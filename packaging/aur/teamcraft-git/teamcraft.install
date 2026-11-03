@@ -1,0 +1,19 @@
+post_install() {
+  cat <<'EOF'
+==> TeamCraft is installed. First start:
+    1. PostgreSQL (skip if it runs already):
+         sudo -u postgres initdb -D /var/lib/postgres/data
+         sudo systemctl enable --now postgresql
+    2. Database role and database of the service user:
+         sudo -u postgres createuser teamcraft
+         sudo -u postgres createdb -O teamcraft teamcraft
+    3. sudo systemctl enable --now teamcraft
+    4. Open http://localhost:8080 and create the administrator.
+    Configuration: /etc/teamcraft/teamcraft.env
+    Commands: sudo -u teamcraft teamcraft user list
+EOF
+}
+
+post_upgrade() {
+  echo "==> Restart the server to use the new version: sudo systemctl restart teamcraft"
+}

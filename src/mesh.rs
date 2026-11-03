@@ -1,0 +1,1697 @@
+//! Triangle meshes and point clouds for the 3D preview.
+//!
+//! Pure-Rust readers for the common mesh, 3D-printing, visualisation and
+//! point-cloud formats, plus STEP B-rep tessellation with the `truck` CAD
+//! kernel (Apache-2.0). Every reader produces one [`Mesh`] in model
+//! coordinates; [`Mesh::encode`] writes the compact binary form that
+//! `static/viewer.js` draws (`TCMESH01`, little endian).
+//!
+//! The readers are defensive: sizes are limited, indices are checked and a
+//! malformed file is an error, never a panic or an endless loop. The server
+//! still runs them in a separate process with a time limit (see `preview`).
+
+use std::collections::HashMap;
+use std::io::{Cursor, Read};
+
+use anyhow::{anyhow, bail, Context, Result};
+
+/// Largest triangle count that is previewed.
+pub const MAX_TRIANGLES: usize = 8_000_000;
+/// Point clouds with more points are thinned out evenly.
+pub const MAX_POINTS: usize = 3_000_000;
+
+const MAGIC: &[u8; 8] = b"TCMESH01";
+/// Colour of parts without own colour when they are merged with coloured ones.
+const NEUTRAL: [u8; 3] = [176, 188, 200];
+
+/// Triangles (or points when `indices` is empty) in model coordinates.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Mesh {
+    /// x, y, z per vertex.
+    pub positions: Vec<f32>,
+    /// Three vertex indices per triangle; empty for a point cloud.
+    pub indices: Vec<u32>,
+    /// r, g, b per vertex – empty, or three bytes for every vertex.
+    pub colors: Vec<u8>,
+    /// Number of bodies / objects (for the status line of the viewer).
+    pub parts: u32,
+}
+
+impl Mesh {
+    pub fn vertex_count(&self) -> usize {
+        self.positions.len() / 3
+    }
+
+    pub fn triangle_count(&self) -> usize {
+        self.indices.len() / 3
+    }
+
+    pub fn is_point_cloud(&self) -> bool {
+        self.indices.is_empty()
+    }
+
+    fn vertex(&mut self, p: [f64; 3]) -> u32 {
+        let index = self.vertex_count() as u32;
+        self.positions
+            .extend([p[0] as f32, p[1] as f32, p[2] as f32]);
+        index
+    }
+
+    /// Appends `other` (indices are shifted; colours are filled in so that
+    /// either every vertex or none has a colour).
+    pub fn append(&mut self, mut other: Mesh) {
+        let offset = self.vertex_count() as u32;
+        if self.colors.is_empty() != other.colors.is_empty() {
+            if self.colors.is_empty() {
+                self.colors = NEUTRAL.repeat(self.vertex_count());
+            } else {
+                other.colors = NEUTRAL.repeat(other.vertex_count());
+            }
+        }
+        self.positions.append(&mut other.positions);
+        self.indices
+            .extend(other.indices.iter().map(|i| i + offset));
+        self.colors.append(&mut other.colors);
+        self.parts += other.parts.max(1);
+    }
+
+    /// Validates the mesh: finite coordinates, indices in range, limits.
+    pub fn check(&self) -> Result<()> {
+        if self.positions.is_empty() {
+            bail!("The file contains no geometry.");
+        }
+        if self.positions.len() % 3 != 0 || self.indices.len() % 3 != 0 {
+            bail!("Internal error: incomplete vertices or triangles.");
+        }
+        if !self.colors.is_empty() && self.colors.len() != self.positions.len() {
+            bail!("Internal error: colours do not match the vertices.");
+        }
+        if self.triangle_count() > MAX_TRIANGLES {
+            bail!(
+                "The model has {} triangles – more than the preview shows ({}).",
+                self.triangle_count(),
+                MAX_TRIANGLES
+            );
+        }
+        if self.is_point_cloud() && self.vertex_count() > MAX_POINTS {
+            bail!("Internal error: point cloud not thinned out.");
+        }
+        if self.positions.iter().any(|v| !v.is_finite()) {
+            bail!("The file contains invalid coordinates (NaN or infinite).");
+        }
+        let n = self.vertex_count() as u32;
+        if self.indices.iter().any(|&i| i >= n) {
+            bail!("Internal error: triangle index out of range.");
+        }
+        Ok(())
+    }
+
+    /// Bounding box `[min x, min y, min z, max x, max y, max z]`.
+    pub fn bounds(&self) -> [f32; 6] {
+        let mut b = [f32::MAX, f32::MAX, f32::MAX, f32::MIN, f32::MIN, f32::MIN];
+        for p in self.positions.chunks_exact(3) {
+            for a in 0..3 {
+                b[a] = b[a].min(p[a]);
+                b[a + 3] = b[a + 3].max(p[a]);
+            }
+        }
+        b
+    }
+
+    /// The binary form read by `static/viewer.js`:
+    ///
+    /// ```text
+    /// 0   "TCMESH01"
+    /// 8   u32 vertices   12  u32 indices   16  u32 parts   20  u32 flags (1 = colours)
+    /// 24  f32 × 6 bounding box
+    /// 48  f32 × 3·vertices, u32 × indices, u8 × 3·vertices (colours, padded to 4 bytes)
+    /// ```
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            48 + self.positions.len() * 4 + self.indices.len() * 4 + self.colors.len() + 4,
+        );
+        out.extend_from_slice(MAGIC);
+        for v in [
+            self.vertex_count() as u32,
+            self.indices.len() as u32,
+            self.parts.max(1),
+            u32::from(!self.colors.is_empty()),
+        ] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in self.bounds() {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in &self.positions {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        for v in &self.indices {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend_from_slice(&self.colors);
+        while out.len() % 4 != 0 {
+            out.push(0);
+        }
+        out
+    }
+
+    /// Reads [`Mesh::encode`] output (tests, tools).
+    pub fn decode(data: &[u8]) -> Result<Mesh> {
+        if data.len() < 48 || &data[..8] != MAGIC {
+            bail!("not a TeamCraft mesh");
+        }
+        let u = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap()) as usize;
+        let (vertices, indices, parts, flags) = (u(8), u(12), u(16), u(20));
+        let colors = if flags & 1 == 1 { vertices * 3 } else { 0 };
+        let need = 48 + vertices * 12 + indices * 4 + colors;
+        if data.len() < need {
+            bail!("truncated mesh");
+        }
+        let f32s = |at: usize, n: usize| -> Vec<f32> {
+            data[at..at + n * 4]
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .collect()
+        };
+        let positions = f32s(48, vertices * 3);
+        let at = 48 + vertices * 12;
+        let index_values = data[at..at + indices * 4]
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+            .collect();
+        let at = at + indices * 4;
+        Ok(Mesh {
+            positions,
+            indices: index_values,
+            colors: data[at..at + colors].to_vec(),
+            parts: parts as u32,
+        })
+    }
+}
+
+/// Mesh formats the readers understand (ids as in `cadformat`).
+pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
+    let mesh = match format {
+        "stl" => stl(data)?,
+        "obj" => obj(data)?,
+        "ply" => ply(data)?,
+        "off" => off(data)?,
+        "3mf" => three_mf(data)?,
+        "amf" => amf(data)?,
+        "gltf" | "glb" => gltf(data)?,
+        "3ds" => three_ds(data)?,
+        "pts" | "xyz" => text_points(data)?,
+        "las" => las(data)?,
+        "step" => step(data)?,
+        other => bail!("No 3D preview for the format '{other}'."),
+    };
+    mesh.check()?;
+    Ok(mesh)
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+fn text(data: &[u8]) -> std::borrow::Cow<'_, str> {
+    String::from_utf8_lossy(data)
+}
+
+fn float(token: &str) -> Result<f64> {
+    let v: f64 = token
+        .parse()
+        .map_err(|_| anyhow!("'{}' is not a number", truncate(token)))?;
+    if !v.is_finite() {
+        bail!("invalid coordinate '{}'", truncate(token));
+    }
+    Ok(v)
+}
+
+fn truncate(s: &str) -> String {
+    s.chars().take(24).collect()
+}
+
+/// Polygon → triangle fan.
+fn fan(mesh: &mut Mesh, polygon: &[u32]) {
+    for k in 1..polygon.len().saturating_sub(1) {
+        mesh.indices
+            .extend([polygon[0], polygon[k], polygon[k + 1]]);
+    }
+}
+
+fn check_triangles(n: usize) -> Result<()> {
+    if n > MAX_TRIANGLES {
+        bail!("The model has {n} triangles – more than the preview shows ({MAX_TRIANGLES}).");
+    }
+    Ok(())
+}
+
+/// Every `stride`-th point of a point cloud with `count` points.
+fn stride_for(count: usize) -> usize {
+    count.div_ceil(MAX_POINTS).max(1)
+}
+
+/// Welds identical vertices of a triangle soup (STL).
+struct Welder {
+    map: HashMap<[u32; 3], u32>,
+    mesh: Mesh,
+}
+
+impl Welder {
+    fn new(triangles: usize) -> Welder {
+        Welder {
+            map: HashMap::with_capacity(triangles / 2),
+            mesh: Mesh {
+                parts: 1,
+                indices: Vec::with_capacity(triangles * 3),
+                ..Mesh::default()
+            },
+        }
+    }
+
+    fn push(&mut self, p: [f32; 3]) {
+        let key = [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()];
+        let next = self.mesh.vertex_count() as u32;
+        let index = *self.map.entry(key).or_insert_with(|| {
+            self.mesh.positions.extend(p);
+            next
+        });
+        self.mesh.indices.push(index);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// STL
+// ---------------------------------------------------------------------------
+
+fn stl(data: &[u8]) -> Result<Mesh> {
+    if data.len() >= 84 {
+        let n = u32::from_le_bytes(data[80..84].try_into().unwrap()) as usize;
+        if n.checked_mul(50).and_then(|b| b.checked_add(84)) == Some(data.len()) {
+            if n == 0 {
+                bail!("The STL file contains no triangles.");
+            }
+            check_triangles(n)?;
+            let mut w = Welder::new(n);
+            for t in 0..n {
+                let o = 84 + t * 50 + 12;
+                for v in 0..3 {
+                    let at = o + v * 12;
+                    let f = |k: usize| {
+                        f32::from_le_bytes(data[at + k * 4..at + k * 4 + 4].try_into().unwrap())
+                    };
+                    w.push([f(0), f(1), f(2)]);
+                }
+            }
+            return Ok(w.mesh);
+        }
+    }
+    let text = text(data);
+    if !text.trim_start().starts_with("solid") {
+        bail!("Not an STL file (neither binary nor ASCII).");
+    }
+    let mut w = Welder::new(data.len() / 200);
+    let mut tokens = text.split_ascii_whitespace();
+    while let Some(token) = tokens.next() {
+        if token == "vertex" {
+            let mut p = [0f32; 3];
+            for c in &mut p {
+                *c = float(tokens.next().context("incomplete vertex")?)? as f32;
+            }
+            w.push(p);
+            check_triangles(w.mesh.indices.len() / 3)?;
+        }
+    }
+    let len = w.mesh.indices.len();
+    w.mesh.indices.truncate(len - len % 3);
+    if w.mesh.indices.is_empty() {
+        bail!("The STL file contains no triangles.");
+    }
+    Ok(w.mesh)
+}
+
+// ---------------------------------------------------------------------------
+// OBJ
+// ---------------------------------------------------------------------------
+
+fn obj(data: &[u8]) -> Result<Mesh> {
+    let text = text(data);
+    let mut mesh = Mesh::default();
+    let mut colors: Vec<u8> = Vec::new();
+    let mut groups = 0u32;
+    let mut polygon = Vec::new();
+    for line in text.lines() {
+        let mut it = line.split_ascii_whitespace();
+        match it.next() {
+            Some("v") => {
+                let values: Vec<f64> = it.map(float).collect::<Result<_>>()?;
+                if values.len() < 3 {
+                    bail!("OBJ vertex with less than three coordinates");
+                }
+                mesh.vertex([values[0], values[1], values[2]]);
+                if values.len() >= 6 {
+                    let scale = if values[3..6].iter().all(|c| *c <= 1.0) {
+                        255.0
+                    } else {
+                        1.0
+                    };
+                    colors.extend(
+                        values[3..6]
+                            .iter()
+                            .map(|c| (c * scale).clamp(0.0, 255.0) as u8),
+                    );
+                }
+            }
+            Some("f") => {
+                let n = mesh.vertex_count() as i64;
+                polygon.clear();
+                for corner in it {
+                    let index: i64 = corner
+                        .split('/')
+                        .next()
+                        .unwrap_or("")
+                        .parse()
+                        .map_err(|_| anyhow!("invalid OBJ face '{}'", truncate(line)))?;
+                    let resolved = if index < 0 { n + index } else { index - 1 };
+                    if resolved < 0 || resolved >= n {
+                        bail!("OBJ face refers to a missing vertex");
+                    }
+                    polygon.push(resolved as u32);
+                }
+                fan(&mut mesh, &polygon);
+                check_triangles(mesh.triangle_count())?;
+            }
+            Some("o") | Some("g") => groups += 1,
+            _ => {}
+        }
+    }
+    if colors.len() == mesh.positions.len() {
+        mesh.colors = colors;
+    }
+    mesh.parts = groups.max(1);
+    thin_out(&mut mesh);
+    Ok(mesh)
+}
+
+/// Thins out a point cloud that has more than [`MAX_POINTS`] points.
+fn thin_out(mesh: &mut Mesh) {
+    if !mesh.is_point_cloud() || mesh.vertex_count() <= MAX_POINTS {
+        return;
+    }
+    let stride = stride_for(mesh.vertex_count());
+    let keep = |v: &[f32]| v.to_vec();
+    mesh.positions = mesh
+        .positions
+        .chunks_exact(3)
+        .step_by(stride)
+        .flat_map(keep)
+        .collect();
+    if !mesh.colors.is_empty() {
+        mesh.colors = mesh
+            .colors
+            .chunks_exact(3)
+            .step_by(stride)
+            .flat_map(|c| c.to_vec())
+            .collect();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PLY
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq)]
+enum PlyType {
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    F32,
+    F64,
+}
+
+impl PlyType {
+    fn parse(s: &str) -> Result<PlyType> {
+        Ok(match s {
+            "char" | "int8" => PlyType::I8,
+            "uchar" | "uint8" => PlyType::U8,
+            "short" | "int16" => PlyType::I16,
+            "ushort" | "uint16" => PlyType::U16,
+            "int" | "int32" => PlyType::I32,
+            "uint" | "uint32" => PlyType::U32,
+            "float" | "float32" => PlyType::F32,
+            "double" | "float64" => PlyType::F64,
+            other => bail!("unknown PLY type '{}'", truncate(other)),
+        })
+    }
+
+    fn size(self) -> usize {
+        match self {
+            PlyType::I8 | PlyType::U8 => 1,
+            PlyType::I16 | PlyType::U16 => 2,
+            PlyType::I32 | PlyType::U32 | PlyType::F32 => 4,
+            PlyType::F64 => 8,
+        }
+    }
+}
+
+struct PlyProperty {
+    name: String,
+    ty: PlyType,
+    /// Count type of a list property.
+    list: Option<PlyType>,
+}
+
+struct PlyElement {
+    name: String,
+    count: usize,
+    properties: Vec<PlyProperty>,
+}
+
+enum PlyEncoding {
+    Ascii,
+    Little,
+    Big,
+}
+
+/// Reads scalar values of a PLY body, binary or ASCII.
+struct PlyReader<'a> {
+    data: &'a [u8],
+    at: usize,
+    encoding: PlyEncoding,
+    tokens: std::str::SplitAsciiWhitespace<'a>,
+}
+
+impl<'a> PlyReader<'a> {
+    fn value(&mut self, ty: PlyType) -> Result<f64> {
+        if let PlyEncoding::Ascii = self.encoding {
+            return float(self.tokens.next().context("PLY file ends early")?);
+        }
+        let n = ty.size();
+        let bytes = self
+            .data
+            .get(self.at..self.at + n)
+            .context("PLY file ends early")?;
+        self.at += n;
+        let mut b = [0u8; 8];
+        b[..n].copy_from_slice(bytes);
+        if let PlyEncoding::Big = self.encoding {
+            b[..n].reverse();
+        }
+        Ok(match ty {
+            PlyType::I8 => b[0] as i8 as f64,
+            PlyType::U8 => b[0] as f64,
+            PlyType::I16 => i16::from_le_bytes([b[0], b[1]]) as f64,
+            PlyType::U16 => u16::from_le_bytes([b[0], b[1]]) as f64,
+            PlyType::I32 => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64,
+            PlyType::U32 => u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64,
+            PlyType::F32 => f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64,
+            PlyType::F64 => f64::from_le_bytes(b),
+        })
+    }
+}
+
+fn ply(data: &[u8]) -> Result<Mesh> {
+    let end = data
+        .windows(10)
+        .position(|w| w == b"end_header")
+        .context("PLY header without end_header")?;
+    let header = std::str::from_utf8(&data[..end]).context("PLY header is not text")?;
+    let mut body = end + 10;
+    // the header ends with "end_header\n" (or "\r\n")
+    while body < data.len() && (data[body] == b'\r' || data[body] == b'\n') {
+        body += 1;
+        if data[body - 1] == b'\n' {
+            break;
+        }
+    }
+    let mut lines = header.lines();
+    if lines.next().map(str::trim) != Some("ply") {
+        bail!("Not a PLY file.");
+    }
+    let mut encoding = None;
+    let mut elements: Vec<PlyElement> = Vec::new();
+    for line in lines {
+        let w: Vec<&str> = line.split_ascii_whitespace().collect();
+        match w.as_slice() {
+            ["format", "ascii", ..] => encoding = Some(PlyEncoding::Ascii),
+            ["format", "binary_little_endian", ..] => encoding = Some(PlyEncoding::Little),
+            ["format", "binary_big_endian", ..] => encoding = Some(PlyEncoding::Big),
+            ["element", name, count] => elements.push(PlyElement {
+                name: name.to_string(),
+                count: count.parse().context("PLY element count")?,
+                properties: Vec::new(),
+            }),
+            ["property", "list", count_ty, ty, name] => elements
+                .last_mut()
+                .context("PLY property outside an element")?
+                .properties
+                .push(PlyProperty {
+                    name: name.to_string(),
+                    ty: PlyType::parse(ty)?,
+                    list: Some(PlyType::parse(count_ty)?),
+                }),
+            ["property", ty, name] => elements
+                .last_mut()
+                .context("PLY property outside an element")?
+                .properties
+                .push(PlyProperty {
+                    name: name.to_string(),
+                    ty: PlyType::parse(ty)?,
+                    list: None,
+                }),
+            _ => {}
+        }
+    }
+    let encoding = encoding.context("PLY header without format")?;
+    let body_text = match encoding {
+        PlyEncoding::Ascii => std::str::from_utf8(&data[body..]).unwrap_or(""),
+        _ => "",
+    };
+    let mut reader = PlyReader {
+        data,
+        at: body,
+        encoding,
+        tokens: body_text.split_ascii_whitespace(),
+    };
+    let mut mesh = Mesh {
+        parts: 1,
+        ..Mesh::default()
+    };
+    let mut colors = Vec::new();
+    let vertex_count = elements
+        .iter()
+        .find(|e| e.name == "vertex")
+        .map_or(0, |e| e.count);
+    let has_faces = elements.iter().any(|e| e.name == "face" && e.count > 0);
+    let stride = if has_faces {
+        1
+    } else {
+        stride_for(vertex_count)
+    };
+    if vertex_count.saturating_mul(12) > data.len().saturating_mul(4) + 1024 {
+        bail!("The PLY header announces more vertices than the file holds.");
+    }
+    let mut polygon = Vec::new();
+    for element in &elements {
+        let is_vertex = element.name == "vertex";
+        let is_face = element.name == "face";
+        let pos: Vec<Option<usize>> = ["x", "y", "z", "red", "green", "blue"]
+            .iter()
+            .map(|n| element.properties.iter().position(|p| p.name == *n))
+            .collect();
+        let color_scale = pos[3].map(|i| element.properties[i].ty).map_or(1.0, |t| {
+            if matches!(t, PlyType::F32 | PlyType::F64) {
+                255.0
+            } else {
+                1.0
+            }
+        });
+        let mut values = vec![0f64; element.properties.len()];
+        for row in 0..element.count {
+            polygon.clear();
+            for (k, property) in element.properties.iter().enumerate() {
+                match property.list {
+                    None => values[k] = reader.value(property.ty)?,
+                    Some(count_ty) => {
+                        let n = reader.value(count_ty)? as usize;
+                        if n > 1024 {
+                            bail!("PLY face with {n} corners");
+                        }
+                        let wanted = is_face
+                            && matches!(property.name.as_str(), "vertex_indices" | "vertex_index");
+                        for _ in 0..n {
+                            let v = reader.value(property.ty)?;
+                            if wanted {
+                                if v < 0.0 || v as usize >= vertex_count {
+                                    bail!("PLY face refers to a missing vertex");
+                                }
+                                polygon.push(v as u32);
+                            }
+                        }
+                    }
+                }
+            }
+            if is_vertex && row % stride == 0 {
+                let get = |i: Option<usize>| i.map(|i| values[i]);
+                let (Some(x), Some(y), Some(z)) = (get(pos[0]), get(pos[1]), get(pos[2])) else {
+                    bail!("PLY vertices without x, y, z");
+                };
+                mesh.vertex([x, y, z]);
+                if let (Some(r), Some(g), Some(b)) = (get(pos[3]), get(pos[4]), get(pos[5])) {
+                    colors.extend([r, g, b].map(|c| (c * color_scale).clamp(0.0, 255.0) as u8));
+                }
+            }
+            if is_face {
+                fan(&mut mesh, &polygon);
+                check_triangles(mesh.triangle_count())?;
+            }
+        }
+    }
+    if colors.len() == mesh.positions.len() {
+        mesh.colors = colors;
+    }
+    Ok(mesh)
+}
+
+// ---------------------------------------------------------------------------
+// OFF
+// ---------------------------------------------------------------------------
+
+fn off(data: &[u8]) -> Result<Mesh> {
+    let text = text(data);
+    let mut lines = text
+        .lines()
+        .map(|l| l.split('#').next().unwrap_or("").trim())
+        .filter(|l| !l.is_empty());
+    let first = lines.next().context("empty OFF file")?;
+    let counts_line = match first {
+        "OFF" | "COFF" | "NOFF" | "CNOFF" => lines.next().context("OFF file without counts")?,
+        other if other.starts_with("OFF") => other.trim_start_matches("OFF"),
+        _ => bail!("Not an OFF file."),
+    };
+    let counts: Vec<usize> = counts_line
+        .split_ascii_whitespace()
+        .map(|t| t.parse().context("OFF counts"))
+        .collect::<Result<_>>()?;
+    let (nv, nf) = (*counts.first().unwrap_or(&0), *counts.get(1).unwrap_or(&0));
+    check_triangles(nf)?;
+    if nv > data.len() {
+        bail!("The OFF header announces more vertices than the file holds.");
+    }
+    let mut mesh = Mesh {
+        parts: 1,
+        ..Mesh::default()
+    };
+    for _ in 0..nv {
+        let line = lines.next().context("OFF file ends early")?;
+        let v: Vec<f64> = line
+            .split_ascii_whitespace()
+            .take(3)
+            .map(float)
+            .collect::<Result<_>>()?;
+        if v.len() < 3 {
+            bail!("OFF vertex with less than three coordinates");
+        }
+        mesh.vertex([v[0], v[1], v[2]]);
+    }
+    let mut polygon = Vec::new();
+    for _ in 0..nf {
+        let line = lines.next().context("OFF file ends early")?;
+        let mut it = line.split_ascii_whitespace();
+        let n: usize = it.next().unwrap_or("0").parse().context("OFF face")?;
+        polygon.clear();
+        for _ in 0..n {
+            let i: usize = it.next().context("OFF face")?.parse().context("OFF face")?;
+            if i >= nv {
+                bail!("OFF face refers to a missing vertex");
+            }
+            polygon.push(i as u32);
+        }
+        fan(&mut mesh, &polygon);
+    }
+    thin_out(&mut mesh);
+    Ok(mesh)
+}
+
+// ---------------------------------------------------------------------------
+// 3MF and AMF (XML, zipped)
+// ---------------------------------------------------------------------------
+
+type Affine = [f64; 12];
+const IDENTITY: Affine = [1., 0., 0., 0., 1., 0., 0., 0., 1., 0., 0., 0.];
+
+/// 3MF transforms are row vectors: `p' = p · M` with the translation last.
+fn parse_transform(s: Option<&str>) -> Result<Affine> {
+    let Some(s) = s else { return Ok(IDENTITY) };
+    let values: Vec<f64> = s
+        .split_ascii_whitespace()
+        .map(float)
+        .collect::<Result<_>>()?;
+    values
+        .try_into()
+        .map_err(|_| anyhow!("3MF transform with the wrong number of values"))
+}
+
+fn apply(m: &Affine, p: [f64; 3]) -> [f64; 3] {
+    [
+        p[0] * m[0] + p[1] * m[3] + p[2] * m[6] + m[9],
+        p[0] * m[1] + p[1] * m[4] + p[2] * m[7] + m[10],
+        p[0] * m[2] + p[1] * m[5] + p[2] * m[8] + m[11],
+    ]
+}
+
+/// `a` first, then `b`.
+fn compose(a: &Affine, b: &Affine) -> Affine {
+    let mut m = [0.0; 12];
+    for r in 0..4 {
+        for c in 0..3 {
+            let mut v = if r == 3 { b[9 + c] } else { 0.0 };
+            for k in 0..3 {
+                v += a[r * 3 + k] * b[k * 3 + c];
+            }
+            m[r * 3 + c] = v;
+        }
+    }
+    m
+}
+
+fn zip_entry(data: &[u8], wanted: impl Fn(&str) -> bool) -> Result<Option<Vec<u8>>> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(data)).context("not a ZIP package")?;
+    let names: Vec<String> = archive
+        .file_names()
+        .filter_map(|n| n.ok().map(|n| n.into_owned()))
+        .collect();
+    let Some(name) = names.into_iter().find(|n| wanted(n.as_str())) else {
+        return Ok(None);
+    };
+    let mut entry = archive.by_name(&name)?;
+    if entry.size() > 2 * 1024 * 1024 * 1024 {
+        bail!("{name} is too large to preview");
+    }
+    let mut out = Vec::with_capacity(entry.size() as usize);
+    entry
+        .by_ref()
+        .take(2 * 1024 * 1024 * 1024)
+        .read_to_end(&mut out)?;
+    Ok(Some(out))
+}
+
+fn attr(e: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<String> {
+    e.attributes()
+        .flatten()
+        .find(|a| a.key.local_name().as_ref() == name)
+        .and_then(|a| a.unescape_value().ok().map(|v| v.into_owned()))
+}
+
+#[derive(Default)]
+struct ThreeMfObject {
+    mesh: Mesh,
+    components: Vec<(String, Affine)>,
+}
+
+fn three_mf(data: &[u8]) -> Result<Mesh> {
+    // The start part is named in _rels/.rels; "3D/3dmodel.model" by convention.
+    let rels = zip_entry(data, |n| n.eq_ignore_ascii_case("_rels/.rels"))?;
+    let target = rels
+        .as_deref()
+        .and_then(|r| {
+            let r = String::from_utf8_lossy(r).into_owned();
+            let at = r.find("3dmodel")?;
+            let start = r[..at].rfind("Target=\"")? + 8;
+            let end = start + r[start..].find('"')?;
+            Some(r[start..end].trim_start_matches('/').to_string())
+        })
+        .unwrap_or_else(|| "3D/3dmodel.model".to_string());
+    let xml = zip_entry(data, |n| n.eq_ignore_ascii_case(&target))?
+        .or(zip_entry(data, |n| {
+            n.to_ascii_lowercase().ends_with(".model")
+        })?)
+        .context("the 3MF package contains no 3D model")?;
+    three_mf_model(&xml)
+}
+
+fn three_mf_model(xml: &[u8]) -> Result<Mesh> {
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(true);
+    let mut objects: HashMap<String, ThreeMfObject> = HashMap::new();
+    let mut items: Vec<(String, Affine)> = Vec::new();
+    let mut current: Option<String> = None;
+    let mut buf = Vec::new();
+    loop {
+        let event = reader
+            .read_event_into(&mut buf)
+            .context("invalid 3MF XML")?;
+        match &event {
+            Event::Start(e) | Event::Empty(e) => match e.local_name().as_ref() {
+                b"object" => {
+                    let id = attr(e, b"id").unwrap_or_default();
+                    objects.entry(id.clone()).or_default();
+                    current = Some(id);
+                }
+                b"vertex" => {
+                    if let Some(obj) = current.as_ref().and_then(|id| objects.get_mut(id)) {
+                        let c = |n: &[u8]| float(attr(e, n).as_deref().unwrap_or("0"));
+                        obj.mesh.vertex([c(b"x")?, c(b"y")?, c(b"z")?]);
+                    }
+                }
+                b"triangle" => {
+                    if let Some(obj) = current.as_ref().and_then(|id| objects.get_mut(id)) {
+                        let n = obj.mesh.vertex_count() as u32;
+                        let mut t = [0u32; 3];
+                        for (k, name) in [b"v1", b"v2", b"v3"].iter().enumerate() {
+                            t[k] = attr(e, *name)
+                                .and_then(|v| v.parse().ok())
+                                .filter(|v| *v < n)
+                                .context("3MF triangle refers to a missing vertex")?;
+                        }
+                        obj.mesh.indices.extend(t);
+                        check_triangles(obj.mesh.triangle_count())?;
+                    }
+                }
+                b"component" => {
+                    if let Some(obj) = current.as_ref().and_then(|id| objects.get_mut(id)) {
+                        let target = attr(e, b"objectid").unwrap_or_default();
+                        obj.components
+                            .push((target, parse_transform(attr(e, b"transform").as_deref())?));
+                    }
+                }
+                b"item" => {
+                    let target = attr(e, b"objectid").unwrap_or_default();
+                    items.push((target, parse_transform(attr(e, b"transform").as_deref())?));
+                }
+                _ => {}
+            },
+            Event::End(e) if e.local_name().as_ref() == b"object" => current = None,
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    if items.is_empty() {
+        // no build section: show every object that has geometry
+        let mut ids: Vec<&String> = objects.keys().collect();
+        ids.sort();
+        items = ids.into_iter().map(|id| (id.clone(), IDENTITY)).collect();
+    }
+    let mut out = Mesh::default();
+    for (id, transform) in &items {
+        instantiate(&objects, id, transform, 0, &mut out)?;
+    }
+    Ok(out)
+}
+
+fn instantiate(
+    objects: &HashMap<String, ThreeMfObject>,
+    id: &str,
+    transform: &Affine,
+    depth: usize,
+    out: &mut Mesh,
+) -> Result<()> {
+    if depth > 16 {
+        bail!("3MF components nest too deeply (cycle?)");
+    }
+    let Some(obj) = objects.get(id) else {
+        return Ok(()); // object in another model part (production extension)
+    };
+    if !obj.mesh.positions.is_empty() {
+        let mut part = obj.mesh.clone();
+        for p in part.positions.chunks_exact_mut(3) {
+            let q = apply(transform, [p[0] as f64, p[1] as f64, p[2] as f64]);
+            p.copy_from_slice(&[q[0] as f32, q[1] as f32, q[2] as f32]);
+        }
+        part.parts = 1;
+        out.append(part);
+        check_triangles(out.triangle_count())?;
+    }
+    for (child, local) in &obj.components {
+        instantiate(objects, child, &compose(local, transform), depth + 1, out)?;
+    }
+    Ok(())
+}
+
+fn amf(data: &[u8]) -> Result<Mesh> {
+    use quick_xml::events::Event;
+    let unzipped;
+    let xml = if data.starts_with(b"PK") {
+        unzipped = zip_entry(data, |_| true)?.context("empty AMF archive")?;
+        &unzipped[..]
+    } else {
+        data
+    };
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(true);
+    let mut out = Mesh::default();
+    let mut object = Mesh::default();
+    let mut coord = [0f64; 3];
+    let mut tri = [0u32; 3];
+    let mut field: Option<Vec<u8>> = None;
+    let mut buf = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buf)
+            .context("invalid AMF XML")?
+        {
+            Event::Start(e) => {
+                let name = e.local_name().as_ref().to_vec();
+                if name == b"object" {
+                    object = Mesh::default();
+                }
+                field = Some(name);
+            }
+            Event::Text(t) => {
+                let value = t.unescape().unwrap_or_default();
+                let value = value.trim();
+                match field.as_deref() {
+                    Some(b"x") => coord[0] = float(value)?,
+                    Some(b"y") => coord[1] = float(value)?,
+                    Some(b"z") => coord[2] = float(value)?,
+                    Some(b"v1") => tri[0] = value.parse().context("AMF triangle")?,
+                    Some(b"v2") => tri[1] = value.parse().context("AMF triangle")?,
+                    Some(b"v3") => tri[2] = value.parse().context("AMF triangle")?,
+                    _ => {}
+                }
+            }
+            Event::End(e) => {
+                match e.local_name().as_ref() {
+                    b"coordinates" => {
+                        object.vertex(coord);
+                    }
+                    b"triangle" => {
+                        let n = object.vertex_count() as u32;
+                        if tri.iter().any(|i| *i >= n) {
+                            bail!("AMF triangle refers to a missing vertex");
+                        }
+                        object.indices.extend(tri);
+                        check_triangles(out.triangle_count() + object.triangle_count())?;
+                    }
+                    b"object" => {
+                        object.parts = 1;
+                        out.append(std::mem::take(&mut object));
+                    }
+                    _ => {}
+                }
+                field = None;
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// glTF / GLB
+// ---------------------------------------------------------------------------
+
+fn gltf(data: &[u8]) -> Result<Mesh> {
+    use base64::Engine;
+    let document = gltf::Gltf::from_slice(data).context("invalid glTF")?;
+    let mut buffers: Vec<Vec<u8>> = Vec::new();
+    for buffer in document.buffers() {
+        let bytes = match buffer.source() {
+            gltf::buffer::Source::Bin => {
+                document.blob.clone().context("GLB without binary chunk")?
+            }
+            gltf::buffer::Source::Uri(uri) => {
+                let Some((_, payload)) = uri
+                    .strip_prefix("data:")
+                    .and_then(|rest| rest.split_once(";base64,"))
+                else {
+                    bail!("This glTF file refers to external buffers ({}); upload the .glb version to preview it.", truncate(uri));
+                };
+                base64::engine::general_purpose::STANDARD
+                    .decode(payload)
+                    .context("invalid base64 buffer")?
+            }
+        };
+        buffers.push(bytes);
+    }
+    let mut out = Mesh::default();
+    let scene = document
+        .default_scene()
+        .or_else(|| document.scenes().next());
+    let roots: Vec<gltf::Node> = match scene {
+        Some(scene) => scene.nodes().collect(),
+        None => document.nodes().collect(),
+    };
+    for node in roots {
+        gltf_node(&node, &IDENTITY4, &buffers, &mut out, 0)?;
+    }
+    Ok(out)
+}
+
+const IDENTITY4: [[f32; 4]; 4] = [
+    [1., 0., 0., 0.],
+    [0., 1., 0., 0.],
+    [0., 0., 1., 0.],
+    [0., 0., 0., 1.],
+];
+
+/// Column-major 4×4 product `a · b`.
+fn mul4(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
+    let mut m = [[0f32; 4]; 4];
+    for (c, column) in m.iter_mut().enumerate() {
+        for (r, value) in column.iter_mut().enumerate() {
+            *value = (0..4).map(|k| a[k][r] * b[c][k]).sum();
+        }
+    }
+    m
+}
+
+fn gltf_node(
+    node: &gltf::Node,
+    parent: &[[f32; 4]; 4],
+    buffers: &[Vec<u8>],
+    out: &mut Mesh,
+    depth: usize,
+) -> Result<()> {
+    if depth > 64 {
+        bail!("glTF nodes nest too deeply");
+    }
+    let world = mul4(parent, &node.transform().matrix());
+    if let Some(mesh) = node.mesh() {
+        for primitive in mesh.primitives() {
+            let points = match primitive.mode() {
+                gltf::mesh::Mode::Triangles => false,
+                gltf::mesh::Mode::Points => true,
+                _ => continue,
+            };
+            let reader = primitive.reader(|b| buffers.get(b.index()).map(|v| &v[..]));
+            let Some(positions) = reader.read_positions() else {
+                continue;
+            };
+            let mut part = Mesh {
+                parts: 1,
+                ..Mesh::default()
+            };
+            for p in positions {
+                let w = &world;
+                let t = |r: usize| w[0][r] * p[0] + w[1][r] * p[1] + w[2][r] * p[2] + w[3][r];
+                part.positions.extend([t(0), t(1), t(2)]);
+            }
+            if !points {
+                match reader.read_indices() {
+                    Some(indices) => part.indices.extend(indices.into_u32()),
+                    None => part.indices.extend(0..part.vertex_count() as u32),
+                }
+                let n = part.vertex_count() as u32;
+                if part.indices.len() % 3 != 0 || part.indices.iter().any(|i| *i >= n) {
+                    bail!("glTF primitive with invalid indices");
+                }
+            }
+            if let Some(colors) = reader.read_colors(0) {
+                part.colors = colors.into_rgb_u8().flatten().collect();
+                if part.colors.len() != part.positions.len() {
+                    part.colors.clear();
+                }
+            }
+            out.append(part);
+            check_triangles(out.triangle_count())?;
+        }
+    }
+    for child in node.children() {
+        gltf_node(&child, &world, buffers, out, depth + 1)?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 3DS (legacy 3ds Max)
+// ---------------------------------------------------------------------------
+
+fn three_ds(data: &[u8]) -> Result<Mesh> {
+    if data.len() < 6 || u16::from_le_bytes([data[0], data[1]]) != 0x4D4D {
+        bail!("Not a 3DS file.");
+    }
+    let mut out = Mesh::default();
+    three_ds_chunks(data, 6, data.len(), &mut out, &mut None, 0)?;
+    Ok(out)
+}
+
+fn three_ds_chunks(
+    data: &[u8],
+    mut at: usize,
+    end: usize,
+    out: &mut Mesh,
+    object: &mut Option<Mesh>,
+    depth: usize,
+) -> Result<()> {
+    if depth > 8 {
+        bail!("3DS chunks nest too deeply");
+    }
+    while at + 6 <= end {
+        let id = u16::from_le_bytes([data[at], data[at + 1]]);
+        let len = u32::from_le_bytes(data[at + 2..at + 6].try_into().unwrap()) as usize;
+        if len < 6 || at + len > end {
+            break; // truncated or padding
+        }
+        let body = at + 6;
+        let chunk_end = at + len;
+        match id {
+            // main → editor → object → triangle mesh: descend
+            0x3D3D => three_ds_chunks(data, body, chunk_end, out, object, depth + 1)?,
+            0x4000 => {
+                // object block: zero-terminated name, then sub-chunks
+                let name_end = data[body..chunk_end]
+                    .iter()
+                    .position(|b| *b == 0)
+                    .map_or(chunk_end, |p| body + p + 1);
+                let mut mesh = Some(Mesh::default());
+                three_ds_chunks(data, name_end, chunk_end, out, &mut mesh, depth + 1)?;
+                if let Some(mut m) = mesh.filter(|m| !m.positions.is_empty()) {
+                    m.parts = 1;
+                    out.append(m);
+                    check_triangles(out.triangle_count())?;
+                }
+            }
+            0x4100 => three_ds_chunks(data, body, chunk_end, out, object, depth + 1)?,
+            0x4110 => {
+                let Some(mesh) = object.as_mut() else {
+                    at = chunk_end;
+                    continue;
+                };
+                let n = u16::from_le_bytes([data[body], data[body + 1]]) as usize;
+                if body + 2 + n * 12 > chunk_end {
+                    bail!("3DS vertex list is truncated");
+                }
+                for v in 0..n {
+                    let o = body + 2 + v * 12;
+                    let f = |k: usize| {
+                        f32::from_le_bytes(data[o + k * 4..o + k * 4 + 4].try_into().unwrap())
+                            as f64
+                    };
+                    mesh.vertex([f(0), f(1), f(2)]);
+                }
+            }
+            0x4120 => {
+                let Some(mesh) = object.as_mut() else {
+                    at = chunk_end;
+                    continue;
+                };
+                let n = u16::from_le_bytes([data[body], data[body + 1]]) as usize;
+                if body + 2 + n * 8 > chunk_end {
+                    bail!("3DS face list is truncated");
+                }
+                let count = mesh.vertex_count() as u32;
+                for f in 0..n {
+                    let o = body + 2 + f * 8;
+                    let i = |k: usize| {
+                        u16::from_le_bytes([data[o + k * 2], data[o + k * 2 + 1]]) as u32
+                    };
+                    let t = [i(0), i(1), i(2)];
+                    if t.iter().any(|v| *v >= count) {
+                        bail!("3DS face refers to a missing vertex");
+                    }
+                    mesh.indices.extend(t);
+                }
+            }
+            _ => {}
+        }
+        at = chunk_end;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Point clouds: PTS / XYZ (text), LAS (binary)
+// ---------------------------------------------------------------------------
+
+/// `x y z [intensity] [r g b]` per line (spaces, commas or semicolons); lines
+/// that are not numbers (headers, the point count of .pts files) are skipped.
+fn text_points(data: &[u8]) -> Result<Mesh> {
+    let text = text(data);
+    // estimate the number of points from the first lines to thin out evenly
+    let sample: Vec<usize> = text.lines().take(1000).map(|l| l.len() + 1).collect();
+    let average = (sample.iter().sum::<usize>() / sample.len().max(1)).max(8);
+    let stride = stride_for(data.len() / average);
+    let mut mesh = Mesh {
+        parts: 1,
+        ..Mesh::default()
+    };
+    let mut colors = Vec::new();
+    let mut row = 0usize;
+    for line in text.lines() {
+        let values: Vec<f64> = line
+            .split(|c: char| c.is_ascii_whitespace() || c == ',' || c == ';')
+            .filter(|t| !t.is_empty())
+            .map_while(|t| t.parse::<f64>().ok().filter(|v| v.is_finite()))
+            .collect();
+        if values.len() < 3 {
+            continue;
+        }
+        row += 1;
+        if (row - 1) % stride != 0 {
+            continue;
+        }
+        mesh.vertex([values[0], values[1], values[2]]);
+        if values.len() >= 6 {
+            let rgb = &values[values.len() - 3..];
+            if rgb.iter().all(|c| (0.0..=255.0).contains(c)) {
+                colors.extend(rgb.iter().map(|c| *c as u8));
+            }
+        }
+        if mesh.vertex_count() > MAX_POINTS {
+            break;
+        }
+    }
+    if colors.len() == mesh.positions.len() {
+        mesh.colors = colors;
+    }
+    Ok(mesh)
+}
+
+fn las(data: &[u8]) -> Result<Mesh> {
+    if data.len() < 227 || &data[..4] != b"LASF" {
+        bail!("Not a LAS file.");
+    }
+    let u16_at = |at: usize| u16::from_le_bytes([data[at], data[at + 1]]) as usize;
+    let u32_at = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap()) as usize;
+    let f64_at = |at: usize| f64::from_le_bytes(data[at..at + 8].try_into().unwrap());
+    let offset = u32_at(96);
+    let format = data[104];
+    if format & 0x80 != 0 {
+        bail!("Compressed LAZ point clouds are not previewed – export an uncompressed .las.");
+    }
+    let format = format & 0x3F;
+    let record = u16_at(105);
+    let mut count = u32_at(107);
+    if count == 0 && data.len() >= 255 && data[25] >= 4 {
+        count = u64::from_le_bytes(data[247..255].try_into().unwrap()) as usize;
+    }
+    if record < 12 || offset > data.len() {
+        bail!("Invalid LAS header.");
+    }
+    count = count.min((data.len() - offset) / record);
+    let scale = [f64_at(131), f64_at(139), f64_at(147)];
+    let origin = [f64_at(155), f64_at(163), f64_at(171)];
+    let rgb_at = match format {
+        2 => Some(20),
+        3 | 5 => Some(28),
+        7 | 8 | 10 => Some(30),
+        _ => None,
+    }
+    .filter(|at| at + 6 <= record);
+    let stride = stride_for(count);
+    let mut mesh = Mesh {
+        parts: 1,
+        ..Mesh::default()
+    };
+    let mut raw_colors: Vec<u16> = Vec::new();
+    for i in (0..count).step_by(stride) {
+        let o = offset + i * record;
+        let c = |k: usize| i32::from_le_bytes(data[o + k * 4..o + k * 4 + 4].try_into().unwrap());
+        mesh.vertex([
+            c(0) as f64 * scale[0] + origin[0],
+            c(1) as f64 * scale[1] + origin[1],
+            c(2) as f64 * scale[2] + origin[2],
+        ]);
+        if let Some(at) = rgb_at {
+            for k in 0..3 {
+                raw_colors.push(u16_at(o + at + k * 2) as u16);
+            }
+        }
+    }
+    if !raw_colors.is_empty() {
+        let shift = if raw_colors.iter().any(|c| *c > 255) {
+            8
+        } else {
+            0
+        };
+        mesh.colors = raw_colors.iter().map(|c| (c >> shift) as u8).collect();
+    }
+    Ok(mesh)
+}
+
+// ---------------------------------------------------------------------------
+// STEP (B-rep) with truck
+// ---------------------------------------------------------------------------
+
+fn step(data: &[u8]) -> Result<Mesh> {
+    use truck_meshalgo::prelude::*;
+    use truck_stepio::r#in::*;
+
+    let text = std::str::from_utf8(data)
+        .map_err(|_| anyhow!("The STEP file is not valid text (ISO 10303-21)."))?;
+    if !text.trim_start().starts_with("ISO-10303-21") {
+        bail!("Not a STEP file (ISO-10303-21 header missing).");
+    }
+    // The kernel may panic on geometry it does not support; that must not
+    // take the process down when the preview runs in-process.
+    let result = std::panic::catch_unwind(|| -> Result<Mesh> {
+        let table = Table::from_step(text)
+            .context("The STEP file could not be parsed by the B-rep reader.")?;
+        let mut out = Mesh::default();
+        let mut failed = 0usize;
+        let mut shells: Vec<_> = table.shell.iter().collect();
+        shells.sort_by_key(|(id, _)| **id);
+        for (_, holder) in shells {
+            let Ok(shell) = table.to_compressed_shell(holder) else {
+                failed += 1;
+                continue;
+            };
+            // tolerance: 0.2 % of the size of the shell
+            let mut min = [f64::MAX; 3];
+            let mut max = [f64::MIN; 3];
+            for v in &shell.vertices {
+                for a in 0..3 {
+                    min[a] = min[a].min(v[a]);
+                    max[a] = max[a].max(v[a]);
+                }
+            }
+            let diameter = if shell.vertices.is_empty() {
+                1.0
+            } else {
+                ((max[0] - min[0]).powi(2) + (max[1] - min[1]).powi(2) + (max[2] - min[2]).powi(2))
+                    .sqrt()
+            };
+            let tolerance = (diameter * 0.002).max(TOLERANCE * 10.0);
+            let mut polygon = shell.robust_triangulation(tolerance).to_polygon();
+            polygon
+                .put_together_same_attrs(TOLERANCE * 50.0)
+                .remove_degenerate_faces()
+                .remove_unused_attrs();
+            let mut part = Mesh {
+                parts: 1,
+                ..Mesh::default()
+            };
+            for p in polygon.positions() {
+                part.vertex([p[0], p[1], p[2]]);
+            }
+            let n = part.vertex_count();
+            let mut corners = Vec::new();
+            for face in polygon.face_iter() {
+                corners.clear();
+                for v in face {
+                    if v.pos >= n {
+                        bail!("Internal error: tessellation index out of range.");
+                    }
+                    corners.push(v.pos as u32);
+                }
+                fan(&mut part, &corners);
+            }
+            if part.indices.is_empty() {
+                failed += 1;
+                continue;
+            }
+            out.append(part);
+            check_triangles(out.triangle_count())?;
+        }
+        if out.positions.is_empty() {
+            if failed > 0 {
+                bail!("The B-rep reader could not tessellate the {failed} shell(s) of this STEP file (unsupported surface types?).");
+            }
+            bail!("The STEP file contains no solids or surfaces the preview can show.");
+        }
+        Ok(out)
+    });
+    match result {
+        Ok(mesh) => mesh,
+        Err(_) => bail!("The B-rep reader failed on this STEP file (unsupported geometry)."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cube_stl_ascii() -> String {
+        let mut s = String::from("solid cube\n");
+        let quads = [
+            [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]],
+            [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]],
+        ];
+        for q in quads {
+            for t in [[0, 1, 2], [0, 2, 3]] {
+                s.push_str("facet normal 0 0 1\n outer loop\n");
+                for k in t {
+                    let p = q[k];
+                    s.push_str(&format!("  vertex {} {} {}\n", p[0], p[1], p[2]));
+                }
+                s.push_str(" endloop\nendfacet\n");
+            }
+        }
+        s.push_str("endsolid cube\n");
+        s
+    }
+
+    #[test]
+    fn stl_ascii_and_binary_are_welded() {
+        let mesh = read("stl", cube_stl_ascii().as_bytes()).unwrap();
+        assert_eq!(mesh.triangle_count(), 4);
+        assert_eq!(mesh.vertex_count(), 8, "shared corners are welded");
+
+        let mut bin = vec![0u8; 80];
+        bin.extend_from_slice(&2u32.to_le_bytes());
+        for tri in [
+            [[0f32, 0., 0.], [1., 0., 0.], [0., 1., 0.]],
+            [[1., 0., 0.], [1., 1., 0.], [0., 1., 0.]],
+        ] {
+            bin.extend_from_slice(&[0u8; 12]);
+            for p in tri {
+                for c in p {
+                    bin.extend_from_slice(&c.to_le_bytes());
+                }
+            }
+            bin.extend_from_slice(&[0, 0]);
+        }
+        let mesh = read("stl", &bin).unwrap();
+        assert_eq!((mesh.triangle_count(), mesh.vertex_count()), (2, 4));
+        assert!(read("stl", b"garbage").is_err());
+        let mut empty = vec![0u8; 80];
+        empty.extend_from_slice(&0u32.to_le_bytes());
+        assert!(read("stl", &empty).is_err());
+    }
+
+    #[test]
+    fn obj_faces_points_and_negative_indices() {
+        let mesh = read(
+            "obj",
+            b"o plate\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1/1/1 2/2/2 3/3/3 4/4/4\nf -4 -3 -2\n",
+        )
+        .unwrap();
+        assert_eq!(mesh.triangle_count(), 3);
+        assert!(
+            read("obj", b"v 0 0 0\nf 1 2 3\n").is_err(),
+            "missing vertices"
+        );
+        let cloud = read("obj", b"v 0 0 0 1 0 0\nv 1 2 3 0 1 0\n").unwrap();
+        assert!(cloud.is_point_cloud());
+        assert_eq!(cloud.colors, vec![255, 0, 0, 0, 255, 0]);
+    }
+
+    #[test]
+    fn ply_ascii_and_binary() {
+        let ascii = b"ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n\
+property uchar red\nproperty uchar green\nproperty uchar blue\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n\
+0 0 0 255 0 0\n1 0 0 0 255 0\n0 1 0 0 0 255\n3 0 1 2\n";
+        let mesh = read("ply", ascii).unwrap();
+        assert_eq!(mesh.triangle_count(), 1);
+        assert_eq!(mesh.colors.len(), 9);
+
+        let mut bin = b"ply\nformat binary_little_endian 1.0\nelement vertex 4\nproperty double x\nproperty double y\nproperty double z\nend_header\n".to_vec();
+        for i in 0..4 {
+            for c in [i as f64, 0.5, -1.0] {
+                bin.extend_from_slice(&c.to_le_bytes());
+            }
+        }
+        let cloud = read("ply", &bin).unwrap();
+        assert!(cloud.is_point_cloud());
+        assert_eq!(cloud.vertex_count(), 4);
+        assert_eq!(cloud.positions[3], 1.0);
+        bin.truncate(bin.len() - 8);
+        assert!(read("ply", &bin).is_err(), "truncated body");
+    }
+
+    #[test]
+    fn off_and_three_ds() {
+        let mesh = read(
+            "off",
+            b"OFF\n# square\n4 1 0\n0 0 0\n1 0 0\n1 1 0\n0 1 0\n4 0 1 2 3\n",
+        )
+        .unwrap();
+        assert_eq!(mesh.triangle_count(), 2);
+
+        // 3DS: main → editor → object "a" → mesh with 3 vertices and 1 face
+        let mut vertices = 3u16.to_le_bytes().to_vec();
+        for p in [[0f32, 0., 0.], [1., 0., 0.], [0., 1., 0.]] {
+            for c in p {
+                vertices.extend_from_slice(&c.to_le_bytes());
+            }
+        }
+        let mut faces = 1u16.to_le_bytes().to_vec();
+        for i in [0u16, 1, 2, 0] {
+            faces.extend_from_slice(&i.to_le_bytes());
+        }
+        let chunk = |id: u16, body: &[u8]| {
+            let mut c = id.to_le_bytes().to_vec();
+            c.extend_from_slice(&((body.len() + 6) as u32).to_le_bytes());
+            c.extend_from_slice(body);
+            c
+        };
+        let trimesh = chunk(
+            0x4100,
+            &[chunk(0x4110, &vertices), chunk(0x4120, &faces)].concat(),
+        );
+        let object = chunk(0x4000, &[b"a\0".to_vec(), trimesh].concat());
+        let file = chunk(0x4D4D, &chunk(0x3D3D, &object));
+        let mesh = read("3ds", &file).unwrap();
+        assert_eq!(
+            (mesh.triangle_count(), mesh.vertex_count(), mesh.parts),
+            (1, 3, 1)
+        );
+    }
+
+    fn zip_of(files: &[(&str, &str)]) -> Vec<u8> {
+        use std::io::Write;
+        let mut out = Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(&mut out);
+        for (name, content) in files {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(content.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn three_mf_with_components_and_build_transforms() {
+        let model = r#"<?xml version="1.0"?>
+<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+ <resources>
+  <object id="1" type="model"><mesh>
+   <vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices>
+   <triangles><triangle v1="0" v2="1" v3="2"/></triangles>
+  </mesh></object>
+  <object id="2" type="model"><components>
+   <component objectid="1"/><component objectid="1" transform="1 0 0 0 1 0 0 0 1 10 0 0"/>
+  </components></object>
+ </resources>
+ <build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 0 0 5"/></build>
+</model>"#;
+        let package = zip_of(&[
+            (
+                "_rels/.rels",
+                r#"<Relationships><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>"#,
+            ),
+            ("3D/3dmodel.model", model),
+        ]);
+        let mesh = read("3mf", &package).unwrap();
+        assert_eq!((mesh.triangle_count(), mesh.parts), (2, 2));
+        let b = mesh.bounds();
+        assert_eq!((b[0], b[3], b[2], b[5]), (0.0, 11.0, 5.0, 5.0));
+        assert!(read("3mf", b"PK not really").is_err());
+    }
+
+    #[test]
+    fn amf_plain_and_zipped() {
+        let amf = "<amf><object id=\"0\"><mesh><vertices>\
+<vertex><coordinates><x>0</x><y>0</y><z>0</z></coordinates></vertex>\
+<vertex><coordinates><x>1</x><y>0</y><z>0</z></coordinates></vertex>\
+<vertex><coordinates><x>0</x><y>1</y><z>0</z></coordinates></vertex>\
+</vertices><volume><triangle><v1>0</v1><v2>1</v2><v3>2</v3></triangle></volume></mesh></object></amf>";
+        assert_eq!(read("amf", amf.as_bytes()).unwrap().triangle_count(), 1);
+        let zipped = zip_of(&[("model.amf", amf)]);
+        assert_eq!(read("amf", &zipped).unwrap().triangle_count(), 1);
+        assert!(read("amf", b"<amf><object><mesh><volume><triangle><v1>0</v1><v2>1</v2><v3>2</v3></triangle></volume></mesh></object></amf>").is_err());
+    }
+
+    #[test]
+    fn gltf_embedded_buffer() {
+        use base64::Engine;
+        let mut bin = Vec::new();
+        for c in [0f32, 0., 0., 1., 0., 0., 0., 1., 0.] {
+            bin.extend_from_slice(&c.to_le_bytes());
+        }
+        let uri = format!(
+            "data:application/octet-stream;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bin)
+        );
+        let json = format!(
+            r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],
+"nodes":[{{"mesh":0,"translation":[0,0,2]}}],
+"meshes":[{{"primitives":[{{"attributes":{{"POSITION":0}}}}]}}],
+"accessors":[{{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}}],
+"bufferViews":[{{"buffer":0,"byteLength":36}}],
+"buffers":[{{"byteLength":36,"uri":"{uri}"}}]}}"#
+        );
+        let mesh = read("gltf", json.as_bytes()).unwrap();
+        assert_eq!(mesh.triangle_count(), 1);
+        assert_eq!(mesh.positions[2], 2.0, "node translation applied");
+        let external = json.replace(&uri, "model.bin");
+        let err = read("gltf", external.as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("external buffers"), "{err}");
+    }
+
+    #[test]
+    fn point_clouds() {
+        let pts = read(
+            "pts",
+            b"3\n0 0 0 10 255 0 0\n1 1 1 10 0 255 0\n2,2,2,10,0,0,255\n",
+        )
+        .unwrap();
+        assert!(pts.is_point_cloud());
+        assert_eq!(pts.vertex_count(), 3);
+        assert_eq!(&pts.colors[..3], &[255, 0, 0]);
+        let xyz = read("xyz", b"# x y z\n1.5 2.5 3.5\n4 5 6\n").unwrap();
+        assert_eq!(xyz.vertex_count(), 2);
+
+        // LAS 1.2, point format 2 (with RGB), two points
+        let mut las = vec![0u8; 227];
+        las[..4].copy_from_slice(b"LASF");
+        las[24] = 1;
+        las[25] = 2;
+        las[94..96].copy_from_slice(&227u16.to_le_bytes());
+        las[96..100].copy_from_slice(&227u32.to_le_bytes());
+        las[104] = 2;
+        las[105..107].copy_from_slice(&26u16.to_le_bytes());
+        las[107..111].copy_from_slice(&2u32.to_le_bytes());
+        for at in [131, 139, 147] {
+            las[at..at + 8].copy_from_slice(&0.01f64.to_le_bytes());
+        }
+        for (x, rgb) in [(100i32, 65535u16), (200, 0)] {
+            let mut rec = vec![0u8; 26];
+            rec[..4].copy_from_slice(&x.to_le_bytes());
+            rec[20..22].copy_from_slice(&rgb.to_le_bytes());
+            las.extend(rec);
+        }
+        let cloud = read("las", &las).unwrap();
+        assert_eq!(cloud.vertex_count(), 2);
+        assert!((cloud.positions[3] - 2.0).abs() < 1e-6);
+        assert_eq!(cloud.colors[0], 255);
+        las[104] = 0x82;
+        assert!(read("las", &las).unwrap_err().to_string().contains("LAZ"));
+    }
+
+    #[test]
+    fn step_box_is_tessellated() {
+        let mesh = read("step", include_bytes!("../tests/fixtures/cube.step")).unwrap();
+        assert!(
+            mesh.triangle_count() >= 12,
+            "{} triangles",
+            mesh.triangle_count()
+        );
+        let b = mesh.bounds();
+        assert!((b[3] - b[0] - 10.0).abs() < 1e-3, "{b:?}");
+        assert!(read(
+            "step",
+            b"ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n"
+        )
+        .is_err());
+        assert!(read("step", b"not a step file").is_err());
+    }
+
+    #[test]
+    fn encode_round_trip_and_limits() {
+        let mut mesh = read("stl", cube_stl_ascii().as_bytes()).unwrap();
+        mesh.colors = vec![9; mesh.positions.len()];
+        let bytes = mesh.encode();
+        assert_eq!(bytes.len() % 4, 0);
+        assert_eq!(Mesh::decode(&bytes).unwrap(), mesh);
+        assert!(Mesh::decode(&bytes[..40]).is_err());
+        let mut a = Mesh::default();
+        a.append(Mesh {
+            positions: vec![0., 0., 0.],
+            ..Mesh::default()
+        });
+        a.append(Mesh {
+            positions: vec![1., 1., 1.],
+            colors: vec![1, 2, 3],
+            ..Mesh::default()
+        });
+        assert_eq!(a.colors, vec![176, 188, 200, 1, 2, 3]);
+        assert!(Mesh {
+            positions: vec![f32::NAN, 0., 0.],
+            ..Mesh::default()
+        }
+        .check()
+        .is_err());
+        assert!(Mesh::default().check().is_err());
+        assert!(read("dwg", b"").is_err());
+    }
+}

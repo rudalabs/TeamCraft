@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The main window: TeamCraft commands, events and dialogs. Files and URLs are opened by the Rust commands only.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-message",
+    "dialog:allow-ask"
+  ]
+}

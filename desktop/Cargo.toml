@@ -1,0 +1,45 @@
+[package]
+name = "teamcraft-desktop"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "TeamCraft Desktop – rich client of the TeamCraft PLM for Windows, macOS and Linux"
+license = "MPL-2.0"
+publish = false
+
+# A project of its own: the server build never compiles the desktop dependencies.
+[workspace]
+
+[features]
+# Release builds (packages): serve the embedded user interface instead of a
+# development server – `cargo build --release --features custom-protocol`.
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+anyhow = "1"
+base64 = "0.22"
+gethostname = "0.5"
+hex = "0.4"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "fs", "sync"] }
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

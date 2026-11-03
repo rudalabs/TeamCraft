@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}New change{% endblock %}
+{% block nav_changes %}active{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>New change</h1>
+    <p class="subtitle">Collect in-work revisions, assign reviewers, submit – approved changes release all their revisions.</p>
+  </div>
+</div>
+<div class="card">
+  {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
+  <form class="stack" method="post" action="/changes">
+    <input type="hidden" name="revision_id" value="{{ form.revision_id }}">
+    {% if revision %}
+    <div class="notice">The revision <strong class="mono">{{ revision.item_number }}/{{ revision.code }}</strong> ({{ revision.name }}) will be added to this change.</div>
+    {% endif %}
+    <label>Title
+      <input type="text" name="title" value="{{ form.title }}" maxlength="200" required autofocus
+             placeholder="{% if revision %}Release {{ revision.item_number }}/{{ revision.code }}{% else %}What is changed and why?{% endif %}">
+    </label>
+    <label>Description <span class="hint">reason for the change, impact, verification</span>
+      <textarea name="description" maxlength="20000">{{ form.description }}</textarea>
+    </label>
+    <label>Priority
+      <select name="priority">
+        {% for p in priorities %}<option value="{{ p }}" {% if form.priority == p %}selected{% endif %}>{{ p|label }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="actions">
+      <button class="primary" type="submit">Create change</button>
+      <a class="button" href="{% if revision %}/revisions/{{ revision.id }}{% else %}/changes{% endif %}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

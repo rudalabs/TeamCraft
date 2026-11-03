@@ -1,0 +1,41 @@
+[Unit]
+Description=TeamCraft product lifecycle management server
+Documentation=https://rudalabs.github.io/TeamCraft/
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=teamcraft
+Group=teamcraft
+WorkingDirectory=/var/lib/teamcraft
+EnvironmentFile=-/etc/teamcraft/teamcraft.env
+ExecStart=/usr/bin/teamcraft serve
+Restart=on-failure
+RestartSec=5
+
+# Hardening: the server only writes its vault below /var/lib/teamcraft.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/teamcraft
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

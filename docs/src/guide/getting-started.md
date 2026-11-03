@@ -1,0 +1,55 @@
+# Getting started
+
+## Build and run
+
+You need Rust (stable, via [rustup](https://rustup.rs)) and PostgreSQL 14+.
+The repository's `docker-compose.yml` starts a development database that
+needs no password:
+
+```sh
+git clone https://github.com/rudalabs/TeamCraft.git && cd TeamCraft
+docker compose up -d db
+cargo run --release
+```
+
+TeamCraft applies its database migrations on start and listens on
+<http://localhost:8080>. The platform guides cover native PostgreSQL
+installations and the desktop app:
+[Linux](https://github.com/rudalabs/TeamCraft/blob/main/platforms/linux.md) ·
+[macOS](https://github.com/rudalabs/TeamCraft/blob/main/platforms/macos.md) ·
+[Windows](https://github.com/rudalabs/TeamCraft/blob/main/platforms/windows.md).
+
+## First start
+
+1. Open <http://localhost:8080>. A server without accounts that listens on
+   localhost offers **Create the administrator** – pick a username and a
+   password (10+ characters). The form disappears afterwards.
+2. **Projects → New project group**: every item belongs to one. The creator
+   manages the group and adds the team members.
+3. **Users** (admins): create accounts for your team, or connect single
+   sign-on (see [Users, roles and SSO](../admin/users.md)).
+4. **Items → New item**: choose the CAD file (s) first – the model, its
+   drawing and a STEP export for the 3D preview. Name and type are taken from
+   the first file (an assembly for `.iam`, `.asm`, `.sldasm`, …). The item is
+   created together with its files; its first revision *A* is *in work* and
+   checked out to you.
+5. **Check in**, then release it with a change order.
+
+On a server that is reachable from other machines, create the first
+administrator from the command line instead:
+
+```sh
+teamcraft user create --username admin --role admin      # prompts for the password
+```
+
+## Command line
+
+| Command                                                                            | Purpose                                      |
+|------------------------------------------------------------------------------------|----------------------------------------------|
+| `teamcraft` / `teamcraft serve`                                                    | run the web server (applies migrations)      |
+| `teamcraft migrate`                                                                | apply migrations and exit                    |
+| `teamcraft user create --username U --role viewer\|editor\|admin [--project CODE]` | local account                                |
+| `teamcraft user set-password --username U`                                         | reset a password                             |
+| `teamcraft user list`                                                              | all accounts                                 |
+| `teamcraft vault check [--verify-hashes]`                                          | every stored file present (and intact)?      |
+| `teamcraft healthcheck`                                                            | exit 0 when the server answers on `/healthz` |

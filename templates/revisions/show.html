@@ -1,0 +1,533 @@
+{% extends "base.html" %}
+{% block title %}{{ rev.item_number }}/{{ rev.code }} {{ rev.name }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+{% set back = "/revisions/" ~ rev.id %}
+
+<div class="page-head">
+  <div>
+    <h1><span class="mono">{{ rev.item_number }}/{{ rev.code }}</span> · {{ rev.name }}</h1>
+    <p class="subtitle">
+      {{ rev.item_type|label }} · {{ m.badge(rev.state) }}
+      {% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name) }}{% endif %}
+      {% if item.project_code %}· project <strong>{{ item.project_code }}</strong>{% endif %}
+    </p>
+  </div>
+  <div class="actions">
+    <form method="post" action="/items/{{ item.id }}/watch">
+      <input type="hidden" name="watch" value="{% if watching %}0{% else %}1{% endif %}">
+      <input type="hidden" name="back" value="{{ back }}">
+      <button type="submit" title="{% if watching %}Stop the notifications about {{ rev.item_number }}{% else %}Get notified about new revisions, releases and check-ins of {{ rev.item_number }}{% endif %}">{% if watching %}Unwatch{% else %}Watch{% endif %}</button>
+    </form>
+    <form method="post" action="/items/{{ item.id }}/favorite">
+      <input type="hidden" name="favorite" value="{% if favorite %}0{% else %}1{% endif %}">
+      <input type="hidden" name="back" value="{{ back }}">
+      <button type="submit" title="{% if favorite %}Remove {{ rev.item_number }} from your favorites{% else %}Keep {{ rev.item_number }} at hand in Vault → ★ Favorites{% endif %}">{% if favorite %}★ Favorite{% else %}☆ Favorite{% endif %}</button>
+    </form>
+    {% if me.role != "viewer" %}<a class="button" href="/revisions/{{ rev.id }}/save-as" title="A new item with the attributes, files and BOM of this revision">Save as…</a>{% endif %}
+    {% if can.edit %}<a class="button primary" href="/revisions/{{ rev.id }}/edit">Edit attributes</a>{% endif %}
+    {% if can.checkout %}
+    <form method="post" action="/revisions/{{ rev.id }}/checkout"><button class="primary" type="submit" title="Take the exclusive edit lock">Check out</button></form>
+    {% endif %}
+    {% if can.checkin %}
+    <button type="button" data-toggle="checkin-form" title="Upload new file versions and release the lock">Check in…</button>
+    {% endif %}
+    {% if can.cancel_checkout %}
+    {#- Cancelling your own check-out takes effect at once; releasing someone else's lock is confirmed. -#}
+    <form method="post" action="/revisions/{{ rev.id }}/cancel-checkout"
+          {% if rev.checked_out_by != me.id %}data-confirm="Release the check-out held by {{ rev.checked_out_by_name }}?"{% endif %}>
+      <button type="submit" title="{% if rev.checked_out_by != me.id %}Release the lock held by {{ rev.checked_out_by_name }}{% else %}Release your lock without uploading anything{% endif %}">{% if rev.checked_out_by != me.id %}Force unlock{% else %}Cancel check-out{% endif %}</button>
+    </form>
+    {% endif %}
+    {% if can.revise %}
+    <form method="post" action="/revisions/{{ rev.id }}/revise"
+          data-confirm="Create a new revision of {{ rev.item_number }} based on {{ rev.code }}?">
+      <button type="submit">Revise</button>
+    </form>
+    {% endif %}
+    {% if can.add_to_change %}
+    <a class="button" href="/changes/new?revision={{ rev.id }}">Release via new change…</a>
+    {% endif %}
+    {% if can.obsolete %}
+    <form method="post" action="/revisions/{{ rev.id }}/obsolete"
+          data-confirm="Mark {{ rev.item_number }}/{{ rev.code }} as obsolete? This cannot be undone.">
+      <button class="danger" type="submit">Mark obsolete</button>
+    </form>
+    {% endif %}
+    {% if can.delete %}
+    <form method="post" action="/items/{{ item.id }}/delete"
+          data-confirm="Delete {{ rev.item_number }} permanently? Only possible because it was never released.">
+      <input type="hidden" name="back" value="{{ back }}">
+      <button class="danger" type="submit">Delete item</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if not is_latest %}
+<div class="notice">You are looking at an older revision. <a href="/revisions/{{ latest_id }}">Go to the latest revision.</a></div>
+{% endif %}
+{% if open_change %}
+<div class="notice">This revision is part of change <a href="/changes/{{ open_change.id }}">{{ open_change.number }} – {{ open_change.title }}</a> ({{ open_change.status|label }}).</div>
+{% endif %}
+{% if rev.state == "in_work" and rev.checked_out_by and rev.checked_out_by != me.id %}
+<div class="notice">Checked out by {{ rev.checked_out_by_name }} since {{ m.time(rev.checked_out_at) }} – only they can modify it right now.</div>
+{% elif rev.state == "in_work" and can.checkout %}
+<div class="notice">Check out this revision to change attributes, files or the BOM.</div>
+{% endif %}
+{% for i in open_impacts %}
+<div class="impact" role="status">
+  <p><strong>Check needed:</strong>
+    <a class="mono" href="/revisions/{{ i.source_revision_id }}">{{ i.source_number }}/{{ i.source_code }}</a> {{ i.source_name }}
+    {% if i.event == "released" %}was released{% else %}is obsolete and has to be replaced{% endif %}{% if i.change_number %}
+    (<a href="/changes/{{ i.change_id }}">{{ i.change_number }}</a>){% endif %} –
+    {{ rev.item_number }} {{ m.relation(i.relation) }}{% if i.detail %} ({{ i.detail }}){% endif %}.
+    <span class="small muted">{{ m.time(i.created_at) }}</span></p>
+  {% if can.acknowledge %}
+  <form class="inline" method="post" action="/impacts/{{ i.id }}/acknowledge">
+    <input type="hidden" name="back" value="{{ back }}">
+    <input type="text" name="note" maxlength="2000" required aria-label="Why no change is needed"
+           placeholder="Why no change is needed, e.g. form, fit and function unchanged">
+    <button class="small" type="submit">Acknowledge</button>
+  </form>
+  <p class="hint">Or revise {{ rev.item_number }} and release a new revision – that resolves the check automatically.</p>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% if can.checkin %}
+<section class="card hidden" id="checkin-form">
+  <h2>Check in {{ rev.item_number }}/{{ rev.code }}</h2>
+  <p class="hint">Files with the same name as an existing file become its next version. The files are stored and
+    your check-out is released in one step – if anything fails, nothing changes.</p>
+  <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin" enctype="multipart/form-data">
+    <label>New files / versions <span class="hint">optional, max. {{ max_upload_mb }} MiB per file</span>
+      <input type="file" name="file" multiple>
+    </label>
+    <label>Comment <span class="hint">what changed, e.g. "wall thickness 2 → 2.5 mm"</span>
+      <input type="text" name="comment" maxlength="2000">
+    </label>
+    <div class="actions"><button class="primary" type="submit">Check in and release</button></div>
+  </form>
+</section>
+{% endif %}
+
+<div class="grid grid-2">
+  <section class="card">
+    <h2>Attributes</h2>
+    <dl class="props">
+      <dt>Name</dt><dd>{{ rev.name }}</dd>
+      <dt>Description</dt><dd class="pre">{{ rev.description or "—" }}</dd>
+      <dt>Material</dt><dd>{{ rev.material or "—" }}</dd>
+      <dt>Mass per unit</dt><dd>{% if rev.mass_kg is not none %}{{ rev.mass_kg|num(4) }} kg{% else %}—{% endif %}</dd>
+      <dt>Unit cost</dt><dd>{% if rev.unit_cost is not none %}{{ rev.unit_cost|num(2) }} €{% else %}—{% endif %}</dd>
+      <dt>Created</dt><dd>{{ m.time(rev.created_at) }} by {{ rev.created_by_name }}</dd>
+      <dt>Last modified</dt><dd>{{ m.time(rev.updated_at) }}</dd>
+      <dt>Released</dt><dd>{{ m.time(rev.released_at) }}</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Item master data</h2>
+      {% if can.master %}<button class="small" type="button" data-toggle="master-form">Edit</button>{% endif %}
+    </div>
+    <dl class="props">
+      <dt>Item number</dt><dd class="mono">{{ item.number }}</dd>
+      <dt>Type</dt><dd>{{ item.item_type|label }}</dd>
+      <dt>Unit</dt><dd>{{ item.unit }}</dd>
+      <dt>Project group</dt><dd>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% else %}—{% endif %}</dd>
+      <dt>Created</dt><dd>{{ m.time(item.created_at) }} by {{ item.created_by_name }}</dd>
+      <dt>Short link</dt><dd class="mono small"><a href="/i/{{ item.number }}">/i/{{ item.number }}</a></dd>
+    </dl>
+    {% if can.master %}
+    <form id="master-form" class="stack hidden" method="post" action="/items/{{ item.id }}/master">
+      <input type="hidden" name="back" value="{{ back }}">
+      <div class="form-row">
+        <label>Project group
+          <select name="project_id" required>
+            {% for p in projects %}<option value="{{ p.id }}" {% if item.project_id == p.id %}selected{% endif %}>{{ p.code }} – {{ p.name }}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Unit <span class="hint">only before the first release</span>
+          <input type="text" name="unit" value="{{ item.unit }}" list="units" maxlength="16">
+          <datalist id="units">{% for u in units %}<option value="{{ u }}">{% endfor %}</datalist>
+        </label>
+      </div>
+      <div class="actions"><button class="primary" type="submit">Save master data</button></div>
+    </form>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card" id="lifecycle">
+  <div class="card-head">
+    <h2>Lifecycle</h2>
+    <button class="small" type="button" data-toggle="lifecycle-rules">All rules</button>
+  </div>
+  <ol class="lifecycle-track" aria-label="Lifecycle states">
+    {% for s in lifecycle.states %}<li class="{% if s == rev.state %}current{% endif %}"{% if s == rev.state %} aria-current="step"{% endif %}>{{ m.badge(s) }}</li>{% endfor %}
+  </ol>
+  {% if lifecycle.next %}
+  <dl class="props">
+    {% for r in lifecycle.next %}
+    <dt>→ {{ r.to|label }}</dt><dd>{{ r.how }} <span class="muted">{{ r.who }}</span></dd>
+    {% endfor %}
+  </dl>
+  {% else %}
+  <p class="small muted">Obsolete is the final state.</p>
+  {% endif %}
+  {% if rev.state == "in_work" %}
+  <p class="small muted">Attributes, files and BOM change only while the revision is checked out – possible for CAD editors of
+    {{ item.project_code or "the project group" }} and admins.</p>
+  {% elif rev.state in ["released", "obsolete"] %}
+  <p class="small muted">Released data never changes; further work happens in a new revision (<em>Revise</em>) by CAD editors of
+    {{ item.project_code or "the project group" }} and admins.</p>
+  {% endif %}
+  <div id="lifecycle-rules" class="table-wrap hidden">
+    <table>
+      <thead><tr><th>From</th><th>To</th><th>How</th><th>Who</th></tr></thead>
+      <tbody>
+      {% for r in lifecycle.rules %}
+        <tr><td class="nowrap">{{ m.badge(r.from) }}</td><td class="nowrap">{{ m.badge(r.to) }}</td><td>{{ r.how }}</td><td>{{ r.who }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card" id="revisions">
+  <h2>Revisions</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Rev</th><th>Name</th><th>State</th><th>Created</th><th>Released</th></tr></thead>
+    <tbody>
+    {% for r in revisions %}
+      <tr class="{% if r.id == rev.id %}current{% endif %}">
+        <td class="mono"><a href="/revisions/{{ r.id }}">{{ r.code }}</a></td>
+        <td>{{ r.name }}</td>
+        <td>{{ m.badge(r.state) }}{% if r.checked_out_by_name %} {{ m.lock(r.checked_out_by_name) }}{% endif %}</td>
+        <td class="small nowrap">{{ m.time(r.created_at) }} · {{ r.created_by_name }}</td>
+        <td class="small nowrap">{{ m.time(r.released_at) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="card" id="files">
+  <div class="card-head">
+    <h2>Files</h2>
+    <a class="button small" href="/revisions/{{ rev.id }}/package.zip" title="This revision with all files of its structure (BOM), bom.csv and manifest.json – released revisions as released">Pack and Go (ZIP)</a>
+  </div>
+  {% if files %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>File</th><th>Version</th><th class="num">Size</th><th>Uploaded</th><th>SHA-256</th><th></th></tr></thead>
+    <tbody>
+    {% for f in files %}
+      <tr>
+        <td>
+          {% if f.format_info and f.format_info.thumbnail %}<a class="thumb-link" href="/files/{{ f.id }}/thumbnail" title="Preview image stored in the file"><img class="file-thumb" src="/files/{{ f.id }}/thumbnail?v={{ f.sha256 }}" alt="" loading="lazy" data-hide-broken></a>{% endif %}
+          <a href="/files/{{ f.id }}/download">{{ f.filename }}</a>
+          {% if f.format_info %}<span class="fmt fmt-{{ f.format_info.kind }}" title="{{ f.format_info.system_name }} · {{ f.format_info.kind_label }} · {{ f.content_type }}">{{ f.format_info.label }}</span>{% else %}<span class="muted small">{{ f.content_type }}</span>{% endif %}
+          {% if f.preview %}<a class="button small" href="/files/{{ f.id }}/preview" title="3D preview in the browser">3D</a>{% endif %}
+        </td>
+        <td class="nowrap">
+          <span class="badge">v{{ f.version }}</span>
+          {% if f.versions|length > 1 %}<button class="small" type="button" data-toggle="versions-{{ f.id }}">History</button>{% endif %}
+        </td>
+        <td class="num">{{ f.size_bytes|filesize }}</td>
+        <td class="small nowrap">{{ m.time(f.uploaded_at) }} · {{ f.uploaded_by_name }}</td>
+        <td class="mono small" title="{{ f.sha256 }}">{{ f.sha256[:12] }}…</td>
+        <td class="right">
+          {% if can.edit %}
+          <form class="inline" method="post" action="/files/{{ f.id }}/delete" data-confirm="Remove {{ f.filename }} and all its versions from this revision?">
+            <input type="hidden" name="back" value="{{ back }}#files">
+            <button class="small danger" type="submit">Remove</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% if f.versions|length > 1 %}
+      <tr id="versions-{{ f.id }}" class="hidden">
+        <td colspan="6">
+          <table>
+            <thead><tr><th>Version</th><th>Comment</th><th class="num">Size</th><th>Uploaded</th><th></th></tr></thead>
+            <tbody>
+            {% for v in f.versions %}
+              <tr class="{% if v.version == f.version %}current{% endif %}">
+                <td class="nowrap"><a href="/file-versions/{{ v.id }}/download">v{{ v.version }}</a>{% if v.version == f.version %} <span class="badge badge-released">current</span>{% endif %}
+                  {% if f.preview %}<a class="button small" href="/file-versions/{{ v.id }}/preview" title="3D preview of v{{ v.version }}">3D</a>{% endif %}</td>
+                <td class="small">{{ v.comment }}</td>
+                <td class="num">{{ v.size_bytes|filesize }}</td>
+                <td class="small nowrap">{{ m.time(v.uploaded_at) }} · {{ v.uploaded_by_name }}</td>
+                <td class="right">
+                  {% if can.edit and v.version != f.version %}
+                  <form class="inline" method="post" action="/files/{{ f.id }}/restore"
+                        data-confirm="Make the content of v{{ v.version }} the new current version of {{ f.filename }}?">
+                    <input type="hidden" name="version" value="{{ v.version }}">
+                    <input type="hidden" name="back" value="{{ back }}#files">
+                    <button class="small" type="submit">Restore</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </td>
+      </tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No files attached.</p>{% endif %}
+  {% if can.edit %}
+  <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data">
+    <input type="file" name="file" multiple required>
+    <input type="text" name="comment" maxlength="2000" placeholder="Comment (optional)" aria-label="Comment">
+    <button type="submit">Upload</button>
+    <span class="hint">same file name = new version · max. {{ max_upload_mb }} MiB per file · <a href="/formats">CAD formats</a></span>
+  </form>
+  {% endif %}
+  {% if native_without_preview %}
+  <p class="hint">No 3D preview for native CAD files – the preview image stored in Inventor, Solid Edge and SolidWorks files is shown next to them. For the model in 3D, attach a STEP export (<em>Save as → STEP AP242</em>); the desktop app can create it with your own Inventor or Solid Edge.</p>
+  {% endif %}
+</section>
+
+<section class="card" id="bom">
+  <div class="card-head">
+    <h2>Bill of materials (single level)</h2>
+    <div class="actions">
+      <a class="button small" href="/revisions/{{ rev.id }}/bom">Multi-level view &amp; roll-up</a>
+      <a class="button small" href="/revisions/{{ rev.id }}/bom.csv">CSV</a>
+      {% if can.edit %}<a class="button small" href="/import?into={{ rev.id }}" title="Add the structure of a BOM table exported from a CAD program (CSV, Excel)">Import BOM…</a>{% endif %}
+    </div>
+  </div>
+  {% if lines %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th class="num">Find no.</th><th>Item</th><th>Name</th><th>Latest</th><th class="num">Qty</th><th>Notes</th>{% if can.edit %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for l in lines %}
+      <tr>
+        {% if can.edit %}
+        <td class="num" colspan="1">
+          <form id="line-{{ l.id }}" class="inline" method="post" action="/bom-lines/{{ l.id }}">
+            <input type="hidden" name="back" value="{{ back }}#bom">
+            <input class="find" type="text" name="find_number" value="{{ l.find_number }}" inputmode="numeric" aria-label="Find number">
+          </form>
+        </td>
+        {% else %}
+        <td class="num">{{ l.find_number }}</td>
+        {% endif %}
+        <td class="mono nowrap"><a href="/revisions/{{ l.child_latest_revision_id }}">{{ l.child_number }}</a></td>
+        <td>{{ l.child_name }}</td>
+        <td class="nowrap"><span class="mono">{{ l.child_latest_code }}</span> {{ m.badge(l.child_latest_state) }}
+          {% if l.released_child_code %}<span class="small muted" title="This revision was released with {{ l.child_number }}/{{ l.released_child_code }}">· released with <span class="mono">{{ l.released_child_code }}</span></span>{% endif %}</td>
+        {% if can.edit %}
+        <td class="num"><input form="line-{{ l.id }}" class="qty" type="text" name="quantity" value="{{ l.quantity|num(6) }}" inputmode="decimal" aria-label="Quantity"> {{ l.child_unit }}</td>
+        <td><input form="line-{{ l.id }}" type="text" name="notes" value="{{ l.notes }}" maxlength="500" aria-label="Notes"></td>
+        <td class="right nowrap">
+          <button form="line-{{ l.id }}" class="small" type="submit">Save</button>
+          <form class="inline" method="post" action="/bom-lines/{{ l.id }}/delete" data-confirm="Remove {{ l.child_number }} from the BOM?">
+            <input type="hidden" name="back" value="{{ back }}#bom">
+            <button class="small danger" type="submit">Remove</button>
+          </form>
+        </td>
+        {% else %}
+        <td class="num">{{ l.quantity|num(6) }} {{ l.child_unit }}</td>
+        <td>{{ l.notes }}</td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No BOM lines.</p>{% endif %}
+  {% if can.edit %}
+  <h3>Add component</h3>
+  <form class="inline" method="post" action="/revisions/{{ rev.id }}/bom/lines">
+    <input type="text" name="child" placeholder="Item number, e.g. PRT-000012" required aria-label="Child item number">
+    <input class="qty" type="text" name="quantity" value="1" inputmode="decimal" aria-label="Quantity" required>
+    <input class="find" type="text" name="find_number" placeholder="auto" inputmode="numeric" aria-label="Find number">
+    <input type="text" name="notes" placeholder="Notes (optional)" maxlength="500" aria-label="Notes">
+    <button type="submit">Add</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card" id="references">
+  <h2>References</h2>
+  <div class="grid grid-2 nested">
+    <div>
+      <h3>{{ rev.item_number }}/{{ rev.code }} refers to</h3>
+      {% if references.outgoing %}
+      <div class="table-wrap">
+      <table>
+        <tbody>
+        {% for r in references.outgoing %}
+          <tr>
+            <td class="small nowrap">{% for k in references.kinds %}{% if k.value == r.kind %}{{ k.label }}{% endif %}{% endfor %}</td>
+            <td class="mono nowrap"><a href="/revisions/{{ r.to_latest_revision_id }}">{{ r.to_number }}</a></td>
+            <td>{{ r.to_name }}{% if r.note %} <span class="small muted">· {{ r.note }}</span>{% endif %}</td>
+            <td class="nowrap"><span class="mono">{{ r.to_latest_code }}</span> {{ m.badge(r.to_latest_state) }}
+              {% if r.released_to_code %}<span class="small muted">· released with <span class="mono">{{ r.released_to_code }}</span></span>{% endif %}</td>
+            {% if can.edit %}
+            <td class="right">
+              <form class="inline" method="post" action="/references/{{ r.id }}/delete" data-confirm="Remove the reference to {{ r.to_number }}?">
+                <input type="hidden" name="back" value="{{ back }}#references">
+                <button class="small danger" type="submit">Remove</button>
+              </form>
+            </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}<p class="empty">No references besides the BOM.</p>{% endif %}
+      {% if can.edit %}
+      <form class="inline" method="post" action="/revisions/{{ rev.id }}/references">
+        <select name="kind" aria-label="Kind of reference">
+          {% for k in references.kinds %}<option value="{{ k.value }}">{{ k.label }}</option>{% endfor %}
+        </select>
+        <input type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Referenced item">
+        <input type="text" name="note" placeholder="Note (optional)" maxlength="500" aria-label="Note">
+        <button type="submit">Add</button>
+      </form>
+      {% endif %}
+      {% if references.suggestions.bom or references.suggestions.drawing_of %}
+      <h3>Suggested by the CAD files</h3>
+      <ul class="plain-list">
+        {% for s in references.suggestions.bom %}
+        <li>
+          <form class="inline" method="post" action="/revisions/{{ rev.id }}/bom/lines">
+            <input type="hidden" name="child" value="{{ s.item_number }}">
+            <input type="hidden" name="quantity" value="1">
+            <button class="small" type="submit">Add to BOM</button>
+          </form>
+          <span class="mono">{{ s.item_number }}</span> {{ s.item_name }} <span class="small muted">· {{ s.via }}</span>
+        </li>
+        {% endfor %}
+        {% for s in references.suggestions.drawing_of %}
+        <li>
+          <form class="inline" method="post" action="/revisions/{{ rev.id }}/references">
+            <input type="hidden" name="item" value="{{ s.item_number }}">
+            <input type="hidden" name="kind" value="drawing">
+            <button class="small" type="submit">Drawing of</button>
+          </form>
+          <span class="mono">{{ s.item_number }}</span> {{ s.item_name }} <span class="small muted">· {{ s.via }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    <div>
+      <h3>Referenced by</h3>
+      {% if references.incoming or references.file_referrers %}
+      <div class="table-wrap">
+      <table>
+        <tbody>
+        {% for r in references.incoming %}
+          <tr>
+            <td class="mono nowrap"><a href="/revisions/{{ r.from_revision_id }}">{{ r.from_number }}/{{ r.from_code }}</a></td>
+            <td>{{ r.from_name }} <span class="small muted">· {% for k in references.kinds %}{% if k.value == r.kind %}{{ k.label|lower }}{% endif %}{% endfor %} {{ rev.item_number }}{% if r.released_to_code %}, released with {{ r.released_to_code }}{% endif %}</span></td>
+            <td>{{ m.badge(r.from_state) }}</td>
+          </tr>
+        {% endfor %}
+        {% for f in references.file_referrers %}
+          <tr>
+            <td class="mono nowrap"><a href="/revisions/{{ f.revision_id }}">{{ f.item_number }}/{{ f.revision_code }}</a></td>
+            <td>{{ f.item_name }} <span class="small muted">· {{ f.filename }} references {{ f.referenced }}</span></td>
+            <td>{{ m.badge(f.revision_state) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}<p class="empty">No other item refers to {{ rev.item_number }}.</p>{% endif %}
+    </div>
+  </div>
+  {% if references.files %}
+  <h3>Found in the CAD files</h3>
+  <p class="hint">File names inside the assemblies and drawings of this revision, matched against the vault. <strong>Heuristic:</strong> TeamCraft searches the files for CAD file names (plain and UTF-16 text); compressed parts of proprietary formats are not read, and names a CAD program keeps after a component was removed are found too. Not verified with files of every CAD program.</p>
+  {% for f in references.files %}
+  <p class="small"><strong>{{ f.filename }}</strong> references:</p>
+  <ul class="plain-list file-refs">
+    {% for n in f.references %}
+    <li><span class="mono small">{{ n.name }}</span> →
+      {% for x in n.matches %}{% if x.same_revision %}<span class="small">in this revision</span>{% else %}<a class="mono" href="/revisions/{{ x.revision_id }}">{{ x.item_number }}/{{ x.revision_code }}</a> {{ m.badge(x.revision_state) }}{% endif %}{% if not loop.last %}, {% endif %}{% else %}<span class="badge badge-in_review">not in TeamCraft</span>{% endfor %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endfor %}
+  {% endif %}
+  {% if resolved_impacts %}
+  <h3>Earlier checks</h3>
+  <ul class="plain-list">
+    {% for i in resolved_impacts %}
+    <li class="small"><span class="mono">{{ i.source_number }}/{{ i.source_code }}</span> {{ i.event }} ·
+      {% if i.resolution == "acknowledged" %}acknowledged by {{ i.resolved_by_name }}{% elif i.resolution == "superseded" %}superseded{% else %}closed{% endif %}
+      {{ m.time(i.resolved_at) }}{% if i.note %} – {{ i.note }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<div class="grid grid-2">
+  <section class="card">
+    <h2>Where used</h2>
+    {% if where_used %}
+    <table>
+      <thead><tr><th>Parent</th><th>Name</th><th>State</th><th class="num">Qty</th></tr></thead>
+      <tbody>
+      {% for w in where_used %}
+        <tr>
+          <td class="mono nowrap"><a href="/revisions/{{ w.parent_revision_id }}">{{ w.parent_number }}/{{ w.parent_code }}</a></td>
+          <td>{{ w.parent_name }}{% if w.released_child_code %} <span class="small muted">· released with <span class="mono">{{ w.released_child_code }}</span></span>{% endif %}</td>
+          <td>{{ m.badge(w.parent_state) }}</td>
+          <td class="num">{{ w.quantity|num(6) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">Not used in any BOM.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Changes</h2>
+    {% if changes %}
+    <table>
+      <tbody>
+      {% for c in changes %}
+        <tr>
+          <td class="nowrap"><a href="/changes/{{ c.id }}">{{ c.number }}</a></td>
+          <td>{{ c.title }}</td>
+          <td>{{ m.badge(c.status) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">Not part of any change.</p>{% endif %}
+    {% if can.add_to_change and drafts %}
+    <h3>Add to an existing draft change</h3>
+    <form class="inline" method="post" action="/revisions/{{ rev.id }}/add-to-change">
+      <select name="change_id" required aria-label="Change">
+        {% for c in drafts %}<option value="{{ c.id }}">{{ c.number }} – {{ c.title }}</option>{% endfor %}
+      </select>
+      <button type="submit">Add</button>
+    </form>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <h2>History</h2>
+  {{ m.history(history) }}
+</section>
+{% endblock %}

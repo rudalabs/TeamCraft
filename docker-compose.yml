@@ -1,0 +1,31 @@
+# PostgreSQL for local development and tests – not a production setup.
+#
+#   docker compose up -d db     start (data stays in the named volume)
+#   docker compose ps           status
+#   docker compose stop db      stop
+#
+# The database listens on 127.0.0.1 only and trusts local connections, so
+# `cargo run` and `cargo test` need no configuration at all.
+
+name: teamcraft
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: teamcraft
+      POSTGRES_DB: teamcraft
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teamcraft -d teamcraft"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}New item{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>New item</h1>
+    <p class="subtitle">Creates the item together with its first revision <span class="mono">A</span> in work.</p>
+  </div>
+</div>
+
+<div class="card">
+  {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
+  <form class="stack" method="post" action="/items" enctype="multipart/form-data">
+    <label>Files <span class="hint">the CAD model with its drawing and a STEP export for the 3D preview – the item is created together with them</span>
+      <input type="file" name="file" multiple data-fill-name="new-item-name" data-fill-type="new-item-type">
+    </label>
+    <div class="form-row">
+      <label>Type
+        <select name="item_type" id="new-item-type" required>
+          {% for t in types %}<option value="{{ t.value }}" {% if form.item_type == t.value %}selected{% endif %}>{{ t.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Item number <span class="hint">leave empty to generate one (e.g. PRT-000042)</span>
+        <input type="text" name="number" value="{{ form.number }}" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*">
+      </label>
+    </div>
+    <label>Name <span class="hint">empty: the name of the first file</span>
+      <input type="text" name="name" id="new-item-name" value="{{ form.name }}" maxlength="200">
+    </label>
+    <label>Description
+      <textarea name="description" maxlength="10000">{{ form.description }}</textarea>
+    </label>
+    <div class="form-row">
+      <label>Project group <span class="hint">only groups you are a member of</span>
+        <select name="project_id" required>
+          <option value="">— choose —</option>
+          {% for p in projects %}<option value="{{ p.id }}" {% if form.project_id == p.id|string %}selected{% endif %}>{{ p.code }} – {{ p.name }}</option>{% endfor %}
+        </select>
+        {% if not projects %}<span class="hint">You are not a member of any project group yet – ask an admin to add you.</span>{% endif %}
+      </label>
+      <label>Unit of measure
+        <input type="text" name="unit" value="{{ form.unit }}" list="units" maxlength="16">
+        <datalist id="units">{% for u in units %}<option value="{{ u }}">{% endfor %}</datalist>
+      </label>
+    </div>
+    <div class="form-row">
+      <label>Material
+        <input type="text" name="material" value="{{ form.material }}" maxlength="200" placeholder="e.g. AlMg3, 1.4301, CFRP">
+      </label>
+      <label>Mass per unit [kg]
+        <input type="text" name="mass_kg" value="{{ form.mass_kg }}" inputmode="decimal" placeholder="0.125">
+      </label>
+      <label>Unit cost [€]
+        <input type="text" name="unit_cost" value="{{ form.unit_cost }}" inputmode="decimal" placeholder="12.50">
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" type="submit">Create item</button>
+      <a class="button" href="/items">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

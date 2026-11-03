@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en" data-skin="teamcraft">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TeamCraft</title>
+  <link rel="stylesheet" href="/static/skins.css">
+  <link rel="stylesheet" href="app.css">
+  <script src="/static/viewer.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+<div class="app-glow" aria-hidden="true"></div>
+
+<!-- Connect / sign in -->
+<section id="connect" class="connect hidden" aria-label="Sign in">
+  <div class="connect-card">
+    <img class="connect-logo skin-logo-light" src="/static/media/logos/TeamCraft_Logo_Blue.svg" alt="TeamCraft">
+    <img class="connect-logo skin-logo-dark" src="/static/media/logos/TeamCraft_Logo_White.svg" alt="TeamCraft">
+    <p class="connect-sub">Desktop client of the open-source product lifecycle management</p>
+
+    <form id="server-form" class="stack">
+      <label>TeamCraft server
+        <input id="server-url" type="text" placeholder="localhost:8080 or plm.example.org" autocomplete="url" spellcheck="false" required>
+      </label>
+      <button class="primary" type="submit">Connect</button>
+    </form>
+
+    <div id="signin-step" class="stack hidden">
+      <p class="small muted">Server: <strong id="signin-server"></strong> · <button type="button" class="link" id="change-server">change</button></p>
+      <button id="signin-browser" class="primary big" type="button">Sign in with the browser</button>
+      <p id="signin-wait" class="hint hidden">Confirm the sign-in in your browser … <button type="button" class="link" id="signin-cancel">cancel</button></p>
+      <details class="token-login">
+        <summary>Use a personal access token instead</summary>
+        <form id="token-form" class="stack">
+          <label>Token <span class="hint">from your account page in the web UI</span>
+            <input id="token-input" type="password" placeholder="tc_pat_…" autocomplete="off" spellcheck="false" required>
+          </label>
+          <button type="submit">Sign in with token</button>
+        </form>
+      </details>
+    </div>
+    <p id="connect-error" class="notice error hidden" role="alert"></p>
+  </div>
+</section>
+
+<!-- Main window -->
+<div id="shell" class="shell hidden">
+  <header class="titlebar">
+    <div class="brand">
+      <img src="/static/media/logos/TeamCraft_Icon.svg" alt="">
+      <span class="brand-name">TeamCraft</span>
+      <span class="brand-sub">PLM</span>
+    </div>
+    <form id="search-form" class="global-search" role="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+      <input id="search-input" type="search" placeholder="Search numbers, names, materials, file contents …" aria-label="Search">
+    </form>
+    <div class="userbox">
+      <button id="open-notifications" class="icon bell" type="button" title="Notifications" aria-label="Notifications">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        <b id="bell-count" class="bell-count hidden"></b>
+      </button>
+      <span id="user-name" class="user-name"></span>
+      <span id="user-role" class="badge"></span>
+      <button id="open-settings" class="icon" type="button" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Navigation">
+    <button type="button" data-view="home" title="Home – project groups (Ctrl+1)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>
+      <span>Home</span>
+    </button>
+    <button type="button" data-view="worklist" title="My worklist – check-outs and reviews (Ctrl+2)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg>
+      <span>Worklist</span>
+      <b id="worklist-count" class="rail-count hidden"></b>
+    </button>
+    <button type="button" data-view="changes" title="Change orders (Ctrl+3)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h13l-3-3M20 17H7l3 3"/></svg>
+      <span>Changes</span>
+    </button>
+    <button type="button" data-view="search" title="Search results (Ctrl+F)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+      <span>Search</span>
+    </button>
+    <div class="rail-spacer"></div>
+    <img class="rail-mark" src="/static/media/logos/TeamCraft_Icon.svg" alt="">
+  </nav>
+
+  <aside id="navigator" class="navigator" aria-label="Navigator"></aside>
+  <div id="splitter" class="splitter" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
+
+  <main class="workarea">
+    <div id="toolbar" class="toolbar" role="toolbar" aria-label="Actions"></div>
+    <div id="tabs" class="tabs" role="tablist"></div>
+    <div id="tab-body" class="tab-body"></div>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status-server" class="status-server"></span>
+    <span id="status-msg" class="status-msg" role="status"></span>
+    <button id="status-zoom" class="status-zoom hidden" type="button" title="Zoom – Ctrl + mouse wheel, Ctrl + + / − / 0; click for 100 %"></button>
+    <span id="status-ws" class="status-ws"></span>
+  </footer>
+</div>
+
+<div id="dialog-root"></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+</body>
+</html>

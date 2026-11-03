@@ -1,0 +1,424 @@
+/* TeamCraft documentation: the layout of a classic Doxygen site (e.g. the
+ * RTAB-Map API docs) – title area with logo, project number and brief, tab
+ * bar with the search box, navigation tree, page title band, tables, code
+ * fragments and the breadcrumb/footer bar.
+ *
+ * Colours follow the browser: the Dracula dark theme by default, the
+ * Doxygen light palette when the browser asks for a light theme
+ * (prefers-color-scheme: light). mdBook 0.5 renders the pages; doxygen.js
+ * adds banner, tabs and footer and moves the search box. */
+
+:root {
+  --dox-title-h: 56px;
+  --dox-tabs-h: 36px;
+  --dox-foot-h: 30px;
+  --dox-top: calc(var(--dox-title-h) + var(--dox-tabs-h));
+  --dox-font: Roboto, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --dox-ui-font: "Lucida Grande", Geneva, Helvetica, Arial, sans-serif;
+  --dox-mono: "JetBrains Mono", "DejaVu Sans Mono", Consolas, monospace;
+  --content-max-width: 100%;
+  --sidebar-target-width: 270px;
+  --menu-bar-height: 0px;
+
+  /* Dracula (default) */
+  --t-bg: #282a36;
+  --t-panel: #21222c;
+  --t-bar: #191a21;
+  --t-line: #44475a;
+  --t-fg: #f8f8f2;
+  --t-muted: #a9abc2;
+  --t-dim: #6272a4;
+  --t-link: #8be9fd;
+  --t-link-visited: #bd93f9;
+  --t-accent: #bd93f9;
+  --t-selected-bg: #44475a;
+  --t-selected-fg: #f8f8f2;
+  --t-tab-bg: #191a21;
+  --t-tab-fg: #f8f8f2;
+  --t-tab-current-bg: #44475a;
+  --t-tab-current-fg: #f8f8f2;
+  --t-tab-shadow: none;
+  --t-part: #bd93f9;
+  --t-h2: #bd93f9;
+  --t-h3: #ff79c6;
+  --t-header-bg: #21222c;
+  --t-th-bg: #44475a;
+  --t-th-fg: #f8f8f2;
+  --t-cell-border: #6272a4;
+  --t-code-bg: #21222c;
+  --t-code-border: #44475a;
+  --t-code-fg: #f8f8f2;
+  --t-inline-code: #50fa7b;
+  --t-mark-bg: #f1fa8c;
+  --t-mark-fg: #282a36;
+  --t-input-bg: #282a36;
+  --t-input-border: #6272a4;
+  --t-scheme: dark;
+  /* code colours */
+  --c-keyword: #ff79c6;
+  --c-type: #8be9fd;
+  --c-comment: #6272a4;
+  --c-string: #f1fa8c;
+  --c-number: #bd93f9;
+  --c-meta: #ffb86c;
+  --c-title: #50fa7b;
+  --c-variable: #ffb86c;
+}
+
+/* Doxygen light, when the browser prefers a light theme */
+@media (prefers-color-scheme: light) {
+  :root {
+    --t-bg: #ffffff;
+    --t-panel: #f9fafc;
+    --t-bar: linear-gradient(to bottom, #fbfcfe 0%, #e8edf6 48%, #d3dbec 100%);
+    --t-line: #c4cfe5;
+    --t-fg: #000000;
+    --t-muted: #364d7c;
+    --t-dim: #8aa0cc;
+    --t-link: #3d578c;
+    --t-link-visited: #4665a2;
+    --t-accent: #5373b4;
+    --t-selected-bg: linear-gradient(to bottom, #6b86bf 0%, #4665a2 50%, #34497a 100%);
+    --t-selected-fg: #ffffff;
+    --t-tab-bg: linear-gradient(to bottom, #fbfcfe 0%, #e8edf6 48%, #d3dbec 100%);
+    --t-tab-fg: #283a5d;
+    --t-tab-current-bg: linear-gradient(to bottom, #6b86bf 0%, #4665a2 50%, #34497a 100%);
+    --t-tab-current-fg: #ffffff;
+    --t-tab-shadow: 0 1px 1px rgb(255 255 255 / 90%);
+    --t-part: #000000;
+    --t-h2: #354c7b;
+    --t-h3: #000000;
+    --t-header-bg: linear-gradient(to bottom, #ffffff 0%, #f9fafc 60%, #f1f4f9 100%);
+    --t-th-bg: #374f7f;
+    --t-th-fg: #ffffff;
+    --t-cell-border: #2d4068;
+    --t-code-bg: #fbfcfd;
+    --t-code-border: #c4cfe5;
+    --t-code-fg: #000000;
+    --t-inline-code: #4665a2;
+    --t-mark-bg: #ffe08a;
+    --t-mark-fg: #000000;
+    --t-input-bg: #ffffff;
+    --t-input-border: #b6c4df;
+    --t-scheme: light;
+    --c-keyword: #008000;
+    --c-type: #604020;
+    --c-comment: #800000;
+    --c-string: #002080;
+    --c-number: #008080;
+    --c-meta: #806020;
+    --c-title: #000000;
+    --c-variable: #000000;
+  }
+}
+
+/* the palette for every mdBook theme class */
+html, html.light, html.navy, html.coal, html.ayu, html.rust {
+  --bg: var(--t-bg);
+  --fg: var(--t-fg);
+  --links: var(--t-link);
+  --sidebar-bg: var(--t-panel);
+  --sidebar-fg: var(--t-fg);
+  --sidebar-non-existant: var(--t-dim);
+  --sidebar-active: var(--t-selected-fg);
+  --sidebar-spacer: var(--t-line);
+  --sidebar-header-border-color: var(--t-line);
+  --scrollbar: var(--t-dim);
+  --icons: var(--t-muted);
+  --icons-hover: var(--t-link);
+  --inline-code-color: var(--t-inline-code);
+  --theme-popup-bg: var(--t-panel);
+  --theme-popup-border: var(--t-line);
+  --theme-hover: var(--t-line);
+  --quote-bg: var(--t-panel);
+  --quote-border: var(--t-accent);
+  --table-border-color: var(--t-cell-border);
+  --table-header-bg: var(--t-th-bg);
+  --table-alternate-bg: var(--t-bg);
+  --searchbar-border-color: var(--t-input-border);
+  --searchbar-bg: var(--t-input-bg);
+  --searchbar-fg: var(--t-fg);
+  --searchbar-shadow-color: var(--t-accent);
+  --searchresults-header-fg: var(--t-muted);
+  --searchresults-border-color: var(--t-line);
+  --searchresults-li-bg: var(--t-line);
+  --search-mark-bg: var(--t-mark-bg);
+  --color-scheme: var(--t-scheme);
+  color-scheme: dark light;
+  background: var(--t-bg);
+}
+
+body { background: var(--t-bg); color: var(--t-fg); }
+::selection { background: var(--t-line); color: var(--t-fg); }
+
+/* ------------------------------------------------------------ mdBook chrome */
+
+#mdbook-menu-bar,
+#mdbook-menu-bar-hover-placeholder,
+.nav-wrapper,
+.nav-wide-wrapper,
+#mdbook-theme-toggle,
+#mdbook-theme-list { display: none !important; }
+
+/* ------------------------------------------------------------------ banner */
+
+#dox-top {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  font-family: var(--dox-ui-font);
+}
+
+#dox-titlearea {
+  height: var(--dox-title-h);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  background: var(--t-panel);
+  border-bottom: 1px solid var(--t-accent);
+  box-sizing: border-box;
+}
+#dox-titlearea a { color: var(--t-fg); text-decoration: none; display: flex; align-items: center; gap: 10px; }
+#dox-titlearea img { width: 42px; height: 42px; }
+#dox-projectname { font: 200% Tahoma, Arial, sans-serif; line-height: 1.15; }
+#dox-projectnumber { font: 50% Tahoma, Arial, sans-serif; margin-left: 6px; color: var(--t-muted); }
+#dox-projectbrief { font: 90% Tahoma, Arial, sans-serif; color: var(--t-muted); }
+
+#dox-tabs {
+  height: var(--dox-tabs-h);
+  background: var(--t-tab-bg);
+  border-bottom: 1px solid var(--t-line);
+  display: flex;
+  align-items: stretch;
+  box-sizing: border-box;
+  padding: 0 10px 0 0;
+}
+#dox-tabs ul { display: flex; margin: 0; padding: 0; list-style: none; overflow-x: auto; scrollbar-width: none; }
+#dox-tabs li { display: flex; }
+#dox-tabs a,
+#dox-menu-toggle {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  font: bold 13px var(--dox-ui-font);
+  white-space: nowrap;
+  color: var(--t-tab-fg);
+  text-decoration: none;
+  text-shadow: var(--t-tab-shadow);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+#dox-tabs a:hover,
+#dox-menu-toggle:hover { color: var(--t-link); }
+#dox-tabs li.current a {
+  background: var(--t-tab-current-bg);
+  color: var(--t-tab-current-fg);
+  text-shadow: none;
+  box-shadow: inset 0 -2px 0 var(--t-accent);
+}
+#dox-tabs .dox-spacer { flex: 1; }
+
+/* the search box at the right end of the tab bar, as in Doxygen */
+#dox-search { display: flex; align-items: center; }
+#dox-search #mdbook-searchbar-outer { margin: 0; padding: 0; max-width: none; }
+#dox-search #mdbook-searchbar {
+  width: 210px;
+  height: 22px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 8px 0 24px;
+  font: 13px var(--dox-ui-font);
+  color: var(--t-fg);
+  background: var(--t-input-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='10' cy='10' r='6' fill='none' stroke='%238a8fa8' stroke-width='2.4'/%3E%3Cpath d='M15 15l6 6' stroke='%238a8fa8' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat 6px 50% / 13px;
+  border: 1px solid var(--t-input-border);
+  border-radius: 0.65em;
+  box-shadow: none;
+  outline: none;
+}
+#dox-search #mdbook-searchbar::placeholder { color: var(--t-dim); }
+#dox-search #mdbook-searchbar:focus { border-color: var(--t-accent); box-shadow: 0 0 0 1px var(--t-accent); }
+
+/* search results as Doxygen's popup below the search box */
+#mdbook-search-wrapper {
+  position: fixed;
+  top: var(--dox-top);
+  right: 10px;
+  width: min(560px, calc(100vw - 20px));
+  max-height: 70vh;
+  overflow: auto;
+  z-index: 250;
+  margin: 0;
+  padding: 6px 10px;
+  background: var(--t-panel);
+  color: var(--t-fg);
+  border: 1px solid var(--t-accent);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 35%);
+  font: 13px var(--dox-ui-font);
+  box-sizing: border-box;
+}
+#mdbook-search-wrapper.hidden { display: none; }
+#mdbook-searchresults-outer { border: 0; margin: 0; padding: 0; }
+#mdbook-searchresults a { color: var(--t-link); }
+#mdbook-content mark, #mdbook-searchresults mark { background: var(--t-mark-bg); color: var(--t-mark-fg); }
+
+/* ------------------------------------------------------------- page frame */
+
+#mdbook-sidebar { top: var(--dox-top); bottom: var(--dox-foot-h); }
+#mdbook-page-wrapper { padding-top: var(--dox-top); padding-bottom: var(--dox-foot-h); background: var(--t-bg); }
+.page { padding: 0; }
+
+/* ------------------------------------------------------- navigation tree */
+
+#mdbook-sidebar {
+  background: var(--t-panel);
+  font: 13px var(--dox-ui-font);
+  border-right: 1px solid var(--t-line);
+}
+#mdbook-sidebar .sidebar-scrollbox { padding: 8px 0 8px 6px; }
+#mdbook-sidebar ol { line-height: 1.8; }
+#mdbook-sidebar li { margin: 0; }
+#mdbook-sidebar a { color: var(--t-fg); text-decoration: none; display: block; padding: 0 8px; }
+#mdbook-sidebar a:hover { color: var(--t-link); }
+#mdbook-sidebar a.active {
+  background: var(--t-selected-bg);
+  color: var(--t-selected-fg) !important;
+  box-shadow: inset 3px 0 0 var(--t-accent);
+}
+/* no "1.2." section numbers – Doxygen shows plain names */
+#mdbook-sidebar strong[aria-hidden="true"] { display: none; }
+#mdbook-sidebar .part-title {
+  margin: 12px 0 2px;
+  padding: 0 8px 2px;
+  color: var(--t-part);
+  font-weight: bold;
+  font-size: 13px;
+}
+#mdbook-sidebar .part-title::before { content: "▾ "; font-size: 80%; }
+#mdbook-sidebar .chapter-fold-toggle { color: var(--t-dim); }
+#mdbook-sidebar .spacer { background: transparent; height: 4px; }
+#mdbook-sidebar-resize-handle,
+.sidebar-resize-handle { width: 6px; background: var(--t-bar); }
+#mdbook-sidebar-resize-handle .sidebar-resize-indicator,
+.sidebar-resize-handle .sidebar-resize-indicator { display: none; }
+
+/* ---------------------------------------------------------------- content */
+
+#mdbook-content { padding: 0; }
+#mdbook-content main {
+  max-width: none;
+  margin: 0;
+  padding: 0 14px 28px;
+  font: 400 15px/24px var(--dox-font);
+  color: var(--t-fg);
+}
+#mdbook-content main a { color: var(--t-link); text-decoration: none; }
+#mdbook-content main a:visited { color: var(--t-link-visited); }
+#mdbook-content main a:hover { text-decoration: underline; }
+
+/* page title like Doxygen's div.header / div.title */
+#mdbook-content main > h1:first-child {
+  margin: 0 -14px 18px;
+  padding: 8px 10px 8px 22px;
+  font: bold 150%/30px var(--dox-font);
+  color: var(--t-fg);
+  background: var(--t-header-bg);
+  border-bottom: 1px solid var(--t-line);
+}
+#mdbook-content main > h1:first-child a { color: var(--t-fg); }
+
+/* group headers */
+#mdbook-content main h2 {
+  margin: 1.8em 0 0.6em;
+  padding: 8px 0 4px;
+  font-size: 150%;
+  font-weight: normal;
+  color: var(--t-h2);
+  border-bottom: 1px solid var(--t-line);
+}
+#mdbook-content main h3 { color: var(--t-h3); font-size: 120%; margin-top: 1.4em; }
+#mdbook-content main h2 a, #mdbook-content main h3 a { color: inherit; }
+
+/* tables like Doxygen's markdownTable */
+#mdbook-content main table { border-collapse: collapse; margin: 8px 0 18px; width: auto; }
+#mdbook-content main table th {
+  background: var(--t-th-bg);
+  color: var(--t-th-fg);
+  font-size: 105%;
+  padding: 5px 8px 4px;
+  border: 1px solid var(--t-cell-border);
+  text-align: left;
+}
+#mdbook-content main table td { border: 1px solid var(--t-cell-border); padding: 4px 8px 3px; background: var(--t-bg); }
+#mdbook-content main table td code { font-size: 90%; }
+
+/* code like Doxygen's div.fragment */
+#mdbook-content main pre {
+  margin: 6px 8px 6px 2px;
+  padding: 6px 8px;
+  background: var(--t-code-bg);
+  border: 1px solid var(--t-code-border);
+  border-radius: 0;
+  font: 14px/1.4 var(--dox-mono);
+}
+#mdbook-content main pre > code,
+#mdbook-content main pre > code.hljs { background: transparent; color: var(--t-code-fg); padding: 0; font-family: var(--dox-mono); }
+#mdbook-content main :not(pre) > code {
+  color: var(--t-inline-code);
+  background: transparent;
+  font-family: var(--dox-mono);
+  font-size: 92%;
+  padding: 0;
+}
+#mdbook-content main blockquote {
+  margin: 0 24px 0 4px;
+  padding: 0 12px;
+  background: var(--t-panel);
+  border-left: 3px solid var(--t-accent);
+}
+#mdbook-content main hr { border: 0; border-top: 1px solid var(--t-line); }
+
+/* code colours */
+.hljs-keyword, .hljs-selector-tag { color: var(--c-keyword); }
+.hljs-type, .hljs-built_in, .hljs-class .hljs-title { color: var(--c-type); }
+.hljs-comment, .hljs-quote { color: var(--c-comment); font-style: normal; }
+.hljs-string, .hljs-regexp, .hljs-symbol { color: var(--c-string); }
+.hljs-number, .hljs-literal { color: var(--c-number); }
+.hljs-meta, .hljs-attr, .hljs-attribute { color: var(--c-meta); }
+.hljs-title, .hljs-section, .hljs-function { color: var(--c-title); font-weight: normal; }
+.hljs-variable, .hljs-template-variable, .hljs-params { color: var(--c-variable); }
+
+/* --------------------------------------------- breadcrumb and footer bar */
+
+#dox-navpath {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--dox-foot-h);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 15px 0 10px;
+  box-sizing: border-box;
+  background: var(--t-bar);
+  border-top: 1px solid var(--t-line);
+  font: 11px var(--dox-ui-font);
+  color: var(--t-dim);
+}
+#dox-navpath a { color: var(--t-link); font-weight: bold; text-decoration: none; }
+#dox-navpath a:hover { text-decoration: underline; }
+#dox-navpath .dox-sep { color: var(--t-dim); padding: 0 2px; }
+#dox-navpath .dox-crumb { color: var(--t-fg); font-weight: bold; }
+#dox-navpath .dox-generated { margin-left: auto; color: var(--t-muted); font-size: 8pt; white-space: nowrap; }
+
+@media (max-width: 720px) {
+  :root { --dox-title-h: 48px; }
+  #dox-projectbrief { display: none; }
+  #dox-tabs a { padding: 0 10px; }
+  #dox-search #mdbook-searchbar { width: 130px; }
+  #dox-navpath .dox-generated { display: none; }
+}

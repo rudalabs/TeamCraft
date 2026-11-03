@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "WebSearch",
+      "Read(./**)",
+      "Edit(./**)",
+      "Write(./**)",
+      "Search(./**)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(tree *)",
+      "Bash(git branch)",
+      "Bash(git pull)",
+      "Bash(git add --all)",
+      "Bash(git commit -m *)",
+      "Bash(git push)",
+      "Bash(git status)",
+      "Bash(git diff)",
+      "Bash(git diff --staged)",
+      "Bash(git --no-pager log)",
+      "Bash(git --no-pager log --oneline)",
+      "Bash(rm -rf ./**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/git-guard.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

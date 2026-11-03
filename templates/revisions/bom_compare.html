@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Compare BOM {{ before.item_number }}/{{ before.code }} – {{ after.code }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <p class="kicker">BOM comparison</p>
+    <h1><a class="mono" href="/revisions/{{ before.id }}">{{ before.item_number }}/{{ before.code }}</a> → <a class="mono" href="/revisions/{{ after.id }}">{{ after.item_number }}/{{ after.code }}</a></h1>
+    <p class="subtitle">{{ summary.added }} added · {{ summary.removed }} removed · {{ summary.changed }} changed · {{ summary.unchanged }} unchanged</p>
+  </div>
+  <form class="inline" method="get" action="/revisions/{{ rev.id }}/bom/compare">
+    <label class="check">Compare {{ rev.code }} with
+      <select name="with">
+        {% for r in revisions %}{% if r.id != rev.id %}<option value="{{ r.id }}" {% if r.id == before.id or r.id == after.id %}selected{% endif %}>{{ r.code }} · {{ r.state|label }}</option>{% endif %}{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Compare</button>
+    <a class="button" href="/revisions/{{ rev.id }}/bom">← BOM</a>
+  </form>
+</div>
+
+<div class="card">
+  {% if diffs %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Change</th><th>Item</th><th>Name</th>
+        <th class="num">Find {{ before.code }}</th><th class="num">Find {{ after.code }}</th>
+        <th class="num">Qty {{ before.code }}</th><th class="num">Qty {{ after.code }}</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+    {% for d in diffs %}
+      <tr class="bom-diff bom-diff-{{ d.change }}">
+        <td><span class="badge bom-change-{{ d.change }}">{{ d.change|label }}</span></td>
+        <td class="mono nowrap">{{ d.child_number }}</td>
+        <td>{{ d.child_name }}</td>
+        <td class="num">{% if d.before %}{{ d.before.find_number }}{% else %}—{% endif %}</td>
+        <td class="num">{% if d.after %}{{ d.after.find_number }}{% else %}—{% endif %}</td>
+        <td class="num">{% if d.before %}{{ d.before.quantity|num(6) }}{% else %}—{% endif %}</td>
+        <td class="num">{% if d.after %}{{ d.after.quantity|num(6) }} {{ d.unit }}{% else %}—{% endif %}</td>
+        <td class="small">{% if d.before and d.after and d.before.notes != d.after.notes %}{{ d.before.notes or "—" }} → {{ d.after.notes or "—" }}{% elif d.after %}{{ d.after.notes }}{% elif d.before %}{{ d.before.notes }}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">Single-level comparison of the direct BOM lines. Lines are matched by child item (and find number).</p>
+  {% else %}
+  <p class="empty">Neither revision has BOM lines.</p>
+  {% endif %}
+</div>
+{% endblock %}

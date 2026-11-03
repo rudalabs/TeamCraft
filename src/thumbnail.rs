@@ -1,0 +1,495 @@
+//! Preview images that CAD programs store inside their own files – the
+//! thumbnails Autodesk Vault or Teamcenter show for native files (findings in
+//! `docs/src/research/cad-previews.md`). Only the image is read, never the
+//! geometry:
+//!
+//! * Autodesk Inventor (`.ipt`, `.iam`, `.idw`, `.ipn`) and Siemens Solid Edge
+//!   (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`) files are OLE compound files
+//!   ([MS-CFB]); the preview is a PNG or a Windows DIB in one of their streams,
+//!   normally the thumbnail property of the summary information ([MS-OLEPS]);
+//! * SolidWorks files up to 2014 are OLE files as well (`PreviewPNG`), newer
+//!   ones keep a PNG in their own container, which is found by its signature.
+//!
+//! Every candidate is validated (PNG chunk structure and checksums, plausible
+//! DIB header and sizes); the summary information wins, then streams named
+//! like a preview, then the largest image. A DIB is served as BMP, which all
+//! browsers and web views display. The layouts follow the documented
+//! containers and open-source readers (e.g. `cad-preview`); they were not
+//! tested with real files of every CAD program version.
+//!
+//! [MS-CFB]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb/
+//! [MS-OLEPS]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-oleps/
+
+use std::{
+    fs::File,
+    io::{self, Read, Seek},
+    path::{Path, PathBuf},
+};
+
+/// Bump to invalidate every cached thumbnail.
+pub const CACHE_VERSION: u32 = 1;
+
+const OLE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+/// Streams larger than this hold geometry, not previews.
+const MAX_STREAM: u64 = 8 * 1024 * 1024;
+/// Bytes of a file in its own container searched for an embedded PNG.
+const MAX_SCAN: u64 = 64 * 1024 * 1024;
+const MIN_SIDE: u32 = 8;
+const MAX_SIDE: u32 = 4096;
+
+/// Formats whose files carry a preview image.
+pub fn supports(format_id: &str) -> bool {
+    (format_id.starts_with("inventor-") && format_id != "inventor-project")
+        || format_id.starts_with("solidedge-")
+        || matches!(
+            format_id,
+            "solidworks-part" | "solidworks-assembly" | "solidworks-drawing"
+        )
+}
+
+/// An image found in a file.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Thumbnail {
+    /// `image/png` or `image/bmp`.
+    pub content_type: &'static str,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct Found {
+    thumbnail: Thumbnail,
+    area: u64,
+}
+
+fn better(best: &mut Option<Found>, candidate: Option<Found>) {
+    let Some(c) = candidate else { return };
+    let replace = match best {
+        None => true,
+        Some(b) => {
+            c.area > b.area
+                || (c.area == b.area
+                    && c.thumbnail.content_type == "image/png"
+                    && b.thumbnail.content_type != "image/png")
+        }
+    };
+    if replace {
+        *best = Some(c);
+    }
+}
+
+/// The preview image of a CAD file, if it has one.
+pub fn extract(path: &Path) -> io::Result<Option<Thumbnail>> {
+    let mut file = File::open(path)?;
+    let mut head = [0u8; 8];
+    let n = read_up_to(&mut file, &mut head)?;
+    file.rewind()?;
+    if n == head.len() && head == OLE_MAGIC {
+        return Ok(from_compound_file(file));
+    }
+    let mut data = Vec::new();
+    file.take(MAX_SCAN).read_to_end(&mut data)?;
+    Ok(find_in(&data, false).map(|f| f.thumbnail))
+}
+
+fn read_up_to(file: &mut File, buf: &mut [u8]) -> io::Result<usize> {
+    let mut n = 0;
+    while n < buf.len() {
+        match file.read(&mut buf[n..])? {
+            0 => break,
+            k => n += k,
+        }
+    }
+    Ok(n)
+}
+
+/// Summary information first, then streams named like a preview, then the
+/// largest image of any stream.
+fn from_compound_file<F: Read + Seek>(inner: F) -> Option<Thumbnail> {
+    let mut cfb = cfb::CompoundFile::open(inner).ok()?;
+    let mut streams: Vec<(u8, PathBuf)> = cfb
+        .walk()
+        .filter(|e| e.is_stream() && e.len() <= MAX_STREAM)
+        .map(|e| {
+            let name = e.name().to_ascii_lowercase();
+            let rank = if name.ends_with("summaryinformation") {
+                0
+            } else if name.contains("preview") || name.contains("thumbnail") {
+                1
+            } else {
+                2
+            };
+            (rank, e.path().to_path_buf())
+        })
+        .collect();
+    streams.sort_by_key(|(rank, _)| *rank);
+    let mut best: Option<Found> = None;
+    let mut best_rank = u8::MAX;
+    for (rank, path) in streams {
+        if best.is_some() && rank > best_rank {
+            break; // a preview of a better-ranked stream was found
+        }
+        let mut data = Vec::new();
+        let Ok(mut stream) = cfb.open_stream(&path) else {
+            continue;
+        };
+        if stream.read_to_end(&mut data).is_err() {
+            continue;
+        }
+        let found = find_in(&data, true);
+        if found.is_some() && best.is_none() {
+            best_rank = rank;
+        }
+        better(&mut best, found);
+    }
+    best.map(|f| f.thumbnail)
+}
+
+/// The largest valid image in `data` (PNGs; DIBs too when `dibs`).
+fn find_in(data: &[u8], dibs: bool) -> Option<Found> {
+    let mut best = None;
+    let mut from = 0;
+    while let Some(pos) = data[from..]
+        .windows(PNG_MAGIC.len())
+        .position(|w| w == PNG_MAGIC)
+    {
+        let start = from + pos;
+        better(&mut best, png_at(&data[start..]));
+        from = start + 1;
+    }
+    if dibs {
+        for i in 0..data.len().saturating_sub(40) {
+            if matches!(
+                u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]),
+                40 | 108 | 124
+            ) {
+                better(&mut best, dib_at(&data[i..]));
+            }
+        }
+    }
+    best
+}
+
+fn plausible(width: u32, height: u32) -> bool {
+    (MIN_SIDE..=MAX_SIDE).contains(&width) && (MIN_SIDE..=MAX_SIDE).contains(&height)
+}
+
+/// A complete PNG at the start of `data`: every chunk complete with a valid
+/// checksum, `IHDR` first, `IEND` last.
+fn png_at(data: &[u8]) -> Option<Found> {
+    let be32 = |o: usize| {
+        data.get(o..o + 4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let mut pos = PNG_MAGIC.len();
+    let (mut width, mut height) = (0, 0);
+    loop {
+        let len = usize::try_from(be32(pos)?).ok()?;
+        let end = pos.checked_add(12)?.checked_add(len)?;
+        let kind = data.get(pos + 4..pos + 8)?;
+        if end > data.len() || !kind.iter().all(u8::is_ascii_alphabetic) {
+            return None;
+        }
+        if crc32fast::hash(&data[pos + 4..end - 4]) != be32(end - 4)? {
+            return None;
+        }
+        if pos == PNG_MAGIC.len() {
+            if kind != b"IHDR" || len != 13 {
+                return None;
+            }
+            width = be32(pos + 8)?;
+            height = be32(pos + 12)?;
+        }
+        pos = end;
+        if kind == b"IEND" {
+            break;
+        }
+    }
+    if !plausible(width, height) {
+        return None;
+    }
+    Some(Found {
+        area: u64::from(width) * u64::from(height),
+        thumbnail: Thumbnail {
+            content_type: "image/png",
+            bytes: data[..pos].to_vec(),
+        },
+    })
+}
+
+/// A device-independent bitmap at the start of `data` (BITMAPINFOHEADER, V4
+/// or V5, uncompressed or bit fields), returned as a BMP file.
+fn dib_at(data: &[u8]) -> Option<Found> {
+    let le32 = |o: usize| {
+        data.get(o..o + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+    let le16 = |o: usize| data.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let header = usize::try_from(le32(0)?).ok()?;
+    if !matches!(header, 40 | 108 | 124) || data.len() < header {
+        return None;
+    }
+    let width = le32(4)? as i32;
+    let height = le32(8)? as i32;
+    let (planes, bits, compression) = (le16(12)?, le16(14)?, le32(16)?);
+    let (image_size, colors_used) = (le32(20)?, le32(32)?);
+    if planes != 1
+        || !matches!(bits, 1 | 4 | 8 | 16 | 24 | 32)
+        || !(compression == 0 || (compression == 3 && matches!(bits, 16 | 32)))
+        || colors_used > 256
+    {
+        return None;
+    }
+    let (w, h) = (u32::try_from(width).ok()?, height.unsigned_abs());
+    if !plausible(w, h) {
+        return None;
+    }
+    let palette = 4 * if bits <= 8 && colors_used == 0 {
+        1usize << bits
+    } else {
+        colors_used as usize
+    };
+    let masks = if compression == 3 && header == 40 {
+        12
+    } else {
+        0
+    };
+    let stride = (w as usize * bits as usize).div_ceil(32) * 4;
+    let pixels = stride.checked_mul(h as usize)?;
+    // The size field is 0 for uncompressed bitmaps or close to the real size.
+    if image_size != 0 && !(pixels / 2..=pixels * 2).contains(&(image_size as usize)) {
+        return None;
+    }
+    let total = header + masks + palette + pixels;
+    if total > data.len() {
+        return None;
+    }
+    let file_size = u32::try_from(14 + total).ok()?;
+    let offset = u32::try_from(14 + header + masks + palette).ok()?;
+    let mut bmp = Vec::with_capacity(14 + total);
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&file_size.to_le_bytes());
+    bmp.extend_from_slice(&[0; 4]);
+    bmp.extend_from_slice(&offset.to_le_bytes());
+    bmp.extend_from_slice(&data[..total]);
+    Some(Found {
+        area: u64::from(w) * u64::from(h),
+        thumbnail: Thumbnail {
+            content_type: "image/bmp",
+            bytes: bmp,
+        },
+    })
+}
+
+/// The thumbnail of a vault blob, cached next to the 3D previews
+/// (`previews/ab/<sha256>.thumb.v<N>.png|bmp|none`).
+pub fn cached(cache_dir: &Path, sha256: &str, blob: &Path) -> io::Result<Option<Thumbnail>> {
+    if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid content hash",
+        ));
+    }
+    let dir = cache_dir.join(&sha256[..2]);
+    let base = format!("{sha256}.thumb.v{CACHE_VERSION}");
+    for (ext, content_type) in [("png", "image/png"), ("bmp", "image/bmp")] {
+        if let Ok(bytes) = std::fs::read(dir.join(format!("{base}.{ext}"))) {
+            return Ok(Some(Thumbnail {
+                content_type,
+                bytes,
+            }));
+        }
+    }
+    if dir.join(format!("{base}.none")).exists() {
+        return Ok(None);
+    }
+    let found = extract(blob)?;
+    std::fs::create_dir_all(&dir)?;
+    let (name, bytes): (String, &[u8]) = match &found {
+        Some(t) if t.content_type == "image/png" => (format!("{base}.png"), &t.bytes),
+        Some(t) => (format!("{base}.bmp"), &t.bytes),
+        None => (format!("{base}.none"), b""),
+    };
+    // write to a temporary name first, so a reader never sees half a file
+    let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, dir.join(name))?;
+    Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Cursor, Write};
+
+    /// A minimal valid PNG (`w` × `h`, one IDAT chunk – its content is not
+    /// decoded by the extractor).
+    pub(crate) fn png(w: u32, h: u32) -> Vec<u8> {
+        fn chunk(out: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
+            out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            let mut body = kind.to_vec();
+            body.extend_from_slice(data);
+            out.extend_from_slice(&body);
+            out.extend_from_slice(&crc32fast::hash(&body).to_be_bytes());
+        }
+        let mut out = PNG_MAGIC.to_vec();
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&w.to_be_bytes());
+        ihdr.extend_from_slice(&h.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+        chunk(&mut out, b"IHDR", &ihdr);
+        chunk(
+            &mut out,
+            b"IDAT",
+            &[0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01],
+        );
+        chunk(&mut out, b"IEND", &[]);
+        out
+    }
+
+    /// A 24-bit DIB (BITMAPINFOHEADER + pixels).
+    fn dib(w: u32, h: u32) -> Vec<u8> {
+        let stride = (w as usize * 24).div_ceil(32) * 4;
+        let mut out = Vec::new();
+        for v in [40u32, w, h] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&24u16.to_le_bytes());
+        for v in [0u32, 0, 2835, 2835, 0, 0] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend((0..stride * h as usize).map(|i| (i % 251) as u8));
+        out
+    }
+
+    fn compound(streams: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let mut cfb = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+        for (name, data) in streams {
+            if let Some(parent) = Path::new(name).parent().filter(|p| *p != Path::new("/")) {
+                if !cfb.exists(parent) {
+                    cfb.create_storage_all(parent).unwrap();
+                }
+            }
+            cfb.create_stream(name).unwrap().write_all(data).unwrap();
+        }
+        cfb.flush().unwrap();
+        cfb.into_inner().into_inner()
+    }
+
+    /// A file or directory below the system temp dir, removed when dropped.
+    struct Temp(PathBuf);
+
+    impl Temp {
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn temp_name() -> PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static NEXT: AtomicU32 = AtomicU32::new(0);
+        std::env::temp_dir().join(format!(
+            "teamcraft-thumb-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn write_temp(bytes: &[u8]) -> Temp {
+        let path = temp_name();
+        std::fs::write(&path, bytes).unwrap();
+        Temp(path)
+    }
+
+    #[test]
+    fn inventor_style_png_in_the_summary_information() {
+        // VT_CF clipboard data: size, format tag, then the image
+        let mut summary = vec![0u8; 48];
+        summary.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0]);
+        summary.extend_from_slice(&png(512, 512));
+        let file = compound(&[
+            ("/\u{5}SummaryInformation", summary),
+            // an appearance texture elsewhere must not win
+            ("/RSeStorage/Texture", png(1024, 1024)),
+        ]);
+        let t = from_compound_file(Cursor::new(file)).unwrap();
+        assert_eq!(t.content_type, "image/png");
+        assert_eq!(t.bytes, png(512, 512));
+    }
+
+    #[test]
+    fn solid_edge_style_dib_becomes_a_bmp() {
+        let mut summary = vec![1, 2, 3, 4, 0xFF, 0xFF, 0xFF, 0xFF, 8, 0, 0, 0];
+        summary.extend_from_slice(&dib(96, 64));
+        let file = compound(&[("/\u{5}SummaryInformation", summary)]);
+        let t = from_compound_file(Cursor::new(file)).unwrap();
+        assert_eq!(t.content_type, "image/bmp");
+        assert_eq!(&t.bytes[..2], b"BM");
+        assert_eq!(
+            u32::from_le_bytes(t.bytes[2..6].try_into().unwrap()) as usize,
+            t.bytes.len()
+        );
+        assert_eq!(u32::from_le_bytes(t.bytes[10..14].try_into().unwrap()), 54);
+    }
+
+    #[test]
+    fn preview_streams_and_plain_files() {
+        // old SolidWorks: PreviewPNG stream
+        let file = compound(&[("/PreviewPNG", png(640, 480)), ("/Contents", vec![7; 4096])]);
+        let t = from_compound_file(Cursor::new(file)).unwrap();
+        assert_eq!(t.bytes, png(640, 480));
+        // own container with an embedded PNG
+        let mut bytes = vec![0x13; 1000];
+        bytes.extend_from_slice(&png(640, 480));
+        bytes.extend_from_slice(&[0x42; 100]);
+        let f = write_temp(&bytes);
+        assert_eq!(extract(f.path()).unwrap().unwrap().bytes, png(640, 480));
+        // nothing valid: truncated or broken checksum
+        let mut broken = png(64, 64);
+        let last = broken.len() - 1;
+        broken[last] ^= 0xFF;
+        let f = write_temp(&broken);
+        assert_eq!(extract(f.path()).unwrap(), None);
+        let f = write_temp(&png(64, 64)[..40]);
+        assert_eq!(extract(f.path()).unwrap(), None);
+        // implausible sizes are ignored
+        assert!(png_at(&png(2, 2)).is_none());
+        assert!(dib_at(&dib(4, 4)).is_none());
+    }
+
+    #[test]
+    fn results_are_cached() {
+        let dir = Temp(temp_name());
+        std::fs::create_dir_all(dir.path()).unwrap();
+        let blob = write_temp(&compound(&[("/PreviewPNG", png(32, 32))]));
+        let sha = "ab".repeat(32);
+        let first = cached(dir.path(), &sha, blob.path()).unwrap().unwrap();
+        assert!(dir
+            .path()
+            .join("ab")
+            .join(format!("{sha}.thumb.v{CACHE_VERSION}.png"))
+            .exists());
+        drop(blob); // the cache answers without the blob
+        let missing = dir.path().join("gone");
+        assert_eq!(cached(dir.path(), &sha, &missing).unwrap().unwrap(), first);
+        let empty = write_temp(b"no preview here");
+        let other = "cd".repeat(32);
+        assert_eq!(cached(dir.path(), &other, empty.path()).unwrap(), None);
+        assert!(dir
+            .path()
+            .join("cd")
+            .join(format!("{other}.thumb.v{CACHE_VERSION}.none"))
+            .exists());
+        assert!(cached(dir.path(), "../x", empty.path()).is_err());
+        assert!(supports("inventor-assembly") && supports("solidedge-weldment"));
+        assert!(!supports("inventor-project") && !supports("step"));
+    }
+}

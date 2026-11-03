@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Save {{ rev.item_number }}/{{ rev.code }} as{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="kicker">Save As</p>
+    <h1>New item from <a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }}</h1>
+    <p class="subtitle">The new item gets the attributes of this revision – and, if you want, its current files and its BOM.
+      It starts with revision A, in work and checked out to you. {{ rev.item_number }} itself does not change.</p>
+  </div>
+</div>
+
+<div class="card">
+  {% if projects %}
+  <form class="stack" method="post" action="/revisions/{{ rev.id }}/save-as">
+    <div class="form-row">
+      <label>Number <span class="hint">empty = next free number</span>
+        <input type="text" name="number" maxlength="64" placeholder="generated">
+      </label>
+      <label>Name <input type="text" name="name" maxlength="200" value="{{ rev.name }}" required></label>
+      <label>Project group
+        <select name="project_id">
+          {% for p in projects %}<option value="{{ p.id }}" {% if p.id == rev.project_id %}selected{% endif %}>{{ p.code }} – {{ p.name }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <label class="check"><input type="checkbox" name="files" value="1" checked> Copy the current files ({{ file_count }})</label>
+    <label class="check"><input type="checkbox" name="bom" value="1" checked> Copy the BOM ({{ line_count }} lines)</label>
+    <div class="actions">
+      <button class="primary" type="submit">Create the new item</button>
+      <a class="button" href="/revisions/{{ rev.id }}">Cancel</a>
+    </div>
+  </form>
+  {% else %}
+  <p class="empty">You are not a CAD editor of any project group, so you cannot create items. <a href="/revisions/{{ rev.id }}">Back</a></p>
+  {% endif %}
+</div>
+{% endblock %}

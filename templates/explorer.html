@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Vault{% endblock %}
+{% block nav_vault %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <p class="kicker">Vault explorer</p>
+    <h1>{% if folder == "mine" %}My check-outs{% elif folder == "favorites" %}Favorites{% elif folder == "locked" %}All check-outs{% elif folder == "none" %}Items without project group{% elif folder == "search" %}Search{% else %}{% for f in folders %}{% if f.id == folder %}<span class="mono">{{ f.code }}</span> · {{ f.name }}{% endif %}{% endfor %}{% endif %}</h1>
+    <p class="subtitle">Pick a folder, select an item, check it out, work on the files, check them back in. Every row shows who holds the lock.</p>
+  </div>
+  <form class="inline" method="get" action="/vault" role="search">
+    {% if folder != "search" %}<input type="hidden" name="folder" value="{{ folder }}">{% endif %}
+    <input type="search" name="q" value="{{ q }}" placeholder="Number or name…" aria-label="Filter">
+    <button type="submit">Filter</button>
+  </form>
+</div>
+
+<div class="explorer">
+  <nav class="card explorer-tree" aria-label="Folders">
+    <a class="{% if folder == 'mine' %}active{% endif %}" href="/vault?folder=mine">🔒 My check-outs</a>
+    <a class="{% if folder == 'favorites' %}active{% endif %}" href="/vault?folder=favorites">★ Favorites</a>
+    <a class="{% if folder == 'locked' %}active{% endif %}" href="/vault?folder=locked">All check-outs</a>
+    <p class="tree-head">Project groups</p>
+    {% for f in folders %}
+    <a class="{% if f.id == folder %}active{% endif %}" href="/vault?folder={{ f.id }}" title="{{ f.name }}">
+      <span class="mono">{{ f.code }}</span> <span class="muted small">{{ f.items }}{% if f.locked %} · {{ f.locked }} 🔒{% endif %}</span>
+    </a>
+    {% else %}
+    <p class="empty small">No project groups yet – <a href="/projects#new-project">create one</a>.</p>
+    {% endfor %}
+    <a class="{% if folder == 'none' %}active{% endif %}" href="/vault?folder=none">Without group</a>
+  </nav>
+
+  <section class="card explorer-list" aria-label="Items">
+    {% if entries %}
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Item</th><th>Rev</th><th>Name</th><th>State</th><th>Lock</th><th class="num">Files</th></tr></thead>
+      <tbody>
+      {% for e in entries %}
+        <tr class="{% if selected and selected.rev.id == e.revision_id %}selected{% endif %}">
+          <td class="mono nowrap"><a href="{{ '/vault?folder=' ~ folder ~ ('&q=' ~ q if q else '') ~ '&rev=' ~ e.revision_id }}">{{ e.number }}</a></td>
+          <td class="mono">{{ e.code }}</td>
+          <td>{{ e.name }}{% if folder in ["mine", "locked", "search"] and e.project_code %} <span class="muted small">{{ e.project_code }}</span>{% endif %}</td>
+          <td>{{ m.badge(e.state) }}</td>
+          <td class="nowrap">{% if e.checked_out_by_name %}{{ m.lock(e.checked_out_by_name) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="num">{{ e.file_count }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if entries|length >= limit %}<p class="hint">Showing the first {{ limit }} items – use the filter to narrow down.</p>{% endif %}
+    {% else %}
+    <p class="empty">{% if folder == "mine" %}You have nothing checked out.{% elif folder == "favorites" %}No favorites yet – use ☆ Favorite on an item.{% elif q %}No items match “{{ q }}”.{% else %}This folder is empty.{% endif %}</p>
+    {% endif %}
+  </section>
+
+  <aside class="card explorer-detail" aria-label="Selected item">
+    {% if selected %}
+    {% set rev = selected.rev %}
+    {% set can = selected.can %}
+    <p class="kicker">{{ rev.item_type|label }}{% if rev.project_code %} · {{ rev.project_code }}{% endif %}</p>
+    <h2><a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a></h2>
+    <p>{{ rev.name }}</p>
+    <p>{{ m.badge(rev.state) }} {% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name) }} <span class="small muted">since {{ m.time(rev.checked_out_at) }}</span>{% endif %}</p>
+    <div class="actions">
+      {% if can.checkout %}
+      <form method="post" action="/revisions/{{ rev.id }}/checkout?back={{ back }}"><button class="primary" type="submit">Check out</button></form>
+      {% endif %}
+      {% if can.cancel_checkout %}
+      <form method="post" action="/revisions/{{ rev.id }}/cancel-checkout?back={{ back }}"
+            {% if rev.checked_out_by != me.id %}data-confirm="Release the check-out held by {{ rev.checked_out_by_name }}?"{% endif %}>
+        <button type="submit">{% if rev.checked_out_by != me.id %}Force unlock{% else %}Cancel check-out{% endif %}</button>
+      </form>
+      {% endif %}
+      <a class="button" href="/revisions/{{ rev.id }}">Open</a>
+    </div>
+
+    <h3>Files</h3>
+    {% if selected.files %}
+    <ul class="file-list">
+      {% for f in selected.files %}
+      <li>
+        <a href="/files/{{ f.id }}/download" title="Download v{{ f.version }}">{{ f.filename }}</a>
+        <span class="muted small">v{{ f.version }} · {{ f.size_bytes|filesize }}{% if f.format_info %} · {{ f.format_info.label }}{% endif %}</span>
+        {% if f.preview %}<a class="button small" href="/files/{{ f.id }}/preview">3D</a>{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}<p class="empty small">No files yet.</p>{% endif %}
+
+    {% if can.checkin %}
+    <h3>Check in</h3>
+    <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin?back={{ back }}" enctype="multipart/form-data">
+      <input type="file" name="file" multiple aria-label="New files or versions">
+      <input type="text" name="comment" maxlength="2000" placeholder="What changed?" aria-label="Comment">
+      <p class="hint">Same file name = next version. Max. {{ max_upload_mb }} MiB per file. Files and lock release happen in one step.</p>
+      <div class="actions"><button class="primary" type="submit">Check in and release</button></div>
+    </form>
+    {% endif %}
+    {% else %}
+    <p class="empty">Select an item to see its files and to check it out or in.</p>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

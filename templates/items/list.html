@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Items{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Items</h1>
+    <p class="subtitle">Parts, assemblies, documents and software – each with its latest revision.</p>
+  </div>
+  {% if me.can_edit %}
+  <div class="actions"><a class="button" href="/import" title="New assembly with items and BOM from a CAD export (CSV, Excel)">Import BOM</a>{{ m.new_button("/items/new", "New item") }}</div>
+  {% endif %}
+</div>
+
+<form class="card form-row" method="get" action="/items">
+  <label>Search
+    <input type="search" name="q" value="{{ filter.q }}" placeholder="Number, name, material, file name or file content">
+  </label>
+  <label>Type
+    <select name="type">
+      <option value="">All types</option>
+      {% for t in types %}<option value="{{ t.value }}" {% if filter.type == t.value %}selected{% endif %}>{{ t.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Project
+    <select name="project">
+      <option value="">All projects</option>
+      {% for p in projects %}<option value="{{ p.id }}" {% if filter.project == p.id|string %}selected{% endif %}>{{ p.code }} – {{ p.name }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Latest state
+    <select name="state">
+      <option value="">Any state</option>
+      {% for s in states %}<option value="{{ s.value }}" {% if filter.state == s.value %}selected{% endif %}>{{ s.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>CAD program <a class="hint" href="/formats">formats</a>
+    <select name="system">
+      <option value="">Any files</option>
+      {% for s in systems %}<option value="{{ s.id }}" {% if filter.system == s.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+    </select>
+  </label>
+  <div class="actions"><button class="primary" type="submit">Filter</button><a class="button" href="/items">Reset</a></div>
+</form>
+
+<div class="card saved-searches">
+  <span class="small muted">Saved searches:</span>
+  {% for s in saved_searches %}
+  <span class="saved-search">
+    <a class="button small" href="/items?{{ s.query }}">{{ s.name }}</a>
+    <form class="inline" method="post" action="/searches/{{ s.id }}/delete">
+      <button class="small link" type="submit" title="Delete the saved search {{ s.name }}" aria-label="Delete {{ s.name }}">×</button>
+    </form>
+  </span>
+  {% else %}
+  <span class="small muted">none yet</span>
+  {% endfor %}
+  {% if filter.q or filter.type or filter.project or filter.state or filter.system %}
+  <form class="inline" method="post" action="/searches">
+    <input type="hidden" name="q" value="{{ filter.q }}">
+    <input type="hidden" name="type" value="{{ filter.type }}">
+    <input type="hidden" name="project" value="{{ filter.project }}">
+    <input type="hidden" name="state" value="{{ filter.state }}">
+    <input type="hidden" name="system" value="{{ filter.system }}">
+    <input type="text" name="name" maxlength="100" required placeholder="Name of this search" aria-label="Name of this search">
+    <button class="small" type="submit">Save this search</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card">
+  {% if items %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Number</th><th>Name</th><th>Type</th><th>Rev</th><th>State</th><th>Project</th><th>Created</th></tr>
+    </thead>
+    <tbody>
+    {% for i in items %}
+      <tr>
+        <td class="nowrap mono"><a href="/revisions/{{ i.latest_revision_id }}">{{ i.number }}</a></td>
+        <td>{{ i.name }}{% if i.matched_file %} <span class="small muted" title="The search term was found in this file">· found in {{ i.matched_file }}</span>{% endif %}</td>
+        <td>{{ i.item_type|label }}</td>
+        <td class="mono">{{ i.latest_code }}</td>
+        <td>{{ m.badge(i.latest_state) }}</td>
+        <td>{{ i.project_code or "" }}</td>
+        <td class="small muted nowrap">{{ m.time(i.created_at) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {{ m.pager(pagination, base_query) }}
+  {% else %}
+  <p class="empty">No items match the filter.{% if me.can_edit %} <a href="/items/new">Create the first one.</a>{% endif %}</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,67 @@
+# Documentation site on GitHub Pages: the mdBook in docs/ (Doxygen-style
+# theme) plus the rustdoc API reference under /api/.
+# Enable it once under Settings → Pages → Source: GitHub Actions.
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/docs.yml"]
+  pull_request:
+    paths: ["docs/**", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  MDBOOK_VERSION: "0.5.4"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install mdBook
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@${{ env.MDBOOK_VERSION }}
+      - name: Build the book
+        # absolute path: relative --dest-dir values are resolved differently
+        # by mdBook versions
+        run: mdbook build docs --dest-dir "$GITHUB_WORKSPACE/site"
+      - name: Build the Rust API reference
+        run: |
+          cargo doc --locked --no-deps --lib
+          mkdir -p site/api
+          cp -r target/doc/. site/api/
+      - name: Check the site
+        run: |
+          ls site
+          test -f site/index.html
+          test -f site/guide/getting-started.html
+          test -f site/api/teamcraft/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

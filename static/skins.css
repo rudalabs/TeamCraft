@@ -1,0 +1,317 @@
+/* TeamCraft skins – the TeamCraft house style (night and day) and the distro skins.
+ * Shared by the web UI (/static/skins.css) and the desktop app (copied at build time).
+ *
+ * Everything visual hangs on the custom properties below. A skin is a block
+ * `[data-skin="…"]` that redefines palette, glow and texture; the rest of
+ * the stylesheet never uses literal colours. The selectors are not limited to
+ * <html>, so the skin picker can render each card in its own skin.
+ * Self-contained (CSP `style-src 'self'`): the fonts Montserrat and Oswald
+ * are served from /static/fonts, no CDNs.
+ *
+ * House palette: blue #0761b0 (main), light blue #9bdafa, ice #e1f3fa,
+ * accent yellow #ffea52, white, greys #f8f8f8 / #efefef and #404040 for text.
+ */
+
+/* ===========================================================================
+   Skins
+   =========================================================================== */
+
+/* TeamCraft (default, night). `:where()` keeps the specificity at zero, so every
+   element with a data-skin starts from these values and the skins below
+   override them. */
+:root,
+:where([data-skin]) {
+  /* palette, dark → light: a deep blue (gradients only), blue, light blue, ice */
+  --c1: #054a86;
+  --c2: #0761b0;
+  --c3: #9bdafa;
+  --c4: #e1f3fa;
+
+  --bg: #04090f;
+  --bg-raised: #071624;
+  --surface: rgb(255 255 255 / 3.5%);
+  --surface-hover: rgb(255 255 255 / 6%);
+  --surface-sunken: rgb(3 8 14 / 55%);
+  --border: rgb(255 255 255 / 9%);
+  --border-strong: rgb(255 255 255 / 18%);
+  --bar: rgb(4 9 15 / 72%);
+
+  --text: #f8f8f8;
+  --text-muted: #a9b9c9;
+  --text-dim: #7a8da1;
+  --link: var(--c3);
+
+  --accent: #9bdafa;
+  --accent-soft: rgb(155 218 250 / 12%);
+  --on-primary: #fff;
+  --danger: #ff7a7a;
+  --danger-soft: rgb(255 122 122 / 12%);
+  --ok: #47d6a2;
+  --ok-soft: rgb(71 214 162 / 12%);
+  /* accent yellow */
+  --warn: #ffea52;
+  --warn-soft: rgb(255 234 82 / 11%);
+
+  --glow:
+    radial-gradient(70% 55% at 15% -10%, rgb(7 97 176 / 32%), transparent 70%),
+    radial-gradient(55% 45% at 100% 0%, rgb(155 218 250 / 10%), transparent 65%),
+    radial-gradient(60% 50% at 50% 110%, rgb(7 97 176 / 22%), transparent 70%);
+  /* the diamond of the TeamCraft icon as a faint lattice ("grid background") */
+  --pattern:
+    repeating-linear-gradient(45deg, rgb(155 218 250 / 2.2%) 0 1px, transparent 1px 34px),
+    repeating-linear-gradient(-45deg, rgb(155 218 250 / 2.2%) 0 1px, transparent 1px 34px);
+  --pattern-size: auto;
+  --mark-glow: drop-shadow(0 0 14px rgb(155 218 250 / 28%));
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 4%) inset, 0 18px 40px -24px rgb(0 0 0 / 80%);
+  /* skin picker swatches: the c-palette unless a skin names its own */
+  --swatch-1: initial;
+  --swatch-2: initial;
+  --swatch-3: initial;
+  --swatch-4: initial;
+  color-scheme: dark;
+}
+
+/* Both house skins show the house palette in the skin picker. */
+[data-skin="teamcraft"], [data-skin="teamcraft-day"] {
+  --swatch-1: #0761b0;
+  --swatch-2: #9bdafa;
+  --swatch-3: #e1f3fa;
+  --swatch-4: #ffea52;
+}
+
+/* TeamCraft Day: white and very light grey. */
+[data-skin="teamcraft-day"] {
+  --c1: #054a86;
+  --c2: #0761b0;
+  --c3: #0761b0;
+  --c4: #9bdafa;
+  --bg: #f8f8f8;
+  --bg-raised: #ffffff;
+  --surface: #ffffff;
+  --surface-hover: #ffffff;
+  --surface-sunken: #efefef;
+  --border: rgb(64 64 64 / 13%);
+  --border-strong: rgb(64 64 64 / 24%);
+  --bar: rgb(255 255 255 / 88%);
+  --text: #404040;
+  --text-muted: #5e5e5e;
+  --text-dim: #7c7c7c;
+  --link: #0761b0;
+  --accent: #0761b0;
+  --accent-soft: rgb(7 97 176 / 9%);
+  --danger: #c0392b;
+  --danger-soft: rgb(192 57 43 / 9%);
+  --ok: #14845a;
+  --ok-soft: rgb(20 132 90 / 10%);
+  /* the accent yellow as a highlight; readable dark text on it */
+  --warn: #6b5a00;
+  --warn-soft: rgb(255 234 82 / 45%);
+  /* Blue 3 tints only – the background stays almost white */
+  --glow:
+    radial-gradient(70% 55% at 15% -10%, rgb(225 243 250 / 90%), transparent 70%),
+    radial-gradient(60% 50% at 100% 110%, rgb(225 243 250 / 70%), transparent 70%);
+  --pattern:
+    repeating-linear-gradient(45deg, rgb(7 97 176 / 3%) 0 1px, transparent 1px 34px),
+    repeating-linear-gradient(-45deg, rgb(7 97 176 / 3%) 0 1px, transparent 1px 34px);
+  --mark-glow: none;
+  --shadow-card: 0 12px 30px -22px rgb(64 64 64 / 40%);
+  color-scheme: light;
+}
+
+[data-skin="arch"] {
+  --c1: #0f4c6e;
+  --c2: #1793d1;
+  --c3: #40bfde;
+  --c4: #9be4f5;
+  --bg: #0b0f13;
+  --bg-raised: #121920;
+  --accent: #1793d1;
+  --accent-soft: rgb(23 147 209 / 15%);
+  --link: #40bfde;
+  --glow:
+    radial-gradient(65% 55% at 85% -10%, rgb(23 147 209 / 28%), transparent 70%),
+    radial-gradient(55% 45% at 0% 100%, rgb(64 191 222 / 12%), transparent 70%);
+  /* blueprint grid – keep it simple */
+  --pattern:
+    linear-gradient(rgb(64 191 222 / 4%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(64 191 222 / 4%) 1px, transparent 1px);
+  --pattern-size: 32px 32px;
+  --mark-glow: drop-shadow(0 0 14px rgb(23 147 209 / 40%));
+}
+
+[data-skin="cachyos"] {
+  --c1: #004d3d;
+  --c2: #00aa88;
+  --c3: #00ccff;
+  --c4: #00ffcc;
+  --bg: #000e0e;
+  --bg-raised: #021a19;
+  --surface-sunken: rgb(0 10 10 / 60%);
+  --accent: #00c9a7;
+  --accent-soft: rgb(0 201 167 / 14%);
+  --link: #00ccff;
+  --ok: #00ffcc;
+  --glow:
+    radial-gradient(60% 50% at 10% -10%, rgb(0 170 136 / 32%), transparent 70%),
+    radial-gradient(50% 45% at 100% 20%, rgb(0 204 255 / 14%), transparent 65%),
+    radial-gradient(60% 50% at 60% 110%, rgb(0 128 102 / 30%), transparent 70%);
+  /* dot matrix */
+  --pattern: radial-gradient(rgb(0 255 204 / 7%) 1px, transparent 1.6px);
+  --pattern-size: 22px 22px;
+  --mark-glow: drop-shadow(0 0 14px rgb(0 204 170 / 40%));
+}
+
+[data-skin="endeavouros"] {
+  --c1: #3b1d63;
+  --c2: #7f3fbf;
+  --c3: #7f7fff;
+  --c4: #ff7f7f;
+  --bg: #0d0614;
+  --bg-raised: #170c22;
+  --accent: #9a6bff;
+  --accent-soft: rgb(154 107 255 / 15%);
+  --link: #a9a9ff;
+  --glow:
+    radial-gradient(65% 55% at 20% -10%, rgb(127 63 191 / 34%), transparent 70%),
+    radial-gradient(50% 45% at 100% 10%, rgb(255 127 127 / 16%), transparent 65%),
+    radial-gradient(60% 50% at 50% 115%, rgb(127 127 255 / 22%), transparent 70%);
+  /* sunset stripes */
+  --pattern: repeating-linear-gradient(115deg, rgb(255 127 127 / 3%) 0 2px, transparent 2px 26px);
+  --mark-glow: drop-shadow(0 0 14px rgb(154 107 255 / 40%));
+}
+
+[data-skin="kde"] {
+  --c1: #0b4f80;
+  --c2: #1d99f3;
+  --c3: #3daee9;
+  --c4: #93cee9;
+  --bg: #1b1e20;
+  --bg-raised: #232629;
+  --surface: rgb(255 255 255 / 4%);
+  --surface-sunken: rgb(0 0 0 / 25%);
+  --text: #eff0f1;
+  --text-muted: #bdc3c7;
+  --text-dim: #7f8c8d;
+  --accent: #3daee9;
+  --accent-soft: rgb(61 174 233 / 15%);
+  --link: #3daee9;
+  --glow:
+    radial-gradient(60% 50% at 50% -15%, rgb(29 153 243 / 22%), transparent 70%),
+    radial-gradient(45% 40% at 0% 100%, rgb(61 174 233 / 10%), transparent 70%);
+  /* Breeze: calm, almost flat, faint horizontal scan lines */
+  --pattern: repeating-linear-gradient(0deg, rgb(255 255 255 / 1.6%) 0 1px, transparent 1px 6px);
+  --mark-glow: drop-shadow(0 0 12px rgb(29 153 243 / 35%));
+}
+
+[data-skin="kubuntu"] {
+  --c1: #00307a;
+  --c2: #0064ff;
+  --c3: #4d94ff;
+  --c4: #a6c8ff;
+  --bg: #050b18;
+  --bg-raised: #0b1630;
+  --accent: #3a86ff;
+  --accent-soft: rgb(58 134 255 / 15%);
+  --link: #6ea4ff;
+  --glow:
+    radial-gradient(70% 55% at 80% -10%, rgb(0 100 255 / 30%), transparent 70%),
+    radial-gradient(55% 45% at 0% 110%, rgb(77 148 255 / 16%), transparent 70%);
+  /* concentric rings, like the Kubuntu circle */
+  --pattern: repeating-radial-gradient(circle at 100% 0%, rgb(166 200 255 / 3%) 0 1px, transparent 1px 42px);
+  --mark-glow: drop-shadow(0 0 14px rgb(0 100 255 / 40%));
+}
+
+[data-skin="opensuse"] {
+  --c1: #173f4f;
+  --c2: #35b9ab;
+  --c3: #73ba25;
+  --c4: #c0e58b;
+  --bg: #07130f;
+  --bg-raised: #0d1f19;
+  --accent: #73ba25;
+  --accent-soft: rgb(115 186 37 / 15%);
+  --on-primary: #0b1a05;
+  --link: #8fd14f;
+  --ok: #8fd14f;
+  --glow:
+    radial-gradient(60% 50% at 15% -10%, rgb(115 186 37 / 26%), transparent 70%),
+    radial-gradient(55% 45% at 100% 30%, rgb(53 185 171 / 16%), transparent 65%),
+    radial-gradient(60% 50% at 50% 115%, rgb(23 63 79 / 50%), transparent 70%);
+  /* chameleon scales */
+  --pattern:
+    radial-gradient(circle at 50% 100%, transparent 9px, rgb(115 186 37 / 4%) 10px, transparent 11px);
+  --pattern-size: 24px 14px;
+  --mark-glow: drop-shadow(0 0 14px rgb(115 186 37 / 35%));
+}
+
+[data-skin="ubuntu"] {
+  --c1: #5e2750;
+  --c2: #e95420;
+  --c3: #f47421;
+  --c4: #ffb07a;
+  --bg: #16020f;
+  --bg-raised: #2c001e;
+  --surface-sunken: rgb(20 0 14 / 55%);
+  --accent: #f47421;
+  --accent-soft: rgb(244 116 33 / 15%);
+  --link: #ff9a57;
+  --glow:
+    radial-gradient(65% 55% at 85% -10%, rgb(233 84 32 / 28%), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, rgb(119 33 111 / 40%), transparent 70%);
+  /* circle of friends: three dots on a grid */
+  --pattern:
+    radial-gradient(circle at 25% 30%, rgb(244 116 33 / 6%) 1.5px, transparent 2.5px),
+    radial-gradient(circle at 75% 30%, rgb(244 116 33 / 6%) 1.5px, transparent 2.5px),
+    radial-gradient(circle at 50% 75%, rgb(244 116 33 / 6%) 1.5px, transparent 2.5px);
+  --pattern-size: 36px 36px;
+  --mark-glow: drop-shadow(0 0 14px rgb(244 116 33 / 35%));
+}
+
+/* ===========================================================================
+   Fonts
+   =========================================================================== */
+
+/* Fonts (SIL Open Font License, static/fonts/OFL-*.txt): Montserrat for
+   text, Oswald for headlines and big numbers. Variable fonts, Latin + Latin
+   Extended (names such as "Uścinowicz"). */
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(/static/fonts/montserrat-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Montserrat';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url(/static/fonts/montserrat-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Oswald';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 700;
+  src: url(/static/fonts/oswald-latin-ext-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Oswald';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 700;
+  src: url(/static/fonts/oswald-latin-wght-normal.woff2) format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Design tokens shared by the web UI and the desktop app. */
+:root {
+  --radius: 12px;
+  --radius-lg: 18px;
+  --sans: 'Montserrat', system-ui, -apple-system, 'Segoe UI', roboto, sans-serif;
+  --display: 'Oswald', 'Montserrat', 'Arial Narrow', sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Code', consolas, monospace;
+}

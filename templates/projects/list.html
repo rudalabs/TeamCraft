@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Project groups{% endblock %}
+{% block nav_projects %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <p class="kicker">Access control</p>
+    <h1>Project groups</h1>
+    <p class="subtitle">Every item belongs to a project group. Everybody can read all groups; CAD editors change the items of the groups they are members of – and can start their own group.</p>
+  </div>
+</div>
+
+<div class="card">
+  {% if projects %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Code</th><th>Name</th><th>Area</th><th class="num">Members</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for p in projects %}
+      <tr>
+        <td class="mono nowrap"><a href="/projects/{{ p.id }}">{{ p.code }}</a></td>
+        <td>{{ p.name }}{% if p.id in my_projects %} <span class="badge badge-member">member</span>{% endif %}</td>
+        <td class="small muted">{{ p.description }}</td>
+        <td class="num">{{ p.member_count }}</td>
+        <td>{% if p.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">archived</span>{% endif %}</td>
+        <td class="right nowrap"><a class="button small" href="/items?project={{ p.id }}">Items</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No project groups yet{% if me.role != "viewer" %} – create the first one below{% endif %}.</p>{% endif %}
+</div>
+
+{% if me.role != "viewer" %}
+<div class="card" id="new-project">
+  <h2>New project group</h2>
+  {% if not me.is_admin %}<p class="hint">You become the manager of the new group and can add your team members.</p>{% endif %}
+  <form class="stack" method="post" action="/projects">
+    <div class="form-row">
+      <label>Code <span class="hint">short and unique, e.g. PUMP, GEARBOX or ROVER</span>
+        <input type="text" name="code" maxlength="32" required pattern="[A-Za-z0-9_\-]+">
+      </label>
+      <label>Name <input type="text" name="name" maxlength="200" required placeholder="Centrifugal pump P-200"></label>
+      {% if me.is_admin %}
+      <label>IdP group <span class="hint">optional, members are synced at SSO login</span>
+        <input type="text" name="oidc_group" maxlength="200" placeholder="teamcraft-…">
+      </label>
+      {% endif %}
+    </div>
+    <label>Area / description <textarea name="description" maxlength="4000"></textarea></label>
+    <div class="actions"><button class="primary" type="submit">Create project group</button></div>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

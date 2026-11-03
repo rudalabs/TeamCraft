@@ -1,0 +1,62 @@
+# Maintainer: TeamCraft contributors <https://github.com/rudalabs/TeamCraft>
+pkgname=teamcraft-git
+_pkgname=teamcraft
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='Open-source product lifecycle management (PLM) server: check-out/check-in vault, BOMs, change orders, 3D preview'
+arch=('x86_64' 'aarch64')
+url='https://github.com/rudalabs/TeamCraft'
+license=('MPL-2.0')
+depends=('gcc-libs' 'glibc')
+makedepends=('cargo' 'git')
+optdepends=('postgresql: local database server')
+provides=('teamcraft')
+conflicts=('teamcraft')
+backup=('etc/teamcraft/teamcraft.env')
+install=teamcraft.install
+options=('!lto')
+source=("$_pkgname::git+https://github.com/rudalabs/TeamCraft.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname"
+  printf '%s.r%s.g%s' \
+    "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)" \
+    "$(git rev-list --count HEAD)" \
+    "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  # the packaged binary reads the system configuration file
+  export TEAMCRAFT_SYSTEM_CONFIG=/etc/teamcraft/teamcraft.env
+  cargo build --frozen --release
+}
+
+check() {
+  cd "$_pkgname"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  export TEAMCRAFT_SYSTEM_CONFIG=/etc/teamcraft/teamcraft.env
+  # unit tests; the end-to-end tests need a PostgreSQL server (see CI)
+  cargo test --frozen --release --lib
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 target/release/teamcraft "$pkgdir/usr/bin/teamcraft"
+  install -Dm644 packaging/linux/teamcraft.service "$pkgdir/usr/lib/systemd/system/teamcraft.service"
+  install -Dm644 packaging/linux/teamcraft.sysusers "$pkgdir/usr/lib/sysusers.d/teamcraft.conf"
+  install -Dm644 packaging/linux/teamcraft.tmpfiles "$pkgdir/usr/lib/tmpfiles.d/teamcraft.conf"
+  install -Dm640 packaging/linux/teamcraft.env "$pkgdir/etc/teamcraft/teamcraft.env"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

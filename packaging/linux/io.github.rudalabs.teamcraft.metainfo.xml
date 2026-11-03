@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.rudalabs.teamcraft</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MPL-2.0</project_license>
+  <name>TeamCraft</name>
+  <summary>Desktop client of the TeamCraft product lifecycle management</summary>
+  <developer id="io.github.rudalabs">
+    <name>TeamCraft contributors</name>
+  </developer>
+  <description>
+    <p>
+      TeamCraft is an open-source product lifecycle management (PLM) system.
+      The desktop client connects to a TeamCraft server and works with its
+      project groups, items, revisions, files, bills of materials and change
+      orders.
+    </p>
+    <ul>
+      <li>Check revisions out into a local workspace, edit the files with any CAD program and check them back in</li>
+      <li>See which files you changed before you check in</li>
+      <li>View STEP, mesh and point-cloud models in 3D</li>
+      <li>Review and release changes, follow notifications and checks after releases</li>
+    </ul>
+    <p>A TeamCraft server is required; it is a separate package.</p>
+  </description>
+  <launchable type="desktop-id">io.github.rudalabs.teamcraft.desktop</launchable>
+  <url type="homepage">https://github.com/rudalabs/TeamCraft</url>
+  <url type="bugtracker">https://github.com/rudalabs/TeamCraft/issues</url>
+  <url type="help">https://rudalabs.github.io/TeamCraft/</url>
+  <url type="vcs-browser">https://github.com/rudalabs/TeamCraft</url>
+  <categories>
+    <category>Development</category>
+    <category>Engineering</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <requires>
+    <internet>always</internet>
+  </requires>
+  <releases>
+    <release version="0.1.0" date="2026-11-04" type="development">
+      <description>
+        <p>Development snapshot, not an official release. TeamCraft is a work in progress and comes without warranty of any kind.</p>
+      </description>
+    </release>
+  </releases>
+</component>

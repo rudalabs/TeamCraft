@@ -1,0 +1,64 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TeamCraft",
+  "version": "0.1.0",
+  "identifier": "io.github.rudalabs.teamcraft",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "TeamCraft",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 980,
+        "minHeight": 620,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "img-src": "'self' data: blob:",
+        "style-src": "'self'",
+        "font-src": "'self'",
+        "script-src": "'self'",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'none'"
+      }
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "publisher": "TeamCraft contributors",
+    "copyright": "TeamCraft contributors – licensed under the MPL-2.0",
+    "category": "Productivity",
+    "shortDescription": "TeamCraft PLM desktop client",
+    "longDescription": "Desktop client of TeamCraft, the open-source product lifecycle management: browse project groups and items, check out into a local workspace, check in new file versions, review changes and preview STEP, mesh and point-cloud models.",
+    "homepage": "https://github.com/rudalabs/TeamCraft",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": { "section": "utils" }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    },
+    "windows": {
+      "nsis": { "installMode": "currentUser" }
+    }
+  }
+}

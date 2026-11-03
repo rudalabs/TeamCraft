@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Sign in to TeamCraft Desktop{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <p class="kicker">TeamCraft Desktop</p>
+  <h1>Sign in on {{ req.device }}?</h1>
+  <p>The TeamCraft desktop app on <strong>{{ req.device }}</strong> asks to work with your account
+    <strong>{{ me.display_name }}</strong> ({{ me.role|label }}). It receives a personal access token that is
+    valid for {{ token_days }} days and appears on your <a href="/account">account page</a>, where you can revoke
+    it at any time.</p>
+  <p class="hint">Only allow this if you have just started the sign-in in TeamCraft Desktop yourself.</p>
+  <form method="post" action="/desktop/authorize" class="actions">
+    <input type="hidden" name="port" value="{{ req.port }}">
+    <input type="hidden" name="state" value="{{ req.state }}">
+    <input type="hidden" name="challenge" value="{{ req.challenge }}">
+    <input type="hidden" name="device" value="{{ req.device }}">
+    <button class="primary" type="submit" name="decision" value="allow">Allow</button>
+    <button type="submit" name="decision" value="deny">Cancel</button>
+  </form>
+</section>
+{% endblock %}

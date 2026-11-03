@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}BOM {{ rev.item_number }}/{{ rev.code }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>BOM of <a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }}</h1>
+    <p class="subtitle">Multi-level structure with mass and cost roll-up.</p>
+  </div>
+  <div class="actions">
+    <form class="inline" method="get" action="/revisions/{{ rev.id }}/bom">
+      <label class="check">Revision rule
+        <select name="rule">
+          <option value="latest" {% if rule == "latest" %}selected{% endif %}>Latest (any state)</option>
+          <option value="released" {% if rule == "released" %}selected{% endif %}>Latest released</option>
+          <option value="as_released" {% if rule == "as_released" %}selected{% endif %}>As released (exact configuration)</option>
+        </select>
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+    <a class="button" href="/revisions/{{ rev.id }}/bom/compare" title="Added, removed and changed lines compared with another revision">Compare…</a>
+    <a class="button" href="/revisions/{{ rev.id }}/bom.csv?rule={{ rule }}">Export CSV</a>
+    <a class="button" href="/revisions/{{ rev.id }}/package.zip?rule={{ rule }}" title="All files of the structure with this revision rule, bom.csv and manifest.json">Pack and Go (ZIP)</a>
+  </div>
+</div>
+
+<div class="grid grid-stats">
+  <div class="card stat">
+    <div class="value">{{ tree.total_mass_kg|num(3) }} kg</div>
+    <div class="label">Total mass{% if not tree.mass_complete %} · <span class="badge badge-in_review">incomplete</span>{% endif %}</div>
+  </div>
+  <div class="card stat">
+    <div class="value">{{ tree.total_cost|num(2) }} €</div>
+    <div class="label">Total cost{% if not tree.cost_complete %} · <span class="badge badge-in_review">incomplete</span>{% endif %}</div>
+  </div>
+  <div class="card stat"><div class="value">{{ tree.line_count }}</div><div class="label">Lines (expanded)</div></div>
+  <div class="card stat"><div class="value">{{ tree.unresolved_count }}</div><div class="label">Unresolved by rule</div></div>
+</div>
+
+<div class="card">
+  {% if rows %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Lvl</th><th class="num">Find</th><th>Item</th><th>Rev</th><th>Name</th>
+        <th class="num">Qty</th><th class="num">Unit mass [kg]</th><th class="num">Total mass [kg]</th>
+        <th class="num">Total cost [€]</th><th>Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+      {% set n = row.node %}
+      <tr class="{% if not n.revision %}unresolved{% endif %}">
+        <td><span class="lvl">{{ row.level }}</span></td>
+        <td class="num">{{ n.find_number }}</td>
+        <td class="mono nowrap {% if row.level > 6 %}indent-deep{% elif row.level > 1 %}indent-{{ row.level }}{% endif %}">
+          {% if n.revision %}<a href="/revisions/{{ n.revision.id }}">{{ n.item_number }}</a>{% else %}{{ n.item_number }}{% endif %}
+          {% if n.cycle %}<span class="badge badge-rejected">cycle</span>{% endif %}
+        </td>
+        <td class="nowrap">{% if n.revision %}<span class="mono">{{ n.revision.code }}</span> {{ m.badge(n.revision.state) }}{% else %}<span class="badge badge-in_review">no {{ rule|replace("_", " ") }} revision</span>{% endif %}</td>
+        <td>{% if n.revision %}{{ n.revision.name }}{% endif %}</td>
+        <td class="num">{{ n.quantity|num(6) }} {{ n.unit }}</td>
+        <td class="num">{{ n.unit_mass_kg|num(4) }}{% if not n.mass_complete %} <span title="mass missing in this sub-tree">⚠</span>{% endif %}</td>
+        <td class="num">{{ n.total_mass_kg|num(4) }}</td>
+        <td class="num">{{ n.total_cost|num(2) }}{% if not n.cost_complete %} <span title="cost missing in this sub-tree">⚠</span>{% endif %}</td>
+        <td class="small">{{ n.notes }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">Unit mass = own mass of the revision + roll-up of its children. ⚠ marks sub-trees where a mass or cost is missing.</p>
+  {% else %}
+  <p class="empty">This revision has no BOM lines.</p>
+  {% endif %}
+</div>
+{% endblock %}
