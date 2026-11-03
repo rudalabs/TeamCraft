@@ -33,6 +33,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/", get(index))
         .route("/me", get(me))
         .route("/projects", get(list_projects).post(create_project))
+        .route(
+            "/projects/{code}/members",
+            get(project_members).post(add_project_member),
+        )
         .route("/items", get(list_items).post(create_item))
         .route("/items/{number}", get(get_item))
         .route("/items/{number}/where-used", get(where_used))
@@ -109,7 +113,9 @@ async fn index() -> Json<Value> {
         "endpoints": [
             "GET    /api/v1/me",
             "GET    /api/v1/projects",
-            "POST   /api/v1/projects                                  {code, name, description?}",
+            "POST   /api/v1/projects                                  {code, name, description?, oidc_group?}",
+            "GET    /api/v1/projects/{code}/members",
+            "POST   /api/v1/projects/{code}/members                   {username}",
             "GET    /api/v1/items?q=&type=&project=&state=&limit=&offset=",
             "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?}",
             "GET    /api/v1/items/{number}",
@@ -162,6 +168,7 @@ struct CreateProject {
     name: String,
     #[serde(default)]
     description: String,
+    oidc_group: Option<String>,
 }
 
 async fn create_project(
@@ -169,8 +176,41 @@ async fn create_project(
     ApiUser(me): ApiUser,
     ApiJson(body): ApiJson<CreateProject>,
 ) -> AppResult<Response> {
-    let project = projects::create(&st.db, &me, &body.code, &body.name, &body.description).await?;
+    let project = projects::create(
+        &st.db,
+        &me,
+        &body.code,
+        &body.name,
+        &body.description,
+        body.oidc_group.as_deref(),
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(json!(project))).into_response())
+}
+
+async fn project_members(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path(code): Path<String>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code(&st.db, &code).await?;
+    Ok(Json(json!(projects::members(&st.db, project.id).await?)))
+}
+
+#[derive(Deserialize)]
+struct AddMember {
+    username: String,
+}
+
+async fn add_project_member(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    ApiJson(body): ApiJson<AddMember>,
+) -> AppResult<Response> {
+    let project = projects::get_by_code(&st.db, &code).await?;
+    let member = projects::add_member(&st.db, &me, project.id, &body.username).await?;
+    Ok((StatusCode::CREATED, Json(json!(member))).into_response())
 }
 
 // ---------------------------------------------------------------------------

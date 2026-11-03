@@ -16,8 +16,11 @@ use crate::{
     services::audit,
 };
 
-/// Columns (of `users u`) needed to build an [`Actor`].
-const ACTOR_COLUMNS: &str = "u.id, u.username, u.display_name, u.role, u.skin";
+/// Columns (of `users u`) needed to build an [`Actor`], including the
+/// project groups the user belongs to.
+const ACTOR_COLUMNS: &str = "u.id, u.username, u.display_name, u.role, u.skin,
+    COALESCE((SELECT array_agg(pm.project_id) FROM project_members pm WHERE pm.user_id = u.id),
+             '{}'::uuid[]) AS projects";
 
 #[derive(sqlx::FromRow)]
 struct ActorRow {
@@ -26,6 +29,7 @@ struct ActorRow {
     display_name: String,
     role: String,
     skin: String,
+    projects: Vec<Uuid>,
 }
 
 impl From<ActorRow> for Actor {
@@ -36,18 +40,21 @@ impl From<ActorRow> for Actor {
             display_name: row.display_name,
             role: Role::parse(&row.role).unwrap_or(Role::Viewer),
             skin: domain::skin_or_default(&row.skin).to_string(),
+            projects: row.projects,
         }
     }
 }
 
-pub fn actor_of(user: &User) -> Actor {
-    Actor {
-        id: user.id,
-        username: user.username.clone(),
-        display_name: user.display_name.clone(),
-        role: Role::parse(&user.role).unwrap_or(Role::Viewer),
-        skin: domain::skin_or_default(&user.skin).to_string(),
-    }
+/// Loads the full actor (incl. project memberships) for a user id.
+pub async fn actor(pool: &PgPool, user_id: Uuid) -> AppResult<Actor> {
+    sqlx::query_as::<_, ActorRow>(&format!(
+        "SELECT {ACTOR_COLUMNS} FROM users u WHERE u.id = $1"
+    ))
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?
+    .map(Actor::from)
+    .ok_or_else(|| AppError::not_found("User not found."))
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +272,7 @@ pub async fn find_by_username(pool: &PgPool, username: &str) -> AppResult<Option
 pub async fn reviewer_candidates(pool: &PgPool) -> AppResult<Vec<User>> {
     Ok(sqlx::query_as::<_, User>(&format!(
         "SELECT {USER_COLUMNS} FROM users
-         WHERE active AND role IN ('engineer', 'admin') ORDER BY display_name"
+         WHERE active AND role IN ('editor', 'admin') ORDER BY display_name"
     ))
     .fetch_all(pool)
     .await?)
@@ -517,6 +524,8 @@ pub struct OidcIdentity {
     pub display_name: String,
     pub email: Option<String>,
     pub role: Role,
+    /// All IdP groups (used to synchronise project memberships).
+    pub groups: Vec<String>,
 }
 
 /// Finds or provisions the user for an OIDC identity and synchronises name,
@@ -619,8 +628,39 @@ pub async fn upsert_oidc_user(pool: &PgPool, ident: OidcIdentity) -> AppResult<U
         .await?;
         user
     };
+    sync_oidc_memberships(&mut tx, user.id, &ident.groups).await?;
     tx.commit().await?;
     Ok(user)
+}
+
+/// Adds/removes the 'oidc' memberships of a user according to the IdP groups
+/// mapped to projects (`projects.oidc_group`). Manual memberships are kept.
+async fn sync_oidc_memberships(
+    conn: &mut sqlx::PgConnection,
+    user_id: Uuid,
+    groups: &[String],
+) -> AppResult<()> {
+    let groups: Vec<String> = groups.iter().map(|g| g.to_ascii_lowercase()).collect();
+    sqlx::query(
+        "INSERT INTO project_members (project_id, user_id, source)
+         SELECT p.id, $1, 'oidc' FROM projects p
+         WHERE p.oidc_group IS NOT NULL AND lower(p.oidc_group) = ANY($2)
+         ON CONFLICT (project_id, user_id) DO NOTHING",
+    )
+    .bind(user_id)
+    .bind(&groups)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "DELETE FROM project_members pm USING projects p
+         WHERE pm.project_id = p.id AND pm.user_id = $1 AND pm.source = 'oidc'
+           AND (p.oidc_group IS NULL OR NOT (lower(p.oidc_group) = ANY($2)))",
+    )
+    .bind(user_id)
+    .bind(&groups)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 /// Turns an IdP username (or e-mail address) into a valid TeamCraft username.

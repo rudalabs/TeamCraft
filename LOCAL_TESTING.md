@@ -50,7 +50,7 @@ Useful variants:
 
 ```sh
 RUST_LOG=debug cargo run                         # verbose logs
-cargo run -- user create --username erika --role engineer   # create a user (prompts for the password)
+cargo run -- user create --username erika --role editor --project NIXUS   # create a user (prompts for the password)
 cargo run -- user list
 cargo run -- vault check --verify-hashes         # verify every stored file
 cargo run --release                              # optimised build
@@ -86,27 +86,34 @@ time. Tick off each expected result.
 2. Sign in with a wrong password → *Invalid username or password.*
 3. Sign in as `admin` / `change-me-please` → dashboard *Hello, Administrator*.
 4. **Users** → *New local account*: create
-    * `erika`, role **engineer**, password `erika-password-1`
-    * `rolf`, role **engineer**, password `rolf-password-1`
-    * `vera`, role **viewer**, password `vera-password-1`
+    * `erika`, role **CAD editor**, password `erika-password-1`
+    * `rolf`, role **CAD editor**, password `rolf-password-1`
+    * `vera`, role **Viewer**, password `vera-password-1`
     * try a password with 5 characters → error *at least 10 characters*.
 5. Sign in as **erika** in window 2 and as **rolf** in window 3.
 6. As admin open `rolf` on the Users page, uncheck *Active*, save → rolf's window is
    signed out on the next click. Re-activate rolf and sign in again.
 7. Try to deactivate or demote `admin` itself → *At least one active administrator must remain.*
 
-### B. Projects
+### B. Project groups and skins
 
-1. As admin: **Projects** → create code `nixus`, name `Nixus` → stored as `NIXUS`.
-2. Create `NIXUS` again → *already exists*.
-3. Edit → uncheck *Active* → project is *archived* and no longer offered when creating items. Re-activate it.
+1. **Projects** lists the 12 seeded WARR project groups (NIXUS, WESP, Retrofire, MOVE III/Rexus/Bexus,
+   CRATER, GRAKSLER, Space Labs, General, PR, Workshop) with their IdP group names.
+2. As admin open **NIXUS** → *Add member* `erika`; open **CRATER** → add `rolf`.
+3. Create a new group `testbench` → stored as `TESTBENCH`; create it again → *already exists*.
+4. Edit TESTBENCH → uncheck *Active* → archived and no longer offered when creating items.
+5. Click your name (top right) → **Skin** → try *WARR Day*, *Arch*, *CachyOS*, *Ubuntu*, …; the choice
+   is stored per user and also used on the login page of this browser.
 
 ### C. Items and revisions (as erika)
 
-1. **Items → New item**: type *Part*, number empty, name `Bolt M6x20`, project NIXUS,
-   mass `0,01` (comma works), unit cost `0.25` → redirected to **PRT-000001/A**, state *In Work*.
-2. New item: *Assembly*, number `nx-eng-001`, name `Engine mount`, mass `0.5`, cost `20`
+1. **Items → New item**: the project list only offers **NIXUS** (erika's only group).
+   Type *Part*, number empty, name `Bolt M6x20`, project NIXUS, mass `0,01` (comma works),
+   unit cost `0.25` → redirected to **PRT-000001/A**, state *WIP*.
+2. New item: *Assembly*, number `nx-eng-001`, name `Engine mount`, project NIXUS, mass `0.5`, cost `20`
    → number normalised to **NX-ENG-001**.
+2a. As **rolf** (CRATER only) open NX-ENG-001/A → no *Edit*/*Check out* buttons;
+   the API returns *Only members of the project group NIXUS can modify …*.
 3. New item with an empty name or mass `abc` → the form is shown again with an error and your input kept.
 4. New item with number `NX-ENG-001` → *already in use*.
 5. **Items** list: search `mount`, filter by type/project/state, check pagination appears with > 50 items (optional).
@@ -231,11 +238,13 @@ docker compose stop app
 ### O. Single sign-on (optional, needs an Authentik application)
 
 1. Ask IT for a test application in Authentik (see DEPLOYMENT.md §2) with redirect URI
-   `http://localhost:8080/auth/oidc/callback`, and add yourself to `teamcraft-engineers`.
+   `http://localhost:8080/auth/oidc/callback`, and add yourself to `teamcraft-editors`
+   and `teamcraft-nixus`.
 2. In `secrets/.env` set `TEAMCRAFT_OIDC_ISSUER_URL`, `TEAMCRAFT_OIDC_CLIENT_ID`,
    `TEAMCRAFT_OIDC_CLIENT_SECRET` and keep `TEAMCRAFT_LOCAL_LOGIN=true`; restart.
-3. The login page shows **Sign in with WARR SSO** → after login you are an *engineer*;
-   removing you from the group and signing in again makes you a *viewer*.
+3. The login page shows **Sign in with WARR SSO** → after login you are a *CAD editor*
+   and member of **NIXUS** (synced from `teamcraft-nixus`); removing you from the groups
+   and signing in again makes you a *viewer* without NIXUS membership.
 
 ## 5. Resetting local data
 

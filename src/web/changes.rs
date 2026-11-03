@@ -103,7 +103,7 @@ pub async fn new_form(
     ctx: WebCtx,
     Query(q): Query<NewQuery>,
 ) -> AppResult<Response> {
-    ctx.me.require(Role::Engineer)?;
+    ctx.me.require(Role::Editor)?;
     let form = ChangeForm {
         priority: "normal".into(),
         revision_id: q.revision.unwrap_or_default(),

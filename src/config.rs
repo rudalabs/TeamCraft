@@ -83,9 +83,9 @@ pub struct OidcConfig {
     pub username_claim: String,
     /// Members of this group become administrators.
     pub admin_group: String,
-    /// Members of this group become engineers.
-    pub engineer_group: String,
-    /// If set, users must be member of this group (or of the admin/engineer
+    /// Members of this group become CAD editors.
+    pub editor_group: String,
+    /// If set, users must be member of this group (or of the admin/editor
     /// group) to log in at all; they get the viewer role.
     /// If unset, every user of the IdP application gets at least viewer access.
     pub viewer_group: Option<String>,
@@ -263,9 +263,9 @@ fn oidc_config<F: Fn(&str) -> Option<String>>(env: &Env<F>) -> Result<Option<Oid
         admin_group: env
             .get("TEAMCRAFT_OIDC_ADMIN_GROUP")?
             .unwrap_or_else(|| "teamcraft-admins".into()),
-        engineer_group: env
-            .get("TEAMCRAFT_OIDC_ENGINEER_GROUP")?
-            .unwrap_or_else(|| "teamcraft-engineers".into()),
+        editor_group: env
+            .get("TEAMCRAFT_OIDC_EDITOR_GROUP")?
+            .unwrap_or_else(|| "teamcraft-editors".into()),
         viewer_group: env.get("TEAMCRAFT_OIDC_VIEWER_GROUP")?,
     }))
 }
@@ -448,7 +448,7 @@ mod tests {
         .unwrap();
         let oidc = cfg.oidc.as_ref().expect("oidc enabled");
         assert_eq!(oidc.admin_group, "teamcraft-admins");
-        assert_eq!(oidc.engineer_group, "teamcraft-engineers");
+        assert_eq!(oidc.editor_group, "teamcraft-editors");
         assert!(oidc.viewer_group.is_none());
         assert_eq!(
             oidc.redirect_uri(&cfg.public_url),

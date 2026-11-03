@@ -146,7 +146,15 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/projects",
             get(admin::projects).post(admin::create_project),
         )
-        .route("/projects/{id}", post(admin::update_project))
+        .route(
+            "/projects/{id}",
+            get(admin::project_show).post(admin::update_project),
+        )
+        .route("/projects/{id}/members", post(admin::add_member))
+        .route(
+            "/projects/{id}/members/{user_id}/remove",
+            post(admin::remove_member),
+        )
         .route("/admin/users", get(admin::users).post(admin::create_user))
         .route(
             "/admin/users/{id}",

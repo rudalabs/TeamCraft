@@ -11,20 +11,23 @@ Open-source product lifecycle management (PLM) for engineering teams – a
 lightweight, self-hosted alternative to commercial PDM/PLM suites, built for
 the needs of WARR.
 
-**features:** engineers manage parts, assemblies, documents and software as
-revisioned items with attached files (CAD, drawings, PDFs, …), build
-multi-level bills of materials with mass and cost roll-up, and release
-revisions through change orders that are reviewed by other engineers (four-eyes principle). Everything is searchable,
-auditable and scriptable
-through a REST API.
+**features:** CAD editors manage parts, assemblies, documents and software of
+their project groups as revisioned items with attached files (CAD, drawings,
+PDFs, …), build multi-level bills of materials with mass and cost roll-up,
+and release revisions through change orders that are reviewed by other
+editors (four-eyes principle). Everything is searchable, auditable and
+scriptable through a REST API.
 
 **techstack:** Rust (axum, sqlx, MiniJinja), PostgreSQL, server-rendered HTML (no JavaScript build step), single
 container image.
 
 **user management:** OIDC single sign-on via Authentik, groups for
-permissions: `teamcraft-admins` → admin, `teamcraft-engineers` → engineer,
+permissions: `teamcraft-admins` → admin, `teamcraft-editors` → CAD editor,
 everybody else with access to the Authentik application → viewer (optionally
-restricted to a `teamcraft-users` group). Local accounts exist only for
+restricted to a `teamcraft-users` group). Project groups (NIXUS, WESP,
+Retrofire, MOVE III/Rexus/Bexus, CRATER, GRAKSLER, Space Labs, General, PR,
+Workshop) limit what a CAD editor may change; their members are synchronised
+from Authentik groups such as `teamcraft-nixus`. Local accounts exist only for
 development and break-glass access.
 
 ## Feature overview
@@ -37,8 +40,8 @@ development and break-glass access.
 | Files                | Content-addressed vault (SHA-256, de-duplicated, integrity check), any file type, up to 512 MiB per file (configurable)                              |
 | BOM                  | Multi-level structure, find numbers, quantities, revision rules *latest* / *latest released*, mass & cost roll-up, where-used, CSV export, no cycles |
 | Changes              | Collect WIP revisions, assign reviewers, submit, approve/reject; approval releases all revisions atomically                                          |
-| Projects             | Group items per WARR project (NIXUS, CRATER, MOVE, …)                                                                                                |
-| Roles                | viewer (read), engineer (create/modify/review), admin (users, projects, overrides)                                                                   |
+| Project groups       | Every item belongs to a WARR project group; only its members (and admins) may change it; memberships manual or synced from Authentik groups         |
+| Roles                | viewer (read everything), CAD editor (create/modify within own project groups, review), admin (users, projects, overrides)                           |
 | Audit log            | Every modification with user, time and details                                                                                                       |
 | REST API             | JSON API with personal access tokens (`/api/v1`)                                                                                                     |
 | Skins                | WARR house style (night and day) plus distro skins (Arch, CachyOS, EndeavourOS, KDE, Kubuntu, openSUSE, Ubuntu), chosen per user                     |
@@ -115,7 +118,7 @@ TEAMCRAFT_OIDC_SCOPES=openid profile email
 TEAMCRAFT_OIDC_GROUPS_CLAIM=groups
 TEAMCRAFT_OIDC_USERNAME_CLAIM=preferred_username
 TEAMCRAFT_OIDC_ADMIN_GROUP=teamcraft-admins
-TEAMCRAFT_OIDC_ENGINEER_GROUP=teamcraft-engineers
+TEAMCRAFT_OIDC_EDITOR_GROUP=teamcraft-editors
 TEAMCRAFT_OIDC_VIEWER_GROUP=            # if set, membership is required for any access
 TEAMCRAFT_LOCAL_LOGIN=false             # default: false when OIDC is configured
 TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME=admin

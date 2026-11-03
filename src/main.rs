@@ -66,9 +66,12 @@ enum UserCommand {
         display_name: String,
         #[arg(long)]
         email: Option<String>,
-        /// viewer, engineer or admin
-        #[arg(long, default_value = "engineer")]
+        /// viewer, editor (CAD editor) or admin
+        #[arg(long, default_value = "editor")]
         role: String,
+        /// Project groups (codes) the user becomes a member of, e.g. --project NIXUS
+        #[arg(long = "project")]
+        projects: Vec<String>,
     },
     /// Set a new password for a local account.
     SetPassword {
@@ -218,8 +221,16 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
             display_name,
             email,
             role,
+            projects,
         } => {
-            let role = Role::parse(&role).context("role must be viewer, engineer or admin")?;
+            let role = Role::parse(&role).context("role must be viewer, editor or admin")?;
+            let mut project_ids = Vec::new();
+            for code in &projects {
+                let project = services::projects::get_by_code(&pool, code)
+                    .await
+                    .with_context(|| format!("unknown project group '{code}'"))?;
+                project_ids.push(project.id);
+            }
             let password = read_new_password()?;
             let user = services::users::create_local(
                 &pool,
@@ -233,7 +244,29 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 },
             )
             .await?;
-            println!("created user '{}' with role {}", user.username, user.role);
+            for project_id in project_ids {
+                sqlx::query(
+                    "INSERT INTO project_members (project_id, user_id) VALUES ($1, $2)
+                     ON CONFLICT DO NOTHING",
+                )
+                .bind(project_id)
+                .bind(user.id)
+                .execute(&pool)
+                .await?;
+            }
+            println!(
+                "created user '{}' with role {}{}",
+                user.username,
+                user.role,
+                if projects.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " in project group(s) {}",
+                        projects.join(", ").to_uppercase()
+                    )
+                }
+            );
         }
         UserCommand::SetPassword { username } => {
             let user = services::users::find_by_username(&pool, &username)

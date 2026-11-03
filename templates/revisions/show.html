@@ -84,7 +84,7 @@
       <dt>Item number</dt><dd class="mono">{{ item.number }}</dd>
       <dt>Type</dt><dd>{{ item.item_type|label }}</dd>
       <dt>Unit</dt><dd>{{ item.unit }}</dd>
-      <dt>Project</dt><dd>{{ item.project_code or "—" }}</dd>
+      <dt>Project group</dt><dd>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% else %}—{% endif %}</dd>
       <dt>Created</dt><dd>{{ m.time(item.created_at) }} by {{ item.created_by_name }}</dd>
       <dt>Short link</dt><dd class="mono small"><a href="/i/{{ item.number }}">/i/{{ item.number }}</a></dd>
     </dl>
@@ -92,10 +92,9 @@
     <form id="master-form" class="stack hidden" method="post" action="/items/{{ item.id }}/master">
       <input type="hidden" name="back" value="{{ back }}">
       <div class="form-row">
-        <label>Project
-          <select name="project_id">
-            <option value="">— none —</option>
-            {% for p in projects %}<option value="{{ p.id }}" {% if item.project_id == p.id %}selected{% endif %}>{{ p.code }} – {{ p.name }}{% if not p.active %} (archived){% endif %}</option>{% endfor %}
+        <label>Project group
+          <select name="project_id" required>
+            {% for p in projects %}<option value="{{ p.id }}" {% if item.project_id == p.id %}selected{% endif %}>{{ p.code }} – {{ p.name }}</option>{% endfor %}
           </select>
         </label>
         <label>Unit <span class="hint">only before the first release</span>

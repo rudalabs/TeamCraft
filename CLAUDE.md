@@ -16,7 +16,7 @@ and a JSON REST API. License: MPL-2.0 (`LICENSE`).
 | Start the dev database | `docker compose up -d db` (status: `docker compose ps`, logs: `docker compose logs db`)                                                                 |
 | All tests              | `cargo test` (needs the dev database)                                                                                                                   |
 | Run the server         | `cargo run` (reads `secrets/.env`) → <http://localhost:8080>, local admin `admin` / `change-me-please`                                                  |
-| CLI                    | `./target/debug/teamcraft user list`, `… user create --username x --role engineer`, `… vault check`, `… healthcheck`                                    |
+| CLI                    | `./target/debug/teamcraft user list`, `… user create --username x --role editor --project NIXUS`, `… vault check`, `… healthcheck`                                    |
 | Smoke test             | `curl -s http://localhost:8080/healthz`, `curl -s http://localhost:8080/readyz`, `curl -s -H "Authorization: Bearer …" http://localhost:8080/api/v1/me` |
 | Validate compose files | `docker compose config`, `docker compose -f deploy/docker-compose.warr.yml config` – the output contains resolved `secrets/.env` values; never quote it |
 

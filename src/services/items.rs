@@ -153,7 +153,7 @@ fn validate_unit(unit: &str) -> AppResult<String> {
 /// Creates an item together with its first revision `A` (in work) and
 /// returns that revision.
 pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<Revision> {
-    actor.require(Role::Engineer)?;
+    actor.require(Role::Editor)?;
     let attrs = revisions::RevisionUpdate {
         name: input.name,
         description: input.description,
@@ -168,16 +168,26 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<R
         _ => None,
     };
 
+    // Every new item belongs to a project group the author is a member of.
+    let project_id = input.project_id.ok_or_else(|| {
+        AppError::BadRequest("Choose the project group the item belongs to.".into())
+    })?;
     let mut tx = pool.begin().await?;
-    if let Some(project_id) = input.project_id {
-        let active = sqlx::query_scalar::<_, bool>("SELECT active FROM projects WHERE id = $1")
+    let (code, active) =
+        sqlx::query_as::<_, (String, bool)>("SELECT code, active FROM projects WHERE id = $1")
             .bind(project_id)
             .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(|| AppError::BadRequest("Unknown project.".into()))?;
-        if !active {
-            return Err(AppError::BadRequest("The project is archived.".into()));
-        }
+    if !active {
+        return Err(AppError::BadRequest(format!(
+            "The project group {code} is archived."
+        )));
+    }
+    if !actor.can_edit_project(Some(project_id)) {
+        return Err(AppError::Forbidden(format!(
+            "You are not a member of the project group {code}; ask an admin to add you."
+        )));
     }
 
     let number = match manual_number {
@@ -219,7 +229,7 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<R
     .bind(&number)
     .bind(input.item_type.as_str())
     .bind(&unit)
-    .bind(input.project_id)
+    .bind(project_id)
     .bind(actor.id)
     .execute(&mut *tx)
     .await
@@ -272,7 +282,7 @@ pub async fn update_master(
     project_id: Option<Uuid>,
     unit: &str,
 ) -> AppResult<Item> {
-    actor.require(Role::Engineer)?;
+    actor.require(Role::Editor)?;
     let unit = validate_unit(unit)?;
     let mut tx = pool.begin().await?;
     let current =
@@ -281,15 +291,29 @@ pub async fn update_master(
             .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(|| AppError::not_found("Item not found."))?;
-    if let Some(pid) = project_id {
-        let exists =
-            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)")
-                .bind(pid)
-                .fetch_one(&mut *tx)
-                .await?;
-        if !exists {
-            return Err(AppError::BadRequest("Unknown project.".into()));
-        }
+    // Moving an item requires membership in the old and the new project group.
+    if !actor.can_edit_project(current.project_id) {
+        return Err(AppError::Forbidden(format!(
+            "Only members of the project group {} can change {}.",
+            current.project_code.as_deref().unwrap_or("?"),
+            current.number
+        )));
+    }
+    let Some(pid) = project_id else {
+        return Err(AppError::BadRequest("Choose a project group.".into()));
+    };
+    let exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)")
+            .bind(pid)
+            .fetch_one(&mut *tx)
+            .await?;
+    if !exists {
+        return Err(AppError::BadRequest("Unknown project.".into()));
+    }
+    if !actor.can_edit_project(Some(pid)) {
+        return Err(AppError::Forbidden(
+            "You can only move items into project groups you are a member of.".into(),
+        ));
     }
     if unit != current.unit {
         let released = sqlx::query_scalar::<_, bool>(
@@ -327,16 +351,18 @@ pub async fn update_master(
 /// Deletes an item created by mistake. Only allowed while it has a single
 /// in-work revision, is not used in any BOM and not part of any change.
 pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<String> {
-    actor.require(Role::Engineer)?;
+    actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
     let item = sqlx::query_as::<_, Item>(&format!("{ITEM_SELECT} WHERE i.id = $1 FOR UPDATE OF i"))
         .bind(item_id)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| AppError::not_found("Item not found."))?;
-    if item.created_by != actor.id && !actor.is_admin() {
+    if (item.created_by != actor.id || !actor.can_edit_project(item.project_id))
+        && !actor.is_admin()
+    {
         return Err(AppError::Forbidden(
-            "Only the creator or an administrator can delete an item.".into(),
+            "Only the creator (as member of the project group) or an administrator can delete an item.".into(),
         ));
     }
     let not_in_work = sqlx::query_scalar::<_, i64>(

@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ project.code }} {{ project.name }}{% endblock %}
+{% block nav_projects %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <p class="kicker">Project group · {{ project.description or "WARR" }}</p>
+    <h1><span class="mono">{{ project.code }}</span> · {{ project.name }}</h1>
+    <p class="subtitle">
+      {% if project.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">archived</span>{% endif %}
+      {% if is_member %}<span class="badge badge-member">you are a member</span>{% endif %}
+      {% if can_edit %}· you can create and change items here{% else %}· read-only for you{% endif %}
+    </p>
+  </div>
+  <div class="actions">
+    <a class="button" href="/items?project={{ project.id }}">Items of {{ project.code }}</a>
+    {% if can_edit and project.active %}{{ m.new_button("/items/new?project=" ~ project.id, "New item") }}{% endif %}
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <section class="card">
+    <h2>Members</h2>
+    {% if members %}
+    <table>
+      <thead><tr><th>Name</th><th>Role</th><th>Added</th>{% if me.is_admin %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for u in members %}
+        <tr>
+          <td>{{ u.display_name }} <span class="muted small mono">{{ u.username }}</span>{% if not u.active %} <span class="badge badge-obsolete">deactivated</span>{% endif %}</td>
+          <td><span class="badge badge-{{ u.role }}">{{ u.role|label }}</span></td>
+          <td class="small nowrap">{% if u.source == "oidc" %}via IdP group{% else %}manually{% endif %} · {{ m.time(u.added_at) }}</td>
+          {% if me.is_admin %}
+          <td class="right">
+            <form class="inline" method="post" action="/projects/{{ project.id }}/members/{{ u.user_id }}/remove"
+                  data-confirm="Remove {{ u.display_name }} from {{ project.code }}?">
+              <button class="small danger" type="submit">Remove</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">No members yet.</p>{% endif %}
+    {% if me.is_admin %}
+      {% if candidates %}
+      <h3>Add member</h3>
+      <form class="inline" method="post" action="/projects/{{ project.id }}/members">
+        <select name="username" required aria-label="User">
+          {% for u in candidates %}<option value="{{ u.username }}">{{ u.display_name }} ({{ u.username }}, {{ u.role|label }})</option>{% endfor %}
+        </select>
+        <button type="submit">Add</button>
+      </form>
+      {% endif %}
+      {% if project.oidc_group %}
+      <p class="hint">Members of the IdP group <span class="mono">{{ project.oidc_group }}</span> are added and removed automatically at their SSO login{% if not oidc_enabled %} (SSO is not configured on this instance){% endif %}. Manually added members stay.</p>
+      {% endif %}
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Details</h2>
+      {% if me.is_admin %}<button class="small" type="button" data-toggle="edit-project">Edit</button>{% endif %}
+    </div>
+    <dl class="props">
+      <dt>Code</dt><dd class="mono">{{ project.code }}</dd>
+      <dt>Name</dt><dd>{{ project.name }}</dd>
+      <dt>Area</dt><dd>{{ project.description or "—" }}</dd>
+      <dt>IdP group</dt><dd class="mono">{{ project.oidc_group or "—" }}</dd>
+      <dt>Created</dt><dd>{{ m.time(project.created_at) }}</dd>
+    </dl>
+    {% if me.is_admin %}
+    <form id="edit-project" class="stack hidden" method="post" action="/projects/{{ project.id }}">
+      <label>Name <input type="text" name="name" value="{{ project.name }}" maxlength="200" required></label>
+      <label>Area / description <textarea name="description" maxlength="4000">{{ project.description }}</textarea></label>
+      <label>IdP group <span class="hint">empty = no synchronisation</span>
+        <input type="text" name="oidc_group" value="{{ project.oidc_group or '' }}" maxlength="200">
+      </label>
+      <label class="check"><input type="checkbox" name="active" {% if project.active %}checked{% endif %}> Active (archived groups accept no new items)</label>
+      <div class="actions"><button class="primary" type="submit">Save</button></div>
+    </form>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -10,33 +10,52 @@ use crate::error::AppError;
 // Roles
 // ---------------------------------------------------------------------------
 
-/// Global user role. Ordering matters: `Viewer < Engineer < Admin`.
+/// Global user role. Ordering matters: `Viewer < Editor < Admin`.
+///
+/// What a CAD editor may change is further limited to the project groups the
+/// user is a member of (see `Actor::can_edit_project`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     /// Read-only access to all product data.
     Viewer,
-    /// Create and modify product data, author changes, review changes.
-    Engineer,
+    /// "CAD editor": create and modify product data of their project groups,
+    /// author changes, review changes.
+    Editor,
     /// Everything, plus user/project administration and lock overrides.
     Admin,
 }
 
 impl Role {
-    pub const ALL: [Role; 3] = [Role::Viewer, Role::Engineer, Role::Admin];
+    pub const ALL: [Role; 3] = [Role::Viewer, Role::Editor, Role::Admin];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Role::Viewer => "viewer",
-            Role::Engineer => "engineer",
+            Role::Editor => "editor",
             Role::Admin => "admin",
         }
     }
 
+    pub fn label(self) -> &'static str {
+        match self {
+            Role::Viewer => "Viewer",
+            Role::Editor => "CAD editor",
+            Role::Admin => "Admin",
+        }
+    }
+
+    /// Accepts the stored values plus a few spellings (`cad-editor`, and the
+    /// former name `engineer`).
     pub fn parse(s: &str) -> Option<Role> {
-        match s.trim().to_ascii_lowercase().as_str() {
+        match s
+            .trim()
+            .to_ascii_lowercase()
+            .replace([' ', '_'], "-")
+            .as_str()
+        {
             "viewer" => Some(Role::Viewer),
-            "engineer" => Some(Role::Engineer),
+            "editor" | "cad-editor" | "engineer" => Some(Role::Editor),
             "admin" => Some(Role::Admin),
             _ => None,
         }
@@ -707,12 +726,15 @@ mod tests {
 
     #[test]
     fn roles_are_ordered() {
-        assert!(Role::Viewer < Role::Engineer);
-        assert!(Role::Engineer < Role::Admin);
+        assert!(Role::Viewer < Role::Editor);
+        assert!(Role::Editor < Role::Admin);
         for r in Role::ALL {
             assert_eq!(Role::parse(r.as_str()), Some(r));
         }
         assert_eq!(Role::parse(" ADMIN "), Some(Role::Admin));
+        assert_eq!(Role::parse("CAD editor"), Some(Role::Editor));
+        assert_eq!(Role::parse("engineer"), Some(Role::Editor));
+        assert_eq!(Role::Editor.label(), "CAD editor");
         assert_eq!(Role::parse("root"), None);
     }
 

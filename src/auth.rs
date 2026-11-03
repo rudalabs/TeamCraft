@@ -42,6 +42,8 @@ pub struct Actor {
     pub role: Role,
     /// UI skin (see `domain::SKINS`).
     pub skin: String,
+    /// Project groups the user is a member of.
+    pub projects: Vec<Uuid>,
 }
 
 impl Actor {
@@ -52,7 +54,7 @@ impl Actor {
         } else {
             Err(AppError::Forbidden(format!(
                 "This action requires the '{}' role.",
-                min.as_str()
+                min.label()
             )))
         }
     }
@@ -61,8 +63,20 @@ impl Actor {
         self.role >= Role::Admin
     }
 
+    /// CAD editor or admin (may edit at least somewhere).
     pub fn can_edit(&self) -> bool {
-        self.role >= Role::Engineer
+        self.role >= Role::Editor
+    }
+
+    /// Whether the actor may modify data of a project group. Admins may edit
+    /// everything, CAD editors only the projects they are members of; items
+    /// without a project (legacy data) are editable by every CAD editor.
+    pub fn can_edit_project(&self, project_id: Option<Uuid>) -> bool {
+        match self.role {
+            Role::Admin => true,
+            Role::Editor => project_id.is_none_or(|p| self.projects.contains(&p)),
+            Role::Viewer => false,
+        }
     }
 }
 
@@ -278,17 +292,34 @@ mod tests {
 
     #[test]
     fn actor_role_checks() {
-        let actor = Actor {
+        let nixus = Uuid::new_v4();
+        let crater = Uuid::new_v4();
+        let mut actor = Actor {
             id: Uuid::new_v4(),
             username: "eng".into(),
             display_name: "Eng".into(),
-            role: Role::Engineer,
+            role: Role::Editor,
             skin: "warr".into(),
+            projects: vec![nixus],
         };
         assert!(actor.require(Role::Viewer).is_ok());
-        assert!(actor.require(Role::Engineer).is_ok());
+        assert!(actor.require(Role::Editor).is_ok());
         assert!(actor.require(Role::Admin).is_err());
         assert!(actor.can_edit());
         assert!(!actor.is_admin());
+        // project groups
+        assert!(actor.can_edit_project(Some(nixus)));
+        assert!(!actor.can_edit_project(Some(crater)));
+        assert!(
+            actor.can_edit_project(None),
+            "legacy items without a project"
+        );
+        actor.role = Role::Admin;
+        assert!(
+            actor.can_edit_project(Some(crater)),
+            "admins edit everything"
+        );
+        actor.role = Role::Viewer;
+        assert!(!actor.can_edit_project(Some(nixus)), "viewers never edit");
     }
 }

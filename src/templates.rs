@@ -26,6 +26,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "changes/new.html",
     "changes/show.html",
     "projects/list.html",
+    "projects/show.html",
     "admin/users.html",
     "admin/user_edit.html",
     "admin/audit.html",
@@ -149,12 +150,21 @@ mod tests {
 
     fn user() -> Value {
         json!({ "id": OTHER, "username": "erika", "display_name": "Erika", "email": null,
-                "auth_source": "local", "role": "engineer", "active": true, "created_at": TS, "last_login_at": null })
+                "auth_source": "local", "role": "editor", "active": true, "created_at": TS, "last_login_at": null,
+                "skin": "warr" })
     }
 
+    const NIXUS: &str = "66666666-6666-4666-8666-666666666666";
+
     fn project() -> Value {
-        json!({ "id": "66666666-6666-4666-8666-666666666666", "code": "NIXUS", "name": "Nixus",
-                "description": "", "active": true, "created_at": TS })
+        json!({ "id": NIXUS, "code": "NIXUS", "name": "WARR Rocketry Project NIXUS",
+                "description": "Rocketry", "active": true, "created_at": TS,
+                "oidc_group": "teamcraft-nixus", "member_count": 3 })
+    }
+
+    fn roles() -> Value {
+        json!([{ "value": "viewer", "label": "Viewer" }, { "value": "editor", "label": "CAD editor" },
+               { "value": "admin", "label": "Admin" }])
     }
 
     fn page() -> Value {
@@ -335,21 +345,33 @@ mod tests {
         render(
             &env,
             "projects/list.html",
-            with_common(json!({ "projects": [project()] })),
+            with_common(json!({ "projects": [project()], "my_projects": [NIXUS] })),
         );
+        let html = render(
+            &env,
+            "projects/show.html",
+            with_common(json!({
+                "project": project(),
+                "members": [{ "user_id": OTHER, "username": "erika", "display_name": "Erika", "role": "editor",
+                              "active": true, "source": "oidc", "added_at": TS }],
+                "candidates": [user()], "is_member": true, "can_edit": true, "oidc_enabled": true,
+            })),
+        );
+        assert!(html.contains("CAD editor"));
+        assert!(html.contains("via IdP group"));
         render(
             &env,
             "admin/users.html",
             with_common(json!({
-                "users": [user()], "roles": ["viewer", "engineer", "admin"],
-                "oidc": { "admin_group": "a", "engineer_group": "e", "viewer_group": null },
+                "users": [user()], "roles": roles(),
+                "oidc": { "admin_group": "a", "editor_group": "e", "viewer_group": null },
             })),
         );
         render(
             &env,
             "admin/user_edit.html",
             with_common(json!({
-                "user": user(), "roles": ["viewer", "engineer", "admin"], "oidc_enabled": false,
+                "user": user(), "roles": roles(), "oidc_enabled": false, "memberships": [project()],
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
                              "last_used_at": null, "expires_at": TS }],
             })),

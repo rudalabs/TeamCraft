@@ -66,20 +66,80 @@ async fn viewers_cannot_modify() {
 async fn complete_release_workflow() {
     let app = app_or_skip!();
     let (_, admin) = app.user("admin", Role::Admin).await;
-    let (_, author) = app.user("erika", Role::Engineer).await;
-    let (_, reviewer) = app.user("rolf", Role::Engineer).await;
+    let (_, author) = app.user_in("erika", Role::Editor, &["NIXUS"]).await;
+    let (_, reviewer) = app.user_in("rolf", Role::Editor, &["CRATER"]).await;
 
-    // Project and items
+    // The WARR project groups are seeded; admins can add more.
+    let r = app
+        .api(Method::GET, "/api/v1/projects", &reviewer, None)
+        .await;
+    let codes: Vec<String> = r
+        .json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["code"].as_str().unwrap().to_string())
+        .collect();
+    for code in [
+        "NIXUS",
+        "WESP",
+        "RETROFIRE",
+        "MOVE-III",
+        "MOVE-REXUS",
+        "MOVE-BEXUS",
+        "CRATER",
+        "GRAKSLER",
+        "SPACE-LABS",
+        "GENERAL",
+        "PR",
+        "WORKSHOP",
+    ] {
+        assert!(codes.contains(&code.to_string()), "seeded project {code}");
+    }
     let r = app
         .api(
             Method::POST,
             "/api/v1/projects",
             &admin,
-            Some(json!({ "code": "nixus", "name": "Nixus" })),
+            Some(json!({ "code": "testbench", "name": "Test bench", "oidc_group": "teamcraft-testbench" })),
         )
         .await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
-    assert_eq!(r.json()["code"], "NIXUS");
+    assert_eq!(r.json()["code"], "TESTBENCH");
+    let r = app
+        .api(
+            Method::GET,
+            "/api/v1/projects/NIXUS/members",
+            &reviewer,
+            None,
+        )
+        .await;
+    assert_eq!(r.json()[0]["username"], "erika");
+
+    // Items always belong to a project group the author is a member of
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &author,
+            Some(json!({ "item_type": "part", "name": "No project" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &author,
+            Some(json!({ "item_type": "part", "name": "Rover wheel", "project": "CRATER" })),
+        )
+        .await;
+    assert_eq!(
+        r.status,
+        StatusCode::FORBIDDEN,
+        "not a CRATER member: {}",
+        r.text()
+    );
 
     let r = app
         .api(Method::POST, "/api/v1/items", &author, Some(json!({
@@ -94,7 +154,8 @@ async fn complete_release_workflow() {
 
     let r = app
         .api(Method::POST, "/api/v1/items", &author, Some(json!({
-            "item_type": "assembly", "number": "nx-eng-001", "name": "Engine mount", "mass_kg": 0.5, "unit_cost": 20.0
+            "item_type": "assembly", "number": "nx-eng-001", "name": "Engine mount", "mass_kg": 0.5, "unit_cost": 20.0,
+            "project": "NIXUS"
         })))
         .await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
@@ -107,7 +168,7 @@ async fn complete_release_workflow() {
             Method::POST,
             "/api/v1/items",
             &author,
-            Some(json!({ "item_type": "part", "number": "NX-ENG-001", "name": "Dup" })),
+            Some(json!({ "item_type": "part", "number": "NX-ENG-001", "name": "Dup", "project": "NIXUS" })),
         )
         .await;
     assert_eq!(r.status, StatusCode::CONFLICT);
@@ -174,7 +235,26 @@ async fn complete_release_workflow() {
             Some(json!({ "material": "AlMg3" })),
         )
         .await;
-    assert_eq!(r.status, StatusCode::CONFLICT, "locked by another user");
+    assert_eq!(
+        r.status,
+        StatusCode::FORBIDDEN,
+        "not a NIXUS member: {}",
+        r.text()
+    );
+    let (_, colleague) = app.user_in("nina", Role::Editor, &["NIXUS"]).await;
+    let r = app
+        .api(
+            Method::PATCH,
+            &format!("/api/v1/items/{asm}/revisions/A"),
+            &colleague,
+            Some(json!({ "material": "AlMg3" })),
+        )
+        .await;
+    assert_eq!(
+        r.status,
+        StatusCode::CONFLICT,
+        "locked by another NIXUS member"
+    );
     let r = app
         .api(
             Method::PATCH,
@@ -359,12 +439,7 @@ async fn complete_release_workflow() {
 
     // Reopen via the service layer is covered by the web test; use withdraw-free path:
     let change_id = r.json()["change"]["id"].as_str().unwrap().to_string();
-    let author_actor = teamcraft::services::users::actor_of(
-        &teamcraft::services::users::find_by_username(&app.pool, "erika")
-            .await
-            .unwrap()
-            .unwrap(),
-    );
+    let author_actor = app.actor("erika").await;
     teamcraft::services::changes::reopen(&app.pool, &author_actor, change_id.parse().unwrap())
         .await
         .expect("reopen");
@@ -495,7 +570,11 @@ async fn complete_release_workflow() {
     let r = app
         .api(Method::GET, "/api/v1/items?project=NIXUS", &reviewer, None)
         .await;
-    assert_eq!(r.json()["total"], 1);
+    assert_eq!(r.json()["total"], 2, "both items belong to NIXUS");
+    let r = app
+        .api(Method::GET, "/api/v1/items?project=CRATER", &reviewer, None)
+        .await;
+    assert_eq!(r.json()["total"], 0);
     let r = app
         .api(Method::GET, "/api/v1/items?state=in_work", &reviewer, None)
         .await;
@@ -515,15 +594,15 @@ async fn complete_release_workflow() {
 #[tokio::test]
 async fn obsolete_and_delete_rules() {
     let app = app_or_skip!();
-    let (_, eng) = app.user("eng", Role::Engineer).await;
-    let (_, other) = app.user("other", Role::Engineer).await;
+    let (_, eng) = app.user_in("eng", Role::Editor, &["WORKSHOP"]).await;
+    let (_, other) = app.user_in("other", Role::Editor, &["WORKSHOP"]).await;
 
     let r = app
         .api(
             Method::POST,
             "/api/v1/items",
             &eng,
-            Some(json!({ "item_type": "document", "name": "Test plan" })),
+            Some(json!({ "item_type": "document", "name": "Test plan", "project": "WORKSHOP" })),
         )
         .await;
     let number = r.json()["item_number"].as_str().unwrap().to_string();
@@ -544,22 +623,12 @@ async fn obsolete_and_delete_rules() {
     let item = teamcraft::services::items::get_by_number(&app.pool, &number)
         .await
         .unwrap();
-    let other_actor = teamcraft::services::users::actor_of(
-        &teamcraft::services::users::find_by_username(&app.pool, "other")
-            .await
-            .unwrap()
-            .unwrap(),
-    );
+    let other_actor = app.actor("other").await;
     let err = teamcraft::services::items::delete(&app.pool, &other_actor, item.id)
         .await
         .unwrap_err();
     assert_eq!(err.status(), StatusCode::FORBIDDEN);
-    let eng_actor = teamcraft::services::users::actor_of(
-        &teamcraft::services::users::find_by_username(&app.pool, "eng")
-            .await
-            .unwrap()
-            .unwrap(),
-    );
+    let eng_actor = app.actor("eng").await;
     teamcraft::services::items::delete(&app.pool, &eng_actor, item.id)
         .await
         .expect("creator may delete");
@@ -572,5 +641,59 @@ async fn obsolete_and_delete_rules() {
         )
         .await;
     assert_eq!(r.status, StatusCode::NOT_FOUND);
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn sso_groups_sync_project_memberships() {
+    use teamcraft::services::users::{upsert_oidc_user, OidcIdentity};
+    let app = app_or_skip!();
+    let identity = |groups: &[&str]| OidcIdentity {
+        subject: "authentik-uid-42".into(),
+        username_hint: "Max.Muster@warr.de".into(),
+        display_name: "Max Muster".into(),
+        email: Some("max@warr.de".into()),
+        role: Role::Editor,
+        groups: groups.iter().map(|g| g.to_string()).collect(),
+    };
+    let nixus = app.project_id("NIXUS").await;
+    let crater = app.project_id("CRATER").await;
+
+    // First login: provisioned, member of the groups mapped to projects
+    let user = upsert_oidc_user(
+        &app.pool,
+        identity(&["teamcraft-editors", "teamcraft-nixus", "teamcraft-crater"]),
+    )
+    .await
+    .expect("provision");
+    assert_eq!(user.username, "max.muster");
+    assert_eq!(user.role, "editor");
+    let actor = app.actor("max.muster").await;
+    assert!(actor.projects.contains(&nixus) && actor.projects.contains(&crater));
+
+    // An admin additionally adds WORKSHOP manually
+    let (admin, _) = app.user("root", Role::Admin).await;
+    let workshop = app.project_id("WORKSHOP").await;
+    teamcraft::services::projects::add_member(&app.pool, &admin, workshop, "max.muster")
+        .await
+        .expect("manual membership");
+
+    // Next login without the CRATER group: CRATER is removed, manual WORKSHOP stays
+    upsert_oidc_user(
+        &app.pool,
+        identity(&["teamcraft-editors", "TeamCraft-NIXUS"]),
+    )
+    .await
+    .expect("login again");
+    let actor = app.actor("max.muster").await;
+    assert!(
+        actor.projects.contains(&nixus),
+        "group names are case-insensitive"
+    );
+    assert!(!actor.projects.contains(&crater), "left the IdP group");
+    assert!(
+        actor.projects.contains(&workshop),
+        "manual memberships are kept"
+    );
     app.teardown().await;
 }

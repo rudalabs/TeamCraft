@@ -144,8 +144,15 @@ impl TestApp {
         let _ = std::fs::remove_dir_all(&self.vault_dir);
     }
 
-    /// Creates a local user and returns it together with an API token.
+    /// Creates a local user without project memberships and returns it
+    /// together with an API token.
     pub async fn user(&self, username: &str, role: Role) -> (Actor, String) {
+        self.user_in(username, role, &[]).await
+    }
+
+    /// Creates a local user who is a member of the given project groups
+    /// (codes of the seeded WARR projects, e.g. "NIXUS").
+    pub async fn user_in(&self, username: &str, role: Role, projects: &[&str]) -> (Actor, String) {
         let user = users::create_local(
             &self.pool,
             None,
@@ -159,11 +166,40 @@ impl TestApp {
         )
         .await
         .expect("create user");
-        let actor = users::actor_of(&user);
+        for code in projects {
+            sqlx::query(
+                "INSERT INTO project_members (project_id, user_id)
+                 SELECT id, $2 FROM projects WHERE code = $1",
+            )
+            .bind(code)
+            .bind(user.id)
+            .execute(&self.pool)
+            .await
+            .expect("add project membership");
+        }
+        let actor = self.actor(username).await;
         let (_, token) = users::create_token(&self.pool, &actor, "tests", None)
             .await
             .expect("create token");
         (actor, token)
+    }
+
+    /// Loads the actor (incl. memberships) of an existing user.
+    pub async fn actor(&self, username: &str) -> Actor {
+        let user = users::find_by_username(&self.pool, username)
+            .await
+            .expect("query user")
+            .expect("user exists");
+        users::actor(&self.pool, user.id).await.expect("load actor")
+    }
+
+    /// Id of a (seeded) project group.
+    pub async fn project_id(&self, code: &str) -> Uuid {
+        sqlx::query_scalar("SELECT id FROM projects WHERE code = $1")
+            .bind(code)
+            .fetch_one(&self.pool)
+            .await
+            .expect("project exists")
     }
 
     pub async fn send(&self, request: Request<Body>) -> Response {

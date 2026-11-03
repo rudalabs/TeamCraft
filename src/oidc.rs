@@ -328,8 +328,8 @@ pub fn role_for_groups(groups: &[String], config: &OidcConfig) -> Option<Role> {
     let member = |g: &str| groups.iter().any(|x| x.eq_ignore_ascii_case(g));
     if member(&config.admin_group) {
         Some(Role::Admin)
-    } else if member(&config.engineer_group) {
-        Some(Role::Engineer)
+    } else if member(&config.editor_group) {
+        Some(Role::Editor)
     } else {
         match &config.viewer_group {
             Some(g) if !member(g) => None,
@@ -359,7 +359,7 @@ fn identity_from_claims(claims: &Value, config: &OidcConfig) -> AppResult<OidcId
         AppError::Forbidden(format!(
             "Your account is not a member of a TeamCraft group. Ask IT to add you to '{}', '{}' or '{}'.",
             config.viewer_group.as_deref().unwrap_or("-"),
-            config.engineer_group,
+            config.editor_group,
             config.admin_group
         ))
     })?;
@@ -369,6 +369,7 @@ fn identity_from_claims(claims: &Value, config: &OidcConfig) -> AppResult<OidcId
         display_name,
         email: get("email"),
         role,
+        groups,
     })
 }
 
@@ -387,7 +388,7 @@ mod tests {
             groups_claim: "groups".into(),
             username_claim: "preferred_username".into(),
             admin_group: "teamcraft-admins".into(),
-            engineer_group: "teamcraft-engineers".into(),
+            editor_group: "teamcraft-editors".into(),
             viewer_group: viewer_group.map(str::to_string),
         }
     }
@@ -404,8 +405,8 @@ mod tests {
             Some(Role::Admin)
         );
         assert_eq!(
-            role_for_groups(&groups(&["TeamCraft-Engineers"]), &open),
-            Some(Role::Engineer)
+            role_for_groups(&groups(&["TeamCraft-Editors"]), &open),
+            Some(Role::Editor)
         );
         assert_eq!(
             role_for_groups(&groups(&["other"]), &open),
@@ -420,8 +421,8 @@ mod tests {
             Some(Role::Viewer)
         );
         assert_eq!(
-            role_for_groups(&groups(&["teamcraft-engineers"]), &restricted),
-            Some(Role::Engineer)
+            role_for_groups(&groups(&["teamcraft-editors"]), &restricted),
+            Some(Role::Editor)
         );
     }
 
@@ -471,14 +472,15 @@ mod tests {
             "preferred_username": "max.m",
             "name": "Max Mustermann",
             "email": "max@example.org",
-            "groups": ["teamcraft-engineers"]
+            "groups": ["teamcraft-editors", "teamcraft-nixus"]
         });
         let id = identity_from_claims(&claims, &cfg).unwrap();
         assert_eq!(id.subject, "1234");
         assert_eq!(id.username_hint, "max.m");
         assert_eq!(id.display_name, "Max Mustermann");
         assert_eq!(id.email.as_deref(), Some("max@example.org"));
-        assert_eq!(id.role, Role::Engineer);
+        assert_eq!(id.role, Role::Editor);
+        assert_eq!(id.groups, vec!["teamcraft-editors", "teamcraft-nixus"]);
 
         let restricted = config(Some("teamcraft-users"));
         let outsider = json!({ "sub": "1", "groups": "other" });

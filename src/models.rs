@@ -40,6 +40,22 @@ pub struct Project {
     pub description: String,
     pub active: bool,
     pub created_at: DateTime<Utc>,
+    /// IdP group whose members are synchronised into this project group.
+    pub oidc_group: Option<String>,
+    pub member_count: i64,
+}
+
+/// A member of a project group.
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct ProjectMember {
+    pub user_id: Uuid,
+    pub username: String,
+    pub display_name: String,
+    pub role: String,
+    pub active: bool,
+    /// `manual` (added by an admin) or `oidc` (synchronised from the IdP).
+    pub source: String,
+    pub added_at: DateTime<Utc>,
 }
 
 /// One row of the item search result, combined with its latest revision.
@@ -78,6 +94,8 @@ pub struct Revision {
     pub item_number: String,
     pub item_type: String,
     pub unit: String,
+    pub project_id: Option<Uuid>,
+    pub project_code: Option<String>,
     pub seq: i32,
     pub code: String,
     pub state: String,

@@ -24,7 +24,7 @@
       <label>Display name <input type="text" name="display_name" value="{{ user.display_name }}" maxlength="128" required></label>
       <label>E-mail <input type="email" name="email" value="{{ user.email or '' }}" maxlength="254"></label>
       <label>Role
-        <select name="role">{% for r in roles %}<option value="{{ r }}" {% if r == user.role %}selected{% endif %}>{{ r }}</option>{% endfor %}</select>
+        <select name="role">{% for r in roles %}<option value="{{ r.value }}" {% if r.value == user.role %}selected{% endif %}>{{ r.label }}</option>{% endfor %}</select>
       </label>
       <label class="check"><input type="checkbox" name="active" {% if user.active %}checked{% endif %}> Active (deactivated users cannot sign in or use API tokens)</label>
       <div class="actions"><button class="primary" type="submit">Save</button></div>
@@ -44,6 +44,16 @@
   </section>
   {% endif %}
 </div>
+
+<section class="card">
+  <h2>Project groups</h2>
+  {% if memberships %}
+  <ul class="tag-row">
+    {% for p in memberships %}<li><a class="badge badge-member" href="/projects/{{ p.id }}">{{ p.code }}</a></li>{% endfor %}
+  </ul>
+  {% else %}<p class="empty">Not a member of any project group – as CAD editor this user cannot change any item.</p>{% endif %}
+  <p class="hint">Memberships are managed on the page of each <a href="/projects">project group</a>.</p>
+</section>
 
 <section class="card">
   <h2>API tokens</h2>

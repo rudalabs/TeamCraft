@@ -34,7 +34,7 @@ services:
       TEAMCRAFT_OIDC_CLIENT_SECRET_FILE: /run/secrets/teamcraft_oidc_client_secret
       TEAMCRAFT_OIDC_DISPLAY_NAME: WARR SSO
       TEAMCRAFT_OIDC_ADMIN_GROUP: teamcraft-admins
-      TEAMCRAFT_OIDC_ENGINEER_GROUP: teamcraft-engineers
+      TEAMCRAFT_OIDC_EDITOR_GROUP: teamcraft-editors
       # TEAMCRAFT_OIDC_VIEWER_GROUP: teamcraft-users   # uncomment to restrict read access
       TEAMCRAFT_LOCAL_LOGIN: "false"
       # Error notifications to Mattermost (optional – remove both lines if unused)

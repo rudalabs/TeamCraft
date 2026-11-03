@@ -14,6 +14,7 @@ use crate::{
 
 pub(crate) const REVISION_SELECT: &str = "
     SELECT r.id, r.item_id, i.number AS item_number, i.item_type, i.unit,
+           i.project_id, rp.code AS project_code,
            r.seq, r.code, r.state, r.name, r.description, r.material,
            r.mass_kg, r.unit_cost,
            r.checked_out_by, co.display_name AS checked_out_by_name, r.checked_out_at,
@@ -22,7 +23,8 @@ pub(crate) const REVISION_SELECT: &str = "
     FROM revisions r
     JOIN items i ON i.id = r.item_id
     JOIN users cb ON cb.id = r.created_by
-    LEFT JOIN users co ON co.id = r.checked_out_by";
+    LEFT JOIN users co ON co.id = r.checked_out_by
+    LEFT JOIN projects rp ON rp.id = i.project_id";
 
 pub fn state_of(rev: &Revision) -> LifecycleState {
     LifecycleState::parse(&rev.state).unwrap_or(LifecycleState::Obsolete)
@@ -73,10 +75,25 @@ pub async fn checked_out_by(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Revis
     .await?)
 }
 
-/// Fails unless `actor` may modify `rev`: engineer role, revision in work and
+/// Fails unless `actor` may change data of the revision's project:
+/// CAD editor (or admin) and member of the item's project group.
+pub fn ensure_project_access(rev: &Revision, actor: &Actor) -> AppResult<()> {
+    actor.require(Role::Editor)?;
+    if actor.can_edit_project(rev.project_id) {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(format!(
+            "Only members of the project group {} can modify {}.",
+            rev.project_code.as_deref().unwrap_or("?"),
+            label(rev)
+        )))
+    }
+}
+
+/// Fails unless `actor` may modify `rev`: project access, revision in work and
 /// not checked out by somebody else.
 pub fn ensure_editable(rev: &Revision, actor: &Actor) -> AppResult<()> {
-    actor.require(Role::Engineer)?;
+    ensure_project_access(rev, actor)?;
     let state = state_of(rev);
     if !state.is_editable() {
         return Err(AppError::Conflict(format!(
@@ -163,7 +180,7 @@ pub async fn update(
 
 /// Takes the exclusive edit lock of an in-work revision.
 pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
-    actor.require(Role::Engineer)?;
+    actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
     let rev = lock(&mut tx, id).await?;
     ensure_editable(&rev, actor)?;
@@ -191,7 +208,7 @@ pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
 
 /// Releases the edit lock. Administrators may release locks of other users.
 pub async fn checkin(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
-    actor.require(Role::Engineer)?;
+    actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
     let rev = lock(&mut tx, id).await?;
     let Some(owner) = rev.checked_out_by else {
@@ -238,9 +255,10 @@ pub async fn checkin(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisi
 /// Creates the next revision of an item, copying attributes, files and BOM
 /// lines from revision `id`. Only possible when the item has no open revision.
 pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
-    actor.require(Role::Engineer)?;
+    actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
     let src = lock(&mut tx, id).await?;
+    ensure_project_access(&src, actor)?;
     // Serialise concurrent revise operations on the same item.
     sqlx::query("SELECT id FROM items WHERE id = $1 FOR UPDATE")
         .bind(src.item_id)
@@ -319,9 +337,10 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
 
 /// Marks a released revision as obsolete.
 pub async fn obsolete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
-    actor.require(Role::Engineer)?;
+    actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
     let rev = lock(&mut tx, id).await?;
+    ensure_project_access(&rev, actor)?;
     transition(&mut tx, &rev, LifecycleState::Obsolete).await?;
     audit::record(
         &mut tx,

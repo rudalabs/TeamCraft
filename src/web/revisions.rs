@@ -37,7 +37,8 @@ pub async fn show(
     let mut entity_ids: Vec<Uuid> = all_revisions.iter().map(|r| r.id).collect();
     entity_ids.push(item.id);
     let history = audit::for_entities(&st.db, &entity_ids, 50).await?;
-    let projects = projects::list(&st.db, false).await?;
+    // Target groups for moving the item (only groups the user may edit).
+    let projects = projects::editable_by(&st.db, &ctx.me).await?;
 
     let state = revisions::state_of(&rev);
     let me = &ctx.me;
@@ -58,20 +59,21 @@ pub async fn show(
     } else {
         Vec::new()
     };
+    let in_project = revisions::ensure_project_access(&rev, me).is_ok();
     let can = json!({
         "edit": editable,
         "checkout": editable && rev.checked_out_by.is_none(),
         "checkin": rev.checked_out_by.is_some()
             && me.can_edit()
             && (rev.checked_out_by == Some(me.id) || me.is_admin()),
-        "revise": me.can_edit() && !item_has_open_revision,
-        "obsolete": me.can_edit() && state == LifecycleState::Released,
-        "delete": (item.created_by == me.id || me.is_admin())
+        "revise": in_project && !item_has_open_revision,
+        "obsolete": in_project && state == LifecycleState::Released,
+        "delete": ((item.created_by == me.id && in_project) || me.is_admin())
             && all_revisions.len() == 1
             && state == LifecycleState::InWork
             && where_used.is_empty()
             && rev_changes.is_empty(),
-        "master": me.can_edit(),
+        "master": in_project,
         "add_to_change": editable && open_change.is_none(),
     });
     let latest_id = all_revisions.first().map(|r| r.id);

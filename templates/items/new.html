@@ -29,11 +29,12 @@
       <textarea name="description" maxlength="10000">{{ form.description }}</textarea>
     </label>
     <div class="form-row">
-      <label>Project
-        <select name="project_id">
-          <option value="">— none —</option>
+      <label>Project group <span class="hint">only groups you are a member of</span>
+        <select name="project_id" required>
+          <option value="">— choose —</option>
           {% for p in projects %}<option value="{{ p.id }}" {% if form.project_id == p.id|string %}selected{% endif %}>{{ p.code }} – {{ p.name }}</option>{% endfor %}
         </select>
+        {% if not projects %}<span class="hint">You are not a member of any project group yet – ask an admin to add you.</span>{% endif %}
       </label>
       <label>Unit of measure
         <input type="text" name="unit" value="{{ form.unit }}" list="units" maxlength="16">

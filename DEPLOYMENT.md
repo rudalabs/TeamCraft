@@ -80,18 +80,43 @@ Create an **OAuth2/OpenID Provider** and an **Application** in Authentik:
 | Scopes                | `openid`, `profile`, `email` (default mappings; `profile` contains the `groups` claim) |
 | Subject mode          | default (hashed user ID) is fine; it must stay stable                                  |
 
-Groups (create them, add members):
+**Role groups** (create them, add members):
 
-| Authentik group                                | TeamCraft role | Rights                                                    |
-|------------------------------------------------|----------------|-----------------------------------------------------------|
-| `teamcraft-admins`                             | admin          | everything + users, projects, audit log, forced check-in  |
-| `teamcraft-engineers`                          | engineer       | create/modify items, BOMs, files, changes; review changes |
-| *(everyone else who may open the application)* | viewer         | read-only, download files                                 |
+| Authentik group                                | TeamCraft role | Rights                                                                              |
+|------------------------------------------------|----------------|-------------------------------------------------------------------------------------|
+| `teamcraft-admins`                             | admin          | everything + users, project groups, audit log, forced check-in                      |
+| `teamcraft-editors`                            | CAD editor     | create/modify items, BOMs, files and changes **of their project groups**; review changes |
+| *(everyone else who may open the application)* | viewer         | read-only (all project groups), download files                                      |
 
 Restrict who may open the application with Authentik policy bindings as usual,
 or set `TEAMCRAFT_OIDC_VIEWER_GROUP=teamcraft-users` so TeamCraft itself
 rejects users who are in none of the three groups. Group names are
 configurable (`TEAMCRAFT_OIDC_*_GROUP`).
+
+**Project groups** – every item belongs to one; a CAD editor can only change
+items of groups they are a member of. The WARR groups are created by the
+database migration, each bound to an Authentik group of the same name
+(editable on the project page in TeamCraft). Members of the Authentik group are
+added at their next SSO login and removed when they leave it; members added
+manually in TeamCraft are kept.
+
+| TeamCraft code | Project group | Authentik group |
+|---|---|---|
+| `NIXUS` | WARR Rocketry Project NIXUS | `teamcraft-nixus` |
+| `WESP` | WARR Rocketry Project WESP | `teamcraft-wesp` |
+| `RETROFIRE` | WARR Rocketry Project Retrofire | `teamcraft-retrofire` |
+| `MOVE-III` | WARR MOVE III | `teamcraft-move-iii` |
+| `MOVE-REXUS` | WARR MOVE Rexus | `teamcraft-move-rexus` |
+| `MOVE-BEXUS` | WARR MOVE Bexus | `teamcraft-move-bexus` |
+| `CRATER` | WARR Space Robotics Project CRATER | `teamcraft-crater` |
+| `GRAKSLER` | WARR Space Robotics Project GRAKSLER | `teamcraft-graksler` |
+| `SPACE-LABS` | WARR Space Labs | `teamcraft-space-labs` |
+| `GENERAL` | WARR General | `teamcraft-general` |
+| `PR` | WARR Public Relations | `teamcraft-pr` |
+| `WORKSHOP` | WARR Workshop | `teamcraft-workshop` |
+
+If WARR's existing Authentik groups for the projects are named differently,
+change the IdP group on each project page instead of creating new groups.
 
 Notes:
 
@@ -286,7 +311,7 @@ newline stripped). Full commented template: [`.env.example`](.env.example).
 | `TEAMCRAFT_OIDC_GROUPS_CLAIM`                      | `groups`                                         | claim with group names                                                                                                  |
 | `TEAMCRAFT_OIDC_USERNAME_CLAIM`                    | `preferred_username`                             | username of new users                                                                                                   |
 | `TEAMCRAFT_OIDC_ADMIN_GROUP`                       | `teamcraft-admins`                               | → admin                                                                                                                 |
-| `TEAMCRAFT_OIDC_ENGINEER_GROUP`                    | `teamcraft-engineers`                            | → engineer                                                                                                              |
+| `TEAMCRAFT_OIDC_EDITOR_GROUP`                      | `teamcraft-editors`                              | → CAD editor (what they may change is limited by project groups, see §2)                                                |
 | `TEAMCRAFT_OIDC_VIEWER_GROUP`                      | –                                                | if set, required for viewer access                                                                                      |
 | `TEAMCRAFT_LOCAL_LOGIN`                            | `true` without SSO, `false` with SSO             | username/password login                                                                                                 |
 | `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME` / `_PASSWORD` | `admin` / –                                      | creates a local admin when the DB has no users (secret)                                                                 |
@@ -394,7 +419,8 @@ Pinning image tags (`v0.1.0`) in the deployment repository makes upgrades explic
 - [ ] GitLab project created, first pipeline green, image in the registry
 - [ ] DNS name + TLS at the reverse proxy, body limit ≥ 520 MiB
 - [ ] Authentik provider + application `teamcraft`, redirect URI registered
-- [ ] Groups `teamcraft-admins`, `teamcraft-engineers` (+ optional `teamcraft-users`) with members
+- [ ] Groups `teamcraft-admins`, `teamcraft-editors` (+ optional `teamcraft-users`) with members
+- [ ] Project groups bound to Authentik groups (`teamcraft-nixus`, … – see §2) or members added in TeamCraft
 - [ ] Secret files created on `vc.it.warr.de` (`db_password`, `oidc_client_secret`, optional `mattermost_error_webhook`)
 - [ ] MR to `server-deployments` with the services from `deploy/docker-compose.warr.yml` merged
 - [ ] `docker compose up -d`, container *healthy*, `/readyz` ok

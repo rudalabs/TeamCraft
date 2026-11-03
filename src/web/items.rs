@@ -125,7 +125,8 @@ async fn render_new(
     form: &NewItemForm,
     error: Option<String>,
 ) -> AppResult<Response> {
-    let projects = projects::list(&st.db, true).await?;
+    // Only the project groups the user may create items in.
+    let projects = projects::editable_by(&st.db, &ctx.me).await?;
     render(
         st,
         ctx,
@@ -152,7 +153,7 @@ pub async fn new_form(
     ctx: WebCtx,
     Query(q): Query<NewQuery>,
 ) -> AppResult<Response> {
-    ctx.me.require(domain::Role::Engineer)?;
+    ctx.me.require(domain::Role::Editor)?;
     let form = NewItemForm {
         item_type: q.item_type.unwrap_or_else(|| "part".into()),
         project_id: q.project.unwrap_or_default(),

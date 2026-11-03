@@ -80,7 +80,7 @@ async fn anonymous_users_are_sent_to_login() {
 #[tokio::test]
 async fn wrong_password_is_rejected() {
     let app = app_or_skip!();
-    app.user("max", Role::Engineer).await;
+    app.user("max", Role::Editor).await;
     let r = app
         .post_form(
             "/login",
@@ -97,7 +97,7 @@ async fn wrong_password_is_rejected() {
 #[tokio::test]
 async fn cross_site_posts_are_blocked() {
     let app = app_or_skip!();
-    app.user("max", Role::Engineer).await;
+    app.user("max", Role::Editor).await;
     let cookie = app.login("max").await;
     let r = app
         .post_form(
@@ -121,7 +121,7 @@ async fn cross_site_posts_are_blocked() {
 async fn every_page_renders_for_an_admin() {
     let app = app_or_skip!();
     let (_, token) = app.user("root", Role::Admin).await;
-    app.user("rolf", Role::Engineer).await;
+    app.user("rolf", Role::Editor).await;
     let cookie = app.login("root").await;
     let origin = Some("http://localhost:8080");
 
@@ -139,6 +139,28 @@ async fn every_page_renders_for_an_admin() {
         )
         .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let nixus = app.project_id("NIXUS").await.to_string();
+    // Admins manage the members of a project group
+    let r = app
+        .post_form(
+            &format!("/projects/{nixus}/members"),
+            Some(&cookie),
+            origin,
+            &[("username", "rolf")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let r = app
+        .get_page(&format!("/projects/{nixus}"), Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.text().contains("rolf (test)"));
+    assert!(app
+        .actor("rolf")
+        .await
+        .projects
+        .contains(&nixus.parse().unwrap()));
+
     let r = app
         .post_form(
             "/items",
@@ -149,6 +171,7 @@ async fn every_page_renders_for_an_admin() {
                 ("name", "Nozzle"),
                 ("mass_kg", "1,25"),
                 ("unit", "each"),
+                ("project_id", &nixus),
             ],
         )
         .await;
@@ -211,7 +234,7 @@ async fn every_page_renders_for_an_admin() {
             Method::POST,
             "/api/v1/items",
             &token,
-            Some(json!({ "item_type": "assembly", "name": "Engine" })),
+            Some(json!({ "item_type": "assembly", "name": "Engine", "project": "NIXUS" })),
         )
         .await;
     let asm_rev = r.json()["id"].as_str().unwrap().to_string();
@@ -243,6 +266,7 @@ async fn every_page_renders_for_an_admin() {
         "/changes/new".to_string(),
         change_url.clone(),
         "/projects".to_string(),
+        format!("/projects/{nixus}"),
         "/admin/users".to_string(),
         format!("/admin/users/{user_id}"),
         "/admin/audit".to_string(),

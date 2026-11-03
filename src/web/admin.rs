@@ -6,7 +6,7 @@ use axum::{
     Form,
 };
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use super::{finish, pagination, render, WebCtx, PER_PAGE};
@@ -17,9 +17,53 @@ use crate::{
     util, AppState,
 };
 
+/// Roles as `{value, label}` for select boxes.
+fn roles() -> Value {
+    json!(Role::ALL
+        .iter()
+        .map(|r| json!({ "value": r.as_str(), "label": r.label() }))
+        .collect::<Vec<_>>())
+}
+
 pub async fn projects(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
     let list = projects::list(&st.db, false).await?;
-    render(&st, &ctx, "projects/list.html", json!({ "projects": list }))
+    render(
+        &st,
+        &ctx,
+        "projects/list.html",
+        json!({ "projects": list, "my_projects": ctx.me.projects }),
+    )
+}
+
+pub async fn project_show(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let project = projects::get(&st.db, id).await?;
+    let members = projects::members(&st.db, id).await?;
+    let all_users = if ctx.me.is_admin() {
+        users::list(&st.db)
+            .await?
+            .into_iter()
+            .filter(|u| u.active && !members.iter().any(|m| m.user_id == u.id))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    render(
+        &st,
+        &ctx,
+        "projects/show.html",
+        json!({
+            "project": project,
+            "members": members,
+            "candidates": all_users,
+            "is_member": ctx.me.projects.contains(&id),
+            "can_edit": ctx.me.can_edit_project(Some(id)),
+            "oidc_enabled": st.config.oidc.is_some(),
+        }),
+    )
 }
 
 #[derive(Deserialize)]
@@ -30,6 +74,8 @@ pub struct NewProjectForm {
     name: String,
     #[serde(default)]
     description: String,
+    #[serde(default)]
+    oidc_group: String,
 }
 
 pub async fn create_project(
@@ -37,9 +83,20 @@ pub async fn create_project(
     ctx: WebCtx,
     Form(form): Form<NewProjectForm>,
 ) -> AppResult<Response> {
-    let result = projects::create(&st.db, &ctx.me, &form.code, &form.name, &form.description).await;
+    let result = projects::create(
+        &st.db,
+        &ctx.me,
+        &form.code,
+        &form.name,
+        &form.description,
+        Some(&form.oidc_group),
+    )
+    .await;
     finish(&st, result, "/projects", |p| {
-        ("/projects".into(), format!("Created project {}", p.code))
+        (
+            format!("/projects/{}", p.id),
+            format!("Created project group {}", p.code),
+        )
     })
 }
 
@@ -50,6 +107,8 @@ pub struct ProjectForm {
     #[serde(default)]
     description: String,
     active: Option<String>,
+    #[serde(default)]
+    oidc_group: String,
 }
 
 pub async fn update_project(
@@ -58,17 +117,55 @@ pub async fn update_project(
     Path(id): Path<Uuid>,
     Form(form): Form<ProjectForm>,
 ) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
     let result = projects::update(
         &st.db,
         &ctx.me,
         id,
-        &form.name,
-        &form.description,
-        form.active.is_some(),
+        projects::ProjectUpdate {
+            name: &form.name,
+            description: &form.description,
+            active: form.active.is_some(),
+            oidc_group: Some(&form.oidc_group),
+        },
     )
     .await;
-    finish(&st, result, "/projects", |p| {
-        ("/projects".into(), format!("Saved project {}", p.code))
+    finish(&st, result, &back, |p| {
+        (back.clone(), format!("Saved project group {}", p.code))
+    })
+}
+
+#[derive(Deserialize)]
+pub struct MemberForm {
+    #[serde(default)]
+    username: String,
+}
+
+pub async fn add_member(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<MemberForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = projects::add_member(&st.db, &ctx.me, id, &form.username).await;
+    finish(&st, result, &back, |m| {
+        (
+            back.clone(),
+            format!("Added {} to the project group", m.display_name),
+        )
+    })
+}
+
+pub async fn remove_member(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = projects::remove_member(&st.db, &ctx.me, id, user_id).await;
+    finish(&st, result, &back, |_| {
+        (back.clone(), "Removed the member".to_string())
     })
 }
 
@@ -81,10 +178,10 @@ pub async fn users(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Respons
         "admin/users.html",
         json!({
             "users": list,
-            "roles": Role::ALL.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+            "roles": roles(),
             "oidc": st.config.oidc.as_ref().map(|o| json!({
                 "admin_group": o.admin_group,
-                "engineer_group": o.engineer_group,
+                "editor_group": o.editor_group,
                 "viewer_group": o.viewer_group,
             })),
         }),
@@ -147,6 +244,7 @@ pub async fn user_edit(
     ctx.me.require(Role::Admin)?;
     let user = users::get(&st.db, id).await?;
     let tokens = users::list_tokens(&st.db, id).await?;
+    let memberships = projects::memberships_of(&st.db, id).await?;
     render(
         &st,
         &ctx,
@@ -154,7 +252,8 @@ pub async fn user_edit(
         json!({
             "user": user,
             "tokens": tokens,
-            "roles": Role::ALL.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+            "memberships": memberships,
+            "roles": roles(),
             "oidc_enabled": st.config.oidc.is_some(),
         }),
     )

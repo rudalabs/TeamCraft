@@ -158,7 +158,7 @@ pub async fn drafts(pool: &PgPool) -> AppResult<Vec<Change>> {
 }
 
 fn ensure_owner(change: &Change, actor: &Actor) -> AppResult<()> {
-    actor.require(Role::Engineer)?;
+    actor.require(Role::Editor)?;
     if change.created_by == actor.id || actor.is_admin() {
         Ok(())
     } else {
@@ -227,7 +227,7 @@ pub struct ChangeInput {
 }
 
 pub async fn create(pool: &PgPool, actor: &Actor, input: ChangeInput) -> AppResult<Change> {
-    actor.require(Role::Engineer)?;
+    actor.require(Role::Editor)?;
     let title = domain::require_text("Title", &input.title, 200)?;
     let description = domain::limit_text("Description", &input.description, 20_000)?;
     let mut tx = pool.begin().await?;
@@ -306,6 +306,8 @@ pub async fn add_item(
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
     let rev = revisions::lock(&mut tx, revision_id).await?;
+    // Only members of the item's project group may put it up for release.
+    revisions::ensure_project_access(&rev, actor)?;
     if revisions::state_of(&rev) != LifecycleState::InWork {
         return Err(AppError::Conflict(format!(
             "Only in-work revisions can be added to a change; {} is {}.",
@@ -406,7 +408,7 @@ pub async fn add_reviewer(
             reviewer.display_name
         )));
     }
-    if Role::parse(&reviewer.role).unwrap_or(Role::Viewer) < Role::Engineer {
+    if Role::parse(&reviewer.role).unwrap_or(Role::Viewer) < Role::Editor {
         return Err(AppError::BadRequest(format!(
             "{} has the viewer role and cannot review changes.",
             reviewer.display_name
@@ -558,7 +560,7 @@ pub async fn review(
     decision: Decision,
     comment: &str,
 ) -> AppResult<Change> {
-    actor.require(Role::Engineer)?;
+    actor.require(Role::Editor)?;
     let comment = domain::limit_text("Comment", comment, 4000)?;
     if decision == Decision::Pending {
         return Err(AppError::BadRequest("Choose approve or reject.".into()));

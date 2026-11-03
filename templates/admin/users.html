@@ -8,8 +8,9 @@
     <h1>Users</h1>
     <p class="subtitle">
       {% if oidc %}Single sign-on users are created at their first login; their role follows the IdP groups
-      <span class="mono">{{ oidc.admin_group }}</span> (admin) and <span class="mono">{{ oidc.engineer_group }}</span> (engineer){% if oidc.viewer_group %}, access requires <span class="mono">{{ oidc.viewer_group }}</span>{% endif %}.
+      <span class="mono">{{ oidc.admin_group }}</span> (admin) and <span class="mono">{{ oidc.editor_group }}</span> (CAD editor){% if oidc.viewer_group %}, access requires <span class="mono">{{ oidc.viewer_group }}</span>{% endif %}.
       {% else %}Local accounts with username and password.{% endif %}
+      What CAD editors may change is limited to their <a href="/projects">project groups</a>.
     </p>
   </div>
 </div>
@@ -24,7 +25,7 @@
         <td class="mono nowrap"><a href="/admin/users/{{ u.id }}">{{ u.username }}</a></td>
         <td>{{ u.display_name }}</td>
         <td class="small">{{ u.email or "" }}</td>
-        <td><span class="badge badge-{{ u.role }}">{{ u.role }}</span></td>
+        <td><span class="badge badge-{{ u.role }}">{{ u.role|label }}</span></td>
         <td class="small">{% if u.auth_source == "oidc" %}SSO{% else %}local{% endif %}</td>
         <td>{% if u.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">deactivated</span>{% endif %}</td>
         <td class="small nowrap">{{ m.time(u.last_login_at) }}</td>
@@ -46,7 +47,7 @@
     </div>
     <div class="form-row">
       <label>Role
-        <select name="role">{% for r in roles %}<option value="{{ r }}" {% if r == "engineer" %}selected{% endif %}>{{ r }}</option>{% endfor %}</select>
+        <select name="role">{% for r in roles %}<option value="{{ r.value }}" {% if r.value == "editor" %}selected{% endif %}>{{ r.label }}</option>{% endfor %}</select>
       </label>
       <label>Initial password <span class="hint">at least 10 characters</span>
         <input type="password" name="password" minlength="10" required autocomplete="new-password">
