@@ -44,6 +44,93 @@ impl Role {
 }
 
 // ---------------------------------------------------------------------------
+// Skins
+// ---------------------------------------------------------------------------
+
+/// A selectable look of the UI. The colours live in `static/style.css`
+/// (`[data-skin="<id>"]`), the logos in `media/`.
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct Skin {
+    pub id: &'static str,
+    pub name: &'static str,
+    /// Path below `/static/media/`.
+    pub logo: &'static str,
+    pub description: &'static str,
+}
+
+pub const DEFAULT_SKIN: &str = "warr";
+
+pub const SKINS: [Skin; 9] = [
+    Skin {
+        id: "warr",
+        name: "WARR",
+        logo: "logos/Logo_WARR_OnlyIcon.svg",
+        description: "House style, night",
+    },
+    Skin {
+        id: "warr-day",
+        name: "WARR Day",
+        logo: "logos/Logo_WARR_OnlyIcon.svg",
+        description: "House style, light",
+    },
+    Skin {
+        id: "arch",
+        name: "Arch",
+        logo: "icons/Arch_logo.svg",
+        description: "Blueprint grid",
+    },
+    Skin {
+        id: "cachyos",
+        name: "CachyOS",
+        logo: "icons/Cachy_logo.svg",
+        description: "Teal dot matrix",
+    },
+    Skin {
+        id: "endeavouros",
+        name: "EndeavourOS",
+        logo: "icons/Endeavor_logo.svg",
+        description: "Purple sunset",
+    },
+    Skin {
+        id: "kde",
+        name: "KDE",
+        logo: "icons/KDE_logo.svg",
+        description: "Breeze dark",
+    },
+    Skin {
+        id: "kubuntu",
+        name: "Kubuntu",
+        logo: "icons/Kubuntu_logo.svg",
+        description: "Blue rings",
+    },
+    Skin {
+        id: "opensuse",
+        name: "openSUSE",
+        logo: "icons/OpenSUSE_logo.svg",
+        description: "Chameleon scales",
+    },
+    Skin {
+        id: "ubuntu",
+        name: "Ubuntu",
+        logo: "icons/Ubuntu_logo.svg",
+        description: "Circle of friends",
+    },
+];
+
+/// Returns the skin id if it is known, otherwise the default skin.
+pub fn skin_or_default(id: &str) -> &'static str {
+    SKINS
+        .iter()
+        .find(|s| s.id == id.trim())
+        .map(|s| s.id)
+        .unwrap_or(DEFAULT_SKIN)
+}
+
+pub fn is_skin(id: &str) -> bool {
+    SKINS.iter().any(|s| s.id == id)
+}
+
+// ---------------------------------------------------------------------------
 // Items
 // ---------------------------------------------------------------------------
 
@@ -152,7 +239,7 @@ impl LifecycleState {
 
     pub fn label(self) -> &'static str {
         match self {
-            LifecycleState::InWork => "In Work",
+            LifecycleState::InWork => "WIP",
             LifecycleState::InReview => "In Review",
             LifecycleState::Released => "Released",
             LifecycleState::Obsolete => "Obsolete",
@@ -385,7 +472,7 @@ pub fn review_outcome(decisions: &[Decision]) -> ReviewOutcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum RevisionRule {
-    /// The newest revision regardless of its state ("latest working").
+    /// The newest revision regardless of its state.
     #[default]
     Latest,
     /// The newest released revision; lines without one are flagged.
@@ -545,6 +632,27 @@ pub fn like_pattern(query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skins() {
+        assert_eq!(skin_or_default("arch"), "arch");
+        assert_eq!(skin_or_default("nonsense"), DEFAULT_SKIN);
+        assert!(is_skin("warr-day"));
+        assert!(!is_skin("WARR"));
+        let mut ids: Vec<_> = SKINS.iter().map(|s| s.id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), SKINS.len(), "skin ids are unique");
+        // every skin has a CSS block
+        let css = include_str!("../static/style.css");
+        for skin in SKINS.iter().filter(|s| s.id != DEFAULT_SKIN) {
+            assert!(
+                css.contains(&format!("[data-skin=\"{}\"] {{", skin.id)),
+                "CSS for {}",
+                skin.id
+            );
+        }
+    }
 
     #[test]
     fn revision_codes_follow_asme_alphabet() {

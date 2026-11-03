@@ -73,11 +73,16 @@ fn filter_filesize(value: i64) -> String {
     util::format_bytes(value)
 }
 
-/// `in_work` → `In Work`.
+/// `in_review` → `In Review`; a few codes have fixed labels (`in_work` → `WIP`).
 fn filter_label(value: Option<String>) -> String {
     let Some(value) = value else {
         return String::new();
     };
+    match value.as_str() {
+        "in_work" => return "WIP".into(),
+        "editor" => return "CAD editor".into(),
+        _ => {}
+    }
     value
         .split('_')
         .filter(|w| !w.is_empty())
@@ -102,7 +107,7 @@ mod tests {
     const TS: &str = "2026-11-03T14:05:59.123456Z";
 
     fn me() -> Value {
-        json!({ "id": ME, "username": "max", "display_name": "Max Muster", "role": "admin", "is_admin": true, "can_edit": true })
+        json!({ "id": ME, "username": "max", "display_name": "Max Muster", "role": "admin", "skin": "arch", "is_admin": true, "can_edit": true })
     }
 
     fn revision(state: &str, checked_out: bool) -> Value {
@@ -164,6 +169,7 @@ mod tests {
             json!({ "kind": "success", "message": "Saved <ok>" }),
         );
         map.insert("local_login".into(), json!(true));
+        map.insert("skin".into(), json!("arch"));
         data
     }
 
@@ -362,9 +368,19 @@ mod tests {
             with_common(json!({
                 "user": user(), "tokens": [], "new_token": { "name": "ci", "value": "tc_pat_secret" },
                 "api_base": "http://localhost:8080/api/v1",
+                "skins": crate::domain::SKINS,
             })),
         );
         assert!(html.contains("tc_pat_secret"));
+        assert!(html.contains("<html lang=\"en\" data-skin=\"arch\">"));
+        assert!(
+            html.contains("data-skin=\"ubuntu\""),
+            "skin picker lists every skin"
+        );
+        assert!(
+            html.contains("skin-card selected"),
+            "current skin is marked"
+        );
     }
 
     fn units() -> Value {
@@ -381,7 +397,8 @@ mod tests {
         assert_eq!(filter_num(Some(1.23456), None), "1.235");
         assert_eq!(filter_num(Some(2.0), Some(2)), "2");
         assert_eq!(filter_num(None, None), "—");
-        assert_eq!(filter_label(Some("in_work".into())), "In Work");
+        assert_eq!(filter_label(Some("in_work".into())), "WIP");
+        assert_eq!(filter_label(Some("in_review".into())), "In Review");
         assert_eq!(filter_label(Some("released".into())), "Released");
     }
 }

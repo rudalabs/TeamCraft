@@ -1,7 +1,8 @@
-//! The signed-in user's own account: password and API tokens.
+//! The signed-in user's own account: skin, password and API tokens.
 
 use axum::{
     extract::{Path, State},
+    http::header,
     response::Response,
     Form,
 };
@@ -9,8 +10,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::{finish, render, Flash, WebCtx};
+use super::{finish, redirect_flash, render, skin_cookie, Flash, WebCtx};
 use crate::{
+    domain,
     error::{AppError, AppResult},
     services::users,
     AppState,
@@ -32,8 +34,46 @@ async fn render_account(
             "tokens": tokens,
             "new_token": new_token,
             "api_base": format!("{}/api/v1", st.config.public_url),
+            "skins": domain::SKINS,
         }),
     )
+}
+
+#[derive(Deserialize)]
+pub struct SkinForm {
+    #[serde(default)]
+    skin: String,
+}
+
+pub async fn set_skin(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Form(form): Form<SkinForm>,
+) -> AppResult<Response> {
+    match users::set_skin(&st.db, &ctx.me, &form.skin).await {
+        Ok(()) => {
+            let name = domain::SKINS
+                .iter()
+                .find(|s| s.id == form.skin)
+                .map(|s| s.name)
+                .unwrap_or("default");
+            let mut response = redirect_flash(
+                &st,
+                "/account#skins",
+                Flash::success(format!("Skin changed to {name}")),
+            );
+            if let Some(cookie) = skin_cookie(&st, &form.skin) {
+                response.headers_mut().append(header::SET_COOKIE, cookie);
+            }
+            Ok(response)
+        }
+        Err(e) if super::is_user_error(&e) => Ok(redirect_flash(
+            &st,
+            "/account#skins",
+            Flash::error(e.public_message()),
+        )),
+        Err(e) => Err(e),
+    }
 }
 
 pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {

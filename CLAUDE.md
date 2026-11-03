@@ -1,7 +1,7 @@
 # CLAUDE.md – working on TeamCraft
 
 TeamCraft is an open-source PLM system (items, revisions, files, BOMs, change
-orders – Teamcenter-like) written in Rust for WARR. It is a single binary (axum web server + CLI) on top of PostgreSQL,
+orders) written in Rust for WARR. It is a single binary (axum web server + CLI) on top of PostgreSQL,
 with a server-rendered HTML UI
 and a JSON REST API. License: MPL-2.0 (`LICENSE`).
 
@@ -40,8 +40,8 @@ say plainly which checks ran and which did not.
 * No destructive Docker commands (`docker compose down -v`, `docker volume rm`, prune).
 * Do not edit `.claude/settings.local.json`; ask the user for missing permissions.
   The project runs in `dontAsk` mode – never work around a denied command.
-* Git: the user creates the repository on gitlab.lrz.de; only the guarded git
-  commands are available (a hook blocks pushes from `main`).
+* Git: the repository is on GitHub (WARR IT deploys from gitlab.lrz.de later);
+  only the guarded git commands are available (a hook blocks pushes from `main`).
 * Follow the WARR IT conventions (templates in `local/template/`): the `.kaniko`
   job in `.gitlab-ci.yml` stays as provided, the README keeps the
   features / techstack / user management / Deployment structure, user management
@@ -50,6 +50,19 @@ say plainly which checks ran and which did not.
 ## Git rules
 
 Always add, commit, and push after each succesful and test-passing functionality implementation.
+
+**No secrets in the history** – the repository is shared on GitHub, and a
+committed secret stays in the history even after it is deleted. Before every
+commit:
+
+* `git status --short` – nothing under `secrets/`, no `.env`, no dumps, no vault data;
+* `git diff --cached` – no tokens (`tc_pat_…`, `tc_sess_…`), passwords, client
+  secrets, webhook URLs or private keys; only the documented local-dev
+  placeholders (`change-me-please`, `teamcraft-dev-password`) are allowed;
+* never print real secret values in commit messages.
+
+If a secret was committed anyway: stop, tell the user, and have it rotated –
+rewriting published history is the user's decision.
 
 ## Architecture
 

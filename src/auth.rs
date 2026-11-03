@@ -40,6 +40,8 @@ pub struct Actor {
     pub username: String,
     pub display_name: String,
     pub role: Role,
+    /// UI skin (see `domain::SKINS`).
+    pub skin: String,
 }
 
 impl Actor {
@@ -281,6 +283,7 @@ mod tests {
             username: "eng".into(),
             display_name: "Eng".into(),
             role: Role::Engineer,
+            skin: "warr".into(),
         };
         assert!(actor.require(Role::Viewer).is_ok());
         assert!(actor.require(Role::Engineer).is_ok());

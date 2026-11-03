@@ -12,7 +12,7 @@
     <form class="inline" method="get" action="/revisions/{{ rev.id }}/bom">
       <label class="check">Revision rule
         <select name="rule">
-          <option value="latest" {% if rule == "latest" %}selected{% endif %}>Latest (working)</option>
+          <option value="latest" {% if rule == "latest" %}selected{% endif %}>Latest (any state)</option>
           <option value="released" {% if rule == "released" %}selected{% endif %}>Latest released</option>
         </select>
       </label>

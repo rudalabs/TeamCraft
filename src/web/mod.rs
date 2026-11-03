@@ -32,13 +32,43 @@ use uuid::Uuid;
 
 use crate::{
     auth::{self, Actor, WebUser},
+    domain,
     error::{AppError, AppResult, ErrorInfo},
     util, AppState,
 };
 
 const STYLE_CSS: &str = include_str!("../../static/style.css");
 const APP_JS: &str = include_str!("../../static/app.js");
-const FAVICON_SVG: &str = include_str!("../../static/favicon.svg");
+
+macro_rules! embed_media {
+    ($($name:literal),* $(,)?) => {
+        &[$(($name, include_str!(concat!("../../media/", $name)))),*]
+    };
+}
+
+/// Logos and status icons from `media/`, served below `/static/media/`.
+const MEDIA: &[(&str, &str)] = embed_media![
+    "logos/TeamCraft_Icon.svg",
+    "logos/TeamCraft_Logo_Blue.svg",
+    "logos/TeamCraft_Logo_White.svg",
+    "logos/Logo_WARR_OnlyIcon.svg",
+    "logos/WARR_Centered_Blue.svg",
+    "logos/WARR_Centered_White.svg",
+    "icons/Arch_logo.svg",
+    "icons/Cachy_logo.svg",
+    "icons/Endeavor_logo.svg",
+    "icons/KDE_logo.svg",
+    "icons/Kubuntu_logo.svg",
+    "icons/OpenSUSE_logo.svg",
+    "icons/Ubuntu_logo.svg",
+    "icons/Green_tick.svg",
+    "icons/Red_cross.svg",
+    "icons/White_plus.svg",
+    "icons/Yellow_circle.svg",
+];
+
+/// Cookie that remembers the skin for pages without a session (login, errors).
+const SKIN_COOKIE: &str = "tc_skin";
 
 /// Items per page in list views.
 pub(crate) const PER_PAGE: i64 = 50;
@@ -129,9 +159,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/account/password", post(account::change_password))
         .route("/account/tokens", post(account::create_token))
         .route("/account/tokens/{id}/revoke", post(account::revoke_token))
+        .route("/account/skin", post(account::set_skin))
         // static assets
         .route("/static/style.css", get(style_css))
         .route("/static/app.js", get(app_js))
+        .route("/static/media/{*path}", get(media))
         .route("/static/favicon.svg", get(favicon))
         .route("/favicon.ico", get(favicon))
         .fallback(not_found)
@@ -207,9 +239,29 @@ fn me_json(me: &Actor) -> Value {
         "username": me.username,
         "display_name": me.display_name,
         "role": me.role,
+        "skin": me.skin,
         "is_admin": me.is_admin(),
         "can_edit": me.can_edit(),
     })
+}
+
+/// The skin remembered in the browser (for pages without a session).
+pub(crate) fn skin_from_cookie(headers: &HeaderMap) -> &'static str {
+    domain::skin_or_default(&auth::cookie_value(headers, SKIN_COOKIE).unwrap_or_default())
+}
+
+/// `Set-Cookie` value remembering a skin for one year.
+pub(crate) fn skin_cookie(st: &AppState, skin: &str) -> Option<HeaderValue> {
+    let secure = if st.config.cookie_secure {
+        "; Secure"
+    } else {
+        ""
+    };
+    HeaderValue::from_str(&format!(
+        "{SKIN_COOKIE}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000{secure}",
+        domain::skin_or_default(skin)
+    ))
+    .ok()
 }
 
 /// Renders a page for a signed-in user.
@@ -222,11 +274,13 @@ pub(crate) fn render(
     let mut data = data;
     if let Value::Object(map) = &mut data {
         map.insert("me".into(), me_json(&ctx.me));
+        map.insert("skin".into(), json!(ctx.me.skin));
     }
     render_public(st, template, data, ctx.flash.clone())
 }
 
 /// Renders a page that does not require a signed-in user (login, errors).
+/// The skin is taken from `data.skin` (default: the house skin).
 pub(crate) fn render_public(
     st: &AppState,
     template: &str,
@@ -238,6 +292,12 @@ pub(crate) fn render_public(
     if let Value::Object(map) = &mut data {
         map.insert("flash".into(), json!(flash));
         map.insert("local_login".into(), json!(st.config.local_login));
+        let skin = map
+            .get("skin")
+            .and_then(Value::as_str)
+            .map(domain::skin_or_default)
+            .unwrap_or(domain::DEFAULT_SKIN);
+        map.insert("skin".into(), json!(skin));
     }
     let html = st.templates.get_template(template)?.render(&data)?;
     let mut response = Html(html).into_response();
@@ -340,6 +400,7 @@ async fn html_errors(State(st): State<AppState>, req: Request, next: Next) -> Re
         .map(|p| p.as_str().to_string())
         .unwrap_or_else(|| "/".into());
     let is_get = req.method() == Method::GET;
+    let skin = skin_from_cookie(req.headers());
     let response = next.run(req).await;
     let Some(info) = response.extensions().get::<ErrorInfo>().cloned() else {
         return response;
@@ -356,6 +417,7 @@ async fn html_errors(State(st): State<AppState>, req: Request, next: Next) -> Re
         "status": info.status.as_u16(),
         "reason": info.status.canonical_reason().unwrap_or("Error"),
         "message": info.message,
+        "skin": skin,
     });
     match render_public(&st, "error.html", data, None) {
         Ok(mut page) => {
@@ -443,14 +505,32 @@ async fn app_js() -> impl IntoResponse {
     )
 }
 
-async fn favicon() -> impl IntoResponse {
+fn svg_response(svg: &'static str) -> Response {
     (
         [
             (header::CONTENT_TYPE, "image/svg+xml"),
             (header::CACHE_CONTROL, "public, max-age=604800"),
         ],
-        FAVICON_SVG,
+        svg,
     )
+        .into_response()
+}
+
+async fn media(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
+    match MEDIA.iter().find(|(name, _)| *name == path) {
+        Some((_, svg)) => svg_response(svg),
+        None => not_found().await.into_response(),
+    }
+}
+
+/// The TeamCraft icon is the favicon.
+async fn favicon() -> Response {
+    let icon = MEDIA
+        .iter()
+        .find(|(name, _)| *name == "logos/TeamCraft_Icon.svg")
+        .map(|(_, svg)| *svg)
+        .unwrap_or_default();
+    svg_response(icon)
 }
 
 async fn not_found() -> AppError {

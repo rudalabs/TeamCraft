@@ -16,12 +16,16 @@ use crate::{
     services::audit,
 };
 
+/// Columns (of `users u`) needed to build an [`Actor`].
+const ACTOR_COLUMNS: &str = "u.id, u.username, u.display_name, u.role, u.skin";
+
 #[derive(sqlx::FromRow)]
 struct ActorRow {
     id: Uuid,
     username: String,
     display_name: String,
     role: String,
+    skin: String,
 }
 
 impl From<ActorRow> for Actor {
@@ -31,6 +35,7 @@ impl From<ActorRow> for Actor {
             username: row.username,
             display_name: row.display_name,
             role: Role::parse(&row.role).unwrap_or(Role::Viewer),
+            skin: domain::skin_or_default(&row.skin).to_string(),
         }
     }
 }
@@ -41,6 +46,7 @@ pub fn actor_of(user: &User) -> Actor {
         username: user.username.clone(),
         display_name: user.display_name.clone(),
         role: Role::parse(&user.role).unwrap_or(Role::Viewer),
+        skin: domain::skin_or_default(&user.skin).to_string(),
     }
 }
 
@@ -49,11 +55,11 @@ pub fn actor_of(user: &User) -> Actor {
 // ---------------------------------------------------------------------------
 
 pub async fn actor_for_session(pool: &PgPool, token: &str) -> AppResult<Option<Actor>> {
-    let row = sqlx::query_as::<_, ActorRow>(
-        "SELECT u.id, u.username, u.display_name, u.role
+    let row = sqlx::query_as::<_, ActorRow>(&format!(
+        "SELECT {ACTOR_COLUMNS}
          FROM sessions s JOIN users u ON u.id = s.user_id
-         WHERE s.token_hash = $1 AND s.expires_at > now() AND u.active",
-    )
+         WHERE s.token_hash = $1 AND s.expires_at > now() AND u.active"
+    ))
     .bind(auth::hash_token(token))
     .fetch_optional(pool)
     .await?;
@@ -61,37 +67,38 @@ pub async fn actor_for_session(pool: &PgPool, token: &str) -> AppResult<Option<A
 }
 
 pub async fn actor_for_api_token(pool: &PgPool, token: &str) -> AppResult<Option<Actor>> {
-    #[derive(sqlx::FromRow)]
-    struct Row {
-        token_id: Uuid,
-        id: Uuid,
-        username: String,
-        display_name: String,
-        role: String,
-    }
-    let row = sqlx::query_as::<_, Row>(
-        "SELECT t.id AS token_id, u.id, u.username, u.display_name, u.role
+    let token_hash = auth::hash_token(token);
+    let row = sqlx::query_as::<_, ActorRow>(&format!(
+        "SELECT {ACTOR_COLUMNS}
          FROM api_tokens t JOIN users u ON u.id = t.user_id
-         WHERE t.token_hash = $1 AND (t.expires_at IS NULL OR t.expires_at > now()) AND u.active",
-    )
-    .bind(auth::hash_token(token))
+         WHERE t.token_hash = $1 AND (t.expires_at IS NULL OR t.expires_at > now()) AND u.active"
+    ))
+    .bind(&token_hash)
     .fetch_optional(pool)
     .await?;
     let Some(row) = row else { return Ok(None) };
     // Only touch last_used_at once per minute to keep write load low.
     sqlx::query(
         "UPDATE api_tokens SET last_used_at = now()
-         WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')",
+         WHERE token_hash = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')",
     )
-    .bind(row.token_id)
+    .bind(&token_hash)
     .execute(pool)
     .await?;
-    Ok(Some(Actor {
-        id: row.id,
-        username: row.username,
-        display_name: row.display_name,
-        role: Role::parse(&row.role).unwrap_or(Role::Viewer),
-    }))
+    Ok(Some(Actor::from(row)))
+}
+
+/// Stores the UI skin of the signed-in user.
+pub async fn set_skin(pool: &PgPool, actor: &Actor, skin: &str) -> AppResult<()> {
+    if !domain::is_skin(skin) {
+        return Err(AppError::BadRequest(format!("Unknown skin '{skin}'.")));
+    }
+    sqlx::query("UPDATE users SET skin = $2 WHERE id = $1")
+        .bind(actor.id)
+        .bind(skin)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// Creates a session and returns the plaintext token for the cookie.

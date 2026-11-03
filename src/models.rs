@@ -16,10 +16,11 @@ pub struct User {
     pub active: bool,
     pub created_at: DateTime<Utc>,
     pub last_login_at: Option<DateTime<Utc>>,
+    pub skin: String,
 }
 
 pub const USER_COLUMNS: &str =
-    "id, username, display_name, email, auth_source, role, active, created_at, last_login_at";
+    "id, username, display_name, email, auth_source, role, active, created_at, last_login_at, skin";
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct ApiToken {

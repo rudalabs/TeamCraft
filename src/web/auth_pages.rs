@@ -9,10 +9,13 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
-use super::{read_flash, redirect, redirect_flash, render_public, Flash};
+use super::{
+    read_flash, redirect, redirect_flash, render_public, skin_cookie, skin_from_cookie, Flash,
+};
 use crate::{
     auth,
     error::{AppError, AppResult},
+    models::User,
     services::users,
     util, AppState,
 };
@@ -22,22 +25,25 @@ pub struct LoginQuery {
     next: Option<String>,
 }
 
-fn render_login(
-    st: &AppState,
-    next: Option<&str>,
+struct LoginPage<'a> {
+    next: Option<&'a str>,
     error: Option<String>,
     flash: Option<Flash>,
-    username: &str,
-) -> AppResult<Response> {
-    let next = util::safe_redirect_target(next);
+    username: &'a str,
+    skin: &'a str,
+}
+
+fn render_login(st: &AppState, page: LoginPage<'_>) -> AppResult<Response> {
+    let next = util::safe_redirect_target(page.next);
     let data = json!({
         "next_encoded": util::pct_encode(&next),
         "next": next,
-        "error": error,
+        "error": page.error,
         "oidc_name": st.oidc.as_ref().map(|o| o.display_name().to_string()),
-        "username": username,
+        "username": page.username,
+        "skin": page.skin,
     });
-    render_public(st, "login.html", data, flash)
+    render_public(st, "login.html", data, page.flash)
 }
 
 pub async fn login_page(
@@ -52,7 +58,16 @@ pub async fn login_page(
             return Ok(redirect(&util::safe_redirect_target(q.next.as_deref())));
         }
     }
-    render_login(&st, q.next.as_deref(), None, read_flash(&headers), "")
+    render_login(
+        &st,
+        LoginPage {
+            next: q.next.as_deref(),
+            error: None,
+            flash: read_flash(&headers),
+            username: "",
+            skin: skin_from_cookie(&headers),
+        },
+    )
 }
 
 #[derive(Deserialize)]
@@ -62,9 +77,14 @@ pub struct LoginForm {
     next: Option<String>,
 }
 
-fn signed_in_redirect(st: &AppState, token: &str, next: Option<&str>) -> Response {
+/// Redirect after a successful login: sets the session cookie and remembers
+/// the user's skin for the login page.
+fn signed_in_redirect(st: &AppState, user: &User, token: &str, next: Option<&str>) -> Response {
     let mut response = redirect(&util::safe_redirect_target(next));
     if let Ok(v) = HeaderValue::from_str(&auth::session_cookie(&st.config, token)) {
+        response.headers_mut().append(header::SET_COOKIE, v);
+    }
+    if let Some(v) = skin_cookie(st, &user.skin) {
         response.headers_mut().append(header::SET_COOKIE, v);
     }
     response
@@ -72,6 +92,7 @@ fn signed_in_redirect(st: &AppState, token: &str, next: Option<&str>) -> Respons
 
 pub async fn login_submit(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> AppResult<Response> {
     if !st.config.local_login {
@@ -83,16 +104,19 @@ pub async fn login_submit(
         Some(user) => {
             let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
             tracing::info!(username = %user.username, "local login");
-            Ok(signed_in_redirect(&st, &token, form.next.as_deref()))
+            Ok(signed_in_redirect(&st, &user, &token, form.next.as_deref()))
         }
         None => {
             tracing::warn!(username = %form.username.trim(), "failed local login");
             let mut page = render_login(
                 &st,
-                form.next.as_deref(),
-                Some("Invalid username or password.".into()),
-                None,
-                form.username.trim(),
+                LoginPage {
+                    next: form.next.as_deref(),
+                    error: Some("Invalid username or password.".into()),
+                    flash: None,
+                    username: form.username.trim(),
+                    skin: skin_from_cookie(&headers),
+                },
             )?;
             *page.status_mut() = StatusCode::UNAUTHORIZED;
             Ok(page)
@@ -137,18 +161,32 @@ pub struct CallbackQuery {
 
 pub async fn oidc_callback(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<CallbackQuery>,
 ) -> AppResult<Response> {
     let oidc = st
         .oidc
         .as_ref()
         .ok_or_else(|| AppError::NotFound("Single sign-on is not configured.".into()))?;
+    let skin = skin_from_cookie(&headers);
+    let error_page = |message: String| {
+        render_login(
+            &st,
+            LoginPage {
+                next: None,
+                error: Some(message),
+                flash: None,
+                username: "",
+                skin,
+            },
+        )
+    };
     if let Some(error) = q.error {
         let message = format!(
             "Single sign-on was not completed: {}",
             q.error_description.unwrap_or(error)
         );
-        let mut page = render_login(&st, None, Some(message), None, "")?;
+        let mut page = error_page(message)?;
         *page.status_mut() = StatusCode::FORBIDDEN;
         return Ok(page);
     }
@@ -162,13 +200,15 @@ pub async fn oidc_callback(
         let user = users::upsert_oidc_user(&st.db, identity).await?;
         let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
         tracing::info!(username = %user.username, role = %user.role, "SSO login");
-        Ok::<_, AppError>((token, return_to))
+        Ok::<_, AppError>((user, token, return_to))
     }
     .await;
     match result {
-        Ok((token, return_to)) => Ok(signed_in_redirect(&st, &token, Some(&return_to))),
+        Ok((user, token, return_to)) => {
+            Ok(signed_in_redirect(&st, &user, &token, Some(&return_to)))
+        }
         Err(e @ (AppError::Forbidden(_) | AppError::BadRequest(_))) => {
-            let mut page = render_login(&st, None, Some(e.public_message()), None, "")?;
+            let mut page = error_page(e.public_message())?;
             *page.status_mut() = e.status();
             Ok(page)
         }

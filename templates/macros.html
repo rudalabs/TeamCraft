@@ -1,7 +1,16 @@
 {#- Shared template helpers. Import inside a block: {% import "macros.html" as m %} -#}
 
 {% macro badge(value) -%}
-<span class="badge badge-{{ value }}">{{ value|label }}</span>
+<span class="badge badge-{{ value }}">
+  {%- if value in ["released", "approved"] %}<img src="/static/media/icons/Green_tick.svg" alt="">
+  {%- elif value in ["in_review", "pending"] %}<img src="/static/media/icons/Yellow_circle.svg" alt="">
+  {%- elif value in ["rejected", "obsolete", "cancelled"] %}<img src="/static/media/icons/Red_cross.svg" alt="">
+  {%- endif %}{{ value|label }}</span>
+{%- endmacro %}
+
+{#- Primary "create" button with the plus icon. -#}
+{% macro new_button(href, text) -%}
+<a class="button primary" href="{{ href }}"><img src="/static/media/icons/White_plus.svg" alt="">{{ text }}</a>
 {%- endmacro %}
 
 {% macro time(value) -%}

@@ -1,18 +1,24 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-skin="{{ skin }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#04090f">
   <title>{% block title %}{% endblock %} · {{ instance_name }}</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/media/logos/TeamCraft_Icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css?v={{ version }}">
   <script src="/static/app.js?v={{ version }}" defer></script>
 </head>
 <body>
+<div class="app-glow" aria-hidden="true"></div>
 {% if me %}
 <header class="topbar">
   <div class="topbar-inner">
-    <a class="brand" href="/"><img src="/static/favicon.svg" alt="">{{ instance_name }}</a>
+    <a class="brand" href="/">
+      <img src="/static/media/logos/TeamCraft_Icon.svg" alt="">
+      <span class="brand-name">{{ instance_name }}</span>
+      <span class="brand-sub">PLM</span>
+    </a>
     <nav class="nav" aria-label="Main">
       <a href="/" class="{% block nav_home %}{% endblock %}">Dashboard</a>
       <a href="/items" class="{% block nav_items %}{% endblock %}">Items</a>
@@ -27,8 +33,8 @@
       <input type="search" name="q" placeholder="Search items…" aria-label="Search items">
     </form>
     <div class="userbox">
-      <a href="/account" title="Account and API tokens">{{ me.display_name }}</a>
-      <span class="badge badge-{{ me.role }}">{{ me.role }}</span>
+      <a href="/account" title="Account, skin and API tokens">{{ me.display_name }}</a>
+      <span class="badge badge-{{ me.role }}">{{ me.role|label }}</span>
       <form method="post" action="/logout"><button class="link" type="submit">Sign out</button></form>
     </div>
   </div>
@@ -38,6 +44,9 @@
   {% if flash %}<div class="flash flash-{{ flash.kind }}" role="status">{{ flash.message }}</div>{% endif %}
   {% block content %}{% endblock %}
 </main>
-<footer>TeamCraft {{ version }} · open-source product lifecycle management</footer>
+<footer>
+  <img class="footer-mark" src="/static/media/logos/Logo_WARR_OnlyIcon.svg" alt="WARR">
+  TeamCraft {{ version }} · WARR e.V. · open-source PLM under the MPL-2.0
+</footer>
 </body>
 </html>

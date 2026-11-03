@@ -40,6 +40,29 @@ async fn anonymous_users_are_sent_to_login() {
     let r = app.get_page("/login", None).await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(r.text().contains("Sign in"));
+    assert!(r.text().contains("data-skin=\"warr\""), "default skin");
+    // the remembered skin also styles the login page
+    let r = app.get_page("/login", Some("tc_skin=opensuse")).await;
+    assert!(r.text().contains("data-skin=\"opensuse\""));
+    let r = app.get_page("/login", Some("tc_skin=<script>")).await;
+    assert!(
+        r.text().contains("data-skin=\"warr\""),
+        "unknown skins fall back"
+    );
+    // embedded media
+    let r = app
+        .get_page("/static/media/logos/TeamCraft_Icon.svg", None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.header("content-type").as_deref(), Some("image/svg+xml"));
+    let r = app
+        .get_page("/static/media/icons/Green_tick.svg", None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    let r = app.get_page("/static/media/../Cargo.toml", None).await;
+    assert_ne!(r.status, StatusCode::OK);
+    let r = app.get_page("/favicon.ico", None).await;
+    assert_eq!(r.status, StatusCode::OK);
     // static assets and security headers
     let r = app.get_page("/static/style.css", None).await;
     assert_eq!(r.status, StatusCode::OK);
@@ -242,6 +265,39 @@ async fn every_page_renders_for_an_admin() {
     let viewer_cookie = app.login("vera").await;
     let r = app.get_page("/admin/users", Some(&viewer_cookie)).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    // Skins: switching stores the choice and remembers it in a cookie
+    let r = app
+        .post_form(
+            "/account/skin",
+            Some(&cookie),
+            origin,
+            &[("skin", "cachyos")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert!(r
+        .headers
+        .get_all("set-cookie")
+        .iter()
+        .any(|v| v.to_str().unwrap_or("").starts_with("tc_skin=cachyos")));
+    let r = app.get_page("/", Some(&cookie)).await;
+    assert!(r.text().contains("data-skin=\"cachyos\""));
+    let r = app
+        .post_form(
+            "/account/skin",
+            Some(&cookie),
+            origin,
+            &[("skin", "windows")],
+        )
+        .await;
+    assert_eq!(
+        r.status,
+        StatusCode::SEE_OTHER,
+        "unknown skins redirect back with an error"
+    );
+    let r = app.get_page("/", Some(&cookie)).await;
+    assert!(r.text().contains("data-skin=\"cachyos\""), "unchanged");
 
     // Logout ends the session
     let r = app.post_form("/logout", Some(&cookie), origin, &[]).await;

@@ -6,11 +6,32 @@
   <div>
     <h1>{{ user.display_name }}</h1>
     <p class="subtitle">
-      <span class="mono">{{ user.username }}</span> · <span class="badge badge-{{ user.role }}">{{ user.role }}</span>
+      <span class="mono">{{ user.username }}</span> · <span class="badge badge-{{ user.role }}">{{ user.role|label }}</span>
       · {% if user.auth_source == "oidc" %}signed in via single sign-on{% else %}local account{% endif %}
     </p>
   </div>
 </div>
+
+<section class="card" id="skins">
+  <div class="card-head">
+    <h2>Skin</h2>
+    <span class="hint">Colours, glow and texture of the interface – only for you.</span>
+  </div>
+  <div class="skins">
+    {% for s in skins %}
+    <form method="post" action="/account/skin">
+      <input type="hidden" name="skin" value="{{ s.id }}">
+      <button class="skin-card{% if s.id == me.skin %} selected{% endif %}" type="submit" data-skin="{{ s.id }}"
+              {% if s.id == me.skin %}aria-pressed="true"{% endif %}>
+        <img src="/static/media/{{ s.logo }}" alt="">
+        <strong>{{ s.name }}</strong>
+        <span class="small muted">{{ s.description }}</span>
+        <span class="skin-swatch" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+      </button>
+    </form>
+    {% endfor %}
+  </div>
+</section>
 
 {% if new_token %}
 <section class="card">

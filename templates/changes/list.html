@@ -8,7 +8,7 @@
     <h1>Changes</h1>
     <p class="subtitle">Change orders release revisions after review (four-eyes principle).</p>
   </div>
-  {% if me.can_edit %}<div class="actions"><a class="button primary" href="/changes/new">New change</a></div>{% endif %}
+  {% if me.can_edit %}<div class="actions">{{ m.new_button("/changes/new", "New change") }}</div>{% endif %}
 </div>
 
 <div class="card">

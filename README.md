@@ -1,8 +1,15 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="media/logos/TeamCraft_Logo_White.svg">
+    <img src="media/logos/TeamCraft_Logo_Blue.svg" alt="TeamCraft" width="440">
+  </picture>
+</p>
+
 # TeamCraft
 
 Open-source product lifecycle management (PLM) for engineering teams – a
-lightweight alternative to commercial PDM/PLM suites such as Siemens
-Teamcenter, built for the needs of WARR.
+lightweight, self-hosted alternative to commercial PDM/PLM suites, built for
+the needs of WARR.
 
 **features:** engineers manage parts, assemblies, documents and software as
 revisioned items with attached files (CAD, drawings, PDFs, …), build
@@ -22,18 +29,19 @@ development and break-glass access.
 
 ## Feature overview
 
-| TeamCraft            | Teamcenter equivalent        | What it does                                                                                                                                                        |
-|----------------------|------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Item                 | Item                         | Part, assembly, document or software with a unique number (`PRT-000042`, `ASM-…`, `DOC-…`, `SW-…`, or your own scheme)                                              |
-| Revision             | Item Revision                | `A, B, …, Y, AA, …` (letters I, O, Q, S, X, Z skipped per ASME Y14.35); lifecycle **In Work → In Review → Released → Obsolete**                                     |
-| Check-out / check-in | Checkout                     | Exclusive edit lock on an in-work revision                                                                                                                          |
-| File                 | Dataset / FMS volume         | Content-addressed vault (SHA-256, de-duplicated, integrity check), any file type, up to 512 MiB per file (configurable)                                             |
-| BOM                  | BOM view / Structure Manager | Multi-level structure, find numbers, quantities, revision rules *latest working* / *latest released*, mass & cost roll-up, where-used, CSV export, cycle prevention |
-| Change               | Change Notice + workflow     | Collect in-work revisions, assign reviewers, submit, approve/reject; approval releases all revisions atomically                                                     |
-| Project              | Project                      | Group items, e.g. per rocket or test campaign                                                                                                                       |
-| Roles                | Access Manager (simplified)  | viewer (read), engineer (create/modify/review), admin (users, projects, overrides)                                                                                  |
-| Audit log            | Audit Manager                | Every modification with user, time and details                                                                                                                      |
-| REST API             | SOA services                 | JSON API with personal access tokens (`/api/v1`)                                                                                                                    |
+| Feature              | What it does                                                                                                                                         |
+|----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Items                | Part, assembly, document or software with a unique number (`PRT-000042`, `ASM-…`, `DOC-…`, `SW-…`, or your own scheme)                               |
+| Revisions            | `A, B, …, Y, AA, …` (letters I, O, Q, S, X, Z skipped per ASME Y14.35); lifecycle **WIP → In Review → Released → Obsolete**                          |
+| Check-out / check-in | Exclusive edit lock on a WIP revision                                                                                                                |
+| Files                | Content-addressed vault (SHA-256, de-duplicated, integrity check), any file type, up to 512 MiB per file (configurable)                              |
+| BOM                  | Multi-level structure, find numbers, quantities, revision rules *latest* / *latest released*, mass & cost roll-up, where-used, CSV export, no cycles |
+| Changes              | Collect WIP revisions, assign reviewers, submit, approve/reject; approval releases all revisions atomically                                          |
+| Projects             | Group items per WARR project (NIXUS, CRATER, MOVE, …)                                                                                                |
+| Roles                | viewer (read), engineer (create/modify/review), admin (users, projects, overrides)                                                                   |
+| Audit log            | Every modification with user, time and details                                                                                                       |
+| REST API             | JSON API with personal access tokens (`/api/v1`)                                                                                                     |
+| Skins                | WARR house style (night and day) plus distro skins (Arch, CachyOS, EndeavourOS, KDE, Kubuntu, openSUSE, Ubuntu), chosen per user                     |
 
 Short links for labels / QR codes: `https://<host>/i/<item number>`.
 

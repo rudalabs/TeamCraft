@@ -9,7 +9,7 @@
     <p class="subtitle">Parts, assemblies, documents and software – each with its latest revision.</p>
   </div>
   {% if me.can_edit %}
-  <div class="actions"><a class="button primary" href="/items/new">New item</a></div>
+  <div class="actions">{{ m.new_button("/items/new", "New item") }}</div>
   {% endif %}
 </div>
 

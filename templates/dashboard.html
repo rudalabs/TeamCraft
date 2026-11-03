@@ -10,8 +10,8 @@
   </div>
   {% if me.can_edit %}
   <div class="actions">
-    <a class="button primary" href="/items/new">New item</a>
-    <a class="button" href="/changes/new">New change</a>
+    {{ m.new_button("/items/new", "New item") }}
+    {{ m.new_button("/changes/new", "New change") }}
   </div>
   {% endif %}
 </div>

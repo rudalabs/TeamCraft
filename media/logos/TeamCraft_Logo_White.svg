@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TeamCraft wordmark for dark backgrounds (white text, ice-blue subline). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="128" viewBox="0 0 560 128">
+    <title>TeamCraft</title>
+    <path fill="#9bdafa" fill-rule="evenodd"
+          d="M 64,9 L 109,35 L 64,61 L 19,35 Z
+             M 64,24.6 L 82,35 L 64,45.4 L 46,35 Z"/>
+    <path fill="#003c6e" d="M 64,24.6 L 82,35 L 64,45.4 L 46,35 Z"/>
+    <path fill="#0761b0" d="M 16.4,39.5 L 61.4,65.5 L 61.4,117.5 L 16.4,91.5 Z"/>
+    <path fill="#6ab2e1" d="M 66.6,65.5 L 111.6,39.5 L 111.6,91.5 L 66.6,117.5 Z"/>
+    <text x="140" y="80" font-family="Montserrat, 'Segoe UI', Arial, sans-serif"
+          font-size="62" font-weight="800" letter-spacing="1" fill="#ffffff">TeamCraft</text>
+    <text x="143" y="110" font-family="Montserrat, 'Segoe UI', Arial, sans-serif"
+          font-size="15" font-weight="600" letter-spacing="4.5" fill="#9bdafa">PRODUCT LIFECYCLE · WARR</text>
+</svg>

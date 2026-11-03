@@ -1,4 +1,4 @@
-//! File attachments ("datasets") of revisions.
+//! File attachments of revisions.
 
 use serde_json::json;
 use sqlx::PgPool;
