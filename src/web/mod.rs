@@ -41,6 +41,13 @@ use crate::{
 
 const STYLE_CSS: &str = include_str!("../../static/style.css");
 const APP_JS: &str = include_str!("../../static/app.js");
+const VIEWER_JS: &str = include_str!("../../static/viewer.js");
+const STEP_WORKER_JS: &str = include_str!("../../static/step-worker.js");
+
+/// CSP of the STEP worker only: OpenCascade needs WebAssembly and – because
+/// it is built with embind – `new Function`. Pages keep `script-src 'self'`.
+const STEP_WORKER_CSP: &str =
+    "default-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; connect-src 'self'";
 
 macro_rules! embed_media {
     ($($name:literal),* $(,)?) => {
@@ -126,6 +133,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/files/{id}/download", get(revisions::download))
         .route("/files/{id}/delete", post(revisions::delete_file))
         .route("/files/{id}/restore", post(revisions::restore_version))
+        .route("/files/{id}/preview", get(revisions::preview))
         .route(
             "/file-versions/{id}/download",
             get(revisions::download_version),
@@ -185,6 +193,9 @@ pub fn router(state: &AppState) -> Router<AppState> {
         // static assets
         .route("/static/style.css", get(style_css))
         .route("/static/app.js", get(app_js))
+        .route("/static/viewer.js", get(viewer_js))
+        .route("/static/step-worker.js", get(step_worker_js))
+        .route("/static/vendor/{*path}", get(vendor_asset))
         .route("/static/media/{*path}", get(media))
         .route("/static/favicon.svg", get(favicon))
         .route("/favicon.ico", get(favicon))
@@ -517,14 +528,70 @@ async fn style_css() -> impl IntoResponse {
     )
 }
 
-async fn app_js() -> impl IntoResponse {
+fn js_response(js: &'static str) -> Response {
     (
         [
             (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
-        APP_JS,
+        js,
     )
+        .into_response()
+}
+
+async fn app_js() -> Response {
+    js_response(APP_JS)
+}
+
+async fn viewer_js() -> Response {
+    js_response(VIEWER_JS)
+}
+
+async fn step_worker_js() -> Response {
+    let mut response = js_response(STEP_WORKER_JS);
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(STEP_WORKER_CSP),
+    );
+    response
+}
+
+/// Serves files of `TEAMCRAFT_VENDOR_DIR` (only plain relative paths).
+async fn vendor_asset(
+    State(st): State<AppState>,
+    axum::extract::Path(path): axum::extract::Path<String>,
+) -> Response {
+    let safe = !path.is_empty()
+        && path
+            .split('/')
+            .all(|seg| !seg.is_empty() && !seg.starts_with('.'))
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '/'));
+    if !safe {
+        return not_found().await.into_response();
+    }
+    let content_type = match path.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("wasm") => "application/wasm",
+        Some("json") => "application/json",
+        Some("css") => "text/css; charset=utf-8",
+        _ => "application/octet-stream",
+    };
+    match tokio::fs::read(st.config.vendor_dir.join(&path)).await {
+        Ok(bytes) => (
+            [
+                (header::CONTENT_TYPE, content_type),
+                (header::CACHE_CONTROL, "public, max-age=604800"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => AppError::NotFound(format!(
+            "{path} is not installed (TEAMCRAFT_VENDOR_DIR, see DEPLOYMENT.md)."
+        ))
+        .into_response(),
+    }
 }
 
 fn svg_response(svg: &'static str) -> Response {

@@ -27,6 +27,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "changes/show.html",
     "projects/list.html",
     "projects/show.html",
+    "files/preview.html",
     "admin/users.html",
     "admin/user_edit.html",
     "admin/audit.html",

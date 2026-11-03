@@ -46,6 +46,9 @@ pub struct Config {
     pub db_max_connections: u32,
     /// Root directory of the file vault.
     pub vault_dir: PathBuf,
+    /// Third-party browser assets not shipped in the repository (the
+    /// OpenCascade WASM engine for STEP/IGES previews), served below `/static/vendor/`.
+    pub vendor_dir: PathBuf,
     pub max_upload_bytes: u64,
     pub session_ttl: Duration,
     /// Adds the `Secure` attribute to cookies (required when served via HTTPS).
@@ -141,6 +144,10 @@ impl Config {
             env.get("TEAMCRAFT_VAULT_DIR")?
                 .unwrap_or_else(|| "./data/vault".to_string()),
         );
+        let vendor_dir = PathBuf::from(
+            env.get("TEAMCRAFT_VENDOR_DIR")?
+                .unwrap_or_else(|| "./data/vendor".to_string()),
+        );
 
         let max_upload_mb = env.parse_or("TEAMCRAFT_MAX_UPLOAD_MB", 512u64)?;
         if max_upload_mb == 0 {
@@ -202,6 +209,7 @@ impl Config {
             database_display,
             db_max_connections,
             vault_dir,
+            vendor_dir,
             max_upload_bytes: max_upload_mb * 1024 * 1024,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
             cookie_secure,

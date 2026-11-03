@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ file.filename }} · 3D preview{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <p class="kicker">3D preview · {{ format|upper }}</p>
+    <h1>{{ file.filename }} <span class="badge">v{{ file.version }}</span></h1>
+    <p class="subtitle">
+      <a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }} · {{ m.badge(rev.state) }}
+      · {{ file.size_bytes|filesize }} · uploaded {{ m.time(file.uploaded_at) }} by {{ file.uploaded_by_name }}
+    </p>
+  </div>
+  <div class="actions">
+    <a class="button" href="/revisions/{{ rev.id }}#files">← Revision</a>
+    <a class="button primary" href="/files/{{ file.id }}/download">Download</a>
+  </div>
+</div>
+
+<section class="card viewer-card">
+  <canvas id="viewer-canvas" class="viewer-canvas" data-src="/files/{{ file.id }}/download" data-format="{{ format }}"
+          aria-label="3D view of {{ file.filename }}"></canvas>
+  <p id="viewer-status" class="small muted" role="status">Loading …</p>
+  {% if format != "stl" %}
+  <p class="hint">STEP and IGES files are tessellated in your browser with OpenCascade (WebAssembly); large assemblies can take a moment.</p>
+  {% endif %}
+</section>
+<script src="/static/viewer.js?v={{ version }}" defer></script>
+{% endblock %}

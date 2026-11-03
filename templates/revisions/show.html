@@ -159,7 +159,10 @@
     <tbody>
     {% for f in files %}
       <tr>
-        <td><a href="/files/{{ f.id }}/download">{{ f.filename }}</a> <span class="muted small">{{ f.content_type }}</span></td>
+        <td>
+          <a href="/files/{{ f.id }}/download">{{ f.filename }}</a> <span class="muted small">{{ f.content_type }}</span>
+          {% if f.preview %}<a class="button small" href="/files/{{ f.id }}/preview" title="3D preview in the browser">3D</a>{% endif %}
+        </td>
         <td class="nowrap">
           <span class="badge">v{{ f.version }}</span>
           {% if f.versions|length > 1 %}<button class="small" type="button" data-toggle="versions-{{ f.id }}">History</button>{% endif %}

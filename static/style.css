@@ -653,6 +653,20 @@ html[data-skin="warr-day"] .login-logo-dark { display: block; }
 
 .pagination { display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end; margin-top: 0.9rem; }
 
+/* 3D preview */
+.viewer-canvas {
+  display: block;
+  width: 100%;
+  height: clamp(22rem, 70vh, 64rem);
+  margin-bottom: 0.7rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: grab;
+  touch-action: none;
+}
+.viewer-canvas:active { cursor: grabbing; }
+
 .skins { display: grid; gap: 0.8rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 .skins form { margin: 0; }
 .skin-card {

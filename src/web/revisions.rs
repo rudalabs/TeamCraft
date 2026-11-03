@@ -38,6 +38,7 @@ pub async fn show(
             let versions: Vec<_> = file_versions.iter().filter(|v| v.file_id == f.id).collect();
             let mut value = json!(f);
             value["versions"] = json!(versions);
+            value["preview"] = json!(preview_format(&f.filename).is_some());
             value
         })
         .collect();
@@ -444,6 +445,31 @@ pub async fn download_version(
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     version_response(&st, id).await
+}
+
+/// 3D formats the browser preview understands.
+pub(crate) fn preview_format(filename: &str) -> Option<&'static str> {
+    match filename.rsplit_once('.')?.1.to_ascii_lowercase().as_str() {
+        "stl" => Some("stl"),
+        "step" | "stp" => Some("step"),
+        "iges" | "igs" => Some("iges"),
+        _ => None,
+    }
+}
+
+/// 3D preview page of the current version of a file.
+pub async fn preview(State(st): State<AppState>, ctx: WebCtx, Path(id): Path<Uuid>) -> AppResult<Response> {
+    let file = files::get(&st.db, id).await?;
+    let format = preview_format(&file.filename).ok_or_else(|| {
+        AppError::BadRequest("There is no 3D preview for this file type (STL, STEP and IGES are supported).".into())
+    })?;
+    let rev = revisions::get(&st.db, file.revision_id).await?;
+    render(
+        &st,
+        &ctx,
+        "files/preview.html",
+        json!({ "file": file, "rev": rev, "format": format }),
+    )
 }
 
 #[derive(Deserialize)]
