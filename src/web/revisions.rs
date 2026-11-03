@@ -458,10 +458,16 @@ pub(crate) fn preview_format(filename: &str) -> Option<&'static str> {
 }
 
 /// 3D preview page of the current version of a file.
-pub async fn preview(State(st): State<AppState>, ctx: WebCtx, Path(id): Path<Uuid>) -> AppResult<Response> {
+pub async fn preview(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
     let file = files::get(&st.db, id).await?;
     let format = preview_format(&file.filename).ok_or_else(|| {
-        AppError::BadRequest("There is no 3D preview for this file type (STL, STEP and IGES are supported).".into())
+        AppError::BadRequest(
+            "There is no 3D preview for this file type (STL, STEP and IGES are supported).".into(),
+        )
     })?;
     let rev = revisions::get(&st.db, file.revision_id).await?;
     render(

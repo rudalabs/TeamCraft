@@ -45,6 +45,8 @@ fn kind_of(filename: &str) -> Kind {
 pub fn extract(filename: &str, content: &[u8]) -> String {
     let text = match kind_of(filename) {
         Kind::None => return String::new(),
+        // A text extension with binary content (binary STL): nothing to index.
+        Kind::PlainText if content.contains(&0) => return String::new(),
         // Drop decimal numbers (e.g. the facet coordinates of ASCII STL files);
         // integers like "912" in "DIN 912" stay searchable.
         Kind::PlainText => String::from_utf8_lossy(content)
@@ -55,7 +57,11 @@ pub fn extract(filename: &str, content: &[u8]) -> String {
         // Quoted STEP/IGES strings are names – keep them as they are ("1.4404").
         Kind::QuotedStrings => quoted_strings(&String::from_utf8_lossy(content)),
     };
-    text.chars().take(MAX_TEXT).collect()
+    // PostgreSQL TEXT cannot hold NUL; other control characters are noise.
+    text.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(MAX_TEXT)
+        .collect()
 }
 
 /// `1.5`, `-0.25`, `1.000000e+00` – but not `912` or `M6`.
@@ -158,6 +164,15 @@ mod tests {
             is_decimal_number("1.000000e+00")
                 && !is_decimal_number("M6")
                 && !is_decimal_number("912")
+        );
+        let mut binary_stl = b"solid exported by CAD".to_vec();
+        binary_stl.resize(84, 0);
+        binary_stl.extend_from_slice(&[0x00, 0x00, 0x80, 0x3f, 0x01, 0x00]);
+        assert_eq!(extract("hub.stl", &binary_stl), "", "binary STL");
+        assert_eq!(
+            extract("part.step", b"#1=PRODUCT('Hub\0\x07 v2','',(#2));"),
+            "Hub   v2",
+            "no NUL or control characters reach the database"
         );
         assert_eq!(extract("drawing.pdf", b"%PDF-1.7 binary"), "");
         assert_eq!(extract("no_extension", b"text"), "");

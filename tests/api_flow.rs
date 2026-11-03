@@ -901,6 +901,18 @@ async fn metadata_and_full_text_search() {
         )
         .await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    // A binary STL (NUL bytes) is stored but not indexed
+    let mut binary_stl = b"solid fin can".to_vec();
+    binary_stl.resize(84, 0);
+    let r = app
+        .api_upload(
+            "/api/v1/items/PRT-000003/revisions/A/files",
+            &eng,
+            "fin-can.stl",
+            &binary_stl,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
 
     let search = |q: &str| {
         let uri = format!("/api/v1/items?q={}", teamcraft::util::pct_encode(q));
