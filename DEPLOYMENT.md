@@ -16,7 +16,8 @@ Users sign in through Authentik (OIDC) and get their permissions from Authentik 
                                                        └──▶ Mattermost webhook (optional, error reports)
 ```
 
-Contents: [1 CI/CD](#1-cicd-pipeline) · [2 Authentik](#2-authentik-application) ·
+Contents:
+[1 CI/CD](#1-cicd-pipeline) · [2 Authentik](#2-authentik-application) ·
 [3 Secrets](#3-secrets) · [4 Deployment MR](#4-deployment-merge-request) ·
 [5 Reverse proxy](#5-reverse-proxy) · [6 First start](#6-first-start--verification) ·
 [7 Configuration](#7-configuration-reference) · [8 Operations](#8-operations) ·
@@ -109,9 +110,14 @@ Notes:
 
 ## 3. Secrets
 
-Secrets are passed as **files** (Docker Compose `secrets:`), using the `*_FILE`
-variant that every TeamCraft variable supports. Templates are in
-[`secrets/`](secrets/README.md):
+All secrets live in a `secrets/` directory that is **never committed** (the
+repository's `.gitignore` excludes `secrets/` as a whole; `.dockerignore`
+keeps it out of the image). Each secret is **one file containing only the
+value** – a trailing newline is ignored. TeamCraft reads them through the
+`*_FILE` variant that every variable supports, e.g.
+`TEAMCRAFT_DB_PASSWORD_FILE=/run/secrets/teamcraft_db_password`; Docker Compose
+mounts them via `secrets:`. The only tracked template is
+[`.env.example`](.env.example), which documents every variable.
 
 | Secret file                             | Content                                 | Consumed via                                                  |
 |-----------------------------------------|-----------------------------------------|---------------------------------------------------------------|
@@ -130,8 +136,23 @@ printf '%s' 'https://<mattermost>/hooks/<id>' > ./secrets/teamcraft/mattermost_e
 chmod 0444 ./secrets/teamcraft/*      # read by uid 10001 (TeamCraft) and uid 70 (postgres) inside the containers
 ```
 
-Plain environment variables (`TEAMCRAFT_DB_PASSWORD=…`) work as well if the
-deployment repository prefers an `env_file`; never commit real values.
+The containers read the files as unprivileged users (TeamCraft uid 10001,
+PostgreSQL uid 70), so the files must be readable for them (`0444`); protect
+the **directory** on the host instead (`0700`, owned by root / the deploy user).
+Docker bind-mounts each file, so the directory permissions do not block the containers.
+
+* **Rotation:** replace the file and run `docker compose up -d teamcraft`
+  (secrets are read at start-up). `POSTGRES_PASSWORD_FILE` only applies when the
+  database volume is created – to change the database password later, run
+  `ALTER ROLE teamcraft PASSWORD '…'` in `teamcraft-db` and then update the file.
+* **Alternative:** plain environment variables (`TEAMCRAFT_DB_PASSWORD=…`) or one
+  `env_file: ./secrets/teamcraft/.env` work as well if the deployment repository
+  prefers that – the file then belongs into the same git-ignored secrets directory.
+* **Local development** uses the same layout in the repository's own `secrets/`
+  folder: `secrets/.env` (copy of `.env.example`) and `secrets/db_password`
+  (shared by the dev PostgreSQL container and TeamCraft), see LOCAL_TESTING.md §2.
+
+Never commit real values, and never put them into the compose file itself.
 
 ## 4. Deployment merge request
 

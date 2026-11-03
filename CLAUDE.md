@@ -18,7 +18,7 @@ and a JSON REST API. License: MPL-2.0 (`LICENSE`).
 | Run the server         | `cargo run` (reads `secrets/.env`) → <http://localhost:8080>, local admin `admin` / `change-me-please`                                                  |
 | CLI                    | `./target/debug/teamcraft user list`, `… user create --username x --role engineer`, `… vault check`, `… healthcheck`                                    |
 | Smoke test             | `curl -s http://localhost:8080/healthz`, `curl -s http://localhost:8080/readyz`, `curl -s -H "Authorization: Bearer …" http://localhost:8080/api/v1/me` |
-| Validate compose files | `docker compose config`, `docker compose -f deploy/docker-compose.warr.yml config`                                                                      |
+| Validate compose files | `docker compose config`, `docker compose -f deploy/docker-compose.warr.yml config` – the output contains resolved `secrets/.env` values; never quote it |
 
 Start long-running processes (`cargo run`) in the background and stop them when
 done. After code changes run fmt, clippy and the tests before reporting success;
@@ -46,6 +46,10 @@ say plainly which checks ran and which did not.
   job in `.gitlab-ci.yml` stays as provided, the README keeps the
   features / techstack / user management / Deployment structure, user management
   via OIDC (Authentik) groups, optional `MATTERMOST_ERROR_WEBHOOK`.
+  
+## Git rules
+
+Always add, commit, and push after each succesful and test-passing functionality implementation.
 
 ## Architecture
 
