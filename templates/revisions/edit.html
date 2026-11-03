@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ rev.item_number }}/{{ rev.code }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Edit <span class="mono">{{ rev.item_number }}/{{ rev.code }}</span></h1>
+    <p class="subtitle">Attributes can only be changed while the revision is in work.</p>
+  </div>
+</div>
+<div class="card">
+  {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
+  <form class="stack" method="post" action="/revisions/{{ rev.id }}/edit">
+    <label>Name
+      <input type="text" name="name" value="{{ rev.name }}" maxlength="200" required autofocus>
+    </label>
+    <label>Description
+      <textarea name="description" maxlength="10000">{{ rev.description }}</textarea>
+    </label>
+    <div class="form-row">
+      <label>Material
+        <input type="text" name="material" value="{{ rev.material }}" maxlength="200">
+      </label>
+      <label>Mass per unit [kg] <span class="hint">own mass, children are added in the BOM roll-up</span>
+        <input type="text" name="mass_kg" inputmode="decimal"
+               value="{% if mass_raw is defined %}{{ mass_raw }}{% elif rev.mass_kg is not none %}{{ rev.mass_kg }}{% endif %}">
+      </label>
+      <label>Unit cost [€]
+        <input type="text" name="unit_cost" inputmode="decimal"
+               value="{% if cost_raw is defined %}{{ cost_raw }}{% elif rev.unit_cost is not none %}{{ rev.unit_cost }}{% endif %}">
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" type="submit">Save</button>
+      <a class="button" href="/revisions/{{ rev.id }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

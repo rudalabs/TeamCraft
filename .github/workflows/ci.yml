@@ -1,0 +1,86 @@
+# TeamCraft CI: formatting, lints and the full test suite against
+# PostgreSQL on Linux; build and unit tests on macOS and Windows.
+# Nothing is packaged or published.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**", "platforms/**"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**", "platforms/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  lint:
+    name: fmt and clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+  test:
+    name: tests (Linux, PostgreSQL ${{ matrix.postgres }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["14", "17"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}-alpine
+        env:
+          POSTGRES_USER: teamcraft
+          POSTGRES_DB: teamcraft
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U teamcraft -d teamcraft"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      TEAMCRAFT_TEST_DATABASE_URL: postgres://teamcraft@localhost:5432/teamcraft
+      TEAMCRAFT_REQUIRE_DB_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+      - name: CLI smoke test
+        env:
+          TEAMCRAFT_DATABASE_URL: postgres://teamcraft@localhost:5432/teamcraft
+        run: |
+          cargo run --locked --quiet -- migrate
+          cargo run --locked --quiet -- vault check
+          cargo run --locked --quiet -- preview-mesh --format step --input tests/data/cube.step --output cube.tcm
+          test -s cube.tcm
+
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked --all-targets
+      - name: unit tests (the database tests run on Linux)
+        run: cargo test --locked --lib

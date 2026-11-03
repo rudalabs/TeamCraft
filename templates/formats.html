@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}File formats{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="kicker">Help</p>
+    <h1>File formats</h1>
+    <p class="subtitle">TeamCraft stores files of any type. It recognises the native formats of these CAD programs and the
+      neutral exchange formats: the file list shows what a file is, the item search filters by CAD program
+      (or finds “SolidWorks”, “NX”, “CATIA product”, …), and every save of a Creo file (<span class="mono">bracket.prt.7</span>)
+      becomes a new version of <span class="mono">bracket.prt</span>.</p>
+  </div>
+  <div class="actions"><a class="button" href="/items">Items</a></div>
+</div>
+
+<div class="card">
+  <h2>Good to know</h2>
+  <ul class="plain-list">
+    <li><strong>3D preview in the browser</strong> for {% for p in previews %}<span class="mono">{{ p }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.
+      Native files (SolidWorks, NX, Creo, CATIA, Inventor, …) need the CAD program’s own kernel – attach a STEP export next to them
+      (e.g. <em>Save as → STEP AP242</em>), then the revision shows it in 3D.</li>
+    <li><strong>Same extension, two programs:</strong> <span class="mono">.prt</span> is NX or Creo and <span class="mono">.asm</span> Creo or
+      Solid Edge – TeamCraft tells them apart by the file content (<strong>heuristic</strong>: Creo files start with a <span class="mono">#UGC:</span> header,
+      Solid Edge files are OLE compound documents).</li>
+    <li><strong>Upper and lower case</strong> do not matter (<span class="mono">.CATPart</span>, <span class="mono">.SLDPRT</span>).</li>
+    <li><strong>Searched inside the file:</strong> the names in STEP/IGES files and the text of text based formats (marked below).</li>
+    <li>Siemens <strong>Teamcenter</strong> is a PLM system, not a CAD program: it manages NX files and uses <span class="mono">.jt</span>
+      for lightweight visualisation and PLM XML for structures.</li>
+  </ul>
+</div>
+
+<div class="grid grid-2">
+{% for s in systems %}
+  <section class="card" id="{{ s.id }}">
+    <div class="card-head">
+      <h2>{{ s.name }}</h2>
+      <a class="button small" href="/items?system={{ s.id }}" title="Items whose latest revision has {{ s.short }} files">Items</a>
+    </div>
+    <p class="small muted">{{ s.vendor }}</p>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Format · extensions</th><th class="right">Kind</th></tr></thead>
+      <tbody>
+      {% for f in s.formats %}
+        <tr>
+          <td>{{ f.label }}
+            <div class="mono small muted">{% for e in f.extensions %}.{{ e }}{% if not loop.last %} {% endif %}{% endfor %}{% if f.creo_iterations %} (.1, .2, …){% endif %}</div></td>
+          <td class="right"><div class="format-kind">
+            <span class="fmt fmt-{{ f.kind }}">{{ f.kind_label }}</span>
+            {% if f.preview %}<span class="badge badge-released" title="3D preview in the browser">3D</span>{% endif %}
+            {% if f.searchable_text %}<span class="badge" title="The content is searched">text</span>{% endif %}
+            {% if f.ambiguous %}<span class="badge" title="The extension is shared with another program; the content decides">by content</span>{% endif %}
+          </div></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+{% endfor %}
+</div>
+{% endblock %}

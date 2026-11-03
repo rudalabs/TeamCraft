@@ -1,0 +1,667 @@
+//! Bills of materials exported by CAD programs: CSV/TSV and spreadsheets
+//! (Excel `.xlsx`/`.xlsm`/`.xlsb`/`.xls`, OpenDocument `.ods`).
+//!
+//! Typical sources are the BOM editor of Autodesk Inventor ("Export Bill of
+//! Materials", structured, all levels), SolidWorks BOM tables ("Save as" CSV
+//! or Excel), parts lists of Solid Edge, Fusion, Creo and NX, SAP-style BOM
+//! explosions and hand-made lists. The reader
+//!
+//! * finds the header row among the first 30 rows (English and German column
+//!   names, e.g. `Item`, `Part Number`, `Description`, `QTY` or `Pos.`,
+//!   `Teilenummer`, `Benennung`, `Menge`),
+//! * takes the structure from a level column (`Level`, `Ebene`, also `.1`,
+//!   `..2`) or from indented position numbers (`1`, `1.1`, `1.1.2`); without
+//!   either, every row is a direct child. A single first row on level 0 is
+//!   the assembly itself,
+//! * skips repeated header rows and components whose BOM structure is
+//!   `Reference` (Inventor), together with everything below them,
+//! * understands German number formats (`2,5`), units in values (`125 g`,
+//!   `4 Stk`, `2.5 m`, `0.28 lbmass`) and Windows-1252 encoded CSV files.
+//!
+//! The column names are a heuristic built from the documented export layouts;
+//! they were not tested with files of every CAD program. Columns can always
+//! be renamed in the spreadsheet before the import.
+//!
+//! Libraries: `csv` (MIT/Unlicense), `calamine` (MIT), `encoding_rs`
+//! (MIT/Apache-2.0).
+
+use std::{collections::HashMap, io::Cursor};
+
+use serde::Serialize;
+
+/// At most this many rows are read.
+pub const MAX_ROWS: usize = 20_000;
+
+/// One component row of the table.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BomRow {
+    /// Row in the file (1-based, for messages).
+    pub line: usize,
+    /// 1 = direct child of the imported assembly.
+    pub level: usize,
+    pub find_number: Option<i32>,
+    /// Part number as written in the file (may be empty).
+    pub number: String,
+    pub name: String,
+    pub description: String,
+    pub quantity: f64,
+    /// Normalised unit (`each`, `set`, `m`, …), empty if not given.
+    pub unit: String,
+    pub material: String,
+    pub mass_kg: Option<f64>,
+}
+
+/// A column of the file that is used, and for what.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Column {
+    pub header: String,
+    pub field: &'static str,
+    pub label: &'static str,
+}
+
+/// The rows of a table and how its columns were understood.
+#[derive(Clone, Debug, Serialize)]
+pub struct BomTable {
+    /// The assembly itself, if the table lists it (one first row on level 0).
+    pub root: Option<BomRow>,
+    pub rows: Vec<BomRow>,
+    pub columns: Vec<Column>,
+    pub warnings: Vec<String>,
+}
+
+/// Column header synonyms per field, compared in lower case with letters and
+/// digits only (`ITEM NO.` → `itemno`).
+#[rustfmt::skip]
+const FIELDS: &[(&str, &[&str])] = &[
+    ("level", &["level", "ebene", "stufe", "bomlevel", "lvl", "strukturstufe", "strukturebene"]),
+    ("position", &["item", "itemno", "itemnumber", "pos", "position", "posnr", "positionsnummer",
+        "findno", "findnumber", "index", "pcno", "nr", "no", "lfdnr", "balloon", "callout"]),
+    ("number", &["partnumber", "partno", "pn", "number", "nummer", "teilenummer", "sachnummer",
+        "artikelnummer", "itemid", "documentnumber", "dokumentnummer", "drawingnumber",
+        "zeichnungsnummer", "partnum", "materialnumber", "materialnummer", "dbpartno",
+        "identnummer", "identnr"]),
+    ("name", &["name", "title", "titel", "benennung", "bezeichnung", "partname", "componentname",
+        "component", "bauteil", "dbpartname", "descriptivepartname", "nomenclature"]),
+    ("description", &["description", "beschreibung", "desc", "comment", "kommentar", "bemerkung",
+        "bemerkungen"]),
+    ("quantity", &["qty", "quantity", "menge", "anzahl", "stk", "stck", "stück", "stueck",
+        "count", "itemqty", "qtyperassembly"]),
+    ("unit", &["unit", "units", "einheit", "uom", "baseunit", "mengeneinheit", "me"]),
+    ("material", &["material", "werkstoff", "materialname"]),
+    ("mass", &["mass", "masse", "weight", "gewicht", "massg", "masskg", "masslb", "massekg",
+        "masseg", "weightkg", "weightg", "weightlb", "gewichtkg", "gewichtg"]),
+    ("structure", &["bomstructure", "stücklistenstruktur", "stuecklistenstruktur", "structure",
+        "struktur"]),
+    ("file", &["filename", "filenamenoextension", "dateiname", "file", "datei"]),
+];
+
+/// English label of a field (preview pages).
+pub fn field_label(field: &str) -> &'static str {
+    match field {
+        "level" => "Level",
+        "position" => "Find number / position",
+        "number" => "Part number",
+        "name" => "Name",
+        "description" => "Description",
+        "quantity" => "Quantity",
+        "unit" => "Unit",
+        "material" => "Material",
+        "mass" => "Mass",
+        "structure" => "BOM structure",
+        "file" => "File name",
+        _ => "?",
+    }
+}
+
+fn squash(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn field_of(header: &str) -> Option<&'static str> {
+    let h = squash(header);
+    FIELDS
+        .iter()
+        .find(|(_, names)| names.contains(&h.as_str()))
+        .map(|(f, _)| *f)
+}
+
+/// Text of a CSV file: UTF-8 (with or without BOM), otherwise Windows-1252
+/// as written by Excel on German Windows.
+fn decode_text(bytes: &[u8]) -> String {
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => encoding_rs::WINDOWS_1252.decode(bytes).0.into_owned(),
+    }
+}
+
+/// `;` (German Excel), tab or `,` – whichever one line of the first 30 has
+/// most of (a title line above the header has none).
+fn sniff_delimiter(text: &str) -> u8 {
+    let most = |d: u8| {
+        text.lines()
+            .take(30)
+            .map(|l| l.matches(d as char).count())
+            .max()
+            .unwrap_or(0)
+    };
+    // max_by_key keeps the last of equal candidates: `,` wins ties.
+    b";\t,"
+        .iter()
+        .copied()
+        .max_by_key(|d| most(*d))
+        .unwrap_or(b',')
+}
+
+fn is_spreadsheet(filename: &str) -> bool {
+    let lower = filename.to_ascii_lowercase();
+    [".xlsx", ".xlsm", ".xlsb", ".xls", ".ods"]
+        .iter()
+        .any(|e| lower.ends_with(e))
+}
+
+/// Whether TeamCraft reads BOMs from files with this name.
+pub fn supported(filename: &str) -> bool {
+    let lower = filename.to_ascii_lowercase();
+    is_spreadsheet(&lower) || [".csv", ".tsv", ".txt"].iter().any(|e| lower.ends_with(e))
+}
+
+fn cell_text(cell: &calamine::Data) -> String {
+    use calamine::Data;
+    match cell {
+        Data::Empty => String::new(),
+        Data::String(s) => s.clone(),
+        Data::Int(i) => i.to_string(),
+        Data::Float(f) if f.fract() == 0.0 && f.abs() < 1e15 => format!("{}", *f as i64),
+        Data::Float(f) => f.to_string(),
+        Data::Bool(b) => b.to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// The cells of the first worksheet or of the CSV file.
+fn read_grid(filename: &str, bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
+    if is_spreadsheet(filename) {
+        use calamine::Reader;
+        let mut workbook = calamine::open_workbook_auto_from_rs(Cursor::new(bytes.to_vec()))
+            .map_err(|e| format!("{filename} is not a readable spreadsheet: {e}"))?;
+        let sheet = workbook
+            .sheet_names()
+            .first()
+            .cloned()
+            .ok_or_else(|| format!("{filename} has no worksheet."))?;
+        let range = workbook
+            .worksheet_range(&sheet)
+            .map_err(|e| format!("Worksheet '{sheet}' cannot be read: {e}"))?;
+        return Ok(range
+            .rows()
+            .map(|r| r.iter().map(cell_text).collect())
+            .collect());
+    }
+    let text = decode_text(bytes);
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(sniff_delimiter(&text))
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(text.as_bytes());
+    reader
+        .records()
+        .map(|r| {
+            r.map(|rec| rec.iter().map(str::to_string).collect())
+                .map_err(|e| format!("{filename} is not a valid CSV file: {e}"))
+        })
+        .collect()
+}
+
+/// `4`, `4,5`, `1.234,5`, `2.5 m`, `4 Stk` → (number, unit text after it).
+fn split_number(raw: &str) -> Option<(f64, &str)> {
+    let s = raw.trim();
+    let end = s
+        .char_indices()
+        .find(|(_, c)| !(c.is_ascii_digit() || matches!(c, '.' | ',' | '-' | '+')))
+        .map_or(s.len(), |(i, _)| i);
+    let num = &s[..end];
+    if !num.bytes().any(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let normalized = match (num.rfind(','), num.rfind('.')) {
+        // 1.234,5 (German) or 1,234.5 (English): the last separator is the decimal one
+        (Some(c), Some(d)) if c > d => num.replace('.', "").replace(',', "."),
+        (Some(_), Some(_)) => num.replace(',', ""),
+        (Some(_), None) if num.matches(',').count() == 1 => num.replace(',', "."),
+        (Some(_), None) => num.replace(',', ""),
+        _ => num.to_string(),
+    };
+    let value = normalized.parse::<f64>().ok().filter(|v| v.is_finite())?;
+    Some((value, s[end..].trim()))
+}
+
+/// The number at the start of a cell (`4,5 m` → 4.5).
+pub fn parse_number(raw: &str) -> Option<f64> {
+    split_number(raw).map(|(v, _)| v)
+}
+
+/// Units as TeamCraft writes them: `Stk`, `Stück`, `pcs`, `EA` → `each`,
+/// `Satz` → `set`; anything else in lower case (at most 16 characters).
+pub fn normalize_unit(raw: &str) -> String {
+    let u = raw.trim();
+    match squash(u).as_str() {
+        "" => String::new(),
+        "each" | "ea" | "stk" | "stck" | "stück" | "stueck" | "st" | "pcs" | "pc" | "piece"
+        | "pieces" | "x" | "count" => "each".into(),
+        "satz" | "set" | "sets" => "set".into(),
+        "m²" | "qm" | "sqm" => "m2".into(),
+        "liter" | "litre" => "l".into(),
+        _ => u.to_lowercase().chars().take(16).collect(),
+    }
+}
+
+/// Mass in kg from `0.125`, `0.125 kg`, `125 g` or `0.28 lbmass` (Inventor);
+/// without a unit in the value, the header decides (`Mass [g]`). `None` for
+/// unknown units.
+fn parse_mass(raw: &str, header: &str) -> Option<f64> {
+    let (value, unit) = split_number(raw)?;
+    let header = squash(header);
+    let unit = if !unit.is_empty() {
+        unit
+    } else if header.ends_with("kg") {
+        "kg"
+    } else if header.ends_with("lb") {
+        "lb"
+    } else if header.ends_with('g') {
+        "g"
+    } else {
+        ""
+    };
+    let factor = match squash(unit).as_str() {
+        "" | "kg" => 1.0,
+        "g" => 0.001,
+        "lb" | "lbs" | "lbm" | "lbmass" => 0.453_592_37,
+        _ => return None,
+    };
+    Some(value * factor).filter(|m| *m >= 0.0)
+}
+
+/// `1`, `1.2`, `1.2.3` → (level, find number of the last segment).
+fn parse_position(raw: &str) -> Option<(usize, Option<i32>)> {
+    let s = raw.trim().trim_end_matches('.');
+    if s.is_empty() || !s.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        return None;
+    }
+    let parts: Vec<&str> = s.split('.').collect();
+    if parts.iter().any(|p| p.is_empty()) {
+        return None;
+    }
+    Some((parts.len(), parts.last().and_then(|p| p.parse().ok())))
+}
+
+/// `Part.ipt` → `Part` (file names used as component names).
+fn file_stem(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, ext))
+            if !stem.is_empty()
+                && (1..=8).contains(&ext.len())
+                && ext.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            stem
+        }
+        _ => name,
+    }
+}
+
+/// Reads a BOM table.
+pub fn read(filename: &str, bytes: &[u8]) -> Result<BomTable, String> {
+    parse(read_grid(filename, bytes)?)
+}
+
+fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
+    // The header is the first row (of the first 30) with two known columns,
+    // one of them a number, a name, a description or a file name.
+    let (header_index, mapping) = grid
+        .iter()
+        .take(30)
+        .enumerate()
+        .find_map(|(i, row)| {
+            let fields: Vec<Option<&'static str>> = row.iter().map(|h| field_of(h)).collect();
+            let known = fields.iter().flatten().count();
+            let identifying = fields
+                .iter()
+                .flatten()
+                .any(|f| matches!(*f, "number" | "name" | "description" | "file"));
+            (known >= 2 && identifying).then_some((i, fields))
+        })
+        .ok_or_else(|| {
+            "No header row found: the table needs columns such as Part Number / Teilenummer, \
+             Description / Benennung and QTY / Menge."
+                .to_string()
+        })?;
+    let header = &grid[header_index];
+    let mut warnings = Vec::new();
+    let mut columns = Vec::new();
+    let mut index: HashMap<&'static str, usize> = HashMap::new();
+    for (col, field) in mapping.iter().enumerate() {
+        let Some(f) = *field else { continue };
+        if let Some(first) = index.get(f) {
+            warnings.push(format!(
+                "Column '{}' is ignored: '{}' already provides the {}.",
+                header[col].trim(),
+                header[*first].trim(),
+                field_label(f).to_lowercase()
+            ));
+            continue;
+        }
+        index.insert(f, col);
+        columns.push(Column {
+            header: header[col].trim().to_string(),
+            field: f,
+            label: field_label(f),
+        });
+    }
+    let has = |f: &str| index.contains_key(f);
+    let cell = |row: &[String], field: &str| -> String {
+        index
+            .get(field)
+            .and_then(|c| row.get(*c))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    };
+    let body = &grid[header_index + 1..];
+    if body.len() > MAX_ROWS {
+        return Err(format!("The table has more than {MAX_ROWS} rows."));
+    }
+    // Structure: level column, else dotted positions, else flat.
+    let dotted = !has("level")
+        && has("position")
+        && body
+            .iter()
+            .any(|r| parse_position(&cell(r, "position")).is_some_and(|(l, _)| l > 1));
+    let mass_header = index.get("mass").map_or("", |c| header[*c].as_str());
+    let is_header_again = |row: &[String]| {
+        index
+            .values()
+            .all(|c| row.get(*c).map(|v| squash(v)) == Some(squash(&header[*c])))
+    };
+
+    let mut rows: Vec<BomRow> = Vec::new();
+    // Level of a skipped reference component: rows below it are skipped too.
+    let mut skip_below: Option<usize> = None;
+    for (offset, row) in body.iter().enumerate() {
+        let line = header_index + offset + 2;
+        if is_header_again(row) {
+            continue; // repeated on every page
+        }
+        let number = cell(row, "number");
+        let mut name = cell(row, "name");
+        let mut description = cell(row, "description");
+        let file = cell(row, "file");
+        if number.is_empty() && name.is_empty() && description.is_empty() && file.is_empty() {
+            continue; // empty or separator row
+        }
+        let position = cell(row, "position");
+        let (level, find_number) = if has("level") {
+            let raw = cell(row, "level");
+            let level = raw.trim_start_matches('.').parse::<usize>().ok();
+            if level.is_none() {
+                warnings.push(format!(
+                    "Row {line}: level '{raw}' is not a number – used 1."
+                ));
+            }
+            (
+                level.unwrap_or(1),
+                parse_position(&position).and_then(|(_, f)| f),
+            )
+        } else if dotted {
+            parse_position(&position).unwrap_or_else(|| {
+                warnings.push(format!(
+                    "Row {line}: position '{position}' is not like 1.2.3 – used level 1."
+                ));
+                (1, None)
+            })
+        } else {
+            (1, position.parse::<i32>().ok())
+        };
+        if let Some(l) = skip_below {
+            if level > l {
+                continue;
+            }
+            skip_below = None;
+        }
+        if matches!(
+            squash(&cell(row, "structure")).as_str(),
+            "reference" | "referenz"
+        ) {
+            let shown = if number.is_empty() { &name } else { &number };
+            warnings.push(format!(
+                "Row {line}: {shown} is a reference component and is not imported."
+            ));
+            skip_below = Some(level);
+            continue;
+        }
+        if name.is_empty() {
+            name = std::mem::take(&mut description);
+        }
+        if name.is_empty() {
+            name = file_stem(&file).to_string();
+        }
+        if name.is_empty() {
+            name = number.clone();
+        }
+        let quantity_raw = cell(row, "quantity");
+        let mut unit = normalize_unit(&cell(row, "unit"));
+        let quantity = match split_number(&quantity_raw) {
+            _ if quantity_raw.is_empty() => 1.0,
+            Some((q, u)) if q > 0.0 && q < 1e9 => {
+                if unit.is_empty() {
+                    unit = normalize_unit(u);
+                }
+                q
+            }
+            _ => {
+                warnings.push(format!(
+                    "Row {line}: quantity '{quantity_raw}' is not a positive number – used 1."
+                ));
+                1.0
+            }
+        };
+        let mass_raw = cell(row, "mass");
+        let mass_kg = if mass_raw.is_empty() {
+            None
+        } else {
+            let mass = parse_mass(&mass_raw, mass_header);
+            if mass.is_none() {
+                warnings.push(format!(
+                    "Row {line}: mass '{mass_raw}' is not understood – left empty."
+                ));
+            }
+            mass
+        };
+        rows.push(BomRow {
+            line,
+            level,
+            find_number: find_number.filter(|f| (1..=999_999).contains(f)),
+            number,
+            name,
+            description,
+            quantity,
+            unit,
+            material: cell(row, "material"),
+            mass_kg,
+        });
+    }
+
+    // One first row on level 0 below which everything else lies: the assembly itself.
+    let root = (rows.len() > 1 && rows[0].level == 0 && rows[1..].iter().all(|r| r.level > 0))
+        .then(|| rows.remove(0));
+    if rows.is_empty() {
+        return Err("The table has a header but no component rows.".into());
+    }
+    // Levels as depth below the assembly: 0- or 1-based numbering and gaps
+    // (1 → 3) are all fine – a row is a child of the nearest row above with a
+    // smaller level.
+    let mut ancestors: Vec<usize> = Vec::new();
+    let mut gap_reported = false;
+    for r in &mut rows {
+        while ancestors.last().is_some_and(|l| *l >= r.level) {
+            ancestors.pop();
+        }
+        if !gap_reported && ancestors.last().is_some_and(|l| r.level > l + 1) {
+            warnings.push(format!(
+                "Row {}: the level jumps from {} to {} – the row is placed directly below the row above.",
+                r.line,
+                ancestors.last().copied().unwrap_or_default(),
+                r.level
+            ));
+            gap_reported = true;
+        }
+        ancestors.push(r.level);
+        r.level = ancestors.len();
+    }
+    Ok(BomTable {
+        root,
+        rows,
+        columns,
+        warnings,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn levels(t: &BomTable) -> Vec<usize> {
+        t.rows.iter().map(|r| r.level).collect()
+    }
+
+    #[test]
+    fn inventor_structured_export() {
+        // Inventor: BOM editor → Structured (all levels) → Export Bill of Materials (CSV)
+        let csv = "Item,Part Number,BOM Structure,Unit QTY,QTY,Description,Material,Mass\n\
+                   1,ASM-PUMP,Normal,,1,Pump assembly,Generic,1.25 kg\n\
+                   1.1,PUMP-HOUSING,Normal,,1,Housing,AlMg3,0.8 kg\n\
+                   1.2,ISO 4762 M6 x 20,Purchased,,6,Socket head cap screw,Steel,4 g\n\
+                   2,SKETCH-REF,Reference,,1,Layout,,\n\
+                   2.1,REF-CHILD,Normal,,1,Below the reference,,\n\
+                   3,BRACKET-01,Normal,,2,Bracket,1.4301,0.28 lbmass\n";
+        let t = read("bom.csv", csv.as_bytes()).unwrap();
+        assert!(t.root.is_none());
+        assert_eq!(t.rows.len(), 4, "the reference and its child are skipped");
+        assert_eq!(levels(&t), vec![1, 2, 2, 1]);
+        assert_eq!(
+            (t.rows[1].find_number, t.rows[1].number.as_str()),
+            (Some(1), "PUMP-HOUSING")
+        );
+        assert_eq!(t.rows[2].quantity, 6.0);
+        assert_eq!(t.rows[2].mass_kg, Some(0.004));
+        assert!((t.rows[3].mass_kg.unwrap() - 0.127).abs() < 0.001);
+        assert_eq!(
+            t.rows[0].name, "Pump assembly",
+            "description becomes the name"
+        );
+        assert!(t
+            .columns
+            .iter()
+            .any(|c| c.header == "QTY" && c.field == "quantity"));
+        assert!(!t.columns.iter().any(|c| c.header == "Unit QTY"));
+        assert!(t.warnings.iter().any(|w| w.contains("SKETCH-REF")));
+    }
+
+    #[test]
+    fn german_semicolon_csv_in_windows_1252() {
+        let text = "Pos.;Teilenummer;Benennung;Menge;Werkstoff;Masse [g]\r\n\
+                    1;NX-001;Düsenhalter;2;1.4404;125,5\r\n\
+                    2;;Schraube M6;8 Stk;A2-70;\r\n\
+                    Pos.;Teilenummer;Benennung;Menge;Werkstoff;Masse [g]\r\n\
+                    3;NX-002;Rohr;2,5 m;;\r\n";
+        let (bytes, _, _) = encoding_rs::WINDOWS_1252.encode(text);
+        let t = read("stueckliste.csv", &bytes).unwrap();
+        assert_eq!(t.rows.len(), 3, "the repeated header is skipped");
+        assert_eq!(t.rows[0].name, "Düsenhalter");
+        assert_eq!(t.rows[0].mass_kg, Some(0.1255));
+        assert_eq!(t.rows[0].find_number, Some(1));
+        assert_eq!((t.rows[1].quantity, t.rows[1].unit.as_str()), (8.0, "each"));
+        assert_eq!(t.rows[1].number, "", "rows without number are kept");
+        assert_eq!((t.rows[2].quantity, t.rows[2].unit.as_str()), (2.5, "m"));
+        assert_eq!(levels(&t), vec![1, 1, 1], "flat list");
+    }
+
+    #[test]
+    fn level_column_root_row_and_preamble() {
+        let tsv = "Bill of Materials for ROVER\n\nLevel\tNumber\tName\tQuantity\n\
+                   0\tROVER\tRover\t1\n1\tWHEEL\tWheel\t6\n2\tHUB\tHub\t1\n1\tFRAME\tFrame\t1\n";
+        let t = read("rover.tsv", tsv.as_bytes()).unwrap();
+        assert_eq!(t.root.as_ref().map(|r| r.number.as_str()), Some("ROVER"));
+        assert_eq!(levels(&t), vec![1, 2, 1]);
+        // SAP-style levels with dots and a gap
+        let csv = "Level,Component,Description,Quantity\n.1,A,,1\n...3,B,,1\n...3,C,,1\n..2,D,,1\n";
+        let t = read("sap.csv", csv.as_bytes()).unwrap();
+        assert!(t.root.is_none());
+        assert_eq!(levels(&t), vec![1, 2, 2, 2], "B and C are siblings below A");
+        assert_eq!(t.rows[0].name, "A", "the component name");
+        assert_eq!(t.warnings.len(), 1, "{:?}", t.warnings);
+    }
+
+    #[test]
+    fn spreadsheets() {
+        let mut book = rust_xlsxwriter::Workbook::new();
+        let sheet = book.add_worksheet();
+        for (c, h) in ["ITEM NO.", "PART NUMBER", "DESCRIPTION", "QTY."]
+            .iter()
+            .enumerate()
+        {
+            sheet.write_string(0, c as u16, *h).unwrap();
+        }
+        sheet.write_number(1, 0, 1.0).unwrap();
+        sheet.write_string(1, 1, "SW-0815").unwrap();
+        sheet.write_string(1, 2, "Motor mount").unwrap();
+        sheet.write_number(1, 3, 2.0).unwrap();
+        sheet.write_string(2, 0, "1.1").unwrap();
+        sheet.write_string(2, 1, "SW-0816").unwrap();
+        sheet.write_string(2, 2, "Bolt").unwrap();
+        sheet.write_number(2, 3, 4.0).unwrap();
+        let bytes = book.save_to_buffer().unwrap();
+        let t = read("SolidWorks BOM.xlsx", &bytes).unwrap();
+        assert_eq!(t.rows.len(), 2);
+        assert_eq!(t.rows[0].number, "SW-0815");
+        assert_eq!(
+            t.rows[0].find_number,
+            Some(1),
+            "1.0 from Excel is position 1"
+        );
+        assert_eq!((t.rows[1].level, t.rows[1].quantity), (2, 4.0));
+        assert!(read("broken.xlsx", b"not a zip").is_err());
+    }
+
+    #[test]
+    fn numbers_units_and_errors() {
+        assert_eq!(parse_number("2,5"), Some(2.5));
+        assert_eq!(parse_number("1.234,5"), Some(1234.5));
+        assert_eq!(parse_number("1,234.5"), Some(1234.5));
+        assert_eq!(parse_number("4 Each"), Some(4.0));
+        assert_eq!(parse_number("abc"), None);
+        assert_eq!(normalize_unit("Stück"), "each");
+        assert_eq!(normalize_unit("Satz"), "set");
+        assert_eq!(normalize_unit("MM"), "mm");
+        assert_eq!(parse_mass("125", "Masse [g]"), Some(0.125));
+        assert_eq!(parse_mass("2 Zentner", "Mass"), None);
+        assert_eq!(parse_position("1.2.3"), Some((3, Some(3))));
+        assert_eq!(parse_position("4."), Some((1, Some(4))));
+        assert_eq!(parse_position("1..2"), None);
+        assert_eq!(file_stem("Bracket.ipt"), "Bracket");
+        assert_eq!(file_stem("M6x20"), "M6x20");
+        assert!(
+            read("x.csv", b"just,some,text\n1,2,3\n").is_err(),
+            "no header"
+        );
+        assert!(
+            read("x.csv", b"Part Number,Description\n").is_err(),
+            "no rows"
+        );
+        assert!(supported("BOM.XLSX") && supported("bom.csv") && !supported("bom.pdf"));
+        let t = read("x.csv", b"Part Number,Description,QTY\nA,One,-2\n").unwrap();
+        assert_eq!(t.rows[0].quantity, 1.0);
+        assert_eq!(t.warnings.len(), 1);
+    }
+}

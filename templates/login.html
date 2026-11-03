@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block content %}
+<div class="login">
+  <img class="login-logo login-logo-light" src="/static/media/logos/TeamCraft_Logo_White.svg?v={{ assets }}" alt="TeamCraft">
+  <img class="login-logo login-logo-dark" src="/static/media/logos/TeamCraft_Logo_Blue.svg?v={{ assets }}" alt="TeamCraft">
+  {% if setup %}
+  <div class="card">
+    <p class="kicker">{{ instance_name }} · first start</p>
+    <h2>Create the administrator</h2>
+    <p class="hint">This server has no accounts yet. The account you create here is the administrator; afterwards this form is gone.
+      It is only offered while the server listens on this computer (localhost).</p>
+    {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
+    <form class="stack" method="post" action="/setup">
+      <label>Username <input type="text" name="username" value="{{ username or 'admin' }}" autocomplete="username" required autofocus></label>
+      <label>Display name <input type="text" name="display_name" placeholder="Administrator" maxlength="200"></label>
+      <label>Password <span class="hint">at least 10 characters</span>
+        <input type="password" name="password" autocomplete="new-password" minlength="10" required>
+      </label>
+      <label>Repeat the password <input type="password" name="password_repeat" autocomplete="new-password" minlength="10" required></label>
+      <button class="primary" type="submit">Create the administrator and sign in</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="card">
+    <p class="kicker">{{ instance_name }}</p>
+    <h2>Sign in</h2>
+    {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
+
+    {% if oidc_name %}
+    <a class="button primary sso" href="/auth/oidc/login?next={{ next_encoded }}">Sign in with {{ oidc_name }}</a>
+    {% endif %}
+
+    {% if oidc_name and local_login %}<div class="divider">or with a local account</div>{% endif %}
+
+    {% if local_login %}
+    <form class="stack" method="post" action="/login">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label>Username
+        <input type="text" name="username" value="{{ username }}" autocomplete="username" required autofocus>
+      </label>
+      <label>Password
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button class="{% if not oidc_name %}primary{% endif %}" type="submit">Sign in</button>
+    </form>
+    {% endif %}
+
+    {% if not oidc_name and not local_login %}
+    <p class="muted">No login method is configured. Please contact your administrator.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Import BOM{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Import BOM</h1>
+    {% if target %}
+    <p class="subtitle">Into <a class="mono" href="/revisions/{{ target.id }}#bom">{{ target.item_number }}/{{ target.code }}</a> · {{ target.name }} – new items are added to the project group {{ target.project_code }}.</p>
+    {% else %}
+    <p class="subtitle">Creates a new assembly with the items and the multi-level BOM of a CAD export. You see a preview before anything is created.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <form class="stack" method="post" action="/import" enctype="multipart/form-data">
+    {% if target %}<input type="hidden" name="into" value="{{ target.id }}">{% endif %}
+    <input type="hidden" name="match_existing_sent" value="1">
+    <label>BOM file <span class="hint">CSV/TSV (UTF-8 or Windows-1252) or Excel/OpenDocument (.xlsx, .xlsm, .xlsb, .xls, .ods), at most {{ max_mib }} MiB</span>
+      <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xlsb,.xls,.ods" required>
+    </label>
+    {% if not target %}
+    <div class="form-row">
+      <label>Project group <span class="hint">of the new assembly and the new items</span>
+        <select name="project_id" required>
+          <option value="">— choose —</option>
+          {% for p in projects %}<option value="{{ p.id }}">{{ p.code }} – {{ p.name }}</option>{% endfor %}
+        </select>
+        {% if not projects %}<span class="hint">You are not a member of any project group yet – ask an admin to add you.</span>{% endif %}
+      </label>
+      <label>Name of the new assembly <span class="hint">default: the assembly row of the table or the file name</span>
+        <input type="text" name="name" maxlength="200">
+      </label>
+    </div>
+    {% endif %}
+    <fieldset class="stack">
+      <legend>Numbers of new items</legend>
+      <label class="check"><input type="radio" name="numbers" value="file" checked> Part number from the file when it is a valid, unused item number – otherwise generated</label>
+      <label class="check"><input type="radio" name="numbers" value="generate"> Always generate numbers (PRT-…, ASM-…); the CAD part number is kept in the description</label>
+    </fieldset>
+    <label class="check"><input type="checkbox" name="match_existing" value="on" checked> Use existing items whose number equals a part number of the file (their own BOM is not changed)</label>
+    <div class="actions">
+      <button class="primary" type="submit">Upload and preview</button>
+      <a class="button" href="{% if target %}/revisions/{{ target.id }}#bom{% else %}/items{% endif %}">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<section class="card">
+  <h2>Which tables work</h2>
+  <ul class="plain-list">
+    <li><strong>Autodesk Inventor:</strong> BOM editor → <em>Structured</em> (all levels) → <em>Export Bill of Materials</em> as CSV or Excel.</li>
+    <li><strong>SolidWorks:</strong> BOM table → <em>Save As</em> Excel or CSV; indented BOMs number their rows <span class="mono">1</span>, <span class="mono">1.1</span>, <span class="mono">1.1.2</span>.</li>
+    <li><strong>Other programs and hand-made lists:</strong> a header row with columns such as <em>Part Number / Teilenummer</em>, <em>Name / Benennung</em>, <em>Description</em>, <em>QTY / Menge</em>, <em>Unit / Einheit</em>, <em>Material / Werkstoff</em>, <em>Mass / Masse</em>; the structure comes from a <em>Level / Ebene</em> column (0- or 1-based, also <span class="mono">.1</span>, <span class="mono">..2</span>) or from dotted positions.</li>
+    <li>Rows with the same part number are one item; components marked <em>Reference</em> (Inventor BOM structure) are left out. German number formats (<span class="mono">2,5</span>) and units in cells (<span class="mono">125 g</span>, <span class="mono">4 Stk</span>) are understood.</li>
+  </ul>
+  <p class="hint">The column recognition is a heuristic built from the documented export layouts of these programs; it was not tested with files from every CAD program. If a column is not recognised, rename it in the spreadsheet – the preview shows which columns were used.</p>
+</section>
+{% endblock %}

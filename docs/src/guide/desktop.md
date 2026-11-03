@@ -1,0 +1,24 @@
+# Desktop app
+
+TeamCraft Desktop (`desktop/`, Tauri 2) is a rich client for Linux, macOS and
+Windows: a navigator tree of the project groups, object tabs (overview,
+files, structure, where used, changes, history, 3D viewer), a worklist with
+check-outs and reviews, and a **local workspace**:
+
+* *Check out* takes the lock and copies the files into a folder per revision;
+* the *Workspace* tab shows new and modified files;
+* *Check in…* uploads the selected files as new versions and releases the lock.
+
+Sign-in runs through the browser (single sign-on or password, confirmed on a
+TeamCraft page) or with a personal access token. The app uses the same skins
+and 3D viewer as the web interface; the models are converted by the server.
+
+## Run it
+
+```sh
+cd desktop
+cargo run            # Linux needs the WebKitGTK development packages
+```
+
+The platform guides list the system packages. Installers are not published
+yet; the app is built and tested from source.

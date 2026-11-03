@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Import preview · {{ plan.filename }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Import preview · {{ plan.filename }}</h1>
+    <p class="subtitle">
+      {% if plan.target %}Into <a class="mono" href="/revisions/{{ plan.target }}#bom">{{ plan.root_label }}</a>
+      {% else %}New assembly <strong>{{ plan.root_name }}</strong> ({% if plan.root_number %}<span class="mono">{{ plan.root_number }}</span>{% else %}number generated{% endif %}){% endif %}
+      · project group {{ plan.project_code }} · nothing is created before you click <em>Import</em>.
+    </p>
+  </div>
+  <div class="actions">
+    <form class="inline" method="post" action="/import/{{ id }}/run">
+      <button class="primary" type="submit">Import</button>
+    </form>
+    <form class="inline" method="post" action="/import/{{ id }}/discard">
+      <button type="submit">Discard</button>
+    </form>
+  </div>
+</div>
+
+<div class="grid grid-stats">
+  <div class="card stat"><div class="value">{{ plan.new_items }}</div><div class="label">New items</div></div>
+  <div class="card stat"><div class="value">{{ plan.existing_items }}</div><div class="label">Existing items used</div></div>
+  <div class="card stat"><div class="value">{{ plan.lines|length }}</div><div class="label">BOM lines</div></div>
+  <div class="card stat"><div class="value">{{ plan.warnings|length }}</div><div class="label">Notes</div></div>
+</div>
+
+{% if plan.warnings %}
+<section class="card" id="notes">
+  <h2>Notes</h2>
+  <ul class="plain-list">
+    {% for w in plan.warnings %}<li>{{ w }}</li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="card" id="structure">
+  <h2>Structure</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Level</th><th class="num">Find no.</th><th>Part number (file)</th><th>Item in TeamCraft</th><th>Name</th><th class="num">Qty</th><th>Material</th><th class="num">Mass [kg]</th><th class="num">Row</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><span class="lvl">{{ r.level }}</span></td>
+        <td class="num">{{ r.find_number }}</td>
+        <td class="mono nowrap {{ r.indent }}">{% if r.file_number %}{{ r.file_number }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="nowrap">
+          {% if r.existing %}<span class="mono">{{ r.existing }}</span> <span class="badge badge-released">existing</span>
+          {% elif r.number %}<span class="mono">{{ r.number }}</span> <span class="badge badge-in_work">new {{ r.type|lower }}</span>
+          {% else %}<span class="muted">generated</span> <span class="badge badge-in_work">new {{ r.type|lower }}</span>{% endif %}
+        </td>
+        <td>{{ r.name }}</td>
+        <td class="num nowrap">{{ r.quantity|num(4) }} {{ r.unit }}</td>
+        <td>{{ r.material }}</td>
+        <td class="num">{% if r.mass_kg is not none %}{{ r.mass_kg|num(4) }}{% endif %}</td>
+        <td class="num small muted">{{ r.row }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="card" id="columns">
+  <h2>Columns used</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Column in the file</th><th>Used as</th></tr></thead>
+    <tbody>
+    {% for c in plan.columns %}<tr><td>{{ c.header }}</td><td>{{ c.label }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">Column recognition is a heuristic – rename a column in the spreadsheet if it was not recognised and upload the file again.</p>
+</section>
+{% endblock %}

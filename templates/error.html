@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ status }} {{ reason }}{% endblock %}
+{% block content %}
+<div class="login">
+  <img class="login-logo login-logo-light" src="/static/media/logos/TeamCraft_Logo_White.svg?v={{ assets }}" alt="TeamCraft">
+  <img class="login-logo login-logo-dark" src="/static/media/logos/TeamCraft_Logo_Blue.svg?v={{ assets }}" alt="TeamCraft">
+  <div class="card">
+    <p class="kicker">Error {{ status }}</p>
+    <h2>{{ reason }}</h2>
+    <p>{{ message }}</p>
+    <div class="actions">
+      <a class="button" href="/" data-back>← Back</a>
+      <a class="button primary" href="/">Dashboard</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

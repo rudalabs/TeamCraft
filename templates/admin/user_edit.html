@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}User {{ user.username }}{% endblock %}
+{% block nav_users %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>{{ user.display_name }} <span class="muted mono">{{ user.username }}</span></h1>
+    <p class="subtitle">
+      {% if user.auth_source == "oidc" %}Single sign-on account{% else %}Local account{% endif %}
+      · created {{ m.time(user.created_at) }} · last login {{ m.time(user.last_login_at) }}
+    </p>
+  </div>
+  <div class="actions"><a class="button" href="/admin/users">← All users</a></div>
+</div>
+
+<div class="grid grid-2">
+  <section class="card">
+    <h2>Profile &amp; permissions</h2>
+    {% if user.auth_source == "oidc" %}
+    <div class="notice">The role of SSO users is overwritten from their IdP groups at every login. Deactivating blocks the account in TeamCraft regardless of the IdP.</div>
+    {% endif %}
+    <form class="stack" method="post" action="/admin/users/{{ user.id }}">
+      <label>Display name <input type="text" name="display_name" value="{{ user.display_name }}" maxlength="128" required></label>
+      <label>E-mail <input type="email" name="email" value="{{ user.email or '' }}" maxlength="254"></label>
+      <label>Role
+        <select name="role">{% for r in roles %}<option value="{{ r.value }}" {% if r.value == user.role %}selected{% endif %}>{{ r.label }}</option>{% endfor %}</select>
+      </label>
+      <label class="check"><input type="checkbox" name="active" {% if user.active %}checked{% endif %}> Active (deactivated users cannot sign in or use API tokens)</label>
+      <div class="actions"><button class="primary" type="submit">Save</button></div>
+    </form>
+  </section>
+
+  {% if user.auth_source == "local" %}
+  <section class="card">
+    <h2>Reset password</h2>
+    <form class="stack" method="post" action="/admin/users/{{ user.id }}/password"
+          data-confirm="Set a new password for {{ user.username }}? All of their sessions end.">
+      <label>New password <span class="hint">at least 10 characters</span>
+        <input type="password" name="password" minlength="10" required autocomplete="new-password">
+      </label>
+      <div class="actions"><button type="submit">Set password</button></div>
+    </form>
+  </section>
+  {% endif %}
+</div>
+
+<section class="card">
+  <h2>Project groups</h2>
+  {% if memberships %}
+  <ul class="tag-row">
+    {% for p in memberships %}<li><a class="badge badge-member" href="/projects/{{ p.id }}">{{ p.code }}</a></li>{% endfor %}
+  </ul>
+  {% else %}<p class="empty">Not a member of any project group – as CAD editor this user cannot change any item.</p>{% endif %}
+  <p class="hint">Memberships are managed on the page of each <a href="/projects">project group</a>.</p>
+</section>
+
+<section class="card">
+  <h2>API tokens</h2>
+  {% if tokens %}
+  <table>
+    <thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
+    <tbody>
+    {% for t in tokens %}
+      <tr>
+        <td>{{ t.name }}</td>
+        <td class="mono small">{{ t.token_prefix }}…</td>
+        <td class="small nowrap">{{ m.time(t.created_at) }}</td>
+        <td class="small nowrap">{{ m.time(t.last_used_at) }}</td>
+        <td class="small nowrap">{% if t.expires_at %}{{ m.time(t.expires_at) }}{% else %}never{% endif %}</td>
+        <td class="right">
+          <form class="inline" method="post" action="/account/tokens/{{ t.id }}/revoke" data-confirm="Revoke token '{{ t.name }}'?">
+            <input type="hidden" name="back" value="/admin/users/{{ user.id }}">
+            <button class="small danger" type="submit">Revoke</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty">No API tokens.</p>{% endif %}
+</section>
+{% endblock %}

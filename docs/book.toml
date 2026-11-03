@@ -1,0 +1,19 @@
+[book]
+title = "TeamCraft"
+description = "TeamCraft – open-source product lifecycle management (PLM) in pure Rust"
+authors = ["TeamCraft contributors"]
+language = "en"
+src = "src"
+
+[output.html]
+site-url = "/TeamCraft/"
+git-repository-url = "https://github.com/rudalabs/TeamCraft"
+edit-url-template = "https://github.com/rudalabs/TeamCraft/edit/main/docs/{path}"
+default-theme = "light"
+preferred-dark-theme = "navy"
+# Doxygen-style look: title area, tab bar, navigation tree (theme/doxygen.*)
+additional-css = ["theme/doxygen.css"]
+additional-js = ["theme/doxygen.js"]
+
+[output.html.search]
+enable = true

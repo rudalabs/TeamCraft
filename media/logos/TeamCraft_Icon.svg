@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- TeamCraft icon: an exploded isometric part (blue #0761b0, light blue #9bdafa,
+     ice #e1f3fa) with a diamond-shaped cut in its top face. Deliberately letter-free.
+     Licensed like the rest of TeamCraft under the MPL-2.0. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+    <title>TeamCraft</title>
+    <!-- top face with a diamond-shaped cut -->
+    <path fill="#e1f3fa" fill-rule="evenodd"
+          d="M 64,9 L 109,35 L 64,61 L 19,35 Z
+             M 64,24.6 L 82,35 L 64,45.4 L 46,35 Z"/>
+    <path fill="#0761b0" d="M 64,24.6 L 82,35 L 64,45.4 L 46,35 Z"/>
+    <!-- left face -->
+    <path fill="#9bdafa" d="M 16.4,39.5 L 61.4,65.5 L 61.4,117.5 L 16.4,91.5 Z"/>
+    <!-- right face -->
+    <path fill="#0761b0" d="M 66.6,65.5 L 111.6,39.5 L 111.6,91.5 L 66.6,117.5 Z"/>
+</svg>

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Notifications</h1>
+    <p class="subtitle">Review requests, decisions, releases, checks needed on your items and news about what you watch.</p>
+  </div>
+  <div class="actions">
+    {% if unread_notifications %}
+    <form method="post" action="/notifications/read-all">
+      <input type="hidden" name="back" value="/notifications">
+      <button type="submit">Mark all as read</button>
+    </form>
+    {% endif %}
+    <a class="button" href="/account#notifications">Settings</a>
+  </div>
+</div>
+
+<section class="card">
+  {% if notifications %}
+  <ul class="notification-list">
+    {% for n in notifications %}
+    <li class="{% if not n.read_at %}unread{% endif %}">
+      <a href="/notifications/{{ n.id }}/open">
+        <span class="n-title">{{ n.title }}</span>
+        {% if n.body %}<span class="n-body">{{ n.body }}</span>{% endif %}
+      </a>
+      <span class="n-meta small muted">{{ n.actor_name }} · {{ m.time(n.created_at) }}
+        {% if n.email_state == "sent" %} · e-mailed{% elif n.email_state == "failed" %} · <span class="badge badge-rejected">e-mail failed</span>{% endif %}
+        {% if n.chat_state == "sent" %} · sent to Mattermost{% elif n.chat_state == "failed" %} · <span class="badge badge-rejected">Mattermost failed</span>{% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}<p class="empty">No notifications yet. You get them when you are asked to review, when changes you take part in move on, when your items need a check and about items and changes you watch.</p>{% endif %}
+</section>
+
+<section class="card" id="watched">
+  <h2>I watch</h2>
+  {% if watched %}
+  <div class="table-wrap">
+  <table>
+    <tbody>
+    {% for w in watched %}
+      <tr>
+        <td class="mono nowrap"><a href="{{ w.link }}">{{ w.number }}{% if w.revision_code %}/{{ w.revision_code }}{% endif %}</a></td>
+        <td>{{ w.name }}</td>
+        <td>{{ m.badge(w.state) }}</td>
+        <td class="right">
+          <form class="inline" method="post" action="/{% if w.entity_type == 'item' %}items{% else %}changes{% endif %}/{{ w.entity_id }}/watch">
+            <input type="hidden" name="watch" value="0">
+            <input type="hidden" name="back" value="/notifications#watched">
+            <button class="small" type="submit">Unwatch</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">Nothing yet – use <strong>Watch</strong> on an item or a change. Items you create are watched automatically.</p>{% endif %}
+</section>
+{% endblock %}

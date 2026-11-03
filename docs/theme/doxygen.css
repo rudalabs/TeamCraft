@@ -1,0 +1,222 @@
+/* TeamCraft documentation: an mdBook (0.5) dressed like a classic Doxygen
+ * site – title area with logo and brief, tab bar, light navigation tree,
+ * Doxygen tables, code fragments and footer. The banner and the tab bar are
+ * inserted by doxygen.js. Colours after Doxygen's default stylesheet. */
+
+:root {
+  --dox-title-h: 56px;
+  --dox-tabs-h: 36px;
+  --dox-top: calc(var(--dox-title-h) + var(--dox-tabs-h));
+  --dox-link: #3d578c;
+  --dox-link-visited: #4665a2;
+  --dox-head: #354c7b;
+  --dox-rule: #879ecb;
+  --dox-line: #c4cfe5;
+  --dox-tree: #f9fafc;
+  --dox-tab-text: #283a5d;
+  --dox-tab: linear-gradient(to bottom, #fbfcfe 0%, #e8edf6 48%, #d5ddee 100%);
+  --dox-tab-active: linear-gradient(to bottom, #6b86bf 0%, #4665a2 50%, #34497a 100%);
+  --dox-font: Roboto, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --dox-ui-font: "Lucida Grande", Geneva, Helvetica, Arial, sans-serif;
+  --content-max-width: 960px;
+}
+
+html.light {
+  --bg: #ffffff;
+  --fg: #000000;
+  --links: var(--dox-link);
+  --sidebar-bg: var(--dox-tree);
+  --sidebar-fg: #364149;
+  --sidebar-active: #ffffff;
+  --sidebar-spacer: var(--dox-line);
+  --sidebar-header-border-color: var(--dox-rule);
+  --inline-code-color: #4665a2;
+  --table-border-color: #2d4068;
+  --table-header-bg: #374f7f;
+  --table-alternate-bg: #f7f8fb;
+  --quote-bg: #f4f6fa;
+  --quote-border: var(--dox-line);
+  --searchbar-bg: #ffffff;
+  --searchbar-border-color: #b6c4df;
+  --searchresults-li-bg: #eef2f9;
+  --search-mark-bg: #c9d6ee;
+  --theme-popup-bg: #f9fafc;
+  --icons: #4665a2;
+  --icons-hover: #283a5d;
+}
+
+/* ------------------------------------------------------------------ banner */
+
+#dox-top {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  font-family: var(--dox-ui-font);
+}
+
+#dox-titlearea {
+  height: var(--dox-title-h);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  background: #ffffff;
+  border-bottom: 1px solid #5373b4;
+  box-sizing: border-box;
+  color: #000;
+}
+
+#dox-titlearea img { width: 40px; height: 40px; }
+#dox-titlearea a { color: inherit; text-decoration: none; display: flex; align-items: center; gap: 12px; }
+#dox-projectname { font: 200% Tahoma, Arial, sans-serif; line-height: 1.1; }
+#dox-projectnumber { font: 50% Tahoma, Arial, sans-serif; margin-left: 4px; color: #50607a; }
+#dox-projectbrief { font: 90% Tahoma, Arial, sans-serif; color: #2d3d5f; }
+
+#dox-tabs {
+  height: var(--dox-tabs-h);
+  background: var(--dox-tab);
+  border-bottom: 1px solid #b6c4df;
+  display: flex;
+  align-items: stretch;
+  box-sizing: border-box;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+#dox-tabs ul { display: flex; margin: 0; padding: 0; list-style: none; }
+#dox-tabs li { display: flex; }
+#dox-tabs a {
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  font-size: 13px;
+  font-weight: bold;
+  white-space: nowrap;
+  color: var(--dox-tab-text);
+  text-decoration: none;
+  text-shadow: 0 1px 1px rgb(255 255 255 / 90%);
+  border-right: 1px solid #b6c4df;
+}
+#dox-tabs a:hover,
+#dox-tabs li.current a {
+  background: var(--dox-tab-active);
+  color: #fff;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 100%);
+}
+#dox-tabs .dox-spacer { flex: 1; }
+
+/* make room for the fixed banner */
+#mdbook-sidebar { top: var(--dox-top); }
+#mdbook-page-wrapper { padding-top: var(--dox-top); }
+#mdbook-menu-bar.sticky { top: var(--dox-top) !important; }
+
+/* ------------------------------------------------------- navigation tree */
+
+html.light #mdbook-sidebar {
+  background: var(--dox-tree);
+  border-right: 1px solid var(--dox-line);
+  font-family: var(--dox-ui-font);
+  font-size: 13px;
+}
+html.light #mdbook-sidebar a { color: #283a5d; }
+html.light #mdbook-sidebar a:hover { color: #000; text-decoration: underline; }
+html.light #mdbook-sidebar a.active {
+  background: var(--dox-tab-active);
+  color: #fff !important;
+  text-shadow: 0 1px 1px rgb(0 0 0 / 100%);
+  border-radius: 2px;
+  padding: 1px 6px;
+  margin-left: -6px;
+}
+html.light #mdbook-sidebar .part-title {
+  color: var(--dox-head);
+  font-weight: bold;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--dox-line);
+  padding-bottom: 3px;
+}
+
+/* the mdBook menu bar becomes Doxygen's light "nav path" strip */
+html.light #mdbook-menu-bar {
+  background: var(--dox-tree);
+  border-bottom: 1px solid var(--dox-line);
+}
+html.light .menu-title { font-family: var(--dox-ui-font); font-size: 15px; color: #364149; }
+
+/* ---------------------------------------------------------------- content */
+
+html.light .content main {
+  font: 400 14px/22px var(--dox-font);
+  color: #000;
+}
+html.light .content a { color: var(--dox-link); text-decoration: none; }
+html.light .content a:visited { color: var(--dox-link-visited); }
+html.light .content a:hover { text-decoration: underline; }
+
+/* page title like Doxygen's div.header */
+html.light .content main > h1:first-child {
+  font-size: 150%;
+  font-weight: bold;
+  margin: 0 0 18px;
+  padding: 10px 12px 8px;
+  background: var(--dox-tree);
+  border-bottom: 1px solid var(--dox-line);
+}
+html.light .content main > h1:first-child a { color: #000; }
+
+/* h2 like Doxygen's group headers */
+html.light .content main h2 {
+  font-size: 150%;
+  font-weight: normal;
+  color: var(--dox-head);
+  border-bottom: 1px solid var(--dox-rule);
+  padding: 8px 0 4px;
+  margin-top: 1.75em;
+}
+html.light .content main h3 { color: var(--dox-head); font-size: 120%; }
+
+/* tables like Doxygen's markdownTable */
+html.light .content table { border-collapse: collapse; margin: 8px 0 16px; }
+html.light .content table th {
+  background: var(--table-header-bg);
+  color: #fff;
+  font-size: 105%;
+  padding: 5px 8px 4px;
+  border: 1px solid var(--table-border-color);
+}
+html.light .content table td { border: 1px solid var(--table-border-color); padding: 3px 8px 2px; }
+html.light .content table tbody tr:nth-child(2n) { background: var(--table-alternate-bg); }
+
+/* code like Doxygen's div.fragment */
+html.light .content pre {
+  background: #fbfcfd;
+  border: 1px solid var(--dox-line);
+  border-radius: 0;
+}
+html.light .content pre > code.hljs { background: transparent; }
+html.light .content :not(pre) > code {
+  background: #f4f6fa;
+  border: 1px solid #dde3ef;
+  padding: 0 3px;
+}
+
+/* Doxygen's footer */
+.dox-footer {
+  margin-top: 40px;
+  padding: 8px 4px;
+  border-top: 1px solid var(--dox-line);
+  text-align: right;
+  font: 12px var(--dox-ui-font);
+  color: #2a3d61;
+}
+.dox-footer img { height: 14px; vertical-align: -2px; margin-left: 4px; }
+
+@media (max-width: 640px) {
+  :root { --dox-title-h: 48px; }
+  #dox-projectbrief { display: none; }
+  #dox-tabs a { padding: 0 12px; }
+}

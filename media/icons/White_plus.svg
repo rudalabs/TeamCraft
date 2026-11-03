@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <filter id="darkHaloStrong" x="-160%" y="-160%" width="420%" height="420%">
+      <!-- Dense near-black glow close to the plus -->
+      <feMorphology in="SourceAlpha" operator="dilate" radius="16" result="expanded1"/>
+      <feGaussianBlur in="expanded1" stdDeviation="14" result="blur1"/>
+      <feColorMatrix in="blur1" type="matrix" values="
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 0 0.98 0" result="shadow1"/>
+
+      <!-- Wider outer falloff so the decay is slower -->
+      <feMorphology in="SourceAlpha" operator="dilate" radius="28" result="expanded2"/>
+      <feGaussianBlur in="expanded2" stdDeviation="26" result="blur2"/>
+      <feColorMatrix in="blur2" type="matrix" values="
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 0 0.78 0" result="shadow2"/>
+
+      <!-- Very broad faint tail -->
+      <feMorphology in="SourceAlpha" operator="dilate" radius="40" result="expanded3"/>
+      <feGaussianBlur in="expanded3" stdDeviation="40" result="blur3"/>
+      <feColorMatrix in="blur3" type="matrix" values="
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 0 0.42 0" result="shadow3"/>
+
+      <feMerge>
+        <feMergeNode in="shadow3"/>
+        <feMergeNode in="shadow2"/>
+        <feMergeNode in="shadow1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#darkHaloStrong)">
+    <path
+      d="M226 96 H286 V226 H416 V286 H286 V416 H226 V286 H96 V226 H226 Z"
+      fill="#FFFFFF"/>
+  </g>
+</svg>
