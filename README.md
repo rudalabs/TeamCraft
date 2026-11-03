@@ -51,10 +51,10 @@ All configuration and secrets live in `secrets/`, which is git-ignored as a
 whole – nothing in it is ever committed. The only tracked template is
 [`.env.example`](.env.example).
 
-| File | Content | Read by |
-|---|---|---|
-| `secrets/.env` | local configuration (copy of `.env.example`) | `cargo run`, `cargo test`, dev `app` container |
-| `secrets/db_password` | PostgreSQL password (one value) | dev `db` container and TeamCraft (`TEAMCRAFT_DB_PASSWORD_FILE`) |
+| File                  | Content                                      | Read by                                                         |
+|-----------------------|----------------------------------------------|-----------------------------------------------------------------|
+| `secrets/.env`        | local configuration (copy of `.env.example`) | `cargo run`, `cargo test`, dev `app` container                  |
+| `secrets/db_password` | PostgreSQL password (one value)              | dev `db` container and TeamCraft (`TEAMCRAFT_DB_PASSWORD_FILE`) |
 
 Production uses one file per secret as well (Docker Compose secrets) – see
 [DEPLOYMENT.md §3](DEPLOYMENT.md#3-secrets).

@@ -1,24 +1,24 @@
 # CLAUDE.md – working on TeamCraft
 
 TeamCraft is an open-source PLM system (items, revisions, files, BOMs, change
-orders – Teamcenter-like) written in Rust for WARR. It is a single binary
-(axum web server + CLI) on top of PostgreSQL, with a server-rendered HTML UI
+orders – Teamcenter-like) written in Rust for WARR. It is a single binary (axum web server + CLI) on top of PostgreSQL,
+with a server-rendered HTML UI
 and a JSON REST API. License: MPL-2.0 (`LICENSE`).
 
 ## Commands
 
-| Task | Command |
-|---|---|
-| Type-check | `cargo check --all-targets` |
-| Format (CI-enforced) | `cargo fmt --all` |
-| Lint (CI-enforced) | `cargo clippy --all-targets -- -D warnings` |
-| Unit tests, no DB | `cargo test --lib` |
-| Start the dev database | `docker compose up -d db` (status: `docker compose ps`, logs: `docker compose logs db`) |
-| All tests | `cargo test` (needs the dev database) |
-| Run the server | `cargo run` (reads `secrets/.env`) → <http://localhost:8080>, local admin `admin` / `change-me-please` |
-| CLI | `./target/debug/teamcraft user list`, `… user create --username x --role engineer`, `… vault check`, `… healthcheck` |
-| Smoke test | `curl -s http://localhost:8080/healthz`, `curl -s http://localhost:8080/readyz`, `curl -s -H "Authorization: Bearer …" http://localhost:8080/api/v1/me` |
-| Validate compose files | `docker compose config`, `docker compose -f deploy/docker-compose.warr.yml config` |
+| Task                   | Command                                                                                                                                                 |
+|------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Type-check             | `cargo check --all-targets`                                                                                                                             |
+| Format (CI-enforced)   | `cargo fmt --all`                                                                                                                                       |
+| Lint (CI-enforced)     | `cargo clippy --all-targets -- -D warnings`                                                                                                             |
+| Unit tests, no DB      | `cargo test --lib`                                                                                                                                      |
+| Start the dev database | `docker compose up -d db` (status: `docker compose ps`, logs: `docker compose logs db`)                                                                 |
+| All tests              | `cargo test` (needs the dev database)                                                                                                                   |
+| Run the server         | `cargo run` (reads `secrets/.env`) → <http://localhost:8080>, local admin `admin` / `change-me-please`                                                  |
+| CLI                    | `./target/debug/teamcraft user list`, `… user create --username x --role engineer`, `… vault check`, `… healthcheck`                                    |
+| Smoke test             | `curl -s http://localhost:8080/healthz`, `curl -s http://localhost:8080/readyz`, `curl -s -H "Authorization: Bearer …" http://localhost:8080/api/v1/me` |
+| Validate compose files | `docker compose config`, `docker compose -f deploy/docker-compose.warr.yml config`                                                                      |
 
 Start long-running processes (`cargo run`) in the background and stop them when
 done. After code changes run fmt, clippy and the tests before reporting success;
