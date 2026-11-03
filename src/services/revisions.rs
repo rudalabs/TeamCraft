@@ -90,9 +90,9 @@ pub fn ensure_project_access(rev: &Revision, actor: &Actor) -> AppResult<()> {
     }
 }
 
-/// Fails unless `actor` may modify `rev`: project access, revision in work and
-/// not checked out by somebody else.
-pub fn ensure_editable(rev: &Revision, actor: &Actor) -> AppResult<()> {
+/// Fails unless `actor` could work on `rev`: project access, revision in work
+/// and not checked out by somebody else (the precondition for checking out).
+pub fn ensure_checkout_possible(rev: &Revision, actor: &Actor) -> AppResult<()> {
     ensure_project_access(rev, actor)?;
     let state = state_of(rev);
     if !state.is_editable() {
@@ -110,6 +110,20 @@ pub fn ensure_editable(rev: &Revision, actor: &Actor) -> AppResult<()> {
                 rev.checked_out_by_name.as_deref().unwrap_or("another user")
             )));
         }
+    }
+    Ok(())
+}
+
+/// Fails unless `actor` may modify `rev` right now: everything of
+/// [`ensure_checkout_possible`] **and** the revision is checked out by the
+/// actor. Every change to attributes, files and BOM requires the lock.
+pub fn ensure_editable(rev: &Revision, actor: &Actor) -> AppResult<()> {
+    ensure_checkout_possible(rev, actor)?;
+    if rev.checked_out_by != Some(actor.id) {
+        return Err(AppError::Conflict(format!(
+            "Check out {} before changing it.",
+            label(rev)
+        )));
     }
     Ok(())
 }
@@ -183,7 +197,7 @@ pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
     let rev = lock(&mut tx, id).await?;
-    ensure_editable(&rev, actor)?;
+    ensure_checkout_possible(&rev, actor)?;
     if rev.checked_out_by == Some(actor.id) {
         return Ok(rev);
     }
@@ -206,8 +220,10 @@ pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
     get(pool, id).await
 }
 
-/// Releases the edit lock. Administrators may release locks of other users.
-pub async fn checkin(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
+/// Releases the edit lock without uploading anything ("cancel check-out").
+/// Administrators may release locks of other users. A check-in with new file
+/// versions is `files::check_in`.
+pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
     let rev = lock(&mut tx, id).await?;
@@ -230,9 +246,9 @@ pub async fn checkin(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisi
         &mut tx,
         Some(actor),
         if forced {
-            "revision.checkin_forced"
+            "revision.checkout_forced_release"
         } else {
-            "revision.checkin"
+            "revision.checkout_cancel"
         },
         "revision",
         Some(id),
@@ -243,7 +259,7 @@ pub async fn checkin(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisi
                 rev.checked_out_by_name.as_deref().unwrap_or("?")
             )
         } else {
-            format!("Checked in {}", label(&rev))
+            format!("Cancelled the check-out of {}", label(&rev))
         },
         json!({ "item_id": rev.item_id }),
     )
@@ -287,8 +303,8 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     let new_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO revisions (id, item_id, seq, code, state, name, description, material,
-                                mass_kg, unit_cost, created_by)
-         SELECT $2, item_id, $3, $4, 'in_work', name, description, material, mass_kg, unit_cost, $5
+                                mass_kg, unit_cost, created_by, checked_out_by, checked_out_at)
+         SELECT $2, item_id, $3, $4, 'in_work', name, description, material, mass_kg, unit_cost, $5, $5, now()
          FROM revisions WHERE id = $1",
     )
     .bind(src.id)
@@ -298,6 +314,7 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     .bind(actor.id)
     .execute(&mut *tx)
     .await?;
+    // The new revision starts with the current version of every file as v1.
     let files = sqlx::query(
         "INSERT INTO files (id, revision_id, filename, content_type, size_bytes, sha256, uploaded_by, uploaded_at)
          SELECT gen_random_uuid(), $2, filename, content_type, size_bytes, sha256, uploaded_by, uploaded_at
@@ -308,6 +325,16 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     .execute(&mut *tx)
     .await?
     .rows_affected();
+    sqlx::query(
+        "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment, uploaded_by, uploaded_at)
+         SELECT gen_random_uuid(), f.id, 1, f.sha256, f.size_bytes, f.content_type,
+                'Taken over from revision ' || $2, f.uploaded_by, f.uploaded_at
+         FROM files f WHERE f.revision_id = $1",
+    )
+    .bind(new_id)
+    .bind(&src.code)
+    .execute(&mut *tx)
+    .await?;
     let lines = sqlx::query(
         "INSERT INTO bom_lines (id, parent_revision_id, child_item_id, find_number, quantity, notes)
          SELECT gen_random_uuid(), $2, child_item_id, find_number, quantity, notes

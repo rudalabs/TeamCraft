@@ -252,16 +252,37 @@ impl TestApp {
         filename: &str,
         content: &[u8],
     ) -> Response {
+        self.api_multipart(uri, token, &[(filename, content)], &[])
+            .await
+    }
+
+    /// Multipart request with several `file` parts and text fields.
+    pub async fn api_multipart(
+        &self,
+        uri: &str,
+        token: &str,
+        files: &[(&str, &[u8])],
+        fields: &[(&str, &str)],
+    ) -> Response {
         let boundary = "teamcraft-test-boundary";
         let mut body = Vec::new();
-        body.extend_from_slice(
-            format!(
-                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: text/plain\r\n\r\n"
-            )
-            .as_bytes(),
-        );
-        body.extend_from_slice(content);
-        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+        for (name, value) in fields {
+            body.extend_from_slice(
+                format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+                    .as_bytes(),
+            );
+        }
+        for (filename, content) in files {
+            body.extend_from_slice(
+                format!(
+                    "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: text/plain\r\n\r\n"
+                )
+                .as_bytes(),
+            );
+            body.extend_from_slice(content);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
         let request = Request::builder()
             .method(Method::POST)
             .uri(uri)

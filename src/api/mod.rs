@@ -45,7 +45,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(get_revision).patch(update_revision),
         )
         .route("/items/{number}/revisions/{code}/checkout", post(checkout))
-        .route("/items/{number}/revisions/{code}/checkin", post(checkin))
+        .route(
+            "/items/{number}/revisions/{code}/checkin",
+            post(checkin).layer(DefaultBodyLimit::max(upload_limit)),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/cancel-checkout",
+            post(cancel_checkout),
+        )
         .route("/items/{number}/revisions/{code}/revise", post(revise))
         .route("/items/{number}/revisions/{code}/obsolete", post(obsolete))
         .route(
@@ -64,6 +71,9 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/files/{id}", get(file_meta).delete(delete_file))
         .route("/files/{id}/content", get(download))
+        .route("/files/{id}/versions", get(file_versions))
+        .route("/files/{id}/restore", post(restore_file))
+        .route("/file-versions/{id}/content", get(download_version))
         .route("/changes", get(list_changes).post(create_change))
         .route("/changes/{number}", get(get_change))
         .route("/changes/{number}/items", post(add_change_item))
@@ -123,7 +133,8 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code|latest}",
             "PATCH  /api/v1/items/{number}/revisions/{code}           {name?, description?, material?, mass_kg?, unit_cost?}",
             "POST   /api/v1/items/{number}/revisions/{code}/checkout",
-            "POST   /api/v1/items/{number}/revisions/{code}/checkin",
+            "POST   /api/v1/items/{number}/revisions/{code}/checkin   optional multipart: 'file' (new versions), 'comment'",
+            "POST   /api/v1/items/{number}/revisions/{code}/cancel-checkout",
             "POST   /api/v1/items/{number}/revisions/{code}/revise",
             "POST   /api/v1/items/{number}/revisions/{code}/obsolete",
             "GET    /api/v1/items/{number}/revisions/{code}/bom?rule=latest|released&expand=true",
@@ -131,9 +142,12 @@ async fn index() -> Json<Value> {
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
             "DELETE /api/v1/bom-lines/{id}",
             "GET    /api/v1/items/{number}/revisions/{code}/files",
-            "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file'",
+            "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment'",
             "GET    /api/v1/files/{id}",
             "GET    /api/v1/files/{id}/content",
+            "GET    /api/v1/files/{id}/versions",
+            "POST   /api/v1/files/{id}/restore                        {version}",
+            "GET    /api/v1/file-versions/{id}/content",
             "DELETE /api/v1/files/{id}",
             "GET    /api/v1/changes?status=",
             "POST   /api/v1/changes                                   {title, description?, priority?}",
@@ -398,13 +412,53 @@ async fn checkout(
     Ok(Json(json!(revisions::checkout(&st.db, &me, rev.id).await?)))
 }
 
+/// Check-in. Without a body it just releases the lock; with a
+/// `multipart/form-data` body (fields `file` and optional `comment`) the files
+/// become new versions and the lock is released in the same transaction.
 async fn checkin(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    req: Request,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &number, &code).await?;
+    if rev.checked_out_by != Some(me.id) {
+        return Err(AppError::Conflict(format!(
+            "You have not checked out {}.",
+            revisions::label(&rev)
+        )));
+    }
+    let is_multipart = req
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.starts_with("multipart/form-data"));
+    let received = if is_multipart {
+        let mut multipart = Multipart::from_request(req, &st)
+            .await
+            .map_err(|e| AppError::BadRequest(e.body_text()))?;
+        web::receive_uploads(&st, &mut multipart).await?
+    } else {
+        web::Received::default()
+    };
+    let (rev, stored) =
+        files::check_in(&st.db, &me, rev.id, &received.uploads, &received.comment).await?;
+    let changed: Vec<Value> = stored
+        .iter()
+        .map(|s| json!({ "file_id": s.file_id, "filename": s.filename, "version": s.version, "changed": s.changed }))
+        .collect();
+    Ok(Json(json!({ "revision": rev, "files": changed })))
+}
+
+async fn cancel_checkout(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
     let rev = revision_at(&st, &number, &code).await?;
-    Ok(Json(json!(revisions::checkin(&st.db, &me, rev.id).await?)))
+    Ok(Json(json!(
+        revisions::cancel_checkout(&st.db, &me, rev.id).await?
+    )))
 }
 
 async fn revise(
@@ -544,8 +598,44 @@ async fn upload_files(
     mut multipart: Multipart,
 ) -> AppResult<Response> {
     let rev = revision_at(&st, &number, &code).await?;
-    let stored = web::receive_files(&st, &me, rev.id, &mut multipart).await?;
-    Ok((StatusCode::CREATED, Json(json!(stored))).into_response())
+    let stored = web::upload_files(&st, &me, rev.id, &mut multipart).await?;
+    let mut records = Vec::with_capacity(stored.len());
+    for s in &stored {
+        records.push(files::get(&st.db, s.file_id).await?);
+    }
+    Ok((StatusCode::CREATED, Json(json!(records))).into_response())
+}
+
+async fn file_versions(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(files::versions(&st.db, id).await?)))
+}
+
+#[derive(Deserialize)]
+struct RestoreBody {
+    version: i32,
+}
+
+async fn restore_file(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+    ApiJson(body): ApiJson<RestoreBody>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(
+        files::restore_version(&st.db, &me, id, body.version).await?
+    )))
+}
+
+async fn download_version(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    web::version_response(&st, id).await
 }
 
 async fn file_meta(

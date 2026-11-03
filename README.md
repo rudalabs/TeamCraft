@@ -36,8 +36,9 @@ development and break-glass access.
 |----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Items                | Part, assembly, document or software with a unique number (`PRT-000042`, `ASM-…`, `DOC-…`, `SW-…`, or your own scheme)                               |
 | Revisions            | `A, B, …, Y, AA, …` (letters I, O, Q, S, X, Z skipped per ASME Y14.35); lifecycle **WIP → In Review → Released → Obsolete**                          |
-| Check-out / check-in | Exclusive edit lock on a WIP revision                                                                                                                |
-| Files                | Content-addressed vault (SHA-256, de-duplicated, integrity check), any file type, up to 512 MiB per file (configurable)                              |
+| Check-out / check-in | Changes require the exclusive lock; check-in stores the new file versions and releases the lock in one transaction                                   |
+| Files & versions     | Every upload of a file name is a new version with comment; full history, download of any version, rollback (restore as new version)                 |
+| Vault                | Content-addressed (SHA-256, de-duplicated, integrity check), any file type, up to 512 MiB per file (configurable)                                    |
 | BOM                  | Multi-level structure, find numbers, quantities, revision rules *latest* / *latest released*, mass & cost roll-up, where-used, CSV export, no cycles |
 | Changes              | Collect WIP revisions, assign reviewers, submit, approve/reject; approval releases all revisions atomically                                          |
 | Project groups       | Every item belongs to a WARR project group; only its members (and admins) may change it; memberships manual or synced from Authentik groups         |

@@ -240,8 +240,8 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<R
     let rev_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO revisions (id, item_id, seq, code, state, name, description, material,
-                                mass_kg, unit_cost, created_by)
-         VALUES ($1, $2, 1, $3, 'in_work', $4, $5, $6, $7, $8, $9)",
+                                mass_kg, unit_cost, created_by, checked_out_by, checked_out_at)
+         VALUES ($1, $2, 1, $3, 'in_work', $4, $5, $6, $7, $8, $9, $9, now())",
     )
     .bind(rev_id)
     .bind(item_id)

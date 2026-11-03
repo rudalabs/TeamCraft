@@ -17,7 +17,6 @@ use crate::{
     auth::{Actor, WebUser},
     domain::{self, LifecycleState, COMMON_UNITS},
     error::{AppError, AppResult},
-    models::FileRecord,
     services::{audit, bom, changes, files, items, projects, revisions},
     util, AppState,
 };
@@ -30,7 +29,18 @@ pub async fn show(
     let rev = revisions::get(&st.db, id).await?;
     let item = items::get(&st.db, rev.item_id).await?;
     let all_revisions = items::revisions(&st.db, item.id).await?;
-    let attachments = files::list(&st.db, id).await?;
+    let file_versions = files::versions_of_revision(&st.db, id).await?;
+    // Every file together with its version history (newest first).
+    let attachments: Vec<serde_json::Value> = files::list(&st.db, id)
+        .await?
+        .into_iter()
+        .map(|f| {
+            let versions: Vec<_> = file_versions.iter().filter(|v| v.file_id == f.id).collect();
+            let mut value = json!(f);
+            value["versions"] = json!(versions);
+            value
+        })
+        .collect();
     let lines = bom::lines(&st.db, id).await?;
     let where_used = items::where_used(&st.db, item.id).await?;
     let rev_changes = changes::for_revision(&st.db, id).await?;
@@ -42,7 +52,9 @@ pub async fn show(
 
     let state = revisions::state_of(&rev);
     let me = &ctx.me;
+    // editable = checked out by me; can_work = could check out / add to a change
     let editable = revisions::ensure_editable(&rev, me).is_ok();
+    let can_work = revisions::ensure_checkout_possible(&rev, me).is_ok();
     let item_has_open_revision = all_revisions
         .iter()
         .any(|r| revisions::state_of(r).is_open());
@@ -50,7 +62,7 @@ pub async fn show(
         .iter()
         .find(|c| changes::status_of(c).is_open())
         .cloned();
-    let drafts = if editable && open_change.is_none() {
+    let drafts = if can_work && open_change.is_none() {
         changes::drafts(&st.db)
             .await?
             .into_iter()
@@ -62,8 +74,9 @@ pub async fn show(
     let in_project = revisions::ensure_project_access(&rev, me).is_ok();
     let can = json!({
         "edit": editable,
-        "checkout": editable && rev.checked_out_by.is_none(),
-        "checkin": rev.checked_out_by.is_some()
+        "checkout": can_work && rev.checked_out_by.is_none(),
+        "checkin": rev.checked_out_by == Some(me.id),
+        "cancel_checkout": rev.checked_out_by.is_some()
             && me.can_edit()
             && (rev.checked_out_by == Some(me.id) || me.is_admin()),
         "revise": in_project && !item_has_open_revision,
@@ -74,7 +87,7 @@ pub async fn show(
             && where_used.is_empty()
             && rev_changes.is_empty(),
         "master": in_project,
-        "add_to_change": editable && open_change.is_none(),
+        "add_to_change": can_work && open_change.is_none(),
     });
     let latest_id = all_revisions.first().map(|r| r.id);
     render(
@@ -190,17 +203,58 @@ pub async fn checkout(
     })
 }
 
+/// Check-in form (multipart): optional new file versions + comment; the files
+/// are stored and the lock is released in one transaction.
 pub async fn checkin(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    mut multipart: Multipart,
+) -> AppResult<Response> {
+    let back = format!("/revisions/{id}");
+    let result = async {
+        let rev = revisions::get(&st.db, id).await?;
+        if rev.checked_out_by != Some(ctx.me.id) {
+            return Err(AppError::Conflict(format!(
+                "You have not checked out {}.",
+                revisions::label(&rev)
+            )));
+        }
+        let received = receive_uploads(&st, &mut multipart).await?;
+        files::check_in(&st.db, &ctx.me, id, &received.uploads, &received.comment).await
+    }
+    .await;
+    finish(&st, result, &back, |(rev, stored)| {
+        let changed: Vec<String> = stored
+            .iter()
+            .filter(|s| s.changed)
+            .map(|s| format!("{} v{}", s.filename, s.version))
+            .collect();
+        let message = if changed.is_empty() {
+            format!("Checked in {}", revisions::label(&rev))
+        } else {
+            format!(
+                "Checked in {} with {}",
+                revisions::label(&rev),
+                changed.join(", ")
+            )
+        };
+        (back.clone(), message)
+    })
+}
+
+/// Releases the lock without changes (admins: release someone else's lock).
+pub async fn cancel_checkout(
     State(st): State<AppState>,
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     let back = format!("/revisions/{id}");
-    let result = revisions::checkin(&st.db, &ctx.me, id).await;
+    let result = revisions::cancel_checkout(&st.db, &ctx.me, id).await;
     finish(&st, result, &back, |rev| {
         (
             back.clone(),
-            format!("Checked in {}", revisions::label(&rev)),
+            format!("Released the check-out of {}", revisions::label(&rev)),
         )
     })
 }
@@ -243,40 +297,67 @@ fn multipart_error(e: MultipartError) -> AppError {
     }
 }
 
+/// Files and the comment field of a multipart upload.
+#[derive(Default)]
+pub(crate) struct Received {
+    pub uploads: Vec<files::Upload>,
+    pub comment: String,
+}
+
 /// Streams every `file` field of a multipart request into the vault and
-/// attaches it to the revision. Shared with the REST API.
-pub(crate) async fn receive_files(
+/// collects the `comment` field. Nothing is registered in the database yet.
+/// Shared with the REST API.
+pub(crate) async fn receive_uploads(
+    st: &AppState,
+    multipart: &mut Multipart,
+) -> AppResult<Received> {
+    let mut received = Received::default();
+    while let Some(mut field) = multipart.next_field().await.map_err(multipart_error)? {
+        match field.name() {
+            Some("comment") => {
+                received.comment = field.text().await.map_err(multipart_error)?;
+            }
+            Some("file") => {
+                let filename = field.file_name().map(str::to_string).unwrap_or_default();
+                if filename.trim().is_empty() {
+                    continue; // empty <input type=file>
+                }
+                let content_type = files::clean_content_type(field.content_type());
+                let mut upload = st.vault.begin_upload(st.config.max_upload_bytes).await?;
+                while let Some(chunk) = field.chunk().await.map_err(multipart_error)? {
+                    upload.write(&chunk).await?;
+                }
+                let blob = upload.finish().await?;
+                received.uploads.push(files::Upload {
+                    blob,
+                    filename,
+                    content_type,
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(received)
+}
+
+/// Upload into a revision that is checked out by the actor (new files or new
+/// versions). Shared with the REST API.
+pub(crate) async fn upload_files(
     st: &AppState,
     actor: &Actor,
     revision_id: Uuid,
     multipart: &mut Multipart,
-) -> AppResult<Vec<FileRecord>> {
+) -> AppResult<Vec<files::Stored>> {
     files::ensure_can_attach(&st.db, actor, revision_id).await?;
-    let mut stored = Vec::new();
-    while let Some(mut field) = multipart.next_field().await.map_err(multipart_error)? {
-        if field.name() != Some("file") {
-            continue;
-        }
-        let filename = field.file_name().map(str::to_string).unwrap_or_default();
-        if filename.trim().is_empty() {
-            continue; // empty <input type=file>
-        }
-        let content_type = files::clean_content_type(field.content_type());
-        let mut upload = st.vault.begin_upload(st.config.max_upload_bytes).await?;
-        while let Some(chunk) = field.chunk().await.map_err(multipart_error)? {
-            upload.write(&chunk).await?;
-        }
-        let blob = upload.finish().await?;
-        stored.push(
-            files::attach(&st.db, actor, revision_id, &blob, &filename, &content_type).await?,
-        );
-    }
-    if stored.is_empty() {
-        return Err(AppError::BadRequest(
-            "Choose at least one file to upload.".into(),
-        ));
-    }
-    Ok(stored)
+    let received = receive_uploads(st, multipart).await?;
+    files::attach(
+        &st.db,
+        actor,
+        revision_id,
+        &received.uploads,
+        &received.comment,
+    )
+    .await
 }
 
 pub async fn upload(
@@ -286,26 +367,40 @@ pub async fn upload(
     mut multipart: Multipart,
 ) -> AppResult<Response> {
     let back = format!("/revisions/{id}#files");
-    let result = receive_files(&st, &ctx.me, id, &mut multipart).await;
+    let result = upload_files(&st, &ctx.me, id, &mut multipart).await;
     finish(&st, result, &back, |stored| {
-        let names: Vec<String> = stored.iter().map(|f| f.filename.clone()).collect();
+        let names: Vec<String> = stored
+            .iter()
+            .map(|s| {
+                if s.changed {
+                    format!("{} v{}", s.filename, s.version)
+                } else {
+                    format!("{} (unchanged)", s.filename)
+                }
+            })
+            .collect();
         (back.clone(), format!("Uploaded {}", names.join(", ")))
     })
 }
 
-/// Streams a file from the vault as a download. Shared with the REST API.
-pub(crate) async fn file_response(st: &AppState, file_id: Uuid) -> AppResult<Response> {
-    let record = files::get(&st.db, file_id).await?;
-    let file = st.vault.open_blob(&record.sha256).await?;
+/// Streams a blob from the vault as a download.
+pub(crate) async fn blob_response(
+    st: &AppState,
+    sha256: &str,
+    filename: &str,
+    content_type: &str,
+    size: i64,
+) -> AppResult<Response> {
+    let file = st.vault.open_blob(sha256).await?;
     Response::builder()
-        .header(header::CONTENT_TYPE, record.content_type.as_str())
-        .header(header::CONTENT_LENGTH, record.size_bytes)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, size)
         .header(
             header::CONTENT_DISPOSITION,
-            util::content_disposition(&record.filename),
+            util::content_disposition(filename),
         )
         .header(header::CACHE_CONTROL, "private, no-cache")
-        .header("x-content-sha256", record.sha256.as_str())
+        .header("x-content-sha256", sha256)
         .body(Body::from_stream(ReaderStream::new(file)))
         .map_err(|e| {
             AppError::Other(anyhow::anyhow!(
@@ -314,12 +409,59 @@ pub(crate) async fn file_response(st: &AppState, file_id: Uuid) -> AppResult<Res
         })
 }
 
+/// Current version of a file. Shared with the REST API.
+pub(crate) async fn file_response(st: &AppState, file_id: Uuid) -> AppResult<Response> {
+    let f = files::get(&st.db, file_id).await?;
+    blob_response(st, &f.sha256, &f.filename, &f.content_type, f.size_bytes).await
+}
+
+/// A specific version of a file (`name.v2.ext`). Shared with the REST API.
+pub(crate) async fn version_response(st: &AppState, version_id: Uuid) -> AppResult<Response> {
+    let (v, filename) = files::get_version(&st.db, version_id).await?;
+    let versioned = match filename.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => format!("{stem}.v{}.{ext}", v.version),
+        _ => format!("{filename}.v{}", v.version),
+    };
+    blob_response(st, &v.sha256, &versioned, &v.content_type, v.size_bytes).await
+}
+
 pub async fn download(
     State(st): State<AppState>,
     WebUser(_me): WebUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     file_response(&st, id).await
+}
+
+pub async fn download_version(
+    State(st): State<AppState>,
+    WebUser(_me): WebUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    version_response(&st, id).await
+}
+
+#[derive(Deserialize)]
+pub struct RestoreForm {
+    version: i32,
+    back: Option<String>,
+}
+
+/// Rollback of a file to an older version (stored as a new version).
+pub async fn restore_version(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<RestoreForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = files::restore_version(&st.db, &ctx.me, id, form.version).await;
+    finish(&st, result, &back, |f| {
+        (
+            back.clone(),
+            format!("Restored {} – it is now version {}", f.filename, f.version),
+        )
+    })
 }
 
 pub async fn delete_file(

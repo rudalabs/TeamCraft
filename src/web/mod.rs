@@ -16,7 +16,9 @@ mod dashboard;
 mod items;
 mod revisions;
 
-pub(crate) use revisions::{file_response, receive_files};
+pub(crate) use revisions::{
+    file_response, receive_uploads, upload_files, version_response, Received,
+};
 
 use axum::{
     extract::{DefaultBodyLimit, FromRequestParts, Request, State},
@@ -103,7 +105,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(revisions::edit_form).post(revisions::update),
         )
         .route("/revisions/{id}/checkout", post(revisions::checkout))
-        .route("/revisions/{id}/checkin", post(revisions::checkin))
+        .route(
+            "/revisions/{id}/checkin",
+            post(revisions::checkin).layer(DefaultBodyLimit::max(upload_limit)),
+        )
+        .route(
+            "/revisions/{id}/cancel-checkout",
+            post(revisions::cancel_checkout),
+        )
         .route("/revisions/{id}/revise", post(revisions::revise))
         .route("/revisions/{id}/obsolete", post(revisions::obsolete))
         .route(
@@ -116,6 +125,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/files/{id}/download", get(revisions::download))
         .route("/files/{id}/delete", post(revisions::delete_file))
+        .route("/files/{id}/restore", post(revisions::restore_version))
+        .route(
+            "/file-versions/{id}/download",
+            get(revisions::download_version),
+        )
         // BOM
         .route("/revisions/{id}/bom", get(bom::show))
         .route("/revisions/{id}/bom.csv", get(bom::csv))

@@ -697,3 +697,171 @@ async fn sso_groups_sync_project_memberships() {
     );
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn checkout_checkin_file_versions_and_rollback() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["CRATER"]).await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &eng,
+            Some(json!({ "item_type": "part", "name": "Wheel hub", "project": "CRATER" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(
+        r.json()["checked_out_by"],
+        json!(app.actor("eng").await.id),
+        "new items are checked out to their creator"
+    );
+    let rev = "/api/v1/items/PRT-000001/revisions/A";
+
+    // v1 by upload while checked out
+    let r = app
+        .api_upload(&format!("{rev}/files"), &eng, "hub.step", b"STEP v1")
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let file_id = r.json()[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(r.json()[0]["version"], 1);
+
+    // check-in with a new version: stored and lock released together
+    let r = app
+        .api_multipart(
+            &format!("{rev}/checkin"),
+            &eng,
+            &[("hub.step", b"STEP v2"), ("hub.stl", b"solid hub")],
+            &[("comment", "thicker spokes")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(
+        r.json()["revision"]["checked_out_by"].is_null(),
+        "lock released"
+    );
+    assert_eq!(r.json()["files"][0]["version"], 2);
+    assert_eq!(r.json()["files"][1]["version"], 1, "new file starts at v1");
+
+    // Without the lock nothing can be changed
+    let r = app
+        .api(
+            Method::PATCH,
+            rev,
+            &eng,
+            Some(json!({ "material": "PA12" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+    assert!(r.json()["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Check out"));
+    let r = app
+        .api_upload(&format!("{rev}/files"), &eng, "hub.step", b"STEP v3")
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    let r = app
+        .api(Method::POST, &format!("{rev}/checkin"), &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "check-in needs a check-out");
+
+    // History: both versions downloadable
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{file_id}/versions"),
+            &eng,
+            None,
+        )
+        .await;
+    let versions = r.json();
+    assert_eq!(versions.as_array().unwrap().len(), 2);
+    assert_eq!(versions[0]["version"], 2);
+    assert_eq!(versions[0]["comment"], "thicker spokes");
+    let v1_id = versions[1]["id"].as_str().unwrap().to_string();
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/file-versions/{v1_id}/content"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.body, b"STEP v1");
+    assert!(r
+        .header("content-disposition")
+        .unwrap()
+        .contains("hub.v1.step"));
+
+    // Rollback to v1 creates v3 with the old content
+    app.api(Method::POST, &format!("{rev}/checkout"), &eng, None)
+        .await;
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/files/{file_id}/restore"),
+            &eng,
+            Some(json!({ "version": 1 })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["version"], 3);
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{file_id}/content"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.body, b"STEP v1");
+
+    // Re-uploading identical content creates no new version
+    let r = app
+        .api_upload(&format!("{rev}/files"), &eng, "HUB.STEP", b"STEP v1")
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED);
+    assert_eq!(
+        r.json()[0]["version"],
+        3,
+        "same name (case-insensitive), same content"
+    );
+
+    // A failing check-in (file too large) changes nothing: lock and version stay
+    let big = vec![b'x'; 1024 * 1024 + 10];
+    let r = app
+        .api_multipart(&format!("{rev}/checkin"), &eng, &[("hub.step", &big)], &[])
+        .await;
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", r.text());
+    let r = app.api(Method::GET, rev, &eng, None).await;
+    assert!(
+        !r.json()["revision"]["checked_out_by"].is_null(),
+        "still checked out"
+    );
+    assert_eq!(r.json()["files"][0]["version"], 3);
+
+    // A check-in without files just releases the lock
+    app.api(Method::POST, &format!("{rev}/checkin"), &eng, None)
+        .await;
+    let r = app
+        .api(
+            Method::GET,
+            "/api/v1/items/PRT-000001/revisions/A",
+            &eng,
+            None,
+        )
+        .await;
+    assert!(r.json()["revision"]["checked_out_by"].is_null());
+
+    // Audit trail of the check-in
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE action IN ('revision.checkin', 'file.version', 'file.restore')")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert!(
+        n >= 4,
+        "check-ins, new version and restore are audited ({n})"
+    );
+    app.teardown().await;
+}

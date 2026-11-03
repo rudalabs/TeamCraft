@@ -125,6 +125,23 @@ pub struct FileRecord {
     pub uploaded_by: Uuid,
     pub uploaded_by_name: String,
     pub uploaded_at: DateTime<Utc>,
+    /// Number of the current version (1, 2, …).
+    pub version: i32,
+}
+
+/// One stored version of a file.
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct FileVersion {
+    pub id: Uuid,
+    pub file_id: Uuid,
+    pub version: i32,
+    pub sha256: String,
+    pub size_bytes: i64,
+    pub content_type: String,
+    pub comment: String,
+    pub uploaded_by: Uuid,
+    pub uploaded_by_name: String,
+    pub uploaded_at: DateTime<Utc>,
 }
 
 /// A stored single-level BOM line with information about the child item.

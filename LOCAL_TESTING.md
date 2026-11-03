@@ -121,19 +121,26 @@ time. Tick off each expected result.
 
 ### D. Check-out / check-in
 
-1. erika on NX-ENG-001/A: **Check out** → 🔒 badge with her name.
-2. rolf opens the same revision: no *Edit* button, a notice says it is checked out by erika.
-3. erika: **Edit attributes** → material `AlMg3` → saved, history shows the change.
-4. admin opens the revision → **Check in** asks for confirmation (force release of erika's lock) → lock gone, history
-   shows *Released check-out … held by erika*.
+1. A new item is **checked out to its creator** automatically (🔒 badge with erika's name).
+2. erika: **Check in…** → no file, comment empty → *Checked in*; the lock is gone and the
+   page now says *Check out this revision to change attributes, files or the BOM* – no edit buttons.
+3. erika: **Check out** → **Edit attributes** → material `AlMg3` → saved, history shows the change.
+4. A second NIXUS member (add one on the NIXUS page) sees *Checked out by erika* and cannot change anything.
+5. admin opens the revision → **Force unlock** (with confirmation) → lock gone, history shows
+   *Released check-out … held by erika*.
 
-### E. Files
+### E. Files, versions and rollback
 
-1. erika on NX-ENG-001/A → *Files*: upload one or more files (e.g. a PDF and a STEP file).
+1. erika checks out NX-ENG-001/A → *Files*: upload `mount.step` and a PDF (comment optional) → both **v1**.
 2. Download → identical file, browser saves it with the original name.
-3. Upload the same file again → stored only once in `./data/vault/objects` (same SHA-256 prefix shown).
-4. **Remove** a file → gone from the revision (the blob stays, older revisions may use it).
-5. Optional: set `TEAMCRAFT_MAX_UPLOAD_MB=1` in `secrets/.env`, restart, upload a larger file → *exceeds the upload limit*.
+3. **Check in…** with a modified `mount.step` and the comment `thicker flange` → one step:
+   `mount.step` becomes **v2** *and* the lock is released.
+4. **History** next to `mount.step` lists v2 (comment *thicker flange*) and v1; download v1 → saved as `mount.v1.step`.
+5. Check out again → **Restore** v1 → becomes **v3** with v1's content (history is never rewritten).
+6. Upload the identical file again → no new version (*unchanged*); the vault stores every content only once.
+7. **Remove** a file → gone from the revision with all versions (the blobs stay, older revisions may use them).
+8. Optional: set `TEAMCRAFT_MAX_UPLOAD_MB=1` in `secrets/.env`, restart, check in a larger file →
+   *exceeds the upload limit*, and nothing changed: still checked out, no new version.
 
 ### F. Bill of materials
 

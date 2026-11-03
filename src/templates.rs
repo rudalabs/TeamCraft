@@ -200,11 +200,18 @@ mod tests {
             "child_latest_revision_id": "99999999-9999-4999-8999-999999999999", "child_latest_code": "A",
             "child_latest_state": "released", "child_name": "Bolt"
         });
+        let version = |n: i32, comment: &str| {
+            json!({ "id": ME, "file_id": OTHER, "version": n, "sha256": "cd".repeat(32), "size_bytes": 1000,
+                    "content_type": "application/pdf", "comment": comment, "uploaded_by": ME,
+                    "uploaded_by_name": "Max", "uploaded_at": TS })
+        };
         let file = json!({ "id": OTHER, "revision_id": ME, "filename": "drawing.pdf", "content_type": "application/pdf",
                            "size_bytes": 123456, "sha256": "ab".repeat(32), "uploaded_by": ME,
-                           "uploaded_by_name": "Max", "uploaded_at": TS });
-        let can_all = json!({ "edit": true, "checkout": true, "checkin": true, "revise": true, "obsolete": true,
-                              "delete": true, "master": true, "add_to_change": true });
+                           "uploaded_by_name": "Max", "uploaded_at": TS, "version": 2,
+                           "versions": [version(2, "wall 2.5 mm"), version(1, "")] });
+        let can_all = json!({ "edit": true, "checkout": true, "checkin": true, "cancel_checkout": true,
+                              "revise": true, "obsolete": true, "delete": true, "master": true,
+                              "add_to_change": true });
 
         let html = render(
             &env,
@@ -271,6 +278,11 @@ mod tests {
                 })),
             );
             assert!(html.contains("Bracket &lt;b&gt;"), "names are escaped");
+            assert!(
+                html.contains("/files/") && html.contains("/restore"),
+                "rollback offered"
+            );
+            assert!(html.contains("Check in and release"), "check-in form");
         }
         render(
             &env,
