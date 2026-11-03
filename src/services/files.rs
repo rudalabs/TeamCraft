@@ -37,6 +37,8 @@ pub struct Upload {
     pub blob: StoredBlob,
     pub filename: String,
     pub content_type: String,
+    /// Text for the full-text search (see `textindex`).
+    pub content_text: String,
 }
 
 pub async fn list(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<FileRecord>> {
@@ -200,8 +202,9 @@ async fn store_uploads(
         };
         if changed {
             sqlx::query(
-                "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment, uploaded_by)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
+                                            uploaded_by, content_text)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .bind(Uuid::new_v4())
             .bind(file_id)
@@ -211,6 +214,7 @@ async fn store_uploads(
             .bind(&upload.content_type)
             .bind(comment)
             .bind(actor.id)
+            .bind(&upload.content_text)
             .execute(&mut *conn)
             .await?;
             audit::record(
@@ -357,17 +361,16 @@ pub async fn restore_version(
     }
     let new_version = current + 1;
     sqlx::query(
-        "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment, uploaded_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
+                                    uploaded_by, content_text)
+         SELECT $1, file_id, $2, sha256, size_bytes, content_type, $3, $4, content_text
+         FROM file_versions WHERE id = $5",
     )
     .bind(Uuid::new_v4())
-    .bind(file_id)
     .bind(new_version)
-    .bind(&old.sha256)
-    .bind(old.size_bytes)
-    .bind(&old.content_type)
     .bind(format!("Restored version {version}"))
     .bind(actor.id)
+    .bind(old.id)
     .execute(&mut *tx)
     .await?;
     sqlx::query(

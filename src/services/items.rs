@@ -35,35 +35,56 @@ pub async fn search(
     filter: &ItemFilter,
     page: Page,
 ) -> AppResult<(Vec<ItemSummary>, i64)> {
+    // $1 = LIKE pattern, $5 = prefix tsquery. A match is any of: item number,
+    // name/description/material (substring or full-text), a file name, or the
+    // extracted text of the current version of a file of the latest revision.
     const FROM: &str = "
         FROM items i
         LEFT JOIN projects p ON p.id = i.project_id
         CROSS JOIN LATERAL (
-            SELECT r.id, r.code, r.state, r.name, r.description
+            SELECT r.id, r.code, r.state, r.name, r.description, r.material, r.search_vector
             FROM revisions r WHERE r.item_id = i.id ORDER BY r.seq DESC LIMIT 1
         ) lr
-        WHERE ($1::text IS NULL OR i.number ILIKE $1 OR lr.name ILIKE $1 OR lr.description ILIKE $1)
+        LEFT JOIN LATERAL (
+            SELECT f.filename FROM files f
+            JOIN file_versions fv ON fv.file_id = f.id AND fv.version = f.current_version
+            WHERE $1::text IS NOT NULL AND f.revision_id = lr.id
+              AND (f.filename ILIKE $1
+                   OR ($5::text IS NOT NULL AND fv.content_vector @@ to_tsquery('simple', $5)))
+            ORDER BY f.filename LIMIT 1
+        ) fm ON TRUE
+        WHERE ($1::text IS NULL
+               OR i.number ILIKE $1 OR lr.name ILIKE $1 OR lr.description ILIKE $1 OR lr.material ILIKE $1
+               OR ($5::text IS NOT NULL AND lr.search_vector @@ to_tsquery('simple', $5))
+               OR fm.filename IS NOT NULL)
           AND ($2::text IS NULL OR i.item_type = $2)
           AND ($3::uuid IS NULL OR i.project_id = $3)
           AND ($4::text IS NULL OR lr.state = $4)";
-    let pattern = filter
+    let query = filter
         .query
         .as_deref()
         .map(str::trim)
-        .filter(|q| !q.is_empty())
-        .map(domain::like_pattern);
+        .filter(|q| !q.is_empty());
+    let pattern = query.map(domain::like_pattern);
+    let tsquery = query.and_then(crate::textindex::prefix_query);
     let item_type = filter.item_type.map(ItemType::as_str);
     let state = filter.state.map(LifecycleState::as_str);
 
     let rows = sqlx::query_as::<_, ItemSummary>(&format!(
         "SELECT i.id, i.number, i.item_type, i.unit, p.code AS project_code, i.created_at,
-                lr.id AS latest_revision_id, lr.code AS latest_code, lr.state AS latest_state, lr.name
-         {FROM} ORDER BY i.number LIMIT $5 OFFSET $6"
+                lr.id AS latest_revision_id, lr.code AS latest_code, lr.state AS latest_state, lr.name,
+                fm.filename AS matched_file
+         {FROM}
+         ORDER BY CASE WHEN $5::text IS NULL THEN 0
+                       ELSE ts_rank(lr.search_vector, to_tsquery('simple', $5)) END DESC,
+                  i.number
+         LIMIT $6 OFFSET $7"
     ))
     .bind(&pattern)
     .bind(item_type)
     .bind(filter.project_id)
     .bind(state)
+    .bind(&tsquery)
     .bind(page.limit)
     .bind(page.offset)
     .fetch_all(pool)
@@ -73,6 +94,7 @@ pub async fn search(
         .bind(item_type)
         .bind(filter.project_id)
         .bind(state)
+        .bind(&tsquery)
         .fetch_one(pool)
         .await?;
     Ok((rows, total))

@@ -244,7 +244,7 @@ mod tests {
             with_common(json!({
                 "items": [{ "id": ME, "number": "PRT-000001", "item_type": "part", "unit": "each", "project_code": null,
                             "created_at": TS, "latest_revision_id": OTHER, "latest_code": "A", "latest_state": "in_work",
-                            "name": "Bracket" }],
+                            "name": "Bracket", "matched_file": "bracket.step" }],
                 "pagination": page(), "base_query": "q=a%20b",
                 "filter": { "q": "a b", "type": "part", "project": "", "state": "" },
                 "projects": [project()], "types": [{ "value": "part", "label": "Part" }],

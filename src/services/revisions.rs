@@ -326,13 +326,18 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     .await?
     .rows_affected();
     sqlx::query(
-        "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment, uploaded_by, uploaded_at)
+        "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
+                                    uploaded_by, uploaded_at, content_text)
          SELECT gen_random_uuid(), f.id, 1, f.sha256, f.size_bytes, f.content_type,
-                'Taken over from revision ' || $2, f.uploaded_by, f.uploaded_at
+                'Taken over from revision ' || $2, f.uploaded_by, f.uploaded_at,
+                COALESCE((SELECT ov.content_text FROM file_versions ov
+                          JOIN files ofl ON ofl.id = ov.file_id AND ov.version = ofl.current_version
+                          WHERE ofl.revision_id = $3 AND ofl.filename = f.filename LIMIT 1), '')
          FROM files f WHERE f.revision_id = $1",
     )
     .bind(new_id)
     .bind(&src.code)
+    .bind(src.id)
     .execute(&mut *tx)
     .await?;
     let lines = sqlx::query(

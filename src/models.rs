@@ -71,6 +71,8 @@ pub struct ItemSummary {
     pub latest_code: String,
     pub latest_state: String,
     pub name: String,
+    /// When searching: a file whose name or content matched.
+    pub matched_file: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]

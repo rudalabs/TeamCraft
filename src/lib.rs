@@ -18,6 +18,7 @@ pub mod notify;
 pub mod oidc;
 pub mod services;
 pub mod templates;
+pub mod textindex;
 pub mod util;
 pub mod vault;
 pub mod web;

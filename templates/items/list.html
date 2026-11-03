@@ -15,7 +15,7 @@
 
 <form class="card form-row" method="get" action="/items">
   <label>Search
-    <input type="search" name="q" value="{{ filter.q }}" placeholder="Number, name or description">
+    <input type="search" name="q" value="{{ filter.q }}" placeholder="Number, name, material, file name or file content">
   </label>
   <label>Type
     <select name="type">
@@ -49,7 +49,7 @@
     {% for i in items %}
       <tr>
         <td class="nowrap mono"><a href="/revisions/{{ i.latest_revision_id }}">{{ i.number }}</a></td>
-        <td>{{ i.name }}</td>
+        <td>{{ i.name }}{% if i.matched_file %} <span class="small muted" title="The search term was found in this file">· found in {{ i.matched_file }}</span>{% endif %}</td>
         <td>{{ i.item_type|label }}</td>
         <td class="mono">{{ i.latest_code }}</td>
         <td>{{ m.badge(i.latest_state) }}</td>

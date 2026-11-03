@@ -328,10 +328,15 @@ pub(crate) async fn receive_uploads(
                     upload.write(&chunk).await?;
                 }
                 let blob = upload.finish().await?;
+                let content_text = match st.vault.object_path(&blob.sha256) {
+                    Ok(path) => crate::textindex::extract_file(&path, &filename).await,
+                    Err(_) => String::new(),
+                };
                 received.uploads.push(files::Upload {
                     blob,
                     filename,
                     content_type,
+                    content_text,
                 });
             }
             _ => {}

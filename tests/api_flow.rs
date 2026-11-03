@@ -865,3 +865,77 @@ async fn checkout_checkin_file_versions_and_rollback() {
     );
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn metadata_and_full_text_search() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["NIXUS"]).await;
+    for (name, material, description) in [
+        (
+            "Injector plate",
+            "Inconel 718",
+            "Coaxial swirl injector, 36 elements",
+        ),
+        (
+            "Fuel valve",
+            "1.4404",
+            "Ball valve DN10 with pneumatic actuator",
+        ),
+        ("Fin can", "CFRP", "Bonded with Araldite 2015"),
+    ] {
+        let r = app
+            .api(Method::POST, "/api/v1/items", &eng, Some(json!({
+                "item_type": "part", "name": name, "material": material, "description": description, "project": "NIXUS"
+            })))
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    // A STEP file whose product names are indexed
+    let step = b"ISO-10303-21;\nDATA;\n#1=PRODUCT('NX-FIN-04','Fin bracket aluminium','',(#2));\n#2=CARTESIAN_POINT('',(1.,2.,3.));\nENDSEC;";
+    let r = app
+        .api_upload(
+            "/api/v1/items/PRT-000003/revisions/A/files",
+            &eng,
+            "fin-can.step",
+            step,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+
+    let search = |q: &str| {
+        let uri = format!("/api/v1/items?q={}", teamcraft::util::pct_encode(q));
+        let eng = eng.clone();
+        let app = &app;
+        async move { app.api(Method::GET, &uri, &eng, None).await.json() }
+    };
+    let numbers = |r: &serde_json::Value| -> Vec<String> {
+        r["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["number"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // prefix full-text over name/material/description, several words
+    assert_eq!(numbers(&search("injec").await), vec!["PRT-000001"]);
+    assert_eq!(numbers(&search("swirl elements").await), vec!["PRT-000001"]);
+    assert_eq!(numbers(&search("pneumatic").await), vec!["PRT-000002"]);
+    assert_eq!(
+        numbers(&search("inconel").await),
+        vec!["PRT-000001"],
+        "material"
+    );
+    // substring match on the number still works
+    assert_eq!(search("000002").await["total"], 1);
+    // file contents (STEP product names) and file names
+    let r = search("aluminium").await;
+    assert_eq!(numbers(&r), vec!["PRT-000003"]);
+    assert_eq!(r["items"][0]["matched_file"], "fin-can.step");
+    assert_eq!(numbers(&search("fin-can.step").await), vec!["PRT-000003"]);
+    // geometry numbers are not indexed; nonsense finds nothing
+    assert_eq!(search("zzzqqq").await["total"], 0);
+    // special characters are harmless
+    assert_eq!(search("' & | ! :*").await["total"], 0);
+    app.teardown().await;
+}
