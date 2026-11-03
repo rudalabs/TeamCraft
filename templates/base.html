@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %} · {{ instance_name }}</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css?v={{ version }}">
+  <script src="/static/app.js?v={{ version }}" defer></script>
+</head>
+<body>
+{% if me %}
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/"><img src="/static/favicon.svg" alt="">{{ instance_name }}</a>
+    <nav class="nav" aria-label="Main">
+      <a href="/" class="{% block nav_home %}{% endblock %}">Dashboard</a>
+      <a href="/items" class="{% block nav_items %}{% endblock %}">Items</a>
+      <a href="/changes" class="{% block nav_changes %}{% endblock %}">Changes</a>
+      <a href="/projects" class="{% block nav_projects %}{% endblock %}">Projects</a>
+      {% if me.is_admin %}
+      <a href="/admin/users" class="{% block nav_users %}{% endblock %}">Users</a>
+      <a href="/admin/audit" class="{% block nav_audit %}{% endblock %}">Audit log</a>
+      {% endif %}
+    </nav>
+    <form class="quicksearch" action="/items" method="get" role="search">
+      <input type="search" name="q" placeholder="Search items…" aria-label="Search items">
+    </form>
+    <div class="userbox">
+      <a href="/account" title="Account and API tokens">{{ me.display_name }}</a>
+      <span class="badge badge-{{ me.role }}">{{ me.role }}</span>
+      <form method="post" action="/logout"><button class="link" type="submit">Sign out</button></form>
+    </div>
+  </div>
+</header>
+{% endif %}
+<main>
+  {% if flash %}<div class="flash flash-{{ flash.kind }}" role="status">{{ flash.message }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+<footer>TeamCraft {{ version }} · open-source product lifecycle management</footer>
+</body>
+</html>

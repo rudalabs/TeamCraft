@@ -1,0 +1,83 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Read(./**)",
+      "Edit(./**)",
+      "WebFetch(domain:*)",
+      "WebSearch",
+      "Search",
+      "Skill",
+      "ExitPlanMode",
+      "Read(./**)",
+      "Grep(./**)",
+      "Edit(./**)",
+      "Bash(rm -rfv ./**)",
+      "Bash(ls ./*)",
+      "Bash(ls -l ./*)",
+      "Bash(ls -a ./*)",
+      "Bash(ls -la ./*)",
+      "Bash(cat *)",
+      "Bash(pwd *)",
+      "Bash(which *)",
+      "Bash(cargo *)",
+      "Bash(tree *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(grep *)",
+      "Bash(file *)",
+      "Bash(.venv/bin/python ./local/*)",
+      "Bash(source .venv/bin/activate && python ./local/*)",
+      "Bash(.venv/bin/python3 ./local/*)",
+      "Bash(source .venv/bin/activate && python3 ./local/*)",
+      "Bash(lazypush *)",
+      "Bash(git branch)",
+      "Bash(git pull)",
+      "Bash(git add --all)",
+      "Bash(git commit -m *)",
+      "Bash(git push)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git blame *)",
+      "Bash(git grep *)",
+      "Bash(git ls-files *)",
+      "Bash(git rev-parse *)",
+      "Bash(git merge-base *)",
+      "Bash(git check-ignore *)",
+      "Bash(git branch --show-current)",
+      "Bash(docker ps *)",
+      "Bash(docker images *)",
+      "Bash(docker compose up -d db)",
+      "Bash(docker compose ps)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose stop db)",
+      "Bash(docker compose start db)",
+      "Bash(curl -s http://localhost:8080/*)",
+      "Bash(curl -si http://localhost:8080/*)",
+      "Bash(curl -sS http://localhost:8080/*)",
+      "Bash(curl -s -H * http://localhost:8080/*)",
+      "Bash(./target/debug/teamcraft *)",
+      "Bash(docker compose stop app)",
+      "Bash(docker compose config)",
+      "Bash(docker compose -f deploy/docker-compose.warr.yml config)",
+      "Bash(docker run --rm teamcraft:dev *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/git-guard.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}

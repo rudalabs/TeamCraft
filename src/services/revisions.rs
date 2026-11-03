@@ -1,0 +1,368 @@
+//! Revisions: attributes, check-out/check-in, revise and obsolete.
+
+use serde_json::json;
+use sqlx::{PgConnection, PgPool};
+use uuid::Uuid;
+
+use crate::{
+    auth::Actor,
+    domain::{self, LifecycleState, Role},
+    error::{AppError, AppResult},
+    models::Revision,
+    services::audit,
+};
+
+pub(crate) const REVISION_SELECT: &str = "
+    SELECT r.id, r.item_id, i.number AS item_number, i.item_type, i.unit,
+           r.seq, r.code, r.state, r.name, r.description, r.material,
+           r.mass_kg, r.unit_cost,
+           r.checked_out_by, co.display_name AS checked_out_by_name, r.checked_out_at,
+           r.created_by, cb.display_name AS created_by_name,
+           r.created_at, r.updated_at, r.released_at
+    FROM revisions r
+    JOIN items i ON i.id = r.item_id
+    JOIN users cb ON cb.id = r.created_by
+    LEFT JOIN users co ON co.id = r.checked_out_by";
+
+pub fn state_of(rev: &Revision) -> LifecycleState {
+    LifecycleState::parse(&rev.state).unwrap_or(LifecycleState::Obsolete)
+}
+
+/// Human readable label such as `PRT-000042/B`.
+pub fn label(rev: &Revision) -> String {
+    format!("{}/{}", rev.item_number, rev.code)
+}
+
+pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Revision> {
+    sqlx::query_as::<_, Revision>(&format!("{REVISION_SELECT} WHERE r.id = $1"))
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| AppError::not_found("Revision not found."))
+}
+
+pub async fn get_by_code(pool: &PgPool, item_id: Uuid, code: &str) -> AppResult<Revision> {
+    sqlx::query_as::<_, Revision>(&format!(
+        "{REVISION_SELECT} WHERE r.item_id = $1 AND r.code = $2"
+    ))
+    .bind(item_id)
+    .bind(code.trim().to_ascii_uppercase())
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::not_found(format!("Revision '{code}' not found.")))
+}
+
+/// Loads a revision and locks its row until the transaction ends.
+pub(crate) async fn lock(conn: &mut PgConnection, id: Uuid) -> AppResult<Revision> {
+    sqlx::query_as::<_, Revision>(&format!(
+        "{REVISION_SELECT} WHERE r.id = $1 FOR UPDATE OF r"
+    ))
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| AppError::not_found("Revision not found."))
+}
+
+/// Revisions currently checked out by a user.
+pub async fn checked_out_by(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Revision>> {
+    Ok(sqlx::query_as::<_, Revision>(&format!(
+        "{REVISION_SELECT} WHERE r.checked_out_by = $1 ORDER BY r.checked_out_at DESC"
+    ))
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Fails unless `actor` may modify `rev`: engineer role, revision in work and
+/// not checked out by somebody else.
+pub fn ensure_editable(rev: &Revision, actor: &Actor) -> AppResult<()> {
+    actor.require(Role::Engineer)?;
+    let state = state_of(rev);
+    if !state.is_editable() {
+        return Err(AppError::Conflict(format!(
+            "{} is {} and cannot be modified. Create a new revision instead.",
+            label(rev),
+            state.label()
+        )));
+    }
+    if let Some(owner) = rev.checked_out_by {
+        if owner != actor.id {
+            return Err(AppError::Conflict(format!(
+                "{} is checked out by {}.",
+                label(rev),
+                rev.checked_out_by_name.as_deref().unwrap_or("another user")
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+pub struct RevisionUpdate {
+    pub name: String,
+    pub description: String,
+    pub material: String,
+    pub mass_kg: Option<f64>,
+    pub unit_cost: Option<f64>,
+}
+
+impl RevisionUpdate {
+    pub(crate) fn validated(self) -> AppResult<RevisionUpdate> {
+        Ok(RevisionUpdate {
+            name: domain::require_text("Name", &self.name, 200)?,
+            description: domain::limit_text("Description", &self.description, 10_000)?,
+            material: domain::limit_text("Material", &self.material, 200)?,
+            mass_kg: domain::validate_non_negative("Mass", self.mass_kg)?,
+            unit_cost: domain::validate_non_negative("Unit cost", self.unit_cost)?,
+        })
+    }
+}
+
+pub async fn update(
+    pool: &PgPool,
+    actor: &Actor,
+    id: Uuid,
+    upd: RevisionUpdate,
+) -> AppResult<Revision> {
+    let upd = upd.validated()?;
+    let mut tx = pool.begin().await?;
+    let rev = lock(&mut tx, id).await?;
+    ensure_editable(&rev, actor)?;
+    sqlx::query(
+        "UPDATE revisions SET name = $2, description = $3, material = $4, mass_kg = $5,
+                              unit_cost = $6, updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&upd.name)
+    .bind(&upd.description)
+    .bind(&upd.material)
+    .bind(upd.mass_kg)
+    .bind(upd.unit_cost)
+    .execute(&mut *tx)
+    .await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "revision.update",
+        "revision",
+        Some(id),
+        format!("Updated attributes of {}", label(&rev)),
+        json!({
+            "item_id": rev.item_id,
+            "name": upd.name,
+            "material": upd.material,
+            "mass_kg": upd.mass_kg,
+            "unit_cost": upd.unit_cost,
+        }),
+    )
+    .await?;
+    tx.commit().await?;
+    get(pool, id).await
+}
+
+/// Takes the exclusive edit lock of an in-work revision.
+pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
+    actor.require(Role::Engineer)?;
+    let mut tx = pool.begin().await?;
+    let rev = lock(&mut tx, id).await?;
+    ensure_editable(&rev, actor)?;
+    if rev.checked_out_by == Some(actor.id) {
+        return Ok(rev);
+    }
+    sqlx::query("UPDATE revisions SET checked_out_by = $2, checked_out_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(actor.id)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "revision.checkout",
+        "revision",
+        Some(id),
+        format!("Checked out {}", label(&rev)),
+        json!({ "item_id": rev.item_id }),
+    )
+    .await?;
+    tx.commit().await?;
+    get(pool, id).await
+}
+
+/// Releases the edit lock. Administrators may release locks of other users.
+pub async fn checkin(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
+    actor.require(Role::Engineer)?;
+    let mut tx = pool.begin().await?;
+    let rev = lock(&mut tx, id).await?;
+    let Some(owner) = rev.checked_out_by else {
+        return Ok(rev);
+    };
+    if owner != actor.id && !actor.is_admin() {
+        return Err(AppError::Forbidden(format!(
+            "{} is checked out by {}; only they or an administrator can check it in.",
+            label(&rev),
+            rev.checked_out_by_name.as_deref().unwrap_or("another user")
+        )));
+    }
+    sqlx::query("UPDATE revisions SET checked_out_by = NULL, checked_out_at = NULL WHERE id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    let forced = owner != actor.id;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        if forced {
+            "revision.checkin_forced"
+        } else {
+            "revision.checkin"
+        },
+        "revision",
+        Some(id),
+        if forced {
+            format!(
+                "Released check-out of {} held by {}",
+                label(&rev),
+                rev.checked_out_by_name.as_deref().unwrap_or("?")
+            )
+        } else {
+            format!("Checked in {}", label(&rev))
+        },
+        json!({ "item_id": rev.item_id }),
+    )
+    .await?;
+    tx.commit().await?;
+    get(pool, id).await
+}
+
+/// Creates the next revision of an item, copying attributes, files and BOM
+/// lines from revision `id`. Only possible when the item has no open revision.
+pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
+    actor.require(Role::Engineer)?;
+    let mut tx = pool.begin().await?;
+    let src = lock(&mut tx, id).await?;
+    // Serialise concurrent revise operations on the same item.
+    sqlx::query("SELECT id FROM items WHERE id = $1 FOR UPDATE")
+        .bind(src.item_id)
+        .execute(&mut *tx)
+        .await?;
+    let open = sqlx::query_scalar::<_, String>(
+        "SELECT code FROM revisions WHERE item_id = $1 AND state IN ('in_work', 'in_review')",
+    )
+    .bind(src.item_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(code) = open {
+        return Err(AppError::Conflict(format!(
+            "{} already has the open revision {code}; release or finish it first.",
+            src.item_number
+        )));
+    }
+    let max_seq = sqlx::query_scalar::<_, i32>(
+        "SELECT COALESCE(MAX(seq), 0) FROM revisions WHERE item_id = $1",
+    )
+    .bind(src.item_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let seq = max_seq + 1;
+    let code = domain::revision_code(seq);
+    let new_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO revisions (id, item_id, seq, code, state, name, description, material,
+                                mass_kg, unit_cost, created_by)
+         SELECT $2, item_id, $3, $4, 'in_work', name, description, material, mass_kg, unit_cost, $5
+         FROM revisions WHERE id = $1",
+    )
+    .bind(src.id)
+    .bind(new_id)
+    .bind(seq)
+    .bind(&code)
+    .bind(actor.id)
+    .execute(&mut *tx)
+    .await?;
+    let files = sqlx::query(
+        "INSERT INTO files (id, revision_id, filename, content_type, size_bytes, sha256, uploaded_by, uploaded_at)
+         SELECT gen_random_uuid(), $2, filename, content_type, size_bytes, sha256, uploaded_by, uploaded_at
+         FROM files WHERE revision_id = $1",
+    )
+    .bind(src.id)
+    .bind(new_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    let lines = sqlx::query(
+        "INSERT INTO bom_lines (id, parent_revision_id, child_item_id, find_number, quantity, notes)
+         SELECT gen_random_uuid(), $2, child_item_id, find_number, quantity, notes
+         FROM bom_lines WHERE parent_revision_id = $1",
+    )
+    .bind(src.id)
+    .bind(new_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "revision.revise",
+        "revision",
+        Some(new_id),
+        format!(
+            "Created revision {}/{code} from {}",
+            src.item_number, src.code
+        ),
+        json!({ "item_id": src.item_id, "from": src.code, "files": files, "bom_lines": lines }),
+    )
+    .await?;
+    tx.commit().await?;
+    get(pool, new_id).await
+}
+
+/// Marks a released revision as obsolete.
+pub async fn obsolete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
+    actor.require(Role::Engineer)?;
+    let mut tx = pool.begin().await?;
+    let rev = lock(&mut tx, id).await?;
+    transition(&mut tx, &rev, LifecycleState::Obsolete).await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "revision.obsolete",
+        "revision",
+        Some(id),
+        format!("Marked {} as obsolete", label(&rev)),
+        json!({ "item_id": rev.item_id }),
+    )
+    .await?;
+    tx.commit().await?;
+    get(pool, id).await
+}
+
+/// Moves a (locked) revision to another lifecycle state after validating
+/// the transition. Entering review clears any check-out.
+pub(crate) async fn transition(
+    conn: &mut PgConnection,
+    rev: &Revision,
+    to: LifecycleState,
+) -> AppResult<()> {
+    let from = state_of(rev);
+    if !from.can_transition_to(to) {
+        return Err(AppError::Conflict(format!(
+            "{} cannot go from {} to {}.",
+            label(rev),
+            from.label(),
+            to.label()
+        )));
+    }
+    sqlx::query(
+        "UPDATE revisions SET state = $2, updated_at = now(),
+             released_at = CASE WHEN $2 = 'released' THEN now() ELSE released_at END,
+             checked_out_by = CASE WHEN $2 = 'in_work' THEN checked_out_by ELSE NULL END,
+             checked_out_at = CASE WHEN $2 = 'in_work' THEN checked_out_at ELSE NULL END
+         WHERE id = $1",
+    )
+    .bind(rev.id)
+    .bind(to.as_str())
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}

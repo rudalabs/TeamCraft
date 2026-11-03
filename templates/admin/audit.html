@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Audit log{% endblock %}
+{% block nav_audit %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Audit log</h1>
+    <p class="subtitle">Every change to product data, changes, projects and users.</p>
+  </div>
+</div>
+
+<form class="card form-row" method="get" action="/admin/audit">
+  <label>Entity type
+    <select name="entity_type">
+      <option value="">All</option>
+      {% for t in ["item", "revision", "change", "project", "user"] %}
+      <option value="{{ t }}" {% if filter.entity_type == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Username <input type="text" name="username" value="{{ filter.username or '' }}"></label>
+  <label>Action <input type="text" name="action" value="{{ filter.action or '' }}" placeholder="e.g. change.released"></label>
+  <div class="actions"><button class="primary" type="submit">Filter</button><a class="button" href="/admin/audit">Reset</a></div>
+</form>
+
+<div class="card">
+  {% if entries %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>When</th><th>Who</th><th>Action</th><th>What</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+      <tr>
+        <td class="small nowrap">{{ m.time(e.at) }}</td>
+        <td class="nowrap">{{ e.username }}</td>
+        <td class="mono small nowrap">{{ e.action }}</td>
+        <td>{{ m.entity_link(e) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {{ m.pager(pagination, base_query) }}
+  {% else %}<p class="empty">No entries.</p>{% endif %}
+</div>
+{% endblock %}

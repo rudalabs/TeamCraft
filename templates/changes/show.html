@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}{{ change.number }} {{ change.title }}{% endblock %}
+{% block nav_changes %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1><span class="mono">{{ change.number }}</span> · {{ change.title }}</h1>
+    <p class="subtitle">{{ m.badge(change.status) }} {{ m.badge(change.priority) }} · created by {{ change.created_by_name }} {{ m.time(change.created_at) }}</p>
+  </div>
+  <div class="actions">
+    {% if can.submit %}
+    <form method="post" action="/changes/{{ change.id }}/submit"
+          data-confirm="Submit {{ change.number }} for review? Its revisions will be frozen.">
+      <button class="primary" type="submit">Submit for review</button>
+    </form>
+    {% endif %}
+    {% if can.withdraw %}
+    <form method="post" action="/changes/{{ change.id }}/withdraw"
+          data-confirm="Withdraw {{ change.number }} from review? All decisions are reset.">
+      <button type="submit">Withdraw</button>
+    </form>
+    {% endif %}
+    {% if can.reopen %}
+    <form method="post" action="/changes/{{ change.id }}/reopen"><button type="submit">Reopen as draft</button></form>
+    {% endif %}
+    {% if can.cancel %}
+    <form method="post" action="/changes/{{ change.id }}/cancel"
+          data-confirm="Cancel {{ change.number }}? This cannot be undone.">
+      <button class="danger" type="submit">Cancel change</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if change.status == "draft" %}
+<div class="notice">Draft: add the revisions to release and at least one reviewer, then submit.{% if not can.submit and can.modify %} Submitting needs at least one revision and one reviewer.{% endif %}</div>
+{% elif change.status == "in_review" %}
+<div class="notice">In review since {{ m.time(change.submitted_at) }}. All reviewers must approve; a single rejection sends the revisions back to In Work.</div>
+{% elif change.status == "rejected" %}
+<div class="notice">Rejected. Fix the revisions, then reopen and resubmit the change – or cancel it.</div>
+{% elif change.status == "released" %}
+<div class="notice">Released {{ m.time(change.closed_at) }}. All revisions of this change are released.</div>
+{% endif %}
+
+{% if can.review %}
+<section class="card">
+  <h2>Your review</h2>
+  <form class="stack" method="post" action="/changes/{{ change.id }}/review">
+    <label>Comment <span class="hint">required when rejecting</span>
+      <textarea name="comment" maxlength="4000"></textarea>
+    </label>
+    <div class="actions">
+      <button class="primary" type="submit" name="decision" value="approve">Approve</button>
+      <button class="danger" type="submit" name="decision" value="reject">Reject</button>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+<div class="grid grid-2">
+  <section class="card">
+    <div class="card-head">
+      <h2>Details</h2>
+      {% if can.edit_text %}<button class="small" type="button" data-toggle="edit-change">Edit</button>{% endif %}
+    </div>
+    <dl class="props">
+      <dt>Description</dt><dd class="pre">{{ change.description or "—" }}</dd>
+      <dt>Priority</dt><dd>{{ change.priority|label }}</dd>
+      <dt>Submitted</dt><dd>{{ m.time(change.submitted_at) }}</dd>
+      <dt>Closed</dt><dd>{{ m.time(change.closed_at) }}</dd>
+      <dt>Last update</dt><dd>{{ m.time(change.updated_at) }}</dd>
+    </dl>
+    {% if can.edit_text %}
+    <form id="edit-change" class="stack hidden" method="post" action="/changes/{{ change.id }}">
+      <label>Title <input type="text" name="title" value="{{ change.title }}" maxlength="200" required></label>
+      <label>Description <textarea name="description" maxlength="20000">{{ change.description }}</textarea></label>
+      <label>Priority
+        <select name="priority">
+          {% for p in priorities %}<option value="{{ p }}" {% if change.priority == p %}selected{% endif %}>{{ p|label }}</option>{% endfor %}
+        </select>
+      </label>
+      <div class="actions"><button class="primary" type="submit">Save</button></div>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Reviewers</h2>
+    {% if reviews %}
+    <table>
+      <thead><tr><th>Reviewer</th><th>Decision</th><th>Comment</th>{% if can.modify %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for r in reviews %}
+        <tr>
+          <td class="nowrap">{{ r.reviewer_name }} <span class="muted small">{{ r.reviewer_username }}</span></td>
+          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %} <span class="small muted">{{ m.time(r.decided_at) }}</span>{% endif %}</td>
+          <td class="pre">{{ r.comment }}</td>
+          {% if can.modify %}
+          <td class="right">
+            <form class="inline" method="post" action="/changes/{{ change.id }}/reviewers/{{ r.reviewer_id }}/remove">
+              <button class="small danger" type="submit">Remove</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">No reviewers assigned.</p>{% endif %}
+    {% if can.modify %}
+      {% if candidates %}
+      <form class="inline" method="post" action="/changes/{{ change.id }}/reviewers">
+        <select name="username" required aria-label="Reviewer">
+          {% for u in candidates %}<option value="{{ u.username }}">{{ u.display_name }} ({{ u.username }})</option>{% endfor %}
+        </select>
+        <button type="submit">Add reviewer</button>
+      </form>
+      {% else %}
+      <p class="hint">No further engineers or admins available. Users appear here after their first login.</p>
+      {% endif %}
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <h2>Affected revisions</h2>
+  {% if items %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Revision</th><th>Name</th><th>State</th>{% if can.modify %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for i in items %}
+      <tr>
+        <td class="mono nowrap"><a href="/revisions/{{ i.revision_id }}">{{ i.item_number }}/{{ i.code }}</a></td>
+        <td>{{ i.name }}</td>
+        <td>{{ m.badge(i.state) }}{% if i.checked_out_by_name %} {{ m.lock(i.checked_out_by_name) }}{% endif %}</td>
+        {% if can.modify %}
+        <td class="right">
+          <form class="inline" method="post" action="/changes/{{ change.id }}/items/{{ i.revision_id }}/remove">
+            <button class="small danger" type="submit">Remove</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No revisions yet.</p>{% endif %}
+  {% if can.modify %}
+  <form class="inline" method="post" action="/changes/{{ change.id }}/items">
+    <input type="text" name="item_number" placeholder="Item number, e.g. PRT-000012" required aria-label="Item number">
+    <button type="submit">Add its in-work revision</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>History</h2>
+  {{ m.history(history) }}
+</section>
+{% endblock %}

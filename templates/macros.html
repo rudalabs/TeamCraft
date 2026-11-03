@@ -1,0 +1,58 @@
+{#- Shared template helpers. Import inside a block: {% import "macros.html" as m %} -#}
+
+{% macro badge(value) -%}
+<span class="badge badge-{{ value }}">{{ value|label }}</span>
+{%- endmacro %}
+
+{% macro time(value) -%}
+{% if value %}<time datetime="{{ value }}">{{ value|dt }}</time>{% else %}<span class="muted">—</span>{% endif %}
+{%- endmacro %}
+
+{% macro lock(name) -%}
+<span class="badge badge-lock" title="Checked out">🔒 {{ name }}</span>
+{%- endmacro %}
+
+{% macro entity_link(e) -%}
+{%- if e.entity_type == "item" and e.entity_id -%}
+<a href="/items/{{ e.entity_id }}">{{ e.summary }}</a>
+{%- elif e.entity_type == "revision" and e.entity_id -%}
+<a href="/revisions/{{ e.entity_id }}">{{ e.summary }}</a>
+{%- elif e.entity_type == "change" and e.entity_id -%}
+<a href="/changes/{{ e.entity_id }}">{{ e.summary }}</a>
+{%- else -%}
+{{ e.summary }}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro history(entries) -%}
+{% if entries %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th>When</th><th>Who</th><th>What</th></tr></thead>
+  <tbody>
+  {% for e in entries %}
+    <tr>
+      <td class="nowrap small">{{ time(e.at) }}</td>
+      <td class="nowrap">{{ e.username }}</td>
+      <td>{{ entity_link(e) }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No activity yet.</p>
+{% endif %}
+{%- endmacro %}
+
+{% macro pager(p, base) -%}
+{% if p.pages > 1 %}
+<div class="pagination">
+  {% if p.prev %}<a class="button small" href="?{{ base }}{% if base %}&{% endif %}page={{ p.prev }}">← Previous</a>{% endif %}
+  <span class="muted small">Page {{ p.page }} of {{ p.pages }} · {{ p.total }} total</span>
+  {% if p.next %}<a class="button small" href="?{{ base }}{% if base %}&{% endif %}page={{ p.next }}">Next →</a>{% endif %}
+</div>
+{% elif p.total > 0 %}
+<div class="pagination"><span class="muted small">{{ p.total }} total</span></div>
+{% endif %}
+{%- endmacro %}

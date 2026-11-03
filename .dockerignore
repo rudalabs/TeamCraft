@@ -1,0 +1,12 @@
+# Keep the build context small and free of secrets.
+target
+.cargo-home
+data
+local
+tmp
+secrets
+.env
+.git
+.idea
+.vscode
+.venv

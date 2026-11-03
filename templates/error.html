@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ status }} {{ reason }}{% endblock %}
+{% block content %}
+<div class="login">
+  <div class="brand"><img src="/static/favicon.svg" alt="">{{ instance_name }}</div>
+  <div class="card">
+    <h2>{{ status }} · {{ reason }}</h2>
+    <p>{{ message }}</p>
+    <div class="actions">
+      <a class="button" href="/" data-back>← Back</a>
+      <a class="button primary" href="/">Dashboard</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,68 @@
+# Local development stack. NOT the production setup – see DEPLOYMENT.md.
+#
+#   docker compose up -d db          # PostgreSQL for `cargo run` / `cargo test`
+#   docker compose ps | logs db      # status / logs
+#   docker compose stop db           # stop (data stays in the named volume)
+#   docker compose down -v           # stop and DELETE all local data
+#
+# Requires the git-ignored files secrets/.env and secrets/db_password
+# (see LOCAL_TESTING.md §2). The PostgreSQL password is only read from
+# secrets/db_password, which TeamCraft reads as well (TEAMCRAFT_DB_PASSWORD_FILE).
+
+name: teamcraft
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: teamcraft
+      POSTGRES_DB: teamcraft
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    ports:
+      # Bound to localhost only.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teamcraft -d teamcraft"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Optional: TeamCraft as a container (builds the image from ./Dockerfile).
+  #   docker compose up -d --build app   → http://localhost:8080
+  app:
+    build: .
+    image: teamcraft:dev
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: secrets/.env
+        required: true
+    environment:
+      # Container-specific overrides of secrets/.env
+      TEAMCRAFT_BIND_ADDR: 0.0.0.0:8080
+      TEAMCRAFT_DB_HOST: db
+      TEAMCRAFT_DB_PORT: "5432"
+      TEAMCRAFT_DB_PASSWORD_FILE: /run/secrets/db_password
+      TEAMCRAFT_DB_SSLMODE: disable
+      TEAMCRAFT_VAULT_DIR: /data/vault
+    secrets:
+      - db_password
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - vault:/data/vault
+
+secrets:
+  db_password:
+    file: ./secrets/db_password
+
+volumes:
+  pgdata:
+  vault:

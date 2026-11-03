@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Changes{% endblock %}
+{% block nav_changes %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Changes</h1>
+    <p class="subtitle">Change orders release revisions after review (four-eyes principle).</p>
+  </div>
+  {% if me.can_edit %}<div class="actions"><a class="button primary" href="/changes/new">New change</a></div>{% endif %}
+</div>
+
+<div class="card">
+  <form class="inline" method="get" action="/changes">
+    <select name="status" aria-label="Status">
+      <option value="">All states</option>
+      {% for s in statuses %}<option value="{{ s.value }}" {% if status == s.value %}selected{% endif %}>{{ s.label }}</option>{% endfor %}
+    </select>
+    <button type="submit">Filter</button>
+  </form>
+</div>
+
+<div class="card">
+  {% if changes %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Number</th><th>Title</th><th>Priority</th><th>Status</th><th>Author</th><th>Created</th><th>Closed</th></tr></thead>
+    <tbody>
+    {% for c in changes %}
+      <tr>
+        <td class="nowrap mono"><a href="/changes/{{ c.id }}">{{ c.number }}</a></td>
+        <td>{{ c.title }}</td>
+        <td>{{ m.badge(c.priority) }}</td>
+        <td>{{ m.badge(c.status) }}</td>
+        <td class="nowrap">{{ c.created_by_name }}</td>
+        <td class="small nowrap">{{ m.time(c.created_at) }}</td>
+        <td class="small nowrap">{{ m.time(c.closed_at) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {{ m.pager(pagination, "status=" ~ status) }}
+  {% else %}<p class="empty">No changes found.</p>{% endif %}
+</div>
+{% endblock %}

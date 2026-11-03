@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
+{% block content %}
+<div class="login">
+  <div class="brand"><img src="/static/favicon.svg" alt="">{{ instance_name }}</div>
+  <div class="card">
+    <h2>Sign in</h2>
+    {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
+
+    {% if oidc_name %}
+    <a class="button primary sso" href="/auth/oidc/login?next={{ next_encoded }}">Sign in with {{ oidc_name }}</a>
+    {% endif %}
+
+    {% if oidc_name and local_login %}<div class="divider">or with a local account</div>{% endif %}
+
+    {% if local_login %}
+    <form class="stack" method="post" action="/login">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label>Username
+        <input type="text" name="username" value="{{ username }}" autocomplete="username" required autofocus>
+      </label>
+      <label>Password
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button class="{% if not oidc_name %}primary{% endif %}" type="submit">Sign in</button>
+    </form>
+    {% endif %}
+
+    {% if not oidc_name and not local_login %}
+    <p class="muted">No login method is configured. Please contact your administrator.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

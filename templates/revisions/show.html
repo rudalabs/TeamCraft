@@ -1,0 +1,279 @@
+{% extends "base.html" %}
+{% block title %}{{ rev.item_number }}/{{ rev.code }} {{ rev.name }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+{% set back = "/revisions/" ~ rev.id %}
+
+<div class="page-head">
+  <div>
+    <h1><span class="mono">{{ rev.item_number }}/{{ rev.code }}</span> · {{ rev.name }}</h1>
+    <p class="subtitle">
+      {{ rev.item_type|label }} · {{ m.badge(rev.state) }}
+      {% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name) }}{% endif %}
+      {% if item.project_code %}· project <strong>{{ item.project_code }}</strong>{% endif %}
+    </p>
+  </div>
+  <div class="actions">
+    {% if can.edit %}<a class="button primary" href="/revisions/{{ rev.id }}/edit">Edit attributes</a>{% endif %}
+    {% if can.checkout %}
+    <form method="post" action="/revisions/{{ rev.id }}/checkout"><button type="submit" title="Take the exclusive edit lock">Check out</button></form>
+    {% endif %}
+    {% if can.checkin %}
+    <form method="post" action="/revisions/{{ rev.id }}/checkin"
+          {% if rev.checked_out_by != me.id %}data-confirm="Release the check-out held by {{ rev.checked_out_by_name }}?"{% endif %}>
+      <button type="submit">Check in</button>
+    </form>
+    {% endif %}
+    {% if can.revise %}
+    <form method="post" action="/revisions/{{ rev.id }}/revise"
+          data-confirm="Create a new revision of {{ rev.item_number }} based on {{ rev.code }}?">
+      <button type="submit">Revise</button>
+    </form>
+    {% endif %}
+    {% if can.add_to_change %}
+    <a class="button" href="/changes/new?revision={{ rev.id }}">Release via new change…</a>
+    {% endif %}
+    {% if can.obsolete %}
+    <form method="post" action="/revisions/{{ rev.id }}/obsolete"
+          data-confirm="Mark {{ rev.item_number }}/{{ rev.code }} as obsolete? This cannot be undone.">
+      <button class="danger" type="submit">Mark obsolete</button>
+    </form>
+    {% endif %}
+    {% if can.delete %}
+    <form method="post" action="/items/{{ item.id }}/delete"
+          data-confirm="Delete {{ rev.item_number }} permanently? Only possible because it was never released.">
+      <input type="hidden" name="back" value="{{ back }}">
+      <button class="danger" type="submit">Delete item</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if not is_latest %}
+<div class="notice">You are looking at an older revision. <a href="/revisions/{{ latest_id }}">Go to the latest revision.</a></div>
+{% endif %}
+{% if open_change %}
+<div class="notice">This revision is part of change <a href="/changes/{{ open_change.id }}">{{ open_change.number }} – {{ open_change.title }}</a> ({{ open_change.status|label }}).</div>
+{% endif %}
+{% if rev.state == "in_work" and rev.checked_out_by and rev.checked_out_by != me.id %}
+<div class="notice">Checked out by {{ rev.checked_out_by_name }} since {{ m.time(rev.checked_out_at) }} – only they can modify it right now.</div>
+{% endif %}
+
+<div class="grid grid-2">
+  <section class="card">
+    <h2>Attributes</h2>
+    <dl class="props">
+      <dt>Name</dt><dd>{{ rev.name }}</dd>
+      <dt>Description</dt><dd class="pre">{{ rev.description or "—" }}</dd>
+      <dt>Material</dt><dd>{{ rev.material or "—" }}</dd>
+      <dt>Mass per unit</dt><dd>{% if rev.mass_kg is not none %}{{ rev.mass_kg|num(4) }} kg{% else %}—{% endif %}</dd>
+      <dt>Unit cost</dt><dd>{% if rev.unit_cost is not none %}{{ rev.unit_cost|num(2) }} €{% else %}—{% endif %}</dd>
+      <dt>Created</dt><dd>{{ m.time(rev.created_at) }} by {{ rev.created_by_name }}</dd>
+      <dt>Last modified</dt><dd>{{ m.time(rev.updated_at) }}</dd>
+      <dt>Released</dt><dd>{{ m.time(rev.released_at) }}</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Item master data</h2>
+      {% if can.master %}<button class="small" type="button" data-toggle="master-form">Edit</button>{% endif %}
+    </div>
+    <dl class="props">
+      <dt>Item number</dt><dd class="mono">{{ item.number }}</dd>
+      <dt>Type</dt><dd>{{ item.item_type|label }}</dd>
+      <dt>Unit</dt><dd>{{ item.unit }}</dd>
+      <dt>Project</dt><dd>{{ item.project_code or "—" }}</dd>
+      <dt>Created</dt><dd>{{ m.time(item.created_at) }} by {{ item.created_by_name }}</dd>
+      <dt>Short link</dt><dd class="mono small"><a href="/i/{{ item.number }}">/i/{{ item.number }}</a></dd>
+    </dl>
+    {% if can.master %}
+    <form id="master-form" class="stack hidden" method="post" action="/items/{{ item.id }}/master">
+      <input type="hidden" name="back" value="{{ back }}">
+      <div class="form-row">
+        <label>Project
+          <select name="project_id">
+            <option value="">— none —</option>
+            {% for p in projects %}<option value="{{ p.id }}" {% if item.project_id == p.id %}selected{% endif %}>{{ p.code }} – {{ p.name }}{% if not p.active %} (archived){% endif %}</option>{% endfor %}
+          </select>
+        </label>
+        <label>Unit <span class="hint">only before the first release</span>
+          <input type="text" name="unit" value="{{ item.unit }}" list="units" maxlength="16">
+          <datalist id="units">{% for u in units %}<option value="{{ u }}">{% endfor %}</datalist>
+        </label>
+      </div>
+      <div class="actions"><button class="primary" type="submit">Save master data</button></div>
+    </form>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card" id="revisions">
+  <h2>Revisions</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Rev</th><th>Name</th><th>State</th><th>Created</th><th>Released</th></tr></thead>
+    <tbody>
+    {% for r in revisions %}
+      <tr class="{% if r.id == rev.id %}current{% endif %}">
+        <td class="mono"><a href="/revisions/{{ r.id }}">{{ r.code }}</a></td>
+        <td>{{ r.name }}</td>
+        <td>{{ m.badge(r.state) }}{% if r.checked_out_by_name %} {{ m.lock(r.checked_out_by_name) }}{% endif %}</td>
+        <td class="small nowrap">{{ m.time(r.created_at) }} · {{ r.created_by_name }}</td>
+        <td class="small nowrap">{{ m.time(r.released_at) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="card" id="files">
+  <h2>Files</h2>
+  {% if files %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>File</th><th class="num">Size</th><th>Uploaded</th><th>SHA-256</th><th></th></tr></thead>
+    <tbody>
+    {% for f in files %}
+      <tr>
+        <td><a href="/files/{{ f.id }}/download">{{ f.filename }}</a> <span class="muted small">{{ f.content_type }}</span></td>
+        <td class="num">{{ f.size_bytes|filesize }}</td>
+        <td class="small nowrap">{{ m.time(f.uploaded_at) }} · {{ f.uploaded_by_name }}</td>
+        <td class="mono small" title="{{ f.sha256 }}">{{ f.sha256[:12] }}…</td>
+        <td class="right">
+          {% if can.edit %}
+          <form class="inline" method="post" action="/files/{{ f.id }}/delete" data-confirm="Remove {{ f.filename }} from this revision?">
+            <input type="hidden" name="back" value="{{ back }}#files">
+            <button class="small danger" type="submit">Remove</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No files attached.</p>{% endif %}
+  {% if can.edit %}
+  <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data">
+    <input type="file" name="file" multiple required>
+    <button type="submit">Upload</button>
+    <span class="hint">max. {{ max_upload_mb }} MiB per file</span>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card" id="bom">
+  <div class="card-head">
+    <h2>Bill of materials (single level)</h2>
+    <div class="actions">
+      <a class="button small" href="/revisions/{{ rev.id }}/bom">Multi-level view &amp; roll-up</a>
+      <a class="button small" href="/revisions/{{ rev.id }}/bom.csv">CSV</a>
+    </div>
+  </div>
+  {% if lines %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th class="num">Find no.</th><th>Item</th><th>Name</th><th>Latest</th><th class="num">Qty</th><th>Notes</th>{% if can.edit %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for l in lines %}
+      <tr>
+        {% if can.edit %}
+        <td class="num" colspan="1">
+          <form id="line-{{ l.id }}" class="inline" method="post" action="/bom-lines/{{ l.id }}">
+            <input type="hidden" name="back" value="{{ back }}#bom">
+            <input class="find" type="text" name="find_number" value="{{ l.find_number }}" inputmode="numeric" aria-label="Find number">
+          </form>
+        </td>
+        {% else %}
+        <td class="num">{{ l.find_number }}</td>
+        {% endif %}
+        <td class="mono nowrap"><a href="/revisions/{{ l.child_latest_revision_id }}">{{ l.child_number }}</a></td>
+        <td>{{ l.child_name }}</td>
+        <td class="nowrap"><span class="mono">{{ l.child_latest_code }}</span> {{ m.badge(l.child_latest_state) }}</td>
+        {% if can.edit %}
+        <td class="num"><input form="line-{{ l.id }}" class="qty" type="text" name="quantity" value="{{ l.quantity|num(6) }}" inputmode="decimal" aria-label="Quantity"> {{ l.child_unit }}</td>
+        <td><input form="line-{{ l.id }}" type="text" name="notes" value="{{ l.notes }}" maxlength="500" aria-label="Notes"></td>
+        <td class="right nowrap">
+          <button form="line-{{ l.id }}" class="small" type="submit">Save</button>
+          <form class="inline" method="post" action="/bom-lines/{{ l.id }}/delete" data-confirm="Remove {{ l.child_number }} from the BOM?">
+            <input type="hidden" name="back" value="{{ back }}#bom">
+            <button class="small danger" type="submit">Remove</button>
+          </form>
+        </td>
+        {% else %}
+        <td class="num">{{ l.quantity|num(6) }} {{ l.child_unit }}</td>
+        <td>{{ l.notes }}</td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No BOM lines.</p>{% endif %}
+  {% if can.edit %}
+  <h3>Add component</h3>
+  <form class="inline" method="post" action="/revisions/{{ rev.id }}/bom/lines">
+    <input type="text" name="child" placeholder="Item number, e.g. PRT-000012" required aria-label="Child item number">
+    <input class="qty" type="text" name="quantity" value="1" inputmode="decimal" aria-label="Quantity" required>
+    <input class="find" type="text" name="find_number" placeholder="auto" inputmode="numeric" aria-label="Find number">
+    <input type="text" name="notes" placeholder="Notes (optional)" maxlength="500" aria-label="Notes">
+    <button type="submit">Add</button>
+  </form>
+  {% endif %}
+</section>
+
+<div class="grid grid-2">
+  <section class="card">
+    <h2>Where used</h2>
+    {% if where_used %}
+    <table>
+      <thead><tr><th>Parent</th><th>Name</th><th>State</th><th class="num">Qty</th></tr></thead>
+      <tbody>
+      {% for w in where_used %}
+        <tr>
+          <td class="mono nowrap"><a href="/revisions/{{ w.parent_revision_id }}">{{ w.parent_number }}/{{ w.parent_code }}</a></td>
+          <td>{{ w.parent_name }}</td>
+          <td>{{ m.badge(w.parent_state) }}</td>
+          <td class="num">{{ w.quantity|num(6) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">Not used in any BOM.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Changes</h2>
+    {% if changes %}
+    <table>
+      <tbody>
+      {% for c in changes %}
+        <tr>
+          <td class="nowrap"><a href="/changes/{{ c.id }}">{{ c.number }}</a></td>
+          <td>{{ c.title }}</td>
+          <td>{{ m.badge(c.status) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">Not part of any change.</p>{% endif %}
+    {% if can.add_to_change and drafts %}
+    <h3>Add to an existing draft change</h3>
+    <form class="inline" method="post" action="/revisions/{{ rev.id }}/add-to-change">
+      <select name="change_id" required aria-label="Change">
+        {% for c in drafts %}<option value="{{ c.id }}">{{ c.number }} – {{ c.title }}</option>{% endfor %}
+      </select>
+      <button type="submit">Add</button>
+    </form>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card">
+  <h2>History</h2>
+  {{ m.history(history) }}
+</section>
+{% endblock %}

@@ -1,0 +1,101 @@
+# Production snippet for the WARR IT server-deployments repository:
+#   https://gitlab.lrz.de/move/it/server-deployments/-/blob/master/vc.it.warr.de/docker-compose.yml
+#
+# Merge the services/volumes/networks/secrets below into that file (see
+# DEPLOYMENT.md). Placeholders are marked with <…>; everything marked
+# "ADAPT" depends on how the existing stack is set up (reverse proxy,
+# networks, secret locations).
+#
+# This file is also a complete, standalone stack for a first test:
+#   docker compose -f deploy/docker-compose.warr.yml up -d
+
+services:
+  teamcraft:
+    # Image pushed by the `teamcraft` CI job. Pin a tag (v0.1.0 → …/teamcraft/teamcraft:v0.1.0)
+    # or a commit SHA for reproducible deployments; :latest follows the default branch.
+    image: registry.gitlab.lrz.de/<group>/<project>:latest
+    restart: unless-stopped
+    depends_on:
+      teamcraft-db:
+        condition: service_healthy
+    environment:
+      TEAMCRAFT_PUBLIC_URL: https://<teamcraft.warr.de>
+      TEAMCRAFT_INSTANCE_NAME: WARR TeamCraft
+      # Database (password from a secret file)
+      TEAMCRAFT_DB_HOST: teamcraft-db
+      TEAMCRAFT_DB_PORT: "5432"
+      TEAMCRAFT_DB_NAME: teamcraft
+      TEAMCRAFT_DB_USER: teamcraft
+      TEAMCRAFT_DB_PASSWORD_FILE: /run/secrets/teamcraft_db_password
+      TEAMCRAFT_DB_SSLMODE: disable          # internal Docker network only
+      # Single sign-on via Authentik; roles follow the group membership
+      TEAMCRAFT_OIDC_ISSUER_URL: https://<authentik.warr.de>/application/o/teamcraft/
+      TEAMCRAFT_OIDC_CLIENT_ID: <client id from Authentik>
+      TEAMCRAFT_OIDC_CLIENT_SECRET_FILE: /run/secrets/teamcraft_oidc_client_secret
+      TEAMCRAFT_OIDC_DISPLAY_NAME: WARR SSO
+      TEAMCRAFT_OIDC_ADMIN_GROUP: teamcraft-admins
+      TEAMCRAFT_OIDC_ENGINEER_GROUP: teamcraft-engineers
+      # TEAMCRAFT_OIDC_VIEWER_GROUP: teamcraft-users   # uncomment to restrict read access
+      TEAMCRAFT_LOCAL_LOGIN: "false"
+      # Error notifications to Mattermost (optional – remove both lines if unused)
+      MATTERMOST_ERROR_WEBHOOK_FILE: /run/secrets/teamcraft_mattermost_error_webhook
+      TEAMCRAFT_MAX_UPLOAD_MB: "512"
+      TEAMCRAFT_LOG_FORMAT: json
+    secrets:
+      - teamcraft_db_password
+      - teamcraft_oidc_client_secret
+      - teamcraft_mattermost_error_webhook
+    volumes:
+      - teamcraft-vault:/data/vault
+    networks:
+      - teamcraft-internal
+      # - <proxy-network>                 # ADAPT: network shared with the reverse proxy
+    # ADAPT: expose via the reverse proxy used on vc.it.warr.de. Example for Traefik v2/v3:
+    # labels:
+    #   - traefik.enable=true
+    #   - traefik.http.routers.teamcraft.rule=Host(`<teamcraft.warr.de>`)
+    #   - traefik.http.routers.teamcraft.entrypoints=websecure
+    #   - traefik.http.routers.teamcraft.tls.certresolver=<resolver>
+    #   - traefik.http.services.teamcraft.loadbalancer.server.port=8080
+    #   # uploads up to 512 MiB: Traefik has no body limit by default
+    # Without a proxy network, publish the port on localhost and proxy to it:
+    # ports:
+    #   - "127.0.0.1:8080:8080"
+
+  teamcraft-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: teamcraft
+      POSTGRES_DB: teamcraft
+      POSTGRES_PASSWORD_FILE: /run/secrets/teamcraft_db_password
+    secrets:
+      - teamcraft_db_password
+    volumes:
+      - teamcraft-db:/var/lib/postgresql/data
+    networks:
+      - teamcraft-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teamcraft -d teamcraft"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+secrets:
+  # ADAPT: location of the secret files on vc.it.warr.de – one value per file,
+  # never committed (see DEPLOYMENT.md §3 for how to create them).
+  teamcraft_db_password:
+    file: ./secrets/teamcraft/db_password
+  teamcraft_oidc_client_secret:
+    file: ./secrets/teamcraft/oidc_client_secret
+  teamcraft_mattermost_error_webhook:
+    file: ./secrets/teamcraft/mattermost_error_webhook
+
+volumes:
+  teamcraft-db:
+  teamcraft-vault:
+
+networks:
+  teamcraft-internal:
+  # <proxy-network>:
+  #   external: true

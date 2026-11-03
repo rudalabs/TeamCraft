@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Projects{% endblock %}
+{% block nav_projects %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Projects</h1>
+    <p class="subtitle">Projects group items, e.g. one vehicle, test bench or campaign.</p>
+  </div>
+</div>
+
+<div class="card">
+  {% if projects %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Code</th><th>Name</th><th>Description</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+    {% for p in projects %}
+      <tr>
+        <td class="mono nowrap">{{ p.code }}</td>
+        <td>{{ p.name }}</td>
+        <td class="pre small">{{ p.description }}</td>
+        <td>{% if p.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">archived</span>{% endif %}</td>
+        <td class="right nowrap">
+          <a class="button small" href="/items?project={{ p.id }}">Items</a>
+          {% if me.is_admin %}<button class="small" type="button" data-toggle="edit-{{ p.id }}">Edit</button>{% endif %}
+        </td>
+      </tr>
+      {% if me.is_admin %}
+      <tr id="edit-{{ p.id }}" class="hidden">
+        <td colspan="5">
+          <form class="stack" method="post" action="/projects/{{ p.id }}">
+            <div class="form-row">
+              <label>Name <input type="text" name="name" value="{{ p.name }}" maxlength="200" required></label>
+              <label class="check"><input type="checkbox" name="active" {% if p.active %}checked{% endif %}> Active (archived projects are hidden when creating items)</label>
+            </div>
+            <label>Description <textarea name="description" maxlength="4000">{{ p.description }}</textarea></label>
+            <div class="actions"><button class="primary" type="submit">Save {{ p.code }}</button></div>
+          </form>
+        </td>
+      </tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No projects yet.</p>{% endif %}
+</div>
+
+{% if me.is_admin %}
+<div class="card">
+  <h2>New project</h2>
+  <form class="stack" method="post" action="/projects">
+    <div class="form-row">
+      <label>Code <span class="hint">e.g. NIXUS, short and unique</span>
+        <input type="text" name="code" maxlength="32" required pattern="[A-Za-z0-9_\-]+">
+      </label>
+      <label>Name <input type="text" name="name" maxlength="200" required></label>
+    </div>
+    <label>Description <textarea name="description" maxlength="4000"></textarea></label>
+    <div class="actions"><button class="primary" type="submit">Create project</button></div>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

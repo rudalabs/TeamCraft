@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block nav_users %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Users</h1>
+    <p class="subtitle">
+      {% if oidc %}Single sign-on users are created at their first login; their role follows the IdP groups
+      <span class="mono">{{ oidc.admin_group }}</span> (admin) and <span class="mono">{{ oidc.engineer_group }}</span> (engineer){% if oidc.viewer_group %}, access requires <span class="mono">{{ oidc.viewer_group }}</span>{% endif %}.
+      {% else %}Local accounts with username and password.{% endif %}
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Username</th><th>Name</th><th>E-mail</th><th>Role</th><th>Source</th><th>Status</th><th>Last login</th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr>
+        <td class="mono nowrap"><a href="/admin/users/{{ u.id }}">{{ u.username }}</a></td>
+        <td>{{ u.display_name }}</td>
+        <td class="small">{{ u.email or "" }}</td>
+        <td><span class="badge badge-{{ u.role }}">{{ u.role }}</span></td>
+        <td class="small">{% if u.auth_source == "oidc" %}SSO{% else %}local{% endif %}</td>
+        <td>{% if u.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">deactivated</span>{% endif %}</td>
+        <td class="small nowrap">{{ m.time(u.last_login_at) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+
+{% if local_login %}
+<div class="card">
+  <h2>New local account</h2>
+  <form class="stack" method="post" action="/admin/users">
+    <div class="form-row">
+      <label>Username <input type="text" name="username" maxlength="64" required pattern="[A-Za-z0-9._\-]{2,64}" autocomplete="off"></label>
+      <label>Display name <input type="text" name="display_name" maxlength="128"></label>
+      <label>E-mail <input type="email" name="email" maxlength="254"></label>
+    </div>
+    <div class="form-row">
+      <label>Role
+        <select name="role">{% for r in roles %}<option value="{{ r }}" {% if r == "engineer" %}selected{% endif %}>{{ r }}</option>{% endfor %}</select>
+      </label>
+      <label>Initial password <span class="hint">at least 10 characters</span>
+        <input type="password" name="password" minlength="10" required autocomplete="new-password">
+      </label>
+    </div>
+    <div class="actions"><button class="primary" type="submit">Create account</button></div>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

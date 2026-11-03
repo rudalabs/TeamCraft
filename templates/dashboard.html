@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block nav_home %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Hello, {{ me.display_name }}</h1>
+    <p class="subtitle">Product data of {{ instance_name }} at a glance.</p>
+  </div>
+  {% if me.can_edit %}
+  <div class="actions">
+    <a class="button primary" href="/items/new">New item</a>
+    <a class="button" href="/changes/new">New change</a>
+  </div>
+  {% endif %}
+</div>
+
+<div class="grid grid-stats">
+  <div class="card stat"><div class="value">{{ stats.items }}</div><div class="label">Items</div></div>
+  <div class="card stat"><div class="value">{{ stats.revisions_in_work }}</div><div class="label">Revisions in work</div></div>
+  <div class="card stat"><div class="value">{{ stats.revisions_in_review }}</div><div class="label">In review</div></div>
+  <div class="card stat"><div class="value">{{ stats.revisions_released }}</div><div class="label">Released revisions</div></div>
+  <div class="card stat"><div class="value">{{ stats.open_changes }}</div><div class="label">Open changes</div></div>
+  <div class="card stat"><div class="value">{{ stats.stored_bytes|filesize }}</div><div class="label">{{ stats.files }} files in the vault</div></div>
+</div>
+
+<div class="grid grid-2">
+  <section class="card">
+    <h2>Waiting for my review</h2>
+    {% if reviews %}
+    <table>
+      <tbody>
+      {% for c in reviews %}
+        <tr>
+          <td class="nowrap"><a href="/changes/{{ c.id }}">{{ c.number }}</a></td>
+          <td>{{ c.title }}</td>
+          <td>{{ m.badge(c.priority) }}</td>
+          <td class="small muted nowrap">{{ c.created_by_name }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">Nothing to review.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Checked out by me</h2>
+    {% if checkouts %}
+    <table>
+      <tbody>
+      {% for r in checkouts %}
+        <tr>
+          <td class="nowrap"><a href="/revisions/{{ r.id }}">{{ r.item_number }}/{{ r.code }}</a></td>
+          <td>{{ r.name }}</td>
+          <td class="small muted nowrap">{{ m.time(r.checked_out_at) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">No check-outs.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>My open changes</h2>
+    {% if my_changes %}
+    <table>
+      <tbody>
+      {% for c in my_changes %}
+        <tr>
+          <td class="nowrap"><a href="/changes/{{ c.id }}">{{ c.number }}</a></td>
+          <td>{{ c.title }}</td>
+          <td>{{ m.badge(c.status) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">No open changes.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Recent activity</h2>
+    {{ m.history(activity) }}
+  </section>
+</div>
+{% endblock %}

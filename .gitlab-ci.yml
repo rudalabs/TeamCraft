@@ -1,0 +1,83 @@
+# TeamCraft CI – based on the WARR IT template (.kaniko + one image job).
+#
+# Pipeline: lint + test  →  build & push the container image with Kaniko.
+#   * every pipeline pushes  $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+#   * the default branch also pushes  $CI_REGISTRY_IMAGE:latest
+#   * git tags (e.g. v0.1.0) also push  $CI_REGISTRY_IMAGE:latest and
+#     $CI_REGISTRY_IMAGE/teamcraft:<tag>
+# Deployment itself happens in the IT server-deployments repository (see DEPLOYMENT.md).
+
+stages:
+  - test
+  - build
+
+variables:
+  # Keep cargo's download cache inside the project so GitLab can cache it.
+  CARGO_HOME: ${CI_PROJECT_DIR}/.cargo-home
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+.rust:
+  image: rust:1-trixie
+  cache:
+    key:
+      files:
+        - Cargo.lock
+    paths:
+      - .cargo-home/registry/index/
+      - .cargo-home/registry/cache/
+      - .cargo-home/git/db/
+      - target/
+  before_script:
+    - rustup component add rustfmt clippy
+    - rustc --version && cargo --version
+
+lint:
+  extends: .rust
+  stage: test
+  script:
+    - cargo fmt --all -- --check
+    - cargo clippy --all-targets --locked -- -D warnings
+
+test:
+  extends: .rust
+  stage: test
+  services:
+    - name: postgres:17-alpine
+      alias: postgres
+  variables:
+    POSTGRES_USER: teamcraft
+    POSTGRES_PASSWORD: teamcraft-ci
+    POSTGRES_DB: teamcraft
+    TEAMCRAFT_TEST_DATABASE_URL: postgres://teamcraft:teamcraft-ci@postgres:5432/teamcraft
+    # Fail instead of skipping the integration tests when the database is missing.
+    TEAMCRAFT_REQUIRE_DB_TESTS: "1"
+  script:
+    - cargo test --locked --all-targets
+
+.kaniko:
+  image:
+    name: registry.gitlab.com/gitlab-ci-utils/container-images/kaniko:debug
+    entrypoint: [""]
+  before_script:
+    # use 'latest' tag for the main branch, the tag name for git tags like v3.1.0
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        EXTRA_TAGS="--destination ${CI_REGISTRY_IMAGE}:latest"
+      elif [ -n "$CI_COMMIT_TAG" ]; then
+        EXTRA_TAGS="--destination ${CI_REGISTRY_IMAGE}:latest --destination ${CI_REGISTRY_IMAGE}/${CI_JOB_NAME}:${CI_COMMIT_TAG}"
+      else
+        EXTRA_TAGS=""
+      fi
+  script:
+    - cd ${CI_PROJECT_DIR}
+    - /kaniko/executor
+      --context .
+      --dockerfile ./Dockerfile
+      --destination ${CI_REGISTRY_IMAGE}:${IMAGE_TAG} ${EXTRA_TAGS}
+
+teamcraft:
+  extends: .kaniko
+  stage: build
+  variables:
+    IMAGE_TAG: $CI_COMMIT_SHORT_SHA
