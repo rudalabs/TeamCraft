@@ -27,3 +27,8 @@
 - [FieldCraft and SolidCraft](reference/interop.md)
 - [Evaluation of other PLM systems](reference/evaluation.md)
 - [Rust API (rustdoc)](reference/rustdoc.md)
+
+# Research
+
+- [Research notes](research/index.md)
+  - [Previews of native CAD files](research/cad-previews.md)

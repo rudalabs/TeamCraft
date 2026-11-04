@@ -61,6 +61,11 @@ tell the user immediately and ask them to run `! git pull --no-rebase && git pus
 
 If a secret was committed anyway: stop, tell the user, and have it rotated.
 
+**Research findings** (how other systems solve something, licences,
+feasibility for an open-source project) get their own page in
+`docs/src/research/` (listed in `index.md` and `docs/src/SUMMARY.md`) and are
+committed and pushed right away – before the implementation starts.
+
 ## Architecture
 
 ```text

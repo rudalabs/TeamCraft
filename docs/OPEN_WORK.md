@@ -7,7 +7,7 @@ the known gaps with details. Last update: 2026-11-04.
 ## To-do
 
 - [x] New item with files right away: file field in the web form and in the desktop dialog (an item is normally never without a file)
-- [ ] Previews of Inventor (`.ipt`, `.iam`, `.idw`, `.ipn`) and Solid Edge (`.par`, `.psm`, `.asm`, `.dft`, `.pwd`) files – the preview image stored in the file; 3D only through a STEP export or the vendor's licensed API
+- [ ] Previews of Inventor (`.ipt`, `.iam`, `.idw`, `.ipn`) and Solid Edge (`.par`, `.psm`, `.asm`, `.dft`, `.pwd`) files: embedded preview image on the server, STEP export through the user's own CAD installation in the desktop app – research and decisions in [docs/src/research/cad-previews.md](src/research/cad-previews.md)
 - [ ] Desktop: tutorial for importing existing CAD file trees (hundreds of files, project files such as Inventor `.ipj`)
 - [ ] Desktop: import of a CAD folder tree as items with files, BOM from the assembly references (needed for the tutorial; feature 8)
 - [ ] Desktop workspace: one subfolder per project group (alternatively git-style: only the chosen project groups are visible locally)
