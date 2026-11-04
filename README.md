@@ -8,7 +8,8 @@
   <strong>Open-source product lifecycle management, built in pure Rust.</strong><br />
   Check your CAD data out and in, keep every version, release with reviews,
   follow changes through assemblies and see STEP, mesh and point-cloud models
-  in 3D – in the browser, in the desktop app or through the REST API.
+  in 3D – in the browser, in the desktop app or through the REST API.<br />
+  <em>Work in progress: an open-source alternative to Siemens Teamcenter and Open Domain VistaPoint.</em>
 </p>
 
 <div align="center">
