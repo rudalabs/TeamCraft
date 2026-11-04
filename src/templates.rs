@@ -236,7 +236,7 @@ mod tests {
         };
         let file = json!({ "id": OTHER, "revision_id": ME, "filename": "nozzle.step", "content_type": "model/step",
                            "size_bytes": 123456, "sha256": "ab".repeat(32), "uploaded_by": ME,
-                           "uploaded_by_name": "Max", "uploaded_at": TS, "version": 2, "preview": true,
+                           "uploaded_by_name": "Max", "uploaded_at": TS, "version": 2, "preview": true, "folder": "rover/nozzle",
                            "format": "step", "format_info": crate::cadformat::info("step"),
                            "versions": [version(2, "wall 2.5 mm"), version(1, "")] });
         let native = json!({ "id": ME, "revision_id": ME, "filename": "nozzle.SLDPRT",

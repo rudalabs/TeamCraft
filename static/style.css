@@ -596,6 +596,7 @@ html[data-skin="teamcraft-day"] .login-logo-dark { display: block; }
 .saved-searches { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding-block: 0.6rem; }
 .saved-search { display: inline-flex; align-items: center; gap: 0.1rem; }
 .saved-searches form.inline input[type="text"] { width: 14rem; }
+.folder-form input[type="text"] { width: 11rem; padding: 0.2rem 0.4rem; font-size: 0.85em; }
 
 /* BOM comparison */
 .bom-change-added { color: var(--ok); background: var(--ok-soft); }

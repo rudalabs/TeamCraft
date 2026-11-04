@@ -36,6 +36,9 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Desktop workspace: one subfolder per project group (alternatively git-style: only the chosen project groups are
   visible locally)
 - [x] Desktop: new members download everything of one or more project groups at once
+- [x] Desktop working folder that mirrors the original folder structure (`files.folder`), read-only files until check-out,
+  *Get* of a structure (BOM + referenced CAD files, revision rule, progress, cancel), migration of the old layout
+- [ ] Desktop Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Desktop: *Import BOM…* (CSV/Excel) on a checked-out assembly
 - [ ] Desktop: cancel long operations (check-in upload, Pack and Go) half-way
 - [x] Browser check (no console errors, no overflow at 390 px) of `/import` and `/import/{id}`, with a STEP import

@@ -58,6 +58,36 @@ which), `conflict` (changed locally and on the server since the base), `new`
 (only local) or `missing` (only on the server). Without a base, unknown local
 content counts as `modified`.
 
+### Working folder: folders and the working set
+
+Every file has a `folder` inside its project group (`""` = the top), the
+place it gets in the desktop working folder
+`<workspace>/<group>/<folder>/<file>`. Uploads and check-ins set it with the
+multipart field `folder` (one folder for all files of the request) or
+`folders` (a JSON object from file name to folder, wins over `folder`); files
+sent without one keep their folder (new files: the top). Folders are
+normalised (`\` → `/`, no leading or trailing `/`) and refused with 400 if
+they contain `..`, a drive letter or names invalid on Windows.
+`PATCH /files/{id}` with `{"folder": "chassis/brackets"}` moves a file while
+you hold the check-out (no new version; recorded in the history). File lists
+and `file-status` return the `folder`.
+
+```sh
+curl -s -X POST -H "$H" -F file=@bracket.prt -F file=@chassis.asm \
+     -F 'folders={"bracket.prt": "chassis/brackets", "chassis.asm": "chassis"}' \
+     $API/items/ASM-000001/revisions/A/checkin
+```
+
+`GET …/revisions/{code}/workset?rule=latest|released|as_released` is what
+the desktop *Get* downloads: the revision, its multi-level BOM under the
+rule and the items holding the CAD files those files reference
+(`references=false` leaves them out), each revision with `via`
+(`root`/`bom`/`reference`), `project_code`, lock (`locked_by_name`,
+`locked_by_me`) and its files (`file_id`, `filename`, `folder`, `version`,
+`sha256`, `size_bytes`); plus `unresolved` (items without a revision for the
+rule), `missing_references` (names not in the vault), `file_count` and
+`total_bytes`.
+
 `POST /worklist/checkin-all` (body optional: `{"revisions": [id, …]}`) checks
 in all of my check-outs – or the listed ones – **without new files**, one
 transaction and one audit record per revision. The answer lists every
@@ -70,7 +100,7 @@ revision with `ok` and `error`, plus `checked_in`, `failed` and a `summary`.
 | Items            | `GET/POST /items`, `GET /items/{number}`, where-used, history, impacts, watch                                                         |
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
 | Worklist         | `GET /worklist` (check-outs, reviews, impacts, statistics), `POST /worklist/checkin-all`                                              |
-| Files            | `POST …/files` (multipart), `GET /files/{id}` (metadata), `/content`, `/versions`, `/restore`, `/mesh` (3D preview), `/thumbnail`     |
+| Files            | `POST …/files` (multipart, `folder`/`folders`), `GET/PATCH /files/{id}` (metadata, folder), `/content`, `/versions`, `/restore`, `/mesh`, `/thumbnail`, `…/workset` |
 | BOM              | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP) |
 | BOM import       | `POST /bom-imports` (new assembly), `POST …/bom/import` (into a checked-out revision); multipart `file` = CSV/Excel table or STEP assembly, `dry_run=true` returns the plan |
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
