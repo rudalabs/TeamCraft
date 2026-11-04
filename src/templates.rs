@@ -25,9 +25,13 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "revisions/bom.html",
     "revisions/bom_compare.html",
     "revisions/save_as.html",
+    "revisions/simulation_compare.html",
     "changes/list.html",
     "changes/new.html",
     "changes/show.html",
+    "requests/list.html",
+    "requests/new.html",
+    "requests/show.html",
     "projects/list.html",
     "projects/show.html",
     "files/preview.html",
@@ -52,6 +56,7 @@ pub fn environment(instance_name: &str) -> Result<Environment<'static>, minijinj
     env.add_filter("num", filter_num);
     env.add_filter("filesize", filter_filesize);
     env.add_filter("label", filter_label);
+    env.add_filter("urlencode", |value: String| util::pct_encode(&value));
     env.add_filter("age", filter_age);
     env.add_global("instance_name", instance_name.to_string());
     env.add_global("version", env!("CARGO_PKG_VERSION"));
@@ -169,6 +174,17 @@ mod tests {
         })
     }
 
+    fn request(status: &str) -> Value {
+        json!({
+            "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "number": "ECR-000001", "title": "Crack <at> the weld",
+            "description": "Problem\nproposal", "reason": "manufacturing", "priority": "high", "status": status,
+            "requested_by": OTHER, "requested_by_name": "Erika", "assignee": ME, "assignee_name": "Max Muster",
+            "assignee_username": "max", "decision_comment": "not now", "decided_by": ME,
+            "decided_by_name": "Max Muster", "decided_at": TS, "due_date": "2026-12-01", "created_at": TS,
+            "updated_at": TS, "closed_at": null, "item_count": 1
+        })
+    }
+
     fn audit_entry() -> Value {
         json!({ "id": 1, "at": TS, "user_id": ME, "username": "max", "action": "item.create",
                 "entity_type": "item", "entity_id": "44444444-4444-4444-8444-444444444444",
@@ -235,7 +251,7 @@ mod tests {
         };
         let file = json!({ "id": OTHER, "revision_id": ME, "filename": "nozzle.step", "content_type": "model/step",
                            "size_bytes": 123456, "sha256": "ab".repeat(32), "uploaded_by": ME,
-                           "uploaded_by_name": "Max", "uploaded_at": TS, "version": 2, "preview": true,
+                           "uploaded_by_name": "Max", "uploaded_at": TS, "version": 2, "preview": true, "folder": "rover/nozzle",
                            "format": "step", "format_info": crate::cadformat::info("step"),
                            "versions": [version(2, "wall 2.5 mm"), version(1, "")] });
         let native = json!({ "id": ME, "revision_id": ME, "filename": "nozzle.SLDPRT",
@@ -294,7 +310,12 @@ mod tests {
                            "open_changes": 1, "files": 4, "stored_bytes": 2048 },
                 "checkouts": [revision("in_work", true)], "reviews": [change("in_review")],
                 "my_changes": [change("draft")], "activity": [audit_entry()], "impacts": [impact(None)],
+                "assigned_requests": [request("in_triage")], "my_requests": [request("new")],
             })),
+        );
+        assert!(
+            html.contains("Requests assigned to me") && html.contains("due 2026-12-01"),
+            "change requests on the dashboard"
         );
         assert!(html.contains("Saved &lt;ok&gt;"), "flash is escaped");
         assert!(html.contains("2 KiB"));
@@ -486,6 +507,7 @@ mod tests {
                     "history": [audit_entry()], "projects": [project()], "units": units(),
                     "references": references.clone(), "open_impacts": [impact(None)],
                     "resolved_impacts": [impact(Some("acknowledged"))],
+                    "open_requests": [request("in_triage")],
                     "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
                     "lifecycle": {
                         "states": crate::domain::LifecycleState::ALL,
@@ -529,6 +551,9 @@ mod tests {
                 "Hub.SLDDRW",
                 "Stage.SLDDRW references Stage.SLDASM",
                 "fit unchanged &lt;ok&gt;",
+                "Request change…",
+                "1 open change request on",
+                "file=nozzle.step",
             ] {
                 assert!(html.contains(expected), "revision page shows {expected}");
             }
@@ -550,6 +575,139 @@ mod tests {
                 "assistant quick actions only when enabled"
             );
         }
+
+        // Simulations: basis links and results on the simulation, the
+        // simulations based on a part on the part
+        let basis = |out_of_date: Option<&str>| {
+            json!({ "id": ME, "revision_id": OTHER, "role": "geometry", "note": "fillet <r2>",
+                    "basis_item_id": OTHER, "basis_number": "PRT-000001", "basis_type": "part",
+                    "basis_revision_id": OTHER, "basis_code": "A", "basis_state": "released",
+                    "basis_name": "Bracket", "file_version_id": ME, "file_id": OTHER,
+                    "file_name": "bracket.step", "file_version": 2, "file_current_version": 3,
+                    "released_revision_id": ME, "released_code": "B", "created_at": TS,
+                    "out_of_date": out_of_date })
+        };
+        let sim_result = |name: &str, status: &str, upper: Option<f64>| {
+            json!({ "id": ME, "revision_id": OTHER, "position": 1, "name": name, "value": 182.5,
+                    "unit": "MPa", "lower_limit": null, "upper_limit": upper, "load_case": "LC1",
+                    "solver": "CalculiX", "solver_version": "2.21", "note": "", "updated_at": TS,
+                    "status": status })
+        };
+        let basis_roles: Vec<_> = crate::domain::BasisRole::ALL
+            .iter()
+            .map(|r| json!({ "value": r.as_str(), "label": r.label() }))
+            .collect();
+        for (state, checked_out) in [("in_work", false), ("released", false)] {
+            let mut rev = revision(state, checked_out);
+            rev["item_type"] = json!("simulation");
+            rev["item_number"] = json!("SIM-000001");
+            let mut sim_item = item();
+            sim_item["item_type"] = json!("simulation");
+            let editable = state == "in_work";
+            let html = render(
+                &env,
+                "revisions/show.html",
+                with_common(json!({
+                    "rev": rev.clone(), "item": sim_item, "revisions": [rev.clone(), revision("released", false)],
+                    "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
+                    "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
+                    "history": [], "projects": [], "units": units(), "references": references.clone(),
+                    "open_impacts": [], "resolved_impacts": [],
+                    "simulation": {
+                        "bases": [basis(Some("PRT-000001/B was released (simulated: A)")), basis(None)],
+                        "results": [sim_result("Max. stress <vM>", "pass", Some(250.0)),
+                                    sim_result("Safety factor", "fail", None),
+                                    sim_result("Mass", "none", None)],
+                        "summary": { "total": 3, "pass": 1, "fail": 1, "without_limits": 1 },
+                        "out_of_date": 1, "roles": basis_roles.clone(),
+                    },
+                    "based_simulations": [],
+                    "can": if editable { can_all.clone() } else { json!({}) }, "max_upload_mb": 512,
+                    "lifecycle": {
+                        "states": crate::domain::LifecycleState::ALL,
+                        "next": crate::domain::rules_from(crate::domain::LifecycleState::parse(state).unwrap()),
+                        "rules": crate::domain::LIFECYCLE_RULES,
+                    },
+                })),
+            );
+            for expected in [
+                "Based on",
+                "B was released (simulated: A)",
+                "bracket.step",
+                "fillet &lt;r2&gt;",
+                "Out of date",
+                "Up to date",
+                "Max. stress &lt;vM&gt;",
+                "badge badge-pass",
+                "badge badge-fail",
+                "1 failed",
+                "no limit",
+                "/simulation/compare",
+                "/simulation/results.csv",
+            ] {
+                assert!(html.contains(expected), "simulation page shows {expected}");
+            }
+            assert!(!html.contains("id=\"bom\""), "no BOM card for simulations");
+            assert!(!html.contains("id=\"simulations\""));
+            assert_eq!(
+                html.contains("/simulation/results/import") && html.contains("/simulation/bases"),
+                editable,
+                "editing only while checked out"
+            );
+        }
+        let html = render(
+            &env,
+            "revisions/show.html",
+            with_common(json!({
+                "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
+                "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
+                "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
+                "history": [], "projects": [], "units": units(), "references": references.clone(),
+                "open_impacts": [], "resolved_impacts": [], "simulation": null,
+                "based_simulations": [{
+                    "simulation_item_id": OTHER, "simulation_number": "SIM-000001", "simulation_code": "A",
+                    "simulation_state": "in_work", "simulation_name": "Bracket – static <LC1>",
+                    "result_count": 3, "failed_count": 1, "open_impact_id": ME,
+                    "basis": basis(Some("PRT-000001/B was released (simulated: A)")) }],
+                "can": {}, "max_upload_mb": 512,
+                "lifecycle": {
+                    "states": crate::domain::LifecycleState::ALL,
+                    "next": crate::domain::rules_from(crate::domain::LifecycleState::Released),
+                    "rules": crate::domain::LIFECYCLE_RULES,
+                },
+            })),
+        );
+        for expected in [
+            "id=\"simulations\"",
+            "SIM-000001/A",
+            "Bracket – static &lt;LC1&gt;",
+            "1 of 3 failed",
+            "check open",
+            "Out of date",
+        ] {
+            assert!(html.contains(expected), "part page shows {expected}");
+        }
+        let diff = |change: &str, before: Value, after: Value, delta: Value| {
+            json!({ "change": change, "name": "Stress <max>", "load_case": "LC1", "unit": "MPa",
+                    "before": before, "after": after, "delta": delta,
+                    "delta_percent": if delta.is_null() { Value::Null } else { json!(-10.0) } })
+        };
+        let html = render(
+            &env,
+            "revisions/simulation_compare.html",
+            with_common(json!({
+                "rev": revision("in_work", false), "before": revision("released", false),
+                "after": revision("in_work", false), "revisions": [revision("released", false)],
+                "diffs": [diff("changed", sim_result("Stress", "fail", Some(150.0)),
+                               sim_result("Stress", "pass", Some(250.0)), json!(-20.0)),
+                          diff("added", Value::Null, sim_result("Mass", "none", None), Value::Null),
+                          diff("removed", sim_result("Old", "pass", Some(1e9)), Value::Null, Value::Null)],
+                "summary": { "added": 1, "removed": 1, "changed": 1, "unchanged": 0 },
+            })),
+        );
+        assert!(html.contains("1 added · 1 removed · 1 changed · 0 unchanged"));
+        assert!(html.contains("Stress &lt;max&gt;") && html.contains("-10 %"));
+        assert!(html.contains("badge badge-fail") && html.contains("badge badge-pass"));
 
         // 3D preview: the server delivers the mesh, the page only draws it
         let preview = |format: &str, is_current: bool| {
@@ -643,6 +801,7 @@ mod tests {
                 "changes/show.html",
                 with_common(json!({
                     "change": change(status), "status_label": "Draft",
+                    "implements": [request("accepted")],
                     "items": [{ "revision_id": OTHER, "item_id": ME, "item_number": "PRT-000001", "code": "A",
                                 "name": "Bracket", "state": "in_work", "checked_out_by_name": "Erika" }],
                     "reviews": [{ "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
@@ -659,6 +818,102 @@ mod tests {
             assert!(
                 html.contains("Impact analysis") && html.contains("uses PRT-000001 in its BOM"),
                 "impact analysis on the change page"
+            );
+            assert!(
+                html.contains("Implements") && html.contains("ECR-000001"),
+                "the change page names the request it implements"
+            );
+        }
+
+        // change requests (ECR)
+        let html = render(
+            &env,
+            "requests/list.html",
+            with_common(json!({
+                "requests": [request("new"), request("implemented")],
+                "filter": { "status": "open", "scope": "mine", "item": "PRT-000001" },
+                "statuses": crate::domain::RequestStatus::ALL.iter()
+                    .map(|s| json!({ "value": s.as_str(), "label": s.label() })).collect::<Vec<_>>(),
+                "base_query": "status=open&scope=mine&item=PRT-000001", "pagination": page(),
+            })),
+        );
+        assert!(html.contains("ECR-000001") && html.contains("Crack &lt;at&gt; the weld"));
+        assert!(html.contains("value=\"mine\" selected") && html.contains("In Triage"));
+        let reasons = json!(crate::domain::RequestReason::ALL
+            .iter()
+            .map(|r| json!({ "value": r.as_str(), "label": r.label() }))
+            .collect::<Vec<_>>());
+        let html = render(
+            &env,
+            "requests/new.html",
+            with_common(json!({
+                "form": { "title": "", "description": "Found in nozzle.step:\n\n", "reason": "defect",
+                          "priority": "normal", "due_date": "", "item_number": "", "revision_id": OTHER,
+                          "note": "File: nozzle.step" },
+                "error": "Title must not be empty.", "priorities": ["low", "normal"], "reasons": reasons,
+                "revision": revision("released", false),
+            })),
+        );
+        assert!(html.contains("PRT-000001/B") && html.contains("File: nozzle.step"));
+        assert!(html.contains("value=\"defect\" selected") && html.contains("Raise request"));
+        let request_item = json!({
+            "item_id": ME, "item_number": "PRT-000001", "item_type": "part", "project_id": ROCKET,
+            "project_code": "ROCKET", "revision_id": OTHER, "revision_code": "B", "revision_state": "released",
+            "name": "Bracket <b>", "latest_revision_id": OTHER, "latest_code": "C", "latest_state": "in_work",
+            "note": "weld seam" });
+        let attachment = |ct: &str, name: &str| {
+            json!({ "id": OTHER, "request_id": ME, "filename": name, "content_type": ct, "size_bytes": 2048,
+                    "sha256": "ab".repeat(32), "uploaded_by": ME, "uploaded_by_name": "Max", "uploaded_at": TS })
+        };
+        let can_all = json!({ "edit": true, "start_triage": true, "decide": true, "assign": true, "reopen": true,
+                              "withdraw": true, "implement": true, "comment": true, "attach": true });
+        for status in [
+            "new",
+            "in_triage",
+            "accepted",
+            "rejected",
+            "deferred",
+            "implemented",
+            "withdrawn",
+        ] {
+            let html = render(
+                &env,
+                "requests/show.html",
+                with_common(json!({
+                    "request": request(status), "status_label": "New", "reason_label": "Defect / error",
+                    "items": [request_item.clone()], "in_work": [request_item.clone()],
+                    "comments": [{ "id": OTHER, "author_id": OTHER, "author_name": "Erika",
+                                   "body": "Seen on <three> parts", "created_at": TS }],
+                    "attachments": [attachment("image/png", "crack.png"), attachment("application/pdf", "report.pdf")],
+                    "images": [attachment("image/png", "crack.png")],
+                    "changes": [change("draft")], "open_changes": [change("draft")], "candidates": [user()],
+                    "history": [audit_entry()], "watching": false, "can": can_all.clone(),
+                    "priorities": ["low", "normal"], "reasons": reasons.clone(), "max_attachment_mb": 10,
+                })),
+            );
+            for expected in [
+                "Crack &lt;at&gt; the weld",
+                "Seen on &lt;three&gt; parts",
+                "Create change order",
+                "PRT-000001/C",
+                "Link an open change order",
+                "name=\"decision\" value=\"accept\"",
+                "/request-attachments/",
+                "?inline=1",
+                "enctype=\"multipart/form-data\"",
+                "CHG-000001",
+                "weld seam",
+            ] {
+                assert!(
+                    html.contains(expected),
+                    "request page ({status}) shows {expected}"
+                );
+            }
+            // deferred → deferred is no transition: no Defer button then
+            assert_eq!(
+                html.contains("name=\"decision\" value=\"defer\""),
+                status != "deferred",
+                "request page ({status}): Defer button"
             );
         }
 

@@ -5,7 +5,9 @@
 //! `GET /api/v1/items/PRT-000042/revisions/B`. The code `latest` selects the
 //! newest revision.
 
+mod change_requests;
 mod personal;
+mod simulations;
 mod uploads_api;
 
 use axum::{
@@ -28,7 +30,7 @@ use crate::{
     models::Revision,
     services::{
         audit, bom, changes, checkouts, desktop, files, impacts, imports, items, notifications,
-        package, projects, references, revisions, stats, uploads, users, Page,
+        package, projects, references, requests, revisions, stats, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -38,6 +40,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .unwrap_or(usize::MAX)
         .saturating_add(1024 * 1024);
     let import_limit = imports::MAX_STEP_BYTES + 1024 * 1024;
+    let attachment_limit = requests::MAX_ATTACHMENT_BYTES + 1024 * 1024;
     Router::new()
         .route("/", get(index))
         .route("/me", get(me))
@@ -66,6 +69,41 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(get_references).post(add_reference),
         )
         .route("/references/{id}", axum::routing::delete(delete_reference))
+        // simulations
+        .route(
+            "/items/{number}/revisions/{code}/simulation",
+            get(simulations::get_simulation),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/bases",
+            get(simulations::list_bases).post(simulations::add_basis),
+        )
+        .route(
+            "/simulation-bases/{id}",
+            axum::routing::delete(simulations::delete_basis),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/results",
+            get(simulations::list_results)
+                .post(simulations::add_result)
+                .put(simulations::put_results),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/results/import",
+            post(simulations::import_results).layer(DefaultBodyLimit::max(import_limit)),
+        )
+        .route(
+            "/simulation-results/{id}",
+            patch(simulations::patch_result).delete(simulations::delete_result),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/compare",
+            get(simulations::compare),
+        )
+        .route(
+            "/items/{number}/simulations",
+            get(simulations::item_simulations),
+        )
         .route("/impacts", get(list_impacts))
         .route("/notifications", get(list_notifications))
         .route("/notifications/read", post(read_notifications))
@@ -126,6 +164,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/items/{number}/revisions/{code}/revise", post(revise))
         .route("/items/{number}/revisions/{code}/package", get(get_package))
+        .route("/items/{number}/revisions/{code}/workset", get(get_workset))
         .route(
             "/bom-imports",
             post(import_bom).layer(DefaultBodyLimit::max(import_limit)),
@@ -161,7 +200,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
                 .delete(uploads_api::abort),
         )
         .route("/uploads/{id}/finish", post(uploads_api::finish))
-        .route("/files/{id}", get(file_meta).delete(delete_file))
+        .route(
+            "/files/{id}",
+            get(file_meta).patch(update_file).delete(delete_file),
+        )
         .route("/files/{id}/content", get(download))
         .route("/files/{id}/thumbnail", get(file_thumbnail))
         .route("/files/{id}/versions", get(file_versions))
@@ -181,6 +223,62 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{number}/submit", post(submit_change))
         .route("/changes/{number}/review", post(review_change))
         .route("/changes/{number}/withdraw", post(withdraw_change))
+        .route(
+            "/change-requests",
+            get(change_requests::list).post(change_requests::create),
+        )
+        .route(
+            "/change-requests/{number}",
+            get(change_requests::get).patch(change_requests::update),
+        )
+        .route(
+            "/change-requests/{number}/comments",
+            post(change_requests::comment),
+        )
+        .route(
+            "/change-requests/{number}/items",
+            post(change_requests::add_item),
+        )
+        .route(
+            "/change-requests/{number}/triage",
+            post(change_requests::triage),
+        )
+        .route(
+            "/change-requests/{number}/assign",
+            post(change_requests::assign),
+        )
+        .route(
+            "/change-requests/{number}/decide",
+            post(change_requests::decide),
+        )
+        .route(
+            "/change-requests/{number}/reopen",
+            post(change_requests::reopen),
+        )
+        .route(
+            "/change-requests/{number}/withdraw",
+            post(change_requests::withdraw),
+        )
+        .route(
+            "/change-requests/{number}/create-change",
+            post(change_requests::create_change),
+        )
+        .route(
+            "/change-requests/{number}/link-change",
+            post(change_requests::link_change),
+        )
+        .route(
+            "/change-requests/{number}/attachments",
+            post(change_requests::attach).layer(DefaultBodyLimit::max(attachment_limit)),
+        )
+        .route(
+            "/change-requests/{number}/watch",
+            post(change_requests::watch).delete(change_requests::watch),
+        )
+        .route(
+            "/change-request-attachments/{id}/content",
+            get(change_requests::attachment_content),
+        )
         .fallback(not_found)
 }
 
@@ -222,7 +320,7 @@ async fn index() -> Json<Value> {
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
             "GET    /api/v1/me",
-            "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, dependents to check (impacts), statistics",
+            "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
             "GET    /api/v1/projects",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?}",
@@ -243,8 +341,8 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code|latest}",
             "PATCH  /api/v1/items/{number}/revisions/{code}           {name?, description?, material?, mass_kg?, unit_cost?}",
             "POST   /api/v1/items/{number}/revisions/{code}/checkout",
-            "POST   /api/v1/items/{number}/revisions/{code}/checkin   optional multipart: 'file' (new versions), 'comment', 'bases' = {\"name\": version | sha256} → 409 if a file moved on, 'uploads' = [upload id] (chunked uploads)",
-            "POST   /api/v1/uploads                                   {item, revision, filename, size, sha256?, content_type?, base?} – start a chunked, resumable upload (checked-out revision)",
+            "POST   /api/v1/items/{number}/revisions/{code}/checkin   optional multipart: 'file' (new versions), 'comment', 'bases' = {\"name\": version | sha256} → 409 if a file moved on, 'folder' or 'folders' = {\"name\": \"folder\"}, 'uploads' = [upload id] (chunked uploads)",
+            "POST   /api/v1/uploads                                   {item, revision, filename, size, sha256?, content_type?, base?, folder?} – start a chunked, resumable upload (checked-out revision)",
             "GET    /api/v1/uploads/{id}                              state and offset to resume from (also HEAD: Upload-Offset, Upload-Length)",
             "PATCH  /api/v1/uploads/{id}                              header Upload-Offset, body = next chunk (≤ chunk_bytes) → 409 at any other offset",
             "POST   /api/v1/uploads/{id}/finish                       {comment?, check_in?} – verify size and sha256, store the new version (and release the check-out)",
@@ -259,6 +357,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/bom       {child, quantity, find_number?, notes?}",
             "GET    /api/v1/items/{number}/revisions/{code}/bom.xlsx?rule=  the expanded BOM as Excel workbook (the BOM import reads it back)",
             "GET    /api/v1/items/{number}/revisions/{code}/package?rule=  Pack and Go: ZIP with all files of the structure, bom.csv, manifest.json",
+            "GET    /api/v1/items/{number}/revisions/{code}/workset?rule=&references=true  desktop Get: files of the structure and the CAD files it references, with folder, version, sha256, lock",
             "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM or STEP assembly of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
             "POST   /api/v1/items/{number}/revisions/{code}/bom/import  same multipart fields – imports below the revision (checked out by me)",
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
@@ -266,6 +365,18 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/references  references, referrers, CAD file references, impacts",
             "POST   /api/v1/items/{number}/revisions/{code}/references  {item, kind: drawing|specification|reference, note?}",
             "DELETE /api/v1/references/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation  basis links (out of date?), result values (pass/fail), summary",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/bases",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/bases  {item, revision?, file? | file_version_id?, role: geometry|mesh|material|load_case|other, note?}",
+            "DELETE /api/v1/simulation-bases/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/results",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/results  {name, value, unit?, lower_limit?, upper_limit?, load_case?, solver?, solver_version?, note?}",
+            "PUT    /api/v1/items/{number}/revisions/{code}/simulation/results  {results: [...], replace?: true} – the result set of a solver run",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/results/import  multipart: file (CSV/Excel: name,value,unit,limit_low,limit_high,load_case), replace?",
+            "PATCH  /api/v1/simulation-results/{id}                   any result field",
+            "DELETE /api/v1/simulation-results/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/compare?with=A   result values of two revisions",
+            "GET    /api/v1/items/{number}/simulations                simulations based on the item (out of date?)",
             "GET    /api/v1/impacts                                   open impacts on items of my project groups",
             "GET    /api/v1/notifications?unread=true&limit=          my notifications and the unread count",
             "POST   /api/v1/notifications/read                        {ids?} – mark as read (all without a body)",
@@ -285,8 +396,9 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/changes/{number}/watch                    watch a change (DELETE: stop)",
             "POST   /api/v1/impacts/{id}/acknowledge                  {note} – the dependent needs no change",
             "GET    /api/v1/items/{number}/revisions/{code}/files",
-            "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases'",
+            "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases', 'folder' (in the project group) or 'folders' = {\"name\": \"folder\"}",
             "GET    /api/v1/files/{id}",
+            "PATCH  /api/v1/files/{id}                                {folder} – its place in the working folder (revision checked out by you)",
             "GET    /api/v1/files/{id}/content",
             "GET    /api/v1/files/{id}/thumbnail                      preview image stored in Inventor, Solid Edge and SolidWorks files (PNG or BMP, 404 if none)",
             "GET    /api/v1/files/{id}/versions",
@@ -303,7 +415,23 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/changes/{number}/dependencies             add the in-work revisions of all unreleased dependencies, level by level",
             "POST   /api/v1/changes/{number}/submit",
             "POST   /api/v1/changes/{number}/review                   {decision: approve|reject, comment?}",
-            "POST   /api/v1/changes/{number}/withdraw"
+            "POST   /api/v1/changes/{number}/withdraw",
+            "GET    /api/v1/change-requests?status=open|all|<status>&scope=mine|assigned&item=&limit=&offset=",
+            "POST   /api/v1/change-requests                           {title, description?, reason?, priority?, due_date?, items?: [{item, revision?, note?}]} – any signed-in user",
+            "GET    /api/v1/change-requests/{number}                  request, items, comments, attachments, change orders, history, what I may do",
+            "PATCH  /api/v1/change-requests/{number}                  {title?, description?, reason?, priority?, due_date?}",
+            "POST   /api/v1/change-requests/{number}/comments         {body} – any signed-in user",
+            "POST   /api/v1/change-requests/{number}/items            {item, revision?, note?}",
+            "POST   /api/v1/change-requests/{number}/triage           new → in triage (CAD editors of the affected groups, admins)",
+            "POST   /api/v1/change-requests/{number}/assign           {username|null}",
+            "POST   /api/v1/change-requests/{number}/decide           {decision: accept|reject|defer, comment?}",
+            "POST   /api/v1/change-requests/{number}/reopen           deferred → in triage",
+            "POST   /api/v1/change-requests/{number}/withdraw         the requester, before the decision",
+            "POST   /api/v1/change-requests/{number}/create-change    {title?, priority?} – draft change order with the in-work revisions of the affected items",
+            "POST   /api/v1/change-requests/{number}/link-change      {change} – link an open change order",
+            "POST   /api/v1/change-requests/{number}/attachments      multipart 'file': PNG, JPEG, GIF, WebP or PDF, up to 10 MiB",
+            "GET    /api/v1/change-request-attachments/{id}/content",
+            "POST   /api/v1/change-requests/{number}/watch            watch a change request (DELETE: stop)"
         ]
     }))
 }
@@ -395,6 +523,8 @@ async fn worklist(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult
         "impacts": impacts::open_for(&st.db, &me).await?,
         "notifications_unread": notifications::unread_count(&st.db, me.id).await?,
         "my_changes": changes::open_by(&st.db, me.id).await?,
+        "requests_assigned": requests::assigned_to(&st.db, me.id).await?,
+        "my_requests": requests::open_by(&st.db, me.id).await?,
         "stats": stats::load(&st.db).await?,
     })))
 }
@@ -601,7 +731,9 @@ async fn create_item(
     ApiJson(body): ApiJson<CreateItem>,
 ) -> AppResult<Response> {
     let item_type = ItemType::parse(&body.item_type).ok_or_else(|| {
-        AppError::BadRequest("item_type must be part, assembly, document or software.".into())
+        AppError::BadRequest(
+            "item_type must be part, assembly, document, software or simulation.".into(),
+        )
     })?;
     let project_id = match body.project.as_deref().filter(|p| !p.trim().is_empty()) {
         Some(code) => Some(projects::get_by_code(&st.db, code).await?.id),
@@ -690,9 +822,11 @@ async fn get_revision(
     let attachments = files::list(&st.db, rev.id).await?;
     let lines = bom::lines(&st.db, rev.id).await?;
     let rev_changes = changes::for_revision(&st.db, rev.id).await?;
-    Ok(Json(
-        json!({ "revision": rev, "files": attachments, "bom": lines, "changes": rev_changes }),
-    ))
+    let open_requests = requests::open_for_item(&st.db, rev.item_id).await?;
+    Ok(Json(json!({
+        "revision": rev, "files": attachments, "bom": lines, "changes": rev_changes,
+        "open_requests": open_requests,
+    })))
 }
 
 #[derive(Deserialize)]
@@ -941,6 +1075,30 @@ async fn get_package(
     }
     let rule = web::package_rule(q.rule.as_deref(), &rev.state);
     web::package_response(package::build(&st.db, &st.vault, rev.id, rule).await?)
+}
+
+#[derive(Deserialize)]
+struct WorksetQuery {
+    rule: Option<String>,
+    /// `false` leaves out the items found through references inside CAD files.
+    references: Option<bool>,
+}
+
+/// The working set for the desktop "Get": the revision, its multi-level BOM
+/// under a revision rule (default latest) and the items holding the CAD files
+/// they reference – every file with folder, version, SHA-256 and the lock of
+/// its revision.
+async fn get_workset(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<WorksetQuery>,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &number, &code).await?;
+    let rule = bom_rule(q.rule.as_deref().filter(|r| !r.trim().is_empty()))?;
+    Ok(Json(json!(
+        workset::resolve(&st.db, &me, rev.id, rule, q.references.unwrap_or(true)).await?
+    )))
 }
 
 #[derive(Deserialize)]
@@ -1210,6 +1368,24 @@ async fn file_meta(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Value>> {
     Ok(Json(json!(files::get(&st.db, id).await?)))
+}
+
+#[derive(Deserialize)]
+struct UpdateFile {
+    /// Folder inside the project group (`""` = top).
+    folder: String,
+}
+
+/// Changes the folder of a file while its revision is checked out.
+async fn update_file(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+    ApiJson(body): ApiJson<UpdateFile>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(
+        files::set_folder(&st.db, &me, id, &body.folder).await?
+    )))
 }
 
 async fn download(

@@ -68,6 +68,8 @@ pub struct FileStatus {
     pub version: Option<i32>,
     pub sha256: Option<String>,
     pub size_bytes: Option<i64>,
+    /// Folder inside the project group (`None` for files only in the workspace).
+    pub folder: Option<String>,
     pub uploaded_by_name: Option<String>,
     pub uploaded_at: Option<DateTime<Utc>>,
     /// The local file as the client reported it.
@@ -158,6 +160,7 @@ pub async fn file_status(
             version: Some(f.version),
             sha256: Some(f.sha256.clone()),
             size_bytes: Some(f.size_bytes),
+            folder: Some(f.folder.clone()),
             uploaded_by_name: Some(f.uploaded_by_name.clone()),
             uploaded_at: Some(f.uploaded_at),
             local_sha256: local_sha,
@@ -179,6 +182,7 @@ pub async fn file_status(
             version: None,
             sha256: None,
             size_bytes: None,
+            folder: None,
             uploaded_by_name: None,
             uploaded_at: None,
             local_sha256: c.sha256.as_deref().map(str::to_ascii_lowercase),

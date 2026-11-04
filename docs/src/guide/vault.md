@@ -20,6 +20,15 @@ Every action returns to the explorer, so a typical session is: pick the
 folder, select the item, *Check out*, download the files, work in your CAD
 program, drop the changed files into *Check in*, done.
 
+> **Browser downloads are for single files and for viewing.** A browser
+> saves files one by one into *Downloads* – without the folder structure an
+> assembly needs, without knowing which version a file is and without
+> read-only protection. For CAD work (assemblies, drawings, anything you
+> will change and check in) use the **desktop working folder**: one folder
+> per project group with the original folder structure, *Get* for whole
+> assemblies, read-only files until you check out – see
+> [How files appear on your computer](desktop.md#how-files-appear-on-your-computer).
+
 ## Rules
 
 * Only revisions **in work** can be checked out, and only by CAD editors of
@@ -28,6 +37,14 @@ program, drop the changed files into *Check in*, done.
 * **Check in** with files: files with the same name become the next version (Creo's iteration suffixes `bracket.prt.7`
   are folded into versions);
   identical content is recognised and not stored again.
+* Every file has a **folder** inside its project group (`chassis/brackets`;
+  empty = the top of the group). It is the file's place in the desktop
+  working folder, so assemblies find their parts. The folder import sets it
+  from the scanned tree, uploads and check-ins may send it (`folder`,
+  `folders` in the API), new versions keep it, and while the revision is
+  checked out the *Folder* column of the revision page moves a file. Folders
+  are relative: `..`, drive letters and names that are invalid on Windows
+  are refused.
 * **Cancel check-out** releases your lock at once – no dialog, nothing is
   uploaded. **Force unlock** (admins) releases someone else's lock after a
   confirmation, is recorded in the audit log and **notifies the owner**
@@ -83,7 +100,9 @@ clients – and the desktop app for files above 32 MiB – upload them in
 **chunks**:
 
 1. `POST /api/v1/uploads` announces the file (revision, name, size,
-   optionally its SHA-256 and the base version). The server refuses at once
+   optionally its SHA-256, the base version and its folder in the project
+   group – the desktop app sends the folder of the working folder, so the
+   file keeps its place there). The server refuses at once
    what it would refuse later: a file larger than `TEAMCRAFT_MAX_UPLOAD_MB`,
    a revision you have not checked out, or a base the server file has moved
    on from.
@@ -122,12 +141,25 @@ cancels one at once.
   and, optionally, the current files and the BOM. The new item starts with
   revision A, checked out to you; the source does not change.
 
-## Desktop workspace
+## Desktop working folder
 
-The desktop app adds a local workspace: *Check out* copies the files into a
-folder per revision, the workspace tab shows which files you changed, which
-are outdated or in conflict and who holds the lock, and *Check in* uploads
-exactly those – based on the versions they were copied from. Opening an
-outdated file or one somebody else has checked out asks first. *Check in all*
-in the worklist checks in every check-out without local changes and lists
-the ones that still have changes. See [Desktop app](desktop.md).
+The desktop app keeps a local working folder: **one folder per project
+group that mirrors the folder structure of the files**, one copy of each
+file (`TeamCraft/ROVER/chassis/brackets/bracket.prt`); the revision is
+metadata, not a folder level.
+
+* *Get* copies an item with its BOM (revision rule *latest* or *released*)
+  and the parts its CAD files reference; only missing and outdated files
+  are downloaded, checked by SHA-256, with progress and cancel.
+* Files you have not checked out are **read-only**; *Check out* makes them
+  writable, *Check in* uploads the changed ones and makes them read-only
+  again.
+* The workspace tab shows which files you changed, which are outdated or in
+  conflict, name clashes (two items with the same folder and file name –
+  never overwritten) and who holds the lock; *Check in* uploads exactly the
+  changed files – based on the versions they were copied from. Opening an
+  outdated file or one somebody else has checked out asks first.
+* *Check in all* in the worklist checks in every check-out without local
+  changes and lists the ones that still have changes.
+
+See [How files appear on your computer](desktop.md#how-files-appear-on-your-computer).

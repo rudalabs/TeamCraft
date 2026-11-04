@@ -2730,6 +2730,7 @@ dependencies = [
  "csv",
  "dotenvy",
  "encoding_rs",
+ "flate2",
  "gltf",
  "hex",
  "lettre",

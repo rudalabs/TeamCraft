@@ -17,6 +17,9 @@
 #   CHROME_BIN        Chrome binary                    (chromedriver's default)
 #   WD_PORT           port for chromedriver            (9515)
 #   SCREENSHOT_SCALE  device pixel ratio of desktop shots (1)
+#   DESKTOP_APP       TeamCraft Desktop binary: also capture the desktop app
+#                     (Linux; needs Xvfb, xdotool and ImageMagick)  (unset)
+#   DESKTOP_DISPLAY   X display for the desktop app's Xvfb          (:99)
 #
 # The passwords and API tokens are generated per run, kept in a private
 # temporary directory and never printed (on GitHub Actions they are also
@@ -27,6 +30,8 @@ BASE_URL=${BASE_URL:-http://127.0.0.1:8080}
 BASE_URL=${BASE_URL%/}
 OUT_DIR=${OUT_DIR:-media/screenshots}
 FIXTURES=${FIXTURES:-tests/fixtures/cad/nist}
+DESKTOP_APP=${DESKTOP_APP:-}
+DESKTOP_DISPLAY=${DESKTOP_DISPLAY:-:99}
 WD_PORT=${WD_PORT:-9515}
 SCALE=${SCREENSHOT_SCALE:-1}
 WD="http://127.0.0.1:${WD_PORT}"
@@ -41,13 +46,32 @@ for tool in curl jq base64 mktemp; do
     command -v "$tool" >/dev/null || die "'$tool' is required"
 done
 [[ -d $FIXTURES ]] || die "fixture folder '$FIXTURES' not found (run from the repository root or set FIXTURES)"
+if [[ -n $DESKTOP_APP ]]; then
+    [[ -x $DESKTOP_APP ]] || die "DESKTOP_APP '$DESKTOP_APP' is not an executable"
+    for tool in Xvfb xdotool import convert compare; do
+        command -v "$tool" >/dev/null || die "'$tool' is required for the desktop screenshots"
+    done
+fi
 
 WORK=$(mktemp -d)
 chmod 700 "$WORK"
 DRIVER_PID=
 SESSION=
+APP_PID=
+XVFB_PID=
 cleanup() {
     local status=$?
+    local pid
+    for pid in "$APP_PID" "$XVFB_PID"; do
+        if [[ -n $pid ]]; then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+    if [[ $status -ne 0 && -s $WORK/desktop.log ]]; then
+        log "last lines of the desktop app log:"
+        tail -n 30 "$WORK/desktop.log" >&2 || true
+    fi
     if [[ -n $SESSION ]]; then
         curl -s --max-time 10 -X DELETE "$WD/session/$SESSION" >/dev/null 2>&1 || true
     fi
@@ -114,17 +138,27 @@ japi() {
     api "$1" "$2" "$3" -H 'Content-Type: application/json' --data-binary "$4"
 }
 
-# Signs WHO in through the login form (curl) and creates a short-lived API token.
-api_token() {
-    local who=$1 code token
-    code=$(web "$who" /account/tokens --data-urlencode name=readme-screenshots \
+# new_token WHO NAME – creates a short-lived API token with WHO's web session
+# (signed in through the login form) and prints it.
+new_token() {
+    local who=$1 name=$2 code token
+    code=$(web "$who" /account/tokens --data-urlencode "name=$name" \
         --data-urlencode expires_days=1)
     [[ $code == 200 ]] || die "creating an API token for $who failed (HTTP $code)"
     token=$(grep -oE 'tc_pat_[0-9a-f]+' "$WORK/page" | head -n 1 || true)
-    [[ -n $token ]] || die "the account page showed no new API token for $who"
-    mask "$token"
-    printf 'Authorization: Bearer %s\n' "$token" >"$WORK/auth-$who"
     rm -f "$WORK/page"
+    [[ -n $token ]] || die "the account page showed no new API token for $who"
+    printf '%s' "$token"
+}
+# (The caller masks the token: the ::add-mask:: line must go to the real
+# stdout, not into the command substitution.)
+
+# api_token WHO – the token the REST calls of this script use for WHO.
+api_token() {
+    local token
+    token=$(new_token "$1" readme-screenshots)
+    mask "$token"
+    printf 'Authorization: Bearer %s\n' "$token" >"$WORK/auth-$1"
 }
 
 login_web() {
@@ -474,6 +508,11 @@ snap() {
     sleep 1.5
     wd GET "/session/$SESSION/screenshot" | jq -r '.value' | base64 -d >"$file" ||
         die "could not decode the screenshot $name"
+    check_png "$file"
+}
+
+check_png() {
+    local file=$1
     if [[ $(head -c 8 "$file" | base64) != iVBORw0KGgo* ]] || [[ $(wc -c <"$file") -lt 10000 ]]; then
         die "$file is not a plausible PNG"
     fi
@@ -509,10 +548,140 @@ capture() {
     shot mobile-dashboard /
 }
 
+# ---------------------------------------------------------------------------
+# TeamCraft Desktop (Tauri) on a virtual X display
+# ---------------------------------------------------------------------------
+#
+# The app has no deep links or start-up options, so xdotool drives it like a
+# user: its own keyboard shortcut Ctrl+2 (worklist) and clicks on navigator
+# rows at fixed positions. The Xvfb display has no window manager: the
+# 1440x900 window is moved to the top left corner and the whole screen is
+# captured with ImageMagick.
+
+# Pre-seeds a fresh profile exactly where the app keeps it
+# (desktop/src/settings.rs: $XDG_CONFIG_HOME/io.github.rudalabs.teamcraft):
+# the server address and a personal access token of admin in the token file
+# (mode 600), so the app starts signed in.
+desktop_profile() {
+    local dir=$WORK/xdg-config/io.github.rudalabs.teamcraft token
+    mkdir -p "$dir" "$WORK/xdg-data" "$WORK/xdg-cache"
+    chmod 700 "$dir"
+    token=$(new_token admin readme-desktop-screenshots)
+    mask "$token"
+    (umask 077 && printf '%s' "$token" >"$dir/token")
+    # No workspace folder: the status bar shows the default one (nothing is
+    # checked out, so the app never creates it).
+    jq -n --arg url "$BASE_URL" '{server_url: $url}' >"$dir/settings.json"
+}
+
+start_xvfb() {
+    # A display that already answers would pass the readiness check below
+    # while our Xvfb exits – and the app would run on a foreign screen.
+    if xdotool getdisplaygeometry >/dev/null 2>&1; then
+        die "X display $DESKTOP_DISPLAY is already in use (set DESKTOP_DISPLAY to a free one)"
+    fi
+    log "starting Xvfb on $DESKTOP_DISPLAY (1440x900)"
+    Xvfb "$DESKTOP_DISPLAY" -screen 0 1440x900x24 -nolisten tcp >"$WORK/xvfb.log" 2>&1 &
+    XVFB_PID=$!
+    local i
+    for ((i = 0; i < 30; i++)); do
+        kill -0 "$XVFB_PID" 2>/dev/null || die "Xvfb exited: $(tail -n 5 "$WORK/xvfb.log")"
+        xdotool getdisplaygeometry >/dev/null 2>&1 && return 0
+        sleep 1
+    done
+    die "Xvfb did not start on $DESKTOP_DISPLAY"
+}
+
+# settle MIN-SECONDS WHAT – waits at least MIN seconds, then until two screen
+# captures a second apart (almost) match and the screen is more than an empty
+# window. A blinking text cursor changes a few pixels, hence the tolerance.
+settle() {
+    local min=$1 what=$2 start=$SECONDS colors diff
+    sleep "$min"
+    import -window root "$WORK/settle-a.png" || die "could not capture the screen ($what)"
+    while true; do
+        sleep 1
+        import -window root "$WORK/settle-b.png" || die "could not capture the screen ($what)"
+        kill -0 "$APP_PID" 2>/dev/null || die "the desktop app exited while waiting for $what"
+        colors=$(convert "$WORK/settle-b.png" -format '%k' info: 2>/dev/null || echo 0)
+        diff=$(compare -metric AE "$WORK/settle-a.png" "$WORK/settle-b.png" null: 2>&1 || true)
+        diff=${diff%% *}
+        [[ $colors =~ ^[0-9]+$ ]] || colors=0
+        [[ $diff =~ ^[0-9]+$ ]] || diff=999999
+        if ((colors > 300 && diff < 400)); then
+            return 0
+        fi
+        if ((SECONDS - start > 90)); then
+            log "  $what did not settle ($colors colours, $diff changed pixels) – capturing anyway"
+            return 0
+        fi
+        mv "$WORK/settle-b.png" "$WORK/settle-a.png"
+    done
+}
+
+desktop_snap() {
+    local file="$OUT_DIR/$1.png"
+    import -window root -depth 8 "png:$file" || die "could not capture $1"
+    check_png "$file"
+}
+
+desktop_key() {
+    xdotool key --clearmodifiers "$@" || die "xdotool could not press $*"
+}
+
+capture_desktop() {
+    log "capturing TeamCraft Desktop (1440x900, Xvfb)"
+    export DISPLAY=$DESKTOP_DISPLAY
+    desktop_profile
+    start_xvfb
+    XDG_CONFIG_HOME=$WORK/xdg-config XDG_DATA_HOME=$WORK/xdg-data XDG_CACHE_HOME=$WORK/xdg-cache \
+        GDK_BACKEND=x11 NO_AT_BRIDGE=1 \
+        WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+        "$DESKTOP_APP" >"$WORK/desktop.log" 2>&1 &
+    APP_PID=$!
+    local win
+    win=$(timeout 90 xdotool search --sync --onlyvisible --name '^TeamCraft$' 2>/dev/null | head -n 1 || true)
+    [[ -n $win ]] || die "the desktop app window did not appear"
+    kill -0 "$APP_PID" 2>/dev/null || die "the desktop app exited"
+    # No window manager: place and size the window ourselves, give it the
+    # keyboard focus and park the pointer on the status bar (no hover effects).
+    xdotool windowmove "$win" 0 0 || true
+    xdotool windowsize "$win" 1440 900 || true
+    xdotool mousemove 1430 895 || true
+    xdotool windowfocus "$win" || true
+    log "  window $win: $(xdotool getwindowgeometry "$win" 2>/dev/null | tr '\n' ' ')"
+
+    settle 8 "the start screen"
+    # The rows of the navigator sit at fixed places for the demo data
+    # (1440x900, default zoom); check the images when the layout changes.
+    desktop_click 140 151 # project group ROVER: expand
+    settle 2 "the items of ROVER"
+    desktop_snap desktop-home
+    desktop_key ctrl+2
+    settle 2 "the worklist"
+    desktop_snap desktop-worklist
+    desktop_click 217 151 # "Checked out by me": the mounting bracket
+    settle 2 "the revision tab"
+    desktop_snap desktop-revision
+    desktop_click 210 207 # "Waiting for my review": the enclosure change
+    settle 2 "the change order tab"
+    desktop_snap desktop-change
+}
+
+# desktop_click X Y – left click at screen position X,Y, then the pointer
+# goes back to the status bar.
+desktop_click() {
+    xdotool mousemove "$1" "$2" click 1 mousemove 1430 895 ||
+        die "xdotool could not click at $1,$2"
+}
+
 main() {
     wait_for_server
     seed
     capture
+    if [[ -n $DESKTOP_APP ]]; then
+        capture_desktop
+    fi
     log "done: $(find "$OUT_DIR" -maxdepth 1 -name '*.png' | wc -l) screenshots in $OUT_DIR"
 }
 

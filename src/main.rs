@@ -61,6 +61,15 @@ enum Command {
         #[command(subcommand)]
         command: VaultCommand,
     },
+    /// Read the referenced CAD files of the stored files again (current
+    /// versions) and replace the stored references – after an update that
+    /// reads a format better, e.g. SOLIDWORKS 2015+ assemblies.
+    RescanReferences {
+        /// Format id to rescan (repeatable), e.g. --format solidworks-assembly;
+        /// default: solidworks-assembly and solidworks-drawing.
+        #[arg(long = "format")]
+        formats: Vec<String>,
+    },
     /// Bridge an MCP client that speaks stdio (e.g. Claude Desktop) to the
     /// MCP endpoint of a TeamCraft server. The personal access token is read
     /// from TEAMCRAFT_TOKEN or --token-file.
@@ -163,6 +172,7 @@ async fn main() -> ExitCode {
         Command::Restore { dir, force } => restore_command(dir, force).await,
         Command::User { command } => user_command(command).await,
         Command::Vault { command } => vault_command(command).await,
+        Command::RescanReferences { formats } => rescan_references(formats).await,
     };
     match result {
         Ok(code) => code,
@@ -453,6 +463,21 @@ fn read_new_password() -> Result<String> {
         }
         Ok(password)
     }
+}
+
+async fn rescan_references(mut formats: Vec<String>) -> Result<ExitCode> {
+    if formats.is_empty() {
+        formats = vec!["solidworks-assembly".into(), "solidworks-drawing".into()];
+    }
+    if let Some(f) = formats.iter().find(|f| !teamcraft::cadrefs::scans(f)) {
+        bail!("'{f}' is not a format that is scanned for references");
+    }
+    let config = load_config()?;
+    let pool = db::connect(&config).await?;
+    let vault = teamcraft::vault::Vault::open(&config.vault_dir).await?;
+    let n = services::files::rescan_references(&pool, &vault, &formats).await?;
+    println!("rescanned {n} file version(s) ({})", formats.join(", "));
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
