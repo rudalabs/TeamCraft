@@ -6,14 +6,19 @@ the known gaps with details. Last update: 2026-11-04.
 
 ## To-do
 
+**Fixes**
+
+- [ ] Folder import: find out why all imported items stayed in "My check-outs" after the last import and fix it (test
+  import against the server)
+- [ ] Bulk action "Check in all my check-outs" (desktop and web)
+
+**General**
+
 - [x] New item with files right away: file field in the web form and in the desktop dialog (an item is normally never
   without a file)
 - [x] Previews of Inventor (`.ipt`, `.iam`, `.idw`, `.ipn`) and Solid Edge (`.par`, `.psm`, `.asm`, `.dft`, `.pwd`)
   files: embedded preview image on the server, STEP export through the user's own CAD installation in the desktop app –
   research and decisions in [docs/src/research/cad-previews.md](src/research/cad-previews.md)
-- [ ] Try the native previews on Windows with real files: preview images of Inventor, Solid Edge and SolidWorks files,
-  *STEP* export with Inventor and with Solid Edge (desktop app)
-- [ ] Try the CAD folder import with a real Inventor and a real Solid Edge project of hundreds of files (desktop app)
 - [x] Desktop: tutorial for importing existing CAD file trees (hundreds of files, project files such as Inventor `.ipj`)
 - [x] Desktop: import of a CAD folder tree as items with files, BOM from the assembly references (needed for the
   tutorial; feature 8)
@@ -37,8 +42,61 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
 - [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
   `SECURITY.md` points to
-- [ ] Test the heuristics with real CAD files: CAD reference scan, BOM table columns, embedded previews
 - [ ] Test e-mail (SMTP) and Mattermost notifications against real servers
+
+**All CAD programs**
+
+- [ ] (research first) CAD add-ins through the official APIs (Inventor API, Solid Edge API, SolidWorks API, NX Open):
+  check out, "save and check in", "get latest" inside the CAD program
+- [ ] Check-in takes dependent files along automatically (from the reference scan)
+- [ ] Create viewables (STEP) in the background without blocking the check-in
+- [ ] Status per file: up to date, modified, locked by X, outdated
+- [ ] Report conflicts early, already when a file is opened
+- [ ] Sync file properties with item attributes: part number, name, material, mass
+- [ ] Recognise standard and library parts (Content Center, Toolbox, Standard Parts) and treat them as purchased parts
+  instead of importing them again and again
+- [ ] Workspace setup wizard (first start or when getting a project group): optional CAD settings to tick – Inventor
+  `.ipj`, NX load options, Solid Edge search paths; nothing ticked by default, preview of what would be created, never
+  created automatically, existing files never overwritten without asking; can be opened again from the settings
+
+**Autodesk Inventor**
+
+- [ ] Project file (`.ipj`) for the workspace only on request, in the workspace wizard: either create a new `.ipj`
+  (workspace = group folder, "Using Unique File Names", library paths adjustable) or choose the team's existing `.ipj`
+  and only check/show it
+- [ ] Folder import: read the paths of an included `.ipj`; recognise Content Center and library folders
+- [ ] Test the reference scan with real `.iam` files, also with derived parts, iParts/iAssemblies and Frame Generator
+- [ ] Test preview images and the STEP export (both built) with real files on Windows
+- [ ] Test the BOM import with real exports of the BOM editor (structured and parts only)
+- [ ] Extend the Inventor part of the tutorial: Pack and Go, `.ipj`, Design Assistant for broken references
+
+**Siemens Solid Edge**
+
+- [ ] Folder import and tutorial: Pack and Go, Design Manager, part families
+- [ ] Test preview images and the STEP export (built) with real `.par`/`.asm`/`.psm` files
+- [ ] Test the reference scan and the BOM import with real files
+- [ ] Use file properties such as the Document Number as item number
+
+**SOLIDWORKS**
+
+- [ ] STEP export through the locally installed SOLIDWORKS (API), like Inventor and Solid Edge
+- [ ] Test preview images (built, old and new files) with real files
+- [ ] Take configurations and Toolbox parts into account in the import and the reference scan
+- [ ] Test the BOM import with real BOM exports
+
+**Siemens NX**
+
+- [ ] (research first) How other PLMs connect NX (native vs. Teamcenter NX Manager), licences (student/academic) and
+  what is feasible for an open-source project
+- [ ] Folder import for the master model concept: the drawing `*_dwg*.prt` belongs into the item of the model
+- [ ] Test `.prt` detection, the reference scan and the BOM import with real NX files
+- [ ] STEP export through the local NX (NX Open / journal), on Windows and Linux
+- [ ] NX load options for the workspace only on request, in the workspace wizard; NX part of the tutorial
+
+**Tests with real data**
+
+- [ ] One real project with hundreds of files each from Inventor, Solid Edge, SOLIDWORKS and NX: folder import, preview
+  images, STEP export, BOMs – including the heuristics (CAD reference scan, BOM table columns, embedded previews)
 
 ## Done
 
