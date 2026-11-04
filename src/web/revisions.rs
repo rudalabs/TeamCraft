@@ -525,9 +525,9 @@ pub(crate) async fn upload_files(
 /// Adds the chunked uploads listed in the `uploads` field (ids of complete
 /// `/api/v1/uploads` sessions of the actor) to the received files, so large
 /// files join a multipart upload or check-in – stored in the same
-/// transaction. A session's own base wins over the `bases` field; the
-/// `folder`/`folders` fields apply to them like to the `file` parts. Returns
-/// the session ids, to be forgotten once the versions are stored.
+/// transaction. A session's own base and folder win over the `bases`,
+/// `folders` and `folder` fields. Returns the session ids, to be forgotten
+/// once the versions are stored.
 pub(crate) async fn take_session_uploads(
     st: &AppState,
     actor: &Actor,
@@ -549,16 +549,13 @@ pub(crate) async fn take_session_uploads(
     for id in &ids {
         let mut upload =
             uploads::complete(&st.db, &st.vault, actor, *id, Some(revision_id)).await?;
+        let key = files::stored_name(&upload.filename).to_lowercase();
         if upload.base.is_none() {
-            upload.base = bases
-                .get(&files::stored_name(&upload.filename).to_lowercase())
-                .cloned();
+            upload.base = bases.get(&key).cloned();
         }
-        files::apply_folders(
-            std::slice::from_mut(&mut upload),
-            folder.as_deref(),
-            &folders,
-        );
+        if upload.folder.is_none() {
+            upload.folder = folders.get(&key).cloned().or_else(|| folder.clone());
+        }
         received.uploads.push(upload);
     }
     Ok(ids)

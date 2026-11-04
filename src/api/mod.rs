@@ -342,7 +342,7 @@ async fn index() -> Json<Value> {
             "PATCH  /api/v1/items/{number}/revisions/{code}           {name?, description?, material?, mass_kg?, unit_cost?}",
             "POST   /api/v1/items/{number}/revisions/{code}/checkout",
             "POST   /api/v1/items/{number}/revisions/{code}/checkin   optional multipart: 'file' (new versions), 'comment', 'bases' = {\"name\": version | sha256} → 409 if a file moved on, 'folder' or 'folders' = {\"name\": \"folder\"}, 'uploads' = [upload id] (chunked uploads)",
-            "POST   /api/v1/uploads                                  {item, revision, filename, size, sha256?, content_type?, base?} – start a chunked, resumable upload (checked-out revision)",
+            "POST   /api/v1/uploads                                   {item, revision, filename, size, sha256?, content_type?, base?, folder?} – start a chunked, resumable upload (checked-out revision)",
             "GET    /api/v1/uploads/{id}                              state and offset to resume from (also HEAD: Upload-Offset, Upload-Length)",
             "PATCH  /api/v1/uploads/{id}                              header Upload-Offset, body = next chunk (≤ chunk_bytes) → 409 at any other offset",
             "POST   /api/v1/uploads/{id}/finish                       {comment?, check_in?} – verify size and sha256, store the new version (and release the check-out)",
