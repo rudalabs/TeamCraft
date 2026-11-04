@@ -184,6 +184,30 @@ pub async fn list(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<FileRecord>
     .collect())
 }
 
+/// The files of several revisions in one query, grouped by revision (each
+/// group ordered like [`list`]).
+pub async fn list_many(
+    pool: &PgPool,
+    revision_ids: &[Uuid],
+) -> AppResult<std::collections::HashMap<Uuid, Vec<FileRecord>>> {
+    let mut out: std::collections::HashMap<Uuid, Vec<FileRecord>> =
+        std::collections::HashMap::new();
+    if revision_ids.is_empty() {
+        return Ok(out);
+    }
+    let rows = sqlx::query_as::<_, FileRecord>(&format!(
+        "{FILE_SELECT} WHERE f.revision_id = ANY($1)
+         ORDER BY f.revision_id, lower(f.filename), f.uploaded_at"
+    ))
+    .bind(revision_ids)
+    .fetch_all(pool)
+    .await?;
+    for f in rows.into_iter().map(with_format) {
+        out.entry(f.revision_id).or_default().push(f);
+    }
+    Ok(out)
+}
+
 pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<FileRecord> {
     sqlx::query_as::<_, FileRecord>(&format!("{FILE_SELECT} WHERE f.id = $1"))
         .bind(id)

@@ -81,12 +81,14 @@ pub async fn build(
         }
     }
 
+    let ids: Vec<Uuid> = revs.iter().map(|r| r.0).collect();
+    let mut files_of = files::list_many(pool, &ids).await?;
     let mut entries = Vec::new();
     let mut manifest_revisions = Vec::new();
     for (id, number, code, name, state) in &revs {
         let folder = format!("{number}_{code}");
         let mut listed = Vec::new();
-        for f in files::list(pool, *id).await? {
+        for f in files_of.remove(id).unwrap_or_default() {
             let zip_path = format!("{folder}/{}", f.filename);
             listed.push(
                 json!({ "path": zip_path, "sha256": f.sha256, "size": f.size_bytes,
