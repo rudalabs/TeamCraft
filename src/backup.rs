@@ -119,16 +119,20 @@ struct DatabaseArgs {
 }
 
 impl DatabaseArgs {
-    fn from_options(options: &PgConnectOptions) -> Self {
+    fn new(options: &PgConnectOptions, password: Option<String>) -> Self {
         let username = options.get_username();
         DatabaseArgs {
             host: options.get_host().to_string(),
             port: options.get_port(),
             username: username.to_string(),
             database: options.get_database().unwrap_or(username).to_string(),
-            password: options.get_password().map(str::to_string),
+            password,
             ssl_mode: ssl_mode_str(options.get_ssl_mode()),
         }
+    }
+
+    fn from_config(config: &Config) -> Self {
+        Self::new(&config.database, config.database_password.clone())
     }
 }
 
@@ -147,7 +151,7 @@ fn ssl_mode_str(mode: PgSslMode) -> &'static str {
 /// Writes a backup of the configured database and vault into `dir`.
 pub fn backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
     prepare_target(dir)?;
-    let database = DatabaseArgs::from_options(&config.database);
+    let database = DatabaseArgs::from_config(config);
     let dump = dir.join(DUMP_FILE);
     run(dump_command(&database, &dump), "pg_dump")?;
     if !dump.is_file() {
@@ -185,7 +189,7 @@ pub fn backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
 pub async fn restore(config: &Config, dir: &Path, force: bool) -> Result<RestoreSummary> {
     let manifest = verify_backup(dir)?;
     ensure_database_empty(config, force).await?;
-    let database = DatabaseArgs::from_options(&config.database);
+    let database = DatabaseArgs::from_config(config);
     let dump = dir.join(DUMP_FILE);
     run(restore_command(&database, &dump), "pg_restore")?;
 
@@ -624,7 +628,7 @@ mod tests {
             .password("pw-secret")
             .database("plm")
             .ssl_mode(PgSslMode::VerifyFull);
-        let database = DatabaseArgs::from_options(&options);
+        let database = DatabaseArgs::new(&options, Some("pw-secret".into()));
         assert_eq!(database.host.as_str(), "db.example.org");
         assert_eq!(database.port, 5433);
         assert_eq!(database.username.as_str(), "teamcraft");

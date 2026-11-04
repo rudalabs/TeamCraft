@@ -72,6 +72,10 @@ pub struct Config {
     pub instance_name: String,
     /// PostgreSQL connection options (contains the password – never log it).
     pub database: PgConnectOptions,
+    /// Password of the database connection, for tools that receive it in
+    /// their environment (`PGPASSWORD` of `pg_dump`/`pg_restore`).
+    /// Secret – never log it.
+    pub database_password: Option<String>,
     /// Human readable, password-free description of the database target.
     pub database_display: String,
     pub db_max_connections: u32,
@@ -183,7 +187,7 @@ impl Config {
             .get("TEAMCRAFT_INSTANCE_NAME")?
             .unwrap_or_else(|| "TeamCraft".to_string());
 
-        let (database, database_display) = database_options(&env)?;
+        let (database, database_display, database_password) = database_options(&env)?;
 
         let db_max_connections = env.parse_or("TEAMCRAFT_DB_MAX_CONNECTIONS", 10u32)?;
         if db_max_connections == 0 {
@@ -281,6 +285,7 @@ impl Config {
             public_url,
             instance_name,
             database,
+            database_password,
             database_display,
             db_max_connections,
             vault_dir,
@@ -404,7 +409,7 @@ fn parse_bool(raw: &str) -> Result<bool> {
 /// in passwords and works nicely with secret files.
 fn database_options<F: Fn(&str) -> Option<String>>(
     env: &Env<F>,
-) -> Result<(PgConnectOptions, String)> {
+) -> Result<(PgConnectOptions, String, Option<String>)> {
     let url = match env.get("TEAMCRAFT_DATABASE_URL")? {
         Some(url) => Some(url),
         None => env.get("DATABASE_URL")?,
@@ -419,7 +424,14 @@ fn database_options<F: Fn(&str) -> Option<String>>(
             options.get_port(),
             options.get_database().unwrap_or("?")
         );
-        return Ok((options, display));
+        // The client tools authenticate like the server does; passwords with
+        // characters that need percent-encoding are better set with
+        // TEAMCRAFT_DB_PASSWORD(_FILE).
+        let password = reqwest::Url::parse(&url)
+            .ok()
+            .and_then(|parsed| parsed.password().map(str::to_string))
+            .filter(|password| !password.is_empty());
+        return Ok((options, display, password));
     }
 
     let host = env
@@ -458,7 +470,7 @@ fn database_options<F: Fn(&str) -> Option<String>>(
         options = options.socket(&host);
     }
     let display = format!("{user}@{host}:{port}/{name}");
-    Ok((options, display))
+    Ok((options, display, password))
 }
 
 #[cfg(test)]
@@ -484,6 +496,7 @@ mod tests {
         assert_eq!(cfg.log_format, LogFormat::Text);
         assert!(cfg.bootstrap_admin.is_none());
         assert_eq!(cfg.database_display, "teamcraft@localhost:5432/teamcraft");
+        assert_eq!(cfg.database_password.as_deref(), Some("secret"));
         assert!(!cfg.summary().contains("secret"));
     }
 
@@ -565,6 +578,7 @@ mod tests {
         assert_eq!(cfg.database_display, "teamcraft@localhost:5432/teamcraft");
         assert!(cfg.local_login);
         assert_eq!(cfg.vault_dir, PathBuf::from("./data/vault"));
+        assert!(cfg.database_password.is_none());
     }
 
     /// The packaged configuration: the local PostgreSQL socket, peer authentication.
@@ -610,6 +624,7 @@ mod tests {
         assert!(cfg.cookie_secure);
         assert_eq!(cfg.log_format, LogFormat::Json);
         assert_eq!(cfg.database_display, "db:5433/plm (from URL)");
+        assert_eq!(cfg.database_password.as_deref(), Some("p"));
     }
 
     #[test]
