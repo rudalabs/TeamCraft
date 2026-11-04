@@ -466,6 +466,9 @@ button.primary, .button.primary {
 button.danger, .button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
 button.link { border: none; background: none; color: var(--link); padding: 0; font-weight: 500; box-shadow: none; }
 button.link:active { transform: none; }
+/* a:hover underlines links; button-like links never, also on touch screens
+   where :hover sticks after a tap (the hover colours below need a mouse) */
+.button:hover, .userbox a.bell:hover { text-decoration: none; }
 button.small, .button.small { padding: 0.25rem 0.65rem; font-size: 0.8rem; border-radius: var(--radius-sm); }
 
 @media (hover: hover) and (pointer: fine) {
