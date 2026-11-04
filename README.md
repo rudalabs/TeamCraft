@@ -23,6 +23,7 @@
 
 <p align="center">
   <a href="https://github.com/rudalabs/TeamCraft/actions/workflows/ci.yml"><img src="https://github.com/rudalabs/TeamCraft/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
+  <a href="https://github.com/rudalabs/TeamCraft/actions/workflows/desktop.yml"><img src="https://github.com/rudalabs/TeamCraft/actions/workflows/desktop.yml/badge.svg?branch=main" alt="Desktop app" /></a>
   <a href="https://github.com/rudalabs/TeamCraft/actions/workflows/docs.yml"><img src="https://github.com/rudalabs/TeamCraft/actions/workflows/docs.yml/badge.svg?branch=main" alt="Docs" /></a>
   <a href="https://www.repostatus.org/#wip"><img src="https://www.repostatus.org/badges/latest/wip.svg" alt="Project status: WIP – initial development is in progress, but there has not yet been a stable, usable release suitable for the public." /></a>
   <img src="https://img.shields.io/badge/release-none_yet_(0.1.0--dev)-orange" alt="Release: none yet" />

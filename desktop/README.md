@@ -37,6 +37,17 @@ Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
 `Ctrl/Cmd+1/2/3` Home/Worklist/Changes, `Ctrl/Cmd+W` close tab; zoom with
 `Ctrl` + mouse wheel or `Ctrl/Cmd` + `+` / `-` / `0`.
 
+## Continuous integration
+
+`.github/workflows/desktop.yml` runs on every change to `desktop/`,
+`static/` or `media/`: `cargo fmt`, `clippy` and the tests, a build, and a
+**start-up smoke test** (the app is started with a fresh profile – on Linux
+under a virtual display – and must still be running after 20 seconds) on
+Linux x86_64 (Ubuntu 24.04 and 26.04) and ARM64, macOS ARM64 and Windows
+x86_64; Windows ARM64 runs as a preview that never blocks. A separate job
+parses every script of `ui/` and the web UI (`node --check`; Node.js is only
+used by CI, the app has no build step). Nothing is packaged or published.
+
 ## Run from source
 
 Installers are not published yet; build and run the app locally. Linux needs
