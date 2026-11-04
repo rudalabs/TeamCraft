@@ -387,10 +387,10 @@
         <td class="small">{{ r.load_case }}</td>
         <td class="num value">{{ r.value }}</td>
         <td class="small">{{ r.unit }}</td>
-        <td class="num">{% if r.lower_limit is not none %}{{ r.lower_limit }}{% else %}<span class="dim">—</span>{% endif %}</td>
-        <td class="num">{% if r.upper_limit is not none %}{{ r.upper_limit }}{% else %}<span class="dim">—</span>{% endif %}</td>
+        <td class="num">{% if r.lower_limit is not none %}{{ r.lower_limit }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="num">{% if r.upper_limit is not none %}{{ r.upper_limit }}{% else %}<span class="muted">—</span>{% endif %}</td>
         {% endif %}
-        <td>{% if r.status != "none" %}{{ m.badge(r.status) }}{% else %}<span class="dim small">no limit</span>{% endif %}</td>
+        <td>{% if r.status != "none" %}{{ m.badge(r.status) }}{% else %}<span class="muted small">no limit</span>{% endif %}</td>
         <td class="small nowrap">{{ r.solver }}{% if r.solver_version %} {{ r.solver_version }}{% endif %}</td>
         {% if can.edit %}
         <td class="right nowrap">
@@ -628,7 +628,7 @@
         <td>{{ s.simulation_name }}{% if s.basis.note %} <span class="small muted">· {{ s.basis.note }}</span>{% endif %}</td>
         <td>{{ m.badge(s.simulation_state) }}</td>
         <td class="small"><span class="mono">{{ s.basis.basis_code }}</span> · {{ s.basis.role|label }}{% if s.basis.file_name %} · {{ s.basis.file_name }} <span class="mono">v{{ s.basis.file_version }}</span>{% endif %}</td>
-        <td class="small nowrap">{% if s.failed_count %}<span class="badge badge-fail">{{ s.failed_count }} of {{ s.result_count }} failed</span>{% elif s.result_count %}{{ s.result_count }} values{% else %}<span class="dim">—</span>{% endif %}</td>
+        <td class="small nowrap">{% if s.failed_count %}<span class="badge badge-fail">{{ s.failed_count }} of {{ s.result_count }} failed</span>{% elif s.result_count %}{{ s.result_count }} values{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="small">{% if s.basis.out_of_date %}<span class="badge badge-out_of_date" title="{{ s.basis.out_of_date }}">Out of date</span> {{ s.basis.out_of_date }}{% else %}<span class="badge badge-up_to_date">Up to date</span>{% endif %}{% if s.open_impact_id %} · <a href="/revisions/{{ s.basis.revision_id }}">check open</a>{% endif %}</td>
       </tr>
     {% endfor %}

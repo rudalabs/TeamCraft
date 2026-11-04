@@ -40,7 +40,7 @@
         <td class="small">{{ d.unit }}</td>
         <td class="num">{% if d.delta is not none and d.change == "changed" %}{{ d.delta|num(6) }}{% else %}—{% endif %}</td>
         <td class="num">{% if d.delta_percent is not none and d.change == "changed" %}{{ d.delta_percent|num(1) }} %{% else %}—{% endif %}</td>
-        <td class="nowrap">{% if d.before and d.before.status != "none" %}{{ m.badge(d.before.status) }}{% elif d.before %}<span class="dim small">no limit</span>{% endif %}{% if d.before and d.after %} → {% endif %}{% if d.after and d.after.status != "none" %}{{ m.badge(d.after.status) }}{% elif d.after %}<span class="dim small">no limit</span>{% endif %}</td>
+        <td class="nowrap">{% if d.before and d.before.status != "none" %}{{ m.badge(d.before.status) }}{% elif d.before %}<span class="muted small">no limit</span>{% endif %}{% if d.before and d.after %} → {% endif %}{% if d.after and d.after.status != "none" %}{{ m.badge(d.after.status) }}{% elif d.after %}<span class="muted small">no limit</span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
