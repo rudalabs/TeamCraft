@@ -340,26 +340,59 @@ mod tests {
             html.contains("Copy the current files (3)") && html.contains("Copy the BOM (2 lines)")
         );
         assert!(html.contains("/save-as") && html.contains("ROCKET"));
-        let diff = |change: &str, before: Value, after: Value| {
-            json!({ "change": change, "child_item_id": OTHER, "child_number": "PRT-000002",
+        let diff = |level: usize, change: &str, before: Value, after: Value| {
+            json!({ "level": level, "change": change, "child_item_id": OTHER, "child_number": "PRT-000002",
                     "child_name": "Bolt <M6>", "unit": "each", "before": before, "after": after })
         };
-        let values =
-            |find: i32, qty: f64| json!({ "find_number": find, "quantity": qty, "notes": "" });
+        let values = |find: i32, qty: f64, rev: Value| json!({ "find_number": find, "quantity": qty, "notes": "", "revision": rev });
+        let diffs = json!([
+            diff(1, "added", Value::Null, values(10, 2.0, Value::Null)),
+            diff(1, "removed", values(20, 1.0, Value::Null), Value::Null),
+            diff(
+                1,
+                "changed",
+                values(30, 1.0, Value::Null),
+                values(30, 4.0, Value::Null)
+            )
+        ]);
+        let summary = json!({ "added": 1, "removed": 1, "changed": 1, "unchanged": 0 });
         let html = render(
             &env,
             "revisions/bom_compare.html",
             with_common(json!({
                 "rev": revision("in_work", false), "before": revision("released", false),
                 "after": revision("in_work", false), "revisions": [revision("in_work", false)],
-                "diffs": [diff("added", Value::Null, values(10, 2.0)),
-                          diff("removed", values(20, 1.0), Value::Null),
-                          diff("changed", values(30, 1.0), values(30, 4.0))],
-                "summary": { "added": 1, "removed": 1, "changed": 1, "unchanged": 0 },
+                "depth": "1", "rule": "latest", "diffs": diffs, "summary": summary,
             })),
         );
         assert!(html.contains("1 added · 1 removed · 1 changed"));
         assert!(html.contains("bom-diff-removed") && html.contains("Bolt &lt;M6&gt;"));
+        assert!(
+            !html.contains("<th>Lvl</th>"),
+            "levels only over all levels"
+        );
+        let deep = render(
+            &env,
+            "revisions/bom_compare.html",
+            with_common(json!({
+                "rev": revision("in_work", false), "before": revision("released", false),
+                "after": revision("in_work", false), "revisions": [revision("in_work", false)],
+                "depth": "all", "rule": "as_released", "summary": summary,
+                "diffs": [diff(1, "changed", values(10, 1.0, json!("A")), values(10, 1.0, json!("B"))),
+                          diff(2, "added", Value::Null, values(10, 2.0, json!("A"))),
+                          diff(9, "removed", values(20, 1.0, Value::Null), Value::Null)],
+            })),
+        );
+        assert!(
+            deep.contains("<th>Lvl</th>")
+                && deep.contains("indent-2")
+                && deep.contains("indent-deep")
+        );
+        assert!(
+            deep.contains("A → <strong>B</strong>"),
+            "a new child revision"
+        );
+        assert!(deep.contains("value=\"all\" selected"));
 
         render(
             &env,

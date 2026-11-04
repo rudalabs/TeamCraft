@@ -12,7 +12,22 @@
   <form class="inline" method="get" action="/revisions/{{ rev.id }}/bom/compare">
     <label class="check">Compare {{ rev.code }} with
       <select name="with">
+        {% set other = after if before.id == rev.id else before %}
+        {% if other.item_id != rev.item_id %}<option value="{{ other.id }}" selected>{{ other.item_number }}/{{ other.code }} · {{ other.state|label }}</option>{% endif %}
         {% for r in revisions %}{% if r.id != rev.id %}<option value="{{ r.id }}" {% if r.id == before.id or r.id == after.id %}selected{% endif %}>{{ r.code }} · {{ r.state|label }}</option>{% endif %}{% endfor %}
+      </select>
+    </label>
+    <label class="check">Levels
+      <select name="depth">
+        <option value="1" {% if depth != "all" %}selected{% endif %}>Direct lines</option>
+        <option value="all" {% if depth == "all" %}selected{% endif %}>All levels</option>
+      </select>
+    </label>
+    <label class="check" title="Which child revisions are compared over all levels">Rule
+      <select name="rule">
+        <option value="latest" {% if rule == "latest" %}selected{% endif %}>Latest</option>
+        <option value="released" {% if rule == "released" %}selected{% endif %}>Latest released</option>
+        <option value="as_released" {% if rule == "as_released" %}selected{% endif %}>As released</option>
       </select>
     </label>
     <button type="submit">Compare</button>
@@ -26,15 +41,19 @@
   <div class="table-wrap">
   <table>
     <thead>
-      <tr><th>Change</th><th>Item</th><th>Name</th>
-        <th class="num">Find {{ before.code }}</th><th class="num">Find {{ after.code }}</th>
-        <th class="num">Qty {{ before.code }}</th><th class="num">Qty {{ after.code }}</th><th>Notes</th></tr>
+      <tr>{% if depth == "all" %}<th>Lvl</th>{% endif %}<th>Change</th><th>Item</th>{% if depth == "all" %}<th>Rev</th>{% endif %}<th>Name</th>
+        {# the codes name the columns unless both are the same (two items) #}
+        {% set b = before.code if before.code != after.code else "before" %}{% set a = after.code if before.code != after.code else "after" %}
+        <th class="num" title="{{ before.item_number }}/{{ before.code }}">Find {{ b }}</th><th class="num" title="{{ after.item_number }}/{{ after.code }}">Find {{ a }}</th>
+        <th class="num" title="{{ before.item_number }}/{{ before.code }}">Qty {{ b }}</th><th class="num" title="{{ after.item_number }}/{{ after.code }}">Qty {{ a }}</th><th>Notes</th></tr>
     </thead>
     <tbody>
     {% for d in diffs %}
       <tr class="bom-diff bom-diff-{{ d.change }}">
+        {% if depth == "all" %}<td><span class="lvl">{{ d.level }}</span></td>{% endif %}
         <td><span class="badge bom-change-{{ d.change }}">{{ d.change|label }}</span></td>
-        <td class="mono nowrap">{{ d.child_number }}</td>
+        <td class="mono nowrap {% if d.level > 6 %}indent-deep{% elif d.level > 1 %}indent-{{ d.level }}{% endif %}">{{ d.child_number }}</td>
+        {% if depth == "all" %}<td class="mono nowrap">{% set rb = d.before.revision if d.before else none %}{% set ra = d.after.revision if d.after else none %}{% if d.before and d.after and rb != ra %}{{ rb or "—" }} → <strong>{{ ra or "—" }}</strong>{% else %}{{ ra or rb or "—" }}{% endif %}</td>{% endif %}
         <td>{{ d.child_name }}</td>
         <td class="num">{% if d.before %}{{ d.before.find_number }}{% else %}—{% endif %}</td>
         <td class="num">{% if d.after %}{{ d.after.find_number }}{% else %}—{% endif %}</td>
@@ -46,7 +65,11 @@
     </tbody>
   </table>
   </div>
-  <p class="hint">Single-level comparison of the direct BOM lines. Lines are matched by child item (and find number).</p>
+  {% if depth == "all" %}
+  <p class="hint">Comparison over all levels, child revisions resolved with the rule “{{ rule|replace("_", " ") }}”. Lines are matched by child item (and find number) below each matched line; added and removed lines bring their whole sub-tree. A new child revision counts as a change.</p>
+  {% else %}
+  <p class="hint">Single-level comparison of the direct BOM lines. Lines are matched by child item (and find number). Choose <em>All levels</em> to compare the whole structure.</p>
+  {% endif %}
   {% else %}
   <p class="empty">Neither revision has BOM lines.</p>
   {% endif %}

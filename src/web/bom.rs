@@ -84,6 +84,25 @@ pub async fn csv(
         .into_response())
 }
 
+/// `GET /revisions/{id}/bom.xlsx` – the expanded BOM as Excel workbook.
+pub async fn xlsx(
+    State(st): State<AppState>,
+    WebUser(_me): WebUser,
+    Path(id): Path<Uuid>,
+    Query(q): Query<RuleQuery>,
+) -> AppResult<Response> {
+    let rev = revisions::get(&st.db, id).await?;
+    let rule = rule_of(&q);
+    let tree = bom::tree(&st.db, id, rule).await?;
+    let filename = format!(
+        "{}_{}_bom_{}.xlsx",
+        rev.item_number,
+        rev.code,
+        rule.as_str()
+    );
+    Ok(super::xlsx_response(bom::to_xlsx(&tree)?, &filename))
+}
+
 #[derive(Deserialize)]
 pub struct AddLineForm {
     #[serde(default)]
