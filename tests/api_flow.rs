@@ -1899,7 +1899,10 @@ async fn stored_cad_files_are_scanned_for_references_once() {
 /// the references of an older reader gets exactly its eight parts.
 #[tokio::test]
 async fn solidworks_assemblies_are_rescanned() {
-    let app = app_or_skip!();
+    // The NIST assembly has 2.1 MB; the test default allows 1 MiB uploads.
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
     let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
     let r = app
         .api(
