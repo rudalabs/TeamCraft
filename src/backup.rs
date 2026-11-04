@@ -331,8 +331,9 @@ fn collect_objects(objects_root: &Path) -> Result<Vec<ObjectFile>> {
                     })?
                     .to_string();
                 if let Err(error) = validate_hash(&hash) {
-                    return Err(error
-                        .context(format!("unexpected object '{}'", entry.path().display())));
+                    return Err(
+                        error.context(format!("unexpected object '{}'", entry.path().display()))
+                    );
                 }
                 let expected_prefix = format!("{first_prefix}{second_prefix}");
                 if !hash.starts_with(expected_prefix.as_str()) {
@@ -406,10 +407,7 @@ fn is_lower_hex(byte: u8) -> bool {
 
 fn object_path_under(objects_root: &Path, hash: &str) -> Result<PathBuf> {
     validate_hash(hash)?;
-    Ok(objects_root
-        .join(&hash[0..2])
-        .join(&hash[2..4])
-        .join(hash))
+    Ok(objects_root.join(&hash[0..2]).join(&hash[2..4]).join(hash))
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
@@ -443,7 +441,8 @@ fn verify_backup(dir: &Path) -> Result<Manifest> {
     let manifest = Manifest::from_json(&text)?;
 
     let dump = dir.join(DUMP_FILE);
-    let metadata = fs::metadata(&dump).with_context(|| format!("cannot read '{}'", dump.display()))?;
+    let metadata =
+        fs::metadata(&dump).with_context(|| format!("cannot read '{}'", dump.display()))?;
     if !metadata.is_file() {
         bail!("'{}' is not a file", dump.display());
     }
@@ -551,10 +550,8 @@ mod tests {
     use std::ffi::OsStr;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "teamcraft-backup-{name}-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("teamcraft-backup-{name}-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -668,7 +665,10 @@ mod tests {
             env_value(&command, "PGPASSWORD"),
             Some(OsStr::new("pw-secret"))
         );
-        assert_eq!(env_value(&command, "PGSSLMODE"), Some(OsStr::new("require")));
+        assert_eq!(
+            env_value(&command, "PGSSLMODE"),
+            Some(OsStr::new("require"))
+        );
 
         let command = restore_command(&database, dump);
         assert_eq!(command.get_program().to_string_lossy(), "pg_restore");
@@ -797,19 +797,33 @@ mod tests {
         let target = target_root.join("objects");
         let hash = write_object(&source, b"blob");
         let stats = copy_objects(&source, &target, true).unwrap();
-        assert_eq!(stats, CopyStats { copied: 1, skipped: 0 });
+        assert_eq!(
+            stats,
+            CopyStats {
+                copied: 1,
+                skipped: 0
+            }
+        );
 
         let target_file = object_path_under(&target, &hash).unwrap();
         fs::write(&target_file, b"keep me").unwrap();
         let stats = copy_objects(&source, &target, true).unwrap();
-        assert_eq!(stats, CopyStats { copied: 0, skipped: 1 });
+        assert_eq!(
+            stats,
+            CopyStats {
+                copied: 0,
+                skipped: 1
+            }
+        );
         assert_eq!(
             fs::read(&target_file).unwrap(),
             b"keep me",
             "existing objects are not overwritten"
         );
         assert_eq!(
-            copy_objects(&source, &target, false).unwrap_err().to_string(),
+            copy_objects(&source, &target, false)
+                .unwrap_err()
+                .to_string(),
             format!("backup target already contains the object '{hash}'")
         );
         fs::remove_dir_all(source_root).ok();
