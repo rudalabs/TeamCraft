@@ -117,6 +117,9 @@ label.check input { width: auto; accent-color: var(--accent); }
 .badge-modified, .badge-new { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .badge-unchanged { color: var(--ok); }
 .badge-missing { color: var(--text-dim); }
+.badge-outdated { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.badge-conflict { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+tr.row-conflict td { background: color-mix(in srgb, var(--danger) 8%, transparent); }
 
 /* File format chips (server: src/cadformat.rs); the kind sets the colour. */
 .fmt {

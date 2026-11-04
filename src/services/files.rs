@@ -6,6 +6,9 @@
 //! version, so the history is never rewritten. The bytes live in the
 //! content-addressed vault, so identical content is stored once.
 
+use std::collections::HashMap;
+
+use chrono::{DateTime, Utc};
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
@@ -13,7 +16,8 @@ use uuid::Uuid;
 use crate::{
     auth::Actor,
     cadformat::{self, CadFormat},
-    cadrefs, domain,
+    cadrefs,
+    domain::{self, BaseConflict, BaseVersion, ServerFile},
     error::{AppError, AppResult},
     models::{FileRecord, FileVersion, Revision},
     services::{audit, references, revisions},
@@ -44,6 +48,53 @@ pub struct Upload {
     pub format: Option<&'static CadFormat>,
     /// CAD files this file references (see `cadrefs`).
     pub references: Vec<String>,
+    /// The server version the client based this upload on; if the file moved
+    /// on since, the upload is refused (409) instead of overwriting it.
+    pub base: Option<BaseVersion>,
+}
+
+/// The name a file gets on the server – the key for bases and versions.
+pub fn stored_name(raw: &str) -> String {
+    // Creo writes every save as <name>.prt.<n>: all iterations are versions of <name>.prt.
+    cadformat::normalize_name(&util::sanitize_filename(raw)).to_string()
+}
+
+/// Parses the `bases` field of an upload: a JSON object that maps file
+/// names to the version each upload is based on, either the version number
+/// (`0` = a new file) or the SHA-256 of the content the client checked out:
+/// `{"hub.step": 3, "frame.iam": "9f86d0…"}`. Keys are matched like file
+/// names on the server (case-insensitive).
+pub fn parse_bases(raw: &str) -> AppResult<HashMap<String, BaseVersion>> {
+    if raw.trim().is_empty() {
+        return Ok(HashMap::new());
+    }
+    let value: serde_json::Value = serde_json::from_str(raw).map_err(|_| {
+        AppError::BadRequest(
+            "The field 'bases' must be a JSON object {\"file name\": version or sha256}.".into(),
+        )
+    })?;
+    let object = value.as_object().ok_or_else(|| {
+        AppError::BadRequest(
+            "The field 'bases' must be a JSON object {\"file name\": version or sha256}.".into(),
+        )
+    })?;
+    object
+        .iter()
+        .map(|(name, base)| {
+            let base = BaseVersion::from_json(base)
+                .map_err(|e| AppError::BadRequest(format!("bases[\"{name}\"]: {e}")))?;
+            Ok((stored_name(name).to_lowercase(), base))
+        })
+        .collect()
+}
+
+/// Attaches the parsed `bases` to the uploads of the same name.
+pub fn apply_bases(uploads: &mut [Upload], bases: &HashMap<String, BaseVersion>) {
+    for upload in uploads {
+        if let Some(base) = bases.get(&stored_name(&upload.filename).to_lowercase()) {
+            upload.base = Some(base.clone());
+        }
+    }
 }
 
 impl Upload {
@@ -77,6 +128,7 @@ impl Upload {
             content_text,
             format,
             references,
+            base: None,
         }
     }
 }
@@ -268,6 +320,76 @@ pub struct Stored {
     pub changed: bool,
 }
 
+/// The current state of a file while an upload is stored (row locked).
+#[derive(sqlx::FromRow)]
+struct Existing {
+    id: Uuid,
+    current_version: i32,
+    sha256: String,
+    uploaded_by_name: String,
+    uploaded_at: DateTime<Utc>,
+}
+
+/// Optimistic concurrency: refuses an upload whose stated base is not the
+/// current version of the file any more (409 – nothing is stored, the whole
+/// transaction is rolled back).
+async fn ensure_base(
+    conn: &mut PgConnection,
+    filename: &str,
+    base: &BaseVersion,
+    existing: Option<&Existing>,
+    upload_sha256: &str,
+) -> AppResult<()> {
+    let current = existing.map(|e| ServerFile {
+        version: e.current_version,
+        sha256: &e.sha256,
+    });
+    let Err(conflict) = domain::check_base(base, current, upload_sha256) else {
+        return Ok(());
+    };
+    let message = match (conflict, existing) {
+        (BaseConflict::Removed, _) | (_, None) => format!(
+            "{filename} was removed from the revision after you got it – nothing was stored. \
+             Upload it again without a base version if it should come back."
+        ),
+        (BaseConflict::AddedMeanwhile, Some(e)) => format!(
+            "{filename} was added on the server meanwhile (v{} by {}, {}) – nothing was stored. \
+             Get the server's file, merge your changes and check in again.",
+            e.current_version,
+            e.uploaded_by_name,
+            e.uploaded_at.format("%Y-%m-%d %H:%M UTC")
+        ),
+        (BaseConflict::Moved, Some(e)) => {
+            let based_on = match base {
+                BaseVersion::Version(v) => format!("v{v}"),
+                BaseVersion::Sha256(sha) => {
+                    let version = sqlx::query_scalar::<_, i32>(
+                        "SELECT version FROM file_versions WHERE file_id = $1 AND sha256 = $2
+                         ORDER BY version DESC LIMIT 1",
+                    )
+                    .bind(e.id)
+                    .bind(sha)
+                    .fetch_optional(&mut *conn)
+                    .await?;
+                    match version {
+                        Some(v) => format!("v{v}"),
+                        None => format!("content {}…", &sha[..sha.len().min(12)]),
+                    }
+                }
+            };
+            format!(
+                "{filename} changed on the server since you got it: your change is based on \
+                 {based_on}, the server has v{} by {} ({}). Nothing was stored – get the current \
+                 version, merge your changes and check in again.",
+                e.current_version,
+                e.uploaded_by_name,
+                e.uploaded_at.format("%Y-%m-%d %H:%M UTC")
+            )
+        }
+    };
+    Err(AppError::Conflict(message))
+}
+
 /// Stores uploads as new files or new versions inside the caller's
 /// transaction. The revision must be locked and checked as editable.
 pub(crate) async fn store_uploads(
@@ -277,27 +399,36 @@ pub(crate) async fn store_uploads(
     uploads: &[Upload],
     comment: &str,
 ) -> AppResult<Vec<Stored>> {
-    #[derive(sqlx::FromRow)]
-    struct Existing {
-        id: Uuid,
-        current_version: i32,
-        sha256: String,
-    }
     let mut stored = Vec::with_capacity(uploads.len());
+    // Names stored earlier in this call: several uploads of one name (Creo
+    // iterations bracket.prt.6 and .7) share one base, which only the first
+    // of them is checked against – the later ones build on it.
+    let mut seen = std::collections::HashSet::new();
     for upload in uploads {
-        // Creo writes every save as <name>.prt.<n>: all iterations are versions of <name>.prt.
-        let filename =
-            cadformat::normalize_name(&util::sanitize_filename(&upload.filename)).to_string();
+        let filename = stored_name(&upload.filename);
+        let first_of_name = seen.insert(filename.to_lowercase());
         let format = upload.format.map(|f| f.id).unwrap_or("");
         let size = i64::try_from(upload.blob.size).unwrap_or(i64::MAX);
         let existing = sqlx::query_as::<_, Existing>(
-            "SELECT id, current_version, sha256 FROM files
-             WHERE revision_id = $1 AND lower(filename) = lower($2) FOR UPDATE",
+            "SELECT f.id, f.current_version, f.sha256, u.display_name AS uploaded_by_name,
+                    f.uploaded_at
+             FROM files f JOIN users u ON u.id = f.uploaded_by
+             WHERE f.revision_id = $1 AND lower(f.filename) = lower($2) FOR UPDATE OF f",
         )
         .bind(rev.id)
         .bind(&filename)
         .fetch_optional(&mut *conn)
         .await?;
+        if let Some(base) = upload.base.as_ref().filter(|_| first_of_name) {
+            ensure_base(
+                conn,
+                &filename,
+                base,
+                existing.as_ref(),
+                &upload.blob.sha256,
+            )
+            .await?;
+        }
         let (file_id, version, changed) = match existing {
             Some(e) if e.sha256 == upload.blob.sha256 => (e.id, e.current_version, false),
             Some(e) => {
@@ -613,6 +744,26 @@ pub async fn all_hashes(pool: &PgPool) -> AppResult<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bases_field() {
+        let sha = "ab".repeat(32);
+        let bases = parse_bases(&format!(
+            r#"{{"Hub.STEP": 3, "housing.prt.7": "{sha}", "new.pdf": 0}}"#
+        ))
+        .unwrap();
+        assert_eq!(bases.get("hub.step"), Some(&BaseVersion::Version(3)));
+        assert_eq!(
+            bases.get("housing.prt"),
+            Some(&BaseVersion::Sha256(sha.clone())),
+            "Creo iterations share the name of the file"
+        );
+        assert_eq!(bases.get("new.pdf"), Some(&BaseVersion::Version(0)));
+        assert!(parse_bases("").unwrap().is_empty());
+        assert!(parse_bases("[1]").is_err());
+        assert!(parse_bases(r#"{"a": true}"#).is_err());
+        assert!(parse_bases("not json").is_err());
+    }
 
     #[test]
     fn content_types() {

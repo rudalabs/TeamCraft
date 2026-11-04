@@ -10,7 +10,8 @@
     <h1><span class="mono">{{ rev.item_number }}/{{ rev.code }}</span> · {{ rev.name }}</h1>
     <p class="subtitle">
       {{ rev.item_type|label }} · {{ m.badge(rev.state) }}
-      {% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name) }}{% endif %}
+      {% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name) }}
+      <span class="small muted" title="Checked out {{ rev.checked_out_at|dt }}">for {{ rev.checked_out_at|age }}</span>{% endif %}
       {% if item.project_code %}· project <strong>{{ item.project_code }}</strong>{% endif %}
     </p>
   </div>
@@ -72,7 +73,7 @@
 <div class="notice">This revision is part of change <a href="/changes/{{ open_change.id }}">{{ open_change.number }} – {{ open_change.title }}</a> ({{ open_change.status|label }}).</div>
 {% endif %}
 {% if rev.state == "in_work" and rev.checked_out_by and rev.checked_out_by != me.id %}
-<div class="notice">Checked out by {{ rev.checked_out_by_name }} since {{ m.time(rev.checked_out_at) }} – only they can modify it right now.</div>
+<div class="notice">Checked out by {{ rev.checked_out_by_name }} since {{ m.time(rev.checked_out_at) }} ({{ rev.checked_out_at|age }}) – only they can modify it right now.{% if me.is_admin %} If they are unavailable, an administrator can force-unlock it; they are notified, and changes they check in later against an older version are refused instead of overwriting newer work.{% endif %}</div>
 {% elif rev.state == "in_work" and can.checkout %}
 <div class="notice">Check out this revision to change attributes, files or the BOM.</div>
 {% endif %}
@@ -102,6 +103,7 @@
   <p class="hint">Files with the same name as an existing file become its next version. The files are stored and
     your check-out is released in one step – if anything fails, nothing changes.</p>
   <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin" enctype="multipart/form-data">
+    <input type="hidden" name="bases" value="{{ file_bases }}">
     <label>New files / versions <span class="hint">optional, max. {{ max_upload_mb }} MiB per file</span>
       <input type="file" name="file" multiple>
     </label>
@@ -288,6 +290,7 @@
   {% else %}<p class="empty">No files attached.</p>{% endif %}
   {% if can.edit %}
   <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data">
+    <input type="hidden" name="bases" value="{{ file_bases }}">
     <input type="file" name="file" multiple required>
     <input type="text" name="comment" maxlength="2000" placeholder="Comment (optional)" aria-label="Comment">
     <button type="submit">Upload</button>

@@ -30,7 +30,48 @@ program, drop the changed files into *Check in*, done.
   identical content is recognised and not stored again.
 * **Cancel check-out** releases your lock at once – no dialog, nothing is
   uploaded. **Force unlock** (admins) releases someone else's lock after a
-  confirmation and is recorded in the audit log.
+  confirmation, is recorded in the audit log and **notifies the owner**
+  (notification kind *unlock*).
+* The revision page and the dashboard show **how long** a lock has been
+  held (*🔒 Max for 3 days*), so forgotten check-outs stand out.
+* **Check in all** (dashboard, *Checked out by me*) checks in every revision
+  you hold **without new files** – the locks are released, the revisions keep
+  their current files. Each revision is checked in on its own (own
+  transaction, own audit record), so one failure does not block the others;
+  the message lists what failed and why. Upload changed files with the
+  revision's own *Check in* first.
+
+## Concurrency: nothing is overwritten silently
+
+The lock keeps two people from changing a revision at the same time. When a
+lock was broken (*Force unlock*) and someone else checked in meanwhile, the
+original owner's files are out of date – checking them in would throw away
+the newer version. TeamCraft therefore checks every upload against the
+version it was **based on** (optimistic concurrency, as Vault and Teamcenter
+clients do):
+
+* The forms of the revision page send the versions the page showed; the
+  desktop app sends the SHA-256 of the version each file was copied from;
+  API clients send `bases` (see the [REST API](../reference/api.md)).
+* If a file moved on since, the check-in or upload is **refused with 409**
+  and a message such as *hub.step changed on the server since you got it:
+  your change is based on v1, the server has v2 by Erika (…). Nothing was
+  stored* – the whole check-in is rolled back, the lock stays yours. Get the
+  current version, merge your changes and check in again.
+* Identical content is never a conflict, and uploads without a base keep the
+  plain last-writer-wins behaviour.
+
+Per file, a workspace is in one of these states (desktop Workspace tab,
+`…/file-status` in the API):
+
+| State        | Meaning                                                                          |
+|--------------|----------------------------------------------------------------------------------|
+| *up to date* | the local file is the current version                                            |
+| *modified*   | changed locally, the server still has the version it was based on – check it in |
+| *outdated*   | unchanged locally, the server has a newer version – get the current files       |
+| *conflict*   | changed locally **and** on the server since – a check-in would be refused        |
+| *new*        | only local                                                                       |
+| *missing*    | only on the server                                                               |
 * Uploads show a progress bar; **Cancel upload** stops the transfer
   immediately and nothing changes on the server.
 
@@ -48,5 +89,9 @@ program, drop the changed files into *Check in*, done.
 ## Desktop workspace
 
 The desktop app adds a local workspace: *Check out* copies the files into a
-folder per revision, the workspace tab shows which files you changed, and *Check in* uploads exactly those.
-See [Desktop app](desktop.md).
+folder per revision, the workspace tab shows which files you changed, which
+are outdated or in conflict and who holds the lock, and *Check in* uploads
+exactly those – based on the versions they were copied from. Opening an
+outdated file or one somebody else has checked out asks first. *Check in all*
+in the worklist checks in every check-out without local changes and lists
+the ones that still have changes. See [Desktop app](desktop.md).
