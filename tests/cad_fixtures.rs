@@ -1,7 +1,8 @@
 //! Real CAD files from NIST (`tests/fixtures/cad`, see its README): the
 //! copies are unchanged, TeamCraft recognises their formats, finds the
-//! preview image in Inventor files and the parts of the NX assembly, and
-//! turns the small STEP files into a 3D preview. No database needed.
+//! preview images in Inventor, NX and SOLIDWORKS files and the parts of
+//! the NX and SOLIDWORKS assemblies, and turns the small STEP files into a
+//! 3D preview. No database needed.
 //!
 //! Gaps found with these files are kept as ignored tests – run them with
 //! `cargo test --test cad_fixtures -- --ignored`; see *Fixes* in
@@ -155,25 +156,54 @@ async fn step_header_name_is_not_a_reference() {
     }
 }
 
-/// Gap: SolidWorks 2015 and newer keep the preview image and the names of
-/// the referenced files in compressed segments of their own container.
+/// SolidWorks 2015 and newer keep the preview image and the names of the
+/// referenced files in Deflate-compressed sections of their own container
+/// (`swpart`).
 #[tokio::test]
-#[ignore = "known gap: compressed SolidWorks 2015+ containers"]
 async fn solidworks_files_carry_previews_and_references() {
     let dir = fixture("mtc-assembly/solidworks");
-    assert!(
-        thumbnail::extract(&dir.join("nist_mtc_crada_box_rev-D.SLDPRT"))
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| {
+            p.extension().is_some_and(|e| {
+                e.eq_ignore_ascii_case("sldprt") || e.eq_ignore_ascii_case("sldasm")
+            })
+        })
+        .collect();
+    files.push(fixture(
+        "ctc-01/solidworks-2018/nist_ctc_01_asme1_rd_sw1802.SLDPRT",
+    ));
+    files.push(fixture(
+        "ftc-11/solidworks-2018/nist_ftc_11_asme1_rb_sw1802.SLDPRT",
+    ));
+    assert_eq!(files.len(), 11);
+    for path in &files {
+        let image = thumbnail::extract(path)
             .unwrap()
-            .is_some(),
-        "preview image of a SolidWorks 2018 part"
-    );
+            .unwrap_or_else(|| panic!("{}: no preview image", path.display()));
+        assert_eq!(image.content_type, "image/png", "{}", path.display());
+        assert!(image.bytes.len() > 10_000, "{}", path.display());
+    }
+
+    // The assembly names exactly its eight parts – not the old names of
+    // renamed components that the rest of the file still contains.
     let name = "nist_mtc_crada_assembly_rev-D.SLDASM";
-    let refs = cadrefs::scan_file(&dir.join(name), name).await;
-    assert!(
-        refs.iter()
-            .any(|r| r.eq_ignore_ascii_case("nist_mtc_crada_box_rev-D.SLDPRT")),
-        "parts of the SolidWorks assembly: {refs:?}"
-    );
+    let mut refs = cadrefs::scan_file(&dir.join(name), name).await;
+    refs.sort();
+    assert_eq!(refs.len(), 8, "{refs:?}");
+    assert!(refs.iter().all(|r| dir.join(r).is_file()), "{refs:?}");
+    // Scanning the bytes in memory gives the same result.
+    let bytes = std::fs::read(dir.join(name)).unwrap();
+    let mut in_memory = cadrefs::find(&bytes, name);
+    in_memory.sort();
+    assert_eq!(in_memory, refs);
+    // Parts reference nothing (no noise from their compressed data).
+    for path in files.iter().filter(|p| p != &&dir.join(name)) {
+        let own = path.file_name().unwrap().to_string_lossy().into_owned();
+        let refs = cadrefs::scan_file(path, &own).await;
+        assert!(refs.is_empty(), "{own}: {refs:?}");
+    }
 }
 
 /// NX parts are read through their stream container (`nxpart`): only the

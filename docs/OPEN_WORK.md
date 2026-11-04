@@ -17,9 +17,11 @@ the known gaps with details. Last update: 2026-11-04.
   behind (request order tested in `tests/concurrency.rs`; still to do: test import against a real server)
 - [x] Bulk action "Check in all my check-outs" (desktop and web) – dashboard button and desktop worklist; the desktop
   checks in only revisions without local changes; `POST /api/v1/worklist/checkin-all`
-- [ ] SOLIDWORKS 2015+ files: the preview image and the referenced file names sit in compressed segments of the
-  container – inflate them before the preview search and the reference scan (gap test in `tests/cad_fixtures.rs`,
-  found with the NIST files)
+- [x] SOLIDWORKS 2015+ files: the preview image and the referenced file names sit in compressed segments of the
+  container – `src/swpart.rs` reads the Deflate sections (bounded, CRC-checked): preview from `PreviewPNG`, assembly
+  components from the component tree (`swXmlContents/COMPINSTANCETREE`, exactly the eight parts of the NIST
+  assembly); `teamcraft rescan-references` updates assemblies stored before (tested in `tests/cad_fixtures.rs`; still
+  to do: a real SOLIDWORKS drawing for the document-manager fallback)
 - [ ] Reference scan: false references in real files – NX parts fixed (stream container, `src/nxpart.rs`); open: noise in JT
   files (gap test in `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is ignored
 
@@ -120,7 +122,9 @@ the known gaps with details. Last update: 2026-11-04.
 **SOLIDWORKS**
 
 - [ ] STEP export through the locally installed SOLIDWORKS (API), like Inventor and Solid Edge
-- [ ] Test preview images of SOLIDWORKS 2014 and older (OLE files) with real files – 2015 and newer: see *Fixes*
+- [ ] Test preview images of SOLIDWORKS 2014 and older (OLE files) with real files – 2015 and newer: done (see *Fixes*)
+- [ ] Test the SOLIDWORKS 2015+ reader with drawings (`.slddrw`), nested sub-assemblies and other versions than 2018
+- [ ] Use the instance counts of the component tree (`swReference`, without `swExcludeFromBOM`) for BOM quantities
 - [ ] Take configurations and Toolbox parts into account in the import and the reference scan
 - [ ] Test the BOM import with real BOM exports
 
