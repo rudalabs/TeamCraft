@@ -53,7 +53,9 @@ the known gaps with details. Last update: 2026-11-04.
   [Operations](src/admin/operations.md)
 - [ ] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools
 - [ ] Chunked resumable uploads (tus) (feature 9)
-- [ ] README screenshots/GIFs: web pages captured in CI by `scripts/screenshots.sh` (PNGs still to commit); desktop app and GIFs open
+- [x] README screenshots of the web pages: captured in CI by `scripts/screenshots.sh` (run 41919547600), committed in
+  `media/screenshots/`
+- [ ] Desktop app screenshots and short GIFs for the README
 - [x] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
 - [x] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
 - [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
