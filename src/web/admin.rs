@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use super::{finish, pagination, render, WebCtx, PER_PAGE};
 use crate::{
-    domain::Role,
+    domain::{self, Role},
     error::{AppError, AppResult},
     services::{audit, projects, users, Page},
     util, AppState,
@@ -35,16 +35,35 @@ pub async fn projects(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Resp
     )
 }
 
+#[derive(Deserialize)]
+pub struct ProjectQuery {
+    /// A numbering scheme to preview without saving it.
+    scheme: Option<String>,
+}
+
 pub async fn project_show(
     State(st): State<AppState>,
     ctx: WebCtx,
     Path(id): Path<Uuid>,
+    Query(q): Query<ProjectQuery>,
 ) -> AppResult<Response> {
     let (project, members, can_manage) = tokio::try_join!(
         projects::get(&st.db, id),
         projects::members(&st.db, id),
         projects::is_manager(&st.db, &ctx.me, id),
     )?;
+    // A candidate scheme from the preview button; an invalid one is shown
+    // next to the field together with the current scheme's numbers.
+    let candidate = q.scheme.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let (numbering, scheme_error) =
+        match projects::numbering_preview(&st.db, &project, candidate).await {
+            Ok(p) => (p, None),
+            Err(AppError::BadRequest(msg)) => (
+                projects::numbering_preview(&st.db, &project, None).await?,
+                Some(msg),
+            ),
+            Err(e) => return Err(e),
+        };
     let all_users = if can_manage {
         users::list(&st.db)
             .await?
@@ -66,8 +85,41 @@ pub async fn project_show(
             "can_edit": ctx.me.can_edit_project(Some(id)),
             "can_manage": can_manage,
             "oidc_enabled": st.config.oidc.is_some(),
+            "numbering": numbering,
+            "scheme_input": q.scheme.as_deref().map(str::trim).unwrap_or_else(|| project.number_scheme.as_deref().unwrap_or("")),
+            "previewing": candidate.is_some() && scheme_error.is_none(),
+            "scheme_error": scheme_error,
+            "default_scheme": domain::DEFAULT_NUMBER_SCHEME,
         }),
     )
+}
+
+#[derive(Deserialize)]
+pub struct NumberingForm {
+    #[serde(default)]
+    scheme: String,
+}
+
+pub async fn update_numbering(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<NumberingForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = projects::set_number_scheme(&st.db, &ctx.me, id, &form.scheme).await;
+    finish(&st, result, &back, |p| {
+        (
+            back.clone(),
+            format!(
+                "Numbering scheme of {}: {}",
+                p.code,
+                p.number_scheme
+                    .as_deref()
+                    .unwrap_or(domain::DEFAULT_NUMBER_SCHEME)
+            ),
+        )
+    })
 }
 
 #[derive(Deserialize)]

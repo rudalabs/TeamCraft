@@ -75,7 +75,7 @@ committed and pushed right away – before the implementation starts.
 src/main.rs        CLI (clap): serve (default), migrate, user, vault check, healthcheck, preview-mesh (hidden)
 src/lib.rs         AppState, router (healthz/readyz, /api/v1, web UI), security headers, tracing
 src/config.rs      env configuration; every variable also as NAME_FILE; all optional for local use
-src/domain.rs      pure rules: Role, ItemType, LifecycleState, ChangeStatus, revision letters, skins, validation
+src/domain.rs      pure rules: Role, ItemType, LifecycleState, ChangeStatus, revision letters, numbering schemes, skins, validation
 src/services/      business logic – the only code that writes to the database
                    (explorer.rs: vault explorer listing; projects.rs: self-service groups with managers;
                     references.rs: item and CAD file references; impacts.rs: change propagation to dependents;

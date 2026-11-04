@@ -48,6 +48,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/projects/{code}/members",
             get(project_members).post(add_project_member),
         )
+        .route(
+            "/projects/{code}/numbering",
+            get(project_numbering).put(set_project_numbering),
+        )
         .route("/items", get(list_items).post(create_item))
         .route("/items/{number}", get(get_item))
         .route("/items/{number}/where-used", get(where_used))
@@ -203,6 +207,8 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?}",
             "GET    /api/v1/projects/{code}/members",
             "POST   /api/v1/projects/{code}/members                   {username, manager?} – managers and admins",
+            "GET    /api/v1/projects/{code}/numbering?scheme=         next generated item numbers per type; scheme = preview another scheme",
+            "PUT    /api/v1/projects/{code}/numbering                 {scheme} e.g. {PROJECT}-{TYPE}-{YYYY}-{SEQ:4}, empty = {TYPE}-{SEQ:6} – managers and admins",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
             "GET    /api/v1/items?q=&type=&project=&state=&system=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo",
             "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?}",
@@ -375,6 +381,46 @@ async fn add_project_member(
     let member =
         projects::add_member(&st.db, &me, project.id, &body.username, body.manager).await?;
     Ok((StatusCode::CREATED, Json(json!(member))).into_response())
+}
+
+#[derive(Deserialize)]
+struct NumberingQuery {
+    scheme: Option<String>,
+}
+
+async fn project_numbering(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path(code): Path<String>,
+    Query(q): Query<NumberingQuery>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code(&st.db, &code).await?;
+    let preview = projects::numbering_preview(&st.db, &project, q.scheme.as_deref()).await?;
+    Ok(Json(json!(preview)))
+}
+
+#[derive(Deserialize)]
+struct SetNumbering {
+    #[serde(default)]
+    scheme: Option<String>,
+}
+
+async fn set_project_numbering(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    ApiJson(body): ApiJson<SetNumbering>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code(&st.db, &code).await?;
+    let project = projects::set_number_scheme(
+        &st.db,
+        &me,
+        project.id,
+        body.scheme.as_deref().unwrap_or(""),
+    )
+    .await?;
+    let preview = projects::numbering_preview(&st.db, &project, None).await?;
+    Ok(Json(json!({ "project": project, "numbering": preview })))
 }
 
 // ---------------------------------------------------------------------------

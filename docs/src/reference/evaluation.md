@@ -55,7 +55,7 @@ PostgreSQL, a pure-Rust build, and an MPL-2.0 licence that allows embedding.
 | Assembly changelog: dependents flagged until acknowledged                   | DocDoku                                 | implemented (change propagation) |
 | Pack-and-go: an assembly with all files as ZIP                              | OdooPLM                                 | implemented                      |
 | Server-side conversion of CAD files for the web preview                     | TurboPLM, DocDoku                       | implemented, in pure Rust        |
-| Numbering masks per item type                                               | DocDoku                                 | planned                          |
+| Numbering masks per item type                                               | DocDoku                                 | implemented (per project group)  |
 | HMAC-signed webhooks with delivery history                                  | TurboPLM                                | planned                          |
 | KiCad HTTP library endpoint                                                 | GitPLM                                  | planned                          |
 
