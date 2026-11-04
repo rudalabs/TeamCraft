@@ -8,7 +8,14 @@ mod common;
 use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode};
-use teamcraft::{domain::RevisionRule, domain::Role, services::bom};
+use teamcraft::{
+    domain::RevisionRule,
+    domain::Role,
+    services::{
+        bom,
+        workset::{self, Via},
+    },
+};
 use uuid::Uuid;
 
 macro_rules! app_or_skip {
@@ -214,6 +221,202 @@ async fn large_bom_expands_level_by_level() {
     );
     assert!(used[..1024].iter().all(|u| u.level == 1));
     assert!(used[1024..].iter().all(|u| u.level == 2));
+
+    app.teardown().await;
+}
+
+/// The working set ("Get" of the desktop app) of the large tree: the same
+/// revisions in the same order as the expanded BOM it was derived from
+/// before, with one query per BOM level instead of one per line.
+#[tokio::test]
+async fn large_workset_follows_the_expanded_bom() {
+    let app = app_or_skip!();
+    let (admin, _token) = app.user("root", Role::Admin).await;
+    let root = build_large_tree(&app, admin.id).await;
+
+    for rule in [
+        RevisionRule::Latest,
+        RevisionRule::Released,
+        RevisionRule::AsReleased,
+    ] {
+        let name = rule.as_str();
+        let started = Instant::now();
+        let ws = workset::resolve(&app.pool, &admin, root, rule, true)
+            .await
+            .expect("workset");
+        let elapsed = started.elapsed();
+        eprintln!(
+            "workset {name}: {} revisions in {elapsed:?} with {} queries",
+            ws.revisions.len(),
+            ws.queries
+        );
+        // the former derivation: every revision of the flattened tree once
+        let tree = bom::tree(&app.pool, root, rule).await.expect("expand");
+        let mut expected = vec![(tree.root.id, Via::Root)];
+        for row in bom::flatten(&tree.children) {
+            let id = row.node.revision.as_ref().unwrap().id;
+            if !expected.iter().any(|(e, _)| *e == id) {
+                expected.push((id, Via::Bom));
+            }
+        }
+        let got: Vec<(Uuid, Via)> = ws
+            .revisions
+            .iter()
+            .map(|r| (r.revision_id, r.via))
+            .collect();
+        assert_eq!(got, expected, "{name}");
+        // 2047 assemblies + bolt + nut (one bolt revision per rule)
+        assert_eq!(ws.revisions.len(), 2049, "{name}");
+        assert!(ws.unresolved.is_empty() && ws.missing_references.is_empty());
+        // root + 12 levels + one reference round (no files) + revisions + files
+        assert!(ws.queries <= 16, "{name}: {} queries", ws.queries);
+        assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
+    }
+
+    app.teardown().await;
+}
+
+/// Inserts a file (version 1) into a revision whose content references `refs`.
+async fn file_with_references(
+    pool: &sqlx::PgPool,
+    user: Uuid,
+    revision: Uuid,
+    filename: &str,
+    refs: &[&str],
+) {
+    let file = Uuid::new_v4();
+    let version = Uuid::new_v4();
+    let sha = format!("{:0>64}", file.simple());
+    sqlx::query(
+        "INSERT INTO files (id, revision_id, filename, content_type, size_bytes, sha256, uploaded_by)
+         VALUES ($1, $2, $3, 'application/octet-stream', 10, $4, $5)",
+    )
+    .bind(file)
+    .bind(revision)
+    .bind(filename)
+    .bind(&sha)
+    .bind(user)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type,
+                                    uploaded_by, references_scanned)
+         VALUES ($1, $2, 1, $3, 10, 'application/octet-stream', $4, TRUE)",
+    )
+    .bind(version)
+    .bind(file)
+    .bind(&sha)
+    .bind(user)
+    .execute(pool)
+    .await
+    .unwrap();
+    for name in refs {
+        sqlx::query("INSERT INTO file_references (file_version_id, name) VALUES ($1, $2)")
+            .bind(version)
+            .bind(*name)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+}
+
+/// The working set with CAD references under `latest` and `released`:
+/// BOM revisions first, then the items whose files are referenced (resolved
+/// with the rule in one query per round), unresolved items of the BOM and of
+/// references, and names found nowhere.
+#[tokio::test]
+async fn workset_resolves_references_in_batches() {
+    let app = app_or_skip!();
+    let (admin, _token) = app.user("root", Role::Admin).await;
+    let pool = &app.pool;
+    let (_, root) = item_with_revisions(
+        pool,
+        admin.id,
+        "ASM-R",
+        "assembly",
+        &[("A", "released", 1.0)],
+    )
+    .await;
+    let (sub_item, sub) = item_with_revisions(
+        pool,
+        admin.id,
+        "ASM-S",
+        "assembly",
+        &[("A", "released", 1.0), ("B", "in_work", 1.0)],
+    )
+    .await;
+    let (wip_item, _) =
+        item_with_revisions(pool, admin.id, "PRT-X", "part", &[("A", "in_work", 1.0)]).await;
+    let (_, p) = item_with_revisions(
+        pool,
+        admin.id,
+        "PRT-P",
+        "part",
+        &[("A", "released", 1.0), ("B", "in_work", 1.0)],
+    )
+    .await;
+    let (_, q) =
+        item_with_revisions(pool, admin.id, "PRT-Q", "part", &[("A", "in_work", 1.0)]).await;
+    let root = root[0];
+    bom_line(pool, root, sub_item, 10, None).await;
+    bom_line(pool, root, wip_item, 20, None).await;
+    file_with_references(pool, admin.id, root, "r.asm", &["P.prt", "missing.prt"]).await;
+    file_with_references(pool, admin.id, sub[0], "s.asm", &["p.prt"]).await;
+    for rev in &p {
+        file_with_references(pool, admin.id, *rev, "p.prt", &["q.prt"]).await;
+    }
+    file_with_references(pool, admin.id, q[0], "q.prt", &[]).await;
+
+    let codes = |ws: &workset::Workset| -> Vec<(String, String, Via)> {
+        ws.revisions
+            .iter()
+            .map(|r| (r.item_number.clone(), r.code.clone(), r.via))
+            .collect()
+    };
+    let own = |n: &str, c: &str, v: Via| (n.to_string(), c.to_string(), v);
+
+    let ws = workset::resolve(pool, &admin, root, RevisionRule::Latest, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        codes(&ws),
+        [
+            own("ASM-R", "A", Via::Root),
+            own("ASM-S", "B", Via::Bom),
+            own("PRT-X", "A", Via::Bom),
+            own("PRT-P", "B", Via::Reference),
+            own("PRT-Q", "A", Via::Reference),
+        ]
+    );
+    assert!(ws.unresolved.is_empty(), "{:?}", ws.unresolved);
+    assert_eq!(ws.missing_references, ["missing.prt"]);
+    // root + 2 BOM levels; 2 rounds × (names, holders, revisions) + last names; revisions + files
+    assert!(ws.queries <= 12, "{} queries", ws.queries);
+    assert_eq!(ws.file_count, 3);
+
+    let ws = workset::resolve(pool, &admin, root, RevisionRule::Released, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        codes(&ws),
+        [
+            own("ASM-R", "A", Via::Root),
+            own("ASM-S", "A", Via::Bom),
+            own("PRT-P", "A", Via::Reference),
+        ]
+    );
+    assert_eq!(ws.unresolved, ["PRT-X", "PRT-Q"]);
+    assert_eq!(ws.missing_references, ["missing.prt"]);
+    assert_eq!(ws.file_count, 3);
+
+    // without references only the BOM
+    let ws = workset::resolve(pool, &admin, root, RevisionRule::Released, false)
+        .await
+        .unwrap();
+    assert_eq!(ws.revisions.len(), 2);
+    assert_eq!(ws.unresolved, ["PRT-X"]);
+    assert!(ws.missing_references.is_empty());
 
     app.teardown().await;
 }
