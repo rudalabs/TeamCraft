@@ -818,9 +818,10 @@ pub async fn locate(
 /// Checks in: uploads the chosen files as new versions and releases the
 /// lock in one request (atomic on the server). Every file names the version
 /// it is based on, so the server refuses (409) to overwrite a newer one; new
-/// files are sent with the folder they sit in. Large files are sent before
-/// in resumable chunks (see [`Api::send_files`]). Afterwards the files are
-/// read-only again.
+/// files are sent with the folder they sit in. Files above
+/// [`crate::api::CHUNKED_ABOVE`] are sent before in resumable chunks (see
+/// [`Api::send_files`]), with progress and cancel through `transfer`.
+/// Afterwards the files are read-only again.
 #[allow(clippy::too_many_arguments)]
 pub async fn check_in(
     api: &Api,
@@ -881,6 +882,8 @@ pub async fn check_in(
         };
         files.push((logical.to_string(), path));
     }
+    // Large files go first as resumable chunked uploads (with their base and
+    // folder) and join this check-in by id – one transaction on the server.
     let result = api
         .send_files(
             &format!("{}/checkin", rev_path(item, code)),
