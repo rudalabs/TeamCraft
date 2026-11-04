@@ -18,8 +18,8 @@
   <form class="stack" method="post" action="/import" enctype="multipart/form-data">
     {% if target %}<input type="hidden" name="into" value="{{ target.id }}">{% endif %}
     <input type="hidden" name="match_existing_sent" value="1">
-    <label>BOM file <span class="hint">CSV/TSV (UTF-8 or Windows-1252) or Excel/OpenDocument (.xlsx, .xlsm, .xlsb, .xls, .ods), at most {{ max_mib }} MiB</span>
-      <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xlsb,.xls,.ods" required>
+    <label>BOM file <span class="hint">CSV/TSV (UTF-8 or Windows-1252) or Excel/OpenDocument (.xlsx, .xlsm, .xlsb, .xls, .ods), at most {{ max_mib }} MiB; or a STEP assembly (.step, .stp), at most {{ max_step_mib }} MiB</span>
+      <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xlsb,.xls,.ods,.step,.stp,.p21" required>
     </label>
     {% if not target %}
     <div class="form-row">
@@ -49,11 +49,12 @@
 </div>
 
 <section class="card">
-  <h2>Which tables work</h2>
+  <h2>Which files work</h2>
   <ul class="plain-list">
     <li><strong>Autodesk Inventor:</strong> BOM editor → <em>Structured</em> (all levels) → <em>Export Bill of Materials</em> as CSV or Excel.</li>
     <li><strong>SolidWorks:</strong> BOM table → <em>Save As</em> Excel or CSV; indented BOMs number their rows <span class="mono">1</span>, <span class="mono">1.1</span>, <span class="mono">1.1.2</span>.</li>
     <li><strong>Other programs and hand-made lists:</strong> a header row with columns such as <em>Part Number / Teilenummer</em>, <em>Name / Benennung</em>, <em>Description</em>, <em>QTY / Menge</em>, <em>Unit / Einheit</em>, <em>Material / Werkstoff</em>, <em>Mass / Masse</em>; the structure comes from a <em>Level / Ebene</em> column (0- or 1-based, also <span class="mono">.1</span>, <span class="mono">..2</span>) or from dotted positions.</li>
+    <li><strong>STEP assemblies</strong> (AP203, AP214, AP242) of any CAD program: the product structure becomes items and BOM – part number from the product id, name and description from the product, quantity = number of placed occurrences. A new assembly keeps the STEP file, so its 3D preview shows the whole assembly. The geometry of the parts is not split into the items.</li>
     <li>Rows with the same part number are one item; components marked <em>Reference</em> (Inventor BOM structure) are left out. German number formats (<span class="mono">2,5</span>) and units in cells (<span class="mono">125 g</span>, <span class="mono">4 Stk</span>) are understood.</li>
   </ul>
   <p class="hint">The column recognition is a heuristic built from the documented export layouts of these programs; it was not tested with files from every CAD program. If a column is not recognised, rename it in the spreadsheet – the preview shows which columns were used.</p>

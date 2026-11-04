@@ -9,7 +9,7 @@
   Check your CAD data out and in, keep every version, release with reviews,
   follow changes through assemblies and see STEP, mesh and point-cloud models
   in 3D – in the browser, in the desktop app or through the REST API.<br />
-  <em>Work in progress: an open-source alternative to Siemens Teamcenter and Open Domain VistaPoint.</em>
+  <em>Work in progress: an open-source alternative to Siemens Teamcenter.</em>
 </p>
 
 <div align="center">
@@ -23,6 +23,7 @@
 
 <p align="center">
   <a href="https://github.com/rudalabs/TeamCraft/actions/workflows/ci.yml"><img src="https://github.com/rudalabs/TeamCraft/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
+  <a href="https://github.com/rudalabs/TeamCraft/actions/workflows/desktop.yml"><img src="https://github.com/rudalabs/TeamCraft/actions/workflows/desktop.yml/badge.svg?branch=main" alt="Desktop app" /></a>
   <a href="https://github.com/rudalabs/TeamCraft/actions/workflows/docs.yml"><img src="https://github.com/rudalabs/TeamCraft/actions/workflows/docs.yml/badge.svg?branch=main" alt="Docs" /></a>
   <a href="https://www.repostatus.org/#wip"><img src="https://www.repostatus.org/badges/latest/wip.svg" alt="Project status: WIP – initial development is in progress, but there has not yet been a stable, usable release suitable for the public." /></a>
   <img src="https://img.shields.io/badge/release-none_yet_(0.1.0--dev)-orange" alt="Release: none yet" />
@@ -60,7 +61,7 @@
 All of the following works end to end today: creating a project group,
 adding items, checking files out and in, building the BOM, releasing through
 a reviewed change order and seeing what has to be checked after a release.
-It is covered by 106 unit tests and 32 end-to-end tests against a real
+It is covered by 114 unit tests and 33 end-to-end tests against a real
 PostgreSQL. Until the first release, the database schema is migrated
 automatically between commits, but nothing else about compatibility is
 promised.
@@ -78,11 +79,13 @@ promised.
 - **Change orders.** Collect revisions, assign reviewers, four-eyes approval,
   all revisions released atomically, impact analysis before approval.
 - **Structure.** Multi-level BOM with mass and cost roll-up, revision rules *latest*, *latest released* and *as
-  released*, where-used, CSV export and *Pack and Go* ZIP of a whole assembly.
+  released*, where-used, comparison of two revisions over one or all levels,
+  CSV and Excel export and *Pack and Go* ZIP of a whole assembly.
 - **BOM import.** Items and multi-level BOMs from the BOM tables of CAD
   programs (Inventor, SolidWorks, Solid Edge, Fusion, Creo, NX, hand-made
   lists) as CSV/TSV, Excel or OpenDocument – English and German columns,
-  levels or positions `1.1.2`, units; preview first, then one transaction.
+  levels or positions `1.1.2`, units – or from the product structure of a
+  STEP assembly of any CAD program; preview first, then one transaction.
 - **Change propagation.** References inside CAD files (SolidWorks, Inventor,
   Solid Edge, CATIA, NX, STEP, KiCad, …) are tracked; a release flags every
   dependent for a check.
@@ -216,7 +219,7 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | gltf, quick-xml, zip                 | glTF, 3MF/AMF, Pack and Go               | MIT / Apache-2.0                         |
 | csv, calamine, encoding_rs           | BOM import: CSV, Excel/ODS, Windows-1252 | MIT-Unlicense / MIT / MIT-Apache + BSD-3 |
 | cfb, crc32fast                       | previews stored in CAD files             | MIT / MIT-Apache                         |
-| rust_xlsxwriter (tests only)         | Excel files for the import tests         | MIT / Apache-2.0                         |
+| rust_xlsxwriter                      | Excel export of BOMs and comparisons     | MIT / Apache-2.0                         |
 | reqwest, rustls, lettre              | HTTP client, TLS, e-mail                 | MIT / Apache-2.0                         |
 | argon2, sha2                         | password hashing, content hashes         | MIT / Apache-2.0                         |
 | Tauri 2                              | desktop app                              | MIT / Apache-2.0                         |

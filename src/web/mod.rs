@@ -61,7 +61,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
     let upload_limit = usize::try_from(state.config.max_upload_bytes)
         .unwrap_or(usize::MAX)
         .saturating_add(1024 * 1024);
-    let import_limit = crate::services::imports::MAX_TABLE_BYTES + 1024 * 1024;
+    let import_limit = crate::services::imports::MAX_STEP_BYTES + 1024 * 1024;
 
     Router::new()
         .route("/", get(dashboard::show))
@@ -132,6 +132,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/revisions/{id}/bom", get(bom::show))
         .route("/revisions/{id}/bom/compare", get(personal::bom_compare))
         .route(
+            "/revisions/{id}/bom/compare.xlsx",
+            get(personal::bom_compare_xlsx),
+        )
+        .route(
             "/revisions/{id}/save-as",
             get(personal::save_as_form).post(personal::save_as_submit),
         )
@@ -149,6 +153,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/import/{id}/run", post(imports::run))
         .route("/import/{id}/discard", post(imports::discard))
         .route("/revisions/{id}/bom.csv", get(bom::csv))
+        .route("/revisions/{id}/bom.xlsx", get(bom::xlsx))
         .route("/revisions/{id}/package.zip", get(bom::package))
         .route("/revisions/{id}/bom/lines", post(bom::add_line))
         .route("/bom-lines/{id}", post(bom::update_line))
@@ -466,6 +471,36 @@ pub(crate) fn finish<T>(
         }
         Err(e) => Err(e),
     }
+}
+
+/// An `.xlsx` download with a sanitised file name (`Content-Disposition`).
+pub(crate) fn xlsx_response(bytes: Vec<u8>, filename: &str) -> Response {
+    let safe: String = filename
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let mut response = bytes.into_response();
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ),
+    );
+    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{safe}\"")) {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_DISPOSITION, value);
+    }
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 /// Parses an optional UUID form/query value; empty strings mean `None`.

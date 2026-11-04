@@ -91,6 +91,7 @@ src/cadformat.rs   file formats of CAD/BIM/DCC/mesh/point-cloud programs, stored
 src/cadrefs.rs     file names referenced inside CAD files (assemblies, drawings, STEP, KiCad) for reference tracking
 src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks files (OLE via cfb, PNG or DIB → BMP), cached in previews/
 src/bomtable.rs    BOM tables exported by CAD programs (CSV/TSV, Excel, ODS): header synonyms, levels, units – heuristic
+src/stepbom.rs     product structure of STEP assemblies (own Part 21 reader: PRODUCT … NEXT_ASSEMBLY_USAGE_OCCURRENCE) → BomTable
 src/assets.rs      embedded CSS/JS/logos/fonts, cache busting (?v=<asset hash>, ETag)
 src/notify.rs      Mattermost error webhook (rate limited)
 src/delivery.rs    e-mail (SMTP via lettre) and Mattermost delivery of notifications from the outbox

@@ -36,7 +36,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
     let upload_limit = usize::try_from(state.config.max_upload_bytes)
         .unwrap_or(usize::MAX)
         .saturating_add(1024 * 1024);
-    let import_limit = imports::MAX_TABLE_BYTES + 1024 * 1024;
+    let import_limit = imports::MAX_STEP_BYTES + 1024 * 1024;
     Router::new()
         .route("/", get(index))
         .route("/me", get(me))
@@ -88,6 +88,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/items/{number}/revisions/{code}/bom/compare",
             get(personal::bom_compare),
         )
+        .route(
+            "/items/{number}/revisions/{code}/bom/compare.xlsx",
+            get(personal::bom_compare_xlsx),
+        )
         .route("/items/{number}/watch", post(watch_item).delete(watch_item))
         .route(
             "/changes/{number}/watch",
@@ -122,6 +126,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route(
             "/items/{number}/revisions/{code}/bom",
             get(get_bom).post(add_bom_line),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/bom.xlsx",
+            get(get_bom_xlsx),
         )
         .route(
             "/items/{number}/revisions/{code}/files",
@@ -211,8 +219,9 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/obsolete",
             "GET    /api/v1/items/{number}/revisions/{code}/bom?rule=latest|released|as_released&expand=true",
             "POST   /api/v1/items/{number}/revisions/{code}/bom       {child, quantity, find_number?, notes?}",
+            "GET    /api/v1/items/{number}/revisions/{code}/bom.xlsx?rule=  the expanded BOM as Excel workbook (the BOM import reads it back)",
             "GET    /api/v1/items/{number}/revisions/{code}/package?rule=  Pack and Go: ZIP with all files of the structure, bom.csv, manifest.json",
-            "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
+            "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM or STEP assembly of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
             "POST   /api/v1/items/{number}/revisions/{code}/bom/import  same multipart fields – imports below the revision (checked out by me)",
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
             "DELETE /api/v1/bom-lines/{id}",
@@ -233,7 +242,8 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/searches                                  {name, q?, type?, project?, state?, system?}",
             "DELETE /api/v1/searches/{id}",
             "POST   /api/v1/items/{number}/revisions/{code}/save-as   {number?, name?, project?, files?, bom?} – new item from this revision",
-            "GET    /api/v1/items/{number}/revisions/{code}/bom/compare?with=A   added / removed / changed BOM lines",
+            "GET    /api/v1/items/{number}/revisions/{code}/bom/compare?with=A&depth=1|all&rule=   added / removed / changed BOM lines (all levels with depth=all)",
+            "GET    /api/v1/items/{number}/revisions/{code}/bom/compare.xlsx?with=A   the same comparison as an Excel workbook",
             "POST   /api/v1/changes/{number}/watch                    watch a change (DELETE: stop)",
             "POST   /api/v1/impacts/{id}/acknowledge                  {note} – the dependent needs no change",
             "GET    /api/v1/items/{number}/revisions/{code}/files",
@@ -678,16 +688,39 @@ async fn get_bom(
 ) -> AppResult<Json<Value>> {
     let rev = revision_at(&st, &number, &code).await?;
     if q.expand.unwrap_or(false) {
-        let rule = match q.rule.as_deref() {
-            Some(r) => RevisionRule::parse(r).ok_or_else(|| {
-                AppError::BadRequest("rule must be latest, released or as_released.".into())
-            })?,
-            None => RevisionRule::default(),
-        };
+        let rule = bom_rule(q.rule.as_deref())?;
         Ok(Json(json!(bom::tree(&st.db, rev.id, rule).await?)))
     } else {
         Ok(Json(json!(bom::lines(&st.db, rev.id).await?)))
     }
+}
+
+fn bom_rule(raw: Option<&str>) -> AppResult<RevisionRule> {
+    match raw {
+        Some(r) => RevisionRule::parse(r).ok_or_else(|| {
+            AppError::BadRequest("rule must be latest, released or as_released.".into())
+        }),
+        None => Ok(RevisionRule::default()),
+    }
+}
+
+/// The expanded BOM as Excel workbook.
+async fn get_bom_xlsx(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<BomQuery>,
+) -> AppResult<Response> {
+    let rev = revision_at(&st, &number, &code).await?;
+    let rule = bom_rule(q.rule.as_deref())?;
+    let tree = bom::tree(&st.db, rev.id, rule).await?;
+    let filename = format!(
+        "{}_{}_bom_{}.xlsx",
+        rev.item_number,
+        rev.code,
+        rule.as_str()
+    );
+    Ok(web::xlsx_response(bom::to_xlsx(&tree)?, &filename))
 }
 
 /// BOM import that creates a new top-level assembly (multipart: `file`,
@@ -727,7 +760,8 @@ async fn bom_import(
     let options = web::import_options(&fields, target, project_id)?;
     let (filename, content) = file.ok_or_else(|| {
         AppError::BadRequest(
-            "Send the BOM table (CSV or Excel) in the multipart field 'file'.".into(),
+            "Send the BOM table (CSV or Excel) or the STEP assembly in the multipart field 'file'."
+                .into(),
         )
     })?;
     let table = imports::read_table(&filename, &content)?;
@@ -739,7 +773,8 @@ async fn bom_import(
         let plan = imports::plan(&mut conn, me, &table, &filename, &options).await?;
         return Ok(Json(json!(plan)).into_response());
     }
-    let result = imports::run(&st.db, me, &table, &filename, &options).await?;
+    let source = imports::step_file(&st.vault, &filename, &content).await?;
+    let result = imports::run(&st.db, me, &table, &filename, &options, source.as_ref()).await?;
     Ok((StatusCode::CREATED, Json(json!(result))).into_response())
 }
 

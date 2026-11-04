@@ -31,6 +31,7 @@ curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/cancel-checkout
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `revise`, `obsolete`                  |
 | Files            | `POST …/files` (multipart), `GET /files/{id}` (metadata), `/content`, `/versions`, `/restore`, `/mesh` (3D preview), `/thumbnail`     |
 | BOM              | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP) |
+| BOM import       | `POST /bom-imports` (new assembly), `POST …/bom/import` (into a checked-out revision); multipart `file` = CSV/Excel table or STEP assembly, `dry_run=true` returns the plan |
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
 | Changes          | `GET/POST /changes`, items, reviewers, `submit`, `review`, `withdraw`, `impact`                                                       |
 | Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`                                                                             |
@@ -38,6 +39,13 @@ curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/cancel-checkout
 | Personal         | `GET /favorites`, `POST/DELETE /items/{number}/favorite`, `GET/POST /searches`, `DELETE /searches/{id}`                               |
 | Save As, compare | `POST …/revisions/{code}/save-as` `{number?, name?, project?, files?, bom?}`, `GET …/revisions/{code}/bom/compare?with={code}`        |
 | Formats          | `GET /formats` – the recognised CAD programs and formats                                                                              |
+
+The BOM comparison is also available as an Excel workbook of the same lines
+(same `with` query): `GET …/revisions/{code}/bom/compare.xlsx?with={code}`.
+Both compare the direct lines; `depth=all` compares every level, with the
+children resolved by `rule=latest|released|as_released` (each line then has
+its `level` and the resolved `revision` on both sides). The expanded BOM
+itself downloads as Excel workbook: `GET …/revisions/{code}/bom.xlsx?rule=`.
 
 Errors are JSON: `{"error": {"code": "conflict", "message": "…"}}` with the
 matching HTTP status (400, 401, 403, 404, 409, 413, 500).

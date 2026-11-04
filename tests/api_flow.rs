@@ -2389,6 +2389,67 @@ async fn delivery_retries_and_gives_up() {
 }
 
 #[tokio::test]
+async fn bom_excel_export_reads_back() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    for (t, number) in [("part", "BOLT"), ("part", "NUT"), ("assembly", "STAGE-1")] {
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/items",
+                &eng,
+                Some(json!({ "item_type": t, "name": number, "number": number, "project": "ROCKET" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    for (child, qty) in [("BOLT", 6), ("NUT", 6)] {
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/items/STAGE-1/revisions/A/bom",
+                &eng,
+                Some(json!({ "child": child, "quantity": qty })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    let r = app
+        .api(
+            Method::GET,
+            "/api/v1/items/STAGE-1/revisions/A/bom.xlsx",
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.header("content-type").unwrap().contains("spreadsheetml"));
+    assert!(r
+        .header("content-disposition")
+        .unwrap()
+        .contains("STAGE-1_A_bom_latest.xlsx"));
+    let table = teamcraft::bomtable::read("bom.xlsx", &r.body).expect("the export reads back");
+    assert_eq!(
+        table
+            .rows
+            .iter()
+            .map(|r| (r.number.as_str(), r.quantity))
+            .collect::<Vec<_>>(),
+        vec![("BOLT", 6.0), ("NUT", 6.0)]
+    );
+    let r = app
+        .api(
+            Method::GET,
+            "/api/v1/items/STAGE-1/revisions/A/bom.xlsx?rule=x",
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    app.teardown().await;
+}
+
+#[tokio::test]
 async fn pack_and_go_zip() {
     use std::io::Read;
     let app = app_or_skip!();
@@ -2849,6 +2910,111 @@ async fn bom_import_from_cad_tables() {
     app.teardown().await;
 }
 
+#[tokio::test]
+async fn bom_import_from_step_assemblies() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    // AP214 product structure: a pump with a rotor sub-assembly and 3 + 1 screws.
+    let mut data = String::new();
+    for (n, id, name) in [
+        (1, "PUMP-100", "Pump"),
+        (2, "ROTOR-1", "Rotor"),
+        (3, "SHAFT-1", "Shaft"),
+        (4, "M6x20", "Screw"),
+    ] {
+        data += &format!(
+            "#{n}1=PRODUCT('{id}','{name}','',(#9));\n\
+             #{n}2=PRODUCT_DEFINITION_FORMATION('','',#{n}1);\n\
+             #{n}3=PRODUCT_DEFINITION('design','',#{n}2,#8);\n"
+        );
+    }
+    for (id, parent, child) in [
+        (101, 1, 2),
+        (102, 1, 4),
+        (103, 1, 4),
+        (104, 1, 4),
+        (105, 2, 3),
+        (106, 2, 4),
+    ] {
+        data += &format!(
+            "#{id}=NEXT_ASSEMBLY_USAGE_OCCURRENCE('{id}','','',#{parent}3,#{child}3,$);\n"
+        );
+    }
+    let step = format!(
+        "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\nDATA;\n{data}ENDSEC;\n\
+         END-ISO-10303-21;\n"
+    );
+    let files: &[(&str, &[u8])] = &[("pump.step", step.as_bytes())];
+
+    let plan = app
+        .api_multipart(
+            "/api/v1/bom-imports",
+            &eng,
+            files,
+            &[("project", "ROCKET"), ("dry_run", "true")],
+        )
+        .await;
+    assert_eq!(plan.status, StatusCode::OK, "{}", plan.text());
+    let plan = plan.json();
+    assert_eq!(plan["root_number"], "PUMP-100", "{plan}");
+    assert_eq!(plan["new_items"], 3);
+    assert_eq!(plan["lines"].as_array().unwrap().len(), 4);
+
+    let done = app
+        .api_multipart("/api/v1/bom-imports", &eng, files, &[("project", "ROCKET")])
+        .await;
+    assert_eq!(done.status, StatusCode::CREATED, "{}", done.text());
+    assert_eq!(done.json()["root"], "PUMP-100/A");
+    let pump = app
+        .api(
+            Method::GET,
+            "/api/v1/items/PUMP-100/revisions/A",
+            &eng,
+            None,
+        )
+        .await
+        .json();
+    let lines: Vec<(String, f64)> = pump["bom"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["child_number"].as_str().unwrap().to_string(),
+                l["quantity"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        vec![("ROTOR-1".to_string(), 1.0), ("M6X20".to_string(), 3.0)]
+    );
+    assert_eq!(
+        pump["files"][0]["filename"], "pump.step",
+        "the STEP file is kept"
+    );
+    let rotor = app
+        .api(Method::GET, "/api/v1/items/ROTOR-1/revisions/A", &eng, None)
+        .await
+        .json();
+    assert_eq!(rotor["revision"]["item_type"], "assembly");
+    assert_eq!(rotor["bom"].as_array().unwrap().len(), 2);
+    assert!(rotor["files"].as_array().unwrap().is_empty());
+
+    // A single part has no product structure.
+    let part = std::fs::read("tests/fixtures/cube.step").unwrap();
+    let r = app
+        .api_multipart(
+            "/api/v1/bom-imports",
+            &eng,
+            &[("cube.step", &part)],
+            &[("project", "ROCKET")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    app.teardown().await;
+}
+
 /// A minimal PNG (`w` × `h`); the extractor checks the chunk structure only.
 fn tiny_png(w: u32, h: u32) -> Vec<u8> {
     fn chunk(out: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
@@ -2984,7 +3150,7 @@ async fn preview_images_stored_in_cad_files() {
     app.teardown().await;
 }
 
-/// The most used Teamcenter / VistaPoint working features: favorites, saved
+/// The most used Teamcenter working features: favorites, saved
 /// searches, Save As and the BOM comparison.
 #[tokio::test]
 async fn favorites_searches_save_as_and_bom_compare() {
@@ -3197,6 +3363,42 @@ async fn favorites_searches_save_as_and_bom_compare() {
         "{html}"
     );
     assert!(html.contains(&nut));
+    let r = app
+        .get_page(
+            &format!("/revisions/{asm_rev}/bom/compare?with={copy_rev}&depth=all&rule=latest"),
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let html = r.text();
+    assert!(
+        html.contains("1 added · 0 removed · 0 changed · 1 unchanged")
+            && html.contains("<th>Lvl</th>"),
+        "all levels: {html}"
+    );
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/revisions/A/bom/compare?with=A&depth=all"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["lines"][0]["level"], 1);
+    assert!(
+        r.json()["lines"][0]["after"]["revision"].is_string(),
+        "resolved revision"
+    );
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/revisions/A/bom/compare?with=A&depth=3"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
     let r = app
         .api(
             Method::GET,

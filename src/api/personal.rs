@@ -13,14 +13,16 @@ use uuid::Uuid;
 use super::{revision_at, ApiJson};
 use crate::{
     auth::ApiUser,
-    error::AppResult,
+    domain::RevisionRule,
+    error::{AppError, AppResult},
+    models::Revision,
     services::{
-        bom_compare,
+        bom_compare::{self, Depth},
         explorer::{self, Listing},
         items, personal, projects,
         save_as::{self, SaveAs},
     },
-    AppState,
+    web, AppState,
 };
 
 /// `GET /favorites` – the caller's favorites with their latest revision.
@@ -147,6 +149,33 @@ pub(super) async fn save_as(
 pub(super) struct CompareQuery {
     /// Code of the other revision of the same item.
     with: String,
+    /// `1` (default) or `all` levels.
+    depth: Option<String>,
+    /// Revision rule of a comparison over all levels (default `latest`).
+    rule: Option<String>,
+}
+
+/// Both revisions of a comparison (older first) and their BOM differences.
+async fn compare_at(
+    st: &AppState,
+    number: &str,
+    code: &str,
+    q: &CompareQuery,
+) -> AppResult<(Revision, Revision, Vec<bom_compare::LineDiff>)> {
+    let depth = Depth::parse(q.depth.as_deref())?;
+    let rule = match q.rule.as_deref() {
+        Some(r) => RevisionRule::parse(r).ok_or_else(|| {
+            AppError::BadRequest("rule must be latest, released or as_released.".into())
+        })?,
+        None => RevisionRule::default(),
+    };
+    let (a, b) = tokio::try_join!(
+        revision_at(st, number, &q.with),
+        revision_at(st, number, code)
+    )?;
+    let (before, after) = if a.seq <= b.seq { (a, b) } else { (b, a) };
+    let diffs = bom_compare::compare(&st.db, before.id, after.id, depth, rule).await?;
+    Ok((before, after, diffs))
 }
 
 /// `GET /items/{number}/revisions/{code}/bom/compare?with=A`
@@ -156,16 +185,26 @@ pub(super) async fn bom_compare(
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Json<Value>> {
-    let (a, b) = tokio::try_join!(
-        revision_at(&st, &number, &q.with),
-        revision_at(&st, &number, &code)
-    )?;
-    let (before, after) = if a.seq <= b.seq { (a, b) } else { (b, a) };
-    let diffs = bom_compare::compare(&st.db, before.id, after.id).await?;
+    let (before, after, diffs) = compare_at(&st, &number, &code, &q).await?;
+    let summary = bom_compare::summary(&diffs);
     Ok(Json(json!({
         "before": before.code,
         "after": after.code,
-        "summary": bom_compare::summary(&diffs),
+        "summary": summary,
         "lines": diffs,
     })))
+}
+
+/// `GET /items/{number}/revisions/{code}/bom/compare.xlsx?with=A` – the same
+/// comparison as the JSON endpoint, as an Excel workbook.
+pub(super) async fn bom_compare_xlsx(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<CompareQuery>,
+) -> AppResult<Response> {
+    let (before, after, diffs) = compare_at(&st, &number, &code, &q).await?;
+    let bytes = bom_compare::to_xlsx(&diffs)?;
+    let filename = format!("bom-compare-{}-{}-{}.xlsx", number, before.code, after.code);
+    Ok(web::xlsx_response(bytes, &filename))
 }

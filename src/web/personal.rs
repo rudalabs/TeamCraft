@@ -1,6 +1,5 @@
 //! Favorites, saved searches, Save As and the BOM comparison (the most used
-//! working features of Teamcenter and VistaPoint, see
-//! docs/src/research/teamcenter-vistapoint.md).
+//! working features of Teamcenter, see docs/src/research/teamcenter.md).
 
 use axum::{
     extract::{Path, Query, State},
@@ -11,11 +10,14 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{finish, parse_opt_uuid, render, WebCtx};
+use super::{finish, parse_opt_uuid, render, xlsx_response, WebCtx};
 use crate::{
+    domain::RevisionRule,
     error::{AppError, AppResult},
+    models::Revision,
     services::{
-        bom_compare, items, personal, projects, revisions,
+        bom_compare::{self, Depth},
+        items, personal, projects, revisions,
         save_as::{self, SaveAs},
     },
     util, AppState,
@@ -171,14 +173,58 @@ pub async fn save_as_submit(
 pub struct CompareQuery {
     /// The revision to compare with (default: the previous one).
     with: Option<String>,
+    /// `1` (default) or `all` levels.
+    depth: Option<String>,
+    /// Revision rule of a comparison over all levels.
+    rule: Option<String>,
 }
 
-pub async fn bom_compare(
-    State(st): State<AppState>,
-    ctx: WebCtx,
-    Path(id): Path<Uuid>,
-    Query(q): Query<CompareQuery>,
-) -> AppResult<Response> {
+impl CompareQuery {
+    fn depth(&self) -> AppResult<Depth> {
+        Depth::parse(self.depth.as_deref())
+    }
+
+    fn rule(&self) -> RevisionRule {
+        self.rule
+            .as_deref()
+            .and_then(RevisionRule::parse)
+            .unwrap_or_default()
+    }
+}
+
+/// The two revisions of a comparison and their BOM differences.
+struct Comparison {
+    /// The revision whose page asked for the comparison.
+    rev: Revision,
+    /// All revisions of the item (choice in the page).
+    revisions: Vec<Revision>,
+    before: Revision,
+    after: Revision,
+    depth: Depth,
+    rule: RevisionRule,
+    diffs: Vec<bom_compare::LineDiff>,
+}
+
+impl Comparison {
+    /// File name of the Excel download.
+    fn file_name(&self) -> String {
+        format!(
+            "bom-compare-{}-{}-{}{}.xlsx",
+            self.rev.item_number,
+            self.before.code,
+            self.after.code,
+            match self.depth {
+                Depth::Single => "",
+                Depth::All => "-all-levels",
+            }
+        )
+    }
+}
+
+/// Loads both revisions (older first) and compares their BOMs. `with` is a
+/// revision id; the default is the previous revision of the item.
+async fn comparison(st: &AppState, id: Uuid, q: &CompareQuery) -> AppResult<Comparison> {
+    let (depth, rule) = (q.depth()?, q.rule());
     let rev = revisions::get(&st.db, id).await?;
     let all = items::revisions(&st.db, rev.item_id).await?;
     let other_id = match parse_opt_uuid("Revision", q.with.as_deref())? {
@@ -205,19 +251,52 @@ pub async fn bom_compare(
     } else {
         (rev.clone(), other)
     };
-    let diffs = bom_compare::compare(&st.db, before.id, after.id).await?;
-    let summary = bom_compare::summary(&diffs);
+    let diffs = bom_compare::compare(&st.db, before.id, after.id, depth, rule).await?;
+    Ok(Comparison {
+        rev,
+        revisions: all,
+        before,
+        after,
+        depth,
+        rule,
+        diffs,
+    })
+}
+
+pub async fn bom_compare(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Query(q): Query<CompareQuery>,
+) -> AppResult<Response> {
+    let cmp = comparison(&st, id, &q).await?;
+    let summary = bom_compare::summary(&cmp.diffs);
     render(
         &st,
         &ctx,
         "revisions/bom_compare.html",
         json!({
-            "rev": rev,
-            "before": before,
-            "after": after,
-            "revisions": all,
-            "diffs": diffs,
+            "rev": cmp.rev,
+            "before": cmp.before,
+            "after": cmp.after,
+            "revisions": cmp.revisions,
+            "depth": cmp.depth.as_str(),
+            "rule": cmp.rule.as_str(),
+            "diffs": cmp.diffs,
             "summary": summary,
         }),
     )
+}
+
+/// `GET /revisions/{id}/bom/compare.xlsx` – the comparison as an Excel
+/// workbook (same `with` query as the page).
+pub async fn bom_compare_xlsx(
+    State(st): State<AppState>,
+    _ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Query(q): Query<CompareQuery>,
+) -> AppResult<Response> {
+    let cmp = comparison(&st, id, &q).await?;
+    let bytes = bom_compare::to_xlsx(&cmp.diffs)?;
+    Ok(xlsx_response(bytes, &cmp.file_name()))
 }

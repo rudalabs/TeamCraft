@@ -25,6 +25,7 @@ pub mod notify;
 pub mod oidc;
 pub mod preview;
 pub mod services;
+pub mod stepbom;
 pub mod templates;
 pub mod textindex;
 pub mod thumbnail;

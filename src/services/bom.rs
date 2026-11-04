@@ -1,5 +1,6 @@
 //! Bills of materials: single-level editing, multi-level expansion with
-//! revision rules, mass/cost roll-up, CSV export and cycle prevention.
+//! revision rules, mass/cost roll-up, CSV and Excel export and cycle
+//! prevention.
 
 use std::collections::{hash_map::Entry, HashMap, VecDeque};
 
@@ -608,6 +609,82 @@ pub fn to_csv(tree: &BomTree) -> String {
     out
 }
 
+/// Exports the expanded BOM as Excel workbook: the CSV columns, item numbers
+/// indented by level, header row frozen and filterable.
+pub fn to_xlsx(tree: &BomTree) -> AppResult<Vec<u8>> {
+    use rust_xlsxwriter::{Format, Workbook};
+    let xlsx =
+        |e: rust_xlsxwriter::XlsxError| AppError::Other(anyhow::anyhow!("Excel export: {e}"));
+    let mut book = Workbook::new();
+    let sheet = book.add_worksheet();
+    sheet.set_name("BOM").map_err(xlsx)?;
+    let bold = Format::new().set_bold();
+    let headers = [
+        "Level",
+        "Find no.",
+        // "Number" (not "Item") so that the BOM import reads the file back.
+        "Number",
+        "Revision",
+        "State",
+        "Name",
+        "Quantity",
+        "Unit",
+        "Unit mass [kg]",
+        "Total mass [kg]",
+        "Unit cost",
+        "Total cost",
+        "Notes",
+    ];
+    for (c, h) in headers.iter().enumerate() {
+        sheet
+            .write_string_with_format(0, c as u16, *h, &bold)
+            .map_err(xlsx)?;
+    }
+    let mass = Format::new().set_num_format("0.0000");
+    let cost = Format::new().set_num_format("0.00");
+    let rows = flatten(&tree.children);
+    for (i, row) in rows.iter().enumerate() {
+        let r = i as u32 + 1;
+        let n = &row.node;
+        let (code, state, name) = match &n.revision {
+            Some(rev) => (rev.code.as_str(), rev.state.as_str(), rev.name.as_str()),
+            None => ("", "unresolved", ""),
+        };
+        let indent = Format::new().set_indent(row.level.saturating_sub(1).min(15) as u8);
+        sheet.write_number(r, 0, row.level as f64).map_err(xlsx)?;
+        sheet
+            .write_number(r, 1, f64::from(n.find_number))
+            .map_err(xlsx)?;
+        sheet
+            .write_string_with_format(r, 2, &n.item_number, &indent)
+            .map_err(xlsx)?;
+        sheet.write_string(r, 3, code).map_err(xlsx)?;
+        sheet.write_string(r, 4, state).map_err(xlsx)?;
+        sheet.write_string(r, 5, name).map_err(xlsx)?;
+        sheet.write_number(r, 6, n.quantity).map_err(xlsx)?;
+        sheet.write_string(r, 7, &n.unit).map_err(xlsx)?;
+        sheet
+            .write_number_with_format(r, 8, n.unit_mass_kg, &mass)
+            .map_err(xlsx)?;
+        sheet
+            .write_number_with_format(r, 9, n.total_mass_kg, &mass)
+            .map_err(xlsx)?;
+        sheet
+            .write_number_with_format(r, 10, n.unit_cost_total, &cost)
+            .map_err(xlsx)?;
+        sheet
+            .write_number_with_format(r, 11, n.total_cost, &cost)
+            .map_err(xlsx)?;
+        sheet.write_string(r, 12, &n.notes).map_err(xlsx)?;
+    }
+    sheet.set_freeze_panes(1, 0).map_err(xlsx)?;
+    sheet
+        .autofilter(0, 0, rows.len() as u32, headers.len() as u16 - 1)
+        .map_err(xlsx)?;
+    sheet.autofit();
+    book.save_to_buffer().map_err(xlsx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -692,5 +769,7 @@ mod tests {
         assert_eq!(lines.len(), 3);
         assert!(lines[1].starts_with("1,10,PRT-000001,A,released,\"Bolt, M6\",2,each,0.24,0.48,"));
         assert_eq!(count_lines(&tree.children), (2, 0));
+        let xlsx = to_xlsx(&tree).unwrap();
+        assert!(xlsx.starts_with(b"PK"), "an .xlsx file is a ZIP archive");
     }
 }
