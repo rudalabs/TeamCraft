@@ -18,6 +18,7 @@ pub mod notifications;
 pub mod package;
 pub mod personal;
 pub mod projects;
+pub mod readiness;
 pub mod references;
 pub mod revisions;
 pub mod save_as;

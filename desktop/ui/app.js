@@ -1638,6 +1638,9 @@
     var desc = h("textarea", { maxlength: "20000", placeholder: "What is released and why" });
     var others = h("input", { type: "text", placeholder: "user names, comma-separated" });
     var submitNow = h("input", { type: "checkbox", checked: true });
+    // A change releases a whole product: unreleased BOM children, drawings and
+    // specifications have to go with it (the server blocks the submit otherwise).
+    var withDeps = h("input", { type: "checkbox", checked: true });
     var reviewerBox = h("div.stack", null, h("p.loading", { text: "Loading the members of " + (rev.project_code || "the project group") }));
     var boxes = [];
     if (rev.project_code) {
@@ -1662,6 +1665,7 @@
       mine ? h("p.notice", { text: "You still hold the check-out. Check in your workspace changes first – submitting releases the lock without uploading anything." }) : null,
       field("Title", title),
       h("div.grid-2", null, [field("Priority", priority), h("label.check", null, [submitNow, "Submit for review now"])]),
+      h("label.check", null, [withDeps, "Include unreleased dependencies", h("span.dim", { text: " – BOM children, drawings and specifications in work, level by level" })]),
       field("Description", desc),
       h("h3", { text: "Reviewers" }),
       h("p.hint", { text: "All reviewers must approve; you cannot review your own change (four-eyes principle)." }),
@@ -1680,6 +1684,8 @@
           api("POST", "/changes", { title: title.value, description: desc.value, priority: priority.value }).then(function (c) {
             number = c.number;
             return api("POST", "/changes/" + enc(number) + "/items", { item: rev.item_number, revision: rev.code });
+          }).then(function () {
+            return withDeps.checked ? api("POST", "/changes/" + enc(number) + "/dependencies") : null;
           }).then(function () {
             return reviewers.reduce(function (p, username) {
               return p.then(function () { return api("POST", "/changes/" + enc(number) + "/reviewers", { username: username }); });
@@ -1810,6 +1816,35 @@
       tab.data.items.length ? table(["Revision", "Name", "State"], tab.data.items.map(function (i) {
         return { cells: [h("span.mono", { text: i.item_number + "/" + i.code }), i.name, h("span", null, [badge(i.state), i.checked_out_by_name ? h("span.badge.badge-lock", { text: "🔒 " + i.checked_out_by_name }) : null])], open: function () { openRevision(i.item_number, i.code); } };
       })) : h("p.empty", { text: "No revisions yet." })]));
+    // Release readiness: unreleased dependencies block the submit.
+    if ((c.status === "draft" || c.status === "rejected") && tab.data.items.length) {
+      var readyPanel = h("section.panel", null, [h("h2", { text: "Release readiness" }), h("p.muted.small", { text: "Checking …" })]);
+      body.appendChild(readyPanel);
+      api("GET", "/changes/" + enc(c.number) + "/readiness").then(function (r) {
+        clear(readyPanel);
+        var rows = r.blockers.concat(r.warnings);
+        var addable = r.blockers.some(function (d) { return d.addable; });
+        append(readyPanel, [
+          h("div.row", null, [h("h2", { text: "Release readiness" }),
+            owner && c.status === "draft" && addable ? h("button.primary.small", { type: "button", on: { click: function () {
+              run("Adding the dependencies", function () { return api("POST", "/changes/" + enc(c.number) + "/dependencies"); })
+                .then(function (res) { toast(res.added.length ? "Added " + res.added.join(", ") : "Nothing to add"); reloadActive(); }, function () {});
+            } } }, "Add all to this change") : null]),
+          r.ready
+            ? h("p.notice.ok", { text: "Ready: every BOM line and reference is released or part of this change." })
+            : h("p.notice.error", { text: r.blockers.length + (r.blockers.length === 1 ? " dependency is" : " dependencies are") + " not released – add them to this change or release them first, then submit." }),
+          rows.length ? table(["Dependency", "Name", "Needed by", "State"], rows.map(function (d) {
+            var note = d.other_change ? " in " + d.other_change : d.problem === "obsolete" ? " – obsolete, replace it" : !d.blocking ? " – found by the CAD file scan" : "";
+            return {
+              cells: [h("span.mono", { text: d.item_number + "/" + d.latest_code }), d.item_name,
+                h("span", null, [h("span.mono", { text: d.revision_label }), " " + relationText(d.relation)]),
+                h("span", null, [badge(d.latest_state), h("span.dim", { text: note })])],
+              open: function () { openRevision(d.item_number, d.latest_code); }
+            };
+          })) : null
+        ]);
+      }, function (err) { clear(readyPanel); append(readyPanel, [h("h2", { text: "Release readiness" }), h("p.notice.error", { text: errorText(err) })]); });
+    }
     // Impact analysis: the items that depend on the revisions of this change.
     var impactPanel = h("section.panel", null, [h("h2", { text: "Impact analysis" }), h("p.muted.small", { text: "Loading …" })]);
     body.appendChild(impactPanel);
