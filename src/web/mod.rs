@@ -66,6 +66,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
 
     Router::new()
         .route("/", get(dashboard::show))
+        .route("/checkouts/checkin-all", post(dashboard::checkin_all))
         .route("/vault", get(explorer::show))
         // authentication
         .route(
@@ -210,6 +211,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/new", get(changes::new_form))
         .route("/changes/{id}", get(changes::show).post(changes::update))
         .route("/changes/{id}/items", post(changes::add_item))
+        .route(
+            "/changes/{id}/dependencies",
+            post(changes::add_dependencies),
+        )
         .route(
             "/changes/{id}/items/{revision_id}/remove",
             post(changes::remove_item),

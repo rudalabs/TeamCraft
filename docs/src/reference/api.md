@@ -23,18 +23,59 @@ curl -s -X POST -H "$H" -F file=@hub.step -F comment="wall 2 → 2.5 mm" \
 curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/cancel-checkout
 ```
 
+### Concurrency: base versions and file status
+
+A check-in or upload can name the version each file is **based on** in the
+multipart field `bases`, a JSON object from file name to the version number
+(`0` = a new file that must not exist yet) or the SHA-256 of the content the
+client checked out. If a file moved on since (e.g. after an administrator
+broke the lock and someone else checked in), the request is refused with
+**409 Conflict** and nothing is stored; identical content is never a
+conflict, and files without a base are stored as before. Several uploads of
+one name in a request (Creo iterations `housing.prt.6`, `housing.prt.7`)
+share the base: the first is checked against it, the others build on it.
+
+```sh
+curl -s -X POST -H "$H" -F file=@hub.step -F 'bases={"hub.step": 3}' \
+     $API/items/PRT-000001/revisions/A/checkin
+# 409 {"error": {"code": "conflict", "message": "hub.step changed on the server since you got it: …"}}
+```
+
+`GET …/revisions/{code}/file-status` returns every file with its current
+`version`, `sha256`, uploader and the lock (`locked_by`, `locked_by_name`,
+`locked_at`, `locked_by_me`, `locked_by_other`). `POST` the same path with the
+client's files to get the sync state of each local copy:
+
+```sh
+curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
+     -d '{"files": [{"filename": "hub.step", "sha256": "9f86d0…", "base_version": 3}]}' \
+     $API/items/PRT-000001/revisions/A/file-status
+```
+
+`state` is `up_to_date`, `modified` (the server still has the base),
+`outdated` (the local content is an older version – `local_version` says
+which), `conflict` (changed locally and on the server since the base), `new`
+(only local) or `missing` (only on the server). Without a base, unknown local
+content counts as `modified`.
+
+`POST /worklist/checkin-all` (body optional: `{"revisions": [id, …]}`) checks
+in all of my check-outs – or the listed ones – **without new files**, one
+transaction and one audit record per revision. The answer lists every
+revision with `ok` and `error`, plus `checked_in`, `failed` and a `summary`.
+
 ## Main resources
 
 | Resource         | Endpoints                                                                                                                             |
 |------------------|---------------------------------------------------------------------------------------------------------------------------------------|
 | Items            | `GET/POST /items`, `GET /items/{number}`, where-used, history, impacts, watch                                                         |
-| Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `revise`, `obsolete`                  |
+| Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
+| Worklist         | `GET /worklist` (check-outs, reviews, impacts, statistics), `POST /worklist/checkin-all`                                              |
 | Files            | `POST …/files` (multipart), `GET /files/{id}` (metadata), `/content`, `/versions`, `/restore`, `/mesh` (3D preview), `/thumbnail`     |
 | BOM              | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP) |
 | BOM import       | `POST /bom-imports` (new assembly), `POST …/bom/import` (into a checked-out revision); multipart `file` = CSV/Excel table or STEP assembly, `dry_run=true` returns the plan |
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
 | Simulations      | `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
-| Changes          | `GET/POST /changes`, items, reviewers, `submit`, `review`, `withdraw`, `impact`                                                       |
+| Changes          | `GET/POST /changes`, items, reviewers, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact`      |
 | Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                 |
 | Notifications    | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                   |
 | Personal         | `GET /favorites`, `POST/DELETE /items/{number}/favorite`, `GET/POST /searches`, `DELETE /searches/{id}`                               |

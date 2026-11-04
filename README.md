@@ -45,7 +45,7 @@
 </p>
 
 <p align="center">
-  <img src="media/screenshots/dashboard.png" width="860" alt="TeamCraft dashboard: change orders waiting for my review, revisions checked out by me and recent activity of the project group ROVER" />
+  <img src="media/screenshots/dashboard.png" width="860" alt="TeamCraft dashboard: item statistics, dependents to check after the release of the fasteners, a change order waiting for my review and the revision checked out by me" />
 </p>
 
 > [!WARNING]
@@ -74,7 +74,12 @@ promised.
 
 - **Check-out / check-in.** Exclusive locks per revision; check-in stores the
   new file versions and releases the lock in one transaction. Cancel
-  check-out and *Cancel upload* take effect immediately.
+  check-out and *Cancel upload* take effect immediately. Check-ins are
+  checked against the version each file was based on, so a version
+  somebody else checked in meanwhile is refused (409) instead of being
+  overwritten; per-file status (up to date, modified, outdated, conflict),
+  lock age and *Check in all my check-outs* on the dashboard and in the
+  desktop worklist.
 - **Vault explorer.** Project groups as folders, every item with its lock
   owner, files and one-click check-out / check-in in a detail pane.
 - **Versions and rollback.** Every upload of a file name is a new version;
@@ -109,7 +114,7 @@ promised.
   [truck](https://github.com/ricosjp/truck) kernel), STL, OBJ, PLY, OFF, 3MF,
   AMF, glTF/GLB, 3DS and point clouds – converted once on the server, in an
   isolated process with a time limit, and drawn by a small WebGL viewer.
-- **Previews of native CAD files.** The preview image Inventor, Solid Edge
+- **Previews of native CAD files.** The preview image Inventor, Solid Edge, NX
   and SolidWorks store in their files is shown next to them; on Windows the
   desktop app creates STEP exports with your own Inventor or Solid Edge at
   check-in for the 3D view (see `docs/src/research/cad-previews.md`).
@@ -157,7 +162,7 @@ captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh).
 <table>
   <tr>
     <td width="50%"><a href="media/screenshots/vault-explorer.png"><img src="media/screenshots/vault-explorer.png" alt="Vault explorer: the project group ROVER as a folder, items with state and lock owner, and the detail pane of the electronics enclosure with its files" /></a><br /><sub><b>Vault explorer</b> – project groups, lock owners, one-click check-out</sub></td>
-    <td width="50%"><a href="media/screenshots/revision-files.png"><img src="media/screenshots/revision-files.png" alt="Files of the mounting bracket revision: STEP, Inventor, SolidWorks and NX files with the preview images stored in the native CAD files and the file versions" /></a><br /><sub><b>Revision files</b> – versions and previews from Inventor and SolidWorks files</sub></td>
+    <td width="50%"><a href="media/screenshots/revision-files.png"><img src="media/screenshots/revision-files.png" alt="Files of the mounting bracket revision: STEP, Inventor, SolidWorks and NX files with their formats, the preview image stored in the Inventor file, the 3D button of the STEP file and a text file in version 2" /></a><br /><sub><b>Revision files</b> – formats, versions and embedded CAD previews</sub></td>
   </tr>
   <tr>
     <td width="50%"><a href="media/screenshots/viewer-3d.png"><img src="media/screenshots/viewer-3d.png" alt="3D viewer in the browser showing the STEP model of the NIST CTC-01 mounting bracket" /></a><br /><sub><b>3D viewer</b> – STEP tessellated on the server, drawn with WebGL</sub></td>
@@ -174,6 +179,21 @@ captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh).
 </table>
 
 ## Quick start
+
+**Install on Linux with Docker** – TeamCraft and PostgreSQL in containers,
+data in Docker volumes, nothing to build:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rudalabs/TeamCraft/main/deploy/install.sh | bash
+```
+
+The script installs into `/opt/teamcraft` (`--user`: `~/teamcraft`), generates
+the database password, starts everything on <http://localhost:8080> and offers
+to create the first administrator. Run it again to upgrade; `--dry-run` shows
+every step first. Details, backups and TLS:
+[Install with Docker](https://rudalabs.github.io/TeamCraft/admin/docker.html).
+
+**From source** (development, macOS, Windows):
 
 ```sh
 git clone https://github.com/rudalabs/TeamCraft.git && cd TeamCraft

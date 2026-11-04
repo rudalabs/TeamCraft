@@ -1,5 +1,14 @@
 # Getting started
 
+## Install on Linux with Docker
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rudalabs/TeamCraft/main/deploy/install.sh | bash
+```
+
+TeamCraft and PostgreSQL run as containers; the script offers to create the
+administrator at the end. See [Install with Docker](../admin/docker.md).
+
 ## Build and run
 
 You need Rust (stable, via [rustup](https://rustup.rs)) and PostgreSQL 16 or newer.

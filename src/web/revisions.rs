@@ -83,6 +83,15 @@ pub async fn show(
                 )
             })
         });
+    // The versions this page shows: uploads from its forms are based on them,
+    // so a file that changed meanwhile is refused instead of overwritten.
+    let file_bases = serde_json::Value::Object(
+        file_list
+            .iter()
+            .map(|f| (f.filename.clone(), json!(f.version)))
+            .collect(),
+    )
+    .to_string();
     // Every file together with its version history (newest first).
     let attachments: Vec<serde_json::Value> = file_list
         .into_iter()
@@ -192,6 +201,7 @@ pub async fn show(
             "is_latest": latest_id == Some(rev.id),
             "latest_id": latest_id,
             "files": attachments,
+            "file_bases": file_bases,
             "native_without_preview": native_without_preview,
             "lines": lines,
             "where_used": where_used,
@@ -469,6 +479,11 @@ pub(crate) async fn receive_uploads(
             }
             None => {}
         }
+    }
+    // Optimistic concurrency: the versions the uploads are based on.
+    if let Some(raw) = received.fields.get("bases") {
+        let bases = files::parse_bases(raw)?;
+        files::apply_bases(&mut received.uploads, &bases);
     }
     Ok(received)
 }

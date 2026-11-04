@@ -1,0 +1,24 @@
+# Build context of the Dockerfile: only what the server build needs.
+# Never send secrets, local data or build output to the builder.
+.git
+.github
+.claude
+.idea
+.vscode
+.venv
+target
+desktop
+secrets
+local
+tmp
+data
+docs
+platforms
+packaging
+snap
+deploy
+tests
+media/screenshots
+**/.env
+**/*.env
+**/*.swp

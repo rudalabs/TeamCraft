@@ -162,8 +162,8 @@
   function badge(value, text) {
     var icon = null;
     if (value === "released" || value === "approved" || value === "unchanged") icon = "Green_tick.svg";
-    else if (value === "in_review" || value === "pending" || value === "modified") icon = "Yellow_circle.svg";
-    else if (value === "rejected" || value === "obsolete" || value === "cancelled") icon = "Red_cross.svg";
+    else if (value === "in_review" || value === "pending" || value === "modified" || value === "outdated") icon = "Yellow_circle.svg";
+    else if (value === "rejected" || value === "obsolete" || value === "cancelled" || value === "conflict") icon = "Red_cross.svg";
     return h("span.badge.badge-" + value, null, [
       icon ? h("img", { src: "/static/media/icons/" + icon, alt: "" }) : null,
       text || label(value)
@@ -181,7 +181,10 @@
   function toast(text, kind) {
     var el = h("div.toast" + (kind ? "." + kind : ""), { role: kind === "error" ? "alert" : "status", text: text });
     $("toasts").appendChild(el);
-    setTimeout(function () { el.remove(); }, kind === "error" ? 9000 : 4500);
+    setTimeout(function () {
+      el.classList.add("leaving"); // app.css fades it out in 150 ms
+      setTimeout(function () { el.remove(); }, 160);
+    }, kind === "error" ? 9000 : 4500);
   }
 
   /** Calls a Rust command; a 401 sends the user back to the sign-in. */
@@ -503,6 +506,46 @@
     }, { title: watching ? "Stop the notifications about " + number : "Get notified about " + number });
   }
 
+  /** "Check in all my check-outs": every revision without local changes in
+   * the workspace is checked in on the server (lock released, one by one);
+   * revisions with modified, new or conflicting files are left checked out
+   * and listed – check them in one at a time with their files. */
+  function checkInAll() {
+    var checkouts = (state.worklist && state.worklist.checkouts) || [];
+    var clean = [], skipped = [], unreadable = [];
+    run("Comparing " + checkouts.length + " check-outs with the workspace", function () {
+      return checkouts.reduce(function (chain, r) {
+        return chain.then(function () {
+          return call("workspace_status", { project: r.project_code, item: r.item_number, code: r.code }).then(function (ws) {
+            var local = ws.files.filter(function (f) { return f.state === "modified" || f.state === "new" || f.state === "conflict"; });
+            if (local.length) skipped.push({ rev: r, files: local });
+            else clean.push(r);
+          }, function (err) { unreadable.push(r.item_number + "/" + r.code + ": " + errorText(err)); });
+        });
+      }, Promise.resolve()).then(function () {
+        if (!clean.length) return { revisions: [], checked_in: 0 };
+        return api("POST", "/worklist/checkin-all", { revisions: clean.map(function (r) { return r.id; }) });
+      });
+    }).then(function (result) {
+      var failed = (result.revisions || []).filter(function (o) { return !o.ok; });
+      var body = h("div.stack", null, [
+        h("p", { text: result.checked_in + " of " + checkouts.length + " check-outs checked in – their locks are released." }),
+        skipped.length ? h("div.stack", null, [
+          h("p", { text: skipped.length + " kept checked out because of local changes – check them in one by one with their files:" }),
+          h("ul.small", null, skipped.map(function (s) {
+            return h("li", null, [h("a", { href: "#", on: { click: function (e) { e.preventDefault(); openRevision(s.rev.item_number, s.rev.code, "workspace"); } } },
+              s.rev.item_number + "/" + s.rev.code), " – " + s.files.map(function (f) { return f.name + " (" + (SYNC_LABEL[f.state] || f.state) + ")"; }).join(", ")]);
+          }))
+        ]) : null,
+        failed.length || unreadable.length ? h("div.notice.error", null, [h("strong", { text: "Problems:" }),
+          h("ul.small", null, failed.map(function (o) { return h("li", { text: o.item_number + "/" + o.code + ": " + o.error }); })
+            .concat(unreadable.map(function (t) { return h("li", { text: t }); })))]) : null
+      ]);
+      dialog("Check in all my check-outs", body, [{ label: "Close", primary: true, submit: true, onClick: function (d) { d.close(); } }]);
+      refreshWorklistCount().then(function () { if (state.view === "worklist") selectView("worklist"); renderActive(); }, function () {});
+    }, function () {});
+  }
+
   function refreshWorklistCount() {
     return api("GET", "/worklist").then(function (w) {
       state.worklist = w;
@@ -617,14 +660,16 @@
       var nav = $("navigator");
       clear(nav);
       nav.appendChild(navHead("My worklist", [
+        w.checkouts.length ? h("button.small", { type: "button", title: "Check in every check-out without local changes (releases the locks)",
+          on: { click: function () { checkInAll(); } } }, [svgIcon(ICONS.checkin), " Check in all"]) : null,
         h("button.small", { type: "button", title: "Refresh", on: { click: function () { selectView("worklist"); } } }, svgIcon(ICONS.refresh))
       ]));
       nav.appendChild(h("p.section-title", { text: "Checked out by me (" + w.checkouts.length + ")" }));
       nav.appendChild(w.checkouts.length ? h("ul.tree", null, w.checkouts.map(function (r) {
-        return h("li", null, h("div.node", { on: { click: function () { openRevision(r.item_number, r.code); } } }, [
+        return h("li", null, h("div.node", { title: "Checked out " + fmtDate(r.checked_out_at), on: { click: function () { openRevision(r.item_number, r.code); } } }, [
           h("span.twisty"), h("span.ico", { text: "🔒" }),
           h("span.label", null, [h("span.mono", { text: r.item_number + "/" + r.code }), " ", r.name]),
-          h("span.meta", null, badge(r.state))
+          h("span.meta.small.dim", { text: lockAge(r.checked_out_at) })
         ]));
       })) : h("p.empty", { text: "Nothing checked out." }));
       nav.appendChild(h("p.section-title", { text: "Waiting for my review (" + w.reviews.length + ")" }));
@@ -811,9 +856,11 @@
       }
       if (wl.checkouts.length || wl.reviews.length) {
         append(welcome, h("div.grid-2", null, [
-          h("section.panel", null, [h("h2", { text: "Checked out by me" }),
+          h("section.panel", null, [h("div.panel-head", null, [h("h2", { text: "Checked out by me" }),
+            wl.checkouts.length ? tool("Check in all", "checkin", function () { checkInAll(); }, { title: "Check in every check-out without local changes (releases the locks)" }) : null]),
             wl.checkouts.length ? table(["Revision", "Name", "Since"], wl.checkouts.map(function (r) {
-              return { cells: [h("span.mono", { text: r.item_number + "/" + r.code }), r.name, fmtDate(r.checked_out_at)], open: function () { openRevision(r.item_number, r.code); } };
+              return { cells: [h("span.mono", { text: r.item_number + "/" + r.code }), r.name,
+                h("span", { title: fmtDate(r.checked_out_at), text: lockAge(r.checked_out_at) })], open: function () { openRevision(r.item_number, r.code); } };
             })) : h("p.empty", { text: "Nothing checked out." })]),
           h("section.panel", null, [h("h2", { text: "Waiting for my review" }),
             wl.reviews.length ? table(["Change", "Title", "Submitted"], wl.reviews.map(function (c) {
@@ -1446,6 +1493,9 @@
     return Promise.all([call("workspace_status", { project: rev.project_code, item: rev.item_number, code: rev.code }), cadPrograms()]).then(function (r) {
       var ws = r[0], programs = r[1];
       var changed = ws.files.filter(function (f) { return f.state === "modified" || f.state === "new"; });
+      var outdated = ws.files.filter(function (f) { return f.state === "outdated"; });
+      var conflicts = ws.files.filter(function (f) { return f.state === "conflict"; });
+      var lockedByOther = rev.checked_out_by && rev.checked_out_by !== state.me.id;
       // STEP for the 3D preview, written by the CAD program installed here
       function stepButton(f) {
         var program = f.state !== "missing" && exportProgram(f.name, programs);
@@ -1471,17 +1521,30 @@
           ])
         ]),
         h("p.small.muted", null, ["Folder: ", h("span.mono", { text: ws.dir })]),
+        rev.checked_out_by ? h("p.small", null, [badge("lock", "🔒 " + (lockedByOther ? rev.checked_out_by_name : "You")),
+          " checked out " + fmtDate(rev.checked_out_at) + " (" + lockAge(rev.checked_out_at) + ")" +
+          (lockedByOther ? " – only they can check in right now; your local changes stay in the workspace." : "")]) : null,
         !ws.exists ? h("p.empty", { text: "Not in your workspace yet – check out (or “Get files”) to copy the files." }) :
           ws.files.length ? table(["File", "Local state", "Server version", "Size", ""], ws.files.map(function (f) {
+            var version = f.server_version ? "v" + f.server_version : "—";
+            if (f.base_version && f.server_version && f.base_version !== f.server_version) version += " (yours: v" + f.base_version + ")";
+            if (f.base_version && !f.server_version && f.state !== "new") version = "removed (yours: v" + f.base_version + ")";
             return {
-              cells: [f.local_name ? h("span", null, [f.name, " ", h("span.dim.small", { text: "← " + f.local_name, title: "Newest Creo iteration in the workspace; it is checked in as " + f.name })]) : f.name, badge(f.state), f.server_version ? "v" + f.server_version : "—", f.state === "missing" ? "—" : fmtSize(f.size),
+              cls: f.state === "conflict" ? "row-conflict" : null,
+              cells: [f.local_name ? h("span", null, [f.name, " ", h("span.dim.small", { text: "← " + f.local_name, title: "Newest Creo iteration in the workspace; it is checked in as " + f.name })]) : f.name,
+                badge(f.state, SYNC_LABEL[f.state]), version, f.state === "missing" ? "—" : fmtSize(f.size),
                 f.state !== "missing" ? h("span.row", null, [
-                  h("button.small", { type: "button", on: { click: function () { openFile(tab, f.name, true); } } }, "Open"),
+                  h("button.small", { type: "button", on: { click: function () { openLocalFile(tab, f); } } }, "Open"),
                   stepButton(f)
                 ]) : ""]
             };
           }), { numeric: [3] }) : h("p.empty", { text: "The folder is empty." }),
-        changed.length && !can.checkin ? h("p.notice", { text: changed.length + " local change(s), but you have not checked out this revision – check out first, then check in." }) : null
+        conflicts.length ? h("p.notice.error", { text: conflicts.length + " file(s) changed here and on the server since you got them: " +
+          conflicts.map(function (f) { return f.name; }).join(", ") + ". A check-in would overwrite the newer version, so the server refuses it – rename your copy, get the current files and merge your changes." }) : null,
+        outdated.length ? h("p.notice", { text: outdated.length + " file(s) have a newer version on the server: " +
+          outdated.map(function (f) { return f.name; }).join(", ") + " – “Get files” replaces them (your unchanged copies)." }) : null,
+        changed.length && !can.checkin ? h("p.notice", { text: changed.length + " local change(s), but you have not checked out this revision – " +
+          (lockedByOther ? rev.checked_out_by_name + " holds the lock; check in after they released it." : "check out first, then check in.") }) : null
       ]));
     });
   }
@@ -1499,13 +1562,77 @@
       .catch(function (e) { toast(errorText(e), "error"); });
   }
 
-  function openFile(tab, filename, local) {
+  /** Labels of the sync states of workspace files. */
+  var SYNC_LABEL = {
+    unchanged: "Up to date", modified: "Modified", outdated: "Outdated", conflict: "Conflict",
+    "new": "New", missing: "Not in workspace"
+  };
+
+  /** How long ago a lock was taken: "3 days", "5 h", "12 min", "just now". */
+  function lockAge(iso) {
+    var s = Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 1000));
+    if (!isFinite(s)) return "—";
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.floor(s / 60) + " min";
+    if (s < 86400) return Math.floor(s / 3600) + " h";
+    if (s < 172800) return "1 day";
+    return Math.floor(s / 86400) + " days";
+  }
+
+  /** Warning before opening a file someone else has checked out, or null. */
+  function foreignLockText(rev) {
+    if (!rev.checked_out_by || rev.checked_out_by === state.me.id) return null;
+    return rev.checked_out_by_name + " has checked out " + rev.item_number + "/" + rev.code + " (for " + lockAge(rev.checked_out_at) +
+      ") and may be changing it – you can look at the files, but changes you make cannot be checked in until they release it.";
+  }
+
+  /** Opens a file of the workspace tab – with a warning if it is outdated,
+   * in conflict or checked out by somebody else. */
+  function openLocalFile(tab, f) {
     var rev = tab.data.rev;
-    var ready = local ? Promise.resolve() : run("Copying " + filename + " into the workspace", function () {
-      return call("workspace_download", { project: rev.project_code, item: rev.item_number, code: rev.code });
-    });
-    ready.then(function () {
-      return call("workspace_open", { project: rev.project_code, item: rev.item_number, code: rev.code, file: filename });
+    var lockText = foreignLockText(rev);
+    function open() { openFile(tab, f.name, true, true); }
+    if (f.state === "outdated") {
+      dialog("Newer version on the server", h("div.stack", null, [
+        h("p", { text: f.name + " in your workspace is v" + (f.base_version || "?") + "; the server has " +
+          (f.server_version ? "v" + f.server_version : "removed it") + ". Get the current files first, so you do not work on an old version." }),
+        lockText ? h("p.notice", { text: lockText }) : null
+      ]), [
+        { label: "Cancel", onClick: function (d) { d.close(); } },
+        { label: "Open my copy", onClick: function (d) { d.close(); open(); } },
+        { label: "Get latest and open", primary: true, submit: true, onClick: function (d) {
+          d.close();
+          run("Getting the current files", function () {
+            return call("workspace_download", { project: rev.project_code, item: rev.item_number, code: rev.code });
+          }).then(function (r) { reportDownload(r); open(); renderActive(); }, function () {});
+        } }
+      ]);
+      return;
+    }
+    var warnings = [];
+    if (f.state === "conflict") warnings.push(f.name + " was changed here and on the server since you got it (yours: v" + (f.base_version || "?") +
+      ", server: " + (f.server_version ? "v" + f.server_version : "removed") + "). Save your work under another name before you get the current version.");
+    if (lockText) warnings.push(lockText);
+    if (!warnings.length) { open(); return; }
+    dialog(f.state === "conflict" ? "Conflicting file" : "Checked out by " + rev.checked_out_by_name,
+      h("div.stack", null, warnings.map(function (w) { return h("p", { text: w }); })), [
+        { label: "Cancel", onClick: function (d) { d.close(); } },
+        { label: "Open anyway", primary: true, submit: true, onClick: function (d) { d.close(); open(); } }
+      ]);
+  }
+
+  function openFile(tab, filename, local, warned) {
+    var rev = tab.data.rev;
+    var lockText = warned ? null : foreignLockText(rev);
+    var asked = lockText ? confirmDialog("Checked out by " + rev.checked_out_by_name, lockText, "Open anyway") : Promise.resolve(true);
+    asked.then(function (ok) {
+      if (!ok) return;
+      var ready = local ? Promise.resolve() : run("Copying " + filename + " into the workspace", function () {
+        return call("workspace_download", { project: rev.project_code, item: rev.item_number, code: rev.code });
+      });
+      return ready.then(function () {
+        return call("workspace_open", { project: rev.project_code, item: rev.item_number, code: rev.code, file: filename });
+      });
     }).catch(function (e) { if (e) toast(errorText(e), "error"); });
   }
 
@@ -1542,9 +1669,10 @@
     var rev = tab.data.rev;
     Promise.all([call("workspace_status", { project: rev.project_code, item: rev.item_number, code: rev.code }), cadPrograms()]).then(function (r) {
       var ws = r[0], programs = r[1];
-      var candidates = ws.files.filter(function (f) { return f.state === "modified" || f.state === "new"; });
+      var candidates = ws.files.filter(function (f) { return f.state === "modified" || f.state === "new" || f.state === "conflict"; });
+      // conflicting files are offered, but not ticked: the server refuses them anyway
       var boxes = candidates.map(function (f) {
-        return { name: f.name, input: h("input", { type: "checkbox", checked: true }), state: f.state };
+        return { name: f.name, input: h("input", { type: "checkbox", checked: f.state !== "conflict" }), state: f.state };
       });
       var comment = h("input", { type: "text", maxlength: "2000", placeholder: "What changed, e.g. wall thickness 2 → 2.5 mm" });
       // Like the Vault add-in or the Teamcenter integration: viewables at check-in.
@@ -1557,8 +1685,10 @@
       var body = h("div.stack", null, [
         h("p.small.muted", null, ["From ", h("span.mono", { text: ws.dir })]),
         candidates.length ? h("div.stack", null, boxes.map(function (b) {
-          return h("label.check", null, [b.input, b.name, " ", badge(b.state)]);
+          return h("label.check", null, [b.input, b.name, " ", badge(b.state, SYNC_LABEL[b.state])]);
         })) : h("p.empty", { text: "No modified or new files – checking in only releases the lock." }),
+        boxes.some(function (b) { return b.state === "conflict"; }) ? h("p.notice.error", { text: "Conflict: these files changed on the server since you got them. " +
+          "The server refuses to overwrite the newer version (nothing is stored) – save your copy under another name, get the current files and merge." }) : null,
         stepNote,
         field("Comment", comment, "stored with every new version")
       ]);
@@ -1640,6 +1770,9 @@
     var desc = h("textarea", { maxlength: "20000", placeholder: "What is released and why" });
     var others = h("input", { type: "text", placeholder: "user names, comma-separated" });
     var submitNow = h("input", { type: "checkbox", checked: true });
+    // A change releases a whole product: unreleased BOM children, drawings and
+    // specifications have to go with it (the server blocks the submit otherwise).
+    var withDeps = h("input", { type: "checkbox", checked: true });
     var reviewerBox = h("div.stack", null, h("p.loading", { text: "Loading the members of " + (rev.project_code || "the project group") }));
     var boxes = [];
     if (rev.project_code) {
@@ -1664,6 +1797,7 @@
       mine ? h("p.notice", { text: "You still hold the check-out. Check in your workspace changes first – submitting releases the lock without uploading anything." }) : null,
       field("Title", title),
       h("div.grid-2", null, [field("Priority", priority), h("label.check", null, [submitNow, "Submit for review now"])]),
+      h("label.check", null, [withDeps, "Include unreleased dependencies", h("span.dim", { text: " – BOM children, drawings and specifications in work, level by level" })]),
       field("Description", desc),
       h("h3", { text: "Reviewers" }),
       h("p.hint", { text: "All reviewers must approve; you cannot review your own change (four-eyes principle)." }),
@@ -1682,6 +1816,8 @@
           api("POST", "/changes", { title: title.value, description: desc.value, priority: priority.value }).then(function (c) {
             number = c.number;
             return api("POST", "/changes/" + enc(number) + "/items", { item: rev.item_number, revision: rev.code });
+          }).then(function () {
+            return withDeps.checked ? api("POST", "/changes/" + enc(number) + "/dependencies") : null;
           }).then(function () {
             return reviewers.reduce(function (p, username) {
               return p.then(function () { return api("POST", "/changes/" + enc(number) + "/reviewers", { username: username }); });
@@ -1812,6 +1948,35 @@
       tab.data.items.length ? table(["Revision", "Name", "State"], tab.data.items.map(function (i) {
         return { cells: [h("span.mono", { text: i.item_number + "/" + i.code }), i.name, h("span", null, [badge(i.state), i.checked_out_by_name ? h("span.badge.badge-lock", { text: "🔒 " + i.checked_out_by_name }) : null])], open: function () { openRevision(i.item_number, i.code); } };
       })) : h("p.empty", { text: "No revisions yet." })]));
+    // Release readiness: unreleased dependencies block the submit.
+    if ((c.status === "draft" || c.status === "rejected") && tab.data.items.length) {
+      var readyPanel = h("section.panel", null, [h("h2", { text: "Release readiness" }), h("p.muted.small", { text: "Checking …" })]);
+      body.appendChild(readyPanel);
+      api("GET", "/changes/" + enc(c.number) + "/readiness").then(function (r) {
+        clear(readyPanel);
+        var rows = r.blockers.concat(r.warnings);
+        var addable = r.blockers.some(function (d) { return d.addable; });
+        append(readyPanel, [
+          h("div.row", null, [h("h2", { text: "Release readiness" }),
+            owner && c.status === "draft" && addable ? h("button.primary.small", { type: "button", on: { click: function () {
+              run("Adding the dependencies", function () { return api("POST", "/changes/" + enc(c.number) + "/dependencies"); })
+                .then(function (res) { toast(res.added.length ? "Added " + res.added.join(", ") : "Nothing to add"); reloadActive(); }, function () {});
+            } } }, "Add all to this change") : null]),
+          r.ready
+            ? h("p.notice.ok", { text: "Ready: every BOM line and reference is released or part of this change." })
+            : h("p.notice.error", { text: r.blockers.length + (r.blockers.length === 1 ? " dependency is" : " dependencies are") + " not released – add them to this change or release them first, then submit." }),
+          rows.length ? table(["Dependency", "Name", "Needed by", "State"], rows.map(function (d) {
+            var note = d.other_change ? " in " + d.other_change : d.problem === "obsolete" ? " – obsolete, replace it" : !d.blocking ? " – found by the CAD file scan" : "";
+            return {
+              cells: [h("span.mono", { text: d.item_number + "/" + d.latest_code }), d.item_name,
+                h("span", null, [h("span.mono", { text: d.revision_label }), " " + relationText(d.relation)]),
+                h("span", null, [badge(d.latest_state), h("span.dim", { text: note })])],
+              open: function () { openRevision(d.item_number, d.latest_code); }
+            };
+          })) : null
+        ]);
+      }, function (err) { clear(readyPanel); append(readyPanel, [h("h2", { text: "Release readiness" }), h("p.notice.error", { text: errorText(err) })]); });
+    }
     // Impact analysis: the items that depend on the revisions of this change.
     var impactPanel = h("section.panel", null, [h("h2", { text: "Impact analysis" }), h("p.muted.small", { text: "Loading …" })]);
     body.appendChild(impactPanel);
@@ -2101,7 +2266,7 @@
   }
 
   /** BOM lines for the parts the new assemblies reference (quantity 1). */
-  function bomFromReferences(created, progress) {
+  function bomFromReferences(created, progress, failed) {
     var lines = 0;
     var assemblies = created.filter(function (c) { return c.item.type === "assembly"; });
     return assemblies.reduce(function (chain, c, i) {
@@ -2112,20 +2277,52 @@
           var children = [];
           (refs.files || []).forEach(function (f) {
             if (f.format_kind !== "assembly") return;
-            f.references.forEach(function (r) {
-              var m = r.matches.filter(function (x) { return !x.same_revision; })[0];
+            (f.references || []).forEach(function (r) {
+              var m = (r.matches || []).filter(function (x) { return !x.same_revision; })[0];
               if (m && m.item_number !== c.rev.item_number && children.indexOf(m.item_number) < 0) children.push(m.item_number);
             });
           });
-          return children.reduce(function (ch, child) {
-            return ch.then(function () {
-              return api("POST", base + "/bom", { child: child, quantity: 1, notes: "From the CAD references – check the quantity" })
-                .then(function () { lines++; }, function () { /* e.g. it would be circular */ });
+          if (!children.length) return;
+          return api("POST", base + "/checkout").then(function () {
+            var added = children.reduce(function (ch, child) {
+              return ch.then(function () {
+                return api("POST", base + "/bom", { child: child, quantity: 1, notes: "From the CAD references – check the quantity" })
+                  .then(function () { lines++; }, function () { /* e.g. it would be circular */ });
+              });
+            }, Promise.resolve());
+            // whatever happened while adding the lines: the lock is released again
+            return added.then(function () { return checkInImported(c.rev); }, function (err) {
+              return checkInImported(c.rev).then(function () { throw err; });
             });
-          }, Promise.resolve());
+          }).catch(function (err) { failed.push(c.rev.item_number + ": BOM lines – " + errorText(err)); });
         }, function () { /* no references */ });
       });
     }, Promise.resolve()).then(function () { return lines; });
+  }
+
+  /** Check-in of an imported item without new files (releases the lock). */
+  function checkInImported(rev) {
+    return api("POST", "/items/" + enc(rev.item_number) + "/revisions/" + enc(rev.code) + "/checkin");
+  }
+
+  /** Releases the check-outs of items an import of this folder created –
+   * also those an earlier run left checked out when it was interrupted. Only
+   * the check-out taken when the item was created (same timestamp) counts:
+   * an item someone checked out again later to work on it keeps its lock. */
+  function releaseImported(log, failed) {
+    var numbers = Object.keys(log).map(function (k) { return log[k]; });
+    if (!numbers.length) return Promise.resolve();
+    return refreshWorklistCount().then(function (w) {
+      var ids = w.checkouts.filter(function (r) {
+        return numbers.indexOf(r.item_number) >= 0 && r.checked_out_at === r.created_at;
+      }).map(function (r) { return r.id; });
+      if (!ids.length) return;
+      return api("POST", "/worklist/checkin-all", { revisions: ids }).then(function (result) {
+        (result.revisions || []).forEach(function (o) {
+          if (!o.ok) failed.push(o.item_number + ": check-in – " + o.error);
+        });
+      });
+    }).catch(function (err) { failed.push("Releasing the check-outs: " + errorText(err)); });
   }
 
   function importFolderDialog() {
@@ -2200,24 +2397,24 @@
             created.push({ rev: rev, item: it });
             return call("upload_files", { item: rev.item_number, code: rev.code, paths: it.files.map(function (f) { return f.path; }), comment: "Imported from " + scanned.folder_name })
               .then(function () { files += it.files.length; },
-                function (err) { failed.push(rev.item_number + " (" + it.name + "): files not uploaded – " + errorText(err)); });
+                function (err) { failed.push(rev.item_number + " (" + it.name + "): files not uploaded – " + errorText(err)); })
+              // Checked in right away: an import that is interrupted (app closed,
+              // sign-in expired, network gone, an error in a later step) never
+              // leaves the items created so far in "My check-outs".
+              .then(function () { return checkInImported(rev); })
+              .then(function () { checkedIn++; },
+                function (err) { failed.push(rev.item_number + ": check-in – " + errorText(err)); });
           }, function (err) { failed.push(it.name + ": " + errorText(err)); });
         });
       }, Promise.resolve()).then(function () {
-        return bom.checked ? bomFromReferences(created, progress) : 0;
-      }).then(function (lines) {
-        // nothing stays locked: every new item is checked in
-        return created.reduce(function (chain, c, i) {
-          return chain.then(function () {
-            progress(i + 1, created.length, "Checking in " + c.rev.item_number);
-            return api("POST", "/items/" + enc(c.rev.item_number) + "/revisions/" + enc(c.rev.code) + "/checkin")
-              .then(function () { checkedIn++; },
-                function (err) { failed.push(c.rev.item_number + ": check-in – " + errorText(err)); });
-          });
-        }, Promise.resolve()).then(function () { return lines; });
+        // the assemblies are checked out once more for their BOM lines – and always checked in again
+        return bom.checked ? bomFromReferences(created, progress, failed) : 0;
       }).catch(function (err) {
         failed.push(errorText(err));
         return 0;
+      }).then(function (lines) {
+        // Items of this folder that an earlier, interrupted run left checked out.
+        return releaseImported(log, failed).then(function () { return lines; });
       }).then(function (lines) {
         running = false;
         bar.classList.add("hidden");
