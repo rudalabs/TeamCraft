@@ -76,6 +76,11 @@ promised.
   Content-addressed storage (SHA-256) stores identical files once.
 - **Lifecycle.** WIP → In Review → Released → Obsolete with revision letters
   after ASME Y14.35; released data never changes, the next revision does.
+- **Change requests (ECR).** Anybody – shop floor, simulation, test, viewers
+  included – reports a problem on an item or a file (with screenshots or a
+  PDF), discusses it; the CAD editors of the project group triage, accept,
+  defer or reject. An accepted request becomes a draft change order with the
+  in-work revisions and is *implemented* when that change order is released.
 - **Change orders.** Collect revisions, assign reviewers, four-eyes approval,
   all revisions released atomically, impact analysis before approval.
 - **Structure.** Multi-level BOM with mass and cost roll-up, revision rules *latest*, *latest released* and *as
@@ -106,8 +111,8 @@ promised.
 - **Teams.** Viewer, CAD editor and admin roles; self-service project groups
   managed by their creators; single sign-on with any OpenID Connect
   provider and group synchronisation.
-- **Notifications.** In-app bell, e-mail and Mattermost; watch items and
-  changes.
+- **Notifications.** In-app bell, e-mail and Mattermost; watch items,
+  changes and change requests.
 - **Desktop app.** A Tauri client for Linux, macOS and Windows with a local
   workspace (one folder per project group) for check-out and check-in, the
   download of whole project groups and an import wizard for existing CAD

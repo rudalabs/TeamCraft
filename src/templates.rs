@@ -28,6 +28,9 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "changes/list.html",
     "changes/new.html",
     "changes/show.html",
+    "requests/list.html",
+    "requests/new.html",
+    "requests/show.html",
     "projects/list.html",
     "projects/show.html",
     "files/preview.html",
@@ -51,6 +54,7 @@ pub fn environment(instance_name: &str) -> Result<Environment<'static>, minijinj
     env.add_filter("num", filter_num);
     env.add_filter("filesize", filter_filesize);
     env.add_filter("label", filter_label);
+    env.add_filter("urlencode", |value: String| util::pct_encode(&value));
     env.add_global("instance_name", instance_name.to_string());
     env.add_global("version", env!("CARGO_PKG_VERSION"));
     // cache busting of the embedded stylesheets, scripts and logos
@@ -150,6 +154,17 @@ mod tests {
             "description": "why", "priority": "high", "status": status, "created_by": ME,
             "created_by_name": "Max Muster", "created_at": TS, "updated_at": TS,
             "submitted_at": TS, "closed_at": null
+        })
+    }
+
+    fn request(status: &str) -> Value {
+        json!({
+            "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "number": "ECR-000001", "title": "Crack <at> the weld",
+            "description": "Problem\nproposal", "reason": "manufacturing", "priority": "high", "status": status,
+            "requested_by": OTHER, "requested_by_name": "Erika", "assignee": ME, "assignee_name": "Max Muster",
+            "assignee_username": "max", "decision_comment": "not now", "decided_by": ME,
+            "decided_by_name": "Max Muster", "decided_at": TS, "due_date": "2026-12-01", "created_at": TS,
+            "updated_at": TS, "closed_at": null, "item_count": 1
         })
     }
 
@@ -278,7 +293,12 @@ mod tests {
                            "open_changes": 1, "files": 4, "stored_bytes": 2048 },
                 "checkouts": [revision("in_work", true)], "reviews": [change("in_review")],
                 "my_changes": [change("draft")], "activity": [audit_entry()], "impacts": [impact(None)],
+                "assigned_requests": [request("in_triage")], "my_requests": [request("new")],
             })),
+        );
+        assert!(
+            html.contains("Requests assigned to me") && html.contains("due 2026-12-01"),
+            "change requests on the dashboard"
         );
         assert!(html.contains("Saved &lt;ok&gt;"), "flash is escaped");
         assert!(html.contains("2 KiB"));
@@ -470,6 +490,7 @@ mod tests {
                     "history": [audit_entry()], "projects": [project()], "units": units(),
                     "references": references.clone(), "open_impacts": [impact(None)],
                     "resolved_impacts": [impact(Some("acknowledged"))],
+                    "open_requests": [request("in_triage")],
                     "can": can_all.clone(), "max_upload_mb": 512,
                     "lifecycle": {
                         "states": crate::domain::LifecycleState::ALL,
@@ -513,6 +534,9 @@ mod tests {
                 "Hub.SLDDRW",
                 "Stage.SLDDRW references Stage.SLDASM",
                 "fit unchanged &lt;ok&gt;",
+                "Request change…",
+                "1 open change request on",
+                "file=nozzle.step",
             ] {
                 assert!(html.contains(expected), "revision page shows {expected}");
             }
@@ -619,6 +643,7 @@ mod tests {
                 "changes/show.html",
                 with_common(json!({
                     "change": change(status), "status_label": "Draft",
+                    "implements": [request("accepted")],
                     "items": [{ "revision_id": OTHER, "item_id": ME, "item_number": "PRT-000001", "code": "A",
                                 "name": "Bracket", "state": "in_work", "checked_out_by_name": "Erika" }],
                     "reviews": [{ "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
@@ -636,6 +661,96 @@ mod tests {
                 html.contains("Impact analysis") && html.contains("uses PRT-000001 in its BOM"),
                 "impact analysis on the change page"
             );
+            assert!(
+                html.contains("Implements") && html.contains("ECR-000001"),
+                "the change page names the request it implements"
+            );
+        }
+
+        // change requests (ECR)
+        let html = render(
+            &env,
+            "requests/list.html",
+            with_common(json!({
+                "requests": [request("new"), request("implemented")],
+                "filter": { "status": "open", "scope": "mine", "item": "PRT-000001" },
+                "statuses": crate::domain::RequestStatus::ALL.iter()
+                    .map(|s| json!({ "value": s.as_str(), "label": s.label() })).collect::<Vec<_>>(),
+                "base_query": "status=open&scope=mine&item=PRT-000001", "pagination": page(),
+            })),
+        );
+        assert!(html.contains("ECR-000001") && html.contains("Crack &lt;at&gt; the weld"));
+        assert!(html.contains("value=\"mine\" selected") && html.contains("In Triage"));
+        let reasons = json!(crate::domain::RequestReason::ALL
+            .iter()
+            .map(|r| json!({ "value": r.as_str(), "label": r.label() }))
+            .collect::<Vec<_>>());
+        let html = render(
+            &env,
+            "requests/new.html",
+            with_common(json!({
+                "form": { "title": "", "description": "Found in nozzle.step:\n\n", "reason": "defect",
+                          "priority": "normal", "due_date": "", "item_number": "", "revision_id": OTHER,
+                          "note": "File: nozzle.step" },
+                "error": "Title must not be empty.", "priorities": ["low", "normal"], "reasons": reasons,
+                "revision": revision("released", false),
+            })),
+        );
+        assert!(html.contains("PRT-000001/B") && html.contains("File: nozzle.step"));
+        assert!(html.contains("value=\"defect\" selected") && html.contains("Raise request"));
+        let request_item = json!({
+            "item_id": ME, "item_number": "PRT-000001", "item_type": "part", "project_id": ROCKET,
+            "project_code": "ROCKET", "revision_id": OTHER, "revision_code": "B", "revision_state": "released",
+            "name": "Bracket <b>", "latest_revision_id": OTHER, "latest_code": "C", "latest_state": "in_work",
+            "note": "weld seam" });
+        let attachment = |ct: &str, name: &str| {
+            json!({ "id": OTHER, "request_id": ME, "filename": name, "content_type": ct, "size_bytes": 2048,
+                    "sha256": "ab".repeat(32), "uploaded_by": ME, "uploaded_by_name": "Max", "uploaded_at": TS })
+        };
+        let can_all = json!({ "edit": true, "start_triage": true, "decide": true, "assign": true, "reopen": true,
+                              "withdraw": true, "implement": true, "comment": true, "attach": true });
+        for status in [
+            "new",
+            "in_triage",
+            "accepted",
+            "rejected",
+            "deferred",
+            "implemented",
+            "withdrawn",
+        ] {
+            let html = render(
+                &env,
+                "requests/show.html",
+                with_common(json!({
+                    "request": request(status), "status_label": "New", "reason_label": "Defect / error",
+                    "items": [request_item.clone()], "in_work": [request_item.clone()],
+                    "comments": [{ "id": OTHER, "author_id": OTHER, "author_name": "Erika",
+                                   "body": "Seen on <three> parts", "created_at": TS }],
+                    "attachments": [attachment("image/png", "crack.png"), attachment("application/pdf", "report.pdf")],
+                    "images": [attachment("image/png", "crack.png")],
+                    "changes": [change("draft")], "open_changes": [change("draft")], "candidates": [user()],
+                    "history": [audit_entry()], "watching": false, "can": can_all.clone(),
+                    "priorities": ["low", "normal"], "reasons": reasons.clone(), "max_attachment_mb": 10,
+                })),
+            );
+            for expected in [
+                "Crack &lt;at&gt; the weld",
+                "Seen on &lt;three&gt; parts",
+                "Create change order",
+                "PRT-000001/C",
+                "Link an open change order",
+                "name=\"decision\" value=\"defer\"",
+                "/request-attachments/",
+                "?inline=1",
+                "enctype=\"multipart/form-data\"",
+                "CHG-000001",
+                "weld seam",
+            ] {
+                assert!(
+                    html.contains(expected),
+                    "request page ({status}) shows {expected}"
+                );
+            }
         }
 
         render(

@@ -9,7 +9,7 @@
 - [Vault, check-out and check-in](guide/vault.md)
 - [Files, versions and 3D preview](guide/files.md)
 - [BOM, references and change propagation](guide/structure.md)
-- [Change orders, reviews and notifications](guide/changes.md)
+- [Change requests, change orders and notifications](guide/changes.md)
 - [Desktop app](guide/desktop.md)
 - [Manual test tour](guide/tour.md)
 

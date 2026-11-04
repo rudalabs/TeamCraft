@@ -160,6 +160,7 @@ fn main() {
             commands::save_package,
             commands::save_stl,
             commands::upload_files,
+            commands::upload_request_attachment,
             commands::cad_programs,
             commands::cad_export_step,
             commands::scan_folder,

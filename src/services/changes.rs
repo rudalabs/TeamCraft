@@ -29,11 +29,11 @@ use crate::{
     services::{
         audit, impacts, next_counter,
         notifications::{self, Notice},
-        revisions, users, Page,
+        requests, revisions, users, Page,
     },
 };
 
-const CHANGE_SELECT: &str = "
+pub(crate) const CHANGE_SELECT: &str = "
     SELECT c.id, c.number, c.title, c.description, c.priority, c.status,
            c.created_by, u.display_name AS created_by_name,
            c.created_at, c.updated_at, c.submitted_at, c.closed_at
@@ -288,11 +288,23 @@ pub struct ChangeInput {
 }
 
 pub async fn create(pool: &PgPool, actor: &Actor, input: ChangeInput) -> AppResult<Change> {
+    let mut tx = pool.begin().await?;
+    let id = create_in(&mut tx, actor, input).await?;
+    tx.commit().await?;
+    get(pool, id).await
+}
+
+/// Creates a draft change inside the caller's transaction (also used when an
+/// accepted change request creates its change order) and returns its id.
+pub(crate) async fn create_in(
+    tx: &mut PgConnection,
+    actor: &Actor,
+    input: ChangeInput,
+) -> AppResult<Uuid> {
     actor.require(Role::Editor)?;
     let title = domain::require_text("Title", &input.title, 200)?;
     let description = domain::limit_text("Description", &input.description, 20_000)?;
-    let mut tx = pool.begin().await?;
-    let number = domain::format_change_number(next_counter(&mut tx, "change").await?);
+    let number = domain::format_change_number(next_counter(&mut *tx, "change").await?);
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO changes (id, number, title, description, priority, status, created_by)
@@ -307,7 +319,7 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: ChangeInput) -> AppResu
     .execute(&mut *tx)
     .await?;
     audit::record(
-        &mut tx,
+        &mut *tx,
         Some(actor),
         "change.create",
         "change",
@@ -316,8 +328,7 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: ChangeInput) -> AppResu
         json!({ "priority": input.priority.as_str() }),
     )
     .await?;
-    tx.commit().await?;
-    get(pool, id).await
+    Ok(id)
 }
 
 pub async fn update(
@@ -363,10 +374,23 @@ pub async fn add_item(
     revision_id: Uuid,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
+    add_item_in(&mut tx, actor, change_id, revision_id).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// [`add_item`] inside the caller's transaction. User errors are raised
+/// before anything is written, so the caller may skip a revision and go on.
+pub(crate) async fn add_item_in(
+    tx: &mut PgConnection,
+    actor: &Actor,
+    change_id: Uuid,
+    revision_id: Uuid,
+) -> AppResult<String> {
+    let change = lock(&mut *tx, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
-    let rev = revisions::lock(&mut tx, revision_id).await?;
+    let rev = revisions::lock(&mut *tx, revision_id).await?;
     // Only members of the item's project group may put it up for release.
     revisions::ensure_project_access(&rev, actor)?;
     if revisions::state_of(&rev) != LifecycleState::InWork {
@@ -400,9 +424,9 @@ pub async fn add_item(
     .await?
     .rows_affected();
     if inserted > 0 {
-        touch(&mut tx, change_id).await?;
+        touch(&mut *tx, change_id).await?;
         audit::record(
-            &mut tx,
+            &mut *tx,
             Some(actor),
             "change.add_item",
             "change",
@@ -412,8 +436,7 @@ pub async fn add_item(
         )
         .await?;
     }
-    tx.commit().await?;
-    Ok(())
+    Ok(revisions::label(&rev))
 }
 
 pub async fn remove_item(
@@ -827,6 +850,8 @@ pub async fn review(
             )
             .await?;
             tell_item_watchers(&mut tx, actor, &change, &released, &people).await?;
+            // The accepted change requests this change implements are done.
+            requests::on_change_released(&mut tx, actor, &change).await?;
         }
     }
     tx.commit().await?;

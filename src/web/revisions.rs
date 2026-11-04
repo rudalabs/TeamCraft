@@ -21,7 +21,8 @@ use crate::{
     models::FileRecord,
     preview::PreviewFormat,
     services::{
-        audit, bom, changes, files, impacts, items, notifications, projects, references, revisions,
+        audit, bom, changes, files, impacts, items, notifications, projects, references, requests,
+        revisions,
     },
     thumbnail, util, AppState,
 };
@@ -54,6 +55,7 @@ pub async fn show(
         watching,
         rev_changes,
         projects,
+        open_requests,
     ) = tokio::try_join!(
         items::revisions(&st.db, item.id),
         files::versions_of_revision(&st.db, id),
@@ -70,6 +72,8 @@ pub async fn show(
         changes::for_revision(&st.db, id),
         // target groups for moving the item (only groups the user may edit)
         projects::editable_by(&st.db, &ctx.me),
+        // change requests (ECR) on the item that are not finished
+        requests::open_for_item(&st.db, item.id),
     )?;
     let favorite = crate::services::personal::is_favorite(&st.db, ctx.me.id, item.id).await?;
     // Native CAD files can only be viewed in 3D through a neutral export.
@@ -179,6 +183,7 @@ pub async fn show(
             "favorite": favorite,
             "resolved_impacts": resolved_impacts,
             "changes": rev_changes,
+            "open_requests": open_requests,
             "open_change": open_change,
             "drafts": drafts,
             "history": history,

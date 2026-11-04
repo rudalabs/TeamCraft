@@ -5,6 +5,7 @@
 //! `GET /api/v1/items/PRT-000042/revisions/B`. The code `latest` selects the
 //! newest revision.
 
+mod change_requests;
 mod personal;
 
 use axum::{
@@ -27,7 +28,7 @@ use crate::{
     models::Revision,
     services::{
         audit, bom, changes, desktop, files, impacts, imports, items, notifications, package,
-        projects, references, revisions, stats, users, Page,
+        projects, references, requests, revisions, stats, users, Page,
     },
     web, AppState,
 };
@@ -37,6 +38,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .unwrap_or(usize::MAX)
         .saturating_add(1024 * 1024);
     let import_limit = imports::MAX_STEP_BYTES + 1024 * 1024;
+    let attachment_limit = requests::MAX_ATTACHMENT_BYTES + 1024 * 1024;
     Router::new()
         .route("/", get(index))
         .route("/me", get(me))
@@ -156,6 +158,62 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{number}/submit", post(submit_change))
         .route("/changes/{number}/review", post(review_change))
         .route("/changes/{number}/withdraw", post(withdraw_change))
+        .route(
+            "/change-requests",
+            get(change_requests::list).post(change_requests::create),
+        )
+        .route(
+            "/change-requests/{number}",
+            get(change_requests::get).patch(change_requests::update),
+        )
+        .route(
+            "/change-requests/{number}/comments",
+            post(change_requests::comment),
+        )
+        .route(
+            "/change-requests/{number}/items",
+            post(change_requests::add_item),
+        )
+        .route(
+            "/change-requests/{number}/triage",
+            post(change_requests::triage),
+        )
+        .route(
+            "/change-requests/{number}/assign",
+            post(change_requests::assign),
+        )
+        .route(
+            "/change-requests/{number}/decide",
+            post(change_requests::decide),
+        )
+        .route(
+            "/change-requests/{number}/reopen",
+            post(change_requests::reopen),
+        )
+        .route(
+            "/change-requests/{number}/withdraw",
+            post(change_requests::withdraw),
+        )
+        .route(
+            "/change-requests/{number}/create-change",
+            post(change_requests::create_change),
+        )
+        .route(
+            "/change-requests/{number}/link-change",
+            post(change_requests::link_change),
+        )
+        .route(
+            "/change-requests/{number}/attachments",
+            post(change_requests::attach).layer(DefaultBodyLimit::max(attachment_limit)),
+        )
+        .route(
+            "/change-requests/{number}/watch",
+            post(change_requests::watch).delete(change_requests::watch),
+        )
+        .route(
+            "/change-request-attachments/{id}/content",
+            get(change_requests::attachment_content),
+        )
         .fallback(not_found)
 }
 
@@ -197,7 +255,7 @@ async fn index() -> Json<Value> {
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
             "GET    /api/v1/me",
-            "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, dependents to check (impacts), statistics",
+            "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
             "GET    /api/v1/projects",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?}",
@@ -263,7 +321,23 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/changes/{number}/reviewers                {username}",
             "POST   /api/v1/changes/{number}/submit",
             "POST   /api/v1/changes/{number}/review                   {decision: approve|reject, comment?}",
-            "POST   /api/v1/changes/{number}/withdraw"
+            "POST   /api/v1/changes/{number}/withdraw",
+            "GET    /api/v1/change-requests?status=open|all|<status>&scope=mine|assigned&item=&limit=&offset=",
+            "POST   /api/v1/change-requests                           {title, description?, reason?, priority?, due_date?, items?: [{item, revision?, note?}]} – any signed-in user",
+            "GET    /api/v1/change-requests/{number}                  request, items, comments, attachments, change orders, history, what I may do",
+            "PATCH  /api/v1/change-requests/{number}                  {title?, description?, reason?, priority?, due_date?}",
+            "POST   /api/v1/change-requests/{number}/comments         {body} – any signed-in user",
+            "POST   /api/v1/change-requests/{number}/items            {item, revision?, note?}",
+            "POST   /api/v1/change-requests/{number}/triage           new → in triage (CAD editors of the affected groups, admins)",
+            "POST   /api/v1/change-requests/{number}/assign           {username|null}",
+            "POST   /api/v1/change-requests/{number}/decide           {decision: accept|reject|defer, comment?}",
+            "POST   /api/v1/change-requests/{number}/reopen           deferred → in triage",
+            "POST   /api/v1/change-requests/{number}/withdraw         the requester, before the decision",
+            "POST   /api/v1/change-requests/{number}/create-change    {title?, priority?} – draft change order with the in-work revisions of the affected items",
+            "POST   /api/v1/change-requests/{number}/link-change      {change} – link an open change order",
+            "POST   /api/v1/change-requests/{number}/attachments      multipart 'file': PNG, JPEG, GIF, WebP or PDF, up to 10 MiB",
+            "GET    /api/v1/change-request-attachments/{id}/content",
+            "POST   /api/v1/change-requests/{number}/watch            watch a change request (DELETE: stop)"
         ]
     }))
 }
@@ -297,6 +371,8 @@ async fn worklist(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult
         "impacts": impacts::open_for(&st.db, &me).await?,
         "notifications_unread": notifications::unread_count(&st.db, me.id).await?,
         "my_changes": changes::open_by(&st.db, me.id).await?,
+        "requests_assigned": requests::assigned_to(&st.db, me.id).await?,
+        "my_requests": requests::open_by(&st.db, me.id).await?,
         "stats": stats::load(&st.db).await?,
     })))
 }
@@ -552,9 +628,11 @@ async fn get_revision(
     let attachments = files::list(&st.db, rev.id).await?;
     let lines = bom::lines(&st.db, rev.id).await?;
     let rev_changes = changes::for_revision(&st.db, rev.id).await?;
-    Ok(Json(
-        json!({ "revision": rev, "files": attachments, "bom": lines, "changes": rev_changes }),
-    ))
+    let open_requests = requests::open_for_item(&st.db, rev.item_id).await?;
+    Ok(Json(json!({
+        "revision": rev, "files": attachments, "bom": lines, "changes": rev_changes,
+        "open_requests": open_requests,
+    })))
 }
 
 #[derive(Deserialize)]

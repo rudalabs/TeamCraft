@@ -325,6 +325,21 @@ dl.props dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .badge-viewer { color: var(--text-dim); }
 .badge-lock { color: var(--warn); background: var(--warn-soft); }
 .badge-member { color: var(--ok); }
+/* change requests (ECR) */
+.badge-new { color: var(--link); border-color: color-mix(in srgb, var(--link) 40%, transparent); }
+.badge-in_triage { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.badge-accepted, .badge-implemented { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
+.badge-deferred, .badge-withdrawn, .badge-reason { color: var(--text-dim); }
+.badge-withdrawn img { opacity: 0.55; filter: grayscale(1); }
+.badge-count { margin-left: 0.3rem; padding: 0 0.45rem; color: var(--warn); background: var(--warn-soft); }
+
+/* discussion thread of a change request */
+ol.thread { list-style: none; margin: 0 0 0.9rem; padding: 0; display: grid; gap: 0.6rem; }
+.thread-entry { padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px; background: var(--surface-sunken); min-width: 0; overflow-wrap: anywhere; }
+.thread-requester { border-left-color: var(--link); }
+.thread-meta { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.3rem; }
+.attachment-thumbs { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.8rem; }
+.attachment-thumbs img { width: 9rem; height: 6.5rem; object-fit: cover; display: block; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
 
 /* File format chips (src/cadformat.rs); the kind of the format sets the colour. */
 .fmt {

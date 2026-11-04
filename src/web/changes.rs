@@ -16,7 +16,7 @@ use super::{
 use crate::{
     domain::{ChangeStatus, Decision, LifecycleState, Priority, Role},
     error::{AppError, AppResult},
-    services::{audit, changes, impacts, items, notifications, revisions, users, Page},
+    services::{audit, changes, impacts, items, notifications, requests, revisions, users, Page},
     AppState,
 };
 
@@ -174,6 +174,7 @@ pub async fn show(
     let revision_ids: Vec<Uuid> = affected.iter().map(|i| i.revision_id).collect();
     let impact = impacts::analysis(&st.db, &revision_ids).await?;
     let watching = notifications::is_watching(&st.db, ctx.me.id, "change", id).await?;
+    let implements = requests::for_change(&st.db, id).await?;
     let status = changes::status_of(&change);
     let me = &ctx.me;
     let is_owner = me.can_edit() && (change.created_by == me.id || me.is_admin());
@@ -209,6 +210,7 @@ pub async fn show(
             "status_label": status.label(),
             "impact": impact,
             "watching": watching,
+            "implements": implements,
             "items": affected,
             "reviews": reviews,
             "candidates": candidates,

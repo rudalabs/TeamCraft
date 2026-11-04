@@ -604,7 +604,8 @@ pub async fn delete(pool: &PgPool, actor: &Actor, file_id: Uuid) -> AppResult<Fi
 /// All distinct blob hashes referenced by the database (for `vault check`).
 pub async fn all_hashes(pool: &PgPool) -> AppResult<Vec<String>> {
     Ok(sqlx::query_scalar::<_, String>(
-        "SELECT sha256 FROM files UNION SELECT sha256 FROM file_versions ORDER BY 1",
+        "SELECT sha256 FROM files UNION SELECT sha256 FROM file_versions
+         UNION SELECT sha256 FROM change_request_attachments ORDER BY 1",
     )
     .fetch_all(pool)
     .await?)

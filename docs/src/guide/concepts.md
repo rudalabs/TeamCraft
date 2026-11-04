@@ -31,8 +31,8 @@ data never changes – further work happens in a new revision (*Revise*).
 
 | Role       | May                                                                                                 |
 |------------|-----------------------------------------------------------------------------------------------------|
-| Viewer     | read everything                                                                                     |
-| CAD editor | create and change items of the project groups they belong to, create project groups, review changes |
+| Viewer     | read everything, raise and discuss change requests                                                  |
+| CAD editor | create and change items of the project groups they belong to, create project groups, review changes, triage and decide change requests on their groups |
 | Admin      | everything, plus users, all project groups and lock overrides                                       |
 
 Every item belongs to a **project group** – a product or product line, a

@@ -43,6 +43,15 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Item copy ("Save as" with files and BOM) – done; open: supersede/replace, alternate parts, multi-level where-used
   (feature 6)
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
+- [x] Engineering change requests (ECR) before the change order: raised by anybody incl. viewers (web, API, desktop
+  revision tab and workspace file, screenshot/PDF attachments), discussion, triage/decision by the CAD editors of the
+  affected project groups, *Create change order* with the in-work revisions or link an open one, *implemented* on the
+  release of the change order (migration 0017)
+- [ ] MCP tools for change requests (`create_change_request`, a triage prompt) once the MCP server is merged
+- [ ] Browser check (no console errors, no overflow at 390 px) of `/requests`, `/requests/new` and `/requests/{id}`,
+  and the desktop request tab
+- [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI), e-mail digest of
+  new requests per project group
 - [ ] Chunked resumable uploads (tus); backup/restore of database and vault as CLI commands (feature 9)
 - [ ] README screenshots/GIFs: dashboard, vault explorer, revision page, 3D viewer, BOM, desktop app
 - [x] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build

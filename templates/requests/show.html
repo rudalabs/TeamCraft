@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}{{ request.number }} {{ request.title }}{% endblock %}
+{% block nav_requests %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1><span class="mono">{{ request.number }}</span> · {{ request.title }}</h1>
+    <p class="subtitle">{{ m.badge(request.status) }} {{ m.badge(request.priority) }} <span class="badge badge-reason">{{ reason_label }}</span>
+      · requested by {{ request.requested_by_name }} {{ m.time(request.created_at) }}</p>
+  </div>
+  <div class="actions">
+    <form method="post" action="/requests/{{ request.id }}/watch">
+      <input type="hidden" name="watch" value="{% if watching %}0{% else %}1{% endif %}">
+      <input type="hidden" name="back" value="/requests/{{ request.id }}">
+      <button type="submit" title="{% if watching %}Stop the notifications about {{ request.number }}{% else %}Get notified about comments and decisions on {{ request.number }}{% endif %}">{% if watching %}Unwatch{% else %}Watch{% endif %}</button>
+    </form>
+    {% if can.start_triage %}
+    <form method="post" action="/requests/{{ request.id }}/triage">
+      <button class="primary" type="submit" title="Take it up: in triage{% if not request.assignee %}, assigned to you{% endif %}">Start triage</button>
+    </form>
+    {% endif %}
+    {% if can.reopen %}
+    <form method="post" action="/requests/{{ request.id }}/reopen"><button type="submit">Take up again</button></form>
+    {% endif %}
+    {% if can.withdraw %}
+    <form method="post" action="/requests/{{ request.id }}/withdraw">
+      <button class="danger" type="submit" title="Take {{ request.number }} back at once">Withdraw</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if request.status == "new" %}
+<div class="notice">New: waiting for the CAD editors of the affected project groups to triage it.</div>
+{% elif request.status == "in_triage" %}
+<div class="notice">In triage{% if request.assignee_name %} with {{ request.assignee_name }}{% endif %}: the problem is being assessed – accept, defer or reject.</div>
+{% elif request.status == "accepted" %}
+<div class="notice">Accepted {{ m.time(request.decided_at) }} by {{ request.decided_by_name }}. {% if changes %}Implemented by the change order(s) below – it is done when one of them is released.{% else %}Next: create its change order or link an open one.{% endif %}</div>
+{% elif request.status == "deferred" %}
+<div class="notice">Deferred {{ m.time(request.decided_at) }} by {{ request.decided_by_name }}: {{ request.decision_comment }}</div>
+{% elif request.status == "rejected" %}
+<div class="notice">Rejected {{ m.time(request.decided_at) }} by {{ request.decided_by_name }}: {{ request.decision_comment }}</div>
+{% elif request.status == "implemented" %}
+<div class="notice">Implemented {{ m.time(request.closed_at) }} – its change order was released.</div>
+{% elif request.status == "withdrawn" %}
+<div class="notice">Withdrawn by the requester {{ m.time(request.closed_at) }}.</div>
+{% endif %}
+
+{% if can.decide %}
+<section class="card">
+  <h2>Decision</h2>
+  <form class="stack" method="post" action="/requests/{{ request.id }}/decide">
+    <label>Comment <span class="hint">required when deferring or rejecting – the requester reads it</span>
+      <textarea name="comment" maxlength="4000"></textarea>
+    </label>
+    <div class="actions">
+      <button class="primary" type="submit" name="decision" value="accept">Accept</button>
+      <button type="submit" name="decision" value="defer">Defer</button>
+      <button class="danger" type="submit" name="decision" value="reject">Reject</button>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+{% if can.implement %}
+<section class="card">
+  <h2>Change order</h2>
+  <div class="grid grid-2">
+    <form class="stack" method="post" action="/requests/{{ request.id }}/create-change">
+      <h3>Create a change order</h3>
+      <label>Title <input type="text" name="title" maxlength="200" value="{{ request.number }}: {{ request.title }}"></label>
+      {% if in_work %}
+      <p class="hint">Takes along the revisions in work:
+        {% for i in in_work %}<span class="mono">{{ i.item_number }}/{{ i.latest_code }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.
+        Revise the other affected items first – or add them later.</p>
+      {% else %}
+      <p class="hint">No affected item has a revision in work yet – revise them first, or add the revisions to the draft later.</p>
+      {% endif %}
+      <div class="actions"><button class="primary" type="submit">Create change order</button></div>
+    </form>
+    <form class="stack" method="post" action="/requests/{{ request.id }}/link-change">
+      <h3>Link an open change order</h3>
+      {% if open_changes %}
+      <label>Draft change
+        <select name="change" required>
+          {% for c in open_changes %}<option value="{{ c.id }}">{{ c.number }} – {{ c.title }}</option>{% endfor %}
+        </select>
+      </label>
+      {% else %}
+      <label>Change number <input type="text" name="change" required placeholder="e.g. CHG-000004"></label>
+      {% endif %}
+      <div class="actions"><button type="submit">Link</button></div>
+    </form>
+  </div>
+</section>
+{% endif %}
+
+{% if changes %}
+<section class="card">
+  <h2>Change orders</h2>
+  <div class="table-wrap">
+  <table>
+    <tbody>
+    {% for c in changes %}
+      <tr>
+        <td class="nowrap mono"><a href="/changes/{{ c.id }}">{{ c.number }}</a></td>
+        <td>{{ c.title }}</td>
+        <td>{{ m.badge(c.status) }}</td>
+        <td class="small muted nowrap">{{ c.created_by_name }} · {{ m.time(c.created_at) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+<div class="grid grid-2">
+  <section class="card">
+    <div class="card-head">
+      <h2>Details</h2>
+      {% if can.edit %}<button class="small" type="button" data-toggle="edit-request">Edit</button>{% endif %}
+    </div>
+    <dl class="props">
+      <dt>Problem and proposed solution</dt><dd class="pre">{{ request.description or "—" }}</dd>
+      <dt>Reason</dt><dd>{{ reason_label }}</dd>
+      <dt>Priority</dt><dd>{{ request.priority|label }}</dd>
+      <dt>Needed by</dt><dd>{{ request.due_date or "—" }}</dd>
+      <dt>Assignee</dt><dd>{{ request.assignee_name or "—" }}</dd>
+      {% if request.decided_at %}
+      <dt>Decision</dt><dd>{{ request.decided_by_name }} {{ m.time(request.decided_at) }}{% if request.decision_comment %}<br><span class="pre">{{ request.decision_comment }}</span>{% endif %}</dd>
+      {% endif %}
+      <dt>Last update</dt><dd>{{ m.time(request.updated_at) }}</dd>
+    </dl>
+    {% if can.assign %}
+    <form class="inline" method="post" action="/requests/{{ request.id }}/assign">
+      <select name="username" aria-label="Assignee">
+        <option value="">Nobody</option>
+        {% for u in candidates %}<option value="{{ u.username }}" {% if request.assignee == u.id %}selected{% endif %}>{{ u.display_name }} ({{ u.username }})</option>{% endfor %}
+      </select>
+      <button type="submit">Assign</button>
+    </form>
+    {% endif %}
+    {% if can.edit %}
+    <form id="edit-request" class="stack hidden" method="post" action="/requests/{{ request.id }}">
+      <label>Title <input type="text" name="title" value="{{ request.title }}" maxlength="200" required></label>
+      <label>Problem and proposed solution <textarea name="description" maxlength="20000" rows="8">{{ request.description }}</textarea></label>
+      <label>Reason
+        <select name="reason">
+          {% for r in reasons %}<option value="{{ r.value }}" {% if request.reason == r.value %}selected{% endif %}>{{ r.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Priority
+        <select name="priority">
+          {% for p in priorities %}<option value="{{ p }}" {% if request.priority == p %}selected{% endif %}>{{ p|label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Needed by <input type="date" name="due_date" value="{{ request.due_date or '' }}"></label>
+      <div class="actions"><button class="primary" type="submit">Save</button></div>
+    </form>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Affected items</h2>
+    {% if items %}
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Item</th><th>Name</th><th>Latest</th><th>Note</th>{% if can.edit %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for i in items %}
+        <tr>
+          <td class="mono nowrap"><a href="/revisions/{{ i.revision_id or i.latest_revision_id }}">{{ i.item_number }}{% if i.revision_code %}/{{ i.revision_code }}{% endif %}</a>
+            {% if i.project_code %}<span class="small muted">{{ i.project_code }}</span>{% endif %}</td>
+          <td>{{ i.name }}</td>
+          <td class="nowrap"><a class="mono" href="/revisions/{{ i.latest_revision_id }}">{{ i.latest_code }}</a> {{ m.badge(i.latest_state) }}</td>
+          <td class="small">{{ i.note }}</td>
+          {% if can.edit %}
+          <td class="right">
+            <form class="inline" method="post" action="/requests/{{ request.id }}/items/{{ i.item_id }}/remove">
+              <button class="small danger" type="submit">Remove</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}<p class="empty">No items named yet.</p>{% endif %}
+    {% if can.edit %}
+    <form class="inline" method="post" action="/requests/{{ request.id }}/items">
+      <input type="text" name="item_number" placeholder="Item number, e.g. PRT-000012" required aria-label="Item number">
+      <input type="text" name="note" placeholder="Note (optional)" maxlength="2000" aria-label="Note">
+      <button type="submit">Add item</button>
+    </form>
+    {% endif %}
+  </section>
+</div>
+
+<section class="card" id="discussion">
+  <h2>Discussion</h2>
+  {% if comments %}
+  <ol class="thread">
+    {% for c in comments %}
+    <li class="thread-entry{% if c.author_id == request.requested_by %} thread-requester{% endif %}">
+      <div class="thread-meta"><strong>{{ c.author_name }}</strong>{% if c.author_id == request.requested_by %} <span class="badge badge-member">requester</span>{% endif %} · {{ m.time(c.created_at) }}</div>
+      <div class="pre">{{ c.body }}</div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}<p class="empty">No comments yet.</p>{% endif %}
+  {% if can.comment %}
+  <form class="stack" method="post" action="/requests/{{ request.id }}/comments">
+    <label>Comment <textarea name="body" maxlength="10000" required placeholder="Findings, measurements, questions, a proposal …"></textarea></label>
+    <div class="actions"><button type="submit">Add comment</button></div>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card" id="attachments">
+  <h2>Attachments</h2>
+  {% if images %}
+  <div class="attachment-thumbs">
+    {% for a in images %}<a href="/request-attachments/{{ a.id }}?inline=1" title="{{ a.filename }}"><img src="/request-attachments/{{ a.id }}?inline=1" alt="{{ a.filename }}" loading="lazy"></a>{% endfor %}
+  </div>
+  {% endif %}
+  {% if attachments %}
+  <div class="table-wrap">
+  <table>
+    <tbody>
+    {% for a in attachments %}
+      <tr>
+        <td><a href="/request-attachments/{{ a.id }}">{{ a.filename }}</a></td>
+        <td class="small nowrap">{{ a.size_bytes|filesize }}</td>
+        <td class="small muted nowrap">{{ a.uploaded_by_name }} · {{ m.time(a.uploaded_at) }}</td>
+        <td class="right">
+          {% if can.attach and (a.uploaded_by == me.id or me.is_admin) %}
+          <form class="inline" method="post" action="/request-attachments/{{ a.id }}/delete">
+            <button class="small danger" type="submit">Remove</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No attachments.</p>{% endif %}
+  {% if can.attach %}
+  <form class="inline" method="post" action="/requests/{{ request.id }}/attachments" enctype="multipart/form-data">
+    <input type="file" name="file" required accept="image/png,image/jpeg,image/gif,image/webp,application/pdf" aria-label="Screenshot, mark-up or PDF">
+    <button type="submit">Attach</button>
+    <span class="hint">Screenshots, mark-ups and PDF reports, up to {{ max_attachment_mb }} MiB.</span>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Status history</h2>
+  {{ m.history(history) }}
+</section>
+{% endblock %}

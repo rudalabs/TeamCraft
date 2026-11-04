@@ -17,6 +17,10 @@ check-outs and reviews, and a **local workspace**:
   step-by-step tutorial (Pack and Go, unique file names, check and release);
 * the *Workspace* tab shows new and modified files;
 * *Check in…* uploads the selected files as new versions and releases the lock.
+* *Request change…* on a revision tab and *Request…* on a file (Files and
+  Workspace tabs) raise a [change request](changes.md) with the item,
+  revision and file name filled in and an optional screenshot or PDF; the
+  worklist lists the requests assigned to you and your open ones;
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.
