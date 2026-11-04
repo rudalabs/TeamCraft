@@ -307,4 +307,37 @@ async fn files_keep_their_folder_in_the_project_group() {
         )
         .await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST);
+
+    // A new version in another folder: the move is in the audit log as well.
+    let r = app
+        .api(Method::POST, &format!("{prt}/checkout"), &max, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let r = app
+        .api_multipart(
+            &format!("{prt}/checkin"),
+            &max,
+            &[("Bracket.SLDPRT", b"\x00part v3")],
+            &[("folder", "chassis/parts")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let r = app
+        .api(Method::GET, &format!("{prt}/files"), &max, None)
+        .await;
+    assert_eq!(r.json()[0]["version"], 3);
+    assert_eq!(r.json()[0]["folder"], "chassis/parts");
+    let moves: Vec<String> = sqlx::query_scalar(
+        "SELECT details->>'to' FROM audit_log
+         WHERE action = 'file.folder' AND details->>'file_id' = $1 ORDER BY id",
+    )
+    .bind(&bracket_id)
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        moves,
+        vec!["chassis/parts", "chassis/brackets", "chassis/parts"],
+        "PATCH, same content with a folder, new version with a folder"
+    );
 }

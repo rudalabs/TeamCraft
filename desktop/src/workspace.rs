@@ -293,6 +293,7 @@ pub async fn fetch(
     progress: &mut (dyn FnMut(&Progress) + Send),
 ) -> Result<Downloaded, ApiError> {
     let mut state = State::load(root);
+    let before = state.clone();
     let mut local = HashMap::new();
     let mut infos = HashMap::new();
     for f in files {
@@ -357,10 +358,17 @@ pub async fn fetch(
                 if let Some(dir) = path.parent() {
                     tokio::fs::create_dir_all(dir).await?;
                 }
-                if path.exists() {
-                    // replaced below; Windows refuses to replace read-only files
+                // replaced below; Windows refuses to replace read-only files
+                // (made read-only again if the download fails)
+                let was_read_only = path.exists() && is_read_only(&path);
+                if was_read_only {
                     let _ = set_read_only(&path, false);
                 }
+                let restore_read_only = || {
+                    if was_read_only {
+                        let _ = set_read_only(&path, true);
+                    }
+                };
                 let mut bytes_before = p.bytes_done;
                 let result = {
                     // progress inside big files, every 4 MiB
@@ -393,16 +401,21 @@ pub async fn fetch(
                         let (size, modified) = std::fs::metadata(&path)
                             .map(|m| (m.len(), modified_ms(&m)))
                             .unwrap_or((bytes, 0));
-                        state.insert(step.file.entry(&step.file.sha256, size, modified));
+                        let entry = step.file.entry(&step.file.sha256, size, modified);
+                        state.insert(entry.clone());
                         // remembered at once: an interrupted Get continues here
-                        let _ = state.save(root);
+                        let _ = State::store(root, [entry]);
                         report.downloaded.push(step.rel.clone());
                     }
                     Err(_) if cancel.load(Ordering::Relaxed) => {
+                        restore_read_only();
                         report.cancelled = true;
                         break;
                     }
-                    Err(e) => report.failed.push(format!("{}: {e}", step.rel)),
+                    Err(e) => {
+                        restore_read_only();
+                        report.failed.push(format!("{}: {e}", step.rel));
+                    }
                 }
                 p.done += 1;
                 progress(&p);
@@ -411,8 +424,7 @@ pub async fn fetch(
     }
     p.current.clear();
     progress(&p);
-    state
-        .save(root)
+    State::store(root, state.changes_since(&before))
         .map_err(|e| ApiError::local(format!("Workspace state: {e}")))?;
     Ok(report)
 }
@@ -560,8 +572,15 @@ async fn new_local_files(
     files: &[ServerFile],
     state: &State,
 ) -> Result<Vec<(String, PathBuf, String)>, ApiError> {
-    let stems: HashSet<String> = files.iter().map(|f| layout::stem_of(&f.filename)).collect();
-    let names: HashSet<String> = files.iter().map(|f| f.filename.to_lowercase()).collect();
+    // compared with the names on disk: the safe names (see `layout::local_rel`)
+    let stems: HashSet<String> = files
+        .iter()
+        .map(|f| layout::stem_of(&safe_name(&f.filename)))
+        .collect();
+    let names: HashSet<String> = files
+        .iter()
+        .map(|f| safe_name(&f.filename).to_lowercase())
+        .collect();
     let mut out = Vec::new();
     if files.is_empty() {
         return Ok(out);
@@ -609,6 +628,7 @@ pub async fn status(
 ) -> Result<Status, ApiError> {
     let rev = revision_files(api, project, item, code).await?;
     let mut state = State::load(root);
+    let before = state.clone();
     let mut found = Vec::new();
     for f in &rev.files {
         let rel = f.rel();
@@ -621,7 +641,7 @@ pub async fn status(
             .map(|e| format!("{}/{} {}", e.item, e.revision, e.filename));
         found.push(Found {
             name: f.filename.clone(),
-            path: newest_local(&dir, &f.filename).await?,
+            path: newest_local(&dir, &safe_name(&f.filename)).await?,
             rel,
             entry: entry.filter(|e| e.item.eq_ignore_ascii_case(item)),
             clash_with,
@@ -728,7 +748,7 @@ pub async fn status(
         });
     }
     if state_changed {
-        let _ = state.save(root);
+        let _ = State::store(root, state.changes_since(&before));
     }
     out.sort_by_key(|f| (f.path.to_lowercase(), f.name.to_lowercase()));
     let dir = main_dir(root, project, &rev.files);
@@ -757,22 +777,29 @@ pub async fn locate(
     }
     let rev = revision_files(api, project, item, code).await?;
     let (logical, _) = logical_name(name);
-    let dirs: Vec<PathBuf> = match rev
+    let (dirs, wanted): (Vec<PathBuf>, String) = match rev
         .files
         .iter()
         .find(|f| f.filename.eq_ignore_ascii_case(logical))
     {
-        Some(f) => vec![layout::join_rel(
-            root,
-            &layout::local_dir_rel(project, &f.folder),
-        )],
-        None => revision_dirs(project, &rev.files)
-            .into_iter()
-            .map(|(rel, _)| layout::join_rel(root, &rel))
-            .collect(),
+        // on disk under its safe name (see `layout::local_rel`)
+        Some(f) => (
+            vec![layout::join_rel(
+                root,
+                &layout::local_dir_rel(project, &f.folder),
+            )],
+            safe_name(&f.filename),
+        ),
+        None => (
+            revision_dirs(project, &rev.files)
+                .into_iter()
+                .map(|(rel, _)| layout::join_rel(root, &rel))
+                .collect(),
+            logical.to_string(),
+        ),
     };
     for dir in &dirs {
-        if let Some(path) = newest_local(dir, logical).await? {
+        if let Some(path) = newest_local(dir, &wanted).await? {
             return Ok((dir.clone(), Some(path)));
         }
     }
@@ -804,6 +831,7 @@ pub async fn check_in(
 ) -> Result<Value, ApiError> {
     let rev = revision_files(api, project, item, code).await?;
     let mut state = State::load(root);
+    let before = state.clone();
     let news = new_local_files(root, project, &rev.files, &state).await?;
     let mut files = Vec::new();
     let mut bases = serde_json::Map::new();
@@ -827,7 +855,7 @@ pub async fn check_in(
                 bases.insert(f.filename.clone(), Value::String(e.sha256.clone()));
             }
             let dir = layout::join_rel(root, &layout::local_dir_rel(project, &f.folder));
-            newest_local(&dir, logical).await?
+            newest_local(&dir, &safe_name(&f.filename)).await?
         } else if let Some((_, path, folder)) = news
             .iter()
             .find(|(n, _, _)| n.eq_ignore_ascii_case(logical))
@@ -905,7 +933,7 @@ pub async fn check_in(
         };
         let dir = layout::join_rel(root, &e.path);
         let dir = dir.parent().unwrap_or(root).to_path_buf();
-        if let Ok(Some(path)) = newest_local(&dir, &e.filename).await {
+        if let Ok(Some(path)) = newest_local(&dir, &safe_name(&e.filename)).await {
             if sha256_of(&path).await.is_ok_and(|sha| sha == e.sha256) {
                 let _ = set_read_only(&path, true);
                 let mut e = e.clone();
@@ -921,7 +949,7 @@ pub async fn check_in(
             }
         }
     }
-    let _ = state.save(root);
+    let _ = State::store(root, state.changes_since(&before));
     Ok(result)
 }
 
@@ -1114,6 +1142,7 @@ fn now_utc() -> String {
 pub async fn migrate(api: &Api, root: &Path) -> Result<MigrationPlan, ApiError> {
     let mut plan = migration_plan(api, root).await?;
     let mut state = State::load(root);
+    let before = state.clone();
     let mut log = vec![format!(
         "== {} – moving {} folder(s) of the old layout <group>/<item>/<revision>/ into the working-folder layout",
         now_utc(),
@@ -1141,30 +1170,38 @@ pub async fn migrate(api: &Api, root: &Path) -> Result<MigrationPlan, ApiError> 
                 if let Some(dir) = target.parent() {
                     std::fs::create_dir_all(dir)?;
                 }
-                let moved = std::fs::rename(&from, &target).or_else(|_| {
+                let changed = if step.modified {
+                    " (changed locally)"
+                } else {
+                    ""
+                };
+                if std::fs::rename(&from, &target).is_err() {
                     // another drive: copy, then remove the original
-                    std::fs::copy(&from, &target).and_then(|_| std::fs::remove_file(&from))
-                });
-                if let Err(e) = moved {
-                    let reason = format!("could not be moved: {e}");
-                    log.push(format!("kept    {} – {reason}", step.from));
-                    step.action = MigrationAction::Keep { reason };
-                    continue;
-                }
-                log.push(format!(
-                    "moved   {} -> {to}{}",
-                    step.from,
-                    if step.modified {
-                        " (changed locally)"
-                    } else {
-                        ""
+                    if let Err(e) = std::fs::copy(&from, &target) {
+                        // no half-copied file is left at the new place
+                        let _ = std::fs::remove_file(&target);
+                        let reason = format!("could not be moved: {e}");
+                        log.push(format!("kept    {} – {reason}", step.from));
+                        step.action = MigrationAction::Keep { reason };
+                        continue;
                     }
-                ));
+                    if let Err(e) = remove_old_copy(&from) {
+                        // the copy is in place; the identical old one is
+                        // removed by the next move (same content)
+                        log.push(format!(
+                            "copied  {} -> {to}{changed} – the old copy could not be removed: {e}",
+                            step.from
+                        ));
+                        record_migrated(&mut state, root, f, &target, step.modified);
+                        continue;
+                    }
+                }
+                log.push(format!("moved   {} -> {to}{changed}", step.from));
                 record_migrated(&mut state, root, f, &target, step.modified);
             }
             MigrationAction::AlreadyThere { to } => {
                 let target = layout::join_rel(root, &to);
-                if let Err(e) = std::fs::remove_file(&from) {
+                if let Err(e) = remove_old_copy(&from) {
                     log.push(format!("kept    {} – could not be removed: {e}", step.from));
                     continue;
                 }
@@ -1197,8 +1234,7 @@ pub async fn migrate(api: &Api, root: &Path) -> Result<MigrationPlan, ApiError> 
             }
         }
     }
-    state
-        .save(root)
+    State::store(root, state.changes_since(&before))
         .map_err(|e| ApiError::local(format!("Workspace state: {e}")))?;
     plan.moves = 0;
     plan.identical = 0;
@@ -1216,6 +1252,21 @@ pub async fn migrate(api: &Api, root: &Path) -> Result<MigrationPlan, ApiError> 
     ));
     append_log(&plan.log, &log)?;
     Ok(plan)
+}
+
+/// Removes the old copy of a migrated file. Windows refuses to delete a
+/// read-only file, so the flag is cleared first (and set again if the
+/// removal still fails).
+fn remove_old_copy(path: &Path) -> std::io::Result<()> {
+    let was_read_only = is_read_only(path);
+    if was_read_only {
+        let _ = set_read_only(path, false);
+    }
+    std::fs::remove_file(path).inspect_err(|_| {
+        if was_read_only {
+            let _ = set_read_only(path, true);
+        }
+    })
 }
 
 /// The state entry and the read-only rule for a file moved into place.
@@ -1288,6 +1339,17 @@ mod tests {
         let moved = dir.path().join("moved.prt");
         std::fs::rename(&path, &moved).unwrap();
         assert!(is_read_only(&moved));
+    }
+
+    #[test]
+    fn read_only_old_copies_are_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plate.prt");
+        std::fs::write(&path, b"v1").unwrap();
+        set_read_only(&path, true).unwrap();
+        remove_old_copy(&path).unwrap();
+        assert!(!path.exists());
+        assert!(remove_old_copy(&path).is_err(), "gone");
     }
 
     /// root ignores file permissions (CI containers).

@@ -20,6 +20,7 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 
 use serde::{Deserialize, Serialize};
@@ -312,6 +313,31 @@ impl State {
         std::fs::rename(&tmp, &path)
     }
 
+    /// Writes `entries` into the state on disk. The state is read again
+    /// under a lock of the process first, so two commands that run at the
+    /// same time (a Get and a status, two Gets) never drop each other's
+    /// entries – a lost entry would turn a file into a clash with "a local
+    /// file that did not come from TeamCraft" that no Get repairs.
+    pub fn store<I: IntoIterator<Item = Entry>>(root: &Path, entries: I) -> std::io::Result<()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut state = State::load(root);
+        for entry in entries {
+            state.insert(entry);
+        }
+        state.save(root)
+    }
+
+    /// The entries that are new or different compared with `before` (what a
+    /// command changed in its copy of the state, for [`State::store`]).
+    pub fn changes_since(&self, before: &State) -> Vec<Entry> {
+        self.files
+            .iter()
+            .filter(|(key, entry)| before.files.get(*key) != Some(*entry))
+            .map(|(_, entry)| entry.clone())
+            .collect()
+    }
+
     pub fn get(&self, rel: &str) -> Option<&Entry> {
         self.files.get(&key_of(rel))
     }
@@ -559,8 +585,13 @@ pub fn plan_migration(files: &[OldFile], existing: &HashMap<String, String>) -> 
                         reason: format!("{to} is taken by {other}"),
                     }
                 } else if key_of(&f.rel) == key {
-                    // already in place (should not happen for old folders)
-                    MigrationAction::AlreadyThere { to }
+                    // The file already is at its place (a server folder that
+                    // looks like <item>/<revision>): it must stay – removing
+                    // the "old copy" would delete the only one.
+                    claimed.insert(key, f.rel.clone());
+                    MigrationAction::Keep {
+                        reason: "already at its place in the working folder".into(),
+                    }
                 } else {
                     match existing.get(&key) {
                         Some(sha) if sha.eq_ignore_ascii_case(&f.sha256) => {
@@ -823,6 +854,36 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_commands_keep_each_others_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = server("PRT-000001", "A", "a.prt", "chassis", "sa");
+        let b = server("PRT-000002", "A", "b.prt", "chassis", "sb");
+        // Both commands loaded the empty state before either one saved.
+        let before = State::load(dir.path());
+        let (mut first, mut second) = (before.clone(), before.clone());
+        first.insert(a.entry("sa", 1, 1));
+        second.insert(b.entry("sb", 1, 1));
+        assert_eq!(first.changes_since(&before), vec![a.entry("sa", 1, 1)]);
+        assert!(first.changes_since(&first).is_empty());
+        State::store(dir.path(), first.changes_since(&before)).unwrap();
+        State::store(dir.path(), second.changes_since(&before)).unwrap();
+        let state = State::load(dir.path());
+        assert!(state.get("ROVER/chassis/a.prt").is_some());
+        assert!(state.get("ROVER/chassis/b.prt").is_some());
+        // A newer entry for the same place replaces the older one.
+        let mut a2 = a.entry("sa2", 2, 2);
+        a2.version = 3;
+        State::store(dir.path(), [a2]).unwrap();
+        assert_eq!(
+            State::load(dir.path())
+                .get("rover/chassis/A.PRT")
+                .unwrap()
+                .version,
+            3
+        );
+    }
+
+    #[test]
     fn get_downloads_only_what_is_missing_or_outdated() {
         let files = vec![
             server("ASM-000001", "A", "chassis.asm", "chassis", "asm2"),
@@ -1052,6 +1113,29 @@ mod tests {
             "{steps:?}"
         );
         assert!(matches!(steps[1].action, MigrationAction::Move { .. }));
+    }
+
+    #[test]
+    fn a_file_already_in_place_is_never_removed() {
+        // The server folder of the file is PRT-000005/A, so the "old"
+        // folder is its place in the new layout (e.g. after the state was
+        // lost): its target is the file itself.
+        let axle = old(
+            "ROVER/PRT-000005/A/axle.prt",
+            "A",
+            "x1",
+            Some("x1"),
+            Some(server("PRT-000005", "A", "axle.prt", "PRT-000005/A", "x1")),
+        );
+        let existing: HashMap<String, String> =
+            [("rover/prt-000005/a/axle.prt".to_string(), "x1".to_string())].into();
+        let steps = plan_migration(&[axle], &existing);
+        assert_eq!(
+            steps[0].action,
+            MigrationAction::Keep {
+                reason: "already at its place in the working folder".into()
+            }
+        );
     }
 
     #[test]

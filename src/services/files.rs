@@ -503,6 +503,10 @@ pub(crate) async fn store_uploads(
             }
             Some(e) => {
                 let version = e.current_version + 1;
+                // A new version in another folder: the move is recorded too.
+                if let Some(folder) = upload.folder.as_deref().filter(|f| *f != e.folder) {
+                    move_to_folder(conn, actor, rev, e.id, &filename, &e.folder, folder).await?;
+                }
                 sqlx::query(
                     "UPDATE files SET sha256 = $2, size_bytes = $3, content_type = $4, uploaded_by = $5,
                                       uploaded_at = now(), current_version = $6, format = $7,
