@@ -43,7 +43,7 @@ Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
 `static/` or `media/`: `cargo fmt`, `clippy` and the tests, a build, and a
 **start-up smoke test** (the app is started with a fresh profile – on Linux
 under a virtual display – and must still be running after 20 seconds) on
-Linux x86_64 (Ubuntu 22.04 and 24.04) and ARM64, macOS ARM64 and Windows
+Linux x86_64 (Ubuntu 24.04 and 26.04) and ARM64, macOS ARM64 and Windows
 x86_64; Windows ARM64 runs as a preview that never blocks. A separate job
 parses every script of `ui/` and the web UI (`node --check`; Node.js is only
 used by CI, the app has no build step). Nothing is packaged or published.
