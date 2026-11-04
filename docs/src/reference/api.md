@@ -104,6 +104,7 @@ revision with `ok` and `error`, plus `checked_in`, `failed` and a `summary`.
 | BOM              | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP) |
 | BOM import       | `POST /bom-imports` (new assembly), `POST …/bom/import` (into a checked-out revision); multipart `file` = CSV/Excel table or STEP assembly, `dry_run=true` returns the plan |
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
+| Change requests  | `GET/POST /change-requests`, `GET/PATCH /change-requests/{number}`, `comments`, `items`, `triage`, `assign`, `decide`, `reopen`, `withdraw`, `create-change`, `link-change`, `attachments`, `watch` |
 | Simulations      | `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
 | Changes          | `GET/POST /changes`, items, reviewers, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact`      |
 | Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                 |
@@ -120,6 +121,37 @@ Both compare the direct lines; `depth=all` compares every level, with the
 children resolved by `rule=latest|released|as_released` (each line then has
 its `level` and the resolved `revision` on both sides). The expanded BOM
 itself downloads as Excel workbook: `GET …/revisions/{code}/bom.xlsx?rule=`.
+
+## Change requests (ECR)
+
+Every signed-in user – viewers included – raises change requests and
+comments on them; CAD editors of the project groups of the affected items
+(and admins) triage and decide. `GET /change-requests/{number}` returns the
+request with its `items`, `comments`, `attachments`, linked `changes`,
+`history` and `can` (the actions the caller may take). See
+[Change requests](../guide/changes.md) for the flow.
+
+```sh
+curl -s -X POST -H "$H" -H "Content-Type: application/json" $API/change-requests -d '{
+  "title": "Weld seam cracks", "reason": "manufacturing", "priority": "high",
+  "description": "Seen on 3 of 10 parts. Proposal: 4 mm fillet.", "due_date": "2026-12-01",
+  "items": [{"item": "PRT-000001", "revision": "A", "note": "File: bracket.step"}]}'
+curl -s -X POST -H "$H" -F file=@crack.png $API/change-requests/ECR-000001/attachments
+curl -s -X POST -H "$H" $API/change-requests/ECR-000001/triage                     # new → in triage
+curl -s -X POST -H "$H" -H "Content-Type: application/json" \
+     $API/change-requests/ECR-000001/decide -d '{"decision": "accept"}'           # or reject / defer + comment
+curl -s -X POST -H "$H" $API/change-requests/ECR-000001/create-change              # draft CHG with the in-work revisions
+```
+
+`create-change` answers with the new `change`, the revisions it `added` and
+the affected items it `skipped` (no revision in work, already in another
+open change, no access). `link-change` (`{"change": "CHG-000004"}`) links an
+existing open change order instead. When a linked change order is released,
+the request becomes `implemented`. Lists filter with
+`?status=open|all|new|in_triage|accepted|rejected|deferred|implemented|withdrawn`,
+`scope=mine|assigned` and `item={number}`; `GET /worklist` contains
+`requests_assigned` and `my_requests`, `GET …/revisions/{code}` the
+`open_requests` of the item.
 
 ## Simulations
 

@@ -49,7 +49,7 @@
         <td>{{ w.name }}</td>
         <td>{{ m.badge(w.state) }}</td>
         <td class="right">
-          <form class="inline" method="post" action="/{% if w.entity_type == 'item' %}items{% else %}changes{% endif %}/{{ w.entity_id }}/watch">
+          <form class="inline" method="post" action="/{% if w.entity_type == 'item' %}items{% elif w.entity_type == 'change_request' %}requests{% else %}changes{% endif %}/{{ w.entity_id }}/watch">
             <input type="hidden" name="watch" value="0">
             <input type="hidden" name="back" value="/notifications#watched">
             <button class="small" type="submit">Unwatch</button>

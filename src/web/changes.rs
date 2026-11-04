@@ -16,7 +16,7 @@ use super::{
 use crate::{
     domain::{ChangeStatus, Decision, LifecycleState, Priority, Role},
     error::{AppError, AppResult},
-    services::{audit, changes, impacts, items, notifications, revisions, users, Page},
+    services::{audit, changes, impacts, items, notifications, requests, revisions, users, Page},
     AppState,
 };
 
@@ -174,6 +174,7 @@ pub async fn show(
     let revision_ids: Vec<Uuid> = affected.iter().map(|i| i.revision_id).collect();
     let impact = impacts::analysis(&st.db, &revision_ids).await?;
     let watching = notifications::is_watching(&st.db, ctx.me.id, "change", id).await?;
+    let implements = requests::for_change(&st.db, id).await?;
     let status = changes::status_of(&change);
     // Release readiness: only meaningful before the change goes into review.
     let readiness = if matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected) {
@@ -221,6 +222,7 @@ pub async fn show(
             "readiness_rows": readiness.as_ref().map(|r| r.blockers.iter().chain(&r.warnings).cloned().collect::<Vec<_>>()).unwrap_or_default(),
             "readiness": readiness,
             "watching": watching,
+            "implements": implements,
             "items": affected,
             "reviews": reviews,
             "candidates": candidates,

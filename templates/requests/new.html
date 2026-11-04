@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Request a change{% endblock %}
+{% block nav_requests %}active{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Request a change</h1>
+    <p class="subtitle">Describe the problem and what you would change. The CAD editors of the affected project group
+      triage it; an accepted request becomes a change order. Screenshots and PDFs can be attached on the next page.</p>
+  </div>
+</div>
+<div class="card">
+  {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
+  <form class="stack" method="post" action="/requests">
+    <input type="hidden" name="revision_id" value="{{ form.revision_id }}">
+    {% if revision %}
+    <div class="notice">About <strong class="mono">{{ revision.item_number }}/{{ revision.code }}</strong> ({{ revision.name }}){% if revision.project_code %} in {{ revision.project_code }}{% endif %}.</div>
+    {% else %}
+    <label>Affected item <span class="hint">optional – more items can be added later</span>
+      <input type="text" name="item_number" value="{{ form.item_number }}" maxlength="64" placeholder="e.g. PRT-000012">
+    </label>
+    {% endif %}
+    <label>Title
+      <input type="text" name="title" value="{{ form.title }}" maxlength="200" required autofocus
+             placeholder="{% if revision %}What is wrong with {{ revision.item_number }}?{% else %}What is wrong, what should change?{% endif %}">
+    </label>
+    <label>Problem and proposed solution <span class="hint">what you observed, where, how often – and what you suggest</span>
+      <textarea name="description" maxlength="20000" rows="8">{{ form.description }}</textarea>
+    </label>
+    <div class="grid grid-2">
+      <label>Reason
+        <select name="reason">
+          {% for r in reasons %}<option value="{{ r.value }}" {% if form.reason == r.value %}selected{% endif %}>{{ r.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Priority
+        <select name="priority">
+          {% for p in priorities %}<option value="{{ p }}" {% if form.priority == p %}selected{% endif %}>{{ p|label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Needed by <span class="hint">optional</span>
+        <input type="date" name="due_date" value="{{ form.due_date }}">
+      </label>
+      <label>Note on the item <span class="hint">optional, e.g. the file or the feature</span>
+        <input type="text" name="note" value="{{ form.note }}" maxlength="2000">
+      </label>
+    </div>
+    <div class="actions">
+      <button class="primary" type="submit">Raise request</button>
+      <a class="button" href="{% if revision %}/revisions/{{ revision.id }}{% else %}/requests{% endif %}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
