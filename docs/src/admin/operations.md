@@ -9,6 +9,7 @@
 | `teamcraft migrate`                        | apply migrations without starting the server                           |
 | `teamcraft backup <dir>`                   | write database and vault backup (`pg_dump`)                            |
 | `teamcraft restore <dir> [--force]`        | verify and restore a backup (`pg_restore`)                             |
+| `teamcraft mcp --server URL`               | stdio bridge for AI assistants to `POST /api/v1/mcp` ([MCP](../reference/mcp.md)) |
 
 ## Backups
 

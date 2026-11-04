@@ -144,8 +144,8 @@ code base. These are the most important rules:
   * validates lifecycle transitions (`LifecycleState::can_transition_to`);
   * writes the audit entry (`audit::record`).
 
-  The web handlers (`src/web/`) and API handlers (`src/api/`) stay thin and
-  call the same service functions.
+  The web handlers (`src/web/`), API handlers (`src/api/`) and MCP tools
+  (`src/mcp/`) stay thin and call the same service functions.
 * **SQL** uses runtime queries (`sqlx::query_as::<_, T>` with `FromRow`), not
   the `query!` macros, so building needs no database.
 * **Schema changes** go into a new numbered file in `migrations/`. Never edit

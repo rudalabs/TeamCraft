@@ -121,6 +121,11 @@ promised.
   workspace (one folder per project group) for check-out and check-in, the
   download of whole project groups and an import wizard for existing CAD
   folders with a step-by-step tutorial.
+- **AI assistants (MCP).** A built-in Model Context Protocol server
+  (`/api/v1/mcp`, plus a stdio bridge `teamcraft mcp`) lets Claude Code and
+  other MCP clients search items and explain BOMs and where-used, compare
+  revisions, check a BOM before a release and draft change orders. It uses
+  your rights and never submits, approves or releases.
 - **Audit log.** Every modification with user, time and details.
 
 ## Download

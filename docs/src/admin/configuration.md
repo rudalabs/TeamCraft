@@ -63,3 +63,13 @@ Migrations run automatically (`teamcraft serve --no-migrate` skips them).
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
 | `TEAMCRAFT_TEST_DATABASE_URL` | server for the integration tests (default: the configuration above); each test creates and drops its own `teamcraft_test_*` database |
 | `TEAMCRAFT_REQUIRE_DB_TESTS`  | fail instead of skipping when no database is reachable (CI)                                                                          |
+
+## MCP stdio bridge (client side)
+
+Only `teamcraft mcp`, the bridge for AI assistants that run on a user's
+machine, reads these. The server does not (see [MCP server](../reference/mcp.md)).
+
+| Variable           | Meaning                                                                         |
+|--------------------|---------------------------------------------------------------------------------|
+| `TEAMCRAFT_SERVER` | base URL of the TeamCraft server (default `http://localhost:8080`)              |
+| `TEAMCRAFT_TOKEN`  | the user's personal access token (or `--token-file`); it is never printed |
