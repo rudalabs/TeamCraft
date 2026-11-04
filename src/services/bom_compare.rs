@@ -201,7 +201,8 @@ const XLSX_WIDTHS: [f64; 10] = [10.0, 18.0, 36.0, 10.0, 16.0, 16.0, 36.0, 16.0, 
 pub fn to_xlsx(diffs: &[LineDiff]) -> AppResult<Vec<u8>> {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
-    sheet.set_name("BOM comparison").map_err(xlsx_error)?;
+    // An invalid sheet name is rejected when the workbook is saved.
+    sheet.set_name("BOM comparison");
     for (col, (title, width)) in XLSX_HEADERS.iter().zip(XLSX_WIDTHS).enumerate() {
         let col = col as u16;
         sheet.write_string(0, col, *title).map_err(xlsx_error)?;
@@ -247,7 +248,6 @@ mod tests {
     use std::io::Read;
 
     use super::*;
-    use crate::services::bom::{ResolvedRevision, MAX_DEPTH};
 
     fn line(child: u128, number: &str, find: i32, qty: f64) -> BomLine {
         BomLine {
