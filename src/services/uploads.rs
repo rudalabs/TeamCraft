@@ -26,7 +26,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::BaseVersion,
+    domain::{self, BaseVersion},
     error::{AppError, AppResult},
     models::Revision,
     services::files,
@@ -41,7 +41,7 @@ pub const MAX_OPEN_PER_USER: i64 = 16;
 
 const SESSION_SELECT: &str = "
     SELECT id, user_id, revision_id, filename, content_type, total_bytes, received_bytes,
-           sha256, base_version, base_sha256, stored_sha256, created_at, updated_at, expires_at
+           sha256, base_version, base_sha256, stored_sha256, folder, created_at, updated_at, expires_at
     FROM upload_sessions";
 
 /// An upload in progress.
@@ -62,6 +62,9 @@ pub struct UploadSession {
     pub base_sha256: Option<String>,
     /// Set once the content was verified and moved into the vault.
     pub stored_sha256: Option<String>,
+    /// Folder inside the project group (`files.folder`); `None` keeps the
+    /// folder of an existing file.
+    pub folder: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -99,6 +102,9 @@ pub struct NewSession {
     pub sha256: Option<String>,
     pub content_type: Option<String>,
     pub base: Option<BaseVersion>,
+    /// Folder inside the project group (normalised here); `None` keeps the
+    /// folder of an existing file (`""` for a new one).
+    pub folder: Option<String>,
 }
 
 /// A finished upload: the stored version and, for a check-in, the revision
@@ -250,6 +256,11 @@ pub async fn create(
     let total = i64::try_from(new.size)
         .map_err(|_| AppError::PayloadTooLarge("The file is too large.".into()))?;
     let sha256 = clean_sha256(new.sha256.as_deref())?;
+    let folder = new
+        .folder
+        .as_deref()
+        .map(domain::normalize_folder)
+        .transpose()?;
     let rev = files::ensure_can_attach(pool, actor, new.revision_id).await?;
     if let Some(base) = &new.base {
         files::precheck_base(pool, rev.id, &filename, base, sha256.as_deref()).await?;
@@ -282,10 +293,11 @@ pub async fn create(
     let id = Uuid::new_v4();
     let session = sqlx::query_as::<_, UploadSession>(
         "INSERT INTO upload_sessions (id, user_id, revision_id, filename, content_type,
-                                      total_bytes, sha256, base_version, base_sha256, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now() + make_interval(hours => $10))
+                                      total_bytes, sha256, base_version, base_sha256, folder,
+                                      expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now() + make_interval(hours => $11))
          RETURNING id, user_id, revision_id, filename, content_type, total_bytes, received_bytes,
-                   sha256, base_version, base_sha256, stored_sha256, created_at, updated_at,
+                   sha256, base_version, base_sha256, stored_sha256, folder, created_at, updated_at,
                    expires_at",
     )
     .bind(id)
@@ -297,6 +309,7 @@ pub async fn create(
     .bind(&sha256)
     .bind(base_version)
     .bind(&base_sha256)
+    .bind(&folder)
     .bind(SESSION_HOURS)
     .fetch_one(&mut *tx)
     .await?;
@@ -352,7 +365,7 @@ pub async fn append(
              expires_at = now() + make_interval(hours => $3)
          WHERE id = $1
          RETURNING id, user_id, revision_id, filename, content_type, total_bytes, received_bytes,
-                   sha256, base_version, base_sha256, stored_sha256, created_at, updated_at,
+                   sha256, base_version, base_sha256, stored_sha256, folder, created_at, updated_at,
                    expires_at",
     )
     .bind(id)
@@ -366,7 +379,7 @@ pub async fn append(
 
 /// Verifies a fully received upload (size, announced SHA-256), moves it into
 /// the vault and classifies it like a regular upload, with the session's
-/// base. Nothing is registered in the database yet – pass the result to
+/// base and folder. Nothing is registered in the database yet – pass the result to
 /// [`files::attach`] / [`files::check_in`] and then call [`forget`].
 ///
 /// Calling it again after a failed attach (e.g. the database was briefly
@@ -439,6 +452,7 @@ pub async fn complete(
     let mut upload =
         files::Upload::classify(vault, blob, session.filename.clone(), &session.content_type).await;
     upload.base = session.base();
+    upload.folder = session.folder.clone();
     Ok(upload)
 }
 

@@ -9,8 +9,7 @@
 //! * [`mcp`] – Model Context Protocol server at `/api/v1/mcp` for AI assistants
 //! * [`assistant`] – built-in assistant (Claude via the Anthropic API) using the MCP tools
 
-// The endpoint index of the REST API (`api::index`) is one large `json!`
-// literal, deeper than the default macro recursion limit of 128.
+// The endpoint list of `GET /api/v1` is one long `json!` literal.
 #![recursion_limit = "256"]
 
 pub mod api;

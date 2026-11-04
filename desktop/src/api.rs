@@ -57,6 +57,19 @@ fn backoff(failures: u32) -> Duration {
 fn chunk_len(size: u64, offset: u64, chunk: u64) -> usize {
     usize::try_from(size.saturating_sub(offset).min(chunk)).unwrap_or(0)
 }
+
+/// The entry for `name` in a JSON-object field of a multipart request
+/// (`bases` or `folders`: `{"file name": …}`, names matched like on the
+/// server, case-insensitively).
+fn field_entry(fields: &[(&str, String)], field: &str, name: &str) -> Option<Value> {
+    let (_, raw) = fields.iter().find(|(f, _)| *f == field)?;
+    let object: serde_json::Map<String, Value> = serde_json::from_str(raw).ok()?;
+    object
+        .into_iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value)
+}
+
 /// The assistant runs several model and tool steps (server limit: 240 s).
 const ASSISTANT_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -309,8 +322,18 @@ impl Api {
                 small.push((name.clone(), file.clone()));
                 continue;
             }
+            // The session carries the file's base version and folder, so
+            // the server refuses a conflict before any byte is sent.
+            let mut announce = json!({ "item": item, "revision": code, "filename": name,
+                                       "size": size });
+            if let Some(base) = field_entry(fields, "bases", name) {
+                announce["base"] = base;
+            }
+            if let Some(folder) = field_entry(fields, "folders", name).filter(Value::is_string) {
+                announce["folder"] = folder;
+            }
             match self
-                .upload_chunked(item, code, name, file, size, transfer)
+                .upload_chunked(announce, name, file, size, transfer)
                 .await
             {
                 Ok(id) => sessions.push(id),
@@ -345,12 +368,12 @@ impl Api {
         }
     }
 
-    /// Sends one file as a chunked upload and returns the upload id. A
-    /// failed chunk is retried at the offset the server confirmed.
+    /// Sends one file as a chunked upload (`announce` = the body that starts
+    /// the session) and returns the upload id. A failed chunk is retried at
+    /// the offset the server confirmed.
     async fn upload_chunked(
         &self,
-        item: &str,
-        code: &str,
+        mut announce: Value,
         name: &str,
         file: &Path,
         size: u64,
@@ -358,16 +381,9 @@ impl Api {
     ) -> Result<String, ApiError> {
         (transfer.progress)(name, 0, size);
         // The server checks the content against it before it is stored.
-        let sha256 = crate::workspace::sha256_of(file).await?;
+        announce["sha256"] = Value::String(crate::workspace::sha256_of(file).await?);
         transfer.check_cancel()?;
-        let session = self
-            .json(
-                Method::POST,
-                "/uploads",
-                Some(&json!({ "item": item, "revision": code, "filename": name,
-                              "size": size, "sha256": sha256 })),
-            )
-            .await?;
+        let session = self.json(Method::POST, "/uploads", Some(&announce)).await?;
         let id = session["id"]
             .as_str()
             .ok_or_else(|| ApiError::local("The server did not start the upload."))?
@@ -548,6 +564,30 @@ mod tests {
         assert_eq!(backoff(1), Duration::from_secs(1));
         assert_eq!(backoff(3), Duration::from_secs(4));
         assert_eq!(backoff(20), Duration::from_secs(16));
+    }
+
+    #[test]
+    fn session_takes_base_and_folder_from_the_fields() {
+        let fields = [
+            ("comment", "x".to_string()),
+            (
+                "bases",
+                r#"{"Frame.IAM": "ab12", "hub.step": 3}"#.to_string(),
+            ),
+            ("folders", r#"{"frame.iam": "chassis/frames"}"#.to_string()),
+        ];
+        assert_eq!(
+            field_entry(&fields, "bases", "frame.iam"),
+            Some(json!("ab12"))
+        );
+        assert_eq!(field_entry(&fields, "bases", "hub.step"), Some(json!(3)));
+        assert_eq!(
+            field_entry(&fields, "folders", "FRAME.iam"),
+            Some(json!("chassis/frames"))
+        );
+        assert_eq!(field_entry(&fields, "folders", "hub.step"), None);
+        assert_eq!(field_entry(&fields, "missing", "hub.step"), None);
+        assert_eq!(field_entry(&fields, "comment", "hub.step"), None);
     }
 
     #[test]
