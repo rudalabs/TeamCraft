@@ -1149,6 +1149,84 @@ pub fn require_text(field: &str, value: &str, max: usize) -> Result<String, AppE
     limit_text(field, v, max)
 }
 
+// ---------------------------------------------------------------------------
+// Working folder: where a file sits inside its project group
+// ---------------------------------------------------------------------------
+
+/// Longest folder path of a file (characters).
+pub const MAX_FOLDER_LEN: usize = 400;
+/// Deepest folder nesting of a file.
+pub const MAX_FOLDER_DEPTH: usize = 32;
+/// Longest single folder name.
+pub const MAX_FOLDER_SEGMENT: usize = 120;
+
+/// Normalises the folder of a file inside its project group – the place it
+/// gets in the desktop working folder `<workspace>/<GROUP>/<folder>/<file>`.
+///
+/// Backslashes become `/`, empty and `.` segments as well as leading and
+/// trailing slashes are dropped (`""` is the top of the group). Refused:
+/// `..`, names that are not valid on Windows, macOS and Linux (`<>:"|?*`,
+/// control characters, trailing dots or spaces, `CON`, `NUL`, `COM1`, …) and
+/// paths longer than [`MAX_FOLDER_LEN`] or deeper than [`MAX_FOLDER_DEPTH`].
+pub fn normalize_folder(raw: &str) -> Result<String, AppError> {
+    let bad = |why: String| AppError::BadRequest(format!("Folder '{}': {why}", raw.trim()));
+    let mut segments = Vec::new();
+    for segment in raw.trim().split(['/', '\\']) {
+        let segment = segment.trim_start();
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            return Err(bad(
+                "'..' is not allowed – folders are relative to the project group.".into(),
+            ));
+        }
+        if let Some(c) = segment
+            .chars()
+            .find(|c| c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+        {
+            return Err(bad(format!(
+                "the character {c:?} is not allowed in folder names."
+            )));
+        }
+        if segment.ends_with(['.', ' ']) {
+            return Err(bad(format!(
+                "'{segment}' ends with a dot or a space (not valid on Windows)."
+            )));
+        }
+        let stem = segment
+            .split('.')
+            .next()
+            .unwrap_or(segment)
+            .to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (stem.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.as_bytes()[3].is_ascii_digit());
+        if reserved {
+            return Err(bad(format!("'{segment}' is a reserved name on Windows.")));
+        }
+        if segment.chars().count() > MAX_FOLDER_SEGMENT {
+            return Err(bad(format!(
+                "folder names must be at most {MAX_FOLDER_SEGMENT} characters."
+            )));
+        }
+        segments.push(segment);
+    }
+    if segments.len() > MAX_FOLDER_DEPTH {
+        return Err(bad(format!(
+            "at most {MAX_FOLDER_DEPTH} folder levels are allowed."
+        )));
+    }
+    let folder = segments.join("/");
+    if folder.chars().count() > MAX_FOLDER_LEN {
+        return Err(bad(format!(
+            "the path must be at most {MAX_FOLDER_LEN} characters."
+        )));
+    }
+    Ok(folder)
+}
+
 /// Trims a text and checks it is at most `max` characters.
 pub fn limit_text(field: &str, value: &str, max: usize) -> Result<String, AppError> {
     let v = value.trim();
@@ -1795,5 +1873,48 @@ mod tests {
     fn password_policy() {
         assert!(validate_password("short").is_err());
         assert!(validate_password("long enough pw").is_ok());
+    }
+
+    #[test]
+    fn folders_are_normalised() {
+        let ok = |raw: &str| normalize_folder(raw).unwrap();
+        assert_eq!(ok(""), "");
+        assert_eq!(ok("  "), "");
+        assert_eq!(ok("/"), "");
+        assert_eq!(ok("chassis"), "chassis");
+        assert_eq!(ok("chassis/brackets"), "chassis/brackets");
+        assert_eq!(ok("chassis\\brackets\\"), "chassis/brackets");
+        assert_eq!(ok("/chassis//./brackets/"), "chassis/brackets");
+        assert_eq!(ok("Rover 2 (old)/Parts"), "Rover 2 (old)/Parts");
+        assert_eq!(ok("a..b/v1.2"), "a..b/v1.2", "dots inside names are fine");
+        assert_eq!(ok("Ölwanne/Gehäuse"), "Ölwanne/Gehäuse");
+        assert_eq!(ok("CONSOLE/COM10"), "CONSOLE/COM10");
+        for bad in [
+            "..",
+            "chassis/../etc",
+            "../outside",
+            "a\\..\\b",
+            "C:/CAD",
+            "a|b",
+            "what?",
+            "star*",
+            "quote\"",
+            "<x>",
+            "tab\there",
+            "trailing./x",
+            "space /x",
+            "CON",
+            "parts/nul.txt",
+            "Com1",
+            "LPT9/x",
+        ] {
+            assert!(normalize_folder(bad).is_err(), "{bad:?} must be refused");
+        }
+        let deep = vec!["a"; MAX_FOLDER_DEPTH + 1].join("/");
+        assert!(normalize_folder(&deep).is_err());
+        assert!(normalize_folder(&vec!["a"; MAX_FOLDER_DEPTH].join("/")).is_ok());
+        let long = vec!["x".repeat(100); 5].join("/");
+        assert!(normalize_folder(&long).is_err(), "longer than 400");
+        assert!(normalize_folder(&"y".repeat(MAX_FOLDER_SEGMENT + 1)).is_err());
     }
 }

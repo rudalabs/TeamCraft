@@ -374,7 +374,11 @@ pub struct FlatBomRow {
 }
 
 /// Picks the child revision according to the rule.
-async fn resolve(pool: &PgPool, item_id: Uuid, rule: RevisionRule) -> AppResult<Option<Revision>> {
+pub(crate) async fn resolve(
+    pool: &PgPool,
+    item_id: Uuid,
+    rule: RevisionRule,
+) -> AppResult<Option<Revision>> {
     let filter = match rule {
         RevisionRule::Latest => "",
         // Lines without an as-released configuration use the newest released revision.

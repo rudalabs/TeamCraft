@@ -485,6 +485,12 @@ pub(crate) async fn receive_uploads(
         let bases = files::parse_bases(raw)?;
         files::apply_bases(&mut received.uploads, &bases);
     }
+    // Where the files sit in the project group (the desktop working folder).
+    let (folder, folders) = files::parse_folders(
+        received.fields.get("folder").map(String::as_str),
+        received.fields.get("folders").map(String::as_str),
+    )?;
+    files::apply_folders(&mut received.uploads, folder.as_deref(), &folders);
     Ok(received)
 }
 
@@ -785,6 +791,35 @@ pub async fn restore_version(
         (
             back.clone(),
             format!("Restored {} – it is now version {}", f.filename, f.version),
+        )
+    })
+}
+
+#[derive(Deserialize)]
+pub struct FolderForm {
+    #[serde(default)]
+    folder: String,
+    back: Option<String>,
+}
+
+/// Moves a file to another folder of the project group (its place in the
+/// desktop working folder) while the revision is checked out.
+pub async fn set_file_folder(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<FolderForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = files::set_folder(&st.db, &ctx.me, id, &form.folder).await;
+    finish(&st, result, &back, |file| {
+        (
+            format!("/revisions/{}#files", file.revision_id),
+            if file.folder.is_empty() {
+                format!("{} is now at the top of the project group", file.filename)
+            } else {
+                format!("{} is now in {}/", file.filename, file.folder)
+            },
         )
     })
 }

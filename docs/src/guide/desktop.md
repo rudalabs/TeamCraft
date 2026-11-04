@@ -3,27 +3,34 @@
 TeamCraft Desktop (`desktop/`, Tauri 2) is a rich client for Linux, macOS and
 Windows: a navigator tree of the project groups, object tabs (overview,
 files, structure, where used, changes, history, 3D viewer), a worklist with
-check-outs and reviews, and a **local workspace**:
+check-outs and reviews, and a **local working folder**:
 
 * *New* (`Ctrl/Cmd+N`) creates an item together with its files: choose the
   CAD files first, name and type follow from the first one;
-* *Check out* takes the lock and copies the files into a folder per project
-  group and revision, `<workspace>/<group>/<item>/<revision>/`;
+* *Check out* takes the lock, copies the files into the working folder and
+  makes them writable;
+* *Get…* on a revision copies the item **with everything it consists of** –
+  its BOM resolved with a revision rule and the parts its CAD files
+  reference – so the assembly opens in the CAD program (see below);
 * *Get…* (*Tools → Get Project Groups…*) copies the files of every item of
-  chosen project groups into the workspace – for new team members;
+  chosen project groups into the working folder – for new team members;
 * *Import…* (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
   scan first (nothing is uploaded), then one item per part or assembly with
-  its drawings and exports; *Help → How to Import a CAD Folder* is the
-  step-by-step tutorial (Pack and Go, unique file names, check and release);
-* the *Workspace* tab shows up-to-date, modified, outdated, conflicting, new
-  and missing files and who holds the lock for how long; opening an outdated
+  its drawings and exports; every file keeps its folder, so the working
+  folder later looks like the original tree. *Help → How to Import a CAD
+  Folder* is the step-by-step tutorial (Pack and Go, unique file names,
+  check and release);
+* the *Workspace* tab shows per file where it is, whether it is up to date,
+  modified, outdated, in conflict, new, missing or a name clash, whether it
+  is read-only, and who holds the lock for how long; opening an outdated
   file or one somebody else has checked out asks first;
 * *Check in…* uploads the selected files as new versions and releases the
   lock – based on the versions they were copied from, so a version somebody
   else checked in meanwhile is never overwritten (see
-  [Concurrency](vault.md#concurrency-nothing-is-overwritten-silently));
+  [Concurrency](vault.md#concurrency-nothing-is-overwritten-silently)) –
+  and makes the files read-only again;
 * *Check in all* in the worklist checks in every check-out without local
-  changes and lists those that still have changes.
+  changes and lists those that still have changes;
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.
@@ -34,6 +41,83 @@ check-outs and reviews, and a **local workspace**:
 Sign-in runs through the browser (single sign-on or password, confirmed on a
 TeamCraft page) or with a personal access token. The app uses the same skins
 and 3D viewer as the web interface; the models are converted by the server.
+
+## How files appear on your computer
+
+There is **one working folder per project group**, and inside it the files
+sit in the **same folders as in the original CAD tree** – one copy of each
+file. The revision is information TeamCraft keeps about the file, not a
+folder level:
+
+```text
+Documents/TeamCraft/                     ← the workspace (Settings → Workspace)
+├── ROVER/                               ← project group
+│   ├── chassis/
+│   │   ├── chassis.asm                  ← ASM-000001 rev. B, checked out by you (writable)
+│   │   └── brackets/
+│   │       ├── bracket.prt              ← PRT-000001 rev. A (read-only)
+│   │       └── bracket.step             ← new STEP export next to it
+│   └── drawings/
+│       └── chassis.drw
+├── LANDER/
+│   └── …
+└── .teamcraft/
+    ├── state.json                       ← per file: item, revision, file id, version, SHA-256, checked out
+    └── migration.log                    ← what the move from the old layout did
+```
+
+The folder of a file is stored with it on the server (*Folder* on the
+revision page, `folder` in the API). The folder import sets it from the
+scanned tree; uploads without a folder put new files at the top of the
+group, and a file keeps its folder when new versions arrive. While a
+revision is checked out, the revision page can move a file to another
+folder.
+
+**Read-only rule.** Files you have **not** checked out are read-only on disk
+(the read-only attribute on Windows, no write permission on Linux and macOS).
+CAD programs then open them read-only, and nobody edits a file that cannot be
+checked in. *Check out* makes the files of the revision writable; *Check in*
+uploads the changed ones and makes them read-only again; *Cancel check-out*
+does the same without uploading. Files you changed are never made read-only
+or overwritten by TeamCraft.
+
+**Get.** *Get…* on a revision resolves its structure on the server – the
+multi-level BOM with the revision rule you choose (*latest*: the newest
+revision of every part, also in work; *released*: the newest released
+revision) plus the items whose files its CAD files reference (an assembly
+names its parts, a drawing its model) – and downloads **only what is
+missing or outdated**, compared by SHA-256. Every file is checked against
+its SHA-256 after the download and recorded at once, so a Get that was
+cancelled or interrupted continues where it stopped. The status bar shows
+the progress with a *Cancel* button.
+
+**Nothing is overwritten.**
+
+* A file you changed locally is kept (and listed) when the server has a
+  newer version – *conflict* in the Workspace tab.
+* Two items with a file of the same folder and name (`chassis/bolt.prt` in
+  two items) cannot share one place: the second is reported as a **name
+  clash** and not downloaded. Give one of them another folder on the
+  revision page.
+* A file in the way that did not come from TeamCraft is reported the same
+  way.
+
+**Why not the browser?** A browser download saves single files into the
+Downloads folder: no folder structure, so the CAD program cannot find the
+parts of an assembly; no record of which version a file is, so changes
+cannot be checked in safely; and no read-only protection. Browser downloads
+are fine for one file or for looking at something – CAD work goes through
+the desktop working folder. *Pack and Go* (ZIP) is for sending a structure
+to someone outside TeamCraft.
+
+**Moving an older workspace.** Earlier versions of the app kept one folder
+per revision, `<group>/<item>/<revision>/` (and before that
+`<item>/<revision>/`). After the sign-in the app finds these folders and
+offers to move the files to their places in the new layout. Files whose
+place is already taken by a different file, and older revisions of an item
+whose newer revision takes the place, stay where they are; files you
+changed are moved first. Identical copies are removed, emptied old folders
+too, and every step is written to `.teamcraft/migration.log`.
 
 ## Run it
 

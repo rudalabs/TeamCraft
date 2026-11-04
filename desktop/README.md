@@ -2,7 +2,7 @@
 
 The rich client of TeamCraft for **Linux, macOS and Windows**: a navigation
 rail, a navigator tree of the project groups, object tabs with sub-tabs, a
-context toolbar, a status bar – and a **local workspace** for
+context toolbar, a status bar – and a **local working folder** for
 check-out/check-in.
 
 It is a [Tauri 2](https://tauri.app) application: the user interface (`ui/`,
@@ -22,10 +22,12 @@ TeamCraft server – it is a client, not an offline copy.
 | Sign-in | **Sign in with the browser** (single sign-on or password, confirmed on a TeamCraft page) or a personal access token; *cancel* stops the sign-in at once |
 | Navigator | Project groups (mine first) → items; *My Worklist* (check-outs, reviews, my open changes); change orders by status; full-text search |
 | Revision tabs | Overview, Files (versions, restore, open), Structure (multi-level BOM, revision rules, roll-up), Where used, Changes, History, **3D viewer** (STEP, meshes, point clouds – converted by the server), Workspace |
-| Check-out / check-in | *Check out* takes the lock and copies the files into `<workspace>/<project group>/<item>/<revision>/` (folders of the older layout without the group folder are moved there on first use); the Workspace tab shows *up to date* / *modified* / *outdated* / *conflict* / *new* / *missing* files (SHA-256) and who holds the lock for how long; *Check in…* uploads the chosen files as new versions and releases the lock in one step. The version every file was copied from is remembered in the hidden `.teamcraft-base.json` of the revision folder and sent along with the check-in, so the server refuses (409) to overwrite a version somebody else checked in meanwhile; *Get files* replaces outdated, unchanged copies and keeps modified ones. Opening an outdated file or one somebody else has checked out asks first. Lock and backup files of the CAD programs are skipped; Creo iterations count as one file |
+| Working folder | One folder per project group that **mirrors the folder structure of the files** (`<workspace>/<group>/<folder>/<file>`, the folder is stored with every file on the server), one copy of each file – the revision is metadata in `<workspace>/.teamcraft/state.json` (item, revision, file id, version, SHA-256, checked out). Files you have not checked out are **read-only** on disk; *Check out* takes the lock and makes them writable; *Check in…* uploads the chosen files as new versions, releases the lock in one step and makes them read-only again. Every check-in names the version each file is based on, so the server refuses (409) to overwrite a version somebody else checked in meanwhile. The Workspace tab shows *up to date* / *modified* / *outdated* / *conflict* / *new* / *missing* / *name clash* per file (from the server's file status) with its path, read-only flag and the lock owner. Two items with the same folder and file name are reported, never overwritten. Lock and backup files of the CAD programs are skipped; Creo iterations count as one file |
+| Get | *Get…* on a revision: the item with its BOM (revision rule *latest* or *released*) and the parts its CAD files reference, resolved by the server (`…/workset`); only missing and outdated files are downloaded (SHA-256, checked after the download), recorded one by one so an interrupted Get continues where it stopped; progress and *Cancel* in the status bar. No browser downloads |
+| Old workspaces | Folders of the older layout `<group>/<item>/<revision>/` (and `<item>/<revision>/`) are found after the sign-in; the app offers to move the files into the new layout – never overwriting a file, keeping files whose place is taken and listing them, writing every step to `.teamcraft/migration.log` |
 | Check in all | *Check in all* in the worklist (navigator and home page): every check-out without local changes is checked in on the server (lock released, one revision at a time); revisions with modified, new or conflicting files stay checked out and are listed |
 | Native CAD previews | The preview image stored in Inventor, Solid Edge and SolidWorks files in the Files tab; on Windows *STEP* in the Workspace tab and *Create STEP exports … first* at check-in export with the installed Inventor or Solid Edge (COM automation through Windows PowerShell; uses your own licence) |
-| Whole project groups locally | *Get…* in the navigator (*Tools → Get Project Groups…*): copies the files of every item of the chosen groups – latest released or latest revision – into the workspace, one folder per group; unchanged files are skipped, locally modified files kept. For new team members or a fresh computer |
+| Whole project groups locally | *Get…* in the navigator (*Tools → Get Project Groups…*): copies the files of every item of the chosen groups – latest released or latest revision – into the working folder with their folder structure; unchanged files are skipped, locally modified files kept, name clashes reported. For new team members or a fresh computer |
 | Import a CAD folder | *Import…* in the navigator (*Tools → Import CAD Folder…*): scans an existing folder (dry run: items, duplicate file names, skipped lock/backup files), then creates one item per part or assembly with the drawings and exports of the same name, project files in one document item, optional BOM lines from the assembly references, and checks every item in right after its files (assemblies once more after their BOM lines), so an interrupted import never leaves items checked out – a new run of the same folder also releases the check-outs an earlier, interrupted run left behind; a final report lists the new items and files, BOM lines, check-ins and problems (with *Open* for the top assembly); interrupted imports continue where they stopped. Tutorial: *Help → How to Import a CAD Folder* |
 | New item | *New* (`Ctrl/Cmd+N`): choose the CAD files first – name and type follow from the first file; they are uploaded right after the item is created |
 | Release and changes | *Release…* creates and submits a change order – with the unreleased dependencies (BOM children, drawings) by default; *Release readiness* panel with *Add all*; approve/reject from the worklist |
@@ -65,7 +67,7 @@ sudo pacman -S webkit2gtk-4.1 libappindicator-gtk3 librsvg xdotool
 ```sh
 cd desktop
 cargo run                      # start the server first: cargo run in the repository root
-cargo test                     # settings, API paths, PKCE + loopback sign-in, workspace comparison
+cargo test                     # settings, API paths, PKCE + loopback sign-in, working-folder layout, Get and migration planning, read-only files
 cargo clippy --all-targets -- -D warnings
 ```
 
@@ -79,7 +81,7 @@ Where the app keeps its data:
 * settings and the token: the per-user configuration directory
   (`~/.config/io.github.rudalabs.teamcraft`, `~/Library/Application Support/io.github.rudalabs.teamcraft`,
   `%APPDATA%\io.github.rudalabs.teamcraft`); the token file is readable by the user only;
-* checked-out files: `Documents/TeamCraft/<project group>/<item>/<revision>/` (configurable in *Settings*).
+* the working folder: `Documents/TeamCraft/<project group>/<folder>/<file>` with `Documents/TeamCraft/.teamcraft/state.json` (configurable in *Settings*).
 
 ## Layout
 
@@ -92,7 +94,8 @@ src/main.rs        Tauri setup, native menu, state
 src/commands.rs    the commands the UI calls (every network and file access)
 src/api.rs         REST client (/api/v1, bearer token) – the web view never talks to the server
 src/signin.rs      browser sign-in: PKCE, loopback listener on 127.0.0.1
-src/workspace.rs   check-out folders, SHA-256 comparison with base versions (outdated / conflict), check-in upload
+src/layout.rs      working-folder rules (pure): folder mapping, state.json, Get planning, migration planning
+src/workspace.rs   Get, status, read-only handling, check-in, migration of the old layout
 src/settings.rs    settings.json and the token file
 ui/                index.html, app.css (layout), app.js (all views)
 capabilities/      Tauri permissions of the window (dialogs only – files and URLs are opened by Rust)
