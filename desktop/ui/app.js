@@ -17,13 +17,13 @@
   var SKINS = [
     { id: "teamcraft", name: "TeamCraft", logo: "logos/TeamCraft_Icon.svg", description: "House style, night" },
     { id: "teamcraft-day", name: "TeamCraft Day", logo: "logos/TeamCraft_Icon.svg", description: "House style, light" },
-    { id: "arch", name: "Arch", logo: "icons/Arch_logo.svg", description: "Blueprint grid" },
-    { id: "cachyos", name: "CachyOS", logo: "icons/Cachy_logo.svg", description: "Teal dot matrix" },
-    { id: "endeavouros", name: "EndeavourOS", logo: "icons/Endeavor_logo.svg", description: "Purple sunset" },
-    { id: "kde", name: "KDE", logo: "icons/KDE_logo.svg", description: "Breeze dark" },
-    { id: "kubuntu", name: "Kubuntu", logo: "icons/Kubuntu_logo.svg", description: "Blue rings" },
-    { id: "opensuse", name: "openSUSE", logo: "icons/OpenSUSE_logo.svg", description: "Chameleon scales" },
-    { id: "ubuntu", name: "Ubuntu", logo: "icons/Ubuntu_logo.svg", description: "Circle of friends" }
+    { id: "arch", name: "Arch", logo: "logos/TeamCraft_Icon.svg", description: "Blueprint grid" },
+    { id: "cachyos", name: "CachyOS", logo: "logos/TeamCraft_Icon.svg", description: "Teal dot matrix" },
+    { id: "endeavouros", name: "EndeavourOS", logo: "logos/TeamCraft_Icon.svg", description: "Purple sunset" },
+    { id: "kde", name: "KDE", logo: "logos/TeamCraft_Icon.svg", description: "Breeze dark" },
+    { id: "kubuntu", name: "Kubuntu", logo: "logos/TeamCraft_Icon.svg", description: "Blue rings" },
+    { id: "opensuse", name: "openSUSE", logo: "logos/TeamCraft_Icon.svg", description: "Chameleon scales" },
+    { id: "ubuntu", name: "Ubuntu", logo: "logos/TeamCraft_Icon.svg", description: "Circle of friends" }
   ];
 
   var ITEM_TYPES = [
@@ -2334,8 +2334,7 @@
       h("img.connect-logo.skin-logo-dark", { src: "/static/media/logos/TeamCraft_Logo_White.svg", alt: "TeamCraft" }),
       h("img.connect-logo.skin-logo-light", { src: "/static/media/logos/TeamCraft_Logo_Blue.svg", alt: "TeamCraft" }),
       h("p", { text: "TeamCraft Desktop " + state.session.version + " – the rich client of TeamCraft, the open-source product lifecycle management." }),
-      h("p.small.muted", { text: "TeamCraft is open source under the Mozilla Public License 2.0. Fonts: Montserrat and Oswald (SIL Open Font License 1.1). " +
-        "Distribution logos are trademarks of their owners." }),
+      h("p.small.muted", { text: "TeamCraft is open source under the Mozilla Public License 2.0. Fonts: Montserrat and Oswald (SIL Open Font License 1.1)." }),
       h("p.small.muted", { text: "Server: " + (state.session.server_url || "—") })
     ]), [{ label: "Close", primary: true, onClick: function (d) { d.close(); } }]);
   }

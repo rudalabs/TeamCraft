@@ -184,9 +184,7 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | Tauri 2                              | desktop app                              | MIT / Apache-2.0                         |
 | Montserrat, Oswald                   | fonts                                    | SIL OFL 1.1                              |
 
-The distribution logos in `media/icons/` (Arch Linux, CachyOS, EndeavourOS,
-KDE, Kubuntu, openSUSE, Ubuntu) are trademarks of their owners and only
-label the matching skins. SolidWorks, NX, Creo, CATIA, Inventor, Fusion,
+SolidWorks, NX, Creo, CATIA, Inventor, Fusion,
 Revit and the other product names are trademarks of their respective
 owners; TeamCraft is not affiliated with them.
 
