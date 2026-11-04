@@ -7,6 +7,12 @@ variable can also be read from a file by appending `_FILE`
 container secrets are passed. For local development TeamCraft also reads an
 optional, git-ignored `secrets/.env` file in the working directory.
 
+In the [Docker installation](docker.md) the variables go into
+`teamcraft.env`; the image sets `TEAMCRAFT_BIND_ADDR=0.0.0.0:8080` and
+`TEAMCRAFT_VAULT_DIR=/var/lib/teamcraft/vault`, and `docker-compose.yml`
+sets the database connection with the password from a Docker secret
+(`TEAMCRAFT_DB_PASSWORD_FILE=/run/secrets/db_password`).
+
 ## Server
 
 | Variable                  | Default                          | Meaning                                                                         |

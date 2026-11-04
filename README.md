@@ -169,6 +169,21 @@ captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh).
 
 ## Quick start
 
+**Install on Linux with Docker** – TeamCraft and PostgreSQL in containers,
+data in Docker volumes, nothing to build:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rudalabs/TeamCraft/main/deploy/install.sh | bash
+```
+
+The script installs into `/opt/teamcraft` (`--user`: `~/teamcraft`), generates
+the database password, starts everything on <http://localhost:8080> and offers
+to create the first administrator. Run it again to upgrade; `--dry-run` shows
+every step first. Details, backups and TLS:
+[Install with Docker](https://rudalabs.github.io/TeamCraft/admin/docker.html).
+
+**From source** (development, macOS, Windows):
+
 ```sh
 git clone https://github.com/rudalabs/TeamCraft.git && cd TeamCraft
 docker compose up -d db     # PostgreSQL on 127.0.0.1, no password needed
