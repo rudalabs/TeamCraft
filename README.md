@@ -14,6 +14,7 @@
 
 <div align="center">
 
+[![Download][badge-download]][download]
 [![Linux][badge-linux]][linux]
 [![macOS][badge-macos]][macos]
 [![Windows][badge-windows]][windows]
@@ -26,7 +27,7 @@
   <a href="https://github.com/rudalabs/TeamCraft/actions/workflows/desktop.yml"><img src="https://github.com/rudalabs/TeamCraft/actions/workflows/desktop.yml/badge.svg?branch=main" alt="Desktop app" /></a>
   <a href="https://github.com/rudalabs/TeamCraft/actions/workflows/docs.yml"><img src="https://github.com/rudalabs/TeamCraft/actions/workflows/docs.yml/badge.svg?branch=main" alt="Docs" /></a>
   <a href="https://www.repostatus.org/#wip"><img src="https://www.repostatus.org/badges/latest/wip.svg" alt="Project status: WIP – initial development is in progress, but there has not yet been a stable, usable release suitable for the public." /></a>
-  <img src="https://img.shields.io/badge/release-none_yet_(0.1.0--dev)-orange" alt="Release: none yet" />
+  <a href="https://github.com/rudalabs/TeamCraft/releases"><img src="https://img.shields.io/github/v/release/rudalabs/TeamCraft?include_prereleases&label=release" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MPL--2.0-blue" alt="Licence: MPL-2.0" /></a>
   <img src="https://img.shields.io/badge/built%20with-Rust-dea584?logo=rust&logoColor=white" alt="Built with Rust" />
   <img src="https://img.shields.io/badge/database-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="PostgreSQL" />
@@ -34,6 +35,7 @@
 
 <p align="center">
   <a href="https://rudalabs.github.io/TeamCraft/">Documentation</a> ·
+  <a href="#download">Download</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/guide/tour.html">Feature tour</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/reference/formats.html">File formats</a> ·
@@ -114,6 +116,26 @@ promised.
   folders with a step-by-step tutorial.
 - **Audit log.** Every modification with user, time and details.
 
+## Download
+
+Builds of every tagged version are on the
+**[Releases page](https://github.com/rudalabs/TeamCraft/releases)** – 0.x
+versions are pre-releases (see the warning above):
+
+| | Linux x86_64 | Linux ARM64 | macOS (Apple silicon) | Windows x86_64 |
+|---|---|---|---|---|
+| **Server** (`teamcraft`) | `.tar.gz` | `.tar.gz` | `.tar.gz` | `.zip` |
+| **Desktop app** | `.AppImage`, `.deb`, `.rpm` | `.deb`, `.rpm` | `.dmg`, `.app.zip` | `.msi`, `-setup.exe` |
+
+Check a download against `SHA256SUMS.txt` (`sha256sum -c --ignore-missing
+SHA256SUMS.txt`). The installers are **not code-signed** yet: macOS asks to
+confirm the first start (*right-click → Open*), Windows SmartScreen shows
+*More info → Run anyway*. The newest build of `main` is attached as artifacts
+to the latest run of the
+[Release workflow](https://github.com/rudalabs/TeamCraft/actions/workflows/release.yml)
+(14 days, signed-in GitHub users). Linux packages for Arch (AUR), snap and
+Flatpak are described in [packaging/](packaging/README.md).
+
 ## Quick start
 
 ```sh
@@ -179,7 +201,8 @@ export and analysis together in one revision.
 ## Documentation
 
 The documentation is published at **<https://rudalabs.github.io/TeamCraft/>**
-(built from [`docs/`](docs) with mdBook, plus the rustdoc API reference):
+(built from [`docs/src`](docs/src/SUMMARY.md) with mdBook, plus the
+[rustdoc API reference](https://rudalabs.github.io/TeamCraft/api/teamcraft/index.html)):
 user guide, administration (configuration, SSO, operations) and reference (file formats, REST API, architecture). A
 running server lists its API at
 `GET /api/v1` and its formats at `/formats`.
@@ -229,6 +252,8 @@ SolidWorks, NX, Creo, CATIA, Inventor, Fusion,
 Revit and the other product names are trademarks of their respective
 owners; TeamCraft is not affiliated with them.
 
+[badge-download]: https://img.shields.io/badge/Download-Releases-16a34a?style=for-the-badge&logo=github&logoColor=white
+[download]: https://github.com/rudalabs/TeamCraft/releases
 [badge-linux]: https://img.shields.io/badge/Linux-Build_from_source-E95420?style=for-the-badge&logo=linux&logoColor=white
 [badge-macos]: https://img.shields.io/badge/macOS-Build_from_source-333333?style=for-the-badge&logo=apple&logoColor=white
 [badge-windows]: https://img.shields.io/badge/Windows-Build_from_source-0078D6?style=for-the-badge
