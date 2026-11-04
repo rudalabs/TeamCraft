@@ -2849,6 +2849,111 @@ async fn bom_import_from_cad_tables() {
     app.teardown().await;
 }
 
+#[tokio::test]
+async fn bom_import_from_step_assemblies() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    // AP214 product structure: a pump with a rotor sub-assembly and 3 + 1 screws.
+    let mut data = String::new();
+    for (n, id, name) in [
+        (1, "PUMP-100", "Pump"),
+        (2, "ROTOR-1", "Rotor"),
+        (3, "SHAFT-1", "Shaft"),
+        (4, "M6x20", "Screw"),
+    ] {
+        data += &format!(
+            "#{n}1=PRODUCT('{id}','{name}','',(#9));\n\
+             #{n}2=PRODUCT_DEFINITION_FORMATION('','',#{n}1);\n\
+             #{n}3=PRODUCT_DEFINITION('design','',#{n}2,#8);\n"
+        );
+    }
+    for (id, parent, child) in [
+        (101, 1, 2),
+        (102, 1, 4),
+        (103, 1, 4),
+        (104, 1, 4),
+        (105, 2, 3),
+        (106, 2, 4),
+    ] {
+        data += &format!(
+            "#{id}=NEXT_ASSEMBLY_USAGE_OCCURRENCE('{id}','','',#{parent}3,#{child}3,$);\n"
+        );
+    }
+    let step = format!(
+        "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\nDATA;\n{data}ENDSEC;\n\
+         END-ISO-10303-21;\n"
+    );
+    let files: &[(&str, &[u8])] = &[("pump.step", step.as_bytes())];
+
+    let plan = app
+        .api_multipart(
+            "/api/v1/bom-imports",
+            &eng,
+            files,
+            &[("project", "ROCKET"), ("dry_run", "true")],
+        )
+        .await;
+    assert_eq!(plan.status, StatusCode::OK, "{}", plan.text());
+    let plan = plan.json();
+    assert_eq!(plan["root_number"], "PUMP-100", "{plan}");
+    assert_eq!(plan["new_items"], 3);
+    assert_eq!(plan["lines"].as_array().unwrap().len(), 4);
+
+    let done = app
+        .api_multipart("/api/v1/bom-imports", &eng, files, &[("project", "ROCKET")])
+        .await;
+    assert_eq!(done.status, StatusCode::CREATED, "{}", done.text());
+    assert_eq!(done.json()["root"], "PUMP-100/A");
+    let pump = app
+        .api(
+            Method::GET,
+            "/api/v1/items/PUMP-100/revisions/A",
+            &eng,
+            None,
+        )
+        .await
+        .json();
+    let lines: Vec<(String, f64)> = pump["bom"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            (
+                l["child_number"].as_str().unwrap().to_string(),
+                l["quantity"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        vec![("ROTOR-1".to_string(), 1.0), ("M6X20".to_string(), 3.0)]
+    );
+    assert_eq!(
+        pump["files"][0]["filename"], "pump.step",
+        "the STEP file is kept"
+    );
+    let rotor = app
+        .api(Method::GET, "/api/v1/items/ROTOR-1/revisions/A", &eng, None)
+        .await
+        .json();
+    assert_eq!(rotor["revision"]["item_type"], "assembly");
+    assert_eq!(rotor["bom"].as_array().unwrap().len(), 2);
+    assert!(rotor["files"].as_array().unwrap().is_empty());
+
+    // A single part has no product structure.
+    let part = std::fs::read("tests/fixtures/cube.step").unwrap();
+    let r = app
+        .api_multipart(
+            "/api/v1/bom-imports",
+            &eng,
+            &[("cube.step", &part)],
+            &[("project", "ROCKET")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    app.teardown().await;
+}
+
 /// A minimal PNG (`w` × `h`); the extractor checks the chunk structure only.
 fn tiny_png(w: u32, h: u32) -> Vec<u8> {
     fn chunk(out: &mut Vec<u8>, kind: &[u8], data: &[u8]) {

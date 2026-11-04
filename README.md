@@ -60,7 +60,7 @@
 All of the following works end to end today: creating a project group,
 adding items, checking files out and in, building the BOM, releasing through
 a reviewed change order and seeing what has to be checked after a release.
-It is covered by 107 unit tests and 32 end-to-end tests against a real
+It is covered by 114 unit tests and 33 end-to-end tests against a real
 PostgreSQL. Until the first release, the database schema is migrated
 automatically between commits, but nothing else about compatibility is
 promised.
@@ -82,7 +82,8 @@ promised.
 - **BOM import.** Items and multi-level BOMs from the BOM tables of CAD
   programs (Inventor, SolidWorks, Solid Edge, Fusion, Creo, NX, hand-made
   lists) as CSV/TSV, Excel or OpenDocument – English and German columns,
-  levels or positions `1.1.2`, units; preview first, then one transaction.
+  levels or positions `1.1.2`, units – or from the product structure of a
+  STEP assembly of any CAD program; preview first, then one transaction.
 - **Change propagation.** References inside CAD files (SolidWorks, Inventor,
   Solid Edge, CATIA, NX, STEP, KiCad, …) are tracked; a release flags every
   dependent for a check.

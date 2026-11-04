@@ -32,8 +32,10 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Desktop: new members download everything of one or more project groups at once
 - [ ] Desktop: *Import BOM…* (CSV/Excel) on a checked-out assembly
 - [ ] Desktop: cancel long operations (check-in upload, Pack and Go) half-way
-- [ ] Browser check (Playwright, no console errors, no overflow at 390 px) of `/import` and `/import/{id}`
-- [ ] STEP assembly import → items + BOM (feature 3c)
+- [x] Browser check (no console errors, no overflow at 390 px) of `/import` and `/import/{id}`, with a STEP import
+  (2026-11-04)
+- [x] STEP assembly import → items + BOM (feature 3c)
+- [ ] Try the STEP assembly import with real exports of Inventor, SolidWorks, Solid Edge, Fusion, CATIA and NX
 - [ ] 3D preview: test real STEP exports of the CAD programs and assembly placements (`mapped_item`); readers for IGES,
   BREP, Parasolid, JT, … (E57: `e57` crate)
 - [ ] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview (feature 4)
@@ -147,9 +149,9 @@ The history up to the open-source release is squashed into the first commit
   `POST /api/v1/bom-imports`) with `dry_run=true`, the UI shows counts,
   notes and the first rows, a second call imports. Desktop tests and the row
   in `desktop/README.md`.
-- **Browser check:** the Playwright/Chromium check of `/import` and
-  `/import/{id}` (no console errors, no horizontal overflow at 390 px) has not
-  been run yet. The pages only use existing styles (cards, tables, `indent-*`).
+- **Browser check:** done on 2026-11-04 in a Chromium-based browser (not
+  automated): `/import` and `/import/{id}` have no console errors and no
+  horizontal overflow at 390 px; wide tables scroll inside `.table-wrap`.
 - **Known limitations** (documented in the UI, keep in mind):
     - the column recognition is a heuristic built from the documented export
       layouts; it was **not tested with real files** of Inventor, SolidWorks,
@@ -161,23 +163,28 @@ The history up to the open-source release is squashed into the first commit
     - the notes (warnings) of an import are shown in the preview only; the
       audit entry `import.bom` keeps their number, not their text.
 
-### 3c – STEP assembly import (not started)
+### 3c – STEP assembly import (done, not tested with real exports)
 
-- Own minimal ISO 10303-21 (Part 21) reader for `PRODUCT`,
+- `src/stepbom.rs`: own minimal ISO 10303-21 (Part 21) reader for `PRODUCT`,
   `PRODUCT_DEFINITION_FORMATION(_WITH_SPECIFIED_SOURCE)`,
   `PRODUCT_DEFINITION` and `NEXT_ASSEMBLY_USAGE_OCCURRENCE` (quantity = number
-  of occurrences below the same parent), turned into a `BomTable` so that the
-  plan/run code of `services::imports` is reused unchanged.
-- The STEP file is attached to the new root revision. Staging for the web
-  flow: `staged_imports` already has the `sha256` column and the kind `step`
-  (store the upload in the vault, not in the row).
+  of occurrences below the same parent), turned into a `BomTable`; the
+  plan/run code of `services::imports` is reused unchanged. Web form
+  (`/import`) and REST API (`/bom-imports`, `…/bom/import`) take `.step`,
+  `.stp` and `.p21` files up to 200 MiB.
+- A new top-level assembly keeps the STEP file (3D preview of the whole
+  assembly). Web uploads are staged in the vault (`staged_imports.kind =
+  'step'`, `sha256`); a discarded upload leaves its blob in the vault.
 - Research result: `ruststep` 0.4 (Apache-2.0) rejected as a direct
   dependency – outdated dependencies (derive_more 0.99, itertools 0.10,
   thiserror 1, unmaintained Inflector) and a heavy proc-macro schema layer.
-  Note: the 3D preview now uses `truck-stepio`, which pulls in `ruststep`
-  anyway; its `Table` gives the shells but no product structure, so the own
-  Part 21 reader for `PRODUCT` / `NEXT_ASSEMBLY_USAGE_OCCURRENCE` is still
-  the plan.
+  `truck-stepio` (3D preview) gives the shells but no product structure.
+- **Known limitations:** tested with hand-written AP214 structures only, not
+  with real exports of the CAD programs (the NIST STEP files in
+  `tests/fixtures/cad` are single parts); complex instances and the
+  quantities of `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE` are not read; the
+  geometry of the parts is not split into the new items; a STEP file
+  imported *into* a checked-out revision is not attached to it.
 
 ## Open – features 4 to 9 (not started)
 
