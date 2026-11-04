@@ -44,7 +44,7 @@ pub fn supports(format_id: &str) -> bool {
         || format_id.starts_with("solidedge-")
         || matches!(
             format_id,
-            "solidworks-part" | "solidworks-assembly" | "solidworks-drawing"
+            "solidworks-part" | "solidworks-assembly" | "solidworks-drawing" | "nx-part"
         )
 }
 
@@ -87,9 +87,65 @@ pub fn extract(path: &Path) -> io::Result<Option<Thumbnail>> {
     if n == head.len() && head == OLE_MAGIC {
         return Ok(from_compound_file(file));
     }
+    if n == head.len() && &head == crate::nxpart::MAGIC {
+        return from_nx_part(file);
+    }
     let mut data = Vec::new();
     file.take(MAX_SCAN).read_to_end(&mut data)?;
     Ok(find_in(&data, false).map(|f| f.thumbnail))
+}
+
+/// NX parts: the JPEG in the `/Root/images/preview` stream.
+fn from_nx_part(file: File) -> io::Result<Option<Thumbnail>> {
+    let Some(mut part) = crate::nxpart::NxPart::open(io::BufReader::new(file))? else {
+        return Ok(None);
+    };
+    let Some(data) = part.read(crate::nxpart::PREVIEW_STREAM, MAX_STREAM)? else {
+        return Ok(None);
+    };
+    Ok(jpeg_size(&data)
+        .filter(|&(w, h)| plausible(w, h))
+        .map(|_| Thumbnail {
+            content_type: "image/jpeg",
+            bytes: data,
+        }))
+}
+
+/// Width and height of a baseline or progressive JPEG, read from its frame
+/// header (SOFn); `None` if the segment structure is broken.
+fn jpeg_size(data: &[u8]) -> Option<(u32, u32)> {
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
+    let mut i = 2;
+    loop {
+        // Fill bytes before a marker are allowed.
+        while *data.get(i)? == 0xFF && *data.get(i + 1)? == 0xFF {
+            i += 1;
+        }
+        if *data.get(i)? != 0xFF {
+            return None;
+        }
+        let marker = *data.get(i + 1)?;
+        if marker == 0x01 || (0xD0..=0xD7).contains(&marker) {
+            i += 2;
+            continue;
+        }
+        let len = u16::from_be_bytes([*data.get(i + 2)?, *data.get(i + 3)?]) as usize;
+        if len < 2 {
+            return None;
+        }
+        let is_sof = (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC);
+        if is_sof {
+            let h = u16::from_be_bytes([*data.get(i + 5)?, *data.get(i + 6)?]);
+            let w = u16::from_be_bytes([*data.get(i + 7)?, *data.get(i + 8)?]);
+            return Some((u32::from(w), u32::from(h)));
+        }
+        if marker == 0xDA || marker == 0xD9 {
+            return None; // image data before any frame header
+        }
+        i += 2 + len;
+    }
 }
 
 fn read_up_to(file: &mut File, buf: &mut [u8]) -> io::Result<usize> {
@@ -292,7 +348,11 @@ pub fn cached(cache_dir: &Path, sha256: &str, blob: &Path) -> io::Result<Option<
     }
     let dir = cache_dir.join(&sha256[..2]);
     let base = format!("{sha256}.thumb.v{CACHE_VERSION}");
-    for (ext, content_type) in [("png", "image/png"), ("bmp", "image/bmp")] {
+    for (ext, content_type) in [
+        ("png", "image/png"),
+        ("bmp", "image/bmp"),
+        ("jpg", "image/jpeg"),
+    ] {
         if let Ok(bytes) = std::fs::read(dir.join(format!("{base}.{ext}"))) {
             return Ok(Some(Thumbnail {
                 content_type,
@@ -307,6 +367,7 @@ pub fn cached(cache_dir: &Path, sha256: &str, blob: &Path) -> io::Result<Option<
     std::fs::create_dir_all(&dir)?;
     let (name, bytes): (String, &[u8]) = match &found {
         Some(t) if t.content_type == "image/png" => (format!("{base}.png"), &t.bytes),
+        Some(t) if t.content_type == "image/jpeg" => (format!("{base}.jpg"), &t.bytes),
         Some(t) => (format!("{base}.bmp"), &t.bytes),
         None => (format!("{base}.none"), b""),
     };
@@ -490,6 +551,37 @@ mod tests {
             .exists());
         assert!(cached(dir.path(), "../x", empty.path()).is_err());
         assert!(supports("inventor-assembly") && supports("solidedge-weldment"));
+        assert!(supports("nx-part"));
         assert!(!supports("inventor-project") && !supports("step"));
+    }
+
+    /// SOI, APP0 (JFIF, 16 bytes), fill byte, SOF0 with `w` × `h`.
+    fn jpeg_header(w: u16, h: u16) -> Vec<u8> {
+        let mut d = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        d.extend_from_slice(b"JFIF\0\x01\x01\0\0\x01\0\x01\0\0");
+        d.extend_from_slice(&[0xFF, 0xFF, 0xC0, 0x00, 0x11, 0x08]);
+        d.extend_from_slice(&h.to_be_bytes());
+        d.extend_from_slice(&w.to_be_bytes());
+        d.extend_from_slice(&[0x03; 10]);
+        d
+    }
+
+    #[test]
+    fn jpeg_size_reads_the_frame_header() {
+        assert_eq!(jpeg_size(&jpeg_header(320, 200)), Some((320, 200)));
+        // Progressive (SOF2) works the same way.
+        let mut p = jpeg_header(64, 48);
+        assert_eq!(p[22], 0xC0);
+        p[22] = 0xC2;
+        assert_eq!(jpeg_size(&p), Some((64, 48)));
+        // Broken or cut-off data never panics.
+        assert_eq!(jpeg_size(b"\xFF\xD8\xFF\xE0\x00"), None);
+        assert_eq!(jpeg_size(b"\xFF\xD8\xFF\xE0\x00\x01"), None);
+        assert_eq!(jpeg_size(b"\xFF\xD8\xFF\xDA\x00\x08"), None);
+        assert_eq!(jpeg_size(b"not a jpeg"), None);
+        let full = jpeg_header(320, 200);
+        for cut in 0..full.len() {
+            let _ = jpeg_size(&full[..cut]);
+        }
     }
 }
