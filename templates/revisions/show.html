@@ -62,8 +62,14 @@
       <button class="danger" type="submit">Delete item</button>
     </form>
     {% endif %}
+    {% if assistant_enabled %}
+    <button type="button" data-toggle="assistant-panel" title="Release notes, release check or any question about this revision">Ask TeamCraft…</button>
+    {% endif %}
   </div>
 </div>
+{% if assistant_enabled %}
+{{ m.assistant_panel([["release_notes", "Draft release notes"], ["release_check", "Check before release"]], rev.item_number, rev.code, "", back) }}
+{% endif %}
 
 {% if not is_latest %}
 <div class="notice">You are looking at an older revision. <a href="/revisions/{{ latest_id }}">Go to the latest revision.</a></div>

@@ -20,6 +20,9 @@ check-outs and reviews, and a **local workspace**:
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.
+* *Ask…* in a revision or change tab opens [Ask TeamCraft](assistant.md)
+  (release notes, release check, review briefing, free questions) when the
+  server has the assistant enabled.
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a
 TeamCraft page) or with a personal access token. The app uses the same skins

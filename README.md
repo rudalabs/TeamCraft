@@ -126,6 +126,11 @@ promised.
   other MCP clients search items and explain BOMs and where-used, compare
   revisions, check a BOM before a release and draft change orders. It uses
   your rights and never submits, approves or releases.
+- **Ask TeamCraft (optional).** With an Anthropic API key configured, the
+  web UI and the desktop app offer quick actions – draft release notes,
+  check before release, brief me for a review, what needs my attention –
+  and a free question box. Claude answers on the server with the same tools
+  and your rights, read-only unless you allow drafts.
 - **Audit log.** Every modification with user, time and details.
 
 ## Download

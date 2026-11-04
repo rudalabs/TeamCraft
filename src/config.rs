@@ -98,6 +98,33 @@ pub struct Config {
     pub smtp: Option<SmtpConfig>,
     /// Notifications to Mattermost. `None` = disabled.
     pub mattermost: Option<MattermostConfig>,
+    /// The built-in assistant (Claude via the Anthropic API). `None` = disabled.
+    pub assistant: Option<AssistantConfig>,
+}
+
+/// Default model of the assistant.
+pub const DEFAULT_ASSISTANT_MODEL: &str = "claude-opus-5-5";
+/// Default for the most model calls of one assistant run.
+pub const DEFAULT_ASSISTANT_MAX_STEPS: u32 = 12;
+
+#[derive(Clone)]
+pub struct AssistantConfig {
+    /// Anthropic API key (secret – never log it).
+    pub api_key: String,
+    /// Claude model id, e.g. `claude-opus-5-5`.
+    pub model: String,
+    /// Most model calls (tool-use rounds) of one run.
+    pub max_steps: u32,
+}
+
+impl std::fmt::Debug for AssistantConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssistantConfig")
+            .field("api_key", &"<redacted>")
+            .field("model", &self.model)
+            .field("max_steps", &self.max_steps)
+            .finish()
+    }
 }
 
 #[derive(Clone)]
@@ -279,6 +306,35 @@ impl Config {
             }
             None => None,
         };
+        let assistant = match env.get("TEAMCRAFT_ANTHROPIC_API_KEY")? {
+            Some(api_key) => {
+                let api_key = api_key.trim().to_string();
+                if api_key.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                    bail!("TEAMCRAFT_ANTHROPIC_API_KEY must not contain spaces or line breaks");
+                }
+                let model = env
+                    .get("TEAMCRAFT_ASSISTANT_MODEL")?
+                    .map(|m| m.trim().to_string())
+                    .unwrap_or_else(|| DEFAULT_ASSISTANT_MODEL.to_string());
+                if !model
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | ':' | '@'))
+                {
+                    bail!("TEAMCRAFT_ASSISTANT_MODEL must be a model id such as {DEFAULT_ASSISTANT_MODEL}");
+                }
+                let max_steps =
+                    env.parse_or("TEAMCRAFT_ASSISTANT_MAX_STEPS", DEFAULT_ASSISTANT_MAX_STEPS)?;
+                if !(1..=50).contains(&max_steps) {
+                    bail!("TEAMCRAFT_ASSISTANT_MAX_STEPS must be between 1 and 50");
+                }
+                Some(AssistantConfig {
+                    api_key,
+                    model,
+                    max_steps,
+                })
+            }
+            None => None,
+        };
 
         Ok(Config {
             bind_addr,
@@ -299,13 +355,14 @@ impl Config {
             mattermost_error_webhook,
             smtp,
             mattermost,
+            assistant,
         })
     }
 
     /// Password-free summary for the startup log.
     pub fn summary(&self) -> String {
         format!(
-            "bind={} public_url={} database={} vault={} max_upload={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} mattermost_notifications={}",
+            "bind={} public_url={} database={} vault={} max_upload={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} mattermost_notifications={} assistant={}",
             self.bind_addr,
             self.public_url,
             self.database_display,
@@ -320,6 +377,7 @@ impl Config {
             self.mattermost
                 .as_ref()
                 .map_or("off", |m| if m.direct { "direct" } else { "channel" }),
+            self.assistant.as_ref().map_or("off", |a| a.model.as_str()),
         )
     }
 }
@@ -713,5 +771,55 @@ mod tests {
             ("TEAMCRAFT_COOKIE_SECURE", "maybe")
         ])
         .is_err());
+    }
+
+    #[test]
+    fn assistant_settings() {
+        let cfg = config_from(&[("TEAMCRAFT_DB_PASSWORD", "x")]).unwrap();
+        assert!(cfg.assistant.is_none(), "disabled without a key");
+        assert!(cfg.summary().contains("assistant=off"));
+
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_ANTHROPIC_API_KEY", "sk-test-key-123"),
+        ])
+        .unwrap();
+        let a = cfg.assistant.as_ref().unwrap();
+        assert_eq!(a.model, DEFAULT_ASSISTANT_MODEL);
+        assert_eq!(a.max_steps, DEFAULT_ASSISTANT_MAX_STEPS);
+        assert!(
+            !cfg.summary().contains("sk-test-key-123"),
+            "no key in the log"
+        );
+        assert!(
+            !format!("{a:?}").contains("sk-test-key-123"),
+            "no key in Debug"
+        );
+
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_ANTHROPIC_API_KEY", "k"),
+            ("TEAMCRAFT_ASSISTANT_MODEL", "claude-sonnet-5-5"),
+            ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "5"),
+        ])
+        .unwrap();
+        let a = cfg.assistant.unwrap();
+        assert_eq!((a.model.as_str(), a.max_steps), ("claude-sonnet-5-5", 5));
+
+        for (key, value) in [
+            ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "0"),
+            ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "500"),
+            ("TEAMCRAFT_ASSISTANT_MODEL", "claude opus"),
+        ] {
+            assert!(
+                config_from(&[
+                    ("TEAMCRAFT_DB_PASSWORD", "x"),
+                    ("TEAMCRAFT_ANTHROPIC_API_KEY", "k"),
+                    (key, value),
+                ])
+                .is_err(),
+                "{key}={value}"
+            );
+        }
     }
 }

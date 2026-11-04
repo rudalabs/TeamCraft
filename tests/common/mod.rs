@@ -106,6 +106,11 @@ fn admin_options() -> Option<PgConnectOptions> {
 
 /// Creates the test application, or `None` if no database server is reachable.
 pub async fn setup() -> Option<TestApp> {
+    setup_with(&[]).await
+}
+
+/// Like [`setup`], with additional configuration variables.
+pub async fn setup_with(extra: &'static [(&'static str, &'static str)]) -> Option<TestApp> {
     let admin_options = admin_options()?;
     let db_name = format!("teamcraft_test_{}", Uuid::new_v4().simple());
     let mut admin = match PgConnection::connect_with(&admin_options).await {
@@ -148,7 +153,10 @@ pub async fn setup() -> Option<TestApp> {
         "TEAMCRAFT_VAULT_DIR" => Some(vault.clone()),
         "TEAMCRAFT_MAX_UPLOAD_MB" => Some("1".into()),
         "TEAMCRAFT_LOCAL_LOGIN" => Some("true".into()),
-        _ => None,
+        _ => extra
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| v.to_string()),
     })
     .expect("test configuration");
     let state = AppState::new(config, pool.clone())
