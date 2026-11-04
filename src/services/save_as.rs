@@ -1,4 +1,4 @@
-//! "Save As" (Teamcenter) / copy record (VistaPoint): a new item from an
+//! "Save As" (as in Teamcenter): a new item from an
 //! existing revision – its attributes, optionally its current files and its
 //! BOM. The new item starts with revision A, in work and checked out to the
 //! author, exactly like a freshly created item.

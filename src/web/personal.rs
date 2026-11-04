@@ -1,6 +1,5 @@
 //! Favorites, saved searches, Save As and the BOM comparison (the most used
-//! working features of Teamcenter and VistaPoint, see
-//! docs/src/research/teamcenter-vistapoint.md).
+//! working features of Teamcenter, see docs/src/research/teamcenter.md).
 
 use axum::{
     extract::{Path, Query, State},

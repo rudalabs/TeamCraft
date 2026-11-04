@@ -2984,7 +2984,7 @@ async fn preview_images_stored_in_cad_files() {
     app.teardown().await;
 }
 
-/// The most used Teamcenter / VistaPoint working features: favorites, saved
+/// The most used Teamcenter working features: favorites, saved
 /// searches, Save As and the BOM comparison.
 #[tokio::test]
 async fn favorites_searches_save_as_and_bom_compare() {
