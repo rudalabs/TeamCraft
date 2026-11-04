@@ -8,6 +8,7 @@ pub mod audit;
 pub mod bom;
 pub mod bom_compare;
 pub mod changes;
+pub mod checkouts;
 pub mod desktop;
 pub mod explorer;
 pub mod files;

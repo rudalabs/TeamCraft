@@ -8,9 +8,15 @@ the known gaps with details. Last update: 2026-11-04.
 
 **Fixes**
 
-- [ ] Folder import: find out why all imported items stayed in "My check-outs" after the last import and fix it (test
-  import against the server)
-- [ ] Bulk action "Check in all my check-outs" (desktop and web)
+- [x] Folder import: find out why all imported items stayed in "My check-outs" after the last import and fix it – the
+  import checked the new items in only at the very end, after every item, upload and the BOM step, in one promise
+  chain: an interrupted import (dialog closed by reloading, app closed, sign-in expired, network gone) or an exception
+  in the BOM step skipped the whole check-in phase, and a second run skipped the logged items, so they were never
+  checked in. Now every item is checked in right after its files, assemblies are checked out once more for their BOM
+  lines and always checked in again, and a run releases the check-outs an earlier run of the same folder left
+  behind (request order tested in `tests/concurrency.rs`; still to do: test import against a real server)
+- [x] Bulk action "Check in all my check-outs" (desktop and web) – dashboard button and desktop worklist; the desktop
+  checks in only revisions without local changes; `POST /api/v1/worklist/checkin-all`
 - [ ] SOLIDWORKS 2015+ files: the preview image and the referenced file names sit in compressed segments of the
   container – inflate them before the preview search and the reference scan (gap test in `tests/cad_fixtures.rs`,
   found with the NIST files)
@@ -60,8 +66,10 @@ the known gaps with details. Last update: 2026-11-04.
   check out, "save and check in", "get latest" inside the CAD program
 - [ ] Check-in takes dependent files along automatically (from the reference scan)
 - [ ] Create viewables (STEP) in the background without blocking the check-in
-- [ ] Status per file: up to date, modified, locked by X, outdated
-- [ ] Report conflicts early, already when a file is opened
+- [x] Status per file: up to date, modified, locked by X, outdated, conflict – desktop Workspace tab and
+  `…/file-status`; check-ins are checked against the base version of every file (409 instead of overwriting)
+- [x] Report conflicts early, already when a file is opened – the desktop asks before opening an outdated,
+  conflicting or foreign-locked file (inside the CAD program still needs the add-ins)
 - [ ] Sync file properties with item attributes: part number, name, material, mass
 - [ ] Recognise standard and library parts (Content Center, Toolbox, Standard Parts) and treat them as purchased parts
   instead of importing them again and again

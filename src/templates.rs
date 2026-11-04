@@ -51,6 +51,7 @@ pub fn environment(instance_name: &str) -> Result<Environment<'static>, minijinj
     env.add_filter("num", filter_num);
     env.add_filter("filesize", filter_filesize);
     env.add_filter("label", filter_label);
+    env.add_filter("age", filter_age);
     env.add_global("instance_name", instance_name.to_string());
     env.add_global("version", env!("CARGO_PKG_VERSION"));
     // cache busting of the embedded stylesheets, scripts and logos
@@ -69,6 +70,20 @@ fn filter_dt(value: Option<String>) -> String {
                 .to_string(),
             Err(_) => v,
         },
+        None => "—".to_string(),
+    }
+}
+
+/// RFC 3339 timestamp → its age now (`3 days`, `5 h`, `just now`), e.g.
+/// how long a lock has been held; `—` for none.
+fn filter_age(value: Option<String>) -> String {
+    match value
+        .as_deref()
+        .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+    {
+        Some(t) => crate::domain::format_age(
+            (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds(),
+        ),
         None => "—".to_string(),
     }
 }
