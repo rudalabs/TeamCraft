@@ -74,7 +74,12 @@ promised.
 
 - **Check-out / check-in.** Exclusive locks per revision; check-in stores the
   new file versions and releases the lock in one transaction. Cancel
-  check-out and *Cancel upload* take effect immediately.
+  check-out and *Cancel upload* take effect immediately. Check-ins are
+  checked against the version each file was based on, so a version
+  somebody else checked in meanwhile is refused (409) instead of being
+  overwritten; per-file status (up to date, modified, outdated, conflict),
+  lock age and *Check in all my check-outs* on the dashboard and in the
+  desktop worklist.
 - **Vault explorer.** Project groups as folders, every item with its lock
   owner, files and one-click check-out / check-in in a detail pane.
 - **Versions and rollback.** Every upload of a file name is a new version;
