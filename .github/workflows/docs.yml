@@ -34,12 +34,20 @@ jobs:
         with:
           tool: mdbook@${{ env.MDBOOK_VERSION }}
       - name: Build the book
-        run: mdbook build docs --dest-dir ../site
+        # absolute path: relative --dest-dir values are resolved differently
+        # by mdBook versions
+        run: mdbook build docs --dest-dir "$GITHUB_WORKSPACE/site"
       - name: Build the Rust API reference
         run: |
           cargo doc --locked --no-deps --lib
           mkdir -p site/api
           cp -r target/doc/. site/api/
+      - name: Check the site
+        run: |
+          ls site
+          test -f site/index.html
+          test -f site/guide/getting-started.html
+          test -f site/api/teamcraft/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
