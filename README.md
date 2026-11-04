@@ -103,6 +103,9 @@ promised.
 - **Teams.** Viewer, CAD editor and admin roles; self-service project groups
   managed by their creators; single sign-on with any OpenID Connect
   provider and group synchronisation.
+- **Numbering schemes.** Generated item numbers per project group from
+  `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`, with a preview of the next
+  numbers.
 - **Notifications.** In-app bell, e-mail and Mattermost; watch items and
   changes.
 - **Desktop app.** A Tauri client for Linux, macOS and Windows with a local

@@ -36,7 +36,7 @@ the known gaps with details. Last update: 2026-11-04.
 - [ ] STEP assembly import → items + BOM (feature 3c)
 - [ ] 3D preview: test real STEP exports of the CAD programs and assembly placements (`mapped_item`); readers for IGES,
   BREP, Parasolid, JT, … (E57: `e57` crate)
-- [ ] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview (feature 4)
+- [x] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview, per project group (feature 4)
 - [ ] Custom attributes per item and file type, classification (standard/purchased parts), attribute search (feature 5)
 - [x] Item copy ("Save as" with files and BOM) – done; open: supersede/replace, alternate parts, multi-level where-used
   (feature 6)
@@ -179,12 +179,15 @@ The history up to the open-source release is squashed into the first commit
   Part 21 reader for `PRODUCT` / `NEXT_ASSEMBLY_USAGE_OCCURRENCE` is still
   the plan.
 
-## Open – features 4 to 9 (not started)
+## Open – features 4 to 9
 
-4. **Configurable numbering schemes** (`{PROJECT}`, `{TYPE}`, `{YYYY}`,
-   `{SEQ:n}`) with preview. Numbers are generated in `items::create_tx`
-   (`domain::format_item_number` + counters); the BOM import uses
-   `create_tx`, so it picks up the schemes automatically.
+4. **Configurable numbering schemes**: done – one scheme per project group
+   (`projects.number_scheme`, `domain::NumberScheme`) with `{PROJECT}`,
+   `{TYPE}`, `{YYYY}`, `{YY}`, `{MM}` and `{SEQ:n}`, preview of the next
+   numbers on the group page and via `GET /api/v1/projects/{code}/numbering`.
+   Counters are named after the expansion without the sequence. Open: a
+   separate scheme per item type within a group, an instance-wide default
+   other than `{TYPE}-{SEQ:6}`.
 5. **Custom attributes** per item type and file type, classification (standard/purchased parts), attribute search. The
    BOM import can then map
    further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to

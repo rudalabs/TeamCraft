@@ -3254,3 +3254,125 @@ async fn favorites_searches_save_as_and_bom_compare() {
     assert!(html.contains("Released") && html.contains("/items?state=released"));
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn numbering_schemes_per_project_group() {
+    use chrono::Datelike;
+    let app = app_or_skip!();
+    let (_, admin) = app.user("root", Role::Admin).await;
+    let (_, eng) = app.user_in("eng", Role::Editor, &["PUMP"]).await;
+    let year = chrono::Utc::now().year();
+    let url = "/api/v1/projects/PUMP/numbering";
+    let create = |item_type: &str, number: Option<&str>| json!({ "item_type": item_type, "name": "Part", "project": "PUMP", "number": number });
+
+    // the built-in scheme
+    let r = app.api(Method::GET, url, &eng, None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["scheme"], "{TYPE}-{SEQ:6}");
+    assert_eq!(r.json()["is_default"], true);
+    assert_eq!(r.json()["next"][0]["item_type"], "part");
+    assert_eq!(r.json()["next"][0]["number"], "PRT-000001");
+
+    // preview another scheme without saving it
+    let r = app
+        .api(
+            Method::GET,
+            &format!("{url}?scheme=%7Bproject%7D-%7BTYPE%7D-%7BYYYY%7D-%7BSEQ:4%7D"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["scheme"], "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}");
+    assert_eq!(r.json()["is_default"], false);
+    assert_eq!(
+        r.json()["next"][1]["number"],
+        format!("PUMP-ASM-{year}-0001")
+    );
+    let r = app
+        .api(Method::GET, &format!("{url}?scheme=PRT-0001"), &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "a scheme needs {{SEQ}}");
+
+    // only managers and admins change it
+    let scheme = json!({ "scheme": "{project}-{type}-{yyyy}-{seq:4}" });
+    let r = app.api(Method::PUT, url, &eng, Some(scheme.clone())).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+    let r = app
+        .api(
+            Method::PUT,
+            url,
+            &admin,
+            Some(json!({ "scheme": "{SEQ}/{TYPE}" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    let r = app.api(Method::PUT, url, &admin, Some(scheme)).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(
+        r.json()["project"]["number_scheme"],
+        "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}"
+    );
+    assert_eq!(
+        r.json()["numbering"]["next"][0]["number"],
+        format!("PUMP-PRT-{year}-0001")
+    );
+
+    // new items follow the scheme; a hand-typed number wins and is skipped
+    let mut numbers = Vec::new();
+    for (item_type, number) in [
+        ("part", None),
+        ("part", None),
+        ("assembly", None),
+        ("part", Some(format!("PUMP-PRT-{year}-0003"))),
+        ("part", None),
+    ] {
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/items",
+                &eng,
+                Some(create(item_type, number.as_deref())),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+        numbers.push(r.json()["item_number"].as_str().unwrap().to_string());
+    }
+    let expected: Vec<String> = ["PRT-0001", "PRT-0002", "ASM-0001", "PRT-0003", "PRT-0004"]
+        .iter()
+        .map(|n| format!("PUMP-{}", n.replacen('-', &format!("-{year}-"), 1)))
+        .collect();
+    assert_eq!(numbers, expected);
+    let r = app.api(Method::GET, url, &eng, None).await;
+    assert_eq!(
+        r.json()["next"][0]["number"],
+        format!("PUMP-PRT-{year}-0005")
+    );
+
+    // other project groups keep the built-in scheme, and its counter
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &admin,
+            Some(json!({ "item_type": "part", "name": "Fin", "project": "ROCKET" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(r.json()["item_number"], "PRT-000001");
+
+    // an empty scheme returns to the built-in one; the audit log has both changes
+    let r = app
+        .api(Method::PUT, url, &admin, Some(json!({ "scheme": "" })))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.json()["project"]["number_scheme"].is_null());
+    assert_eq!(r.json()["numbering"]["next"][0]["number"], "PRT-000002");
+    let changes: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE action = 'project.numbering'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(changes, 2);
+    app.teardown().await;
+}

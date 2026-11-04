@@ -1,5 +1,6 @@
 //! Items (parts, assemblies, documents, software) and their search.
 
+use chrono::Utc;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
@@ -257,12 +258,13 @@ pub(crate) async fn create_tx(
         AppError::BadRequest("Choose the project group the item belongs to.".into())
     })?;
     let tx = conn;
-    let (code, active) =
-        sqlx::query_as::<_, (String, bool)>("SELECT code, active FROM projects WHERE id = $1")
-            .bind(project_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| AppError::BadRequest("Unknown project.".into()))?;
+    let (code, active, scheme) = sqlx::query_as::<_, (String, bool, Option<String>)>(
+        "SELECT code, active, number_scheme FROM projects WHERE id = $1",
+    )
+    .bind(project_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::BadRequest("Unknown project.".into()))?;
     if !active {
         return Err(AppError::BadRequest(format!(
             "The project group {code} is archived."
@@ -277,12 +279,19 @@ pub(crate) async fn create_tx(
     let number = match manual_number {
         Some(n) => n,
         None => {
-            // Skip numbers that were already entered manually.
-            let counter = format!("item:{}", input.item_type.as_str());
+            // The project group's numbering scheme; numbers that were already
+            // entered manually (or by another scheme) are skipped.
+            let scheme = domain::NumberScheme::of_project(scheme.as_deref())?;
+            let ctx = domain::number_context(&code, input.item_type, Utc::now());
+            let counter = scheme.counter_key(&ctx);
             let mut attempts = 0;
             loop {
-                let candidate =
-                    domain::format_item_number(input.item_type, next_counter(tx, &counter).await?);
+                let generated = scheme.format(&ctx, next_counter(tx, &counter).await?);
+                let candidate = domain::normalize_item_number(&generated).map_err(|_| {
+                    AppError::BadRequest(format!(
+                        "The numbering scheme of the project group {code} gives the invalid item number '{generated}'; enter a number or change the scheme."
+                    ))
+                })?;
                 let taken = sqlx::query_scalar::<_, bool>(
                     "SELECT EXISTS(SELECT 1 FROM items WHERE number = $1)",
                 )
