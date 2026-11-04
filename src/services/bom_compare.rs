@@ -246,8 +246,8 @@ fn xlsx_error(e: rust_xlsxwriter::XlsxError) -> AppError {
 mod tests {
     use std::io::Read;
 
-    use crate::services::bom::{MAX_DEPTH, ResolvedRevision};
     use super::*;
+    use crate::services::bom::{ResolvedRevision, MAX_DEPTH};
 
     fn line(child: u128, number: &str, find: i32, qty: f64) -> BomLine {
         BomLine {
