@@ -7,6 +7,7 @@
 
 mod change_requests;
 mod personal;
+mod simulations;
 
 use axum::{
     extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State},
@@ -28,7 +29,7 @@ use crate::{
     models::Revision,
     services::{
         audit, bom, changes, checkouts, desktop, files, impacts, imports, items, notifications,
-        package, projects, references, requests, revisions, stats, users, Page,
+        package, projects, references, requests, revisions, stats, users, workset, Page,
     },
     web, AppState,
 };
@@ -67,6 +68,41 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(get_references).post(add_reference),
         )
         .route("/references/{id}", axum::routing::delete(delete_reference))
+        // simulations
+        .route(
+            "/items/{number}/revisions/{code}/simulation",
+            get(simulations::get_simulation),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/bases",
+            get(simulations::list_bases).post(simulations::add_basis),
+        )
+        .route(
+            "/simulation-bases/{id}",
+            axum::routing::delete(simulations::delete_basis),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/results",
+            get(simulations::list_results)
+                .post(simulations::add_result)
+                .put(simulations::put_results),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/results/import",
+            post(simulations::import_results).layer(DefaultBodyLimit::max(import_limit)),
+        )
+        .route(
+            "/simulation-results/{id}",
+            patch(simulations::patch_result).delete(simulations::delete_result),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/compare",
+            get(simulations::compare),
+        )
+        .route(
+            "/items/{number}/simulations",
+            get(simulations::item_simulations),
+        )
         .route("/impacts", get(list_impacts))
         .route("/notifications", get(list_notifications))
         .route("/notifications/read", post(read_notifications))
@@ -127,6 +163,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/items/{number}/revisions/{code}/revise", post(revise))
         .route("/items/{number}/revisions/{code}/package", get(get_package))
+        .route("/items/{number}/revisions/{code}/workset", get(get_workset))
         .route(
             "/bom-imports",
             post(import_bom).layer(DefaultBodyLimit::max(import_limit)),
@@ -154,7 +191,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/bom-lines/{id}",
             patch(update_bom_line).delete(delete_bom_line),
         )
-        .route("/files/{id}", get(file_meta).delete(delete_file))
+        .route(
+            "/files/{id}",
+            get(file_meta).patch(update_file).delete(delete_file),
+        )
         .route("/files/{id}/content", get(download))
         .route("/files/{id}/thumbnail", get(file_thumbnail))
         .route("/files/{id}/versions", get(file_versions))
@@ -292,7 +332,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code|latest}",
             "PATCH  /api/v1/items/{number}/revisions/{code}           {name?, description?, material?, mass_kg?, unit_cost?}",
             "POST   /api/v1/items/{number}/revisions/{code}/checkout",
-            "POST   /api/v1/items/{number}/revisions/{code}/checkin   optional multipart: 'file' (new versions), 'comment', 'bases' = {\"name\": version | sha256} → 409 if a file moved on",
+            "POST   /api/v1/items/{number}/revisions/{code}/checkin   optional multipart: 'file' (new versions), 'comment', 'bases' = {\"name\": version | sha256} → 409 if a file moved on, 'folder' or 'folders' = {\"name\": \"folder\"}",
             "GET    /api/v1/items/{number}/revisions/{code}/file-status   current version, sha256 and lock of every file",
             "POST   /api/v1/items/{number}/revisions/{code}/file-status   {files: [{filename, sha256, base_version? | base_sha256?}]} → up_to_date | modified | outdated | conflict | new | missing",
             "POST   /api/v1/worklist/checkin-all                      {revisions?: [id]} – check in my check-outs without new files (lock release), one by one",
@@ -303,6 +343,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/bom       {child, quantity, find_number?, notes?}",
             "GET    /api/v1/items/{number}/revisions/{code}/bom.xlsx?rule=  the expanded BOM as Excel workbook (the BOM import reads it back)",
             "GET    /api/v1/items/{number}/revisions/{code}/package?rule=  Pack and Go: ZIP with all files of the structure, bom.csv, manifest.json",
+            "GET    /api/v1/items/{number}/revisions/{code}/workset?rule=&references=true  desktop Get: files of the structure and the CAD files it references, with folder, version, sha256, lock",
             "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM or STEP assembly of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
             "POST   /api/v1/items/{number}/revisions/{code}/bom/import  same multipart fields – imports below the revision (checked out by me)",
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
@@ -310,6 +351,18 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/references  references, referrers, CAD file references, impacts",
             "POST   /api/v1/items/{number}/revisions/{code}/references  {item, kind: drawing|specification|reference, note?}",
             "DELETE /api/v1/references/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation  basis links (out of date?), result values (pass/fail), summary",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/bases",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/bases  {item, revision?, file? | file_version_id?, role: geometry|mesh|material|load_case|other, note?}",
+            "DELETE /api/v1/simulation-bases/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/results",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/results  {name, value, unit?, lower_limit?, upper_limit?, load_case?, solver?, solver_version?, note?}",
+            "PUT    /api/v1/items/{number}/revisions/{code}/simulation/results  {results: [...], replace?: true} – the result set of a solver run",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/results/import  multipart: file (CSV/Excel: name,value,unit,limit_low,limit_high,load_case), replace?",
+            "PATCH  /api/v1/simulation-results/{id}                   any result field",
+            "DELETE /api/v1/simulation-results/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/compare?with=A   result values of two revisions",
+            "GET    /api/v1/items/{number}/simulations                simulations based on the item (out of date?)",
             "GET    /api/v1/impacts                                   open impacts on items of my project groups",
             "GET    /api/v1/notifications?unread=true&limit=          my notifications and the unread count",
             "POST   /api/v1/notifications/read                        {ids?} – mark as read (all without a body)",
@@ -329,8 +382,9 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/changes/{number}/watch                    watch a change (DELETE: stop)",
             "POST   /api/v1/impacts/{id}/acknowledge                  {note} – the dependent needs no change",
             "GET    /api/v1/items/{number}/revisions/{code}/files",
-            "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases'",
+            "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases', 'folder' (in the project group) or 'folders' = {\"name\": \"folder\"}",
             "GET    /api/v1/files/{id}",
+            "PATCH  /api/v1/files/{id}                                {folder} – its place in the working folder (revision checked out by you)",
             "GET    /api/v1/files/{id}/content",
             "GET    /api/v1/files/{id}/thumbnail                      preview image stored in Inventor, Solid Edge and SolidWorks files (PNG or BMP, 404 if none)",
             "GET    /api/v1/files/{id}/versions",
@@ -663,7 +717,9 @@ async fn create_item(
     ApiJson(body): ApiJson<CreateItem>,
 ) -> AppResult<Response> {
     let item_type = ItemType::parse(&body.item_type).ok_or_else(|| {
-        AppError::BadRequest("item_type must be part, assembly, document or software.".into())
+        AppError::BadRequest(
+            "item_type must be part, assembly, document, software or simulation.".into(),
+        )
     })?;
     let project_id = match body.project.as_deref().filter(|p| !p.trim().is_empty()) {
         Some(code) => Some(projects::get_by_code(&st.db, code).await?.id),
@@ -1005,6 +1061,30 @@ async fn get_package(
 }
 
 #[derive(Deserialize)]
+struct WorksetQuery {
+    rule: Option<String>,
+    /// `false` leaves out the items found through references inside CAD files.
+    references: Option<bool>,
+}
+
+/// The working set for the desktop "Get": the revision, its multi-level BOM
+/// under a revision rule (default latest) and the items holding the CAD files
+/// they reference – every file with folder, version, SHA-256 and the lock of
+/// its revision.
+async fn get_workset(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<WorksetQuery>,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &number, &code).await?;
+    let rule = bom_rule(q.rule.as_deref().filter(|r| !r.trim().is_empty()))?;
+    Ok(Json(json!(
+        workset::resolve(&st.db, &me, rev.id, rule, q.references.unwrap_or(true)).await?
+    )))
+}
+
+#[derive(Deserialize)]
 struct AddBomLine {
     child: String,
     quantity: f64,
@@ -1271,6 +1351,24 @@ async fn file_meta(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Value>> {
     Ok(Json(json!(files::get(&st.db, id).await?)))
+}
+
+#[derive(Deserialize)]
+struct UpdateFile {
+    /// Folder inside the project group (`""` = top).
+    folder: String,
+}
+
+/// Changes the folder of a file while its revision is checked out.
+async fn update_file(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+    ApiJson(body): ApiJson<UpdateFile>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(
+        files::set_folder(&st.db, &me, id, &body.folder).await?
+    )))
 }
 
 async fn download(

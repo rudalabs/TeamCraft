@@ -1895,6 +1895,72 @@ async fn stored_cad_files_are_scanned_for_references_once() {
     app.teardown().await;
 }
 
+/// `teamcraft rescan-references`: a SOLIDWORKS 2018 assembly stored with
+/// the references of an older reader gets exactly its eight parts.
+#[tokio::test]
+async fn solidworks_assemblies_are_rescanned() {
+    // The NIST assembly has 2.1 MB; the test default allows 1 MiB uploads.
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &eng,
+            Some(json!({ "item_type": "assembly", "name": "Box", "project": "ROCKET" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let name = "nist_mtc_crada_assembly_rev-D.SLDASM";
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/cad/nist/mtc-assembly/solidworks")
+            .join(name),
+    )
+    .unwrap();
+    let files = "/api/v1/items/ASM-000001/revisions/A/files";
+    let r = app.api_upload(files, &eng, name, &bytes).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let refs_uri = "/api/v1/items/ASM-000001/revisions/A/references";
+    let names = |v: serde_json::Value| -> Vec<String> {
+        let mut n: Vec<String> = v["files"][0]["references"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|n| n["name"].as_str().unwrap().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        n.sort();
+        n
+    };
+    let fresh = names(app.api(Method::GET, refs_uri, &eng, None).await.json());
+    assert_eq!(fresh.len(), 8, "{fresh:?}");
+
+    // As if stored by an older release: a false reference.
+    sqlx::query("DELETE FROM file_references")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO file_references (file_version_id, name) SELECT id, 'old name.SLDPRT' FROM file_versions",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let vault = app.vault().await;
+    let formats = ["solidworks-assembly".to_string(), "stl".to_string()];
+    let n = teamcraft::services::files::rescan_references(&app.pool, &vault, &formats)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    let rescanned = names(app.api(Method::GET, refs_uri, &eng, None).await.json());
+    assert_eq!(rescanned, fresh);
+    app.teardown().await;
+}
+
 /// Records the e-mails instead of sending them.
 #[derive(Default)]
 struct RecordingMailer(std::sync::Mutex<Vec<String>>);
@@ -3576,5 +3642,475 @@ async fn numbering_schemes_per_project_group() {
             .await
             .unwrap();
     assert_eq!(changes, 2);
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn simulation_bases_results_and_out_of_date() {
+    use serde_json::Value;
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    let (_, rev) = app.user_in("rev", Role::Editor, &["ROCKET"]).await;
+    let (_, viewer) = app.user("vera", Role::Viewer).await;
+    let call = |method: Method, uri: String, token: &str, body: Option<Value>| {
+        let app = &app;
+        let token = token.to_string();
+        async move { app.api(method, &uri, &token, body).await }
+    };
+    let prt = "/api/v1/items/PRT-000001/revisions";
+    let sim = "/api/v1/items/SIM-000001/revisions";
+
+    // A part with a STEP file and a simulation item (SIM- numbers).
+    for (item_type, name) in [("part", "Bracket"), ("simulation", "Bracket – static")] {
+        let r = call(
+            Method::POST,
+            "/api/v1/items".into(),
+            &eng,
+            Some(json!({ "item_type": item_type, "name": name, "project": "ROCKET" })),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    let r = call(Method::GET, format!("{sim}/A"), &eng, None).await;
+    assert_eq!(
+        r.json()["revision"]["item_type"],
+        "simulation",
+        "{}",
+        r.text()
+    );
+    let r = app
+        .api_upload(
+            &format!("{prt}/A/files"),
+            &eng,
+            "bracket.step",
+            b"ISO-10303-21; v1",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+
+    // Basis links: rules
+    let basis = json!({ "item": "PRT-000001", "revision": "A", "file": "Bracket.STEP", "role": "geometry" });
+    let r = call(
+        Method::POST,
+        format!("{sim}/A/simulation/bases"),
+        &viewer,
+        Some(basis.clone()),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "viewers cannot add bases");
+    let r = call(
+        Method::POST,
+        format!("{prt}/A/simulation/bases"),
+        &eng,
+        Some(json!({ "item": "SIM-000001" })),
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::BAD_REQUEST,
+        "only simulations have bases: {}",
+        r.text()
+    );
+    for bad in [
+        json!({ "item": "PRT-000001", "role": "sketch" }),
+        json!({ "item": "SIM-000001" }),
+        json!({ "item": "PRT-000001", "file": "nope.step" }),
+        json!({ "item": "PRT-000001", "revision": "Q" }),
+    ] {
+        let r = call(
+            Method::POST,
+            format!("{sim}/A/simulation/bases"),
+            &eng,
+            Some(bad.clone()),
+        )
+        .await;
+        assert!(
+            r.status == StatusCode::BAD_REQUEST || r.status == StatusCode::NOT_FOUND,
+            "{bad}: {} {}",
+            r.status,
+            r.text()
+        );
+    }
+    let r = call(
+        Method::POST,
+        format!("{sim}/A/simulation/bases"),
+        &eng,
+        Some(basis.clone()),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let first = r.json();
+    assert_eq!(first["file_name"], "bracket.step");
+    assert_eq!(first["file_version"], 1);
+    assert_eq!(first["out_of_date"], Value::Null);
+    let r = call(
+        Method::POST,
+        format!("{sim}/A/simulation/bases"),
+        &eng,
+        Some(basis.clone()),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "no duplicates");
+    let r = call(Method::GET, format!("{sim}/A/simulation"), &eng, None).await;
+    assert_eq!(r.json()["out_of_date"], false, "{}", r.text());
+
+    // A new version of the simulated file makes the simulation out of date.
+    let r = app
+        .api_upload(
+            &format!("{prt}/A/files"),
+            &eng,
+            "bracket.step",
+            b"ISO-10303-21; v2",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let state = call(Method::GET, format!("{sim}/A/simulation"), &eng, None)
+        .await
+        .json();
+    assert_eq!(state["out_of_date"], true, "{state}");
+    assert!(
+        state["bases"][0]["out_of_date"]
+            .as_str()
+            .unwrap()
+            .contains("bracket.step has version 2"),
+        "{state}"
+    );
+    // Re-link to the current version.
+    let id = first["id"].as_str().unwrap();
+    let r = call(
+        Method::DELETE,
+        format!("/api/v1/simulation-bases/{id}"),
+        &eng,
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.text());
+    let r = call(
+        Method::POST,
+        format!("{sim}/A/simulation/bases"),
+        &eng,
+        Some(basis.clone()),
+    )
+    .await;
+    assert_eq!(r.json()["file_version"], 2, "{}", r.text());
+    let used = call(
+        Method::GET,
+        "/api/v1/items/PRT-000001/simulations".into(),
+        &viewer,
+        None,
+    )
+    .await
+    .json();
+    assert_eq!(used[0]["simulation_number"], "SIM-000001", "{used}");
+    assert_eq!(used[0]["basis"]["out_of_date"], Value::Null, "{used}");
+
+    // Result values
+    let results = format!("{sim}/A/simulation/results");
+    let stress = json!({ "name": "Max. von Mises stress", "value": 182.5, "unit": "MPa",
+                         "upper_limit": 250.0, "load_case": "LC1", "solver": "CalculiX",
+                         "solver_version": "2.21" });
+    let r = call(Method::POST, results.clone(), &eng, Some(stress.clone())).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(r.json()["status"], "pass");
+    let r = call(Method::POST, results.clone(), &eng, Some(stress.clone())).await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "same name and load case");
+    let r = call(
+        Method::POST,
+        results.clone(),
+        &eng,
+        Some(json!({ "name": "x", "value": 1.0, "lower_limit": 3.0, "upper_limit": 2.0 })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    // A solver script writes the whole set.
+    let r = call(
+        Method::PUT,
+        results.clone(),
+        &eng,
+        Some(json!({ "results": [
+            { "name": "max. von mises stress", "value": 190.0, "unit": "MPa", "limit_high": 250.0, "load_case": "lc1" },
+            { "name": "Safety factor", "value": 1.3, "limit_low": 1.5, "load_case": "LC1" }
+        ] })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(
+        r.json()["import"],
+        json!({ "added": 1, "updated": 1, "removed": 0 })
+    );
+    // CSV import adds the modal result.
+    let r = app
+        .api_multipart(
+            &format!("{results}/import"),
+            &eng,
+            &[(
+                "results.csv",
+                b"name,value,unit,limit_low,limit_high,load_case\nFirst eigenfrequency,2.35e2,Hz,200,,modal\n",
+            )],
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["added"], 1);
+    let r = app
+        .api_multipart(
+            &format!("{results}/import"),
+            &eng,
+            &[("bad.csv", b"a,b\n1,2\n")],
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    let listed = call(Method::GET, results.clone(), &eng, None).await.json();
+    assert_eq!(listed["summary"]["total"], 3, "{listed}");
+    assert_eq!(listed["summary"]["fail"], 1, "the safety factor is too low");
+    let factor = listed["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "Safety factor")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = call(
+        Method::PATCH,
+        format!("/api/v1/simulation-results/{factor}"),
+        &viewer,
+        Some(json!({ "value": 1.6 })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+    let r = call(
+        Method::PATCH,
+        format!("/api/v1/simulation-results/{factor}"),
+        &eng,
+        Some(json!({ "value": 1.6 })),
+    )
+    .await;
+    assert_eq!(r.json()["status"], "pass", "{}", r.text());
+    assert_eq!(r.json()["lower_limit"], 1.5, "limits are kept");
+
+    // Release part and simulation together: nothing to check, values frozen.
+    for path in [prt, sim] {
+        call(Method::POST, format!("{path}/A/checkin"), &eng, None).await;
+    }
+    release_via_change(
+        &app,
+        &eng,
+        &rev,
+        "rev",
+        &[("PRT-000001", "A"), ("SIM-000001", "A")],
+    )
+    .await;
+    assert_eq!(
+        call(Method::GET, "/api/v1/impacts".into(), &eng, None)
+            .await
+            .json(),
+        json!([])
+    );
+    let r = call(
+        Method::POST,
+        results.clone(),
+        &eng,
+        Some(json!({ "name": "late", "value": 1.0 })),
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::CONFLICT,
+        "released results are frozen: {}",
+        r.text()
+    );
+
+    // Revise copies bases and results.
+    let r = call(Method::POST, format!("{sim}/A/revise"), &eng, None).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let state_b = call(Method::GET, format!("{sim}/B/simulation"), &eng, None)
+        .await
+        .json();
+    assert_eq!(state_b["bases"].as_array().unwrap().len(), 1, "{state_b}");
+    assert_eq!(state_b["results"].as_array().unwrap().len(), 3, "{state_b}");
+    assert_eq!(state_b["out_of_date"], false);
+
+    // A new release of the part flags the simulation.
+    let r = call(Method::POST, format!("{prt}/A/revise"), &eng, None).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    app.api_upload(
+        &format!("{prt}/B/files"),
+        &eng,
+        "bracket.step",
+        b"ISO-10303-21; v3",
+    )
+    .await;
+    call(Method::POST, format!("{prt}/B/checkin"), &eng, None).await;
+    release_via_change(&app, &eng, &rev, "rev", &[("PRT-000001", "B")]).await;
+    let open = call(Method::GET, "/api/v1/impacts".into(), &eng, None)
+        .await
+        .json();
+    let impact = open
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["item_number"] == "SIM-000001")
+        .cloned()
+        .unwrap_or_else(|| panic!("{open}"));
+    assert_eq!(impact["relation"], "simulation");
+    assert_eq!(impact["revision_code"], "B", "the open simulation revision");
+    assert!(
+        impact["detail"].as_str().unwrap().contains("based on A"),
+        "{impact}"
+    );
+    let state_b = call(Method::GET, format!("{sim}/B/simulation"), &eng, None)
+        .await
+        .json();
+    assert_eq!(state_b["out_of_date"], true, "{state_b}");
+    assert_eq!(
+        state_b["bases"][0]["out_of_date"],
+        "PRT-000001/B was released (simulated: A)"
+    );
+    let used = call(
+        Method::GET,
+        "/api/v1/items/PRT-000001/simulations".into(),
+        &eng,
+        None,
+    )
+    .await
+    .json();
+    assert_eq!(used[0]["simulation_code"], "B", "{used}");
+    assert_eq!(used[0]["open_impact_id"], impact["id"], "{used}");
+    // The creator of the simulation is told to check it.
+    let notes = call(Method::GET, "/api/v1/notifications".into(), &eng, None)
+        .await
+        .json();
+    assert!(
+        notes["notifications"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n["kind"] == "impact" && n["title"].as_str().unwrap().contains("SIM-000001")),
+        "{notes}"
+    );
+
+    // Rebase on B and compare the results of B with A.
+    let basis_id = state_b["bases"][0]["id"].as_str().unwrap().to_string();
+    call(
+        Method::DELETE,
+        format!("/api/v1/simulation-bases/{basis_id}"),
+        &eng,
+        None,
+    )
+    .await;
+    let r = call(
+        Method::POST,
+        format!("{sim}/B/simulation/bases"),
+        &eng,
+        Some(json!({ "item": "PRT-000001", "file": "bracket.step" })),
+    )
+    .await;
+    assert_eq!(
+        r.json()["basis_code"],
+        "B",
+        "latest by default: {}",
+        r.text()
+    );
+    let state_b = call(Method::GET, format!("{sim}/B/simulation"), &eng, None)
+        .await
+        .json();
+    assert_eq!(state_b["out_of_date"], false, "{state_b}");
+    let stress_b = state_b["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "max. von mises stress")
+        .unwrap_or_else(|| panic!("{state_b}"))["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    call(
+        Method::PATCH,
+        format!("/api/v1/simulation-results/{stress_b}"),
+        &eng,
+        Some(json!({ "value": 171.0 })),
+    )
+    .await;
+    let cmp = call(
+        Method::GET,
+        format!("{sim}/B/simulation/compare?with=A"),
+        &eng,
+        None,
+    )
+    .await
+    .json();
+    assert_eq!(
+        cmp["summary"],
+        json!({ "added": 0, "removed": 0, "changed": 1, "unchanged": 2 }),
+        "{cmp}"
+    );
+    assert_eq!(
+        (cmp["before"].as_str(), cmp["after"].as_str()),
+        (Some("A"), Some("B"))
+    );
+    let changed = cmp["diffs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["change"] == "changed")
+        .unwrap();
+    assert_eq!(changed["delta"], -19.0);
+
+    // Acknowledging the check ("still valid") resolves it.
+    let r = call(
+        Method::POST,
+        format!(
+            "/api/v1/impacts/{}/acknowledge",
+            impact["id"].as_str().unwrap()
+        ),
+        &eng,
+        Some(json!({ "note": "re-run on B, stress lower" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+
+    // The audit log records the basis and result changes.
+    let history = call(
+        Method::GET,
+        "/api/v1/items/SIM-000001/history".into(),
+        &eng,
+        None,
+    )
+    .await
+    .json();
+    for action in [
+        "simulation.basis.add",
+        "simulation.basis.remove",
+        "simulation.result.add",
+        "simulation.result.import",
+        "simulation.result.update",
+    ] {
+        assert!(
+            history
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["action"] == action),
+            "{action}: {history}"
+        );
+    }
+
+    // Result file formats are recognised on upload.
+    let r = app
+        .api_upload(&format!("{sim}/B/files"), &eng, "static.frd", b"    1C\n")
+        .await;
+    assert_eq!(r.json()[0]["format"], "calculix-frd", "{}", r.text());
+    let r = app
+        .api_upload(&format!("{sim}/B/files"), &eng, "values.dat", b"1 2 3\n")
+        .await;
+    assert_eq!(
+        r.json()[0]["format"],
+        "",
+        "plain .dat files are not Fluent: {}",
+        r.text()
+    );
     app.teardown().await;
 }

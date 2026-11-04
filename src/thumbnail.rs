@@ -8,7 +8,9 @@
 //!   ([MS-CFB]); the preview is a PNG or a Windows DIB in one of their streams,
 //!   normally the thumbnail property of the summary information ([MS-OLEPS]);
 //! * SolidWorks files up to 2014 are OLE files as well (`PreviewPNG`), newer
-//!   ones keep a PNG in their own container, which is found by its signature.
+//!   ones keep the PNG in a Deflate-compressed `PreviewPNG` section of their
+//!   own container (`swpart`);
+//! * NX parts keep a JPEG in their stream container (`nxpart`).
 //!
 //! Every candidate is validated (PNG chunk structure and checksums, plausible
 //! DIB header and sizes); the summary information wins, then streams named
@@ -26,8 +28,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Bump to invalidate every cached thumbnail.
-pub const CACHE_VERSION: u32 = 1;
+/// Bump to invalidate every cached thumbnail (2: SOLIDWORKS 2015+ previews,
+/// cached as "none" before).
+pub const CACHE_VERSION: u32 = 2;
 
 const OLE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -81,18 +84,33 @@ fn better(best: &mut Option<Found>, candidate: Option<Found>) {
 /// The preview image of a CAD file, if it has one.
 pub fn extract(path: &Path) -> io::Result<Option<Thumbnail>> {
     let mut file = File::open(path)?;
-    let mut head = [0u8; 8];
+    let mut head = [0u8; 1024];
     let n = read_up_to(&mut file, &mut head)?;
+    let head = &head[..n];
     file.rewind()?;
-    if n == head.len() && head == OLE_MAGIC {
+    if head.starts_with(&OLE_MAGIC) {
         return Ok(from_compound_file(file));
     }
-    if n == head.len() && &head == crate::nxpart::MAGIC {
+    if head.starts_with(crate::nxpart::MAGIC) {
         return from_nx_part(file);
+    }
+    if crate::swpart::is_container(head) {
+        return from_sw_container(file);
     }
     let mut data = Vec::new();
     file.take(MAX_SCAN).read_to_end(&mut data)?;
     Ok(find_in(&data, false).map(|f| f.thumbnail))
+}
+
+/// SOLIDWORKS 2015+ files: the PNG of the `PreviewPNG` section.
+fn from_sw_container(file: File) -> io::Result<Option<Thumbnail>> {
+    let Some(mut sw) = crate::swpart::SwContainer::open(io::BufReader::new(file))? else {
+        return Ok(None);
+    };
+    let Some(data) = sw.read(crate::swpart::PREVIEW_SECTION, MAX_STREAM)? else {
+        return Ok(None);
+    };
+    Ok(png_at(&data).map(|f| f.thumbnail))
 }
 
 /// NX parts: the JPEG in the `/Root/images/preview` stream.

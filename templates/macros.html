@@ -2,15 +2,15 @@
 
 {% macro badge(value) -%}
 <span class="badge badge-{{ value }}">
-  {%- if value in ["released", "approved", "accepted", "implemented"] %}<img src="/static/media/icons/Green_tick.svg?v={{ assets }}" alt="">
+  {%- if value in ["released", "approved", "accepted", "implemented", "pass"] %}<img src="/static/media/icons/Green_tick.svg?v={{ assets }}" alt="">
   {%- elif value in ["in_review", "pending", "in_triage"] %}<img src="/static/media/icons/Yellow_circle.svg?v={{ assets }}" alt="">
-  {%- elif value in ["rejected", "obsolete", "cancelled", "withdrawn"] %}<img src="/static/media/icons/Red_cross.svg?v={{ assets }}" alt="">
+  {%- elif value in ["rejected", "obsolete", "cancelled", "withdrawn", "fail"] %}<img src="/static/media/icons/Red_cross.svg?v={{ assets }}" alt="">
   {%- endif %}{{ value|label }}</span>
 {%- endmacro %}
 
 {#- How a dependent depends on the item that changed (impacts, impact analysis). -#}
 {% macro relation(r, target="it") -%}
-{% if r == "bom" %}uses {{ target }} in its BOM{% elif r == "drawing" %}is a drawing of {{ target }}{% elif r == "specification" %}is a specification for {{ target }}{% elif r == "reference" %}references {{ target }}{% elif r == "file" %}has a CAD file that references {% if target == "it" %}its files{% else %}files of {{ target }}{% endif %}{% else %}depends on {{ target }}{% endif %}
+{% if r == "bom" %}uses {{ target }} in its BOM{% elif r == "drawing" %}is a drawing of {{ target }}{% elif r == "specification" %}is a specification for {{ target }}{% elif r == "reference" %}references {{ target }}{% elif r == "simulation" %}is a simulation based on {{ target }}{% elif r == "file" %}has a CAD file that references {% if target == "it" %}its files{% else %}files of {{ target }}{% endif %}{% else %}depends on {{ target }}{% endif %}
 {%- endmacro %}
 
 {#- Primary "create" button with the plus icon. -#}

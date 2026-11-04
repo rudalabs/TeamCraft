@@ -611,6 +611,7 @@ html[data-skin="teamcraft-day"] .login-logo-dark { display: block; }
 .saved-searches { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding-block: 0.6rem; }
 .saved-search { display: inline-flex; align-items: center; gap: 0.1rem; }
 .saved-searches form.inline input[type="text"] { width: 14rem; }
+.folder-form input[type="text"] { width: 11rem; padding: 0.2rem 0.4rem; font-size: 0.85em; }
 
 /* BOM comparison */
 .bom-change-added { color: var(--ok); background: var(--ok-soft); }
@@ -678,6 +679,19 @@ ul.file-refs { margin-bottom: 0.7rem; }
   width: 3rem; height: 3rem; object-fit: contain; display: block;
   border: 1px solid var(--border); border-radius: 4px; background: #fff;
 }
+
+/* simulations: pass/fail of result values, out-of-date bases */
+.badge-pass { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
+.badge-fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-soft); }
+.badge-none { color: var(--text-dim); }
+.badge-out_of_date { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.badge-up_to_date { color: var(--ok); }
+.fmt-result { color: var(--text-muted); border-style: dashed; border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+tr.result-fail td.num.value { color: var(--danger); font-weight: 600; }
+input.value { width: 8em; text-align: right; }
+input.limit { width: 6.5em; text-align: right; }
+input.unit { width: 4.5em; }
+.result-summary { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0 0 0.6rem; }
 
 /* Assistant ("Ask TeamCraft") */
 .assistant-panel { margin-bottom: 1.1rem; }

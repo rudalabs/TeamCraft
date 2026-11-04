@@ -61,4 +61,5 @@ teamcraft user create --username admin --role admin      # prompts for the passw
 | `teamcraft user set-password --username U`                                         | reset a password                             |
 | `teamcraft user list`                                                              | all accounts                                 |
 | `teamcraft vault check [--verify-hashes]`                                          | every stored file present (and intact)?      |
+| `teamcraft rescan-references [--format id]`                                        | read stored CAD file references again        |
 | `teamcraft healthcheck`                                                            | exit 0 when the server answers on `/healthz` |
