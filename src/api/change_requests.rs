@@ -250,6 +250,8 @@ pub(super) async fn add_item(
     let request = requests::get_by_number(&st.db, &number).await?;
     let item = affected(&st, &body).await?;
     requests::add_item(&st.db, &me, request.id, item).await?;
+    // reload: the item count and the update time changed
+    let request = requests::get(&st.db, request.id).await?;
     Ok(Json(request_json(&st, &me, request).await?))
 }
 
@@ -375,6 +377,7 @@ pub(super) async fn link_change(
     let request = requests::get_by_number(&st.db, &number).await?;
     let change = changes::get_by_number(&st.db, &body.change).await?;
     requests::link_change(&st.db, &me, request.id, change.id).await?;
+    let request = requests::get(&st.db, request.id).await?;
     reply(&st, &me, request).await
 }
 

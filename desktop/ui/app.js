@@ -2054,7 +2054,7 @@
       body.appendChild(h("section.panel", null, [h("h2", { text: "Decision" }), comment,
         h("div.row", null, [
           h("button.primary", { type: "button", on: { click: function () { decide("accept"); } } }, "Accept"),
-          h("button", { type: "button", on: { click: function () { decide("defer"); } } }, "Defer"),
+          r.status === "deferred" ? null : h("button", { type: "button", on: { click: function () { decide("defer"); } } }, "Defer"),
           h("button.danger", { type: "button", on: { click: function () { decide("reject"); } } }, "Reject")
         ])]));
     }

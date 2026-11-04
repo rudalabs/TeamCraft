@@ -739,7 +739,7 @@ mod tests {
                 "Create change order",
                 "PRT-000001/C",
                 "Link an open change order",
-                "name=\"decision\" value=\"defer\"",
+                "name=\"decision\" value=\"accept\"",
                 "/request-attachments/",
                 "?inline=1",
                 "enctype=\"multipart/form-data\"",
@@ -751,6 +751,12 @@ mod tests {
                     "request page ({status}) shows {expected}"
                 );
             }
+            // deferred → deferred is no transition: no Defer button then
+            assert_eq!(
+                html.contains("name=\"decision\" value=\"defer\""),
+                status != "deferred",
+                "request page ({status}): Defer button"
+            );
         }
 
         render(

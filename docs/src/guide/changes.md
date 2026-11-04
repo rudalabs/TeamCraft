@@ -40,7 +40,9 @@ release.
    * **Accept** – the change will be made;
    * **Defer** – not now (reason required); *take up again* later;
    * **Reject** – no change (reason required).
-   While no item is named, any CAD editor may triage.
+   While no item is named, any CAD editor may triage; once the request is
+   decided, an item is added only by a member of its project group (or an
+   admin).
 4. **Implement** – an accepted request gets its change order: *Create change
    order* creates a draft with the in-work revisions of the affected items
    (items without a revision in work are listed – revise them and add the

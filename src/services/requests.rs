@@ -656,6 +656,28 @@ pub async fn add_item(
             not_now(&request)
         });
     }
+    // After the decision only members of the item's project group (or admins)
+    // add items: otherwise a CAD editor could accept a request while no item
+    // is named (any CAD editor may triage then) and attach items of foreign
+    // groups to the accepted request afterwards.
+    if !matches!(
+        status_of(&request),
+        RequestStatus::New | RequestStatus::InTriage
+    ) {
+        let project =
+            sqlx::query_scalar::<_, Option<Uuid>>("SELECT project_id FROM items WHERE id = $1")
+                .bind(item.item_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or_else(|| AppError::not_found("Item not found."))?;
+        if !actor.can_edit_project(project) {
+            return Err(AppError::Forbidden(format!(
+                "{} is {}: only members of the item's project group or an administrator can add it now.",
+                request.number,
+                status_of(&request).label()
+            )));
+        }
+    }
     let label = insert_item(&mut tx, id, &item).await?.ok_or_else(|| {
         AppError::Conflict(format!("The item is already part of {}.", request.number))
     })?;

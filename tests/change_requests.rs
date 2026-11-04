@@ -539,3 +539,50 @@ async fn web_ui_request_pages() {
     assert_eq!(r.json()["change_request"]["status"], "new");
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn outsider_cannot_attach_foreign_items_after_deciding_an_empty_request() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    let (_, outsider) = app.user_in("otto", Role::Editor, &["ROVER"]).await;
+    let part = create_part(&app, &eng, "Bracket").await;
+
+    // no item named: any CAD editor may triage and decide ...
+    let created = raise(&app, &outsider, json!({ "title": "Lighter bracket" })).await;
+    let ecr = created["change_request"]["number"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/change-requests/{ecr}/decide"),
+            &outsider,
+            Some(json!({ "decision": "accept" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["change_request"]["status"], "accepted");
+
+    // ... but after the decision a ROCKET item is added only by ROCKET members
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/change-requests/{ecr}/items"),
+            &outsider,
+            Some(json!({ "item": part })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/change-requests/{ecr}/items"),
+            &eng,
+            Some(json!({ "item": part })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["change_request"]["item_count"], 1, "fresh reply");
+    app.teardown().await;
+}
