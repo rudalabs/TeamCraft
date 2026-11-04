@@ -44,6 +44,10 @@
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
+<p align="center">
+  <img src="media/screenshots/dashboard.png" width="860" alt="TeamCraft dashboard: change orders waiting for my review, revisions checked out by me and recent activity of the project group ROVER" />
+</p>
+
 > [!WARNING]
 > **Work in progress: there is no official release yet.** TeamCraft is under
 > active development (version 0.x). Features, the REST API, the configuration
@@ -138,6 +142,30 @@ to the latest run of the
 [Release workflow](https://github.com/rudalabs/TeamCraft/actions/workflows/release.yml)
 (14 days, signed-in GitHub users). Linux packages for Arch (AUR), snap and
 Flatpak are described in [packaging/](packaging/README.md).
+
+## Screenshots
+
+Demo data from the openly licensed [NIST CAD test files](tests/fixtures/cad/README.md),
+captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh).
+
+<table>
+  <tr>
+    <td width="50%"><a href="media/screenshots/vault-explorer.png"><img src="media/screenshots/vault-explorer.png" alt="Vault explorer: the project group ROVER as a folder, items with state and lock owner, and the detail pane of the electronics enclosure with its files" /></a><br /><sub><b>Vault explorer</b> – project groups, lock owners, one-click check-out</sub></td>
+    <td width="50%"><a href="media/screenshots/revision-files.png"><img src="media/screenshots/revision-files.png" alt="Files of the mounting bracket revision: STEP, Inventor, SolidWorks and NX files with the preview images stored in the native CAD files and the file versions" /></a><br /><sub><b>Revision files</b> – versions and previews from Inventor and SolidWorks files</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/viewer-3d.png"><img src="media/screenshots/viewer-3d.png" alt="3D viewer in the browser showing the STEP model of the NIST CTC-01 mounting bracket" /></a><br /><sub><b>3D viewer</b> – STEP tessellated on the server, drawn with WebGL</sub></td>
+    <td width="50%"><a href="media/screenshots/bom.png"><img src="media/screenshots/bom.png" alt="Multi-level bill of materials of the sensor mast assembly with quantities, states and mass and cost roll-up" /></a><br /><sub><b>Multi-level BOM</b> – revision rules, mass and cost roll-up</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/change-review.png"><img src="media/screenshots/change-review.png" alt="Change order in review: affected revisions, reviewers with one approval and one pending decision, and the impact analysis" /></a><br /><sub><b>Change order</b> – four-eyes review and impact analysis</sub></td>
+    <td width="50%"><a href="media/screenshots/revision.png"><img src="media/screenshots/revision.png" alt="Revision page of the mounting bracket: attributes, lifecycle state, check-out lock and actions" /></a><br /><sub><b>Revision</b> – attributes, lifecycle and lock</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/notifications.png"><img src="media/screenshots/notifications.png" alt="Notifications: review requests, approvals and the release of the standard fasteners" /></a><br /><sub><b>Notifications</b> – in-app, e-mail and Mattermost</sub></td>
+    <td width="50%" align="center"><a href="media/screenshots/mobile-dashboard.png"><img src="media/screenshots/mobile-dashboard.png" width="200" alt="The dashboard on a 390 pixel wide phone screen" /></a><br /><sub><b>On the phone</b> – the same pages, responsive</sub></td>
+  </tr>
+</table>
 
 ## Quick start
 
