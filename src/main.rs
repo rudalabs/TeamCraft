@@ -115,13 +115,15 @@ async fn main() -> ExitCode {
     {
         return preview_mesh(format, input, output);
     }
-    // An optional local configuration file (see config::LOCAL_ENV_FILE).
-    if let Err(e) = teamcraft::config::load_local_env_file() {
-        eprintln!(
-            "warning: {} could not be loaded completely: {e}",
-            teamcraft::config::LOCAL_ENV_FILE
-        );
-        eprintln!("         (quote values that contain spaces, e.g. NAME=\"Single Sign-On\")");
+    // Optional configuration files (see the `config` module).
+    for (path, e) in teamcraft::config::load_env_files() {
+        eprintln!("warning: {path} could not be loaded completely: {e}");
+        if matches!(&e, dotenvy::Error::Io(io) if io.kind() == std::io::ErrorKind::PermissionDenied)
+        {
+            eprintln!("         (run TeamCraft commands as its service user, e.g. `sudo -u teamcraft teamcraft …`)");
+        } else {
+            eprintln!("         (quote values that contain spaces, e.g. NAME=\"Single Sign-On\")");
+        }
     }
     let result = match cli.command.unwrap_or(Command::Serve { no_migrate: false }) {
         Command::PreviewMesh { .. } => unreachable!("handled above"),

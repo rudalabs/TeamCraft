@@ -1,0 +1,60 @@
+# Maintainer: TeamCraft contributors <https://github.com/rudalabs/TeamCraft>
+pkgname=teamcraft-desktop-git
+_pkgname=teamcraft
+_appid=io.github.rudalabs.teamcraft
+pkgver=0.1.0.r0.g0000000
+pkgrel=1
+pkgdesc='Desktop client of the TeamCraft PLM: check-out workspace, 3D viewer, reviews'
+arch=('x86_64' 'aarch64')
+url='https://github.com/rudalabs/TeamCraft'
+license=('MPL-2.0')
+depends=('webkit2gtk-4.1' 'gtk3' 'glib2' 'cairo' 'gdk-pixbuf2' 'libsoup3' 'xdotool' 'hicolor-icon-theme' 'gcc-libs' 'glibc')
+makedepends=('cargo' 'git')
+provides=('teamcraft-desktop')
+conflicts=('teamcraft-desktop')
+options=('!lto')
+source=("$_pkgname::git+https://github.com/rudalabs/TeamCraft.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$_pkgname/desktop"
+  printf '%s.r%s.g%s' \
+    "$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)" \
+    "$(git rev-list --count HEAD)" \
+    "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd "$_pkgname/desktop"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$_pkgname/desktop"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  # custom-protocol: serve the embedded user interface (release build)
+  cargo build --frozen --release --features custom-protocol
+}
+
+check() {
+  cd "$_pkgname/desktop"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --release --features custom-protocol
+}
+
+package() {
+  cd "$_pkgname"
+  install -Dm755 desktop/target/release/teamcraft-desktop "$pkgdir/usr/bin/teamcraft-desktop"
+  install -Dm644 "packaging/linux/$_appid.desktop" "$pkgdir/usr/share/applications/$_appid.desktop"
+  install -Dm644 "packaging/linux/$_appid.metainfo.xml" "$pkgdir/usr/share/metainfo/$_appid.metainfo.xml"
+  install -Dm644 desktop/icons/32x32.png "$pkgdir/usr/share/icons/hicolor/32x32/apps/$_appid.png"
+  install -Dm644 desktop/icons/64x64.png "$pkgdir/usr/share/icons/hicolor/64x64/apps/$_appid.png"
+  install -Dm644 desktop/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/$_appid.png"
+  install -Dm644 desktop/icons/128x128@2x.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/$_appid.png"
+  install -Dm644 desktop/icons/icon.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/$_appid.png"
+  install -Dm644 desktop/icons/app-icon.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/$_appid.svg"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

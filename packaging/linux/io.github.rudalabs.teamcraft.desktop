@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=TeamCraft
+GenericName=Product Lifecycle Management
+Comment=Check out, change and check in CAD data of a TeamCraft server
+Exec=teamcraft-desktop
+Icon=io.github.rudalabs.teamcraft
+Terminal=false
+Categories=Development;Engineering;
+Keywords=PLM;PDM;CAD;vault;BOM;STEP;
+StartupWMClass=teamcraft-desktop

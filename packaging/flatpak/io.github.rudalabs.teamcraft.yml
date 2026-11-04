@@ -1,0 +1,56 @@
+# Flatpak of TeamCraft Desktop (the server is packaged for the AUR and as a snap).
+#
+# Local build and test from the repository root:
+#   flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+#   flatpak-builder --user --install --install-deps-from=flathub --force-clean \
+#       --state-dir=target/flatpak-state target/flatpak-build packaging/flatpak/io.github.rudalabs.teamcraft.yml
+#   flatpak run io.github.rudalabs.teamcraft
+#
+# The build downloads the Rust crates (--share=network), which is fine for
+# local builds; Flathub requires offline sources (cargo-sources.json from
+# flatpak-cargo-generator) – see packaging/README.md.
+id: io.github.rudalabs.teamcraft
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: teamcraft-desktop
+finish-args:
+  - --share=ipc
+  # talks to the TeamCraft server; the browser sign-in answers on 127.0.0.1
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # the check-out workspace (Documents/TeamCraft)
+  - --filesystem=xdg-documents/TeamCraft:create
+modules:
+  - name: teamcraft-desktop
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      build-args:
+        - --share=network
+      env:
+        CARGO_HOME: /run/build/teamcraft-desktop/cargo-home
+        CARGO_TARGET_DIR: /run/build/teamcraft-desktop/cargo-target
+    build-commands:
+      - cargo build --release --locked --features custom-protocol --manifest-path desktop/Cargo.toml
+      - install -Dm755 /run/build/teamcraft-desktop/cargo-target/release/teamcraft-desktop /app/bin/teamcraft-desktop
+      - install -Dm644 packaging/linux/io.github.rudalabs.teamcraft.desktop /app/share/applications/io.github.rudalabs.teamcraft.desktop
+      - install -Dm644 packaging/linux/io.github.rudalabs.teamcraft.metainfo.xml /app/share/metainfo/io.github.rudalabs.teamcraft.metainfo.xml
+      - install -Dm644 desktop/icons/128x128.png /app/share/icons/hicolor/128x128/apps/io.github.rudalabs.teamcraft.png
+      - install -Dm644 desktop/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/io.github.rudalabs.teamcraft.png
+      - install -Dm644 desktop/icons/icon.png /app/share/icons/hicolor/512x512/apps/io.github.rudalabs.teamcraft.png
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - target
+          - desktop/target
+          - desktop/ui/static
+          - data
+          - local
+          - secrets
+          - .venv

@@ -7,9 +7,13 @@ description = "TeamCraft Desktop – rich client of the TeamCraft PLM for Window
 license = "MPL-2.0"
 publish = false
 
-# A project of its own: the server build (Dockerfile, GitLab CI) never compiles
-# the desktop dependencies.
+# A project of its own: the server build never compiles the desktop dependencies.
 [workspace]
+
+[features]
+# Release builds (packages): serve the embedded user interface instead of a
+# development server – `cargo build --release --features custom-protocol`.
+custom-protocol = ["tauri/custom-protocol"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

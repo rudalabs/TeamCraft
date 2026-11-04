@@ -1,0 +1,61 @@
+# Snap of the TeamCraft server (the desktop client is a Flatpak).
+#
+#   snapcraft pack                                   # build (LXD or Multipass)
+#   sudo snap install --dangerous teamcraft_*.snap   # local test
+#   sudo nano /var/snap/teamcraft/common/teamcraft.env
+#   sudo snap restart teamcraft.server
+#
+# Strict confinement: the database is reached over TCP (the local
+# PostgreSQL socket is not accessible to snaps).
+name: teamcraft
+title: TeamCraft
+base: core24
+version: '0.1.0'
+summary: Open-source product lifecycle management (PLM) server
+description: |
+  TeamCraft manages the engineering data of a team: items, revisions, CAD
+  files and their versions, bills of materials and change orders, with
+  check-out / check-in locking, full-text search, a 3D preview of STEP, mesh
+  and point-cloud files, a REST API and single sign-on.
+
+  The snap runs the server as a service on http://localhost:8080. It needs a
+  PostgreSQL database; configure it in /var/snap/teamcraft/common/teamcraft.env
+  and restart the service with `sudo snap restart teamcraft.server`.
+license: MPL-2.0
+website: https://github.com/rudalabs/TeamCraft
+source-code: https://github.com/rudalabs/TeamCraft
+issues: https://github.com/rudalabs/TeamCraft/issues
+grade: devel
+confinement: strict
+
+platforms:
+  amd64:
+  arm64:
+
+environment:
+  TEAMCRAFT_ENV_FILE: $SNAP_COMMON/teamcraft.env
+  TEAMCRAFT_VAULT_DIR: $SNAP_COMMON/vault
+
+apps:
+  teamcraft:
+    command: bin/teamcraft
+    plugs: [network, network-bind]
+  server:
+    command: bin/teamcraft serve
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 5s
+    plugs: [network, network-bind]
+
+parts:
+  teamcraft:
+    plugin: rust
+    source: .
+    rust-channel: stable
+    build-packages: [pkg-config]
+  # the install hook, made executable at build time
+  hooks:
+    plugin: nil
+    source: snap/local
+    override-build: |
+      install -Dm755 "$CRAFT_PART_SRC/install-hook" "$CRAFT_PART_INSTALL/snap/hooks/install"

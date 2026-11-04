@@ -1,0 +1,4 @@
+d /var/lib/teamcraft 0750 teamcraft teamcraft -
+d /var/lib/teamcraft/vault 0750 teamcraft teamcraft -
+z /etc/teamcraft 0750 root teamcraft -
+z /etc/teamcraft/teamcraft.env 0640 root teamcraft -

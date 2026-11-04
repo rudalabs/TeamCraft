@@ -2,10 +2,13 @@
 //!
 //! Every variable can alternatively be provided as a file by appending
 //! `_FILE` to its name (e.g. `TEAMCRAFT_DB_PASSWORD_FILE=/run/secrets/db_password`),
-//! which is how Docker / Compose secrets are consumed. See `.env.example`.
+//! which is how container secrets are consumed. Reference:
+//! `docs/src/admin/configuration.md`.
 //!
-//! For local development the variables are read from [`LOCAL_ENV_FILE`]
-//! (`secrets/.env`); the whole `secrets/` directory is git-ignored.
+//! Files that are read on start (variables already set take precedence):
+//! `TEAMCRAFT_ENV_FILE` if set, the local development file [`LOCAL_ENV_FILE`]
+//! (`secrets/.env`, git-ignored) and – only in package builds – the system
+//! file [`SYSTEM_ENV_FILE`].
 
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
@@ -15,14 +18,42 @@ use sqlx::postgres::{PgConnectOptions, PgSslMode};
 /// Local configuration file, relative to the working directory (the repository root).
 pub const LOCAL_ENV_FILE: &str = "secrets/.env";
 
+/// Configuration file of a system installation. Set at build time by the
+/// distribution packages (`TEAMCRAFT_SYSTEM_CONFIG=/etc/teamcraft/teamcraft.env`),
+/// so development builds never read a system file.
+pub const SYSTEM_ENV_FILE: Option<&str> = option_env!("TEAMCRAFT_SYSTEM_CONFIG");
+
 /// Loads [`LOCAL_ENV_FILE`] into the process environment if it exists.
 /// Variables that are already set take precedence. Returns whether a file was loaded.
 pub fn load_local_env_file() -> std::result::Result<bool, dotenvy::Error> {
-    match dotenvy::from_path(LOCAL_ENV_FILE) {
+    load_env_file(LOCAL_ENV_FILE)
+}
+
+fn load_env_file(path: &str) -> std::result::Result<bool, dotenvy::Error> {
+    match dotenvy::from_path(path) {
         Ok(()) => Ok(true),
         Err(e) if e.not_found() => Ok(false),
         Err(e) => Err(e),
     }
+}
+
+/// Loads every configuration file (see the module documentation). Errors are
+/// returned with the path; the remaining files are still loaded.
+pub fn load_env_files() -> Vec<(String, dotenvy::Error)> {
+    let mut paths: Vec<String> = Vec::new();
+    if let Ok(explicit) = std::env::var("TEAMCRAFT_ENV_FILE") {
+        if !explicit.trim().is_empty() {
+            paths.push(explicit.trim().to_string());
+        }
+    }
+    paths.push(LOCAL_ENV_FILE.to_string());
+    if let Some(system) = SYSTEM_ENV_FILE.filter(|p| !p.is_empty()) {
+        paths.push(system.to_string());
+    }
+    paths
+        .into_iter()
+        .filter_map(|path| load_env_file(&path).err().map(|e| (path, e)))
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -421,6 +452,11 @@ fn database_options<F: Fn(&str) -> Option<String>>(
     if let Some(password) = &password {
         options = options.password(password);
     }
+    // A directory as host: PostgreSQL's local socket (e.g. /run/postgresql)
+    // with peer authentication as the operating-system user.
+    if host.starts_with('/') {
+        options = options.socket(&host);
+    }
     let display = format!("{user}@{host}:{port}/{name}");
     Ok((options, display))
 }
@@ -529,6 +565,37 @@ mod tests {
         assert_eq!(cfg.database_display, "teamcraft@localhost:5432/teamcraft");
         assert!(cfg.local_login);
         assert_eq!(cfg.vault_dir, PathBuf::from("./data/vault"));
+    }
+
+    /// The packaged configuration: the local PostgreSQL socket, peer authentication.
+    #[test]
+    fn unix_socket_database() {
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_HOST", "/run/postgresql"),
+            ("TEAMCRAFT_DB_USER", "teamcraft"),
+        ])
+        .unwrap();
+        assert_eq!(
+            cfg.database.get_socket().map(|p| p.display().to_string()),
+            Some("/run/postgresql".to_string())
+        );
+        assert_eq!(
+            cfg.database_display,
+            "teamcraft@/run/postgresql:5432/teamcraft"
+        );
+        // the packaged system configuration parses
+        let file = include_str!("../packaging/linux/teamcraft.env");
+        let vars: std::collections::HashMap<String, String> =
+            dotenvy::from_read_iter(file.as_bytes())
+                .map(|r| r.expect("valid line"))
+                .collect();
+        assert_eq!(vars["TEAMCRAFT_VAULT_DIR"], "/var/lib/teamcraft/vault");
+        let packaged = Config::from_lookup(|k| vars.get(k).cloned()).expect("packaged config");
+        assert!(
+            packaged.bind_addr.ip().is_loopback(),
+            "first-start setup works"
+        );
+        assert!(packaged.database.get_socket().is_some());
     }
 
     #[test]
