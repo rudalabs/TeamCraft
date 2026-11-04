@@ -148,6 +148,65 @@ impl Api {
         Ok(written)
     }
 
+    /// Streams a file into `dest` for the working folder: written next to it
+    /// first (`<name>.teamcraft-download`), checked against the SHA-256 the
+    /// server named, then renamed over `dest`. `cancel` stops it between two
+    /// chunks (the partial file is removed); `on_bytes` is told every chunk.
+    pub async fn download_verified(
+        &self,
+        path: &str,
+        dest: &Path,
+        expected_sha256: &str,
+        cancel: &std::sync::atomic::AtomicBool,
+        on_bytes: &mut (dyn FnMut(u64) + Send),
+    ) -> Result<u64, ApiError> {
+        use sha2::{Digest, Sha256};
+        use std::sync::atomic::Ordering;
+        let url = self.url(path)?;
+        let mut resp = ensure_ok(self.request(Method::GET, &url).send().await?).await?;
+        let mut tmp = dest.as_os_str().to_owned();
+        tmp.push(".teamcraft-download");
+        let tmp = std::path::PathBuf::from(tmp);
+        let mut file = tokio::fs::File::create(&tmp).await?;
+        let mut hasher = Sha256::new();
+        let mut written = 0u64;
+        let result: Result<(), ApiError> = async {
+            while let Some(chunk) = resp.chunk().await? {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(ApiError::local("Cancelled."));
+                }
+                file.write_all(&chunk).await?;
+                hasher.update(&chunk);
+                written += chunk.len() as u64;
+                on_bytes(chunk.len() as u64);
+            }
+            file.flush().await?;
+            Ok(())
+        }
+        .await;
+        drop(file);
+        if let Err(e) = result {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(e);
+        }
+        let sha = hex::encode(hasher.finalize());
+        if !expected_sha256.is_empty() && !sha.eq_ignore_ascii_case(expected_sha256) {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(ApiError::local(format!(
+                "{} arrived damaged (SHA-256 does not match) – get it again.",
+                dest.file_name().unwrap_or_default().to_string_lossy()
+            )));
+        }
+        if let Err(e) = tokio::fs::rename(&tmp, dest).await {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(ApiError::local(format!(
+                "{} could not be replaced (open in a CAD program?): {e}",
+                dest.display()
+            )));
+        }
+        Ok(written)
+    }
+
     /// Multipart request with `file` parts and text fields (uploads, check-in).
     pub async fn multipart(
         &self,

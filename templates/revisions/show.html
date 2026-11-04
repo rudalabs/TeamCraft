@@ -227,7 +227,7 @@
   {% if files %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>File</th><th>Version</th><th class="num">Size</th><th>Uploaded</th><th>SHA-256</th><th></th></tr></thead>
+    <thead><tr><th>File</th><th title="Place inside the project group – the desktop working folder mirrors it">Folder</th><th>Version</th><th class="num">Size</th><th>Uploaded</th><th>SHA-256</th><th></th></tr></thead>
     <tbody>
     {% for f in files %}
       <tr>
@@ -236,6 +236,17 @@
           <a href="/files/{{ f.id }}/download">{{ f.filename }}</a>
           {% if f.format_info %}<span class="fmt fmt-{{ f.format_info.kind }}" title="{{ f.format_info.system_name }} · {{ f.format_info.kind_label }} · {{ f.content_type }}">{{ f.format_info.label }}</span>{% else %}<span class="muted small">{{ f.content_type }}</span>{% endif %}
           {% if f.preview %}<a class="button small" href="/files/{{ f.id }}/preview" title="3D preview in the browser">3D</a>{% endif %}
+        </td>
+        <td class="small">
+          {% if can.edit %}
+          <form class="inline folder-form" method="post" action="/files/{{ f.id }}/folder">
+            <input type="hidden" name="back" value="{{ back }}#files">
+            <input class="mono" type="text" name="folder" value="{{ f.folder }}" maxlength="400" placeholder="(top of the group)"
+                   aria-label="Folder of {{ f.filename }}" title="Folder inside {{ rev.project_code or 'the project group' }}, e.g. chassis/brackets">
+            <button class="small" type="submit">Move</button>
+          </form>
+          {% elif f.folder %}<span class="mono" title="{{ rev.project_code or '' }}/{{ f.folder }}/{{ f.filename }} in the desktop working folder">{{ f.folder }}/</span>
+          {% else %}<span class="muted" title="At the top of the project group in the desktop working folder">—</span>{% endif %}
         </td>
         <td class="nowrap">
           <span class="badge">v{{ f.version }}</span>
@@ -255,7 +266,7 @@
       </tr>
       {% if f.versions|length > 1 %}
       <tr id="versions-{{ f.id }}" class="hidden">
-        <td colspan="6">
+        <td colspan="7">
           <table>
             <thead><tr><th>Version</th><th>Comment</th><th class="num">Size</th><th>Uploaded</th><th></th></tr></thead>
             <tbody>
@@ -288,6 +299,9 @@
   </table>
   </div>
   {% else %}<p class="empty">No files attached.</p>{% endif %}
+  <p class="hint">Downloads in the browser are for single files and for viewing. For CAD work use the
+    TeamCraft desktop app: it keeps one working folder per project group with the folder structure shown here
+    (<span class="mono">TeamCraft/{% if rev.project_code %}{{ rev.project_code }}{% else %}&lt;group&gt;{% endif %}/&lt;folder&gt;/&lt;file&gt;</span>), gets whole assemblies and keeps files you have not checked out read-only.</p>
   {% if can.edit %}
   <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data">
     <input type="hidden" name="bases" value="{{ file_bases }}">

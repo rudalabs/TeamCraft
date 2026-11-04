@@ -123,7 +123,9 @@ promised.
 - **Notifications.** In-app bell, e-mail and Mattermost; watch items and
   changes.
 - **Desktop app.** A Tauri client for Linux, macOS and Windows with a local
-  workspace (one folder per project group) for check-out and check-in, the
+  working folder – one folder per project group that mirrors the original
+  folder structure, read-only until you check out – for check-out and
+  check-in, *Get* of whole assemblies (BOM and referenced CAD files), the
   download of whole project groups and an import wizard for existing CAD
   folders with a step-by-step tutorial.
 - **Audit log.** Every modification with user, time and details.

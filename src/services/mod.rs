@@ -25,6 +25,7 @@ pub mod revisions;
 pub mod save_as;
 pub mod stats;
 pub mod users;
+pub mod workset;
 
 use sqlx::PgConnection;
 

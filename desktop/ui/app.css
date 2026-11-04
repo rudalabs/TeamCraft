@@ -136,8 +136,10 @@ label.check input { width: auto; accent-color: var(--accent); }
 .badge-unchanged { color: var(--ok); }
 .badge-missing { color: var(--text-dim); }
 .badge-outdated { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
-.badge-conflict { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
-tr.row-conflict td { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.badge-conflict, .badge-clash { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+tr.row-conflict td, tr.row-clash td { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.ro-flag { font-size: 0.75rem; color: var(--text-dim); }
+.ws-path { display: block; font-size: 0.75rem; color: var(--text-dim); }
 
 /* File format chips (server: src/cadformat.rs); the kind sets the colour. */
 .fmt {
@@ -275,6 +277,10 @@ html.skin-light .skin-logo-dark { display: none; }
   white-space: nowrap; overflow: hidden;
 }
 .status-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
+.status-get { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; overflow: hidden; }
+.status-get progress { width: 8rem; height: 0.55rem; }
+.status-get-text { overflow: hidden; text-overflow: ellipsis; max-width: 34rem; }
+.status-get button { font-size: 0.75rem; padding: 0.05rem 0.5rem; }
 .status-server::before { content: '●'; color: var(--ok); margin-right: 0.35rem; }
 
 /* ---------------------------------------------------------------- navigator */
