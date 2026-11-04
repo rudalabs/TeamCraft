@@ -67,7 +67,11 @@ How the desktop export works:
   `previews/`), `GET /files/{id}/thumbnail` (web and REST API), shown on the
   revision page and in the desktop app. Tested with generated files in the
   layouts described above, **not yet with real Inventor, Solid Edge or
-  SolidWorks files**.
+  SolidWorks files**. Update: tested with the NIST files in
+  `tests/fixtures/cad` – Inventor 2021, NX 1980 and SOLIDWORKS 2018. In
+  SOLIDWORKS 2015+ files the PNG is not stored as such but in a
+  Deflate-compressed `PreviewPNG` section of their own container; it is
+  inflated by `src/swpart.rs`.
 * **STEP export through the local CAD program – implemented** in the desktop
   app (`desktop/src/cadexport.rs`): *STEP* button in the workspace and *Create STEP exports … first* at check-in;
   Inventor and Solid Edge through

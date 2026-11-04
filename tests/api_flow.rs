@@ -1895,6 +1895,72 @@ async fn stored_cad_files_are_scanned_for_references_once() {
     app.teardown().await;
 }
 
+/// `teamcraft rescan-references`: a SOLIDWORKS 2018 assembly stored with
+/// the references of an older reader gets exactly its eight parts.
+#[tokio::test]
+async fn solidworks_assemblies_are_rescanned() {
+    // The NIST assembly has 2.1 MB; the test default allows 1 MiB uploads.
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &eng,
+            Some(json!({ "item_type": "assembly", "name": "Box", "project": "ROCKET" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let name = "nist_mtc_crada_assembly_rev-D.SLDASM";
+    let bytes = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/cad/nist/mtc-assembly/solidworks")
+            .join(name),
+    )
+    .unwrap();
+    let files = "/api/v1/items/ASM-000001/revisions/A/files";
+    let r = app.api_upload(files, &eng, name, &bytes).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let refs_uri = "/api/v1/items/ASM-000001/revisions/A/references";
+    let names = |v: serde_json::Value| -> Vec<String> {
+        let mut n: Vec<String> = v["files"][0]["references"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|n| n["name"].as_str().unwrap().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        n.sort();
+        n
+    };
+    let fresh = names(app.api(Method::GET, refs_uri, &eng, None).await.json());
+    assert_eq!(fresh.len(), 8, "{fresh:?}");
+
+    // As if stored by an older release: a false reference.
+    sqlx::query("DELETE FROM file_references")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO file_references (file_version_id, name) SELECT id, 'old name.SLDPRT' FROM file_versions",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let vault = app.vault().await;
+    let formats = ["solidworks-assembly".to_string(), "stl".to_string()];
+    let n = teamcraft::services::files::rescan_references(&app.pool, &vault, &formats)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    let rescanned = names(app.api(Method::GET, refs_uri, &eng, None).await.json());
+    assert_eq!(rescanned, fresh);
+    app.teardown().await;
+}
+
 /// Records the e-mails instead of sending them.
 #[derive(Default)]
 struct RecordingMailer(std::sync::Mutex<Vec<String>>);

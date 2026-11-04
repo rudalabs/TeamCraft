@@ -11,9 +11,16 @@
 //! names; `services::references` matches them against the files in the
 //! vault.
 //!
-//! This is a heuristic: a name that a CAD program keeps in its file after
-//! the component was removed is still found, and compressed sections are not
-//! read. The revision page therefore shows the names as "found in the file".
+//! Two containers are read by their structure instead: NX parts
+//! (`nxpart`: only the reference streams) and SOLIDWORKS 2015+ files
+//! (`swpart`: the component tree of an assembly, otherwise the document
+//! manager's section – both inflated from their compressed sections). The
+//! rest of such a file (history, old names) is never scanned.
+//!
+//! For every other file this is a heuristic: a name that a CAD program keeps
+//! in its file after the component was removed is still found, and
+//! compressed sections of unknown containers are not read. The revision page
+//! therefore shows the names as "found in the file".
 
 use std::collections::HashSet;
 use std::io::{Read, Seek};
@@ -258,7 +265,26 @@ pub fn find(content: &[u8], own_name: &str) -> Vec<String> {
     if let Some(streams) = crate::nxpart::reference_streams_in(content) {
         return from_nx_streams(&streams, own_name);
     }
+    // SOLIDWORKS 2015+: only the inflated reference sections.
+    if let Ok(Some(data)) = crate::swpart::reference_data(std::io::Cursor::new(content), MAX_SCAN) {
+        return from_sw_sections(data, own_name);
+    }
     finish(raw_names(content), own_name)
+}
+
+/// SOLIDWORKS 2015+ files: the component files of an assembly's component
+/// tree; without one (drawings) the names in the document manager's
+/// section; nothing if neither inflates.
+fn from_sw_sections(data: crate::swpart::ReferenceData, own_name: &str) -> Vec<String> {
+    let names = match (data.components, data.content_manager) {
+        (Some(paths), _) => paths
+            .iter()
+            .map(|p| p.rsplit(['\\', '/']).next().unwrap_or(p).trim().to_string())
+            .collect(),
+        (None, Some(section)) => raw_names(&section),
+        (None, None) => Vec::new(),
+    };
+    finish(names, own_name)
 }
 
 /// All names with a referencable extension, in the order found.
@@ -301,8 +327,9 @@ fn from_nx_streams(streams: &[Vec<u8>], own_name: &str) -> Vec<String> {
 }
 
 /// Reads a stored file and finds its references: NX parts through their
-/// stream directory (with seeks, so large parts are read completely),
-/// everything else from its first [`MAX_SCAN`] bytes.
+/// stream directory and SOLIDWORKS 2015+ files through their sections (with
+/// seeks, so large files are read completely), everything else from its
+/// first [`MAX_SCAN`] bytes.
 pub async fn scan_file(path: &Path, own_name: &str) -> Vec<String> {
     let path = path.to_path_buf();
     let own = own_name.to_string();
@@ -310,6 +337,9 @@ pub async fn scan_file(path: &Path, own_name: &str) -> Vec<String> {
         let mut file = std::io::BufReader::new(std::fs::File::open(&path)?);
         if let Some(streams) = crate::nxpart::reference_streams(&mut file, MAX_SCAN)? {
             return Ok(from_nx_streams(&streams, &own));
+        }
+        if let Some(data) = crate::swpart::reference_data(&mut file, MAX_SCAN)? {
+            return Ok(from_sw_sections(data, &own));
         }
         let mut content = Vec::new();
         file.seek(std::io::SeekFrom::Start(0))?;
