@@ -9,6 +9,7 @@
 
 mod account;
 mod admin;
+mod assistant;
 mod auth_pages;
 mod bom;
 mod changes;
@@ -68,6 +69,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/", get(dashboard::show))
         .route("/checkouts/checkin-all", post(dashboard::checkin_all))
         .route("/vault", get(explorer::show))
+        .route("/assistant", get(assistant::show).post(assistant::ask))
         // authentication
         .route(
             "/login",
@@ -420,6 +422,10 @@ pub(crate) fn render(
         map.insert("me".into(), me_json(&ctx.me));
         map.insert("skin".into(), json!(ctx.me.skin));
         map.insert("unread_notifications".into(), json!(ctx.unread));
+        map.insert(
+            "assistant_enabled".into(),
+            json!(crate::services::assistant::enabled(st)),
+        );
     }
     render_public(st, template, data, ctx.flash.clone())
 }
@@ -486,6 +492,7 @@ pub(crate) fn is_user_error(e: &AppError) -> bool {
             | AppError::Forbidden(_)
             | AppError::NotFound(_)
             | AppError::PayloadTooLarge(_)
+            | AppError::Unavailable(_)
     )
 }
 

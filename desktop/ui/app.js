@@ -122,7 +122,8 @@
     edit: "M4 20h4L19 9l-4-4L4 16z",
     obsolete: "M5 5l14 14|M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18",
     release: "M5 21V4|M5 4h12l-2.5 4 2.5 4H5",
-    eye: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z|M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6"
+    eye: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z|M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
+    ask: "M4 5h16v11H9l-5 4z|M8 9h8|M8 12h5"
   };
 
   function tool(label, icon, onClick, opts) {
@@ -901,6 +902,184 @@
   // Revision tab
   // ======================================================================
 
+  // ======================================================================
+  // Assistant ("Ask TeamCraft") – the server runs Claude with the MCP tools
+  // and the user's rights; shown only when the server has it enabled.
+  // ======================================================================
+
+  function assistantEnabled() {
+    return !!(state.me && state.me.capabilities && state.me.capabilities.assistant);
+  }
+
+  var ITEM_NUMBER = /\b(?:PRT|ASM|DOC|SW)-\d{3,}\b/g;
+
+  /** Text with generated item numbers as links that open the item. */
+  function itemLink(number) {
+    return h("button.link", { type: "button", title: "Open " + number, on: { click: function () { openRevision(number, "latest"); } } }, number);
+  }
+
+  function itemLinks(text) {
+    var nodes = [], last = 0, m;
+    ITEM_NUMBER.lastIndex = 0;
+    while ((m = ITEM_NUMBER.exec(text)) !== null) {
+      if (m.index > last) nodes.push(text.slice(last, m.index));
+      nodes.push(itemLink(m[0]));
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) nodes.push(text.slice(last));
+    return nodes;
+  }
+
+  /** Inline markdown-lite: `code` and **bold**; everything else is text. */
+  function inlineNodes(text) {
+    var out = [];
+    var parts = text.split("`");
+    var ticks = parts.length - 1;
+    var paired = ticks - (ticks % 2);
+    parts.forEach(function (part, k) {
+      if (k % 2 === 1 && k < paired) { out.push(h("code", { text: part })); return; }
+      if (k % 2 === 1) out.push("`");
+      var pieces = part.split("**"), markers = pieces.length - 1, strong = null;
+      pieces.forEach(function (piece, n) {
+        if (n > 0) {
+          if (markers % 2 === 1 && n === markers) out.push("**");
+          else if (strong) { out.push(strong); strong = null; }
+          else strong = h("strong");
+        }
+        if (strong) append(strong, itemLinks(piece));
+        else out.push.apply(out, itemLinks(piece));
+      });
+      if (strong) out.push(strong);
+    });
+    return out;
+  }
+
+  function tableCells(line) {
+    return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(function (c) { return c.trim(); });
+  }
+
+  function isSeparatorRow(line) {
+    var cells = tableCells(line);
+    return cells.length > 0 && cells.every(function (c) { return /^[\s:]*-[-\s:]*$/.test(c); });
+  }
+
+  /** The assistant's markdown-lite as DOM nodes (never as HTML). */
+  function markdownLite(text) {
+    var root = h("div.assistant-text");
+    var lines = String(text || "").split(/\r?\n/);
+    var para = null, list = null;
+    function endBlocks() { para = null; list = null; }
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i], t = line.trim(), m;
+      if (t.indexOf("```") === 0) {
+        endBlocks();
+        var code = [];
+        for (i++; i < lines.length && lines[i].trim().indexOf("```") !== 0; i++) code.push(lines[i]);
+        root.appendChild(h("pre", null, h("code", { text: code.join("\n") })));
+        continue;
+      }
+      if (!t) { endBlocks(); continue; }
+      if ((m = /^(#{1,6})\s+(.*)$/.exec(t))) {
+        endBlocks();
+        root.appendChild(h(m[1].length <= 2 ? "h3" : "h4", null, inlineNodes(m[2])));
+        continue;
+      }
+      if (t.charAt(0) === "|" && i + 1 < lines.length && isSeparatorRow(lines[i + 1])) {
+        endBlocks();
+        var head = h("tr", null, tableCells(t).map(function (c) { return h("th", null, inlineNodes(c)); }));
+        var rows = [];
+        for (i += 2; i < lines.length && lines[i].trim().charAt(0) === "|"; i++) {
+          rows.push(h("tr", null, tableCells(lines[i]).map(function (c) { return h("td", null, inlineNodes(c)); })));
+        }
+        i--;
+        root.appendChild(h("div.table-wrap", null, h("table.grid", null, [h("thead", null, head), h("tbody", null, rows)])));
+        continue;
+      }
+      if (/^[-*_]{3,}$/.test(t)) { endBlocks(); root.appendChild(h("hr")); continue; }
+      var bullet = /^(?:[-*•])\s+(.*)$/.exec(t), numbered = /^\d{1,3}[.)]\s+(.*)$/.exec(t);
+      if (bullet || numbered) {
+        para = null;
+        var tag = bullet ? "ul" : "ol";
+        if (!list || list.tagName.toLowerCase() !== tag) { list = h(tag); root.appendChild(list); }
+        list.appendChild(h("li", null, inlineNodes((bullet || numbered)[1])));
+        continue;
+      }
+      list = null;
+      if (!para) { para = h("p"); root.appendChild(para); } else para.appendChild(h("br"));
+      append(para, inlineNodes(t.replace(/^>\s/, "")));
+    }
+    return root;
+  }
+
+  /** "Ask TeamCraft" for a revision or change: quick actions, a free question, the answer. */
+  function assistantDialog(context, subject, actions) {
+    var labels = {};
+    actions.forEach(function (a) { labels[a[0]] = a[1]; });
+    var question = h("textarea", { maxlength: "4000", rows: "3", placeholder: "Ask about items, structures, changes, reviews …" });
+    var drafts = canEdit() ? h("input", { type: "checkbox" }) : null;
+    var status = h("p.hint", { role: "status" });
+    var answer = h("div.assistant-answer.hidden", { "aria-live": "polite" });
+    var quick = actions.map(function (a) {
+      return h("button.chip", { type: "button", on: { click: function () { send(a[0]); } } }, a[1]);
+    });
+    var body = h("div.stack", null, [
+      h("p.hint", { text: "Claude reads the PDM data of " + subject + " with your rights. Read-only unless you allow drafts – it never submits, approves or releases. The question and the data the tools return are sent to Anthropic." }),
+      h("div.assistant-quick", null, quick),
+      field("Your question", question, "optional with a quick action"),
+      drafts ? h("label.check", null, [drafts, "Allow drafting change orders"]) : null,
+      status,
+      answer
+    ]);
+    var busy = false;
+    var dlg = dialog("Ask TeamCraft", body, [
+      { label: "Close", onClick: function (d) { d.close(); } },
+      { label: "Ask", primary: true, submit: true, onClick: function () { send("ask"); } }
+    ], { wide: true });
+    var controls = quick.concat([question, drafts, dlg.form.querySelector("button[type=submit]")]).filter(Boolean);
+    var errorEl = dlg.form.querySelector(".error-text");
+
+    function setBusy(on) {
+      busy = on;
+      controls.forEach(function (el) { el.disabled = on; });
+      status.textContent = on ? "Looking it up in TeamCraft … this can take a minute." : "";
+    }
+
+    function send(action) {
+      if (busy) return;
+      var text = question.value.trim();
+      if (action === "ask" && !text) { dlg.fail("Type a question first."); question.focus(); return; }
+      if (errorEl) errorEl.classList.add("hidden");
+      setBusy(true);
+      api("POST", "/assistant", {
+        action: action, question: text || null, context: context, allow_drafts: !!(drafts && drafts.checked)
+      }).then(function (run) {
+        setBusy(false);
+        showAnswer(action, text, run);
+      }, function (err) {
+        setBusy(false);
+        dlg.fail(err);
+      });
+    }
+
+    function showAnswer(action, text, run) {
+      clear(answer);
+      answer.classList.remove("hidden");
+      var tools = (run.tools || []).map(function (t) {
+        return h("span.badge" + (t.ok ? "" : ".badge-rejected"), { title: t.ok ? "tool call" : "tool call failed", text: t.name });
+      });
+      append(answer, [
+        h("h3", { text: labels[action] || (text.length > 80 ? text.slice(0, 80) + "…" : text) }),
+        markdownLite(run.answer && run.answer.text),
+        run.answer && run.answer.truncated ? h("p.notice", { text: "The answer was cut off at the length limit – ask a narrower question for the rest." }) : null,
+        h("p.hint", null, [tools.length ? "Looked up: " : "No tools used. "].concat(tools, [
+          " · " + run.steps + (run.steps === 1 ? " step" : " steps") + " · " + run.model + (run.allow_drafts ? " · drafts allowed" : " · read-only")
+        ])),
+        h("p.hint", { text: "Generated by an AI model from the PDM data – check numbers and states before you rely on them." })
+      ]);
+      if (run.allow_drafts) refreshWorklistCount();
+    }
+  }
+
   function openRevision(number, code, sub) {
     openTab({ key: "rev:" + number + ":" + code, kind: "revision", number: number, code: code, title: number + "/" + code, sub: sub || "overview" });
   }
@@ -977,6 +1156,11 @@
       tool("Obsolete", "obsolete", function () { doObsolete(tab); }, { disabled: !can.obsolete, danger: can.obsolete }),
       h("span.sep"),
       watchTool(tab, "items", rev.item_number, d.watching),
+      assistantEnabled() ? tool("Ask…", "ask", function () {
+        assistantDialog({ item: rev.item_number, revision: rev.code }, rev.item_number + "/" + rev.code, [
+          ["release_notes", "Draft release notes"], ["release_check", "Check before release"]
+        ]);
+      }, { title: "Ask TeamCraft: release notes, release check or any question about this revision" }) : null,
       tool("Pack and Go…", "download", function () { savePackage(rev, null); }, { title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json)" }),
       tool("Open folder", "folder", function () { openWorkspaceFolder(tab); }, { title: "Open the workspace folder of this revision" }),
       tool("Browser", "web", function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, { title: "Open this revision in the web UI" }),
@@ -1898,6 +2082,9 @@
       tool("Withdraw", "cancel", function () { action("withdraw", "Withdrawing " + c.number); }, { disabled: !(owner && c.status === "in_review") }),
       h("span.sep"),
       watchTool(tab, "changes", c.number, !!tab.data.watching),
+      assistantEnabled() ? tool("Ask…", "ask", function () {
+        assistantDialog({ change: c.number }, c.number, [["review_brief", "Brief me for this review"]]);
+      }, { title: "Ask TeamCraft: a briefing for the review – what changes, impact, risks, open questions" }) : null,
       tool("Browser", "web", function () { call("open_web", { path: "/changes/" + c.id }).catch(function (e) { toast(errorText(e), "error"); }); }, { title: "Open this change in the web UI (reviewers, items, cancel …)" }),
       tool("Refresh", "refresh", reloadActive)
     ]);

@@ -296,7 +296,7 @@ pub async fn add_dependencies(
     finish(&st, result, &back, |added| {
         let text = match added.len() {
             0 => {
-                "Nothing to add – the remaining dependencies are in review elsewhere or not in work"
+                "Nothing to add – the remaining dependencies are in review elsewhere, not in work or in another project group"
                     .into()
             }
             1 => format!("Added {}", added[0]),

@@ -12,6 +12,8 @@ use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 
 const JSON_TIMEOUT: Duration = Duration::from_secs(60);
+/// The assistant runs several model and tool steps (server limit: 240 s).
+const ASSISTANT_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// An error as the UI shows it.
 #[derive(Clone, Debug, Serialize)]
@@ -116,7 +118,12 @@ impl Api {
         body: Option<&Value>,
     ) -> Result<Value, ApiError> {
         let url = self.url(path)?;
-        let mut req = self.request(method, &url).timeout(JSON_TIMEOUT);
+        let timeout = if path.starts_with("/assistant") {
+            ASSISTANT_TIMEOUT
+        } else {
+            JSON_TIMEOUT
+        };
+        let mut req = self.request(method, &url).timeout(timeout);
         if let Some(body) = body {
             req = req.json(body);
         }

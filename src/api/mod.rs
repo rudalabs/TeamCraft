@@ -44,6 +44,8 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/desktop/token", post(desktop_token))
         .route("/worklist", get(worklist))
         .route("/worklist/checkin-all", post(checkin_all))
+        .route("/mcp", post(crate::mcp::http).get(crate::mcp::http_get))
+        .route("/assistant", get(assistant_info).post(assistant_ask))
         .route("/formats", get(formats))
         .route("/projects", get(list_projects).post(create_project))
         .route(
@@ -255,6 +257,9 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/projects/{code}/members                   {username, manager?} – managers and admins",
             "GET    /api/v1/projects/{code}/numbering?scheme=         next generated item numbers per type; scheme = preview another scheme",
             "PUT    /api/v1/projects/{code}/numbering                 {scheme} e.g. {PROJECT}-{TYPE}-{YYYY}-{SEQ:4}, empty = {TYPE}-{SEQ:6} – managers and admins",
+            "POST   /api/v1/mcp                                       Model Context Protocol (JSON-RPC 2.0) for AI assistants, see the MCP reference",
+            "GET    /api/v1/assistant                                 whether the built-in assistant is enabled, and its quick actions",
+            "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention, context: {item?, revision?, change?}, allow_drafts?}",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
             "GET    /api/v1/items?q=&type=&project=&state=&system=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo",
             "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?}",
@@ -328,6 +333,8 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/changes/{number}/impact                   impact analysis: items that depend on its revisions",
             "POST   /api/v1/changes/{number}/items                    {item, revision?}",
             "POST   /api/v1/changes/{number}/reviewers                {username}",
+            "GET    /api/v1/changes/{number}/readiness                release readiness: unreleased (blocking) and obsolete or file-scan (warning) dependencies",
+            "POST   /api/v1/changes/{number}/dependencies             add the in-work revisions of all unreleased dependencies, level by level",
             "POST   /api/v1/changes/{number}/submit",
             "POST   /api/v1/changes/{number}/review                   {decision: approve|reject, comment?}",
             "POST   /api/v1/changes/{number}/withdraw"
@@ -335,8 +342,66 @@ async fn index() -> Json<Value> {
     }))
 }
 
-async fn me(ApiUser(me): ApiUser) -> Json<Value> {
-    Json(json!(me))
+async fn me(State(st): State<AppState>, ApiUser(me): ApiUser) -> Json<Value> {
+    let mut body = json!(me);
+    body["capabilities"] = json!({
+        "assistant": crate::services::assistant::enabled(&st),
+        "mcp": true,
+    });
+    Json(body)
+}
+
+/// `GET /api/v1/assistant`: whether the assistant is enabled and what it offers.
+async fn assistant_info(State(st): State<AppState>, ApiUser(_me): ApiUser) -> Json<Value> {
+    let actions: Vec<Value> = crate::assistant::Action::ALL
+        .iter()
+        .map(|a| json!({ "id": a.as_str(), "label": a.label(), "needs": a.needs() }))
+        .collect();
+    Json(json!({
+        "enabled": crate::services::assistant::enabled(&st),
+        "model": st.assistant.as_ref().map(|a| a.model.clone()),
+        "max_question_chars": crate::assistant::MAX_QUESTION_CHARS,
+        "actions": actions,
+    }))
+}
+
+#[derive(Deserialize, Default)]
+struct AssistantContext {
+    item: Option<String>,
+    revision: Option<String>,
+    change: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AssistantBody {
+    question: Option<String>,
+    action: Option<String>,
+    #[serde(default)]
+    context: AssistantContext,
+    #[serde(default)]
+    allow_drafts: bool,
+}
+
+/// `POST /api/v1/assistant`: runs the assistant with the caller's rights.
+async fn assistant_ask(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    ApiJson(body): ApiJson<AssistantBody>,
+) -> AppResult<Json<Value>> {
+    if !crate::services::assistant::enabled(&st) {
+        return Err(crate::assistant::AssistantError::Disabled.into_app_error());
+    }
+    let question = crate::assistant::Question::new(
+        body.action.as_deref(),
+        body.question.as_deref(),
+        body.context.item.as_deref(),
+        body.context.revision.as_deref(),
+        body.context.change.as_deref(),
+        body.allow_drafts,
+    )
+    .map_err(AppError::BadRequest)?;
+    let run = crate::services::assistant::ask(&st, &me, question).await?;
+    Ok(Json(json!(run)))
 }
 
 #[derive(Deserialize)]

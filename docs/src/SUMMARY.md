@@ -12,6 +12,7 @@
 - [Change orders, reviews and notifications](guide/changes.md)
 - [Simulations (FEA, CFD)](guide/simulation.md)
 - [Desktop app](guide/desktop.md)
+- [Ask TeamCraft (assistant)](guide/assistant.md)
 - [Manual test tour](guide/tour.md)
 
 # Administration
@@ -25,6 +26,7 @@
 
 - [Supported file formats](reference/formats.md)
 - [REST API](reference/api.md)
+- [MCP server (AI assistants)](reference/mcp.md)
 - [Architecture](reference/architecture.md)
 - [FieldCraft and SolidCraft](reference/interop.md)
 - [Evaluation of other PLM systems](reference/evaluation.md)

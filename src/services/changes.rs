@@ -460,9 +460,16 @@ pub async fn add_dependencies(
         }
         let mut progress = false;
         for id in ids {
+            // A dependency of another project group (e.g. a shared library
+            // part) is left for its members; it stays a blocker, but does
+            // not stop the others from being added.
+            let rev = revisions::lock(&mut tx, id).await?;
+            if revisions::ensure_project_access(&rev, actor).is_err() {
+                continue;
+            }
             if add_item_tx(&mut tx, actor, &change, id).await? {
                 progress = true;
-                added.push(revisions::label(&revisions::lock(&mut tx, id).await?));
+                added.push(revisions::label(&rev));
             }
         }
         if !progress {

@@ -70,3 +70,36 @@
 <div class="pagination"><span class="muted small">{{ p.total }} total</span></div>
 {% endif %}
 {%- endmacro %}
+
+{#- The assistant panel ("Ask TeamCraft"): quick actions for the page and a
+    free question. Shown with a button data-toggle="assistant-panel".
+    actions: list of [value, label]. -#}
+{% macro assistant_panel(actions, item="", revision="", change="", back="/", hidden=true) -%}
+<section class="card assistant-panel{% if hidden %} hidden{% endif %}" id="assistant-panel">
+  <div class="card-head">
+    <h2>Ask TeamCraft</h2>
+    <span class="hint">Claude reads the PDM data with your rights{% if item %} · {{ item }}{% if revision %}/{{ revision }}{% endif %}{% endif %}{% if change %} · {{ change }}{% endif %}</span>
+  </div>
+  <form class="stack assistant-form" method="post" action="/assistant">
+    <input type="hidden" name="item" value="{{ item }}">
+    <input type="hidden" name="revision" value="{{ revision }}">
+    <input type="hidden" name="change" value="{{ change }}">
+    <input type="hidden" name="back" value="{{ back }}">
+    {% if actions %}
+    <div class="actions assistant-quick">
+      {% for a in actions %}<button type="submit" name="action" value="{{ a[0] }}">{{ a[1] }}</button>{% endfor %}
+    </div>
+    {% endif %}
+    <label>Your question <span class="hint">optional with a quick action – e.g. “Which assemblies use this part, and are they released?”</span>
+      <textarea name="question" maxlength="4000" placeholder="Ask about items, structures, changes, reviews …"></textarea>
+    </label>
+    <div class="actions">
+      <button class="primary" type="submit" name="action" value="ask">Ask</button>
+      {% if me.can_edit %}<label class="check small"><input type="checkbox" name="allow_drafts" value="1"> Allow drafting change orders</label>{% endif %}
+      <span class="hint assistant-status" role="status"></span>
+    </div>
+    <p class="hint">Read-only unless you allow drafts; it never submits, approves or releases. The question and the data the
+      tools return are sent to Anthropic.</p>
+  </form>
+</section>
+{%- endmacro %}

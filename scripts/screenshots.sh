@@ -304,6 +304,9 @@ seed() {
     for key in cover enclosure; do
         japi mchen POST "/changes/$eco2/items" "$(jq -nc --arg i "${NUM[$key]}" '{item: $i}')" >/dev/null
     done
+    # Release readiness: the enclosure's BOM children box, plate and window
+    # are not released yet, so the submit would be refused without them.
+    api mchen POST "/changes/$eco2/dependencies" >/dev/null
     japi mchen POST "/changes/$eco2/reviewers" '{"username":"admin"}' >/dev/null
     japi mchen POST "/changes/$eco2/reviewers" '{"username":"jlopez"}' >/dev/null
     api mchen POST "/changes/$eco2/submit" >/dev/null
