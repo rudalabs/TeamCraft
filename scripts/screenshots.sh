@@ -421,7 +421,7 @@ wait_js() {
 open_page() {
     wd POST "/session/$SESSION/url" "$(jq -nc --arg u "$BASE_URL$1" '{url: $u}')" >/dev/null
     wait_js 'document.readyState === "complete"' 60 "the page $1 to load"
-    if [[ $(js 'return location.pathname;') == /login ]]; then
+    if [[ $1 != /login && $(js 'return location.pathname;') == /login ]]; then
         die "$1 redirected to the login page"
     fi
     wait_js '!document.fonts || document.fonts.status === "loaded"' 30 "the web fonts"
