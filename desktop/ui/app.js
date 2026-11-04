@@ -564,6 +564,7 @@
     var others = state.projects.filter(function (p) { return p.active && state.me.projects.indexOf(p.id) === -1; });
     clear(nav);
     nav.appendChild(navHead("Project groups", [
+      h("button.small", { type: "button", title: "Copy the files of whole project groups into your workspace", on: { click: function () { getProjectsDialog(); } } }, "Get…"),
       canEdit() ? h("button.small", { type: "button", title: "New item (Ctrl+N)", on: { click: function () { newItemDialog(); } } }, [svgIcon(ICONS.plus), "New"]) : null
     ]));
     function group(title, list) {
@@ -1073,7 +1074,7 @@
 
   /** STEP export of a workspace file with the local CAD program; resolves to the STEP name. */
   function exportStep(rev, name) {
-    return call("cad_export_step", { item: rev.item_number, code: rev.code, file: name });
+    return call("cad_export_step", { project: rev.project_code, item: rev.item_number, code: rev.code, file: name });
   }
 
   function revFiles(tab, el) {
@@ -1442,7 +1443,7 @@
 
   function revWorkspace(tab, el) {
     var rev = tab.data.rev, can = revisionAbilities(tab.data);
-    return Promise.all([call("workspace_status", { item: rev.item_number, code: rev.code }), cadPrograms()]).then(function (r) {
+    return Promise.all([call("workspace_status", { project: rev.project_code, item: rev.item_number, code: rev.code }), cadPrograms()]).then(function (r) {
       var ws = r[0], programs = r[1];
       var changed = ws.files.filter(function (f) { return f.state === "modified" || f.state === "new"; });
       // STEP for the 3D preview, written by the CAD program installed here
@@ -1463,7 +1464,7 @@
           h("div.row", null, [
             tool("Open folder", "folder", function () { openWorkspaceFolder(tab); }),
             tool("Get files", "download", function () {
-              run("Copying files into the workspace", function () { return call("workspace_download", { item: rev.item_number, code: rev.code }); })
+              run("Copying files into the workspace", function () { return call("workspace_download", { project: rev.project_code, item: rev.item_number, code: rev.code }); })
                 .then(function (r) { reportDownload(r); renderActive(); }, function () {});
             }, { title: "Copy the current files into the workspace without checking out" }),
             can.checkin ? tool("Check in…", "checkin", function () { checkinDialog(tab); }, { primary: changed.length > 0 }) : null
@@ -1494,24 +1495,24 @@
 
   function openWorkspaceFolder(tab) {
     var rev = tab && tab.data && tab.data.rev;
-    call("workspace_open", rev ? { item: rev.item_number, code: rev.code, file: null } : { item: null, code: null, file: null })
+    call("workspace_open", rev ? { project: rev.project_code, item: rev.item_number, code: rev.code, file: null } : { project: null, item: null, code: null, file: null })
       .catch(function (e) { toast(errorText(e), "error"); });
   }
 
   function openFile(tab, filename, local) {
     var rev = tab.data.rev;
     var ready = local ? Promise.resolve() : run("Copying " + filename + " into the workspace", function () {
-      return call("workspace_download", { item: rev.item_number, code: rev.code });
+      return call("workspace_download", { project: rev.project_code, item: rev.item_number, code: rev.code });
     });
     ready.then(function () {
-      return call("workspace_open", { item: rev.item_number, code: rev.code, file: filename });
+      return call("workspace_open", { project: rev.project_code, item: rev.item_number, code: rev.code, file: filename });
     }).catch(function (e) { if (e) toast(errorText(e), "error"); });
   }
 
   function doCheckout(tab) {
     var rev = tab.data.rev;
     run("Checking out " + rev.item_number + "/" + rev.code, function () {
-      return call("workspace_checkout", { item: rev.item_number, code: rev.code });
+      return call("workspace_checkout", { project: rev.project_code, item: rev.item_number, code: rev.code });
     }).then(function (r) {
       toast("Checked out " + rev.item_number + "/" + rev.code + " – files are in " + r.dir);
       if (r.kept.length) reportDownload(r);
@@ -1539,7 +1540,7 @@
 
   function checkinDialog(tab) {
     var rev = tab.data.rev;
-    Promise.all([call("workspace_status", { item: rev.item_number, code: rev.code }), cadPrograms()]).then(function (r) {
+    Promise.all([call("workspace_status", { project: rev.project_code, item: rev.item_number, code: rev.code }), cadPrograms()]).then(function (r) {
       var ws = r[0], programs = r[1];
       var candidates = ws.files.filter(function (f) { return f.state === "modified" || f.state === "new"; });
       var boxes = candidates.map(function (f) {
@@ -1576,7 +1577,7 @@
             }, Promise.resolve());
             exported.then(function () {
               setStatus("Checking in …");
-              return call("workspace_checkin", { item: rev.item_number, code: rev.code, files: files, comment: comment.value });
+              return call("workspace_checkin", { project: rev.project_code, item: rev.item_number, code: rev.code, files: files, comment: comment.value });
             }).then(function () {
               setStatus("");
               d.close();
@@ -1931,6 +1932,85 @@
     ], { wide: true });
   }
 
+  // ------------------------------------------- whole project groups locally
+
+  /** Every item of a project group (all pages of the item list). */
+  function projectItems(code) {
+    var all = [];
+    function page(offset) {
+      return api("GET", "/items?project=" + enc(code) + "&limit=200&offset=" + offset).then(function (r) {
+        all = all.concat(r.items);
+        return r.items.length && all.length < r.total ? page(all.length) : all;
+      });
+    }
+    return page(0);
+  }
+
+  /** For new team members or a fresh computer: copies the files of every item
+   * of the chosen project groups into the workspace, one folder per group. */
+  function getProjectsDialog() {
+    function member(p) { return state.me.projects.indexOf(p.id) !== -1; }
+    var groups = state.projects.filter(function (p) { return p.active; }).sort(function (a, b) {
+      return (member(b) - member(a)) || a.code.localeCompare(b.code);
+    });
+    var boxes = groups.map(function (p) {
+      return { code: p.code, input: h("input", { type: "checkbox", checked: member(p) }), label: p.code + " – " + p.name + (member(p) ? " (member)" : "") };
+    });
+    var rule = h("select", null, [
+      h("option", { value: "released", text: "Latest released revision – items without a release are skipped" }),
+      h("option", { value: "latest", text: "Latest revision, also in work" })
+    ]);
+    var bar = h("progress.hidden", { max: "1", value: "0" });
+    var report = h("p.small", { role: "status" });
+    var stop = false, running = false;
+    dialog("Get project groups", h("div.stack", null, [
+      h("p", { text: "Copies the files of every item of the chosen project groups into your workspace – one folder per group: " +
+        state.session.workspace_dir + "/<group>/<item>/<revision>/. Unchanged files are skipped, files you changed locally are kept." }),
+      groups.length ? h("div.stack", null, boxes.map(function (b) { return h("label.check", null, [b.input, b.label]); }))
+        : h("p.empty", { text: "There are no project groups yet." }),
+      field("Revision", rule),
+      bar, report
+    ]), [
+      { label: "Close", onClick: function (d) { stop = true; d.close(); } },
+      {
+        label: "Get files", primary: true, submit: true, onClick: function (d) {
+          if (running) return;
+          var codes = boxes.filter(function (b) { return b.input.checked; }).map(function (b) { return b.code; });
+          if (!codes.length) { d.fail("Choose at least one project group."); return; }
+          running = true; stop = false;
+          var done = { items: 0, files: 0, kept: 0, skipped: 0, errors: [] };
+          report.textContent = "Listing the items …";
+          Promise.all(codes.map(function (code) {
+            return projectItems(code).then(function (items) { return items.map(function (it) { return { project: code, item: it }; }); });
+          })).then(function (lists) {
+            var jobs = [].concat.apply([], lists);
+            bar.max = Math.max(jobs.length, 1); bar.value = 0; bar.classList.remove("hidden");
+            return jobs.reduce(function (chain, job, i) {
+              return chain.then(function () {
+                if (stop) return;
+                var code = rule.value === "released" ? job.item.released_code : job.item.latest_code;
+                bar.value = i + 1;
+                report.textContent = "Item " + (i + 1) + " of " + jobs.length + ": " + job.project + " / " + job.item.number;
+                if (!code) { done.skipped++; return; }
+                return call("workspace_download", { project: job.project, item: job.item.number, code: code }).then(function (r) {
+                  done.items++; done.files += r.downloaded.length; done.kept += r.kept.length;
+                }, function (err) { done.errors.push(job.item.number + ": " + errorText(err)); });
+              });
+            }, Promise.resolve());
+          }).then(function () {
+            running = false;
+            var text = (stop ? "Stopped. " : "Done. ") + done.items + " items, " + done.files + " files copied" +
+              (done.kept ? ", " + done.kept + " locally modified files kept" : "") +
+              (done.skipped ? ", " + done.skipped + " items without a released revision skipped" : "") +
+              (done.errors.length ? ", " + done.errors.length + " errors: " + done.errors.slice(0, 5).join("; ") : "") + ".";
+            report.textContent = text;
+            toast(text, done.errors.length ? "error" : null);
+          }, function (err) { running = false; d.fail(err); });
+        }
+      }
+    ], { wide: true });
+  }
+
   function openSettings() {
     var current = document.documentElement.getAttribute("data-skin");
     var ws = h("input", { type: "text", value: state.session.workspace_dir, spellcheck: "false" });
@@ -2054,6 +2134,7 @@
     if (!shellVisible) return;
     switch (id) {
       case "new-item": newItemDialog(); break;
+      case "get-projects": getProjectsDialog(); break;
       case "settings": case "settings-app": openSettings(); break;
       case "sign-out": signOut(); break;
       case "refresh": selectView(state.view); reloadActive(); refreshWorklistCount(); break;

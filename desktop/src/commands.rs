@@ -370,6 +370,7 @@ pub async fn save_stl(
 pub async fn workspace_checkout(
     app: AppHandle,
     state: State<'_, AppState>,
+    project: Option<String>,
     item: String,
     code: String,
 ) -> CmdResult<workspace::Downloaded> {
@@ -384,7 +385,14 @@ pub async fn workspace_checkout(
         None,
     )
     .await?;
-    workspace::download_all(&api, &workspace_root(&app, &state), &item, &code).await
+    workspace::download_all(
+        &api,
+        &workspace_root(&app, &state),
+        project.as_deref(),
+        &item,
+        &code,
+    )
+    .await
 }
 
 /// Copies the files of any revision (e.g. released ones) into the workspace
@@ -393,11 +401,19 @@ pub async fn workspace_checkout(
 pub async fn workspace_download(
     app: AppHandle,
     state: State<'_, AppState>,
+    project: Option<String>,
     item: String,
     code: String,
 ) -> CmdResult<workspace::Downloaded> {
     let api = signed_in_api(&state)?;
-    workspace::download_all(&api, &workspace_root(&app, &state), &item, &code).await
+    workspace::download_all(
+        &api,
+        &workspace_root(&app, &state),
+        project.as_deref(),
+        &item,
+        &code,
+    )
+    .await
 }
 
 /// Local files of a revision compared with the server.
@@ -405,6 +421,7 @@ pub async fn workspace_download(
 pub async fn workspace_status(
     app: AppHandle,
     state: State<'_, AppState>,
+    project: Option<String>,
     item: String,
     code: String,
 ) -> CmdResult<Value> {
@@ -420,7 +437,12 @@ pub async fn workspace_status(
             None,
         )
         .await?;
-    let dir = workspace::revision_dir(&workspace_root(&app, &state), &item, &code);
+    let dir = workspace::revision_dir(
+        &workspace_root(&app, &state),
+        project.as_deref(),
+        &item,
+        &code,
+    );
     let files = workspace::status(&dir, &files).await?;
     Ok(json!({ "dir": dir, "exists": dir.is_dir(), "files": files }))
 }
@@ -430,6 +452,7 @@ pub async fn workspace_status(
 pub async fn workspace_checkin(
     app: AppHandle,
     state: State<'_, AppState>,
+    project: Option<String>,
     item: String,
     code: String,
     files: Vec<String>,
@@ -439,6 +462,7 @@ pub async fn workspace_checkin(
     workspace::check_in(
         &api,
         &workspace_root(&app, &state),
+        project.as_deref(),
         &item,
         &code,
         &files,
@@ -453,13 +477,16 @@ pub async fn workspace_checkin(
 pub async fn workspace_open(
     app: AppHandle,
     state: State<'_, AppState>,
+    project: Option<String>,
     item: Option<String>,
     code: Option<String>,
     file: Option<String>,
 ) -> CmdResult<()> {
     let root = workspace_root(&app, &state);
     let dir = match (item, code) {
-        (Some(item), Some(code)) => workspace::revision_dir(&root, &item, &code),
+        (Some(item), Some(code)) => {
+            workspace::revision_dir(&root, project.as_deref(), &item, &code)
+        }
         _ => root,
     };
     std::fs::create_dir_all(&dir)?;
@@ -601,6 +628,7 @@ pub async fn cad_programs() -> Vec<cadexport::CadProgram> {
 pub async fn cad_export_step(
     app: AppHandle,
     state: State<'_, AppState>,
+    project: Option<String>,
     item: String,
     code: String,
     file: String,
@@ -608,7 +636,12 @@ pub async fn cad_export_step(
     if file.contains(['/', '\\']) || file == ".." || file.is_empty() {
         return Err(ApiError::local(format!("'{file}' is not a file name.")));
     }
-    let dir = workspace::revision_dir(&workspace_root(&app, &state), &item, &code);
+    let dir = workspace::revision_dir(
+        &workspace_root(&app, &state),
+        project.as_deref(),
+        &item,
+        &code,
+    );
     let input = dir.join(&file);
     if !input.is_file() {
         return Err(ApiError::local(format!(

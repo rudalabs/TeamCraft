@@ -98,6 +98,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .build()?;
     let tools = SubmenuBuilder::new(app, "Tools")
         .item(&item("open-workspace", "Open Workspace Folder", None)?)
+        .item(&item("get-projects", "Get Project Groups…", None)?)
         .item(&item("open-web", "Open in Browser", None)?)
         .build()?;
     let help = SubmenuBuilder::new(app, "Help")

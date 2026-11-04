@@ -623,6 +623,13 @@ async fn complete_release_workflow() {
         .api(Method::GET, "/api/v1/items?project=ROCKET", &reviewer, None)
         .await;
     assert_eq!(r.json()["total"], 2, "both items belong to ROCKET");
+    let listed = r.json()["items"].as_array().unwrap().clone();
+    assert!(
+        listed
+            .iter()
+            .all(|i| i["released_code"] == "A" && i["latest_code"] == "B"),
+        "the list names the newest released revision next to the latest: {listed:?}"
+    );
     let r = app
         .api(Method::GET, "/api/v1/items?project=ROVER", &reviewer, None)
         .await;

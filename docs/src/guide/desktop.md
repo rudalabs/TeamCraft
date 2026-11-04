@@ -7,7 +7,10 @@ check-outs and reviews, and a **local workspace**:
 
 * *New* (`Ctrl/Cmd+N`) creates an item together with its files: choose the
   CAD files first, name and type follow from the first one;
-* *Check out* takes the lock and copies the files into a folder per revision;
+* *Check out* takes the lock and copies the files into a folder per project
+  group and revision, `<workspace>/<group>/<item>/<revision>/`;
+* *Get…* (*Tools → Get Project Groups…*) copies the files of every item of
+  chosen project groups into the workspace – for new team members;
 * the *Workspace* tab shows new and modified files;
 * *Check in…* uploads the selected files as new versions and releases the lock.
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and

@@ -16,9 +16,9 @@ the known gaps with details. Last update: 2026-11-04.
 - [ ] Desktop: tutorial for importing existing CAD file trees (hundreds of files, project files such as Inventor `.ipj`)
 - [ ] Desktop: import of a CAD folder tree as items with files, BOM from the assembly references (needed for the
   tutorial; feature 8)
-- [ ] Desktop workspace: one subfolder per project group (alternatively git-style: only the chosen project groups are
+- [x] Desktop workspace: one subfolder per project group (alternatively git-style: only the chosen project groups are
   visible locally)
-- [ ] Desktop: new members download everything of one or more project groups at once
+- [x] Desktop: new members download everything of one or more project groups at once
 - [ ] Desktop: *Import BOM…* (CSV/Excel) on a checked-out assembly
 - [ ] Desktop: cancel long operations (check-in upload, Pack and Go) half-way
 - [ ] Browser check (Playwright, no console errors, no overflow at 390 px) of `/import` and `/import/{id}`

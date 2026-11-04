@@ -18,8 +18,9 @@ TeamCraft server – it is a client, not an offline copy.
 | Sign-in | **Sign in with the browser** (single sign-on or password, confirmed on a TeamCraft page) or a personal access token; *cancel* stops the sign-in at once |
 | Navigator | Project groups (mine first) → items; *My Worklist* (check-outs, reviews, my open changes); change orders by status; full-text search |
 | Revision tabs | Overview, Files (versions, restore, open), Structure (multi-level BOM, revision rules, roll-up), Where used, Changes, History, **3D viewer** (STEP, meshes, point clouds – converted by the server), Workspace |
-| Check-out / check-in | *Check out* takes the lock and copies the files into `<workspace>/<item>/<revision>/`; the Workspace tab shows *modified* / *new* / *missing* files (SHA-256); *Check in…* uploads the chosen files as new versions and releases the lock in one step. Lock and backup files of the CAD programs are skipped; Creo iterations count as one file |
+| Check-out / check-in | *Check out* takes the lock and copies the files into `<workspace>/<project group>/<item>/<revision>/` (folders of the older layout without the group folder are moved there on first use); the Workspace tab shows *modified* / *new* / *missing* files (SHA-256); *Check in…* uploads the chosen files as new versions and releases the lock in one step. Lock and backup files of the CAD programs are skipped; Creo iterations count as one file |
 | Native CAD previews | The preview image stored in Inventor, Solid Edge and SolidWorks files in the Files tab; on Windows *STEP* in the Workspace tab and *Create STEP exports … first* at check-in export with the installed Inventor or Solid Edge (COM automation through Windows PowerShell; uses your own licence) |
+| Whole project groups locally | *Get…* in the navigator (*Tools → Get Project Groups…*): copies the files of every item of the chosen groups – latest released or latest revision – into the workspace, one folder per group; unchanged files are skipped, locally modified files kept. For new team members or a fresh computer |
 | New item | *New* (`Ctrl/Cmd+N`): choose the CAD files first – name and type follow from the first file; they are uploaded right after the item is created |
 | Release and changes | *Release…* creates and submits a change order; approve/reject from the worklist |
 | Change propagation | *Dependents to check*, *Check needed* banner with **Acknowledge…**, references, *As released* rule, impact analysis |
@@ -60,7 +61,7 @@ Where the app keeps its data:
 * settings and the token: the per-user configuration directory
   (`~/.config/io.github.rudalabs.teamcraft`, `~/Library/Application Support/io.github.rudalabs.teamcraft`,
   `%APPDATA%\io.github.rudalabs.teamcraft`); the token file is readable by the user only;
-* checked-out files: `Documents/TeamCraft/<item>/<revision>/` (configurable in *Settings*).
+* checked-out files: `Documents/TeamCraft/<project group>/<item>/<revision>/` (configurable in *Settings*).
 
 ## Layout
 

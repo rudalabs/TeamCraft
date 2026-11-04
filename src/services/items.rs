@@ -89,6 +89,8 @@ pub async fn search(
     let rows = sqlx::query_as::<_, ItemSummary>(&format!(
         "SELECT i.id, i.number, i.item_type, i.unit, p.code AS project_code, i.created_at,
                 lr.id AS latest_revision_id, lr.code AS latest_code, lr.state AS latest_state, lr.name,
+                (SELECT rr.code FROM revisions rr WHERE rr.item_id = i.id AND rr.state = 'released'
+                 ORDER BY rr.seq DESC LIMIT 1) AS released_code,
                 fm.filename AS matched_file
          {FROM}
          ORDER BY CASE WHEN $5::text IS NULL THEN 0

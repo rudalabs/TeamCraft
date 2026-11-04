@@ -76,6 +76,8 @@ pub struct ItemSummary {
     pub latest_code: String,
     pub latest_state: String,
     pub name: String,
+    /// Newest released revision, if any (e.g. to fetch released files).
+    pub released_code: Option<String>,
     /// When searching: a file whose name or content matched.
     pub matched_file: Option<String>,
 }

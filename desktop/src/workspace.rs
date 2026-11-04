@@ -1,6 +1,6 @@
-//! The local workspace: one folder per checked-out revision,
-//! `<workspace>/<item number>/<revision>/`, as in the check-out/check-in
-//! workflow of classic PDM clients. Files are compared with the server by
+//! The local workspace: one folder per project group and revision,
+//! `<workspace>/<project group>/<item number>/<revision>/`, as in the
+//! check-out/check-in workflow of classic PDM clients. Files are compared with the server by
 //! SHA-256, so the app knows what changed before it checks in.
 
 use std::{
@@ -16,9 +16,33 @@ use tokio::io::AsyncReadExt;
 
 use crate::api::{Api, ApiError};
 
-/// Folder of a revision inside the workspace.
-pub fn revision_dir(root: &Path, item_number: &str, code: &str) -> PathBuf {
-    root.join(safe_name(item_number)).join(safe_name(code))
+/// Folder of a revision inside the workspace – one subfolder per project
+/// group: `<workspace>/<project group>/<item number>/<revision>/`, so every
+/// group's files stay together and only the groups one works with are on
+/// disk. A folder of the older layout (`<workspace>/<item>/<revision>/`) is
+/// moved there the first time it is used; without a project group the item
+/// folder sits directly in the workspace.
+pub fn revision_dir(root: &Path, project: Option<&str>, item_number: &str, code: &str) -> PathBuf {
+    let legacy = root.join(safe_name(item_number)).join(safe_name(code));
+    let Some(project) = project.map(str::trim).filter(|p| !p.is_empty()) else {
+        return legacy;
+    };
+    let dir = root
+        .join(safe_name(project))
+        .join(safe_name(item_number))
+        .join(safe_name(code));
+    if !dir.exists() && legacy.is_dir() {
+        if let Some(parent) = dir.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if std::fs::rename(&legacy, &dir).is_ok() {
+            // the item folder of the old layout is empty now (or holds other revisions)
+            if let Some(old_item) = legacy.parent() {
+                let _ = std::fs::remove_dir(old_item);
+            }
+        }
+    }
+    dir
 }
 
 /// A file or folder name that is valid on Windows, macOS and Linux.
@@ -240,10 +264,11 @@ pub struct Downloaded {
 pub async fn download_all(
     api: &Api,
     root: &Path,
+    project: Option<&str>,
     item_number: &str,
     code: &str,
 ) -> Result<Downloaded, ApiError> {
-    let dir = revision_dir(root, item_number, code);
+    let dir = revision_dir(root, project, item_number, code);
     tokio::fs::create_dir_all(&dir).await?;
     let files = api
         .json(
@@ -283,12 +308,13 @@ pub async fn download_all(
 pub async fn check_in(
     api: &Api,
     root: &Path,
+    project: Option<&str>,
     item_number: &str,
     code: &str,
     names: &[String],
     comment: &str,
 ) -> Result<Value, ApiError> {
-    let dir = revision_dir(root, item_number, code);
+    let dir = revision_dir(root, project, item_number, code);
     let mut files = Vec::new();
     for name in names {
         if name.contains(['/', '\\']) || name == ".." || is_ignored(name) {
@@ -371,8 +397,27 @@ mod tests {
         assert_eq!(logical_name("v1.2"), ("v1.2", 0));
         let root = Path::new("/ws");
         assert_eq!(
-            revision_dir(root, "NX-ENG-001", "B"),
+            revision_dir(root, None, "NX-ENG-001", "B"),
             Path::new("/ws/NX-ENG-001/B")
+        );
+        assert_eq!(
+            revision_dir(root, Some("ROVER"), "PRT-000001", "A"),
+            Path::new("/ws/ROVER/PRT-000001/A")
+        );
+    }
+
+    #[test]
+    fn old_layout_moves_into_the_project_group_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("PRT-000001").join("A");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("hub.step"), b"x").unwrap();
+        let new = revision_dir(dir.path(), Some("ROVER"), "PRT-000001", "A");
+        assert_eq!(new, dir.path().join("ROVER").join("PRT-000001").join("A"));
+        assert!(new.join("hub.step").is_file(), "the files moved along");
+        assert!(
+            !dir.path().join("PRT-000001").exists(),
+            "empty old item folder removed"
         );
     }
 
