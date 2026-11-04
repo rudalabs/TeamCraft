@@ -34,8 +34,14 @@
       <button class="danger" type="submit" title="Cancel {{ change.number }} at once (cannot be undone)">Cancel change</button>
     </form>
     {% endif %}
+    {% if assistant_enabled %}
+    <button type="button" data-toggle="assistant-panel" title="A briefing for the review: what changes, impact, risks, open questions">Ask TeamCraft…</button>
+    {% endif %}
   </div>
 </div>
+{% if assistant_enabled %}
+{{ m.assistant_panel([["review_brief", "Brief me for this review"]], "", "", change.number, "/changes/" ~ change.id) }}
+{% endif %}
 
 {% if change.status == "draft" %}
 <div class="notice">Draft: add the revisions to release and at least one reviewer, then submit.{% if not can.submit and can.modify %} Submitting needs at least one revision, one reviewer and released dependencies (see <a href="#readiness">Release readiness</a>).{% endif %}</div>

@@ -665,6 +665,23 @@ ul.file-refs { margin-bottom: 0.7rem; }
   border: 1px solid var(--border); border-radius: 4px; background: #fff;
 }
 
+/* Assistant ("Ask TeamCraft") */
+.assistant-panel { margin-bottom: 1.1rem; }
+.assistant-quick button { font-weight: 600; }
+.assistant-form.busy { opacity: 0.75; cursor: progress; }
+.assistant-form.busy .assistant-status { color: var(--accent); font-weight: 600; }
+.assistant-question { margin-top: 0; padding-bottom: 0.7rem; border-bottom: 1px solid var(--border); white-space: pre-wrap; }
+.assistant-text { line-height: 1.6; max-width: 72rem; }
+.assistant-text h3 { margin: 1.2rem 0 0.4rem; font-size: 1.05rem; }
+.assistant-text h4 { margin: 1rem 0 0.3rem; font-size: 0.95rem; color: var(--text-muted); }
+.assistant-text > :first-child { margin-top: 0; }
+.assistant-text ul, .assistant-text ol { padding-left: 1.4rem; margin: 0.3rem 0 0.8rem; }
+.assistant-text li { margin: 0.15rem 0; }
+.assistant-text pre { overflow-x: auto; padding: 0.7rem 0.9rem; border-radius: 8px; background: var(--surface-sunken); border: 1px solid var(--border); }
+.assistant-text table { margin: 0.4rem 0 0.9rem; }
+.assistant-text hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
+.assistant-meta .badge { margin: 0 0.15rem 0.2rem 0; }
+
 /* ===========================================================================
    Small screens (phones from 360 px)
    =========================================================================== */

@@ -4,6 +4,7 @@
 //! Both the web UI and the REST API call into these functions, so the rules
 //! are enforced identically for both.
 
+pub mod assistant;
 pub mod audit;
 pub mod bom;
 pub mod bom_compare;
@@ -14,6 +15,7 @@ pub mod explorer;
 pub mod files;
 pub mod impacts;
 pub mod imports;
+pub mod insights;
 pub mod items;
 pub mod notifications;
 pub mod package;
