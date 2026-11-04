@@ -43,6 +43,7 @@
 | `src/web/`, `templates/`, `static/`  | HTML interface                                                                                       |
 | `src/api/`                           | REST API                                                                                             |
 | `src/mcp/`                           | MCP server for AI assistants (`POST /api/v1/mcp`): JSON-RPC, tools and prompts over the services     |
+| `src/assistant.rs`                   | built-in assistant: tool loop over the Anthropic Messages API with the MCP tools, markdown rendering |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache                                                                     |
 | `migrations/`                        | PostgreSQL schema                                                                                    |

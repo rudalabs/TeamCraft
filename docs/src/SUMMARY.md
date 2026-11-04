@@ -11,6 +11,7 @@
 - [BOM, references and change propagation](guide/structure.md)
 - [Change orders, reviews and notifications](guide/changes.md)
 - [Desktop app](guide/desktop.md)
+- [Ask TeamCraft (assistant)](guide/assistant.md)
 - [Manual test tour](guide/tour.md)
 
 # Administration

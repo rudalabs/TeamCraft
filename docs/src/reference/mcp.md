@@ -12,6 +12,10 @@ REST API and the web interface. It can read what you can read, and it can
 draft change orders if you are a CAD editor. It **cannot** submit, approve,
 release or make anything obsolete. Those decisions stay with people.
 
+The same tools also power the optional server-side assistant,
+[Ask TeamCraft](../guide/assistant.md). It needs no client, only an
+Anthropic API key on the server.
+
 ## Endpoint
 
 | Transport                | Address                                                       |

@@ -40,6 +40,7 @@ curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/cancel-checkout
 | Save As, compare | `POST …/revisions/{code}/save-as` `{number?, name?, project?, files?, bom?}`, `GET …/revisions/{code}/bom/compare?with={code}`        |
 | Formats          | `GET /formats` – the recognised CAD programs and formats                                                                              |
 | MCP              | `POST /mcp` – Model Context Protocol for AI assistants, see [MCP server](mcp.md)                                                      |
+| Assistant        | `GET/POST /assistant` – the built-in assistant (optional), see [Ask TeamCraft](../guide/assistant.md#api)                              |
 
 The BOM comparison is also available as an Excel workbook of the same lines
 (same `with` query): `GET …/revisions/{code}/bom/compare.xlsx?with={code}`.
