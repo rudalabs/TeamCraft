@@ -39,17 +39,26 @@ the known gaps with details. Last update: 2026-11-04.
 
 ## Done
 
-| #  | Feature                                                                                                                                                               | Commit               |
-|----|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------|
-| –  | File formats of all common CAD programs                                                                                                                               | `70a7f8d`            |
-| 1  | Assembly/reference tracking with change propagation                                                                                                                   | `a79cde1`            |
-| 2  | Notifications: bell, page, API, e-mail (SMTP), Mattermost, watch lists, per-user opt-out, desktop                                                                     | `1218faa`            |
-| 3a | Pack and Go ZIP (files + `bom.csv` + `manifest.json`), STL export from the 3D viewer                                                                                  | `e1065f7`            |
-| –  | Open-source release: pure-Rust 3D preview (`src/mesh.rs`, truck for STEP), 130+ formats, no WARR branding/seeds/GitLab, self-service project groups                   | `2e3cbe2`            |
-| –  | Vault explorer (`/vault`), immediate cancel buttons, upload progress with cancel, no start-up hangs                                                                   | `1288741`            |
-| –  | First start without configuration (create the administrator in the browser)                                                                                           | `931ab77`            |
-| –  | mdBook docs with Doxygen-style theme + rustdoc on GitHub Pages, `platforms/` guides, GitHub CI, new README                                                            | `7db3670`            |
-| 3b | CSV/Excel BOM import: reader (`src/bomtable.rs`), service (`src/services/imports.rs`), web UI (upload → preview → import), REST API, unit and integration tests, docs | `921deb0`, `45333f2` |
+The history up to the open-source release is squashed into the first commit
+`64b4ba7`; later work has its own commits.
+
+| #  | Feature                                                                                                                                                               | Commit    |
+|----|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------|
+| –  | File formats of all common CAD programs                                                                                                                               | `64b4ba7` |
+| 1  | Assembly/reference tracking with change propagation                                                                                                                   | `64b4ba7` |
+| 2  | Notifications: bell, page, API, e-mail (SMTP), Mattermost, watch lists, per-user opt-out, desktop                                                                     | `64b4ba7` |
+| 3a | Pack and Go ZIP (files + `bom.csv` + `manifest.json`), STL export from the 3D viewer                                                                                  | `64b4ba7` |
+| –  | Open-source release: pure-Rust 3D preview (`src/mesh.rs`, truck for STEP), 130+ formats, no WARR branding/seeds/GitLab, self-service project groups                   | `64b4ba7` |
+| –  | Vault explorer (`/vault`), immediate cancel buttons, upload progress with cancel, no start-up hangs                                                                   | `64b4ba7` |
+| –  | First start without configuration (create the administrator in the browser)                                                                                           | `64b4ba7` |
+| –  | mdBook docs with Doxygen-style theme + rustdoc on GitHub Pages, `platforms/` guides, GitHub CI, new README                                                            | `64b4ba7` |
+| 3b | CSV/Excel BOM import: reader (`src/bomtable.rs`), service (`src/services/imports.rs`), web UI (upload → preview → import), REST API, unit and integration tests, docs | `64b4ba7` |
+| –  | Linux packages: AUR (server, desktop), snap (server), Flatpak (desktop)                                                                                               | `dba645e` |
+| –  | Docs in the Doxygen layout with a high-contrast colour scheme                                                                                                         | `f6ec85a` |
+| –  | New item together with its files (web form and desktop dialog)                                                                                                        | `2c10492` |
+| –  | Preview images of native Inventor, Solid Edge and SolidWorks files                                                                                                    | `1fd120d` |
+| –  | Desktop: one workspace folder per project group; import of existing CAD folders                                                                                       | `2c20b2a`, `88f5e68` |
+| –  | Skins without distribution logos                                                                                                                                      | `c7b3236` |
 
 ## Open – feature 3 (BOM from CAD)
 
