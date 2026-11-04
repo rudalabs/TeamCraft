@@ -183,8 +183,29 @@ rest of the project.
 
 ## Releases and versions
 
-There is no release yet. `main` is the development branch, and the version
-stays at `0.1.0` until the first release. Once releases start, version
-numbers will follow [Semantic Versioning](https://semver.org), and a
-`CHANGELOG.md` will list the changes. While the version is still `0.x`, any
+`main` is the development branch. Version numbers follow
+[Semantic Versioning](https://semver.org); while the version is `0.x`, any
 release may contain breaking changes.
+
+**Build artifacts.** Every push to `main` runs
+`.github/workflows/release.yml`, which builds the server binaries (Linux
+x86_64/ARM64, macOS ARM64, Windows x86_64) and the desktop installers
+(AppImage, `.deb`, `.rpm`, `.dmg`, `.msi`, NSIS `-setup.exe`) and keeps them
+as workflow artifacts for 14 days. *Run workflow* on the Actions page builds
+any branch the same way.
+
+**Cutting a release** (maintainers):
+
+1. Set the same version in `Cargo.toml`, `desktop/Cargo.toml` and
+   `desktop/tauri.conf.json` (the workflow refuses a mismatch), run
+   `cargo check` and `cargo check --manifest-path desktop/Cargo.toml` so both
+   `Cargo.lock` files follow, and commit.
+2. Tag and push: `git tag -a v0.2.0 -m "TeamCraft 0.2.0" && git push origin v0.2.0`.
+3. The workflow builds everything again from the tag, writes
+   `SHA256SUMS.txt` and creates the GitHub Release with generated notes –
+   as a **pre-release** for `0.x` and suffixed versions (`1.0.0-rc.1`).
+
+The installers are not code-signed yet (macOS: ad-hoc signature, Windows:
+unsigned); signing needs certificates as repository secrets and is a
+follow-up. Nothing else is published (no container images, no package
+registries).
