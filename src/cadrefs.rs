@@ -149,10 +149,11 @@ fn names_in(run: &str, exts: &[&str], out: &mut Vec<String>) {
 }
 
 /// Runs of printable text in single-byte encodings (ASCII, UTF-8, Latin-1).
-fn byte_runs(content: &[u8], mut f: impl FnMut(&str)) {
+fn byte_runs(content: &[u8], skip: Option<&std::ops::Range<usize>>, mut f: impl FnMut(&str)) {
     let mut start = None;
     for (i, &b) in content.iter().enumerate() {
-        let printable = (0x20..0x7f).contains(&b) || b >= 0x80;
+        let printable = ((0x20..0x7f).contains(&b) || b >= 0x80)
+            && !skip.is_some_and(|s| s.contains(&i));
         match (printable, start) {
             (true, None) => start = Some(i),
             (false, Some(s)) => {
@@ -173,13 +174,14 @@ fn byte_runs(content: &[u8], mut f: impl FnMut(&str)) {
 
 /// Runs of printable UTF-16LE text (Latin-1 and Latin Extended-A), at both
 /// byte alignments.
-fn utf16_runs(content: &[u8], mut f: impl FnMut(&str)) {
+fn utf16_runs(content: &[u8], skip: Option<&std::ops::Range<usize>>, mut f: impl FnMut(&str)) {
     for align in 0..2 {
         let mut run = String::new();
         let mut i = align;
         while i + 1 < content.len() {
             let unit = u16::from_le_bytes([content[i], content[i + 1]]);
-            let printable = (0x20..0x7f).contains(&unit) || (0xa0..0x180).contains(&unit);
+            let printable = ((0x20..0x7f).contains(&unit) || (0xa0..0x180).contains(&unit))
+                && !skip.is_some_and(|s| s.contains(&i) || s.contains(&(i + 1)));
             if printable {
                 run.push(char::from_u32(u32::from(unit)).unwrap_or('?'));
             } else {
@@ -196,13 +198,64 @@ fn utf16_runs(content: &[u8], mut f: impl FnMut(&str)) {
     }
 }
 
+/// Finds `needle` in `haystack` at or after `from`.
+fn find_bytes(haystack: &[u8], from: usize, needle: &[u8]) -> Option<usize> {
+    haystack
+        .get(from..)?
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .map(|i| from + i)
+}
+
+/// Byte range of the `FILE_NAME(...)` entity in the HEADER of an ISO
+/// 10303-21 (STEP) file, if there is one. It carries the name the exporting
+/// program chose, not a reference to another file.
+fn step_file_name_entity(content: &[u8]) -> Option<std::ops::Range<usize>> {
+    let start = content
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(content.len());
+    if !content[start..].starts_with(b"ISO-10303-21;") {
+        return None;
+    }
+    let header = find_bytes(content, start, b"HEADER;")?;
+    let header_end = find_bytes(content, header + b"HEADER;".len(), b"ENDSEC;")?;
+    let name = find_bytes(content, header + b"HEADER;".len(), b"FILE_NAME")?;
+    if name >= header_end {
+        return None;
+    }
+    let open = name + content[name..].iter().position(|&b| b == b'(')?;
+    // Quoted strings may contain parentheses; `''` is an escaped quote.
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut i = open;
+    while i < content.len() {
+        match content[i] {
+            b'\'' if in_string && content.get(i + 1) == Some(&b'\'') => i += 1,
+            b'\'' => in_string = !in_string,
+            b'(' if !in_string => depth += 1,
+            b')' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(name..i + 1);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// The CAD file names referenced in `content`, without `own_name`; each name
 /// once (case-insensitive), in the order found.
 pub fn find(content: &[u8], own_name: &str) -> Vec<String> {
     let exts = extensions();
+    // The export name in the STEP header is not a reference to another file.
+    let skip = step_file_name_entity(content);
     let mut found = Vec::new();
-    byte_runs(content, |run| names_in(run, &exts, &mut found));
-    utf16_runs(content, |run| names_in(run, &exts, &mut found));
+    byte_runs(content, skip.as_ref(), |run| names_in(run, &exts, &mut found));
+    utf16_runs(content, skip.as_ref(), |run| names_in(run, &exts, &mut found));
     let own = cadformat::normalize_name(own_name).to_lowercase();
     let mut seen = HashSet::new();
     found
@@ -317,6 +370,20 @@ mod tests {
         assert_eq!(
             find(kicad, "main.kicad_sch"),
             vec!["power.kicad_sch", "imu.kicad_sch"]
+        );
+    }
+
+    #[test]
+    fn step_header_name_is_not_a_reference() {
+        let step = b"ISO-10303-21;\nHEADER;\n\
+            FILE_DESCRIPTION((''),'2;1');\n\
+            FILE_NAME('export name.stp','2021-01-01',(''),(''),'','','');\n\
+            FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\nDATA;\n\
+            #5=DOCUMENT_FILE('export name.stp','',$,#6,'','');\n\
+            #7=DOCUMENT_FILE('nozzle.stp','',$,#6,'','');\nENDSEC;\nEND-ISO-10303-21;\n";
+        assert_eq!(
+            find(step, "stored.stp"),
+            vec!["export name.stp", "nozzle.stp"]
         );
     }
 
