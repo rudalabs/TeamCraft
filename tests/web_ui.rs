@@ -1724,5 +1724,27 @@ async fn simulations_in_the_web_ui() {
         part.contains("id=\"simulations\"") && part.contains("SIM-000001/A"),
         "{part}"
     );
+
+    // A part a simulation is based on cannot be deleted.
+    let part_item = app
+        .api(Method::GET, "/api/v1/items/PRT-000001", &eng, None)
+        .await
+        .json()["item"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = app
+        .post_form(
+            &format!("/items/{part_item}/delete"),
+            Some(&cookie),
+            origin,
+            &[("back", format!("/revisions/{prt_a}").as_str())],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let r = app
+        .api(Method::GET, "/api/v1/items/PRT-000001", &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "the basis item still exists");
     app.teardown().await;
 }

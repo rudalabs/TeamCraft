@@ -252,6 +252,17 @@ pub async fn add_basis(
             "A simulation cannot be based on itself.".into(),
         ));
     }
+    // Hold the basis item against a concurrent delete (`items::delete` locks
+    // it FOR UPDATE and then checks `item_is_basis`).
+    let basis_exists =
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM items WHERE id = $1 FOR SHARE")
+            .bind(basis.item_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_some();
+    if !basis_exists {
+        return Err(AppError::not_found("Item not found."));
+    }
     // The simulated file: an exact version or the current version of a file.
     #[derive(sqlx::FromRow)]
     struct Pin {
@@ -357,10 +368,14 @@ pub async fn remove_basis(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<S
     let mut tx = pool.begin().await?;
     let rev = revisions::lock(&mut tx, existing.revision_id).await?;
     revisions::ensure_editable(&rev, actor)?;
-    sqlx::query("DELETE FROM simulation_bases WHERE id = $1")
+    let removed = sqlx::query("DELETE FROM simulation_bases WHERE id = $1")
         .bind(id)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+    if removed == 0 {
+        return Err(AppError::not_found("Basis link not found."));
+    }
     audit::record(
         &mut tx,
         Some(actor),
@@ -669,7 +684,7 @@ pub async fn update_result(
     let existing = get_result(pool, id).await?;
     let mut tx = pool.begin().await?;
     let rev = lock_editable(&mut tx, actor, existing.revision_id).await?;
-    sqlx::query(
+    let updated = sqlx::query(
         "UPDATE simulation_results SET name = $2, value = $3, unit = $4, lower_limit = $5,
                 upper_limit = $6, load_case = $7, solver = $8, solver_version = $9, note = $10,
                 updated_at = now()
@@ -696,7 +711,11 @@ pub async fn update_result(
                 input.name
             ),
         )
-    })?;
+    })?
+    .rows_affected();
+    if updated == 0 {
+        return Err(AppError::not_found("Result value not found."));
+    }
     audit::record(
         &mut tx,
         Some(actor),
@@ -724,10 +743,14 @@ pub async fn remove_result(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<
     let existing = get_result(pool, id).await?;
     let mut tx = pool.begin().await?;
     let rev = lock_editable(&mut tx, actor, existing.revision_id).await?;
-    sqlx::query("DELETE FROM simulation_results WHERE id = $1")
+    let removed = sqlx::query("DELETE FROM simulation_results WHERE id = $1")
         .bind(id)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+    if removed == 0 {
+        return Err(AppError::not_found("Result value not found."));
+    }
     audit::record(
         &mut tx,
         Some(actor),
@@ -787,13 +810,25 @@ pub async fn import_results(
         }
         inputs.push(row);
     }
-    let existing: HashMap<(String, String), Uuid> = results(pool, revision_id)
-        .await?
-        .into_iter()
-        .map(|r| (r.key(), r.id))
-        .collect();
     let mut tx = pool.begin().await?;
     let rev = lock_editable(&mut tx, actor, revision_id).await?;
+    // Read the current values under the revision lock: a value added
+    // concurrently must be updated, not inserted a second time.
+    #[derive(sqlx::FromRow)]
+    struct Existing {
+        id: Uuid,
+        name: String,
+        load_case: String,
+    }
+    let existing: HashMap<(String, String), Uuid> = sqlx::query_as::<_, Existing>(
+        "SELECT id, name, load_case FROM simulation_results WHERE revision_id = $1",
+    )
+    .bind(rev.id)
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .map(|r| ((r.name.to_lowercase(), r.load_case.to_lowercase()), r.id))
+    .collect();
     let mut summary = ImportSummary::default();
     if replace {
         let keep: Vec<Uuid> = inputs

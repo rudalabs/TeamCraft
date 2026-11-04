@@ -144,7 +144,9 @@
   document.querySelectorAll("input[type=file][data-fill-name]").forEach(function (input) {
     var name = document.getElementById(input.getAttribute("data-fill-name"));
     var type = document.getElementById(input.getAttribute("data-fill-type"));
-    var typeChosen = false;
+    // A type other than the default came with the page (/items/new?type=simulation,
+    // a form shown again after an error): keep it instead of guessing.
+    var typeChosen = !!(type && type.value && type.value !== "part");
     if (type) type.addEventListener("change", function () { typeChosen = true; });
     input.addEventListener("change", function () {
       var file = input.files && input.files[0];
