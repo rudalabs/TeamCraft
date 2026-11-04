@@ -2,11 +2,16 @@
 //! which lines were added, removed or changed (quantity, find number, notes).
 //! Lines are matched by child item and find number first, then by child item.
 
+use rust_xlsxwriter::Workbook;
 use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{error::AppResult, models::BomLine, services::bom};
+use crate::{
+    error::{AppError, AppResult},
+    models::BomLine,
+    services::bom,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -15,6 +20,18 @@ pub enum Change {
     Removed,
     Changed,
     Unchanged,
+}
+
+impl Change {
+    /// Label used in the Excel export.
+    pub fn label(self) -> &'static str {
+        match self {
+            Change::Added => "added",
+            Change::Removed => "removed",
+            Change::Changed => "changed",
+            Change::Unchanged => "unchanged",
+        }
+    }
 }
 
 /// One child of either BOM.
@@ -162,8 +179,73 @@ pub async fn compare(pool: &PgPool, before: Uuid, after: Uuid) -> AppResult<Vec<
     Ok(diff(&a, &b))
 }
 
+/// Column headers of the Excel export, in order.
+const XLSX_HEADERS: [&str; 10] = [
+    "Change",
+    "Child number",
+    "Name",
+    "Unit",
+    "Before: find no.",
+    "Before: quantity",
+    "Before: notes",
+    "After: find no.",
+    "After: quantity",
+    "After: notes",
+];
+
+/// Column widths of the Excel export, matching [`XLSX_HEADERS`].
+const XLSX_WIDTHS: [f64; 10] = [10.0, 18.0, 36.0, 10.0, 16.0, 16.0, 36.0, 16.0, 16.0, 36.0];
+
+/// Builds the comparison as an `.xlsx` workbook: a header row and one row per
+/// line, with the values of the older and the newer revision side by side.
+pub fn to_xlsx(diffs: &[LineDiff]) -> AppResult<Vec<u8>> {
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    sheet.set_name("BOM comparison").map_err(xlsx_error)?;
+    for (col, (title, width)) in XLSX_HEADERS.iter().zip(XLSX_WIDTHS).enumerate() {
+        let col = col as u16;
+        sheet.write_string(0, col, *title).map_err(xlsx_error)?;
+        sheet.set_column_width(col, width).map_err(xlsx_error)?;
+    }
+    for (i, line) in diffs.iter().enumerate() {
+        let row = i as u32 + 1;
+        sheet
+            .write_string(row, 0, line.change.label())
+            .map_err(xlsx_error)?;
+        sheet
+            .write_string(row, 1, line.child_number.as_str())
+            .map_err(xlsx_error)?;
+        sheet
+            .write_string(row, 2, line.child_name.as_str())
+            .map_err(xlsx_error)?;
+        sheet
+            .write_string(row, 3, line.unit.as_str())
+            .map_err(xlsx_error)?;
+        for (values, base) in [(&line.before, 4u16), (&line.after, 7u16)] {
+            let Some(values) = values else { continue };
+            sheet
+                .write_number(row, base, f64::from(values.find_number))
+                .map_err(xlsx_error)?;
+            sheet
+                .write_number(row, base + 1, values.quantity)
+                .map_err(xlsx_error)?;
+            sheet
+                .write_string(row, base + 2, values.notes.as_str())
+                .map_err(xlsx_error)?;
+        }
+    }
+    workbook.save_to_buffer().map_err(xlsx_error)
+}
+
+/// The workbook is built in memory; a failure here is a bug, not user input.
+fn xlsx_error(e: rust_xlsxwriter::XlsxError) -> AppError {
+    AppError::Other(anyhow::anyhow!("xlsx export failed: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
+    use std::io::Read;
+
     use super::*;
 
     fn line(child: u128, number: &str, find: i32, qty: f64) -> BomLine {
@@ -210,5 +292,32 @@ mod tests {
         let s = summary(&d);
         assert_eq!((s.added, s.removed, s.changed, s.unchanged), (1, 1, 2, 1));
         assert!(diff(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn xlsx_export_contains_the_lines() {
+        let before = [line(1, "PRT-1", 10, 4.0), line(2, "PRT-2", 20, 1.0)];
+        let after = [line(1, "PRT-1", 10, 4.0), line(3, "PRT-3", 30, 2.0)];
+        let bytes = to_xlsx(&diff(&before, &after)).expect("xlsx export");
+
+        assert!(bytes.starts_with(b"PK"), "an xlsx file is a zip archive");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("zip archive");
+        assert!(
+            zip.by_name("xl/worksheets/sheet1.xml").is_ok(),
+            "the workbook has a worksheet"
+        );
+        // Text lives in the shared string table, numbers in the worksheet.
+        let mut xml = String::new();
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).expect("zip entry");
+            if entry.name().ends_with(".xml") {
+                let mut text = String::new();
+                entry.read_to_string(&mut text).expect("UTF-8 XML");
+                xml.push_str(&text);
+            }
+        }
+        for needle in ["PRT-1", "PRT-2", "PRT-3", "removed", "added", "unchanged"] {
+            assert!(xml.contains(needle), "the workbook contains '{needle}'");
+        }
     }
 }
