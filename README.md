@@ -169,7 +169,8 @@ Flatpak are described in [packaging/](packaging/README.md).
 ## Screenshots
 
 Demo data from the openly licensed [NIST CAD test files](tests/fixtures/cad/README.md),
-captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh).
+captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh) –
+the web UI with headless Chrome, TeamCraft Desktop on a virtual X display.
 
 <table>
   <tr>
@@ -187,6 +188,14 @@ captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh).
   <tr>
     <td width="50%"><a href="media/screenshots/notifications.png"><img src="media/screenshots/notifications.png" alt="Notifications: review requests, approvals and the release of the standard fasteners" /></a><br /><sub><b>Notifications</b> – in-app, e-mail and Mattermost</sub></td>
     <td width="50%" align="center"><a href="media/screenshots/mobile-dashboard.png"><img src="media/screenshots/mobile-dashboard.png" width="200" alt="The dashboard on a 390 pixel wide phone screen" /></a><br /><sub><b>On the phone</b> – the same pages, responsive</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/desktop-home.png"><img src="media/screenshots/desktop-home.png" alt="TeamCraft Desktop start screen: the project group ROVER expanded in the navigator with its items and their states, item statistics and the dependents to check" /></a><br /><sub><b>Desktop app</b> – navigator, statistics and what needs attention</sub></td>
+    <td width="50%"><a href="media/screenshots/desktop-revision.png"><img src="media/screenshots/desktop-revision.png" alt="TeamCraft Desktop: the checked-out mounting bracket revision in a tab with check-in, edit and release actions, its properties, lifecycle and the sub-tabs for files, structure, where used and 3D viewer" /></a><br /><sub><b>Desktop revision tab</b> – check-out to a local workspace, check-in</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/desktop-change.png"><img src="media/screenshots/desktop-change.png" alt="TeamCraft Desktop: the enclosure change order in review with the approve and reject form, one approval and one pending reviewer and the affected revisions" /></a><br /><sub><b>Desktop review</b> – approve or reject without leaving the app</sub></td>
+    <td width="50%"><a href="media/screenshots/desktop-worklist.png"><img src="media/screenshots/desktop-worklist.png" alt="TeamCraft Desktop worklist: the revision checked out by me, the change order waiting for my review and four dependents to check" /></a><br /><sub><b>Desktop worklist</b> – check-outs, reviews and dependents</sub></td>
   </tr>
 </table>
 
