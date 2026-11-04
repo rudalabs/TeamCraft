@@ -18,6 +18,8 @@ REPO="rudalabs/TeamCraft"
 RAW="https://raw.githubusercontent.com/${REPO}"
 API="https://api.github.com/repos/${REPO}"
 IMAGE="ghcr.io/rudalabs/teamcraft"
+# Compose project "teamcraft-server" (docker-compose.yml) → volume names.
+VOLUME_DB="teamcraft-server_db"
 
 usage() {
   cat <<'EOF'
@@ -213,7 +215,12 @@ if [ -z "$DIR" ]; then
   if [ "$USER_MODE" -eq 1 ]; then DIR="$HOME/teamcraft"; else DIR="/opt/teamcraft"; fi
 fi
 case "$DIR" in /*) ;; *) DIR="$PWD/$DIR" ;; esac
-DIR=${DIR%/}
+while [ "${DIR%/}" != "$DIR" ]; do DIR=${DIR%/}; done
+# --uninstall --purge deletes the directory: never / or a top-level one.
+case "$DIR" in
+  /[!/]*/[!/]*) ;;
+  *) die "refusing to use '${DIR:-/}' as the installation directory – use one of its own, e.g. /opt/teamcraft" ;;
+esac
 
 # Root privileges only where the directory needs them.
 if [ "$(id -u)" -ne 0 ]; then
@@ -302,6 +309,10 @@ EOF
 
 uninstall() {
   [ -f "$DIR/docker-compose.yml" ] || die "no installation in $DIR (use --dir)"
+  # Only a directory written by this script is stopped or deleted.
+  if ! grep -q "image: $IMAGE:" "$DIR/docker-compose.yml" || ! as_root test -f "$DIR/.env"; then
+    die "$DIR does not look like a TeamCraft installation made by install.sh – nothing changed"
+  fi
   check_docker
   say "Stopping TeamCraft in $DIR"
   if [ "$PURGE" -eq 1 ]; then
@@ -399,6 +410,10 @@ else
 fi
 if [ -n "$PUBLIC_URL" ]; then
   case "$PUBLIC_URL" in http://*|https://*) ;; *) die "--public-url must start with http:// or https://" ;; esac
+  # Written unquoted into teamcraft.env: no spaces, quotes, $, # or backslashes.
+  case "$PUBLIC_URL" in
+    *[[:space:][:cntrl:]]*|*[\"\'\$\`\\#]*) die "--public-url must be a plain URL without spaces or quotes" ;;
+  esac
   { grep -v '^TEAMCRAFT_PUBLIC_URL=' "$TMP/teamcraft.env.current" || true
     printf 'TEAMCRAFT_PUBLIC_URL=%s\n' "${PUBLIC_URL%/}"; } >"$TMP/teamcraft.env.new"
   mv "$TMP/teamcraft.env.new" "$TMP/teamcraft.env.current"
@@ -413,6 +428,13 @@ fi
 if as_root test -f "$DIR/secrets/db_password"; then
   note "keeping the database password in $DIR/secrets/db_password"
 else
+  # PostgreSQL reads the password only when its volume is initialised: a new
+  # one would not match a database volume that is still there.
+  if has docker && docker_cmd volume inspect "$VOLUME_DB" >/dev/null 2>&1; then
+    die "the database volume $VOLUME_DB already exists, but $DIR/secrets/db_password is missing.
+  Restore secrets/db_password from the previous installation directory (or a backup),
+  or – only if its data is no longer needed – remove the volume: docker volume rm $VOLUME_DB"
+  fi
   run_root install -d -m 700 "$DIR/secrets"
   gen_password | write_file "$DIR/secrets/db_password" 644
 fi
@@ -420,7 +442,11 @@ fi
 # Compose settings: version and published address.
 [ -z "$BIND" ] && [ "$EXISTING" -eq 1 ] && BIND=$(env_value "$DIR/.env" TEAMCRAFT_BIND)
 BIND=${BIND:-127.0.0.1:8080}
-case "$BIND" in *:[0-9]*) ;; *) die "--bind needs host:port, e.g. 127.0.0.1:8080 or 0.0.0.0:8080" ;; esac
+# Written into .env: host:port with a numeric port, nothing else.
+case "${BIND##*:}" in ""|*[!0-9]*) BIND_OK=0 ;; *) BIND_OK=1 ;; esac
+case "$BIND" in *:*) ;; *) BIND_OK=0 ;; esac
+case "$BIND" in *[!A-Za-z0-9.:\[\]-]*) BIND_OK=0 ;; esac
+[ "$BIND_OK" -eq 1 ] || die "--bind needs host:port, e.g. 127.0.0.1:8080 or 0.0.0.0:8080"
 write_file "$DIR/.env" 644 <<EOF
 # Written by install.sh – used by docker compose in this directory.
 TEAMCRAFT_VERSION=$VERSION
@@ -462,7 +488,8 @@ fi
 
 DC="docker compose"
 [ -n "$DOCKER_SUDO" ] && DC="sudo docker compose"
-CREATE_ADMIN="cd $DIR && $DC exec teamcraft teamcraft user create --username admin --role admin"
+QDIR=$(printf '%q' "$DIR")
+CREATE_ADMIN="cd $QDIR && $DC exec teamcraft teamcraft user create --username admin --role admin"
 
 users=1
 if [ "$DRY_RUN" -eq 0 ]; then
@@ -482,7 +509,8 @@ if [ "$DRY_RUN" -eq 0 ] && [ "${users:-0}" -eq 0 ]; then
   fi
 fi
 
-URL=$(env_value "$DIR/teamcraft.env" TEAMCRAFT_PUBLIC_URL)
+URL=${PUBLIC_URL%/}
+[ -z "$URL" ] && URL=$(env_value "$DIR/teamcraft.env" TEAMCRAFT_PUBLIC_URL)
 [ -z "$URL" ] && URL="http://localhost:$PORT"
 
 echo
@@ -492,8 +520,8 @@ else
   say "TeamCraft $VERSION runs at $URL"
 fi
 note "directory:  $DIR (configuration: teamcraft.env)"
-note "status:     cd $DIR && $DC ps"
-note "logs:       cd $DIR && $DC logs -f teamcraft"
+note "status:     cd $QDIR && $DC ps"
+note "logs:       cd $QDIR && $DC logs -f teamcraft"
 note "upgrade:    run install.sh again (data and configuration stay)"
 case "$BIND_HOST" in
   127.*|localhost|"[::1]")

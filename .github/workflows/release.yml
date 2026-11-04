@@ -210,16 +210,25 @@ jobs:
   publish:
     name: GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [version, server, desktop]
+    # After the image: install.sh installs the newest release, whose image
+    # must already be on ghcr.io.
+    needs: [version, server, desktop, image-manifest]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # Only the binaries and installers – not the image-digest-* artifacts.
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: server-*
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: desktop-*
           merge-multiple: true
       - name: Checksums
         working-directory: dist

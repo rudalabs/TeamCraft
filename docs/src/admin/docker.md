@@ -131,11 +131,12 @@ The data lives in two Docker volumes: `teamcraft-server_db` (PostgreSQL) and
 Back up both together, plus the installation directory (it holds the
 database password). The image has no PostgreSQL client tools, so
 `teamcraft backup` ([Operations](operations.md#backups)) does not run inside
-the container; dump through the database container instead:
+the container; dump through the database container instead (`sh -c`: the
+dump is written as root, because `/opt/teamcraft` belongs to root):
 
 ```sh
 cd /opt/teamcraft
-sudo docker compose exec -T db pg_dump -U teamcraft -Fc teamcraft > teamcraft-db.dump
+sudo sh -c 'docker compose exec -T db pg_dump -U teamcraft -Fc teamcraft > teamcraft-db.dump'
 sudo docker run --rm -v teamcraft-server_vault:/vault:ro -v "$PWD":/backup alpine \
   tar -czf /backup/teamcraft-vault.tar.gz -C /vault --exclude=./vault/previews .
 ```
@@ -187,4 +188,5 @@ deletes the volumes and the directory as well, after a confirmation.
 | the installer waits and then stops       | its output shows `docker compose ps` and the last log lines                    |
 | `Forbidden` / origin error on every form | `TEAMCRAFT_PUBLIC_URL` must be exactly the address in the browser               |
 | `password authentication failed`         | `secrets/db_password` was changed after the first start – the database keeps the first one |
+| `the database volume … already exists`   | the installation directory was deleted without `--purge` (or another directory is used): restore its `secrets/db_password`; the Compose project name `teamcraft-server` allows one installation per host |
 | port 8080 is taken                       | `--bind 127.0.0.1:8081`                                                         |
