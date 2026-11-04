@@ -1,5 +1,6 @@
 //! Import of bills of materials exported by CAD programs (see
-//! [`crate::bomtable`]).
+//! [`crate::bomtable`]) and of the product structure of STEP assemblies (see
+//! [`crate::stepbom`]).
 //!
 //! An import creates the items that are not in TeamCraft yet and the
 //! multi-level BOM below an assembly: a new top-level assembly or a revision
@@ -21,7 +22,10 @@
 //! * components already in the BOM of the target revision are not added
 //!   again, so importing the same table twice does not duplicate lines.
 //!
-//! Web uploads wait in `staged_imports` until the user confirms the preview.
+//! A STEP file is attached to the new top-level assembly it creates, so its 3D
+//! preview shows the whole assembly. Web uploads wait in `staged_imports`
+//! until the user confirms the preview – tables in the row, STEP files in the
+//! vault.
 
 use std::collections::{hash_map::Entry, HashMap, HashSet};
 
@@ -35,11 +39,42 @@ use crate::{
     bomtable::{self, BomRow, BomTable, Column},
     domain::{self, ItemType, Role},
     error::{AppError, AppResult},
-    services::{audit, bom, items, revisions},
+    services::{
+        audit, bom,
+        files::{self, Upload},
+        items, revisions,
+    },
+    stepbom,
+    vault::{StoredBlob, Vault},
 };
 
 /// Largest BOM table accepted.
 pub const MAX_TABLE_BYTES: usize = 20 * 1024 * 1024;
+/// Largest STEP assembly accepted.
+pub const MAX_STEP_BYTES: usize = 200 * 1024 * 1024;
+
+/// Largest import file accepted with this name.
+pub fn max_bytes(filename: &str) -> usize {
+    if stepbom::is_step(filename) {
+        MAX_STEP_BYTES
+    } else {
+        MAX_TABLE_BYTES
+    }
+}
+
+/// "BOM tables can be at most 20 MiB." / "STEP files …"
+pub fn too_large(filename: &str) -> AppError {
+    AppError::PayloadTooLarge(format!(
+        "{} can be at most {} MiB.",
+        if stepbom::is_step(filename) {
+            "STEP files"
+        } else {
+            "BOM tables"
+        },
+        max_bytes(filename) / 1024 / 1024
+    ))
+}
+
 /// Staged uploads older than this are removed by the housekeeping task.
 pub const STAGED_HOURS: i32 = 24;
 
@@ -183,20 +218,36 @@ pub struct ImportResult {
     pub warnings: Vec<String>,
 }
 
-/// Reads an uploaded BOM table (format and size checks included).
+/// Reads an uploaded BOM table or STEP assembly (format and size checks
+/// included).
 pub fn read_table(filename: &str, bytes: &[u8]) -> AppResult<BomTable> {
-    if !bomtable::supported(filename) {
+    let step = stepbom::is_step(filename);
+    if !step && !bomtable::supported(filename) {
         return Err(AppError::BadRequest(format!(
-            "{filename}: BOM tables are read from CSV, TSV, TXT, XLSX, XLSM, XLSB, XLS and ODS files."
+            "{filename}: BOMs are read from CSV, TSV, TXT, XLSX, XLSM, XLSB, XLS and ODS tables \
+             and from STEP assemblies (STEP, STP, P21)."
         )));
     }
-    if bytes.len() > MAX_TABLE_BYTES {
-        return Err(AppError::PayloadTooLarge(format!(
-            "BOM tables can be at most {} MiB.",
-            MAX_TABLE_BYTES / 1024 / 1024
-        )));
+    if bytes.len() > max_bytes(filename) {
+        return Err(too_large(filename));
     }
-    bomtable::read(filename, bytes).map_err(AppError::BadRequest)
+    if step {
+        stepbom::read(bytes).map_err(AppError::BadRequest)
+    } else {
+        bomtable::read(filename, bytes).map_err(AppError::BadRequest)
+    }
+}
+
+/// Stores an uploaded STEP assembly in the vault, ready to be attached to the
+/// assembly it creates; `None` for tables.
+pub async fn step_file(vault: &Vault, filename: &str, bytes: &[u8]) -> AppResult<Option<Upload>> {
+    if !stepbom::is_step(filename) {
+        return Ok(None);
+    }
+    let blob = vault.store_bytes(bytes).await?;
+    Ok(Some(
+        Upload::classify(vault, blob, filename.to_string(), "").await,
+    ))
 }
 
 /// Rows with the same part number – or, without one, the same name – are one item.
@@ -628,16 +679,18 @@ fn planned_item(
     item
 }
 
-/// Runs an import in one transaction.
+/// Runs an import in one transaction. `source` (the STEP file, see
+/// [`step_file`]) is attached to a new top-level assembly.
 pub async fn run(
     pool: &PgPool,
     actor: &Actor,
     table: &BomTable,
     filename: &str,
     options: &ImportOptions,
+    source: Option<&Upload>,
 ) -> AppResult<ImportResult> {
     let mut tx = pool.begin().await?;
-    let result = run_tx(&mut tx, actor, table, filename, options).await?;
+    let result = run_tx(&mut tx, actor, table, filename, options, source).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -648,8 +701,10 @@ async fn run_tx(
     table: &BomTable,
     filename: &str,
     options: &ImportOptions,
+    source: Option<&Upload>,
 ) -> AppResult<ImportResult> {
     let plan = plan(conn, actor, table, filename, options).await?;
+    let notes = domain::truncate_chars(&format!("Imported from {}", plan.filename), 500);
 
     // (item id, number, new revision) per planned item. Existing items and
     // items with numbers from the file come first, so that generated numbers
@@ -684,7 +739,12 @@ async fn run_tx(
                 },
             )
             .await?;
-            revisions::lock(conn, c.revision_id).await?
+            let rev = revisions::lock(conn, c.revision_id).await?;
+            if let Some(upload) = source {
+                files::store_uploads(conn, actor, &rev, std::slice::from_ref(upload), &notes)
+                    .await?;
+            }
+            rev
         }
     };
     for (i, it) in plan.items.iter().enumerate() {
@@ -693,7 +753,6 @@ async fn run_tx(
         }
     }
 
-    let notes = domain::truncate_chars(&format!("Imported from {}", plan.filename), 500);
     let mut parents: HashMap<usize, crate::models::Revision> = HashMap::new();
     for line in &plan.lines {
         let Some((child_id, child_number, _)) = ids[line.child].clone() else {
@@ -799,17 +858,30 @@ pub struct Staged {
     pub filename: String,
     pub options: ImportOptions,
     content: Vec<u8>,
+    /// Vault blob of a STEP file.
+    sha256: Option<String>,
 }
 
 impl Staged {
     pub fn table(&self) -> AppResult<BomTable> {
         read_table(&self.filename, &self.content)
     }
+
+    /// The staged STEP file, to attach to the new assembly.
+    async fn source(&self, vault: &Vault) -> Option<Upload> {
+        let blob = StoredBlob {
+            sha256: self.sha256.clone()?,
+            size: self.content.len() as u64,
+        };
+        Some(Upload::classify(vault, blob, self.filename.clone(), "").await)
+    }
 }
 
-/// Stores an upload for the preview; fails right away if the table cannot be read.
+/// Stores an upload for the preview; fails right away if the file cannot be
+/// read. STEP files go to the vault, tables into the row.
 pub async fn stage(
     pool: &PgPool,
+    vault: &Vault,
     actor: &Actor,
     filename: &str,
     content: Vec<u8>,
@@ -817,16 +889,24 @@ pub async fn stage(
 ) -> AppResult<Uuid> {
     actor.require(Role::Editor)?;
     read_table(filename, &content)?;
+    let (kind, row_content, sha256) = if stepbom::is_step(filename) {
+        let blob = vault.store_bytes(&content).await?;
+        ("step", None, Some(blob.sha256))
+    } else {
+        ("bom_table", Some(content.as_slice()), None)
+    };
     let id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO staged_imports (id, user_id, kind, filename, size_bytes, content, options)
-         VALUES ($1, $2, 'bom_table', $3, $4, $5, $6)",
+        "INSERT INTO staged_imports (id, user_id, kind, filename, size_bytes, content, sha256, options)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(id)
     .bind(actor.id)
+    .bind(kind)
     .bind(domain::truncate_chars(filename, 255))
     .bind(content.len() as i64)
-    .bind(&content)
+    .bind(row_content)
+    .bind(sha256)
     .bind(sqlx::types::Json(&options))
     .execute(pool)
     .await?;
@@ -835,34 +915,54 @@ pub async fn stage(
 
 const GONE: &str = "This import is no longer available – upload the file again.";
 
-type StagedRow = (Uuid, String, sqlx::types::Json<ImportOptions>, Vec<u8>);
+type StagedRow = (
+    Uuid,
+    String,
+    sqlx::types::Json<ImportOptions>,
+    Option<Vec<u8>>,
+    Option<String>,
+);
 
-fn staged_of(row: StagedRow) -> Staged {
-    Staged {
-        id: row.0,
-        filename: row.1,
-        options: row.2 .0,
-        content: row.3,
-    }
+async fn staged_of(vault: &Vault, row: StagedRow) -> AppResult<Staged> {
+    let (id, filename, options, content, sha256) = row;
+    let content = match (content, &sha256) {
+        (Some(content), _) => content,
+        (None, Some(sha)) => tokio::fs::read(vault.object_path(sha)?)
+            .await
+            .map_err(|_| AppError::not_found(GONE))?,
+        (None, None) => return Err(AppError::not_found(GONE)),
+    };
+    Ok(Staged {
+        id,
+        filename,
+        options: options.0,
+        content,
+        sha256,
+    })
 }
 
 /// A staged upload of the actor.
-pub async fn staged(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Staged> {
-    sqlx::query_as::<_, StagedRow>(
-        "SELECT id, filename, options, content FROM staged_imports
-         WHERE id = $1 AND user_id = $2 AND kind = 'bom_table'",
+pub async fn staged(pool: &PgPool, vault: &Vault, actor: &Actor, id: Uuid) -> AppResult<Staged> {
+    let row = sqlx::query_as::<_, StagedRow>(
+        "SELECT id, filename, options, content, sha256 FROM staged_imports
+         WHERE id = $1 AND user_id = $2",
     )
     .bind(id)
     .bind(actor.id)
     .fetch_optional(pool)
     .await?
-    .map(staged_of)
-    .ok_or_else(|| AppError::not_found(GONE))
+    .ok_or_else(|| AppError::not_found(GONE))?;
+    staged_of(vault, row).await
 }
 
 /// The preview of a staged upload.
-pub async fn preview(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<(Staged, Plan)> {
-    let staged = staged(pool, actor, id).await?;
+pub async fn preview(
+    pool: &PgPool,
+    vault: &Vault,
+    actor: &Actor,
+    id: Uuid,
+) -> AppResult<(Staged, Plan)> {
+    let staged = staged(pool, vault, actor, id).await?;
     let table = staged.table()?;
     let mut conn = pool.acquire().await?;
     let plan = plan(&mut conn, actor, &table, &staged.filename, &staged.options).await?;
@@ -870,20 +970,34 @@ pub async fn preview(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<(Stage
 }
 
 /// Runs a staged import and removes the upload (a second click finds nothing).
-pub async fn run_staged(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ImportResult> {
+pub async fn run_staged(
+    pool: &PgPool,
+    vault: &Vault,
+    actor: &Actor,
+    id: Uuid,
+) -> AppResult<ImportResult> {
     let mut tx = pool.begin().await?;
-    let staged = sqlx::query_as::<_, StagedRow>(
-        "SELECT id, filename, options, content FROM staged_imports
-         WHERE id = $1 AND user_id = $2 AND kind = 'bom_table' FOR UPDATE",
+    let row = sqlx::query_as::<_, StagedRow>(
+        "SELECT id, filename, options, content, sha256 FROM staged_imports
+         WHERE id = $1 AND user_id = $2 FOR UPDATE",
     )
     .bind(id)
     .bind(actor.id)
     .fetch_optional(&mut *tx)
     .await?
-    .map(staged_of)
     .ok_or_else(|| AppError::not_found(GONE))?;
+    let staged = staged_of(vault, row).await?;
     let table = staged.table()?;
-    let result = run_tx(&mut tx, actor, &table, &staged.filename, &staged.options).await?;
+    let source = staged.source(vault).await;
+    let result = run_tx(
+        &mut tx,
+        actor,
+        &table,
+        &staged.filename,
+        &staged.options,
+        source.as_ref(),
+    )
+    .await?;
     sqlx::query("DELETE FROM staged_imports WHERE id = $1")
         .bind(id)
         .execute(&mut *tx)

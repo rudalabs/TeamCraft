@@ -61,7 +61,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
     let upload_limit = usize::try_from(state.config.max_upload_bytes)
         .unwrap_or(usize::MAX)
         .saturating_add(1024 * 1024);
-    let import_limit = crate::services::imports::MAX_TABLE_BYTES + 1024 * 1024;
+    let import_limit = crate::services::imports::MAX_STEP_BYTES + 1024 * 1024;
 
     Router::new()
         .route("/", get(dashboard::show))

@@ -36,7 +36,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
     let upload_limit = usize::try_from(state.config.max_upload_bytes)
         .unwrap_or(usize::MAX)
         .saturating_add(1024 * 1024);
-    let import_limit = imports::MAX_TABLE_BYTES + 1024 * 1024;
+    let import_limit = imports::MAX_STEP_BYTES + 1024 * 1024;
     Router::new()
         .route("/", get(index))
         .route("/me", get(me))
@@ -216,7 +216,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/bom?rule=latest|released|as_released&expand=true",
             "POST   /api/v1/items/{number}/revisions/{code}/bom       {child, quantity, find_number?, notes?}",
             "GET    /api/v1/items/{number}/revisions/{code}/package?rule=  Pack and Go: ZIP with all files of the structure, bom.csv, manifest.json",
-            "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
+            "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM or STEP assembly of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
             "POST   /api/v1/items/{number}/revisions/{code}/bom/import  same multipart fields – imports below the revision (checked out by me)",
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
             "DELETE /api/v1/bom-lines/{id}",
@@ -732,7 +732,8 @@ async fn bom_import(
     let options = web::import_options(&fields, target, project_id)?;
     let (filename, content) = file.ok_or_else(|| {
         AppError::BadRequest(
-            "Send the BOM table (CSV or Excel) in the multipart field 'file'.".into(),
+            "Send the BOM table (CSV or Excel) or the STEP assembly in the multipart field 'file'."
+                .into(),
         )
     })?;
     let table = imports::read_table(&filename, &content)?;
@@ -744,7 +745,8 @@ async fn bom_import(
         let plan = imports::plan(&mut conn, me, &table, &filename, &options).await?;
         return Ok(Json(json!(plan)).into_response());
     }
-    let result = imports::run(&st.db, me, &table, &filename, &options).await?;
+    let source = imports::step_file(&st.vault, &filename, &content).await?;
+    let result = imports::run(&st.db, me, &table, &filename, &options, source.as_ref()).await?;
     Ok((StatusCode::CREATED, Json(json!(result))).into_response())
 }
 

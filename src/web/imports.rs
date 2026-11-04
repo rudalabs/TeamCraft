@@ -56,6 +56,7 @@ pub async fn upload_form(
             "target": target,
             "projects": projects,
             "max_mib": imports::MAX_TABLE_BYTES / 1024 / 1024,
+            "max_step_mib": imports::MAX_STEP_BYTES / 1024 / 1024,
         }),
     )
 }
@@ -72,13 +73,11 @@ pub(crate) async fn receive(
         };
         if name == "file" {
             let filename = field.file_name().map(str::to_string).unwrap_or_default();
+            let max = imports::max_bytes(&filename);
             let mut data = Vec::new();
             while let Some(chunk) = field.chunk().await.map_err(multipart_error)? {
-                if data.len() + chunk.len() > imports::MAX_TABLE_BYTES {
-                    return Err(AppError::PayloadTooLarge(format!(
-                        "BOM tables can be at most {} MiB.",
-                        imports::MAX_TABLE_BYTES / 1024 / 1024
-                    )));
+                if data.len() + chunk.len() > max {
+                    return Err(imports::too_large(&filename));
                 }
                 data.extend_from_slice(&chunk);
             }
@@ -134,9 +133,11 @@ pub async fn upload(
             super::parse_opt_uuid("Project", fields.get("project_id").map(String::as_str))?;
         let options = options_from(&fields, target, project_id)?;
         let (filename, content) = file.ok_or_else(|| {
-            AppError::BadRequest("Choose the BOM file (CSV or Excel) to import.".into())
+            AppError::BadRequest(
+                "Choose the BOM file (CSV, Excel or STEP assembly) to import.".into(),
+            )
         })?;
-        imports::stage(&st.db, &ctx.me, &filename, content, options).await
+        imports::stage(&st.db, &st.vault, &ctx.me, &filename, content, options).await
     }
     .await;
     finish(&st, result, &back, |id| {
@@ -183,7 +184,7 @@ pub async fn preview(
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    match imports::preview(&st.db, &ctx.me, id).await {
+    match imports::preview(&st.db, &st.vault, &ctx.me, id).await {
         Ok((_, plan)) => render(
             &st,
             &ctx,
@@ -209,7 +210,7 @@ pub async fn run(
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let result = imports::run_staged(&st.db, &ctx.me, id).await;
+    let result = imports::run_staged(&st.db, &st.vault, &ctx.me, id).await;
     finish(&st, result, &format!("/import/{id}"), |r| {
         let message = format!(
             "Imported {} BOM lines into {}: {} new items, {} existing items used.",
