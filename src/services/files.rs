@@ -533,7 +533,7 @@ pub async fn precheck_base(
     let mut conn = pool.acquire().await?;
     let existing = sqlx::query_as::<_, Existing>(
         "SELECT f.id, f.current_version, f.sha256, u.display_name AS uploaded_by_name,
-                f.uploaded_at
+                f.uploaded_at, f.folder
          FROM files f JOIN users u ON u.id = f.uploaded_by
          WHERE f.revision_id = $1 AND lower(f.filename) = lower($2)",
     )
