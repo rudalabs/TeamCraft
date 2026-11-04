@@ -182,14 +182,18 @@ pub enum ItemType {
     Assembly,
     Document,
     Software,
+    /// An analysis (FEA, CFD, …): model, solver deck, results and report,
+    /// linked to the revisions it is based on (see `services::simulations`).
+    Simulation,
 }
 
 impl ItemType {
-    pub const ALL: [ItemType; 4] = [
+    pub const ALL: [ItemType; 5] = [
         ItemType::Part,
         ItemType::Assembly,
         ItemType::Document,
         ItemType::Software,
+        ItemType::Simulation,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -198,6 +202,7 @@ impl ItemType {
             ItemType::Assembly => "assembly",
             ItemType::Document => "document",
             ItemType::Software => "software",
+            ItemType::Simulation => "simulation",
         }
     }
 
@@ -207,6 +212,7 @@ impl ItemType {
             ItemType::Assembly => "Assembly",
             ItemType::Document => "Document",
             ItemType::Software => "Software",
+            ItemType::Simulation => "Simulation",
         }
     }
 
@@ -217,6 +223,7 @@ impl ItemType {
             ItemType::Assembly => "ASM",
             ItemType::Document => "DOC",
             ItemType::Software => "SW",
+            ItemType::Simulation => "SIM",
         }
     }
 
@@ -226,6 +233,7 @@ impl ItemType {
             "assembly" => Some(ItemType::Assembly),
             "document" => Some(ItemType::Document),
             "software" => Some(ItemType::Software),
+            "simulation" => Some(ItemType::Simulation),
             _ => None,
         }
     }
@@ -858,6 +866,135 @@ impl ReferenceKind {
 }
 
 // ---------------------------------------------------------------------------
+// Simulations
+// ---------------------------------------------------------------------------
+
+/// What a simulation takes from the revision it is based on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BasisRole {
+    /// The analysed geometry (part, assembly).
+    Geometry,
+    /// A mesh / FE model kept as its own item.
+    Mesh,
+    /// Material data (specification, data sheet).
+    Material,
+    /// Where the loads come from (load specification, test report).
+    LoadCase,
+    Other,
+}
+
+impl BasisRole {
+    pub const ALL: [BasisRole; 5] = [
+        BasisRole::Geometry,
+        BasisRole::Mesh,
+        BasisRole::Material,
+        BasisRole::LoadCase,
+        BasisRole::Other,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BasisRole::Geometry => "geometry",
+            BasisRole::Mesh => "mesh",
+            BasisRole::Material => "material",
+            BasisRole::LoadCase => "load_case",
+            BasisRole::Other => "other",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BasisRole::Geometry => "Geometry",
+            BasisRole::Mesh => "Mesh",
+            BasisRole::Material => "Material",
+            BasisRole::LoadCase => "Load case",
+            BasisRole::Other => "Other",
+        }
+    }
+
+    /// Also accepts `load-case` and `load case`.
+    pub fn parse(s: &str) -> Option<BasisRole> {
+        match s
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['-', ' '], "_")
+            .as_str()
+        {
+            "geometry" => Some(BasisRole::Geometry),
+            "mesh" => Some(BasisRole::Mesh),
+            "material" => Some(BasisRole::Material),
+            "load_case" => Some(BasisRole::LoadCase),
+            "other" => Some(BasisRole::Other),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a result value is within its limits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultStatus {
+    Pass,
+    Fail,
+    /// No limit given: the value is informative only (`"none"`).
+    #[serde(rename = "none")]
+    NoLimits,
+}
+
+impl ResultStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResultStatus::Pass => "pass",
+            ResultStatus::Fail => "fail",
+            ResultStatus::NoLimits => "none",
+        }
+    }
+}
+
+/// Pass when `lower <= value <= upper` (limits inclusive, either may be
+/// missing), fail otherwise; [`ResultStatus::NoLimits`] without limits.
+pub fn result_status(value: f64, lower: Option<f64>, upper: Option<f64>) -> ResultStatus {
+    if lower.is_none() && upper.is_none() {
+        return ResultStatus::NoLimits;
+    }
+    let above_lower = lower.is_none_or(|l| value >= l);
+    let below_upper = upper.is_none_or(|u| value <= u);
+    if value.is_finite() && above_lower && below_upper {
+        ResultStatus::Pass
+    } else {
+        ResultStatus::Fail
+    }
+}
+
+/// Validates a result value and its limits (finite numbers, lower ≤ upper).
+pub fn validate_result_numbers(
+    name: &str,
+    value: f64,
+    lower: Option<f64>,
+    upper: Option<f64>,
+) -> Result<(), AppError> {
+    if !value.is_finite() {
+        return Err(AppError::BadRequest(format!(
+            "{name}: the value must be a finite number."
+        )));
+    }
+    if lower.is_some_and(|v| !v.is_finite()) || upper.is_some_and(|v| !v.is_finite()) {
+        return Err(AppError::BadRequest(format!(
+            "{name}: the limits must be finite numbers."
+        )));
+    }
+    if let (Some(l), Some(u)) = (lower, upper) {
+        if l > u {
+            return Err(AppError::BadRequest(format!(
+                "{name}: the lower limit {l} is above the upper limit {u}."
+            )));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Notifications
 // ---------------------------------------------------------------------------
 
@@ -1010,6 +1147,84 @@ pub fn require_text(field: &str, value: &str, max: usize) -> Result<String, AppE
         return Err(AppError::BadRequest(format!("{field} must not be empty.")));
     }
     limit_text(field, v, max)
+}
+
+// ---------------------------------------------------------------------------
+// Working folder: where a file sits inside its project group
+// ---------------------------------------------------------------------------
+
+/// Longest folder path of a file (characters).
+pub const MAX_FOLDER_LEN: usize = 400;
+/// Deepest folder nesting of a file.
+pub const MAX_FOLDER_DEPTH: usize = 32;
+/// Longest single folder name.
+pub const MAX_FOLDER_SEGMENT: usize = 120;
+
+/// Normalises the folder of a file inside its project group – the place it
+/// gets in the desktop working folder `<workspace>/<GROUP>/<folder>/<file>`.
+///
+/// Backslashes become `/`, empty and `.` segments as well as leading and
+/// trailing slashes are dropped (`""` is the top of the group). Refused:
+/// `..`, names that are not valid on Windows, macOS and Linux (`<>:"|?*`,
+/// control characters, trailing dots or spaces, `CON`, `NUL`, `COM1`, …) and
+/// paths longer than [`MAX_FOLDER_LEN`] or deeper than [`MAX_FOLDER_DEPTH`].
+pub fn normalize_folder(raw: &str) -> Result<String, AppError> {
+    let bad = |why: String| AppError::BadRequest(format!("Folder '{}': {why}", raw.trim()));
+    let mut segments = Vec::new();
+    for segment in raw.trim().split(['/', '\\']) {
+        let segment = segment.trim_start();
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            return Err(bad(
+                "'..' is not allowed – folders are relative to the project group.".into(),
+            ));
+        }
+        if let Some(c) = segment
+            .chars()
+            .find(|c| c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+        {
+            return Err(bad(format!(
+                "the character {c:?} is not allowed in folder names."
+            )));
+        }
+        if segment.ends_with(['.', ' ']) {
+            return Err(bad(format!(
+                "'{segment}' ends with a dot or a space (not valid on Windows)."
+            )));
+        }
+        let stem = segment
+            .split('.')
+            .next()
+            .unwrap_or(segment)
+            .to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (stem.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.as_bytes()[3].is_ascii_digit());
+        if reserved {
+            return Err(bad(format!("'{segment}' is a reserved name on Windows.")));
+        }
+        if segment.chars().count() > MAX_FOLDER_SEGMENT {
+            return Err(bad(format!(
+                "folder names must be at most {MAX_FOLDER_SEGMENT} characters."
+            )));
+        }
+        segments.push(segment);
+    }
+    if segments.len() > MAX_FOLDER_DEPTH {
+        return Err(bad(format!(
+            "at most {MAX_FOLDER_DEPTH} folder levels are allowed."
+        )));
+    }
+    let folder = segments.join("/");
+    if folder.chars().count() > MAX_FOLDER_LEN {
+        return Err(bad(format!(
+            "the path must be at most {MAX_FOLDER_LEN} characters."
+        )));
+    }
+    Ok(folder)
 }
 
 /// Trims a text and checks it is at most `max` characters.
@@ -1602,6 +1817,53 @@ mod tests {
     }
 
     #[test]
+    fn simulation_items_and_basis_roles() {
+        let ctx = NumberContext {
+            project: "ROVER",
+            item_type: ItemType::Simulation,
+            year: 2026,
+            month: 3,
+        };
+        assert_eq!(NumberScheme::default_scheme().format(&ctx, 3), "SIM-000003");
+        assert_eq!(ItemType::parse(" Simulation "), Some(ItemType::Simulation));
+        for t in ItemType::ALL {
+            assert_eq!(ItemType::parse(t.as_str()), Some(t));
+        }
+        for r in BasisRole::ALL {
+            assert_eq!(BasisRole::parse(r.as_str()), Some(r));
+        }
+        assert_eq!(BasisRole::parse("Load-Case"), Some(BasisRole::LoadCase));
+        assert_eq!(BasisRole::parse("load case"), Some(BasisRole::LoadCase));
+        assert_eq!(BasisRole::parse("sketch"), None);
+    }
+
+    #[test]
+    fn result_pass_fail() {
+        use ResultStatus::{Fail, Pass};
+        assert_eq!(result_status(5.0, None, None), ResultStatus::NoLimits);
+        assert_eq!(result_status(5.0, Some(1.0), Some(10.0)), Pass);
+        assert_eq!(result_status(1.0, Some(1.0), Some(10.0)), Pass, "inclusive");
+        assert_eq!(
+            result_status(10.0, Some(1.0), Some(10.0)),
+            Pass,
+            "inclusive"
+        );
+        assert_eq!(result_status(0.5, Some(1.0), Some(10.0)), Fail);
+        assert_eq!(result_status(11.0, Some(1.0), Some(10.0)), Fail);
+        // only an upper limit (max. stress), only a lower one (safety factor)
+        assert_eq!(result_status(180e6, None, Some(200e6)), Pass);
+        assert_eq!(result_status(210e6, None, Some(200e6)), Fail);
+        assert_eq!(result_status(1.4, Some(1.5), None), Fail);
+        assert_eq!(result_status(-3.0, Some(-5.0), None), Pass);
+        assert_eq!(result_status(f64::NAN, Some(0.0), None), Fail);
+        assert_eq!(Pass.as_str(), "pass");
+        assert!(validate_result_numbers("Stress", 1.0, Some(2.0), Some(1.0)).is_err());
+        assert!(validate_result_numbers("Stress", f64::INFINITY, None, None).is_err());
+        assert!(validate_result_numbers("Stress", 1.0, Some(f64::NAN), None).is_err());
+        assert!(validate_result_numbers("Stress", 1.0, Some(1.0), Some(1.0)).is_ok());
+    }
+
+    #[test]
     fn like_patterns_are_escaped() {
         assert_eq!(like_pattern("valve"), "%valve%");
         assert_eq!(like_pattern("50%_x\\"), "%50\\%\\_x\\\\%");
@@ -1611,5 +1873,48 @@ mod tests {
     fn password_policy() {
         assert!(validate_password("short").is_err());
         assert!(validate_password("long enough pw").is_ok());
+    }
+
+    #[test]
+    fn folders_are_normalised() {
+        let ok = |raw: &str| normalize_folder(raw).unwrap();
+        assert_eq!(ok(""), "");
+        assert_eq!(ok("  "), "");
+        assert_eq!(ok("/"), "");
+        assert_eq!(ok("chassis"), "chassis");
+        assert_eq!(ok("chassis/brackets"), "chassis/brackets");
+        assert_eq!(ok("chassis\\brackets\\"), "chassis/brackets");
+        assert_eq!(ok("/chassis//./brackets/"), "chassis/brackets");
+        assert_eq!(ok("Rover 2 (old)/Parts"), "Rover 2 (old)/Parts");
+        assert_eq!(ok("a..b/v1.2"), "a..b/v1.2", "dots inside names are fine");
+        assert_eq!(ok("Ölwanne/Gehäuse"), "Ölwanne/Gehäuse");
+        assert_eq!(ok("CONSOLE/COM10"), "CONSOLE/COM10");
+        for bad in [
+            "..",
+            "chassis/../etc",
+            "../outside",
+            "a\\..\\b",
+            "C:/CAD",
+            "a|b",
+            "what?",
+            "star*",
+            "quote\"",
+            "<x>",
+            "tab\there",
+            "trailing./x",
+            "space /x",
+            "CON",
+            "parts/nul.txt",
+            "Com1",
+            "LPT9/x",
+        ] {
+            assert!(normalize_folder(bad).is_err(), "{bad:?} must be refused");
+        }
+        let deep = vec!["a"; MAX_FOLDER_DEPTH + 1].join("/");
+        assert!(normalize_folder(&deep).is_err());
+        assert!(normalize_folder(&vec!["a"; MAX_FOLDER_DEPTH].join("/")).is_ok());
+        let long = vec!["x".repeat(100); 5].join("/");
+        assert!(normalize_folder(&long).is_err(), "longer than 400");
+        assert!(normalize_folder(&"y".repeat(MAX_FOLDER_SEGMENT + 1)).is_err());
     }
 }

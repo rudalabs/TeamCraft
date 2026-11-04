@@ -16,12 +16,13 @@ use super::{finish, items::BackForm, render, WebCtx};
 use crate::{
     auth::{Actor, WebUser},
     cadformat::FormatKind,
-    domain::{self, LifecycleState, ReferenceKind, COMMON_UNITS},
+    domain::{self, BasisRole, ItemType, LifecycleState, ReferenceKind, COMMON_UNITS},
     error::{AppError, AppResult},
     models::FileRecord,
     preview::PreviewFormat,
     services::{
         audit, bom, changes, files, impacts, items, notifications, projects, references, revisions,
+        simulations,
     },
     thumbnail, util, AppState,
 };
@@ -161,6 +162,34 @@ pub async fn show(
         .map(|k| json!({ "value": k.as_str(), "label": k.label() }))
         .collect();
     let latest_id = all_revisions.first().map(|r| r.id);
+    // Simulations: basis links and result values of a simulation revision;
+    // for every other item the simulations based on it.
+    let is_simulation = rev.item_type == ItemType::Simulation.as_str();
+    let simulation = if is_simulation {
+        let (bases, results) = tokio::try_join!(
+            simulations::bases(&st.db, id),
+            simulations::results(&st.db, id)
+        )?;
+        let out_of_date = bases.iter().filter(|b| b.out_of_date.is_some()).count();
+        let roles: Vec<_> = BasisRole::ALL
+            .iter()
+            .map(|r| json!({ "value": r.as_str(), "label": r.label() }))
+            .collect();
+        json!({
+            "summary": simulations::summarize(&results),
+            "bases": bases,
+            "results": results,
+            "out_of_date": out_of_date,
+            "roles": roles,
+        })
+    } else {
+        serde_json::Value::Null
+    };
+    let based_simulations = if is_simulation {
+        Vec::new()
+    } else {
+        simulations::based_on_item(&st.db, item.id).await?
+    };
     render(
         &st,
         &ctx,
@@ -185,6 +214,8 @@ pub async fn show(
                 "kinds": reference_kinds,
             },
             "open_impacts": open_impacts,
+            "simulation": simulation,
+            "based_simulations": based_simulations,
             "watching": watching,
             "favorite": favorite,
             "resolved_impacts": resolved_impacts,
@@ -454,6 +485,12 @@ pub(crate) async fn receive_uploads(
         let bases = files::parse_bases(raw)?;
         files::apply_bases(&mut received.uploads, &bases);
     }
+    // Where the files sit in the project group (the desktop working folder).
+    let (folder, folders) = files::parse_folders(
+        received.fields.get("folder").map(String::as_str),
+        received.fields.get("folders").map(String::as_str),
+    )?;
+    files::apply_folders(&mut received.uploads, folder.as_deref(), &folders);
     Ok(received)
 }
 
@@ -754,6 +791,35 @@ pub async fn restore_version(
         (
             back.clone(),
             format!("Restored {} – it is now version {}", f.filename, f.version),
+        )
+    })
+}
+
+#[derive(Deserialize)]
+pub struct FolderForm {
+    #[serde(default)]
+    folder: String,
+    back: Option<String>,
+}
+
+/// Moves a file to another folder of the project group (its place in the
+/// desktop working folder) while the revision is checked out.
+pub async fn set_file_folder(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<FolderForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = files::set_folder(&st.db, &ctx.me, id, &form.folder).await;
+    finish(&st, result, &back, |file| {
+        (
+            format!("/revisions/{}#files", file.revision_id),
+            if file.folder.is_empty() {
+                format!("{} is now at the top of the project group", file.filename)
+            } else {
+                format!("{} is now in {}/", file.filename, file.folder)
+            },
         )
     })
 }

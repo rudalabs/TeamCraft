@@ -28,7 +28,7 @@ use crate::{
 const FILE_SELECT: &str = "
     SELECT f.id, f.revision_id, f.filename, f.content_type, f.size_bytes, f.sha256,
            f.uploaded_by, u.display_name AS uploaded_by_name, f.uploaded_at,
-           f.current_version AS version, COALESCE(f.format, '') AS format
+           f.current_version AS version, COALESCE(f.format, '') AS format, f.folder
     FROM files f JOIN users u ON u.id = f.uploaded_by";
 
 const VERSION_SELECT: &str = "
@@ -51,6 +51,10 @@ pub struct Upload {
     /// The server version the client based this upload on; if the file moved
     /// on since, the upload is refused (409) instead of overwriting it.
     pub base: Option<BaseVersion>,
+    /// Folder inside the project group (normalised, see
+    /// `domain::normalize_folder`); `None` keeps the folder of an existing
+    /// file (`""` for a new one).
+    pub folder: Option<String>,
 }
 
 /// The name a file gets on the server – the key for bases and versions.
@@ -97,6 +101,49 @@ pub fn apply_bases(uploads: &mut [Upload], bases: &HashMap<String, BaseVersion>)
     }
 }
 
+/// Parses the folder fields of an upload: `folder` (one folder for every
+/// file of the request) and `folders` (a JSON object `{"file name":
+/// "folder"}` for each file, e.g. from the desktop folder import; it wins
+/// over `folder`). Returns the default folder and the folders by lower-case
+/// stored name.
+pub fn parse_folders(
+    folder: Option<&str>,
+    folders: Option<&str>,
+) -> AppResult<(Option<String>, HashMap<String, String>)> {
+    let default = folder.map(domain::normalize_folder).transpose()?;
+    let mut by_name = HashMap::new();
+    if let Some(raw) = folders.filter(|raw| !raw.trim().is_empty()) {
+        let invalid = || {
+            AppError::BadRequest(
+                "The field 'folders' must be a JSON object {\"file name\": \"folder\"}.".into(),
+            )
+        };
+        let value: serde_json::Value = serde_json::from_str(raw).map_err(|_| invalid())?;
+        for (name, folder) in value.as_object().ok_or_else(invalid)? {
+            let folder = folder.as_str().ok_or_else(invalid)?;
+            by_name.insert(
+                stored_name(name).to_lowercase(),
+                domain::normalize_folder(folder)?,
+            );
+        }
+    }
+    Ok((default, by_name))
+}
+
+/// Attaches the parsed folders to the uploads.
+pub fn apply_folders(
+    uploads: &mut [Upload],
+    default: Option<&str>,
+    by_name: &HashMap<String, String>,
+) {
+    for upload in uploads {
+        let key = stored_name(&upload.filename).to_lowercase();
+        if let Some(folder) = by_name.get(&key).map(String::as_str).or(default) {
+            upload.folder = Some(folder.to_string());
+        }
+    }
+}
+
 impl Upload {
     /// Classifies a blob that was just stored in the vault: format, content
     /// type, the text for the full-text search and the referenced CAD files.
@@ -129,6 +176,7 @@ impl Upload {
             format,
             references,
             base: None,
+            folder: None,
         }
     }
 }
@@ -167,6 +215,55 @@ pub async fn scan_unscanned_references(pool: &PgPool, vault: &Vault) -> AppResul
     Ok(count)
 }
 
+/// Reads the references of the current file versions of the given formats
+/// again and replaces the stored ones – after a reader improved (e.g.
+/// SOLIDWORKS 2015+ files, whose compressed sections were not read before).
+/// Formats that are not scanned for references are skipped. Each version is
+/// replaced in its own transaction, so an interrupted run can simply be
+/// repeated. Returns how many versions were scanned.
+pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String]) -> AppResult<u64> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        version_id: Uuid,
+        filename: String,
+        sha256: String,
+    }
+    let formats: Vec<&str> = formats
+        .iter()
+        .map(String::as_str)
+        .filter(|f| cadrefs::scans(f))
+        .collect();
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT fv.id AS version_id, f.filename, fv.sha256
+         FROM file_versions fv JOIN files f ON f.id = fv.file_id AND fv.version = f.current_version
+         WHERE f.format = ANY($1)
+         ORDER BY fv.id",
+    )
+    .bind(&formats)
+    .fetch_all(pool)
+    .await?;
+    let mut count = 0;
+    for row in rows {
+        let names = match vault.object_path(&row.sha256) {
+            Ok(path) => cadrefs::scan_file(&path, &row.filename).await,
+            Err(_) => continue,
+        };
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT 1 FROM file_versions WHERE id = $1 FOR UPDATE")
+            .bind(row.version_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM file_references WHERE file_version_id = $1")
+            .bind(row.version_id)
+            .execute(&mut *tx)
+            .await?;
+        references::store_file_references(&mut tx, row.version_id, &names).await?;
+        tx.commit().await?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 fn with_format(mut file: FileRecord) -> FileRecord {
     file.format_info = cadformat::info(&file.format);
     file
@@ -177,6 +274,21 @@ pub async fn list(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<FileRecord>
         "{FILE_SELECT} WHERE f.revision_id = $1 ORDER BY lower(f.filename), f.uploaded_at"
     ))
     .bind(revision_id)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(with_format)
+    .collect())
+}
+
+/// The files of several revisions in one query, ordered by revision, folder
+/// and name.
+pub async fn list_many(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<FileRecord>> {
+    Ok(sqlx::query_as::<_, FileRecord>(&format!(
+        "{FILE_SELECT} WHERE f.revision_id = ANY($1)
+         ORDER BY f.revision_id, lower(f.folder), lower(f.filename)"
+    ))
+    .bind(revision_ids)
     .fetch_all(pool)
     .await?
     .into_iter()
@@ -328,6 +440,7 @@ struct Existing {
     sha256: String,
     uploaded_by_name: String,
     uploaded_at: DateTime<Utc>,
+    folder: String,
 }
 
 /// Optimistic concurrency: refuses an upload whose stated base is not the
@@ -411,7 +524,7 @@ pub(crate) async fn store_uploads(
         let size = i64::try_from(upload.blob.size).unwrap_or(i64::MAX);
         let existing = sqlx::query_as::<_, Existing>(
             "SELECT f.id, f.current_version, f.sha256, u.display_name AS uploaded_by_name,
-                    f.uploaded_at
+                    f.uploaded_at, f.folder
              FROM files f JOIN users u ON u.id = f.uploaded_by
              WHERE f.revision_id = $1 AND lower(f.filename) = lower($2) FOR UPDATE OF f",
         )
@@ -430,12 +543,23 @@ pub(crate) async fn store_uploads(
             .await?;
         }
         let (file_id, version, changed) = match existing {
-            Some(e) if e.sha256 == upload.blob.sha256 => (e.id, e.current_version, false),
+            Some(e) if e.sha256 == upload.blob.sha256 => {
+                // Same content: only a new folder is stored.
+                if let Some(folder) = upload.folder.as_deref().filter(|f| *f != e.folder) {
+                    move_to_folder(conn, actor, rev, e.id, &filename, &e.folder, folder).await?;
+                }
+                (e.id, e.current_version, false)
+            }
             Some(e) => {
                 let version = e.current_version + 1;
+                // A new version in another folder: the move is recorded too.
+                if let Some(folder) = upload.folder.as_deref().filter(|f| *f != e.folder) {
+                    move_to_folder(conn, actor, rev, e.id, &filename, &e.folder, folder).await?;
+                }
                 sqlx::query(
                     "UPDATE files SET sha256 = $2, size_bytes = $3, content_type = $4, uploaded_by = $5,
-                                      uploaded_at = now(), current_version = $6, format = $7
+                                      uploaded_at = now(), current_version = $6, format = $7,
+                                      folder = COALESCE($8, folder)
                      WHERE id = $1",
                 )
                 .bind(e.id)
@@ -445,6 +569,7 @@ pub(crate) async fn store_uploads(
                 .bind(actor.id)
                 .bind(version)
                 .bind(format)
+                .bind(upload.folder.as_deref())
                 .execute(&mut *conn)
                 .await?;
                 (e.id, version, true)
@@ -452,8 +577,9 @@ pub(crate) async fn store_uploads(
             None => {
                 let id = Uuid::new_v4();
                 sqlx::query(
-                    "INSERT INTO files (id, revision_id, filename, content_type, size_bytes, sha256, uploaded_by, format)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                    "INSERT INTO files (id, revision_id, filename, content_type, size_bytes, sha256, uploaded_by,
+                                        format, folder)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                 )
                 .bind(id)
                 .bind(rev.id)
@@ -463,6 +589,7 @@ pub(crate) async fn store_uploads(
                 .bind(&upload.blob.sha256)
                 .bind(actor.id)
                 .bind(format)
+                .bind(upload.folder.as_deref().unwrap_or(""))
                 .execute(&mut *conn)
                 .await?;
                 (id, 1, true)
@@ -523,6 +650,84 @@ pub(crate) async fn store_uploads(
 
 fn validate_comment(comment: &str) -> AppResult<String> {
     domain::limit_text("Comment", comment, 2000)
+}
+
+/// Stores a new folder for a file inside the caller's transaction (the
+/// revision is locked and checked as editable) and records it.
+async fn move_to_folder(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    rev: &Revision,
+    file_id: Uuid,
+    filename: &str,
+    from: &str,
+    to: &str,
+) -> AppResult<()> {
+    sqlx::query("UPDATE files SET folder = $2 WHERE id = $1")
+        .bind(file_id)
+        .bind(to)
+        .execute(&mut *conn)
+        .await?;
+    let shown = |f: &str| {
+        if f.is_empty() {
+            "the top of the project group".to_string()
+        } else {
+            format!("{f}/")
+        }
+    };
+    audit::record(
+        conn,
+        Some(actor),
+        "file.folder",
+        "revision",
+        Some(rev.id),
+        format!(
+            "Moved {filename} from {} to {} in {}",
+            shown(from),
+            shown(to),
+            revisions::label(rev)
+        ),
+        json!({ "item_id": rev.item_id, "file_id": file_id, "from": from, "to": to }),
+    )
+    .await
+}
+
+/// Changes the folder of a file (its place in the desktop working folder)
+/// while its revision is checked out by the actor.
+pub async fn set_folder(
+    pool: &PgPool,
+    actor: &Actor,
+    file_id: Uuid,
+    folder: &str,
+) -> AppResult<FileRecord> {
+    let folder = domain::normalize_folder(folder)?;
+    let file = get(pool, file_id).await?;
+    let mut tx = pool.begin().await?;
+    let rev = revisions::lock(&mut tx, file.revision_id).await?;
+    revisions::ensure_editable(&rev, actor)?;
+    let current =
+        sqlx::query_scalar::<_, String>("SELECT folder FROM files WHERE id = $1 FOR UPDATE")
+            .bind(file_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if current != folder {
+        move_to_folder(
+            &mut tx,
+            actor,
+            &rev,
+            file_id,
+            &file.filename,
+            &current,
+            &folder,
+        )
+        .await?;
+        sqlx::query("UPDATE revisions SET updated_at = now() WHERE id = $1")
+            .bind(rev.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    get(pool, file_id).await
 }
 
 /// Adds files / new versions to a revision that is checked out by the actor.
@@ -763,6 +968,34 @@ mod tests {
         assert!(parse_bases("[1]").is_err());
         assert!(parse_bases(r#"{"a": true}"#).is_err());
         assert!(parse_bases("not json").is_err());
+    }
+
+    #[test]
+    fn folder_fields() {
+        let (default, by_name) = parse_folders(
+            Some("\\Rover\\"),
+            Some(r#"{"Parts/Wheel.IPT": "Rover/Parts", "frame.asm.3": "Rover"}"#),
+        )
+        .unwrap();
+        assert_eq!(default.as_deref(), Some("Rover"));
+        assert_eq!(
+            by_name.get("wheel.ipt").map(String::as_str),
+            Some("Rover/Parts")
+        );
+        assert_eq!(
+            by_name.get("frame.asm").map(String::as_str),
+            Some("Rover"),
+            "keys are matched like stored names"
+        );
+        assert_eq!(parse_folders(None, None).unwrap(), (None, HashMap::new()));
+        assert_eq!(
+            parse_folders(Some(""), Some(" ")).unwrap().0.as_deref(),
+            Some("")
+        );
+        assert!(parse_folders(Some("../x"), None).is_err());
+        assert!(parse_folders(None, Some(r#"{"a.step": "../x"}"#)).is_err());
+        assert!(parse_folders(None, Some(r#"{"a.step": 3}"#)).is_err());
+        assert!(parse_folders(None, Some("[]")).is_err());
     }
 
     #[test]

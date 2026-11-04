@@ -10,6 +10,7 @@
 - [Files, versions and 3D preview](guide/files.md)
 - [BOM, references and change propagation](guide/structure.md)
 - [Change orders, reviews and notifications](guide/changes.md)
+- [Simulations (FEA, CFD)](guide/simulation.md)
 - [Desktop app](guide/desktop.md)
 - [Ask TeamCraft (assistant)](guide/assistant.md)
 - [Manual test tour](guide/tour.md)

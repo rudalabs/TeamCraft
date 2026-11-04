@@ -1,122 +1,44 @@
-//! The local workspace: one folder per project group and revision,
-//! `<workspace>/<project group>/<item number>/<revision>/`, as in the
-//! check-out/check-in workflow of classic PDM clients. Files are compared with the server by
-//! SHA-256, so the app knows what changed before it checks in.
+//! The local working folder: one folder per project group that mirrors the
+//! folder structure of the files on the server, one copy of each file (see
+//! [`crate::layout`] for the rules):
+//!
+//! ```text
+//! <workspace>/ROVER/chassis/chassis.asm
+//! <workspace>/ROVER/chassis/brackets/bracket.prt
+//! <workspace>/.teamcraft/state.json
+//! ```
+//!
+//! Files are compared with the server by SHA-256. Files the user has not
+//! checked out are read-only on disk; checking out makes them writable,
+//! checking in uploads the changed ones and makes them read-only again.
+//! Nothing that was changed locally is ever overwritten, and two items with
+//! the same folder and file name are reported instead of replacing each other.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
+    sync::atomic::{AtomicBool, Ordering},
+    time::UNIX_EPOCH,
 };
 
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 
-use crate::api::{Api, ApiError};
+pub use crate::layout::{is_ignored, logical_name, safe_name};
+use crate::{
+    api::{Api, ApiError},
+    layout::{self, Entry, GetAction, MigrationAction, OldFile, ServerFile, State},
+};
 
-/// Folder of a revision inside the workspace – one subfolder per project
-/// group: `<workspace>/<project group>/<item number>/<revision>/`, so every
-/// group's files stay together and only the groups one works with are on
-/// disk. A folder of the older layout (`<workspace>/<item>/<revision>/`) is
-/// moved there the first time it is used; without a project group the item
-/// folder sits directly in the workspace.
-pub fn revision_dir(root: &Path, project: Option<&str>, item_number: &str, code: &str) -> PathBuf {
-    let legacy = root.join(safe_name(item_number)).join(safe_name(code));
-    let Some(project) = project.map(str::trim).filter(|p| !p.is_empty()) else {
-        return legacy;
-    };
-    let dir = root
-        .join(safe_name(project))
-        .join(safe_name(item_number))
-        .join(safe_name(code));
-    if !dir.exists() && legacy.is_dir() {
-        if let Some(parent) = dir.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if std::fs::rename(&legacy, &dir).is_ok() {
-            // the item folder of the old layout is empty now (or holds other revisions)
-            if let Some(old_item) = legacy.parent() {
-                let _ = std::fs::remove_dir(old_item);
-            }
-        }
-    }
-    dir
-}
+// ---------------------------------------------------------------------------
+// Local files
+// ---------------------------------------------------------------------------
 
-/// A file or folder name that is valid on Windows, macOS and Linux.
-pub fn safe_name(name: &str) -> String {
-    let cleaned: String = name
-        .trim()
-        .chars()
-        .map(|c| {
-            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
-                '_'
-            } else {
-                c
-            }
-        })
-        .collect();
-    let cleaned = cleaned.trim_matches(|c| c == '.' || c == ' ').to_string();
-    if cleaned.is_empty() {
-        "_".into()
-    } else {
-        cleaned
-    }
-}
-
-/// Temporary, lock and backup files of CAD and office programs are never
-/// uploaded: SolidWorks/Office `~$…` locks, AutoCAD `.dwl`/`.sv$`, KiCad
-/// `-bak`/`_autosave-`/`.lck`, Creo `trail.txt`/`std.out`, FreeCAD `.FCBak`,
-/// Eagle `.b#1`, Blender `.blend1`, `Thumbs.db`, …
-pub fn is_ignored(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    let ext = lower.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-    name.starts_with('.')
-        || name.starts_with("~$")
-        || lower.ends_with('~')
-        || lower.ends_with(".teamcraft-download")
-        || lower.ends_with("-bak")
-        || lower.starts_with("_autosave-")
-        || lower.starts_with("trail.txt")
-        || matches!(
-            lower.as_str(),
-            "std.out" | "current_session.pro" | "thumbs.db" | "desktop.ini" | "fp-info-cache"
-        )
-        || matches!(
-            ext,
-            "tmp" | "bak" | "lck" | "lock" | "dwl" | "dwl2" | "sv$" | "ac$" | "fcbak" | "fcstd1"
-                | "blend1" | "blend2" | "kicad_prl"
-        )
-        // Eagle backups: board.b#1, schematic.s#2, library.l#3
-        || (ext.len() == 3
-            && matches!(ext.as_bytes()[0], b'b' | b's' | b'l')
-            && ext.as_bytes()[1] == b'#'
-            && ext.as_bytes()[2].is_ascii_digit())
-}
-
-/// Creo writes every save as `<name>.<ext>.<n>` (`bracket.prt.7`).
-const CREO_ITERATED: [&str; 7] = ["prt", "asm", "drw", "frm", "lay", "sec", "mfg"];
-
-/// The name a workspace file has on the server and its Creo iteration:
-/// `bracket.prt.7` → `("bracket.prt", 7)`, `bracket.prt` → `("bracket.prt", 0)`.
-/// Same rule as `cadformat::normalize_name` on the server.
-pub fn logical_name(name: &str) -> (&str, u32) {
-    if let Some((base, number)) = name.rsplit_once('.') {
-        if !number.is_empty() && number.len() <= 6 && number.bytes().all(|b| b.is_ascii_digit()) {
-            if let Some((stem, ext)) = base.rsplit_once('.') {
-                if !stem.is_empty() && CREO_ITERATED.contains(&ext.to_ascii_lowercase().as_str()) {
-                    return (base, number.parse().unwrap_or(0));
-                }
-            }
-        }
-    }
-    (name, 0)
-}
-
-/// The file of a revision folder that holds the newest content of a
-/// server file: the highest Creo iteration, or the file itself.
+/// The file of a folder that holds the newest content of a server file: the
+/// highest Creo iteration, or the file itself.
 pub async fn newest_local(dir: &Path, name: &str) -> Result<Option<PathBuf>, ApiError> {
     let wanted = name.to_lowercase();
     let mut best: Option<(u32, PathBuf)> = None;
@@ -150,336 +72,71 @@ pub async fn sha256_of(path: &Path) -> Result<String, ApiError> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Hidden file of a revision folder that remembers the server version every
-/// file had when it was copied into the workspace (the *base* of local
-/// changes). It tells "changed here" apart from "changed on the server", and
-/// the check-in sends it along so the server refuses to overwrite a newer
-/// version (409) instead of losing somebody else's work.
-pub const BASE_FILE: &str = ".teamcraft-base.json";
-
-/// The server version a workspace file was copied from.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct BaseEntry {
-    pub name: String,
-    pub version: i64,
-    pub sha256: String,
+fn modified_ms(meta: &std::fs::Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
-/// Lower-case file name → base entry.
-pub type Bases = HashMap<String, BaseEntry>;
-
-/// Reads the base file of a revision folder (empty if there is none or it
-/// cannot be read – the workspace then works as before, without the checks).
-pub async fn read_bases(dir: &Path) -> Bases {
-    match tokio::fs::read(dir.join(BASE_FILE)).await {
-        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-        Err(_) => Bases::new(),
+/// SHA-256, size and modification time of a local file; an unchanged file
+/// (same size and time as when the state entry was written) is not hashed
+/// again. `None` if it does not exist.
+async fn local_info(
+    path: &Path,
+    cached: Option<&Entry>,
+) -> Result<Option<(String, u64, u64)>, ApiError> {
+    let Ok(meta) = tokio::fs::metadata(path).await else {
+        return Ok(None);
+    };
+    if !meta.is_file() {
+        return Ok(None);
     }
-}
-
-pub async fn write_bases(dir: &Path, bases: &Bases) -> Result<(), ApiError> {
-    let json = serde_json::to_vec_pretty(bases)
-        .map_err(|e| ApiError::local(format!("Workspace state: {e}")))?;
-    tokio::fs::write(dir.join(BASE_FILE), json).await?;
-    Ok(())
-}
-
-/// `{"hub.step": "<sha256>", …}` – the `bases` field of a check-in for the
-/// files that are uploaded and were copied from the server before.
-pub fn bases_field(bases: &Bases, names: &[String]) -> String {
-    let map: serde_json::Map<String, Value> = names
-        .iter()
-        .filter_map(|name| {
-            let base = bases.get(&name.to_lowercase())?;
-            Some((name.clone(), Value::String(base.sha256.clone())))
-        })
-        .collect();
-    Value::Object(map).to_string()
-}
-
-/// A file of the revision folder compared with the server.
-#[derive(Clone, Debug, Serialize, PartialEq)]
-pub struct LocalFile {
-    /// Name on the server (Creo iterations without the `.<n>` suffix).
-    pub name: String,
-    /// The file on disk, if it differs from `name` (newest Creo iteration,
-    /// e.g. `bracket.prt.7`).
-    pub local_name: Option<String>,
-    /// `unchanged`, `modified`, `outdated` (unchanged here, newer version on
-    /// the server), `conflict` (changed here **and** on the server), `new`
-    /// (only local) or `missing` (only on the server)
-    pub state: &'static str,
-    pub size: u64,
-    /// Current version on the server, if the file exists there.
-    pub server_version: Option<i64>,
-    /// The server version the local file was copied from, if known.
-    pub base_version: Option<i64>,
-}
-
-/// The state of a local file that exists on the server and differs from
-/// the current version: with a known base, a file the server changed since
-/// is `outdated` (unchanged here) or a `conflict` (changed here too).
-pub fn differing_state(
-    local_sha: &str,
-    server_sha: &str,
-    base: Option<&BaseEntry>,
-) -> &'static str {
-    match base {
-        Some(b) if b.sha256 == server_sha => "modified",
-        Some(b) if b.sha256 == local_sha => "outdated",
-        Some(_) => "conflict",
-        None => "modified",
-    }
-}
-
-fn server_files(files: &Value) -> HashMap<String, (String, String, i64)> {
-    // lower-case name → (name, sha256, version); the server treats names case-insensitively
-    files
-        .as_array()
-        .map(|list| {
-            list.iter()
-                .filter_map(|f| {
-                    let name = f["filename"].as_str()?;
-                    Some((
-                        name.to_lowercase(),
-                        (
-                            name.to_string(),
-                            f["sha256"].as_str().unwrap_or("").to_string(),
-                            f["version"].as_i64().unwrap_or(1),
-                        ),
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Compares the revision folder with the files on the server. Creo
-/// iterations count as one file: the newest iteration is compared.
-pub async fn status(dir: &Path, files_on_server: &Value) -> Result<Vec<LocalFile>, ApiError> {
-    let server = server_files(files_on_server);
-    let bases = read_bases(dir).await;
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    // lower-case logical name → (iteration, logical name, file name, path, size)
-    let mut newest: HashMap<String, (u32, String, String, PathBuf, u64)> = HashMap::new();
-    if dir.is_dir() {
-        let mut entries = tokio::fs::read_dir(dir).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let meta = entry.metadata().await?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !meta.is_file() || is_ignored(&name) {
-                continue;
-            }
-            let (logical, iteration) = logical_name(&name);
-            let key = logical.to_lowercase();
-            if newest.get(&key).is_none_or(|(i, ..)| iteration > *i) {
-                let logical = logical.to_string();
-                newest.insert(key, (iteration, logical, name, entry.path(), meta.len()));
-            }
+    let (size, modified) = (meta.len(), modified_ms(&meta));
+    if let Some(e) = cached {
+        if e.size == size && e.modified_ms == modified && modified != 0 && !e.sha256.is_empty() {
+            return Ok(Some((e.sha256.clone(), size, modified)));
         }
     }
-    for (key, (_, logical, file_name, path, size)) in newest {
-        let base = bases.get(&key);
-        let (state, version) = match server.get(&key) {
-            Some((_, sha, version)) => {
-                let local = sha256_of(&path).await?;
-                (
-                    if &local == sha {
-                        "unchanged"
-                    } else {
-                        differing_state(&local, sha, base)
-                    },
-                    Some(*version),
-                )
-            }
-            // copied from the server, but removed there since: changed here → conflict
-            None => match base {
-                Some(b) => {
-                    let local = sha256_of(&path).await?;
-                    (
-                        if local == b.sha256 {
-                            "outdated"
-                        } else {
-                            "conflict"
-                        },
-                        None,
-                    )
-                }
-                None => ("new", None),
-            },
+    Ok(Some((sha256_of(path).await?, size, modified)))
+}
+
+/// Makes a file read-only or writable for its owner (Unix permissions; the
+/// read-only attribute on Windows). Returns whether anything changed.
+pub fn set_read_only(path: &Path, read_only: bool) -> std::io::Result<bool> {
+    let mut perms = std::fs::metadata(path)?.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = perms.mode();
+        let wanted = if read_only {
+            mode & !0o222
+        } else {
+            mode | 0o200
         };
-        seen.insert(key);
-        out.push(LocalFile {
-            local_name: (file_name != logical).then_some(file_name),
-            name: logical,
-            state,
-            size,
-            server_version: version,
-            base_version: base.map(|b| b.version),
-        });
-    }
-    for (key, (name, _, version)) in &server {
-        if !seen.contains(key) {
-            out.push(LocalFile {
-                name: name.clone(),
-                local_name: None,
-                state: "missing",
-                size: 0,
-                server_version: Some(*version),
-                base_version: bases.get(key).map(|b| b.version),
-            });
+        if wanted == mode {
+            return Ok(false);
         }
+        perms.set_mode(wanted);
     }
-    out.sort_by_key(|f| f.name.to_lowercase());
-    Ok(out)
+    #[cfg(not(unix))]
+    {
+        if perms.readonly() == read_only {
+            return Ok(false);
+        }
+        // Windows: only the read-only attribute is cleared.
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(read_only);
+    }
+    std::fs::set_permissions(path, perms)?;
+    Ok(true)
 }
 
-/// Result of filling a revision folder.
-#[derive(Debug, Serialize)]
-pub struct Downloaded {
-    pub dir: PathBuf,
-    pub downloaded: Vec<String>,
-    /// Local files that differ from the server and were kept untouched.
-    pub kept: Vec<String>,
-}
-
-/// Downloads the current version of every file into the revision folder.
-/// Files that already match are skipped, outdated files (unchanged since
-/// they were copied) are replaced, modified local files are kept. The
-/// version of every copied file is remembered in [`BASE_FILE`].
-pub async fn download_all(
-    api: &Api,
-    root: &Path,
-    project: Option<&str>,
-    item_number: &str,
-    code: &str,
-) -> Result<Downloaded, ApiError> {
-    let dir = revision_dir(root, project, item_number, code);
-    tokio::fs::create_dir_all(&dir).await?;
-    let files = api
-        .json(
-            Method::GET,
-            &format!("/items/{}/revisions/{}/files", enc(item_number), enc(code)),
-            None,
-        )
-        .await?;
-    let mut downloaded = Vec::new();
-    let mut kept = Vec::new();
-    let mut bases = read_bases(&dir).await;
-    let before = bases.clone();
-    for f in files.as_array().cloned().unwrap_or_default() {
-        let (Some(id), Some(name)) = (f["id"].as_str(), f["filename"].as_str()) else {
-            continue;
-        };
-        let sha = f["sha256"].as_str().unwrap_or("").to_string();
-        let base = BaseEntry {
-            name: name.to_string(),
-            version: f["version"].as_i64().unwrap_or(1),
-            sha256: sha.clone(),
-        };
-        let target = dir.join(safe_name(name));
-        if target.is_file() {
-            let local = sha256_of(&target).await?;
-            if local == sha {
-                bases.insert(name.to_lowercase(), base);
-                continue;
-            }
-            // Outdated (unchanged since it was copied here): replaced by the
-            // current version. Local changes stay untouched – with their old base.
-            let unchanged_here = before
-                .get(&name.to_lowercase())
-                .is_some_and(|b| b.sha256 == local);
-            if !unchanged_here {
-                kept.push(name.to_string());
-                continue;
-            }
-        }
-        api.download_to(&format!("/files/{id}/content"), &target)
-            .await?;
-        bases.insert(name.to_lowercase(), base);
-        downloaded.push(name.to_string());
-    }
-    if bases != before {
-        write_bases(&dir, &bases).await?;
-    }
-    Ok(Downloaded {
-        dir,
-        downloaded,
-        kept,
-    })
-}
-
-/// Checks in: uploads the chosen files of the revision folder as new
-/// versions and releases the lock in one request (atomic on the server).
-pub async fn check_in(
-    api: &Api,
-    root: &Path,
-    project: Option<&str>,
-    item_number: &str,
-    code: &str,
-    names: &[String],
-    comment: &str,
-) -> Result<Value, ApiError> {
-    let dir = revision_dir(root, project, item_number, code);
-    let mut files = Vec::new();
-    for name in names {
-        if name.contains(['/', '\\']) || name == ".." || is_ignored(name) {
-            return Err(ApiError::local(format!("'{name}' cannot be checked in.")));
-        }
-        // Creo: the newest iteration (bracket.prt.7) is uploaded as bracket.prt.
-        let (logical, _) = logical_name(name);
-        let Some(path) = newest_local(&dir, logical).await? else {
-            return Err(ApiError::local(format!(
-                "{name} is no longer in the workspace."
-            )));
-        };
-        files.push((logical.to_string(), path));
-    }
-    // The server refuses (409) files that changed there since they were copied here.
-    let mut bases = read_bases(&dir).await;
-    let names: Vec<String> = files.iter().map(|(name, _)| name.clone()).collect();
-    let result = api
-        .multipart(
-            &format!(
-                "/items/{}/revisions/{}/checkin",
-                enc(item_number),
-                enc(code)
-            ),
-            &files,
-            &[
-                ("comment", comment.to_string()),
-                ("bases", bases_field(&bases, &names)),
-            ],
-        )
-        .await?;
-    // The checked-in content is the new base of the local files (best effort:
-    // the check-in itself has succeeded).
-    let stored = result["files"].as_array().cloned().unwrap_or_default();
-    for (name, path) in &files {
-        let version = stored
-            .iter()
-            .find(|s| {
-                s["filename"]
-                    .as_str()
-                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
-            })
-            .and_then(|s| s["version"].as_i64());
-        if let (Some(version), Ok(sha256)) = (version, sha256_of(path).await) {
-            bases.insert(
-                name.to_lowercase(),
-                BaseEntry {
-                    name: name.clone(),
-                    version,
-                    sha256,
-                },
-            );
-        }
-    }
-    if !files.is_empty() {
-        let _ = write_bases(&dir, &bases).await;
-    }
-    Ok(result)
+pub fn is_read_only(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|m| m.permissions().readonly())
+        .unwrap_or(false)
 }
 
 /// Percent-encoding of a path segment (item numbers are `A-Z0-9._-` anyway).
@@ -487,200 +144,1285 @@ pub fn enc(segment: &str) -> String {
     url::form_urlencoded::byte_serialize(segment.as_bytes()).collect()
 }
 
+// ---------------------------------------------------------------------------
+// Server side
+// ---------------------------------------------------------------------------
+
+/// The files of one revision and its lock, from the file status of the server.
+pub struct RevisionFiles {
+    pub files: Vec<ServerFile>,
+    pub locked_by_me: bool,
+    pub locked_by_name: Option<String>,
+    pub status: Value,
+}
+
+fn rev_path(item: &str, code: &str) -> String {
+    format!("/items/{}/revisions/{}", enc(item), enc(code))
+}
+
+/// Server files of a `file-status` answer (files only in the workspace are
+/// left out).
+fn server_files_of(
+    status: &Value,
+    project: Option<&str>,
+    item: &str,
+    code: &str,
+) -> Vec<ServerFile> {
+    let locked_by_me = status["locked_by_me"].as_bool().unwrap_or(false);
+    status["files"]
+        .as_array()
+        .map(|files| {
+            files
+                .iter()
+                .filter_map(|f| {
+                    Some(ServerFile {
+                        project: project.map(str::to_string),
+                        item: item.to_string(),
+                        revision: code.to_string(),
+                        file_id: f["file_id"].as_str()?.to_string(),
+                        filename: f["filename"].as_str()?.to_string(),
+                        folder: f["folder"].as_str().unwrap_or("").to_string(),
+                        version: f["version"].as_i64().unwrap_or(1),
+                        sha256: f["sha256"].as_str().unwrap_or("").to_string(),
+                        size: f["size_bytes"].as_u64().unwrap_or(0),
+                        locked_by_me,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub async fn revision_files(
+    api: &Api,
+    project: Option<&str>,
+    item: &str,
+    code: &str,
+) -> Result<RevisionFiles, ApiError> {
+    let status = api
+        .json(
+            Method::GET,
+            &format!("{}/file-status", rev_path(item, code)),
+            None,
+        )
+        .await?;
+    Ok(RevisionFiles {
+        files: server_files_of(&status, project, item, code),
+        locked_by_me: status["locked_by_me"].as_bool().unwrap_or(false),
+        locked_by_name: status["locked_by_name"].as_str().map(str::to_string),
+        status,
+    })
+}
+
+/// The folders of the workspace the files of a revision live in, with the
+/// server folder each stands for; without files the project group folder.
+fn revision_dirs(project: Option<&str>, files: &[ServerFile]) -> Vec<(String, String)> {
+    let mut dirs: BTreeMap<String, String> = BTreeMap::new();
+    for f in files {
+        dirs.entry(layout::local_dir_rel(project, &f.folder))
+            .or_insert_with(|| f.folder.clone());
+    }
+    if dirs.is_empty() {
+        dirs.insert(layout::local_dir_rel(project, ""), String::new());
+    }
+    dirs.into_iter().collect()
+}
+
+/// The folder to show for a revision: where its first file lives.
+pub fn main_dir(root: &Path, project: Option<&str>, files: &[ServerFile]) -> PathBuf {
+    let rel = revision_dirs(project, files)
+        .into_iter()
+        .next()
+        .map(|(rel, _)| rel)
+        .unwrap_or_default();
+    layout::join_rel(root, &rel)
+}
+
+// ---------------------------------------------------------------------------
+// Get: copy files into the working folder
+// ---------------------------------------------------------------------------
+
+/// Progress of a Get, sent to the user interface.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Progress {
+    pub done: usize,
+    pub total: usize,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+    pub current: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Clash {
+    pub path: String,
+    pub file: String,
+    pub with: String,
+}
+
+/// Result of a Get (or of filling the files of one revision).
+#[derive(Debug, Default, Serialize)]
+pub struct Downloaded {
+    /// The folder of the (root) revision.
+    pub dir: PathBuf,
+    pub downloaded: Vec<String>,
+    pub up_to_date: usize,
+    /// Local files that differ from the server and were kept untouched.
+    pub kept: Vec<String>,
+    /// Files whose place is taken by another file: never overwritten.
+    pub clashes: Vec<Clash>,
+    pub failed: Vec<String>,
+    pub cancelled: bool,
+    pub bytes: u64,
+    /// Items without a revision for the rule (Get of a structure).
+    pub unresolved: Vec<String>,
+    /// File names referenced in CAD files that are not in the vault.
+    pub missing_references: Vec<String>,
+    pub revisions: usize,
+}
+
+/// Copies the server files into the working folder: missing and outdated
+/// files are downloaded (each one checked by SHA-256 and recorded in the
+/// state right away, so an interrupted Get continues where it stopped),
+/// local changes and clashes are kept and reported. Files of revisions the
+/// user has not checked out become read-only, checked-out ones writable.
+pub async fn fetch(
+    api: &Api,
+    root: &Path,
+    files: &[ServerFile],
+    cancel: &AtomicBool,
+    progress: &mut (dyn FnMut(&Progress) + Send),
+) -> Result<Downloaded, ApiError> {
+    let mut state = State::load(root);
+    let before = state.clone();
+    let mut local = HashMap::new();
+    let mut infos = HashMap::new();
+    for f in files {
+        let rel = f.rel();
+        if let Some(info) = local_info(&layout::join_rel(root, &rel), state.get(&rel)).await? {
+            local.insert(layout::key_of(&rel), info.0.clone());
+            infos.insert(layout::key_of(&rel), info);
+        }
+    }
+    let steps = layout::plan_get(files, &state, &local);
+    let mut report = Downloaded::default();
+    let mut p = Progress {
+        total: steps
+            .iter()
+            .filter(|s| matches!(s.action, GetAction::Download { .. }))
+            .count(),
+        bytes_total: steps
+            .iter()
+            .filter(|s| matches!(s.action, GetAction::Download { .. }))
+            .map(|s| s.file.size)
+            .sum(),
+        ..Progress::default()
+    };
+    progress(&p);
+    for step in &steps {
+        let path = layout::join_rel(root, &step.rel);
+        let read_only = layout::read_only_wanted(step.file.locked_by_me);
+        match &step.action {
+            GetAction::UpToDate => {
+                let (sha, size, modified) = infos
+                    .get(&layout::key_of(&step.rel))
+                    .cloned()
+                    .unwrap_or_default();
+                let _ = set_read_only(&path, read_only);
+                let modified = std::fs::metadata(&path)
+                    .map(|m| modified_ms(&m))
+                    .unwrap_or(modified);
+                state.insert(step.file.entry(&sha, size, modified));
+                report.up_to_date += 1;
+            }
+            GetAction::KeepModified => {
+                if step.file.locked_by_me {
+                    let _ = set_read_only(&path, false);
+                }
+                report.kept.push(step.rel.clone());
+            }
+            GetAction::Clash { with } => report.clashes.push(Clash {
+                path: step.rel.clone(),
+                file: format!(
+                    "{}/{} {}",
+                    step.file.item, step.file.revision, step.file.filename
+                ),
+                with: with.clone(),
+            }),
+            GetAction::Download { .. } => {
+                if cancel.load(Ordering::Relaxed) {
+                    report.cancelled = true;
+                    break;
+                }
+                p.current = step.rel.clone();
+                progress(&p);
+                if let Some(dir) = path.parent() {
+                    tokio::fs::create_dir_all(dir).await?;
+                }
+                // replaced below; Windows refuses to replace read-only files
+                // (made read-only again if the download fails)
+                let was_read_only = path.exists() && is_read_only(&path);
+                if was_read_only {
+                    let _ = set_read_only(&path, false);
+                }
+                let restore_read_only = || {
+                    if was_read_only {
+                        let _ = set_read_only(&path, true);
+                    }
+                };
+                let mut bytes_before = p.bytes_done;
+                let result = {
+                    // progress inside big files, every 4 MiB
+                    let mut reported = bytes_before;
+                    let shown = &p;
+                    let report_progress = &mut *progress;
+                    let mut on_bytes = |n: u64| {
+                        bytes_before += n;
+                        if bytes_before - reported >= 4 << 20 {
+                            reported = bytes_before;
+                            let mut q = shown.clone();
+                            q.bytes_done = bytes_before;
+                            report_progress(&q);
+                        }
+                    };
+                    api.download_verified(
+                        &format!("/files/{}/content", step.file.file_id),
+                        &path,
+                        &step.file.sha256,
+                        cancel,
+                        &mut on_bytes,
+                    )
+                    .await
+                };
+                p.bytes_done = bytes_before;
+                match result {
+                    Ok(bytes) => {
+                        report.bytes += bytes;
+                        let _ = set_read_only(&path, read_only);
+                        let (size, modified) = std::fs::metadata(&path)
+                            .map(|m| (m.len(), modified_ms(&m)))
+                            .unwrap_or((bytes, 0));
+                        let entry = step.file.entry(&step.file.sha256, size, modified);
+                        state.insert(entry.clone());
+                        // remembered at once: an interrupted Get continues here
+                        let _ = State::store(root, [entry]);
+                        report.downloaded.push(step.rel.clone());
+                    }
+                    Err(_) if cancel.load(Ordering::Relaxed) => {
+                        restore_read_only();
+                        report.cancelled = true;
+                        break;
+                    }
+                    Err(e) => {
+                        restore_read_only();
+                        report.failed.push(format!("{}: {e}", step.rel));
+                    }
+                }
+                p.done += 1;
+                progress(&p);
+            }
+        }
+    }
+    p.current.clear();
+    progress(&p);
+    State::store(root, state.changes_since(&before))
+        .map_err(|e| ApiError::local(format!("Workspace state: {e}")))?;
+    Ok(report)
+}
+
+/// Copies the current files of one revision into the working folder.
+pub async fn download_revision(
+    api: &Api,
+    root: &Path,
+    project: Option<&str>,
+    item: &str,
+    code: &str,
+    cancel: &AtomicBool,
+    progress: &mut (dyn FnMut(&Progress) + Send),
+) -> Result<Downloaded, ApiError> {
+    let rev = revision_files(api, project, item, code).await?;
+    let mut report = fetch(api, root, &rev.files, cancel, progress).await?;
+    report.dir = main_dir(root, project, &rev.files);
+    report.revisions = 1;
+    Ok(report)
+}
+
+/// "Get": the revision with its BOM resolved by a revision rule (`latest`
+/// or `released`) and the CAD files its files reference – only what is
+/// missing or outdated is downloaded.
+pub async fn get_structure(
+    api: &Api,
+    root: &Path,
+    item: &str,
+    code: &str,
+    rule: &str,
+    cancel: &AtomicBool,
+    progress: &mut (dyn FnMut(&Progress) + Send),
+) -> Result<Downloaded, ApiError> {
+    let rule = if rule == "released" {
+        "released"
+    } else {
+        "latest"
+    };
+    let set = api
+        .json(
+            Method::GET,
+            &format!("{}/workset?rule={rule}", rev_path(item, code)),
+            None,
+        )
+        .await?;
+    let mut files = Vec::new();
+    let mut root_files = Vec::new();
+    let mut root_project = None;
+    let revisions = set["revisions"].as_array().cloned().unwrap_or_default();
+    for (i, r) in revisions.iter().enumerate() {
+        let project = r["project_code"].as_str().map(str::to_string);
+        let locked_by_me = r["locked_by_me"].as_bool().unwrap_or(false);
+        for f in r["files"].as_array().into_iter().flatten() {
+            let (Some(id), Some(name)) = (f["file_id"].as_str(), f["filename"].as_str()) else {
+                continue;
+            };
+            let file = ServerFile {
+                project: project.clone(),
+                item: r["item_number"].as_str().unwrap_or_default().to_string(),
+                revision: r["code"].as_str().unwrap_or_default().to_string(),
+                file_id: id.to_string(),
+                filename: name.to_string(),
+                folder: f["folder"].as_str().unwrap_or("").to_string(),
+                version: f["version"].as_i64().unwrap_or(1),
+                sha256: f["sha256"].as_str().unwrap_or("").to_string(),
+                size: f["size_bytes"].as_u64().unwrap_or(0),
+                locked_by_me,
+            };
+            if i == 0 {
+                root_files.push(file.clone());
+            }
+            files.push(file);
+        }
+        if i == 0 {
+            root_project = project;
+        }
+    }
+    let mut report = fetch(api, root, &files, cancel, progress).await?;
+    report.dir = main_dir(root, root_project.as_deref(), &root_files);
+    report.revisions = revisions.len();
+    let strings = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    report.unresolved = strings(&set["unresolved"]);
+    report.missing_references = strings(&set["missing_references"]);
+    Ok(report)
+}
+
+// ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
+
+/// A file of a revision in the working folder compared with the server.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct LocalFile {
+    /// Name on the server (Creo iterations without the `.<n>` suffix).
+    pub name: String,
+    /// The file on disk, if it differs from `name` (newest Creo iteration).
+    pub local_name: Option<String>,
+    /// Relative path in the workspace (`ROVER/chassis/bracket.prt`).
+    pub path: String,
+    /// `up_to_date`, `modified`, `outdated`, `conflict`, `new`, `missing`
+    /// (from the server's file status) or `clash` (another item's file is
+    /// at this place).
+    pub state: String,
+    pub size: u64,
+    pub server_version: Option<i64>,
+    /// The server version the local file was copied from, if known.
+    pub base_version: Option<i64>,
+    pub read_only: bool,
+    /// The file at this place belongs to another item.
+    pub clash_with: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Status {
+    pub dir: PathBuf,
+    pub exists: bool,
+    pub locked_by_me: bool,
+    pub locked_by_name: Option<String>,
+    pub files: Vec<LocalFile>,
+}
+
+/// A local file of a revision: where it is and what the state says.
+struct Found {
+    name: String,
+    path: Option<PathBuf>,
+    rel: String,
+    entry: Option<Entry>,
+    clash_with: Option<String>,
+}
+
+/// Local files in the folders of a revision that belong to it but are not on
+/// the server yet: untracked files with the name stem of one of its files
+/// (`bracket.step` next to `bracket.prt`, e.g. a STEP export).
+async fn new_local_files(
+    root: &Path,
+    project: Option<&str>,
+    files: &[ServerFile],
+    state: &State,
+) -> Result<Vec<(String, PathBuf, String)>, ApiError> {
+    // compared with the names on disk: the safe names (see `layout::local_rel`)
+    let stems: HashSet<String> = files
+        .iter()
+        .map(|f| layout::stem_of(&safe_name(&f.filename)))
+        .collect();
+    let names: HashSet<String> = files
+        .iter()
+        .map(|f| safe_name(&f.filename).to_lowercase())
+        .collect();
+    let mut out = Vec::new();
+    if files.is_empty() {
+        return Ok(out);
+    }
+    for (dir_rel, folder) in revision_dirs(project, files) {
+        let dir = layout::join_rel(root, &dir_rel);
+        let Ok(mut entries) = tokio::fs::read_dir(&dir).await else {
+            continue;
+        };
+        let mut seen = HashSet::new();
+        while let Some(entry) = entries.next_entry().await? {
+            let disk = entry.file_name().to_string_lossy().to_string();
+            if is_ignored(&disk) || !entry.metadata().await?.is_file() {
+                continue;
+            }
+            let (logical, _) = logical_name(&disk);
+            let logical = logical.to_string();
+            let rel = format!("{dir_rel}/{logical}")
+                .trim_start_matches('/')
+                .to_string();
+            if names.contains(&logical.to_lowercase())
+                || state.get(&rel).is_some()
+                || !stems.contains(&layout::stem_of(&logical))
+                || !seen.insert(logical.to_lowercase())
+            {
+                continue;
+            }
+            if let Some(path) = newest_local(&dir, &logical).await? {
+                out.push((logical, path, folder.clone()));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Compares the files of a revision in the working folder with the server
+/// (the server's file status decides up to date / modified / outdated /
+/// conflict), and puts the read-only rule in force for unchanged files.
+pub async fn status(
+    api: &Api,
+    root: &Path,
+    project: Option<&str>,
+    item: &str,
+    code: &str,
+) -> Result<Status, ApiError> {
+    let rev = revision_files(api, project, item, code).await?;
+    let mut state = State::load(root);
+    let before = state.clone();
+    let mut found = Vec::new();
+    for f in &rev.files {
+        let rel = f.rel();
+        let dir = layout::join_rel(root, &rel);
+        let dir = dir.parent().unwrap_or(root).to_path_buf();
+        let entry = state.get(&rel).cloned();
+        let clash_with = entry
+            .as_ref()
+            .filter(|e| !e.item.eq_ignore_ascii_case(item))
+            .map(|e| format!("{}/{} {}", e.item, e.revision, e.filename));
+        found.push(Found {
+            name: f.filename.clone(),
+            path: newest_local(&dir, &safe_name(&f.filename)).await?,
+            rel,
+            entry: entry.filter(|e| e.item.eq_ignore_ascii_case(item)),
+            clash_with,
+        });
+    }
+    for (name, path, _) in new_local_files(root, project, &rev.files, &state).await? {
+        let rel = layout::rel_of(root, &path).unwrap_or_default();
+        found.push(Found {
+            name,
+            path: Some(path),
+            rel,
+            entry: None,
+            clash_with: None,
+        });
+    }
+    // The local content of every file, reported to the server.
+    let mut client = Vec::new();
+    let mut local: HashMap<String, (String, u64)> = HashMap::new();
+    for f in &found {
+        let Some(path) = &f.path else { continue };
+        if f.clash_with.is_some() {
+            continue;
+        }
+        let exact = layout::rel_of(root, path)
+            .is_some_and(|r| layout::key_of(&r) == layout::key_of(&f.rel));
+        let cached = f.entry.as_ref().filter(|_| exact);
+        if let Some((sha, size, _)) = local_info(path, cached).await? {
+            let mut c = json!({ "filename": f.name, "sha256": sha });
+            if let Some(e) = &f.entry {
+                c["base_sha256"] = json!(e.sha256);
+            }
+            client.push(c);
+            local.insert(f.name.to_lowercase(), (sha, size));
+        }
+    }
+    let server = if client.is_empty() {
+        rev.status.clone()
+    } else {
+        api.json(
+            Method::POST,
+            &format!("{}/file-status", rev_path(item, code)),
+            Some(&json!({ "files": client })),
+        )
+        .await?
+    };
+    let by_name: HashMap<String, &Value> = server["files"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| Some((f["filename"].as_str()?.to_lowercase(), f)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    let mut state_changed = false;
+    for f in found {
+        let s = by_name.get(&f.name.to_lowercase());
+        let server_state = s
+            .and_then(|s| s["state"].as_str())
+            .unwrap_or(if f.path.is_some() { "new" } else { "missing" });
+        let state_name = if f.clash_with.is_some() {
+            "clash"
+        } else if f.path.is_none() {
+            "missing"
+        } else {
+            server_state
+        };
+        let local_name = f
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .filter(|n| !n.eq_ignore_ascii_case(&f.name));
+        // Read-only rule for files that equal a server version: writable
+        // only while checked out by me. Local changes are not touched.
+        if let (Some(path), "up_to_date" | "outdated") = (&f.path, state_name) {
+            if set_read_only(path, layout::read_only_wanted(rev.locked_by_me)).unwrap_or(false) {
+                state_changed = true;
+            }
+            if let Some(e) = f
+                .entry
+                .as_ref()
+                .filter(|e| e.checked_out != rev.locked_by_me)
+            {
+                let mut e = e.clone();
+                e.checked_out = rev.locked_by_me;
+                if let Ok(meta) = std::fs::metadata(path) {
+                    e.modified_ms = modified_ms(&meta);
+                }
+                state.insert(e);
+                state_changed = true;
+            }
+        }
+        out.push(LocalFile {
+            read_only: f.path.as_deref().is_some_and(is_read_only),
+            size: local.get(&f.name.to_lowercase()).map(|l| l.1).unwrap_or(0),
+            server_version: s.and_then(|s| s["version"].as_i64()),
+            base_version: f.entry.as_ref().map(|e| e.version),
+            name: f.name,
+            local_name,
+            path: f.rel,
+            state: state_name.to_string(),
+            clash_with: f.clash_with,
+        });
+    }
+    if state_changed {
+        let _ = State::store(root, state.changes_since(&before));
+    }
+    out.sort_by_key(|f| (f.path.to_lowercase(), f.name.to_lowercase()));
+    let dir = main_dir(root, project, &rev.files);
+    Ok(Status {
+        exists: out.iter().any(|f| f.state != "missing"),
+        dir,
+        locked_by_me: rev.locked_by_me,
+        locked_by_name: rev.locked_by_name,
+        files: out,
+    })
+}
+
+/// Where a file of a revision is in the working folder (for opening it and
+/// for the STEP export): the newest Creo iteration of a server file, or a
+/// new local file next to the revision's files.
+pub async fn locate(
+    api: &Api,
+    root: &Path,
+    project: Option<&str>,
+    item: &str,
+    code: &str,
+    name: &str,
+) -> Result<(PathBuf, Option<PathBuf>), ApiError> {
+    if name.contains(['/', '\\']) || name == ".." || name.is_empty() {
+        return Err(ApiError::local(format!("'{name}' is not a file name.")));
+    }
+    let rev = revision_files(api, project, item, code).await?;
+    let (logical, _) = logical_name(name);
+    let (dirs, wanted): (Vec<PathBuf>, String) = match rev
+        .files
+        .iter()
+        .find(|f| f.filename.eq_ignore_ascii_case(logical))
+    {
+        // on disk under its safe name (see `layout::local_rel`)
+        Some(f) => (
+            vec![layout::join_rel(
+                root,
+                &layout::local_dir_rel(project, &f.folder),
+            )],
+            safe_name(&f.filename),
+        ),
+        None => (
+            revision_dirs(project, &rev.files)
+                .into_iter()
+                .map(|(rel, _)| layout::join_rel(root, &rel))
+                .collect(),
+            logical.to_string(),
+        ),
+    };
+    for dir in &dirs {
+        if let Some(path) = newest_local(dir, &wanted).await? {
+            return Ok((dir.clone(), Some(path)));
+        }
+    }
+    Ok((
+        dirs.into_iter()
+            .next()
+            .unwrap_or_else(|| root.to_path_buf()),
+        None,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Check-in
+// ---------------------------------------------------------------------------
+
+/// Checks in: uploads the chosen files as new versions and releases the
+/// lock in one request (atomic on the server). Every file names the version
+/// it is based on, so the server refuses (409) to overwrite a newer one; new
+/// files are sent with the folder they sit in. Afterwards the files are
+/// read-only again.
+pub async fn check_in(
+    api: &Api,
+    root: &Path,
+    project: Option<&str>,
+    item: &str,
+    code: &str,
+    names: &[String],
+    comment: &str,
+) -> Result<Value, ApiError> {
+    let rev = revision_files(api, project, item, code).await?;
+    let mut state = State::load(root);
+    let before = state.clone();
+    let news = new_local_files(root, project, &rev.files, &state).await?;
+    let mut files = Vec::new();
+    let mut bases = serde_json::Map::new();
+    let mut folders = serde_json::Map::new();
+    for name in names {
+        if name.contains(['/', '\\']) || name == ".." || is_ignored(name) {
+            return Err(ApiError::local(format!("'{name}' cannot be checked in.")));
+        }
+        // Creo: the newest iteration (bracket.prt.7) is uploaded as bracket.prt.
+        let (logical, _) = logical_name(name);
+        let path = if let Some(f) = rev
+            .files
+            .iter()
+            .find(|f| f.filename.eq_ignore_ascii_case(logical))
+        {
+            let rel = f.rel();
+            if let Some(e) = state
+                .get(&rel)
+                .filter(|e| e.item.eq_ignore_ascii_case(item))
+            {
+                bases.insert(f.filename.clone(), Value::String(e.sha256.clone()));
+            }
+            let dir = layout::join_rel(root, &layout::local_dir_rel(project, &f.folder));
+            newest_local(&dir, &safe_name(&f.filename)).await?
+        } else if let Some((_, path, folder)) = news
+            .iter()
+            .find(|(n, _, _)| n.eq_ignore_ascii_case(logical))
+        {
+            folders.insert(logical.to_string(), Value::String(folder.clone()));
+            Some(path.clone())
+        } else {
+            // a new file at the top of the revision's first folder
+            let (dir_rel, folder) = revision_dirs(project, &rev.files)
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            folders.insert(logical.to_string(), Value::String(folder));
+            newest_local(&layout::join_rel(root, &dir_rel), logical).await?
+        };
+        let Some(path) = path else {
+            return Err(ApiError::local(format!(
+                "{name} is no longer in the working folder."
+            )));
+        };
+        files.push((logical.to_string(), path));
+    }
+    let result = api
+        .multipart(
+            &format!("{}/checkin", rev_path(item, code)),
+            &files,
+            &[
+                ("comment", comment.to_string()),
+                ("bases", Value::Object(bases).to_string()),
+                ("folders", Value::Object(folders).to_string()),
+            ],
+        )
+        .await?;
+    // The checked-in content is the new base of the local files, and the
+    // lock is gone: everything unchanged becomes read-only (best effort –
+    // the check-in itself has succeeded).
+    let stored = result["files"].as_array().cloned().unwrap_or_default();
+    let after = revision_files(api, project, item, code)
+        .await
+        .map(|r| r.files)
+        .unwrap_or_default();
+    for (name, path) in &files {
+        let Some(server) = after.iter().find(|f| f.filename.eq_ignore_ascii_case(name)) else {
+            continue;
+        };
+        let version = stored
+            .iter()
+            .find(|s| {
+                s["filename"]
+                    .as_str()
+                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
+            })
+            .and_then(|s| s["version"].as_i64())
+            .unwrap_or(server.version);
+        if let Ok(sha) = sha256_of(path).await {
+            let meta = std::fs::metadata(path).ok();
+            let mut entry = server.entry(&sha, meta.as_ref().map(|m| m.len()).unwrap_or(0), 0);
+            entry.version = version;
+            entry.checked_out = false;
+            if layout::rel_of(root, path)
+                .is_some_and(|r| layout::key_of(&r) == layout::key_of(&entry.path))
+            {
+                entry.modified_ms = meta.as_ref().map(modified_ms).unwrap_or(0);
+            }
+            state.insert(entry);
+        }
+    }
+    let keys: Vec<String> = state
+        .of_revision(item, code)
+        .map(|e| layout::key_of(&e.path))
+        .collect();
+    for key in keys {
+        let Some(e) = state.files.get(&key).cloned() else {
+            continue;
+        };
+        let dir = layout::join_rel(root, &e.path);
+        let dir = dir.parent().unwrap_or(root).to_path_buf();
+        if let Ok(Some(path)) = newest_local(&dir, &safe_name(&e.filename)).await {
+            if sha256_of(&path).await.is_ok_and(|sha| sha == e.sha256) {
+                let _ = set_read_only(&path, true);
+                let mut e = e.clone();
+                e.checked_out = false;
+                if let Ok(meta) = std::fs::metadata(&path) {
+                    e.modified_ms = if path == layout::join_rel(root, &e.path) {
+                        modified_ms(&meta)
+                    } else {
+                        0
+                    };
+                }
+                state.insert(e);
+            }
+        }
+    }
+    let _ = State::store(root, state.changes_since(&before));
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// Migration from the old layout <group>/<item>/<revision>/
+// ---------------------------------------------------------------------------
+
+/// The base file of an old revision folder: lower-case name → version and
+/// SHA-256 the file was copied as.
+#[derive(Deserialize)]
+struct OldBase {
+    version: i64,
+    sha256: String,
+}
+
+async fn read_old_bases(dir: &Path) -> HashMap<String, OldBase> {
+    match tokio::fs::read(dir.join(layout::OLD_BASE_FILE)).await {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        Err(_) => HashMap::new(),
+    }
+}
+
+/// Folders two and three levels below the workspace that hold files and no
+/// subfolders – the shape of an old revision folder – with whether they
+/// hold the old base file.
+pub fn scan_old_dirs(root: &Path) -> Vec<(String, bool)> {
+    fn visible_dirs(dir: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                    .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+                    .map(|e| e.path())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    let mut out = Vec::new();
+    let mut candidates = Vec::new();
+    for first in visible_dirs(root) {
+        for second in visible_dirs(&first) {
+            candidates.push(second.clone());
+            candidates.extend(visible_dirs(&second));
+        }
+    }
+    for dir in candidates {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let (mut files, mut subdirs) = (0, 0);
+        for e in entries.flatten() {
+            match e.file_type() {
+                Ok(t) if t.is_dir() => subdirs += 1,
+                Ok(t) if t.is_file() => files += 1,
+                _ => {}
+            }
+        }
+        if files > 0 && subdirs == 0 {
+            if let Some(rel) = layout::rel_of(root, &dir) {
+                out.push((rel, dir.join(layout::OLD_BASE_FILE).is_file()));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// What the move into the new layout would do.
+#[derive(Debug, Default, Serialize)]
+pub struct MigrationPlan {
+    pub dirs: Vec<String>,
+    pub steps: Vec<layout::MigrationStep>,
+    pub moves: usize,
+    pub identical: usize,
+    pub kept: usize,
+    pub log: PathBuf,
+    #[serde(skip)]
+    files: Vec<OldFile>,
+    #[serde(skip)]
+    old_dirs: Vec<PathBuf>,
+}
+
+/// Finds the folders of the old layout and plans their move. Folders
+/// without the old base file count only if the server knows the item and
+/// revision; nothing is changed.
+pub async fn migration_plan(api: &Api, root: &Path) -> Result<MigrationPlan, ApiError> {
+    let state = State::load(root);
+    let candidates = layout::old_dir_candidates(&scan_old_dirs(root), &state);
+    let mut plan = MigrationPlan {
+        log: root.join(layout::STATE_DIR).join(layout::MIGRATION_LOG),
+        ..MigrationPlan::default()
+    };
+    for dir in candidates {
+        let status = match api
+            .json(
+                Method::GET,
+                &format!("{}/file-status", rev_path(&dir.item, &dir.revision)),
+                None,
+            )
+            .await
+        {
+            Ok(status) => status,
+            Err(e) if e.status == 404 || e.status == 400 => {
+                if !dir.marked {
+                    continue; // a folder of the user's own, not an old revision folder
+                }
+                Value::Null
+            }
+            Err(e) => return Err(e),
+        };
+        let project = match &dir.group {
+            Some(group) => Some(group.clone()),
+            None => api
+                .json(Method::GET, &rev_path(&dir.item, &dir.revision), None)
+                .await
+                .ok()
+                .and_then(|r| r["project_code"].as_str().map(str::to_string)),
+        };
+        let server = server_files_of(&status, project.as_deref(), &dir.item, &dir.revision);
+        let abs = layout::join_rel(root, &dir.rel);
+        let bases = read_old_bases(&abs).await;
+        let mut entries = tokio::fs::read_dir(&abs).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let disk = entry.file_name().to_string_lossy().to_string();
+            if !entry.metadata().await?.is_file() || is_ignored(&disk) {
+                continue;
+            }
+            let (logical, _) = logical_name(&disk);
+            let server_file = server
+                .iter()
+                .find(|f| f.filename.eq_ignore_ascii_case(logical))
+                .cloned();
+            let sibling_folder = server
+                .iter()
+                .find(|f| layout::stem_of(&f.filename) == layout::stem_of(logical))
+                .or_else(|| server.first())
+                .map(|f| f.folder.clone());
+            let base = bases.get(&logical.to_lowercase());
+            plan.files.push(OldFile {
+                rel: format!("{}/{disk}", dir.rel),
+                group: project.clone(),
+                item: dir.item.clone(),
+                revision: dir.revision.clone(),
+                disk_name: disk.clone(),
+                sha256: sha256_of(&entry.path()).await?,
+                base_version: base.map(|b| b.version),
+                base_sha256: base.map(|b| b.sha256.clone()),
+                server: server_file,
+                sibling_folder,
+            });
+        }
+        plan.dirs.push(dir.rel.clone());
+        plan.old_dirs.push(abs);
+    }
+    // What is already at the target places.
+    let mut existing = HashMap::new();
+    for f in &plan.files {
+        if let Some(target) = layout::migration_target(f) {
+            let path = layout::join_rel(root, &target);
+            if path.is_file() {
+                existing.insert(layout::key_of(&target), sha256_of(&path).await?);
+            }
+        }
+    }
+    plan.steps = layout::plan_migration(&plan.files, &existing);
+    for s in &plan.steps {
+        match s.action {
+            MigrationAction::Move { .. } => plan.moves += 1,
+            MigrationAction::AlreadyThere { .. } => plan.identical += 1,
+            MigrationAction::Keep { .. } => plan.kept += 1,
+        }
+    }
+    Ok(plan)
+}
+
+fn now_utc() -> String {
+    layout::format_utc(
+        std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    )
+}
+
+/// Moves the files of the old layout into the new one, as planned: a file
+/// whose place is taken stays where it is (never overwritten), identical
+/// copies are removed, emptied old folders too. Every step goes into
+/// `.teamcraft/migration.log`.
+pub async fn migrate(api: &Api, root: &Path) -> Result<MigrationPlan, ApiError> {
+    let mut plan = migration_plan(api, root).await?;
+    let mut state = State::load(root);
+    let before = state.clone();
+    let mut log = vec![format!(
+        "== {} – moving {} folder(s) of the old layout <group>/<item>/<revision>/ into the working-folder layout",
+        now_utc(),
+        plan.dirs.len()
+    )];
+    let by_rel: HashMap<String, OldFile> = plan
+        .files
+        .iter()
+        .map(|f| (f.rel.clone(), f.clone()))
+        .collect();
+    for step in plan.steps.iter_mut() {
+        let Some(f) = by_rel.get(&step.from) else {
+            continue;
+        };
+        let from = layout::join_rel(root, &step.from);
+        match step.action.clone() {
+            MigrationAction::Move { to } => {
+                let target = layout::join_rel(root, &to);
+                if target.exists() {
+                    let reason = format!("{to} appeared meanwhile");
+                    log.push(format!("kept    {} – {reason}", step.from));
+                    step.action = MigrationAction::Keep { reason };
+                    continue;
+                }
+                if let Some(dir) = target.parent() {
+                    std::fs::create_dir_all(dir)?;
+                }
+                let changed = if step.modified {
+                    " (changed locally)"
+                } else {
+                    ""
+                };
+                if std::fs::rename(&from, &target).is_err() {
+                    // another drive: copy, then remove the original
+                    if let Err(e) = std::fs::copy(&from, &target) {
+                        // no half-copied file is left at the new place
+                        let _ = std::fs::remove_file(&target);
+                        let reason = format!("could not be moved: {e}");
+                        log.push(format!("kept    {} – {reason}", step.from));
+                        step.action = MigrationAction::Keep { reason };
+                        continue;
+                    }
+                    if let Err(e) = remove_old_copy(&from) {
+                        // the copy is in place; the identical old one is
+                        // removed by the next move (same content)
+                        log.push(format!(
+                            "copied  {} -> {to}{changed} – the old copy could not be removed: {e}",
+                            step.from
+                        ));
+                        record_migrated(&mut state, root, f, &target, step.modified);
+                        continue;
+                    }
+                }
+                log.push(format!("moved   {} -> {to}{changed}", step.from));
+                record_migrated(&mut state, root, f, &target, step.modified);
+            }
+            MigrationAction::AlreadyThere { to } => {
+                let target = layout::join_rel(root, &to);
+                if let Err(e) = remove_old_copy(&from) {
+                    log.push(format!("kept    {} – could not be removed: {e}", step.from));
+                    continue;
+                }
+                log.push(format!("removed {} – the same file is at {to}", step.from));
+                if state.get(&to).is_none() {
+                    record_migrated(&mut state, root, f, &target, step.modified);
+                }
+            }
+            MigrationAction::Keep { reason } => {
+                log.push(format!("kept    {} – {reason}", step.from));
+            }
+        }
+    }
+    // Old folders that are empty now (but for the base file) are removed.
+    for dir in &plan.old_dirs {
+        let left = std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| e.file_name().to_string_lossy() != layout::OLD_BASE_FILE)
+                    .count()
+            })
+            .unwrap_or(1);
+        if left == 0 {
+            let _ = std::fs::remove_file(dir.join(layout::OLD_BASE_FILE));
+            if std::fs::remove_dir(dir).is_ok() {
+                if let Some(item_dir) = dir.parent() {
+                    let _ = std::fs::remove_dir(item_dir); // only if empty
+                }
+            }
+        }
+    }
+    State::store(root, state.changes_since(&before))
+        .map_err(|e| ApiError::local(format!("Workspace state: {e}")))?;
+    plan.moves = 0;
+    plan.identical = 0;
+    plan.kept = 0;
+    for s in &plan.steps {
+        match s.action {
+            MigrationAction::Move { .. } => plan.moves += 1,
+            MigrationAction::AlreadyThere { .. } => plan.identical += 1,
+            MigrationAction::Keep { .. } => plan.kept += 1,
+        }
+    }
+    log.push(format!(
+        "== {} moved, {} identical copies removed, {} kept",
+        plan.moves, plan.identical, plan.kept
+    ));
+    append_log(&plan.log, &log)?;
+    Ok(plan)
+}
+
+/// Removes the old copy of a migrated file. Windows refuses to delete a
+/// read-only file, so the flag is cleared first (and set again if the
+/// removal still fails).
+fn remove_old_copy(path: &Path) -> std::io::Result<()> {
+    let was_read_only = is_read_only(path);
+    if was_read_only {
+        let _ = set_read_only(path, false);
+    }
+    std::fs::remove_file(path).inspect_err(|_| {
+        if was_read_only {
+            let _ = set_read_only(path, true);
+        }
+    })
+}
+
+/// The state entry and the read-only rule for a file moved into place.
+fn record_migrated(state: &mut State, root: &Path, f: &OldFile, target: &Path, modified: bool) {
+    let Some(server) = &f.server else {
+        return; // a local-only file stays untracked (it shows up as new)
+    };
+    // Creo iterations: one entry for the logical name.
+    let (version, sha) = match (&f.base_version, &f.base_sha256) {
+        (Some(v), Some(s)) => (*v, s.clone()),
+        _ => (server.version, server.sha256.clone()),
+    };
+    let mut entry = server.entry(&sha, 0, 0);
+    entry.version = version;
+    if layout::rel_of(root, target)
+        .is_some_and(|r| layout::key_of(&r) == layout::key_of(&entry.path))
+        && !modified
+    {
+        if let Ok(meta) = std::fs::metadata(target) {
+            entry.size = meta.len();
+            entry.modified_ms = modified_ms(&meta);
+        }
+    }
+    if !modified {
+        let _ = set_read_only(target, layout::read_only_wanted(server.locked_by_me));
+        if let Ok(meta) = std::fs::metadata(target) {
+            if entry.size == meta.len() {
+                entry.modified_ms = modified_ms(&meta);
+            }
+        }
+    }
+    state.insert(entry);
+}
+
+fn append_log(path: &Path, lines: &[String]) -> Result<(), ApiError> {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    for line in lines {
+        writeln!(file, "{line}")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
-    fn names() {
-        assert_eq!(safe_name("PRT-000001"), "PRT-000001");
-        assert_eq!(safe_name("a/b\\c:d"), "a_b_c_d");
-        assert_eq!(safe_name(" .. "), "_");
-        assert_eq!(safe_name("CON?"), "CON_");
-        assert!(is_ignored("~$drawing.docx"));
-        assert!(is_ignored("~$Bracket.SLDPRT"), "SolidWorks lock file");
-        assert!(is_ignored(".DS_Store"));
-        assert!(is_ignored("part.step.teamcraft-download"));
-        for name in [
-            "layout.dwl",
-            "layout.dwl2",
-            "layout.sv$",
-            "board.kicad_pcb-bak",
-            "_autosave-board.kicad_pcb",
-            "~board.kicad_pcb.lck",
-            "board.kicad_prl",
-            "trail.txt.12",
-            "std.out",
-            "Thumbs.db",
-            "rover.FCBak",
-            "scene.blend1",
-            "board.b#1",
-            "power.s#3",
-        ] {
-            assert!(is_ignored(name), "{name}");
-        }
-        for name in [
-            "nozzle.step",
-            "Bracket.SLDPRT",
-            "housing.prt.3",
-            "board.kicad_pcb",
-            "power.sch",
-            "rover.FCStd",
-            "notes.txt",
-        ] {
-            assert!(!is_ignored(name), "{name}");
-        }
-        assert_eq!(logical_name("bracket.prt.7"), ("bracket.prt", 7));
-        assert_eq!(logical_name("Frame.ASM.12"), ("Frame.ASM", 12));
-        assert_eq!(logical_name("bracket.prt"), ("bracket.prt", 0));
-        assert_eq!(logical_name("report.pdf.2"), ("report.pdf.2", 0));
-        assert_eq!(logical_name("v1.2"), ("v1.2", 0));
-        let root = Path::new("/ws");
-        assert_eq!(
-            revision_dir(root, None, "NX-ENG-001", "B"),
-            Path::new("/ws/NX-ENG-001/B")
-        );
-        assert_eq!(
-            revision_dir(root, Some("ROVER"), "PRT-000001", "A"),
-            Path::new("/ws/ROVER/PRT-000001/A")
-        );
+    fn read_only_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bracket.prt");
+        std::fs::write(&path, b"v1").unwrap();
+        assert!(!is_read_only(&path));
+        assert!(set_read_only(&path, true).unwrap());
+        assert!(is_read_only(&path));
+        assert!(!set_read_only(&path, true).unwrap(), "already read-only");
+        assert!(std::fs::OpenOptions::new().write(true).open(&path).is_err() || is_root());
+        assert!(set_read_only(&path, false).unwrap());
+        assert!(!is_read_only(&path));
+        std::fs::write(&path, b"v2").unwrap();
+        // a read-only file can still be moved (the migration) and replaced
+        // after it was made writable (a Get)
+        set_read_only(&path, true).unwrap();
+        let moved = dir.path().join("moved.prt");
+        std::fs::rename(&path, &moved).unwrap();
+        assert!(is_read_only(&moved));
     }
 
     #[test]
-    fn old_layout_moves_into_the_project_group_folder() {
+    fn read_only_old_copies_are_removed() {
         let dir = tempfile::tempdir().unwrap();
-        let old = dir.path().join("PRT-000001").join("A");
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join("hub.step"), b"x").unwrap();
-        let new = revision_dir(dir.path(), Some("ROVER"), "PRT-000001", "A");
-        assert_eq!(new, dir.path().join("ROVER").join("PRT-000001").join("A"));
-        assert!(new.join("hub.step").is_file(), "the files moved along");
-        assert!(
-            !dir.path().join("PRT-000001").exists(),
-            "empty old item folder removed"
-        );
+        let path = dir.path().join("plate.prt");
+        std::fs::write(&path, b"v1").unwrap();
+        set_read_only(&path, true).unwrap();
+        remove_old_copy(&path).unwrap();
+        assert!(!path.exists());
+        assert!(remove_old_copy(&path).is_err(), "gone");
     }
 
-    #[tokio::test]
-    async fn compares_with_the_server() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("same.step"), b"v1").unwrap();
-        std::fs::write(dir.path().join("Changed.STEP"), b"edited").unwrap();
-        std::fs::write(dir.path().join("new.pdf"), b"%PDF").unwrap();
-        std::fs::write(dir.path().join("~$lock.docx"), b"x").unwrap();
-        let sha_v1 = hex::encode(Sha256::digest(b"v1"));
-        let server = json!([
-            { "filename": "same.step", "sha256": sha_v1, "version": 1 },
-            { "filename": "changed.step", "sha256": sha_v1, "version": 3 },
-            { "filename": "gone.stl", "sha256": sha_v1, "version": 2 },
-        ]);
-        let files = status(dir.path(), &server).await.unwrap();
-        let states: Vec<(&str, &str)> = files.iter().map(|f| (f.name.as_str(), f.state)).collect();
-        assert_eq!(
-            states,
-            vec![
-                ("Changed.STEP", "modified"),
-                ("gone.stl", "missing"),
-                ("new.pdf", "new"),
-                ("same.step", "unchanged"),
-            ]
-        );
-        assert_eq!(files[0].server_version, Some(3));
-        assert!(files.iter().all(|f| f.local_name.is_none()));
+    /// root ignores file permissions (CI containers).
+    fn is_root() -> bool {
+        std::env::var("USER").is_ok_and(|u| u == "root")
     }
 
     #[tokio::test]
     async fn creo_iterations_are_one_file() {
         let dir = tempfile::tempdir().unwrap();
-        // Checked out as housing.prt, then saved twice in Creo.
         std::fs::write(dir.path().join("housing.prt"), b"v1").unwrap();
         std::fs::write(dir.path().join("housing.prt.1"), b"edit 1").unwrap();
         std::fs::write(dir.path().join("housing.prt.2"), b"edit 2").unwrap();
-        std::fs::write(dir.path().join("frame.asm.5"), b"v1").unwrap();
-        std::fs::write(dir.path().join("trail.txt.3"), b"log").unwrap();
-        let sha_v1 = hex::encode(Sha256::digest(b"v1"));
-        let server = json!([
-            { "filename": "housing.prt", "sha256": sha_v1, "version": 1 },
-            { "filename": "frame.asm", "sha256": sha_v1, "version": 4 },
-        ]);
-        let files = status(dir.path(), &server).await.unwrap();
-        assert_eq!(
-            files,
-            vec![
-                LocalFile {
-                    name: "frame.asm".into(),
-                    local_name: Some("frame.asm.5".into()),
-                    state: "unchanged",
-                    size: 2,
-                    server_version: Some(4),
-                    base_version: None,
-                },
-                LocalFile {
-                    name: "housing.prt".into(),
-                    local_name: Some("housing.prt.2".into()),
-                    state: "modified",
-                    size: 6,
-                    server_version: Some(1),
-                    base_version: None,
-                },
-            ]
-        );
         let newest = newest_local(dir.path(), "HOUSING.PRT").await.unwrap();
         assert_eq!(newest, Some(dir.path().join("housing.prt.2")));
         assert_eq!(newest_local(dir.path(), "gone.prt").await.unwrap(), None);
     }
 
     #[tokio::test]
-    async fn outdated_and_conflicting_files() {
+    async fn unchanged_files_are_not_hashed_again() {
         let dir = tempfile::tempdir().unwrap();
-        let sha = |b: &[u8]| hex::encode(Sha256::digest(b));
-        // All four were checked out as v1; the server moved on for three of them.
-        std::fs::write(dir.path().join("mine.step"), b"edited").unwrap();
-        std::fs::write(dir.path().join("old.step"), b"v1").unwrap();
-        std::fs::write(dir.path().join("both.step"), b"edited").unwrap();
-        std::fs::write(dir.path().join("removed.step"), b"edited").unwrap();
-        std::fs::write(dir.path().join("fresh.pdf"), b"%PDF").unwrap();
-        let mut bases = Bases::new();
-        for name in ["mine.step", "old.step", "both.step", "removed.step"] {
-            bases.insert(
-                name.into(),
-                BaseEntry {
-                    name: name.into(),
-                    version: 1,
-                    sha256: sha(b"v1"),
-                },
-            );
+        let path = dir.path().join("a.step");
+        std::fs::write(&path, b"content").unwrap();
+        let (sha, size, modified) = local_info(&path, None).await.unwrap().unwrap();
+        assert_eq!(sha, hex::encode(Sha256::digest(b"content")));
+        let mut entry = ServerFile {
+            project: None,
+            item: "PRT-000001".into(),
+            revision: "A".into(),
+            file_id: "f".into(),
+            filename: "a.step".into(),
+            folder: String::new(),
+            version: 1,
+            sha256: sha.clone(),
+            size,
+            locked_by_me: false,
         }
-        write_bases(dir.path(), &bases).await.unwrap();
-        assert_eq!(read_bases(dir.path()).await, bases);
-        let server = json!([
-            { "filename": "mine.step", "sha256": sha(b"v1"), "version": 1 },
-            { "filename": "old.step", "sha256": sha(b"v2"), "version": 2 },
-            { "filename": "both.step", "sha256": sha(b"v2"), "version": 2 },
-        ]);
-        let files = status(dir.path(), &server).await.unwrap();
-        let states: Vec<(&str, &str, Option<i64>)> = files
-            .iter()
-            .map(|f| (f.name.as_str(), f.state, f.base_version))
-            .collect();
+        .entry("cached", size, modified);
+        let (cached, ..) = local_info(&path, Some(&entry)).await.unwrap().unwrap();
+        assert_eq!(cached, "cached", "same size and time: the state's hash");
+        entry.size += 1;
+        let (fresh, ..) = local_info(&path, Some(&entry)).await.unwrap().unwrap();
+        assert_eq!(fresh, sha);
         assert_eq!(
-            states,
-            vec![
-                ("both.step", "conflict", Some(1)),
-                ("fresh.pdf", "new", None),
-                ("mine.step", "modified", Some(1)),
-                ("old.step", "outdated", Some(1)),
-                ("removed.step", "conflict", Some(1)),
-            ],
-            "the base file itself is not listed"
+            local_info(&dir.path().join("gone"), None).await.unwrap(),
+            None
         );
-        let field: Value = serde_json::from_str(&bases_field(
-            &bases,
-            &["Mine.STEP".to_string(), "fresh.pdf".to_string()],
-        ))
-        .unwrap();
-        assert_eq!(field, json!({ "Mine.STEP": sha(b"v1") }));
-        assert_eq!(differing_state("a", "b", None), "modified");
+    }
+
+    #[test]
+    fn old_folders_are_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for (rel, content) in [
+            ("ROVER/PRT-000001/A/bracket.prt", "x"),
+            ("ROVER/PRT-000001/A/.teamcraft-base.json", "{}"),
+            ("ROVER/chassis/brackets/bracket.prt", "y"),
+            ("ROVER/chassis/chassis.asm", "z"),
+            ("PRT-000002/B/plate.prt", "p"),
+            (".teamcraft/state.json", "{}"),
+        ] {
+            let path = layout::join_rel(root, rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, content).unwrap();
+        }
+        assert_eq!(
+            scan_old_dirs(root),
+            vec![
+                ("PRT-000002/B".to_string(), false),
+                ("ROVER/PRT-000001/A".to_string(), true),
+                ("ROVER/chassis/brackets".to_string(), false),
+            ],
+            "ROVER/chassis holds a subfolder"
+        );
     }
 }

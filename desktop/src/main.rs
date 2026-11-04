@@ -11,6 +11,7 @@ mod api;
 mod cadexport;
 mod commands;
 mod folderimport;
+mod layout;
 mod settings;
 mod signin;
 mod workspace;
@@ -37,6 +38,8 @@ pub struct AppState {
     pub agent: Mutex<Option<commands::RunningAgent>>,
     /// Number of the last agent session (events carry it).
     pub agent_seq: AtomicU64,
+    /// Cancel flag of the running Get (workspace downloads).
+    pub get_cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Name of this computer, shown on the browser confirmation page and used for
@@ -136,6 +139,7 @@ fn main() {
                 sign_in_cancel: Mutex::new(None),
                 agent: Mutex::new(None),
                 agent_seq: AtomicU64::new(0),
+                get_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             });
             build_menu(app)?;
             if let (Some(zoom), Some(window)) = (zoom, app.get_webview_window("main")) {
@@ -160,6 +164,10 @@ fn main() {
             commands::file_bytes,
             commands::workspace_checkout,
             commands::workspace_download,
+            commands::workspace_get,
+            commands::workspace_cancel,
+            commands::workspace_migration_plan,
+            commands::workspace_migrate,
             commands::workspace_status,
             commands::workspace_checkin,
             commands::workspace_open,

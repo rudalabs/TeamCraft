@@ -141,6 +141,9 @@ pub struct FileRecord {
     pub version: i32,
     /// Format id (see `cadformat`), `""` if unknown.
     pub format: String,
+    /// Folder inside the project group (`chassis/brackets`, `""` = top);
+    /// the desktop working folder mirrors it.
+    pub folder: String,
     /// Label, CAD program and kind of the format; filled by `files::list` / `files::get`.
     #[sqlx(skip)]
     pub format_info: Option<crate::cadformat::FormatInfo>,
