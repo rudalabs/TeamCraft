@@ -2389,6 +2389,67 @@ async fn delivery_retries_and_gives_up() {
 }
 
 #[tokio::test]
+async fn bom_excel_export_reads_back() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    for (t, number) in [("part", "BOLT"), ("part", "NUT"), ("assembly", "STAGE-1")] {
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/items",
+                &eng,
+                Some(json!({ "item_type": t, "name": number, "number": number, "project": "ROCKET" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    for (child, qty) in [("BOLT", 6), ("NUT", 6)] {
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/items/STAGE-1/revisions/A/bom",
+                &eng,
+                Some(json!({ "child": child, "quantity": qty })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    let r = app
+        .api(
+            Method::GET,
+            "/api/v1/items/STAGE-1/revisions/A/bom.xlsx",
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.header("content-type").unwrap().contains("spreadsheetml"));
+    assert!(r
+        .header("content-disposition")
+        .unwrap()
+        .contains("STAGE-1_A_bom_latest.xlsx"));
+    let table = teamcraft::bomtable::read("bom.xlsx", &r.body).expect("the export reads back");
+    assert_eq!(
+        table
+            .rows
+            .iter()
+            .map(|r| (r.number.as_str(), r.quantity))
+            .collect::<Vec<_>>(),
+        vec![("BOLT", 6.0), ("NUT", 6.0)]
+    );
+    let r = app
+        .api(
+            Method::GET,
+            "/api/v1/items/STAGE-1/revisions/A/bom.xlsx?rule=x",
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
+    app.teardown().await;
+}
+
+#[tokio::test]
 async fn pack_and_go_zip() {
     use std::io::Read;
     let app = app_or_skip!();
@@ -3302,6 +3363,42 @@ async fn favorites_searches_save_as_and_bom_compare() {
         "{html}"
     );
     assert!(html.contains(&nut));
+    let r = app
+        .get_page(
+            &format!("/revisions/{asm_rev}/bom/compare?with={copy_rev}&depth=all&rule=latest"),
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let html = r.text();
+    assert!(
+        html.contains("1 added · 0 removed · 0 changed · 1 unchanged")
+            && html.contains("<th>Lvl</th>"),
+        "all levels: {html}"
+    );
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/revisions/A/bom/compare?with=A&depth=all"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["lines"][0]["level"], 1);
+    assert!(
+        r.json()["lines"][0]["after"]["revision"].is_string(),
+        "resolved revision"
+    );
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/revisions/A/bom/compare?with=A&depth=3"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
     let r = app
         .api(
             Method::GET,

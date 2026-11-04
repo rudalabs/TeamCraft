@@ -153,6 +153,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/import/{id}/run", post(imports::run))
         .route("/import/{id}/discard", post(imports::discard))
         .route("/revisions/{id}/bom.csv", get(bom::csv))
+        .route("/revisions/{id}/bom.xlsx", get(bom::xlsx))
         .route("/revisions/{id}/package.zip", get(bom::package))
         .route("/revisions/{id}/bom/lines", post(bom::add_line))
         .route("/bom-lines/{id}", post(bom::update_line))

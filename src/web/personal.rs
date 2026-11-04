@@ -12,10 +12,12 @@ use uuid::Uuid;
 
 use super::{finish, parse_opt_uuid, render, xlsx_response, WebCtx};
 use crate::{
+    domain::RevisionRule,
     error::{AppError, AppResult},
     models::Revision,
     services::{
-        bom_compare, items, personal, projects, revisions,
+        bom_compare::{self, Depth},
+        items, personal, projects, revisions,
         save_as::{self, SaveAs},
     },
     util, AppState,
@@ -171,6 +173,23 @@ pub async fn save_as_submit(
 pub struct CompareQuery {
     /// The revision to compare with (default: the previous one).
     with: Option<String>,
+    /// `1` (default) or `all` levels.
+    depth: Option<String>,
+    /// Revision rule of a comparison over all levels.
+    rule: Option<String>,
+}
+
+impl CompareQuery {
+    fn depth(&self) -> AppResult<Depth> {
+        Depth::parse(self.depth.as_deref())
+    }
+
+    fn rule(&self) -> RevisionRule {
+        self.rule
+            .as_deref()
+            .and_then(RevisionRule::parse)
+            .unwrap_or_default()
+    }
 }
 
 /// The two revisions of a comparison and their BOM differences.
@@ -181,6 +200,8 @@ struct Comparison {
     revisions: Vec<Revision>,
     before: Revision,
     after: Revision,
+    depth: Depth,
+    rule: RevisionRule,
     diffs: Vec<bom_compare::LineDiff>,
 }
 
@@ -188,18 +209,25 @@ impl Comparison {
     /// File name of the Excel download.
     fn file_name(&self) -> String {
         format!(
-            "bom-compare-{}-{}-{}.xlsx",
-            self.rev.item_number, self.before.code, self.after.code
+            "bom-compare-{}-{}-{}{}.xlsx",
+            self.rev.item_number,
+            self.before.code,
+            self.after.code,
+            match self.depth {
+                Depth::Single => "",
+                Depth::All => "-all-levels",
+            }
         )
     }
 }
 
 /// Loads both revisions (older first) and compares their BOMs. `with` is a
 /// revision id; the default is the previous revision of the item.
-async fn comparison(st: &AppState, id: Uuid, with: Option<&str>) -> AppResult<Comparison> {
+async fn comparison(st: &AppState, id: Uuid, q: &CompareQuery) -> AppResult<Comparison> {
+    let (depth, rule) = (q.depth()?, q.rule());
     let rev = revisions::get(&st.db, id).await?;
     let all = items::revisions(&st.db, rev.item_id).await?;
-    let other_id = match parse_opt_uuid("Revision", with)? {
+    let other_id = match parse_opt_uuid("Revision", q.with.as_deref())? {
         Some(other) => other,
         // the revision before this one, else the one after it
         None => all
@@ -223,12 +251,14 @@ async fn comparison(st: &AppState, id: Uuid, with: Option<&str>) -> AppResult<Co
     } else {
         (rev.clone(), other)
     };
-    let diffs = bom_compare::compare(&st.db, before.id, after.id).await?;
+    let diffs = bom_compare::compare(&st.db, before.id, after.id, depth, rule).await?;
     Ok(Comparison {
         rev,
         revisions: all,
         before,
         after,
+        depth,
+        rule,
         diffs,
     })
 }
@@ -239,7 +269,7 @@ pub async fn bom_compare(
     Path(id): Path<Uuid>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let cmp = comparison(&st, id, q.with.as_deref()).await?;
+    let cmp = comparison(&st, id, &q).await?;
     let summary = bom_compare::summary(&cmp.diffs);
     render(
         &st,
@@ -250,6 +280,8 @@ pub async fn bom_compare(
             "before": cmp.before,
             "after": cmp.after,
             "revisions": cmp.revisions,
+            "depth": cmp.depth.as_str(),
+            "rule": cmp.rule.as_str(),
             "diffs": cmp.diffs,
             "summary": summary,
         }),
@@ -264,7 +296,7 @@ pub async fn bom_compare_xlsx(
     Path(id): Path<Uuid>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let cmp = comparison(&st, id, q.with.as_deref()).await?;
+    let cmp = comparison(&st, id, &q).await?;
     let bytes = bom_compare::to_xlsx(&cmp.diffs)?;
     Ok(xlsx_response(bytes, &cmp.file_name()))
 }
