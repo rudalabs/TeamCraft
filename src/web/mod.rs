@@ -25,8 +25,8 @@ mod revisions;
 pub(crate) use bom::{package_response, package_rule};
 pub(crate) use imports::{options_from as import_options, receive as receive_import};
 pub(crate) use revisions::{
-    file_response, mesh_response, receive_uploads, upload_files, version_response, warm_previews,
-    Received,
+    file_response, mesh_response, receive_uploads, thumbnail_response, upload_files,
+    version_response, warm_previews, Received,
 };
 
 use axum::{
@@ -113,6 +113,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(changes::add_from_revision),
         )
         .route("/files/{id}/download", get(revisions::download))
+        .route("/files/{id}/thumbnail", get(revisions::thumbnail))
         .route("/files/{id}/delete", post(revisions::delete_file))
         .route("/files/{id}/restore", post(revisions::restore_version))
         .route("/files/{id}/preview", get(revisions::preview))

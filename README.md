@@ -74,6 +74,10 @@ release yet; the database schema is migrated automatically between versions.
   [truck](https://github.com/ricosjp/truck) kernel), STL, OBJ, PLY, OFF, 3MF,
   AMF, glTF/GLB, 3DS and point clouds – converted once on the server, in an
   isolated process with a time limit, and drawn by a small WebGL viewer.
+- **Previews of native CAD files.** The preview image Inventor, Solid Edge
+  and SolidWorks store in their files is shown next to them; on Windows the
+  desktop app creates STEP exports with your own Inventor or Solid Edge at
+  check-in for the 3D view (see `docs/src/research/cad-previews.md`).
 - **Search.** Ranked full-text search over numbers, names, materials, file
   names and the text inside STEP, IGES and text files; filter by CAD program.
 - **Teams.** Viewer, CAD editor and admin roles; self-service project groups
@@ -171,6 +175,7 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | truck (truck-stepio, truck-meshalgo) | STEP reading and tessellation            | Apache-2.0                               |
 | gltf, quick-xml, zip                 | glTF, 3MF/AMF, Pack and Go               | MIT / Apache-2.0                         |
 | csv, calamine, encoding_rs           | BOM import: CSV, Excel/ODS, Windows-1252 | MIT-Unlicense / MIT / MIT-Apache + BSD-3 |
+| cfb, crc32fast                       | previews stored in CAD files             | MIT / MIT-Apache                         |
 | rust_xlsxwriter (tests only)         | Excel files for the import tests         | MIT / Apache-2.0                         |
 | reqwest, rustls, lettre              | HTTP client, TLS, e-mail                 | MIT / Apache-2.0                         |
 | argon2, sha2                         | password hashing, content hashes         | MIT / Apache-2.0                         |

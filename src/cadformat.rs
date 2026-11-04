@@ -539,6 +539,8 @@ pub struct FormatInfo {
     pub kind_label: &'static str,
     /// Format of the browser 3D preview (`stl`, `step`, `iges`, `brep`).
     pub preview: Option<&'static str>,
+    /// Files of this format carry a preview image (see `thumbnail`).
+    pub thumbnail: bool,
 }
 
 impl CadFormat {
@@ -553,6 +555,7 @@ impl CadFormat {
             kind: self.kind,
             kind_label: self.kind.label(),
             preview: crate::preview::PreviewFormat::of_format(self.id).map(|p| p.as_str()),
+            thumbnail: crate::thumbnail::supports(self.id),
         }
     }
 }

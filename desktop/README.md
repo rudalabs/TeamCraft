@@ -19,6 +19,7 @@ TeamCraft server – it is a client, not an offline copy.
 | Navigator | Project groups (mine first) → items; *My Worklist* (check-outs, reviews, my open changes); change orders by status; full-text search |
 | Revision tabs | Overview, Files (versions, restore, open), Structure (multi-level BOM, revision rules, roll-up), Where used, Changes, History, **3D viewer** (STEP, meshes, point clouds – converted by the server), Workspace |
 | Check-out / check-in | *Check out* takes the lock and copies the files into `<workspace>/<item>/<revision>/`; the Workspace tab shows *modified* / *new* / *missing* files (SHA-256); *Check in…* uploads the chosen files as new versions and releases the lock in one step. Lock and backup files of the CAD programs are skipped; Creo iterations count as one file |
+| Native CAD previews | The preview image stored in Inventor, Solid Edge and SolidWorks files in the Files tab; on Windows *STEP* in the Workspace tab and *Create STEP exports … first* at check-in export with the installed Inventor or Solid Edge (COM automation through Windows PowerShell; uses your own licence) |
 | New item | *New* (`Ctrl/Cmd+N`): choose the CAD files first – name and type follow from the first file; they are uploaded right after the item is created |
 | Release and changes | *Release…* creates and submits a change order; approve/reject from the worklist |
 | Change propagation | *Dependents to check*, *Check needed* banner with **Acknowledge…**, references, *As released* rule, impact analysis |

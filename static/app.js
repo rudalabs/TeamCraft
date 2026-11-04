@@ -161,6 +161,14 @@
     });
   });
 
+  // Preview images that turn out to be missing are hidden, not shown broken
+  // (<img data-hide-broken>, optionally inside an a.thumb-link).
+  document.querySelectorAll("img[data-hide-broken]").forEach(function (img) {
+    function hide() { (img.closest("a.thumb-link") || img).classList.add("hidden"); }
+    if (img.complete && img.naturalWidth === 0 && img.getAttribute("loading") !== "lazy") hide();
+    img.addEventListener("error", hide);
+  });
+
   // Copy buttons: <button data-copy="id">.
   document.querySelectorAll("[data-copy]").forEach(function (btn) {
     btn.addEventListener("click", function () {

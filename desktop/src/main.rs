@@ -7,6 +7,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod api;
+mod cadexport;
 mod commands;
 mod settings;
 mod signin;
@@ -155,6 +156,8 @@ fn main() {
             commands::save_package,
             commands::save_stl,
             commands::upload_files,
+            commands::cad_programs,
+            commands::cad_export_step,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TeamCraft Desktop");

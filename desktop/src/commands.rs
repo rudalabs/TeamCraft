@@ -12,6 +12,7 @@ use tokio::sync::Notify;
 
 use crate::{
     api::{self, Api, ApiError},
+    cadexport,
     settings::{self, Settings},
     signin, workspace, AppState,
 };
@@ -264,6 +265,8 @@ pub async fn file_bytes(
         // 3D preview meshes, converted by the server
         "mesh" => format!("/files/{id}/mesh"),
         "version-mesh" => format!("/file-versions/{id}/mesh"),
+        // preview image stored in Inventor / Solid Edge / SolidWorks files
+        "thumbnail" => format!("/files/{id}/thumbnail"),
         _ => return Err(ApiError::local("Unknown file kind.")),
     };
     let bytes = signed_in_api(&state)?.bytes(&path).await?;
@@ -580,4 +583,45 @@ mod upload_tests {
         assert_eq!(names[0].0, "frame.asm");
         assert_eq!(names[1].0, "Bracket.ipt");
     }
+}
+
+/// The CAD programs on this computer that can export STEP for the 3D
+/// preview (Windows: Inventor, Solid Edge; elsewhere none).
+#[tauri::command]
+pub async fn cad_programs() -> Vec<cadexport::CadProgram> {
+    tokio::task::spawn_blocking(cadexport::available)
+        .await
+        .unwrap_or_default()
+}
+
+/// Exports a workspace file of a revision to STEP with the local Inventor or
+/// Solid Edge; the STEP file lands next to it (and is checked in with it).
+/// Returns the name of the STEP file.
+#[tauri::command]
+pub async fn cad_export_step(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    item: String,
+    code: String,
+    file: String,
+) -> CmdResult<String> {
+    if file.contains(['/', '\\']) || file == ".." || file.is_empty() {
+        return Err(ApiError::local(format!("'{file}' is not a file name.")));
+    }
+    let dir = workspace::revision_dir(&workspace_root(&app, &state), &item, &code);
+    let input = dir.join(&file);
+    if !input.is_file() {
+        return Err(ApiError::local(format!(
+            "{file} is not in the workspace – check out or use “Get files” first."
+        )));
+    }
+    let output = tokio::task::spawn_blocking(move || cadexport::export_step(&input))
+        .await
+        .map_err(|e| ApiError::local(format!("The export stopped: {e}")))?
+        .map_err(ApiError::local)?;
+    Ok(output
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_string())
 }

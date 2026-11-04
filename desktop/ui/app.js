@@ -1041,6 +1041,41 @@
   function dt(t) { return h("dt", { text: t }); }
   function dd(v) { var e = h("dd"); append(e, v); return e; }
 
+  // ------------------------------------------- previews of native CAD files
+
+  var thumbCache = {};
+  /** The preview image stored in an Inventor, Solid Edge or SolidWorks file. */
+  function thumbImage(f) {
+    var img = h("img.file-thumb.hidden", { alt: "", title: "Preview image stored in the file" });
+    var url = thumbCache[f.sha256] || (thumbCache[f.sha256] = invoke("file_bytes", { kind: "thumbnail", id: f.id })
+      .then(function (bytes) { return URL.createObjectURL(new Blob([bytes])); }));
+    url.then(function (u) { img.src = u; img.classList.remove("hidden"); }, function () { /* the file has none */ });
+    return img;
+  }
+
+  var cadProgramsPromise = null;
+  /** CAD programs on this computer that export STEP: "inventor", "solid-edge" (Windows). */
+  function cadPrograms() {
+    if (!cadProgramsPromise) cadProgramsPromise = call("cad_programs").catch(function () { return []; });
+    return cadProgramsPromise;
+  }
+
+  var PROGRAM_LABEL = { "inventor": "Inventor", "solid-edge": "Solid Edge" };
+
+  /** The local program that can export this file to STEP, or null. */
+  function exportProgram(name, programs) {
+    var m = /\.([a-z0-9]+)$/i.exec(name || "");
+    var ext = m ? m[1].toLowerCase() : "";
+    if ((ext === "ipt" || ext === "iam") && programs.indexOf("inventor") >= 0) return "inventor";
+    if (["par", "psm", "pwd", "asm"].indexOf(ext) >= 0 && programs.indexOf("solid-edge") >= 0) return "solid-edge";
+    return null;
+  }
+
+  /** STEP export of a workspace file with the local CAD program; resolves to the STEP name. */
+  function exportStep(rev, name) {
+    return call("cad_export_step", { item: rev.item_number, code: rev.code, file: name });
+  }
+
   function revFiles(tab, el) {
     var d = tab.data, can = revisionAbilities(d);
     if (!d.files.length) {
@@ -1051,7 +1086,9 @@
       var fmt = previewFormat(f);
       return {
         cells: [
-          h("span", null, [f.filename, " ", formatChip(f)]),
+          f.format_info && f.format_info.thumbnail
+            ? h("span.file-cell", null, [thumbImage(f), h("span", null, [f.filename, " ", formatChip(f)])])
+            : h("span", null, [f.filename, " ", formatChip(f)]),
           h("span.badge", { text: "v" + f.version }),
           fmtSize(f.size_bytes),
           fmtDate(f.uploaded_at) + " · " + f.uploaded_by_name,
@@ -1405,8 +1442,21 @@
 
   function revWorkspace(tab, el) {
     var rev = tab.data.rev, can = revisionAbilities(tab.data);
-    return call("workspace_status", { item: rev.item_number, code: rev.code }).then(function (ws) {
+    return Promise.all([call("workspace_status", { item: rev.item_number, code: rev.code }), cadPrograms()]).then(function (r) {
+      var ws = r[0], programs = r[1];
       var changed = ws.files.filter(function (f) { return f.state === "modified" || f.state === "new"; });
+      // STEP for the 3D preview, written by the CAD program installed here
+      function stepButton(f) {
+        var program = f.state !== "missing" && exportProgram(f.name, programs);
+        if (!program) return null;
+        return h("button.small", {
+          type: "button", title: "Create a STEP export with " + PROGRAM_LABEL[program] + " next to the file – check it in with the model for the 3D preview",
+          on: { click: function () {
+            run("Exporting " + f.name + " to STEP with " + PROGRAM_LABEL[program], function () { return exportStep(rev, f.name); })
+              .then(function (step) { toast("Created " + step + " – check it in together with " + f.name); renderActive(); }, function () {});
+          } }
+        }, "STEP");
+      }
       el.appendChild(h("section.panel", null, [
         h("div.panel-head", null, [
           h("h2", { text: "Local workspace" }),
@@ -1424,7 +1474,10 @@
           ws.files.length ? table(["File", "Local state", "Server version", "Size", ""], ws.files.map(function (f) {
             return {
               cells: [f.local_name ? h("span", null, [f.name, " ", h("span.dim.small", { text: "← " + f.local_name, title: "Newest Creo iteration in the workspace; it is checked in as " + f.name })]) : f.name, badge(f.state), f.server_version ? "v" + f.server_version : "—", f.state === "missing" ? "—" : fmtSize(f.size),
-                f.state !== "missing" ? h("button.small", { type: "button", on: { click: function () { openFile(tab, f.name, true); } } }, "Open") : ""]
+                f.state !== "missing" ? h("span.row", null, [
+                  h("button.small", { type: "button", on: { click: function () { openFile(tab, f.name, true); } } }, "Open"),
+                  stepButton(f)
+                ]) : ""]
             };
           }), { numeric: [3] }) : h("p.empty", { text: "The folder is empty." }),
         changed.length && !can.checkin ? h("p.notice", { text: changed.length + " local change(s), but you have not checked out this revision – check out first, then check in." }) : null
@@ -1486,17 +1539,26 @@
 
   function checkinDialog(tab) {
     var rev = tab.data.rev;
-    call("workspace_status", { item: rev.item_number, code: rev.code }).then(function (ws) {
+    Promise.all([call("workspace_status", { item: rev.item_number, code: rev.code }), cadPrograms()]).then(function (r) {
+      var ws = r[0], programs = r[1];
       var candidates = ws.files.filter(function (f) { return f.state === "modified" || f.state === "new"; });
       var boxes = candidates.map(function (f) {
         return { name: f.name, input: h("input", { type: "checkbox", checked: true }), state: f.state };
       });
       var comment = h("input", { type: "text", maxlength: "2000", placeholder: "What changed, e.g. wall thickness 2 → 2.5 mm" });
+      // Like the Vault add-in or the Teamcenter integration: viewables at check-in.
+      var exportable = boxes.filter(function (b) { return exportProgram(b.name, programs); });
+      var withStep = h("input", { type: "checkbox", checked: true });
+      var stepNote = exportable.length ? h("label.check", null, [withStep,
+        "Create STEP exports with " + exportable.map(function (b) { return PROGRAM_LABEL[exportProgram(b.name, programs)]; })
+          .filter(function (v, i, a) { return a.indexOf(v) === i; }).join(" / ") +
+        " first, for the 3D preview (" + exportable.length + (exportable.length === 1 ? " file)" : " files)")]) : null;
       var body = h("div.stack", null, [
         h("p.small.muted", null, ["From ", h("span.mono", { text: ws.dir })]),
         candidates.length ? h("div.stack", null, boxes.map(function (b) {
           return h("label.check", null, [b.input, b.name, " ", badge(b.state)]);
         })) : h("p.empty", { text: "No modified or new files – checking in only releases the lock." }),
+        stepNote,
         field("Comment", comment, "stored with every new version")
       ]);
       dialog("Check in " + rev.item_number + "/" + rev.code, body, [
@@ -1504,8 +1566,18 @@
         {
           label: "Check in and release", primary: true, submit: true, onClick: function (d) {
             var files = boxes.filter(function (b) { return b.input.checked; }).map(function (b) { return b.name; });
-            setStatus("Checking in …");
-            call("workspace_checkin", { item: rev.item_number, code: rev.code, files: files, comment: comment.value }).then(function () {
+            var toExport = stepNote && withStep.checked ? files.filter(function (n) { return exportProgram(n, programs); }) : [];
+            // one export after the other: the CAD program handles one document at a time
+            var exported = toExport.reduce(function (chain, name) {
+              return chain.then(function () {
+                setStatus("Exporting " + name + " to STEP with " + PROGRAM_LABEL[exportProgram(name, programs)] + " …");
+                return exportStep(rev, name).then(function (step) { if (files.indexOf(step) < 0) files.push(step); });
+              });
+            }, Promise.resolve());
+            exported.then(function () {
+              setStatus("Checking in …");
+              return call("workspace_checkin", { item: rev.item_number, code: rev.code, files: files, comment: comment.value });
+            }).then(function () {
               setStatus("");
               d.close();
               toast("Checked in " + rev.item_number + "/" + rev.code + (files.length ? " with " + files.join(", ") : ""));

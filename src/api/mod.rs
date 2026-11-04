@@ -112,6 +112,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/files/{id}", get(file_meta).delete(delete_file))
         .route("/files/{id}/content", get(download))
+        .route("/files/{id}/thumbnail", get(file_thumbnail))
         .route("/files/{id}/versions", get(file_versions))
         .route("/files/{id}/restore", post(restore_file))
         .route("/file-versions/{id}/content", get(download_version))
@@ -209,6 +210,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment'",
             "GET    /api/v1/files/{id}",
             "GET    /api/v1/files/{id}/content",
+            "GET    /api/v1/files/{id}/thumbnail                      preview image stored in Inventor, Solid Edge and SolidWorks files (PNG or BMP, 404 if none)",
             "GET    /api/v1/files/{id}/versions",
             "POST   /api/v1/files/{id}/restore                        {version}",
             "GET    /api/v1/file-versions/{id}/content",
@@ -1010,6 +1012,15 @@ async fn download(
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     web::file_response(&st, id).await
+}
+
+/// The preview image embedded in an Inventor, Solid Edge or SolidWorks file.
+async fn file_thumbnail(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    web::thumbnail_response(&st, id).await
 }
 
 async fn delete_file(

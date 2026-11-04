@@ -2832,3 +2832,138 @@ async fn bom_import_from_cad_tables() {
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "project group required");
     app.teardown().await;
 }
+
+/// A minimal PNG (`w` × `h`); the extractor checks the chunk structure only.
+fn tiny_png(w: u32, h: u32) -> Vec<u8> {
+    fn chunk(out: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let mut body = kind.to_vec();
+        body.extend_from_slice(data);
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&crc32fast::hash(&body).to_be_bytes());
+    }
+    let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    let mut ihdr = w.to_be_bytes().to_vec();
+    ihdr.extend_from_slice(&h.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+    chunk(&mut out, b"IHDR", &ihdr);
+    chunk(
+        &mut out,
+        b"IDAT",
+        &[0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01],
+    );
+    chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+#[tokio::test]
+async fn preview_images_stored_in_cad_files() {
+    use std::io::Write;
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROVER"]).await;
+    let cookie = app.login("eng").await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "part", "name": "Bracket", "project": "ROVER" })),
+    )
+    .await;
+    // An Inventor-like part: OLE compound file, PNG in the summary information.
+    let mut ole = cfb::CompoundFile::create(std::io::Cursor::new(Vec::new())).unwrap();
+    let mut summary = vec![0u8; 48];
+    summary.extend_from_slice(&tiny_png(256, 256));
+    ole.create_stream("/\u{5}SummaryInformation")
+        .unwrap()
+        .write_all(&summary)
+        .unwrap();
+    ole.flush().unwrap();
+    let ipt = ole.into_inner().into_inner();
+    let files = app
+        .api_multipart(
+            "/api/v1/items/PRT-000001/revisions/A/files",
+            &eng,
+            &[("bracket.ipt", &ipt), ("bracket.step", b"ISO-10303-21;")],
+            &[],
+        )
+        .await;
+    assert_eq!(files.status, StatusCode::CREATED, "{}", files.text());
+    let files = files.json();
+    let id_of = |name: &str| {
+        files
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["filename"] == name)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let (ipt_id, step_id) = (id_of("bracket.ipt"), id_of("bracket.step"));
+    let ipt_record = files
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["filename"] == "bracket.ipt")
+        .unwrap()
+        .clone();
+    assert_eq!(ipt_record["format_info"]["thumbnail"], true);
+
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{ipt_id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.header("content-type").as_deref(), Some("image/png"));
+    assert_eq!(r.body, tiny_png(256, 256));
+    // second request: from the cache
+    let again = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{ipt_id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(again.body, r.body);
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{step_id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "STEP files have none");
+
+    // Web: the revision page shows it, the image is served to the session.
+    let rev_id = app
+        .api(
+            Method::GET,
+            "/api/v1/items/PRT-000001/revisions/A",
+            &eng,
+            None,
+        )
+        .await
+        .json()["revision"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let page = app
+        .get_page(&format!("/revisions/{rev_id}"), Some(&cookie))
+        .await
+        .text();
+    assert!(page.contains(&format!("/files/{ipt_id}/thumbnail")));
+    assert!(!page.contains(&format!("/files/{step_id}/thumbnail")));
+    let r = app
+        .get_page(&format!("/files/{ipt_id}/thumbnail"), Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.header("content-type").as_deref(), Some("image/png"));
+    app.teardown().await;
+}

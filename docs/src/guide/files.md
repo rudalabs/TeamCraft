@@ -38,8 +38,25 @@ is read and tessellated with the [truck](https://github.com/ricosjp/truck)
 B-rep kernel, the mesh readers are part of TeamCraft. *Download STL* saves
 the shown triangles, e.g. for 3D printing.
 
-Native CAD files (SolidWorks, NX, Creo, CATIA, …) are proprietary – attach a
-STEP export next to them to see them in 3D.
+## Previews of native CAD files
+
+Native CAD files (Inventor, Solid Edge, SolidWorks, NX, Creo, CATIA, …) are
+proprietary; TeamCraft does not read their geometry (see
+[Research: previews of native CAD files](../research/cad-previews.md)).
+Instead it shows what other PLM systems show:
+
+* **The preview image stored in the file.** Inventor (`.ipt`, `.iam`,
+  `.idw`, `.ipn`), Solid Edge (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`) and
+  SolidWorks files carry a picture the CAD program wrote when saving. It
+  appears next to the file on the revision page and in the desktop app
+  (`GET /api/v1/files/{id}/thumbnail`). Only the image is read; files saved
+  without one simply show none.
+* **3D from a STEP export.** Attach a STEP export next to the native file.
+  The desktop app on Windows creates it with your own Inventor or Solid Edge
+  – the *STEP* button in the workspace or the option at check-in, like the
+  Inventor add-in of Autodesk Vault or the Solid Edge integration of
+  Teamcenter. It uses your licence (student licences included, within their
+  terms); TeamCraft contains no Autodesk or Siemens software.
 
 ## Full-text search
 

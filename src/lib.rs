@@ -26,6 +26,7 @@ pub mod preview;
 pub mod services;
 pub mod templates;
 pub mod textindex;
+pub mod thumbnail;
 pub mod util;
 pub mod vault;
 pub mod web;

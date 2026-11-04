@@ -62,10 +62,18 @@ How the desktop export works:
 
 ## Status
 
-* Embedded preview images: being implemented (server, web, desktop).
-* STEP export through the local CAD program: being implemented in the
-  desktop app (Windows). It can only be tested on a Windows computer with
-  Inventor or Solid Edge – not available in the development environment.
+* **Embedded preview images – implemented:** `src/thumbnail.rs` (OLE
+  compound files through the `cfb` crate, PNG or DIB → BMP, cached in
+  `previews/`), `GET /files/{id}/thumbnail` (web and REST API), shown on the
+  revision page and in the desktop app. Tested with generated files in the
+  layouts described above, **not yet with real Inventor, Solid Edge or
+  SolidWorks files**.
+* **STEP export through the local CAD program – implemented** in the desktop
+  app (`desktop/src/cadexport.rs`): *STEP* button in the workspace and
+  *Create STEP exports … first* at check-in; Inventor and Solid Edge through
+  COM automation from Windows PowerShell. The Windows code compiles for
+  `x86_64-pc-windows-gnu`, but it was **not run against a real Inventor or
+  Solid Edge** – that needs a Windows computer with one of them.
 
 ## Sources
 

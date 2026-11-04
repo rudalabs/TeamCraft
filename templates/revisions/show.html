@@ -224,6 +224,7 @@
     {% for f in files %}
       <tr>
         <td>
+          {% if f.format_info and f.format_info.thumbnail %}<a class="thumb-link" href="/files/{{ f.id }}/thumbnail" title="Preview image stored in the file"><img class="file-thumb" src="/files/{{ f.id }}/thumbnail?v={{ f.sha256 }}" alt="" loading="lazy" data-hide-broken></a>{% endif %}
           <a href="/files/{{ f.id }}/download">{{ f.filename }}</a>
           {% if f.format_info %}<span class="fmt fmt-{{ f.format_info.kind }}" title="{{ f.format_info.system_name }} · {{ f.format_info.kind_label }} · {{ f.content_type }}">{{ f.format_info.label }}</span>{% else %}<span class="muted small">{{ f.content_type }}</span>{% endif %}
           {% if f.preview %}<a class="button small" href="/files/{{ f.id }}/preview" title="3D preview in the browser">3D</a>{% endif %}
@@ -288,7 +289,7 @@
   </form>
   {% endif %}
   {% if native_without_preview %}
-  <p class="hint">No 3D preview for native CAD files – attach a STEP export (e.g. <em>Save as → STEP AP242</em>), STL or IGES next to them to see the model in the browser.</p>
+  <p class="hint">No 3D preview for native CAD files – the preview image stored in Inventor, Solid Edge and SolidWorks files is shown next to them. For the model in 3D, attach a STEP export (<em>Save as → STEP AP242</em>); the desktop app can create it with your own Inventor or Solid Edge.</p>
   {% endif %}
 </section>
 

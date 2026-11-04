@@ -588,3 +588,10 @@ html[data-skin="teamcraft-day"] .login-logo-dark { display: block; }
 .grid.nested { margin: 0; }
 .grid.nested > div { min-width: 0; }
 ul.file-refs { margin-bottom: 0.7rem; }
+
+/* Preview images stored in CAD files (Inventor, Solid Edge, SolidWorks) */
+.thumb-link { display: inline-block; vertical-align: middle; margin-right: 0.45rem; }
+.file-thumb {
+  width: 3rem; height: 3rem; object-fit: contain; display: block;
+  border: 1px solid var(--border); border-radius: 4px; background: #fff;
+}

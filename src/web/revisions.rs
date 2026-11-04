@@ -23,7 +23,7 @@ use crate::{
     services::{
         audit, bom, changes, files, impacts, items, notifications, projects, references, revisions,
     },
-    util, AppState,
+    thumbnail, util, AppState,
 };
 
 /// The 3D preview of a file: by its stored format, or by its name while
@@ -543,6 +543,48 @@ pub async fn download(
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     file_response(&st, id).await
+}
+
+/// The preview image stored inside a CAD file (Inventor, Solid Edge,
+/// SolidWorks), read once and cached next to the 3D previews. Shared with
+/// the REST API.
+pub(crate) async fn thumbnail_response(st: &AppState, file_id: Uuid) -> AppResult<Response> {
+    let f = files::get(&st.db, file_id).await?;
+    if !thumbnail::supports(&f.format) {
+        return Err(AppError::not_found(
+            "Files of this type have no embedded preview image.",
+        ));
+    }
+    let blob = st.vault.object_path(&f.sha256)?;
+    let cache = st.vault.root().join("previews");
+    let sha256 = f.sha256.clone();
+    let found = tokio::task::spawn_blocking(move || thumbnail::cached(&cache, &sha256, &blob))
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("thumbnail task failed: {e}")))??;
+    let Some(image) = found else {
+        return Err(AppError::not_found(format!(
+            "{} has no embedded preview image.",
+            f.filename
+        )));
+    };
+    Response::builder()
+        .header(header::CONTENT_TYPE, image.content_type)
+        .header(header::CACHE_CONTROL, "private, max-age=86400")
+        .header(header::ETAG, format!("\"{}-thumb\"", f.sha256))
+        .body(Body::from(image.bytes))
+        .map_err(|e| {
+            AppError::Other(anyhow::anyhow!(
+                "building the thumbnail response failed: {e}"
+            ))
+        })
+}
+
+pub async fn thumbnail(
+    State(st): State<AppState>,
+    WebUser(_me): WebUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    thumbnail_response(&st, id).await
 }
 
 pub async fn download_version(

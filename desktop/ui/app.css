@@ -535,3 +535,7 @@ ul.notifications li.unread button { color: var(--text); border-left: 3px solid v
 ul.file-picks { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
 ul.file-picks li { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Preview images stored in CAD files (Inventor, Solid Edge, SolidWorks) */
+.file-cell { display: inline-flex; align-items: center; gap: 0.5rem; }
+.file-thumb { width: 2.5rem; height: 2.5rem; object-fit: contain; border: 1px solid var(--border); border-radius: 4px; background: #fff; flex: none; }

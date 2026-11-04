@@ -29,7 +29,7 @@ curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/cancel-checkout
 |---------------|---------------------------------------------------------------------------------------------------------------------------------------|
 | Items         | `GET/POST /items`, `GET /items/{number}`, where-used, history, impacts, watch                                                         |
 | Revisions     | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `revise`, `obsolete`                  |
-| Files         | `POST …/files` (multipart), `GET /files/{id}` (metadata), `/content`, `/versions`, `/restore`, `/mesh` (3D preview)                   |
+| Files         | `POST …/files` (multipart), `GET /files/{id}` (metadata), `/content`, `/versions`, `/restore`, `/mesh` (3D preview), `/thumbnail`     |
 | BOM           | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP) |
 | References    | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
 | Changes       | `GET/POST /changes`, items, reviewers, `submit`, `review`, `withdraw`, `impact`                                                       |
