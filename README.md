@@ -78,7 +78,8 @@ promised.
 - **Change orders.** Collect revisions, assign reviewers, four-eyes approval,
   all revisions released atomically, impact analysis before approval.
 - **Structure.** Multi-level BOM with mass and cost roll-up, revision rules *latest*, *latest released* and *as
-  released*, where-used, CSV export and *Pack and Go* ZIP of a whole assembly.
+  released*, where-used, comparison of two revisions over one or all levels,
+  CSV and Excel export and *Pack and Go* ZIP of a whole assembly.
 - **BOM import.** Items and multi-level BOMs from the BOM tables of CAD
   programs (Inventor, SolidWorks, Solid Edge, Fusion, Creo, NX, hand-made
   lists) as CSV/TSV, Excel or OpenDocument – English and German columns,
@@ -202,7 +203,7 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | gltf, quick-xml, zip                 | glTF, 3MF/AMF, Pack and Go               | MIT / Apache-2.0                         |
 | csv, calamine, encoding_rs           | BOM import: CSV, Excel/ODS, Windows-1252 | MIT-Unlicense / MIT / MIT-Apache + BSD-3 |
 | cfb, crc32fast                       | previews stored in CAD files             | MIT / MIT-Apache                         |
-| rust_xlsxwriter                      | BOM comparison export, Excel test files  | MIT / Apache-2.0                         |
+| rust_xlsxwriter                      | Excel export of BOMs and comparisons     | MIT / Apache-2.0                         |
 | reqwest, rustls, lettre              | HTTP client, TLS, e-mail                 | MIT / Apache-2.0                         |
 | argon2, sha2                         | password hashing, content hashes         | MIT / Apache-2.0                         |
 | Tauri 2                              | desktop app                              | MIT / Apache-2.0                         |

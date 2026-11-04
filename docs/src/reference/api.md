@@ -41,6 +41,10 @@ curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/cancel-checkout
 
 The BOM comparison is also available as an Excel workbook of the same lines
 (same `with` query): `GET …/revisions/{code}/bom/compare.xlsx?with={code}`.
+Both compare the direct lines; `depth=all` compares every level, with the
+children resolved by `rule=latest|released|as_released` (each line then has
+its `level` and the resolved `revision` on both sides). The expanded BOM
+itself downloads as Excel workbook: `GET …/revisions/{code}/bom.xlsx?rule=`.
 
 Errors are JSON: `{"error": {"code": "conflict", "message": "…"}}` with the
 matching HTTP status (400, 401, 403, 404, 409, 413, 500).

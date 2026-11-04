@@ -40,7 +40,7 @@ the known gaps with details. Last update: 2026-11-04.
 - [ ] Custom attributes per item and file type, classification (standard/purchased parts), attribute search (feature 5)
 - [x] Item copy ("Save as" with files and BOM) – done; open: supersede/replace, alternate parts, multi-level where-used
   (feature 6)
-- [x] BOM comparison between revisions (single level) with Excel export – done; open: multi-level comparison (feature 7)
+- [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
 - [ ] Chunked resumable uploads (tus); backup/restore of database and vault as CLI commands (feature 9)
 - [ ] README screenshots/GIFs: dashboard, vault explorer, revision page, 3D viewer, BOM, desktop app
 - [x] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
@@ -191,8 +191,9 @@ The history up to the open-source release is squashed into the first commit
    attributes.
 6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate
    parts, multi-level where-used.
-7. **BOM comparison** between revisions: single level with Excel export
-   (`rust_xlsxwriter`, MIT/Apache-2.0) done; open: multi-level comparison.
+7. **BOM comparison** between revisions with Excel export (`rust_xlsxwriter`,
+   MIT/Apache-2.0): done – direct lines, and over all levels with a revision
+   rule (`depth=all`); the expanded BOM itself exports as Excel too.
 8. **Bulk import of a folder tree** (NAS/Drive) as items with files (candidate: `walkdir`, MIT/Unlicense).
 9. **Chunked resumable uploads** (tus protocol, `tus-js-client`) and **backup/restore** of database and vault as CLI
    commands (`pg_dump` /

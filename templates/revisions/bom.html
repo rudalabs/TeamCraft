@@ -21,6 +21,7 @@
     </form>
     <a class="button" href="/revisions/{{ rev.id }}/bom/compare" title="Added, removed and changed lines compared with another revision">Compare…</a>
     <a class="button" href="/revisions/{{ rev.id }}/bom.csv?rule={{ rule }}">Export CSV</a>
+    <a class="button" href="/revisions/{{ rev.id }}/bom.xlsx?rule={{ rule }}" title="The expanded BOM as Excel workbook – the BOM import reads it back">Export Excel</a>
     <a class="button" href="/revisions/{{ rev.id }}/package.zip?rule={{ rule }}" title="All files of the structure with this revision rule, bom.csv and manifest.json">Pack and Go (ZIP)</a>
   </div>
 </div>
