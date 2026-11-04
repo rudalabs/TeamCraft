@@ -180,7 +180,10 @@
   function toast(text, kind) {
     var el = h("div.toast" + (kind ? "." + kind : ""), { role: kind === "error" ? "alert" : "status", text: text });
     $("toasts").appendChild(el);
-    setTimeout(function () { el.remove(); }, kind === "error" ? 9000 : 4500);
+    setTimeout(function () {
+      el.classList.add("leaving"); // app.css fades it out in 150 ms
+      setTimeout(function () { el.remove(); }, 160);
+    }, kind === "error" ? 9000 : 4500);
   }
 
   /** Calls a Rust command; a 401 sends the user back to the sign-in. */
