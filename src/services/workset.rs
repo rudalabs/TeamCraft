@@ -76,9 +76,17 @@ pub struct Workset {
     pub missing_references: Vec<String>,
     pub file_count: usize,
     pub total_bytes: i64,
+    /// Database queries the resolution took (for the performance tests).
+    #[serde(skip)]
+    pub queries: usize,
 }
 
 /// Resolves the working set below a revision.
+///
+/// The BOM is read level by level ([`bom::load_structure`], one query per
+/// BOM level) and walked without expanding shared sub-assemblies again;
+/// each round of CAD references takes three queries (names, holders, their
+/// revisions under the rule), whatever the number of files.
 pub async fn resolve(
     pool: &PgPool,
     actor: &Actor,
@@ -87,43 +95,33 @@ pub async fn resolve(
     with_references: bool,
 ) -> AppResult<Workset> {
     let root = revisions::get(pool, root_revision_id).await?;
-    let tree = bom::tree(pool, root_revision_id, rule).await?;
+    let (lines_by_rev, mut queries) = bom::load_structure(pool, root.id, rule).await?;
+    queries += 1;
+    let structure = bom::structure_revisions(root.id, &lines_by_rev);
+    drop(lines_by_rev);
     let mut order: Vec<(Uuid, Via)> = vec![(root.id, Via::Root)];
     let mut seen: HashSet<Uuid> = HashSet::from([root.id]);
-    let mut unresolved: Vec<String> = Vec::new();
-    for row in bom::flatten(&tree.children) {
-        match &row.node.revision {
-            Some(r) => {
-                if seen.insert(r.id) {
-                    order.push((r.id, Via::Bom));
-                }
-            }
-            None => {
-                if !unresolved.contains(&row.node.item_number) {
-                    unresolved.push(row.node.item_number.clone());
-                }
-            }
+    // Items already in the set keep the revision the BOM chose: one
+    // revision per item, as one file can sit in the folder only once.
+    let mut items_done: HashSet<Uuid> = HashSet::from([root.item_id]);
+    for (rev_id, item_id) in structure.revisions {
+        if seen.insert(rev_id) {
+            order.push((rev_id, Via::Bom));
         }
+        items_done.insert(item_id);
     }
+    let mut unresolved: Vec<String> = structure.unresolved;
     let mut missing_references = Vec::new();
     if with_references {
         // Names already looked up, so a name is resolved only once.
         let mut looked_up: HashSet<String> = HashSet::new();
         let mut frontier: Vec<Uuid> = order.iter().map(|(id, _)| *id).collect();
-        // Items already in the set keep the revision the BOM chose: one
-        // revision per item, as one file can sit in the folder only once.
-        let mut items_done: HashSet<Uuid> =
-            sqlx::query_scalar::<_, Uuid>("SELECT item_id FROM revisions WHERE id = ANY($1)")
-                .bind(&frontier)
-                .fetch_all(pool)
-                .await?
-                .into_iter()
-                .collect();
         while !frontier.is_empty() {
             if seen.len() > MAX_REVISIONS {
                 break;
             }
             let names = referenced_names(pool, &frontier).await?;
+            queries += 1;
             let names: Vec<String> = names
                 .into_iter()
                 .filter(|n| looked_up.insert(n.clone()))
@@ -133,32 +131,39 @@ pub async fn resolve(
                 break;
             }
             let holders = holders_of(pool, &names, root.project_id).await?;
+            queries += 1;
             let found: HashSet<&str> = holders.iter().map(|(_, k)| k.as_str()).collect();
             for name in &names {
                 if !found.contains(name.as_str()) {
                     missing_references.push(name.clone());
                 }
             }
+            // Holder items new to the set, in the order of `holders`.
+            let mut new_items: Vec<Uuid> = Vec::new();
             for (item_id, _) in &holders {
-                if !items_done.insert(*item_id) {
-                    continue;
+                if items_done.insert(*item_id) {
+                    new_items.push(*item_id);
                 }
-                match bom::resolve(pool, *item_id, rule).await? {
-                    Some(rev) => {
-                        if seen.insert(rev.id) {
-                            order.push((rev.id, Via::Reference));
-                            frontier.push(rev.id);
+            }
+            if new_items.is_empty() {
+                continue;
+            }
+            let resolved = bom::resolve_items(pool, &new_items, rule).await?;
+            queries += 1;
+            for item_id in &new_items {
+                let Some(item) = resolved.get(item_id) else {
+                    continue;
+                };
+                match item.revision_id {
+                    Some(rev_id) => {
+                        if seen.insert(rev_id) {
+                            order.push((rev_id, Via::Reference));
+                            frontier.push(rev_id);
                         }
                     }
                     None => {
-                        let number = sqlx::query_scalar::<_, String>(
-                            "SELECT number FROM items WHERE id = $1",
-                        )
-                        .bind(item_id)
-                        .fetch_one(pool)
-                        .await?;
-                        if !unresolved.contains(&number) {
-                            unresolved.push(number);
+                        if !unresolved.contains(&item.number) {
+                            unresolved.push(item.number.clone());
                         }
                     }
                 }
@@ -229,6 +234,8 @@ pub async fn resolve(
         missing_references,
         file_count,
         total_bytes,
+        // + the revisions and their files
+        queries: queries + 2,
     })
 }
 
