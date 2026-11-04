@@ -1232,6 +1232,37 @@ mod tests {
     }
 
     #[test]
+    fn structure_revisions_match_the_expanded_tree_with_cycles() {
+        // Under `latest` / `released` the resolved structure can contain
+        // cycles (A's newest revision uses B, B's newest uses A): lines may
+        // point to any revision, including ancestors and the root.
+        let mut seed: u64 = 0xc1c1e;
+        let mut next = move |n: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let mut compared = 0;
+        for _ in 0..2000 {
+            let n = 2 + next(9) as usize;
+            let revs: Vec<ResolvedRevision> = (0..n).map(|_| rev("A", None, None)).collect();
+            let items: Vec<Uuid> = (0..n).map(|_| Uuid::new_v4()).collect();
+            let mut lines = Vec::new();
+            for parent in 0..n {
+                let mut find = 0;
+                for _ in 0..next(3) {
+                    find += 10;
+                    let child = next(n as u64) as usize;
+                    lines.push(dline(&revs, &items, parent, child, find));
+                }
+            }
+            compared += usize::from(compare(&revs[0], &structure(lines)));
+        }
+        assert!(compared > 1000, "only {compared} structures compared");
+    }
+
+    #[test]
     fn structure_revisions_rewalk_where_the_depth_limit_cut_off() {
         // root → c1 → … → c(MAX_DEPTH-2) → s → q → r, and root → s directly
         // (find no. 20): below the deep s only q is shown (r is too deep),
