@@ -1,0 +1,33 @@
+# NIST CAD test files – see README.md. Columns: sha256, size in bytes, path, TeamCraft format id, NIST archive and path inside it.
+3f19cc5350b8ca45ade6035d16ab4e1362243ac7e614a1dd9d658efd85a19e00	1089645	nist/ctc-01/catia-v5/nist_ctc_01_asme1_rd_ct5290_ra.CATPart	catia-part	NIST-FTC-CTC-PMI-CAD-models.zip:CATIA V5-6R2019/nist_ctc_01_asme1_rd_ct5290_ra.CATPart
+990d33279407dd1350bf46023c7f6e84840d1f6746e34f511621d9fbdef4cac4	744830	nist/ctc-01/creo-10/nist_ctc_01_asme1_rd_cr10030.prt.5	creo-part	NIST-FTC-CTC-PMI-CAD-models.zip:Creo 10/nist_ctc_01_asme1_rd_cr10030.prt.5
+c3716769b86d5fb7db9b65fa4c785c0f98db92258af0a801d544ab7d83251ec3	492544	nist/ctc-01/inventor-2021/INV_nist_ctc_01_asme1_2021.ipt	inventor-part	NIST-FTC-CTC-PMI-CAD-models.zip:Inventor 2021/INV_nist_ctc_01_asme1_2021.ipt
+9a60c6bccdedfe3c27f88a991139284a7c393edc946f1d50171c3a627e6accfe	974843	nist/ctc-01/nx-1980/nist_ctc_01_asme1_nx1980_rd.prt	nx-part	NIST-FTC-CTC-PMI-CAD-models.zip:NX 1980/nist_ctc_01_asme1_nx1980_rd.prt
+0557f86aefe6796180416871426dddca83d7ca32bd400770999441aa2705212a	521280	nist/ctc-01/solidworks-2018/nist_ctc_01_asme1_rd_sw1802.SLDPRT	solidworks-part	NIST-FTC-CTC-PMI-CAD-models.zip:SolidWorks MBD 2018/nist_ctc_01_asme1_rd_sw1802.SLDPRT
+85a5752da05f53c456ca3a9e038c90358e1d5a3141d1f0d6e5f0970f2356e821	396445	nist/ctc-01/step/nist_ctc_01_asme1_ap242-e1.stp	step	NIST-PMI-STEP-Files.zip:nist_ctc_01_asme1_ap242-e1.stp
+e081d518484d5c708c6729353237f94a7d97da2b74a10d60d4c0d146d67a5855	235171	nist/ctc-01/step/nist_ctc_01_asme1_rd.stp	step	NIST-PMI-STEP-Files.zip:AP203 geometry only/nist_ctc_01_asme1_rd.stp
+0f507d3d753855324a56088a387581fadfaf63b639c1231c2429f5632af76163	212992	nist/ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt	inventor-part	NIST-FTC-CTC-PMI-CAD-models.zip:Inventor 2021/INV_nist_ftc_11_asme1_2021.ipt
+07f8b1f55d6adba7c76901bc1655f2d04e14509ffc2d82426c3ce28af67f7db5	269897	nist/ftc-11/solidworks-2018/nist_ftc_11_asme1_rb_sw1802.SLDPRT	solidworks-part	NIST-FTC-CTC-PMI-CAD-models.zip:SolidWorks MBD 2018/nist_ftc_11_asme1_rb_sw1802.SLDPRT
+a5abfea460499dc31bc812aca68917948a117565fea4f5a080e36eb32f39650d	7634	nist/ftc-11/step/nist_ftc_11_asme1_rb.stp	step	NIST-PMI-STEP-Files.zip:AP203 geometry only/nist_ftc_11_asme1_rb.stp
+1b7db7982f70c896ca5bf840308978adc148a1ebdd51c559e3abc0c9f99d5363	329621	nist/mtc-assembly/nx/90591A141 HEX NUT.prt	nx-part	NIST-MTC-Assembly.zip:NX/90591A141 HEX NUT.prt
+43d5e5c758ce010a6e72d1f1300a8dbde76713259de13d41d1621b52eeea74de	585349	nist/mtc-assembly/nx/91274A118 SHCS.prt	nx-part	NIST-MTC-Assembly.zip:NX/91274A118 SHCS.prt
+23acec44220891b47874b64296a7d74c65da86b75225e120ac5225bbc344956f	579321	nist/mtc-assembly/nx/91274A141 SHCS.prt	nx-part	NIST-MTC-Assembly.zip:NX/91274A141 SHCS.prt
+856f78e35af9752151b1ce5d2a960cc5ad9278400d1abc086f01318aa2f3c3e3	442974	nist/mtc-assembly/nx/91304A112 FHSCS.prt	nx-part	NIST-MTC-Assembly.zip:NX/91304A112 FHSCS.prt
+bc84358ac677b444d1881044d175cc3442ed8629827bc73f9d93bffacd4b46a7	1618097	nist/mtc-assembly/nx/NIST mtc crada assembly.jt	jt	NIST-MTC-Assembly.zip:NX/NIST mtc crada assembly.jt
+83eab6cfcdb5a3b93f6c4893e37c9a19332a450df74615ca78253937ebf736de	679082	nist/mtc-assembly/nx/NIST mtc crada assembly.prt	nx-part	NIST-MTC-Assembly.zip:NX/NIST mtc crada assembly.prt
+31790cb113f4ac85aba667c1538af6ff61b7d20d3b576931ae875396f045afed	3535911	nist/mtc-assembly/nx/NIST mtc crada box.prt	nx-part	NIST-MTC-Assembly.zip:NX/NIST mtc crada box.prt
+f95f35ab95d8eefee209cfbf772297fcbc6071cbf6d3ec94a7d6383b7b54d2b2	3600213	nist/mtc-assembly/nx/NIST mtc crada cover.prt	nx-part	NIST-MTC-Assembly.zip:NX/NIST mtc crada cover.prt
+a5685b989e3fe0b5fd689b2ed254094bbcd2caf8fb6db3d6c22e73f2eda8f4ee	4025278	nist/mtc-assembly/nx/NIST mtc crada plate.prt	nx-part	NIST-MTC-Assembly.zip:NX/NIST mtc crada plate.prt
+2f7cf9853da4f57f51d55ce2fe0729d0b9b6fad6c11ff77fac554a995eaf60c9	2208260	nist/mtc-assembly/nx/NIST mtc crada polycarb.prt	nx-part	NIST-MTC-Assembly.zip:NX/NIST mtc crada polycarb.prt
+827f5965029de6381108b5b5627c675b3e0ab500a55d902e20db9d8591b0d53e	158	nist/mtc-assembly/nx/README.txt	text	NIST-MTC-Assembly.zip:NX/README.txt
+082aad22d8f2944c21a5b4e44879896932f484d145c698d78e9e750cedbcc88f	355595	nist/mtc-assembly/solidworks/90591A141_ZINC PLATED STEEL HEX NUT.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/90591A141_ZINC PLATED STEEL HEX NUT.SLDPRT
+75d724a10876cfba064b4aee891634dfb97e54cb6763991d876d5d126e640262	768538	nist/mtc-assembly/solidworks/91274A118_COATED ALLOY STEEL SOCKET HEAD CAP SCREW.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/91274A118_COATED ALLOY STEEL SOCKET HEAD CAP SCREW.SLDPRT
+96b96a9b3cb88652805029169ce125375062d63477f934c204a7ab4b86faf739	860146	nist/mtc-assembly/solidworks/91274A141_COATED ALLOY STEEL SOCKET HEAD CAP SCREW.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/91274A141_COATED ALLOY STEEL SOCKET HEAD CAP SCREW.SLDPRT
+3bda61fdafc4dba6e721fc8cdadadfcf99a3bdbe2f386ef374b3aa2d21ef756a	604195	nist/mtc-assembly/solidworks/91304A112_BLUE FLAT-HEAD SOCKET CAP SCREW.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/91304A112_BLUE FLAT-HEAD SOCKET CAP SCREW.SLDPRT
+d5b7f39fd854a38e6d89de0580d5e63868f17acc95308573fbe599b87c6c0503	154	nist/mtc-assembly/solidworks/README.txt	text	NIST-MTC-Assembly.zip:SolidWorks/README.txt
+92d18bdaca461f3bcc1d50ff838e32b678dd14ff5ab13161809b0d0dfb244f76	2183071	nist/mtc-assembly/solidworks/nist_mtc_crada_assembly_rev-D.SLDASM	solidworks-assembly	NIST-MTC-Assembly.zip:SolidWorks/nist_mtc_crada_assembly_rev-D.SLDASM
+3577d5d1727557ba88b73f02e9986423252b5921f09c0499e92b15654f69c4f8	1013064	nist/mtc-assembly/solidworks/nist_mtc_crada_box_rev-D.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/nist_mtc_crada_box_rev-D.SLDPRT
+36bf5b450d3b5e3b3959cffdb6e28d6ee5ba827ea5109bd794edf6416634aca5	893216	nist/mtc-assembly/solidworks/nist_mtc_crada_cover_rev-B.SAT	acis-text	NIST-MTC-Assembly.zip:SolidWorks/nist_mtc_crada_cover_rev-B.SAT
+1fb1b54fa7531c9846eb6ef71ee381f7c3551ee79fde900f6c26c6c1f0ec8c5c	858435	nist/mtc-assembly/solidworks/nist_mtc_crada_cover_rev-B.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/nist_mtc_crada_cover_rev-B.SLDPRT
+be8150458846cc8d0357491bb8daf83827e4ade4b1ae6366bea3832c56642cd5	724497	nist/mtc-assembly/solidworks/nist_mtc_crada_plate_rev-A.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/nist_mtc_crada_plate_rev-A.SLDPRT
+2f1ec6a437cc923ad9fb4ea86a7db0d67ee920bcffc4152afa6643f3912764aa	253010	nist/mtc-assembly/solidworks/nist_mtc_crada_polycarb-window.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/nist_mtc_crada_polycarb-window.SLDPRT

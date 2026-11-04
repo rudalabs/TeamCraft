@@ -11,6 +11,11 @@ the known gaps with details. Last update: 2026-11-04.
 - [ ] Folder import: find out why all imported items stayed in "My check-outs" after the last import and fix it (test
   import against the server)
 - [ ] Bulk action "Check in all my check-outs" (desktop and web)
+- [ ] SOLIDWORKS 2015+ files: the preview image and the referenced file names sit in compressed segments of the
+  container – inflate them before the preview search and the reference scan (gap test in `tests/cad_fixtures.rs`,
+  found with the NIST files)
+- [ ] Reference scan: false references in real files – earlier file names and binary noise in NX parts, the export name
+  in the STEP header (`FILE_NAME`), noise in JT files (gap test in `tests/cad_fixtures.rs`)
 
 **General**
 
@@ -66,7 +71,8 @@ the known gaps with details. Last update: 2026-11-04.
   and only check/show it
 - [ ] Folder import: read the paths of an included `.ipj`; recognise Content Center and library folders
 - [ ] Test the reference scan with real `.iam` files, also with derived parts, iParts/iAssemblies and Frame Generator
-- [ ] Test preview images and the STEP export (both built) with real files on Windows
+- [ ] Test the STEP export (built) with real files on Windows – the preview images are verified with the NIST Inventor
+  2021 files
 - [ ] Test the BOM import with real exports of the BOM editor (structured and parts only)
 - [ ] Extend the Inventor part of the tutorial: Pack and Go, `.ipj`, Design Assistant for broken references
 
@@ -80,7 +86,7 @@ the known gaps with details. Last update: 2026-11-04.
 **SOLIDWORKS**
 
 - [ ] STEP export through the locally installed SOLIDWORKS (API), like Inventor and Solid Edge
-- [ ] Test preview images (built, old and new files) with real files
+- [ ] Test preview images of SOLIDWORKS 2014 and older (OLE files) with real files – 2015 and newer: see *Fixes*
 - [ ] Take configurations and Toolbox parts into account in the import and the reference scan
 - [ ] Test the BOM import with real BOM exports
 
@@ -89,12 +95,20 @@ the known gaps with details. Last update: 2026-11-04.
 - [ ] (research first) How other PLMs connect NX (native vs. Teamcenter NX Manager), licences (student/academic) and
   what is feasible for an open-source project
 - [ ] Folder import for the master model concept: the drawing `*_dwg*.prt` belongs into the item of the model
-- [ ] Test `.prt` detection, the reference scan and the BOM import with real NX files
+- [x] `.prt` detection and the reference scan of an assembly verified with the NIST NX 1980 files (false references:
+  see *Fixes*)
+- [ ] Test the BOM import with real NX BOM exports
 - [ ] STEP export through the local NX (NX Open / journal), on Windows and Linux
 - [ ] NX load options for the workspace only on request, in the workspace wizard; NX part of the tutorial
 
 **Tests with real data**
 
+- [x] Openly licensed test files in the repository: `tests/fixtures/cad` (NIST: Inventor 2021, NX 1980, SOLIDWORKS
+  2018, Creo 10, CATIA V5, STEP AP203/AP242; NX and SOLIDWORKS box assembly), checked by `tests/cad_fixtures.rs`
+- [ ] Solid Edge test files: none openly licensed found – create a part, a sheet metal part and an assembly with Solid
+  Edge (Community Edition) and publish them under CC0
+- [ ] End-to-end test against the server with the fixtures: folder import of `tests/fixtures/cad/nist/mtc-assembly/nx`
+  and `…/solidworks` → items, files, references, BOM lines, preview images, STEP preview
 - [ ] One real project with hundreds of files each from Inventor, Solid Edge, SOLIDWORKS and NX: folder import, preview
   images, STEP export, BOMs – including the heuristics (CAD reference scan, BOM table columns, embedded previews)
 
