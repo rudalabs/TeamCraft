@@ -154,6 +154,7 @@ fn main() {
             commands::set_zoom,
             commands::save_package,
             commands::save_stl,
+            commands::upload_files,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TeamCraft Desktop");

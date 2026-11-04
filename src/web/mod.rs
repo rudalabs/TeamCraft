@@ -75,7 +75,12 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/auth/oidc/login", get(auth_pages::oidc_start))
         .route("/auth/oidc/callback", get(auth_pages::oidc_callback))
         // items
-        .route("/items", get(items::list).post(items::create))
+        .route(
+            "/items",
+            get(items::list)
+                .post(items::create)
+                .layer(DefaultBodyLimit::max(upload_limit)),
+        )
         .route("/items/new", get(items::new_form))
         .route("/items/{id}", get(items::show))
         .route("/items/{id}/master", post(items::update_master))
@@ -222,7 +227,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
 
 /// Header set by `static/app.js` when it sends a form itself (uploads with
 /// a progress bar and a cancel button).
-const SCRIPT_HEADER: &str = "x-teamcraft-script";
+pub(crate) const SCRIPT_HEADER: &str = "x-teamcraft-script";
 
 /// A script-sent form gets the redirect target as JSON instead of a `303`,
 /// which XMLHttpRequest would follow on its own and thereby consume the flash

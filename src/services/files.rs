@@ -270,7 +270,7 @@ pub struct Stored {
 
 /// Stores uploads as new files or new versions inside the caller's
 /// transaction. The revision must be locked and checked as editable.
-async fn store_uploads(
+pub(crate) async fn store_uploads(
     conn: &mut PgConnection,
     actor: &Actor,
     rev: &Revision,

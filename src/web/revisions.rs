@@ -396,10 +396,13 @@ pub(crate) fn multipart_error(e: MultipartError) -> AppError {
 pub(crate) struct Received {
     pub uploads: Vec<files::Upload>,
     pub comment: String,
+    /// Every other text field of the form.
+    pub fields: std::collections::HashMap<String, String>,
 }
 
 /// Streams every `file` field of a multipart request into the vault and
-/// collects the `comment` field. Nothing is registered in the database yet.
+/// collects the `comment` and all other text fields. Nothing is registered in
+/// the database yet.
 /// Shared with the REST API.
 pub(crate) async fn receive_uploads(
     st: &AppState,
@@ -426,7 +429,12 @@ pub(crate) async fn receive_uploads(
                     .uploads
                     .push(files::Upload::classify(&st.vault, blob, filename, &content_type).await);
             }
-            _ => {}
+            Some(other) => {
+                let name = other.to_string();
+                let value = field.text().await.map_err(multipart_error)?;
+                received.fields.insert(name, value);
+            }
+            None => {}
         }
     }
     Ok(received)

@@ -14,9 +14,11 @@ Use two browsers (or a private window) for the two-person steps.
 
 ## 2. Items, check-out and check-in
 
-1. *Items → New item*: part *Wheel hub* in `ROVER`. Revision A is in work
-   and checked out to erika (🔒 badge).
-2. Upload `hub.step` and `hub.stl`; open **3D** for each. The STEP model is
+1. *Items → New item*: choose `hub.step` and `hub.stl` as files – the name
+   *hub* and the type *part* are filled in; change the name to *Wheel hub*,
+   project group `ROVER`. The item is created with both files; revision A is
+   in work and checked out to erika (🔒 badge).
+2. Open **3D** for each file. The STEP model is
    tessellated on the server – try *Download STL*.
 3. *Vault → My check-outs*: the item is listed; select it, **Check in** a
    changed `hub.step` with a comment. The upload shows a progress bar; try

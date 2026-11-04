@@ -9,7 +9,7 @@ use crate::{
     domain::{self, ItemType, LifecycleState, Role},
     error::{AppError, AppResult},
     models::{Item, ItemSummary, Revision, WhereUsed},
-    services::{audit, next_counter, notifications, revisions, Page},
+    services::{audit, files, next_counter, notifications, revisions, Page},
 };
 
 const ITEM_SELECT: &str = "
@@ -197,6 +197,25 @@ fn validate_unit(unit: &str) -> AppResult<String> {
 pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<Revision> {
     let mut tx = pool.begin().await?;
     let created = create_tx(&mut tx, actor, input).await?;
+    tx.commit().await?;
+    revisions::get(pool, created.revision_id).await
+}
+
+/// Creates an item and stores its first files in the new revision – one
+/// transaction, so there is never an item without the files it was created
+/// with. The revision stays checked out by the creator.
+pub async fn create_with_files(
+    pool: &PgPool,
+    actor: &Actor,
+    input: NewItem,
+    uploads: &[files::Upload],
+) -> AppResult<Revision> {
+    let mut tx = pool.begin().await?;
+    let created = create_tx(&mut tx, actor, input).await?;
+    if !uploads.is_empty() {
+        let rev = revisions::lock(&mut tx, created.revision_id).await?;
+        files::store_uploads(&mut tx, actor, &rev, uploads, "").await?;
+    }
     tx.commit().await?;
     revisions::get(pool, created.revision_id).await
 }

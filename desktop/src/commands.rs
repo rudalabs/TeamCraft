@@ -522,3 +522,62 @@ mod tests {
         assert_eq!(clamp_zoom(f64::NAN), 1.0);
     }
 }
+
+/// Uploads local files into a revision the user has checked out: the files
+/// of a new item, or of an item created by the folder import. Creo
+/// iterations are uploaded under their logical name (`bracket.prt.7` →
+/// `bracket.prt`).
+#[tauri::command]
+pub async fn upload_files(
+    state: State<'_, AppState>,
+    item: String,
+    code: String,
+    paths: Vec<PathBuf>,
+    comment: Option<String>,
+) -> CmdResult<Value> {
+    let api = signed_in_api(&state)?;
+    let files = upload_names(&paths)?;
+    if files.is_empty() {
+        return Ok(Value::Null);
+    }
+    api.multipart(
+        &format!(
+            "/items/{}/revisions/{}/files",
+            workspace::enc(&item),
+            workspace::enc(&code)
+        ),
+        &files,
+        &[("comment", comment.unwrap_or_default())],
+    )
+    .await
+}
+
+/// `(name on the server, local path)` for every path.
+fn upload_names(paths: &[PathBuf]) -> CmdResult<Vec<(String, PathBuf)>> {
+    paths
+        .iter()
+        .map(|path| {
+            let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+                ApiError::local(format!("{} has no usable file name.", path.display()))
+            })?;
+            let (logical, _) = workspace::logical_name(name);
+            Ok((logical.to_string(), path.clone()))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod upload_tests {
+    use super::*;
+
+    #[test]
+    fn upload_names_drop_creo_iterations() {
+        let names = upload_names(&[
+            PathBuf::from("/cad/frame.asm.12"),
+            PathBuf::from("/cad/Bracket.ipt"),
+        ])
+        .unwrap();
+        assert_eq!(names[0].0, "frame.asm");
+        assert_eq!(names[1].0, "Bracket.ipt");
+    }
+}

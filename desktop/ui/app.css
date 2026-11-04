@@ -530,3 +530,8 @@ ul.notifications li.unread button { color: var(--text); border-left: 3px solid v
 .n-title { display: block; font-weight: 600; }
 .n-body { display: block; font-size: 0.85em; white-space: pre-line; }
 .n-meta { display: block; font-size: 0.78em; color: var(--text-dim); margin-top: 0.15rem; }
+
+/* Files chosen in the new-item dialog */
+ul.file-picks { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
+ul.file-picks li { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

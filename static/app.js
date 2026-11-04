@@ -137,6 +137,30 @@
     });
   });
 
+  // New item: name and type from the first chosen file
+  // (<input type="file" data-fill-name="id" data-fill-type="id">).
+  var ASSEMBLY = ["iam", "asm", "sldasm", "catproduct", "f3z"];
+  var DRAWING = ["idw", "dwg", "dxf", "dft", "slddrw", "catdrawing", "drw", "ipn", "pdf"];
+  document.querySelectorAll("input[type=file][data-fill-name]").forEach(function (input) {
+    var name = document.getElementById(input.getAttribute("data-fill-name"));
+    var type = document.getElementById(input.getAttribute("data-fill-type"));
+    var typeChosen = false;
+    if (type) type.addEventListener("change", function () { typeChosen = true; });
+    input.addEventListener("change", function () {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      // Creo iterations: bracket.prt.7 → bracket.prt
+      var base = file.name.replace(/\.\d+$/, "");
+      var dot = base.lastIndexOf(".");
+      var stem = dot > 0 ? base.slice(0, dot) : base;
+      var ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+      if (name && !name.value.trim()) name.value = stem;
+      if (type && !typeChosen) {
+        type.value = ASSEMBLY.indexOf(ext) >= 0 ? "assembly" : DRAWING.indexOf(ext) >= 0 ? "document" : "part";
+      }
+    });
+  });
+
   // Copy buttons: <button data-copy="id">.
   document.querySelectorAll("[data-copy]").forEach(function (btn) {
     btn.addEventListener("click", function () {

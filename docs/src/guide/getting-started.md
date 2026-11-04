@@ -28,9 +28,12 @@ installations and the desktop app:
    manages the group and adds the team members.
 3. **Users** (admins): create accounts for your team, or connect single
    sign-on (see [Users, roles and SSO](../admin/users.md)).
-4. **Items → New item**: a part, assembly, document or software item. Its
-   first revision *A* is created *in work* and checked out to you.
-5. Upload files, **Check in**, then release it with a change order.
+4. **Items → New item**: choose the CAD file(s) first – the model, its
+   drawing and a STEP export for the 3D preview. Name and type are taken from
+   the first file (an assembly for `.iam`, `.asm`, `.sldasm`, …). The item is
+   created together with its files; its first revision *A* is *in work* and
+   checked out to you.
+5. **Check in**, then release it with a change order.
 
 On a server that is reachable from other machines, create the first
 administrator from the command line instead:

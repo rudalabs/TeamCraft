@@ -1,7 +1,8 @@
 //! Item search, creation and master data.
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{FromRequest, Multipart, Path, Query, Request, State},
+    http::header,
     response::Response,
     Form,
 };
@@ -188,22 +189,96 @@ fn parse_new_item(form: &NewItemForm) -> AppResult<items::NewItem> {
     })
 }
 
-pub async fn create(
-    State(st): State<AppState>,
-    ctx: WebCtx,
-    Form(form): Form<NewItemForm>,
-) -> AppResult<Response> {
+/// `Part.ipt` → `Part`.
+fn file_stem(filename: &str) -> &str {
+    match filename.rsplit_once('.') {
+        Some((stem, _)) if !stem.trim().is_empty() => stem.trim(),
+        _ => filename.trim(),
+    }
+}
+
+/// The fields and files of the new-item form: multipart (with `file` parts)
+/// or a plain form without files.
+async fn receive_new_item(st: &AppState, req: Request) -> AppResult<super::revisions::Received> {
+    let multipart = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("multipart/form-data"));
+    if multipart {
+        let mut multipart = Multipart::from_request(req, st)
+            .await
+            .map_err(|e| AppError::BadRequest(e.body_text()))?;
+        super::revisions::receive_uploads(st, &mut multipart).await
+    } else {
+        let Form(fields) = Form::<std::collections::HashMap<String, String>>::from_request(req, st)
+            .await
+            .map_err(|e| AppError::BadRequest(e.body_text()))?;
+        Ok(super::revisions::Received {
+            fields,
+            ..Default::default()
+        })
+    }
+}
+
+/// New item from the form, optionally with its first files. Without a name,
+/// the name of the first file is used.
+pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> AppResult<Response> {
+    // Sent by the upload script (progress bar): errors go back to the form as
+    // a flash message, because the script expects a redirect.
+    let scripted = req.headers().contains_key(super::SCRIPT_HEADER);
+    let received = match receive_new_item(&st, req).await {
+        Ok(r) => r,
+        Err(e) if is_user_error(&e) => {
+            return render_new(&st, &ctx, &NewItemForm::default(), Some(e.public_message())).await;
+        }
+        Err(e) => return Err(e),
+    };
+    let mut form: NewItemForm = serde_json::from_value(json!(received.fields)).unwrap_or_default();
+    if form.name.trim().is_empty() {
+        if let Some(first) = received.uploads.first() {
+            form.name = file_stem(&first.filename).to_string();
+        }
+    }
     let result = match parse_new_item(&form) {
-        Ok(input) => items::create(&st.db, &ctx.me, input).await,
+        Ok(input) => items::create_with_files(&st.db, &ctx.me, input, &received.uploads).await,
         Err(e) => Err(e),
     };
     match result {
-        Ok(rev) => Ok(super::redirect_flash(
-            &st,
-            &format!("/revisions/{}", rev.id),
-            super::Flash::success(format!("Created {} – {}", rev.item_number, rev.name)),
-        )),
-        Err(e) if is_user_error(&e) => render_new(&st, &ctx, &form, Some(e.public_message())).await,
+        Ok(rev) => {
+            let files = match received.uploads.len() {
+                0 => String::new(),
+                1 => " with 1 file".to_string(),
+                n => format!(" with {n} files"),
+            };
+            Ok(super::redirect_flash(
+                &st,
+                &format!("/revisions/{}", rev.id),
+                super::Flash::success(format!(
+                    "Created {} – {}{files}; it is checked out to you.",
+                    rev.item_number, rev.name
+                )),
+            ))
+        }
+        Err(e) if is_user_error(&e) => {
+            let mut message = e.public_message();
+            if !received.uploads.is_empty() {
+                message.push_str(" Choose the files again.");
+            }
+            if scripted {
+                let back = format!(
+                    "/items/new?type={}&project={}",
+                    util::pct_encode(&form.item_type),
+                    util::pct_encode(&form.project_id)
+                );
+                return Ok(super::redirect_flash(
+                    &st,
+                    &back,
+                    super::Flash::error(message),
+                ));
+            }
+            render_new(&st, &ctx, &form, Some(message)).await
+        }
         Err(e) => Err(e),
     }
 }

@@ -1459,3 +1459,72 @@ async fn bom_import_in_the_web_ui() {
     assert_eq!(r.header("location").as_deref(), Some("/import"));
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn new_item_with_files() {
+    let app = app_or_skip!();
+    let (_, token) = app.user_in("erika", Role::Editor, &["ROVER"]).await;
+    let cookie = app.login("erika").await;
+    let project = app.project_id("ROVER").await.to_string();
+    let form = app.get_page("/items/new", Some(&cookie)).await.text();
+    assert!(
+        form.contains("enctype=\"multipart/form-data\"") && form.contains("name=\"file\" multiple"),
+        "the form takes files"
+    );
+
+    // No name: the item is named after its first file and has it right away.
+    let r = post_multipart(
+        &app,
+        "/items",
+        &cookie,
+        ("Bracket.step", b"ISO-10303-21; bracket"),
+        &[
+            ("item_type", "part"),
+            ("name", ""),
+            ("project_id", &project),
+            ("unit", "each"),
+        ],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let rev = app
+        .api(
+            Method::GET,
+            "/api/v1/items/PRT-000001/revisions/A",
+            &token,
+            None,
+        )
+        .await
+        .json();
+    assert_eq!(rev["revision"]["name"], "Bracket");
+    let files = rev["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["filename"], "Bracket.step");
+    assert_eq!(files[0]["format"], "step");
+    let page = app
+        .get_page(&r.header("location").unwrap(), Some(&cookie))
+        .await
+        .text();
+    assert!(
+        page.contains("Bracket.step"),
+        "the revision page lists the file"
+    );
+
+    // Errors re-render the form and ask for the files again; nothing is created.
+    let r = post_multipart(
+        &app,
+        "/items",
+        &cookie,
+        ("Frame.ipt", b"OLE"),
+        &[("item_type", "part"), ("project_id", "")],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.text().contains("Choose the files again"));
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM items")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    app.teardown().await;
+}

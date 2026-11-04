@@ -11,10 +11,13 @@
 
 <div class="card">
   {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
-  <form class="stack" method="post" action="/items">
+  <form class="stack" method="post" action="/items" enctype="multipart/form-data">
+    <label>Files <span class="hint">the CAD model with its drawing and a STEP export for the 3D preview – the item is created together with them</span>
+      <input type="file" name="file" multiple data-fill-name="new-item-name" data-fill-type="new-item-type">
+    </label>
     <div class="form-row">
       <label>Type
-        <select name="item_type" required>
+        <select name="item_type" id="new-item-type" required>
           {% for t in types %}<option value="{{ t.value }}" {% if form.item_type == t.value %}selected{% endif %}>{{ t.label }}</option>{% endfor %}
         </select>
       </label>
@@ -22,8 +25,8 @@
         <input type="text" name="number" value="{{ form.number }}" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*">
       </label>
     </div>
-    <label>Name
-      <input type="text" name="name" value="{{ form.name }}" maxlength="200" required autofocus>
+    <label>Name <span class="hint">empty: the name of the first file</span>
+      <input type="text" name="name" id="new-item-name" value="{{ form.name }}" maxlength="200">
     </label>
     <label>Description
       <textarea name="description" maxlength="10000">{{ form.description }}</textarea>
