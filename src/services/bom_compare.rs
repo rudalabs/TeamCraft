@@ -202,7 +202,7 @@ pub fn to_xlsx(diffs: &[LineDiff]) -> AppResult<Vec<u8>> {
     let mut workbook = Workbook::new();
     let sheet = workbook.add_worksheet();
     // An invalid sheet name is rejected when the workbook is saved.
-    sheet.set_name("BOM comparison");
+    sheet.set_name("BOM comparison").map_err(xlsx_error)?;
     for (col, (title, width)) in XLSX_HEADERS.iter().zip(XLSX_WIDTHS).enumerate() {
         let col = col as u16;
         sheet.write_string(0, col, *title).map_err(xlsx_error)?;
@@ -311,7 +311,7 @@ mod tests {
         let mut xml = String::new();
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i).expect("zip entry");
-            if entry.name().ends_with(".xml") {
+            if entry.name().is_ok_and(|n| n.ends_with(".xml")) {
                 let mut text = String::new();
                 entry.read_to_string(&mut text).expect("UTF-8 XML");
                 xml.push_str(&text);
