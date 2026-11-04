@@ -306,15 +306,20 @@ impl Config {
             }
             None => None,
         };
-        let assistant = match env.get("TEAMCRAFT_ANTHROPIC_API_KEY")? {
+        // A key file with only blanks counts as "not set", like an empty variable.
+        let api_key = env
+            .get("TEAMCRAFT_ANTHROPIC_API_KEY")?
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+        let assistant = match api_key {
             Some(api_key) => {
-                let api_key = api_key.trim().to_string();
                 if api_key.chars().any(|c| c.is_whitespace() || c.is_control()) {
                     bail!("TEAMCRAFT_ANTHROPIC_API_KEY must not contain spaces or line breaks");
                 }
                 let model = env
                     .get("TEAMCRAFT_ASSISTANT_MODEL")?
                     .map(|m| m.trim().to_string())
+                    .filter(|m| !m.is_empty())
                     .unwrap_or_else(|| DEFAULT_ASSISTANT_MODEL.to_string());
                 if !model
                     .chars()
@@ -805,6 +810,26 @@ mod tests {
         .unwrap();
         let a = cfg.assistant.unwrap();
         assert_eq!((a.model.as_str(), a.max_steps), ("claude-sonnet-5-5", 5));
+
+        // key and model files with only blanks: "not set", not an empty key
+        let dir = std::env::temp_dir().join(format!("teamcraft-cfg-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let blank = dir.join("blank");
+        std::fs::write(&blank, "  \n").unwrap();
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_ANTHROPIC_API_KEY_FILE", blank.to_str().unwrap()),
+        ])
+        .unwrap();
+        assert!(cfg.assistant.is_none(), "blank key file = disabled");
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_ANTHROPIC_API_KEY", "k"),
+            ("TEAMCRAFT_ASSISTANT_MODEL_FILE", blank.to_str().unwrap()),
+        ])
+        .unwrap();
+        assert_eq!(cfg.assistant.unwrap().model, DEFAULT_ASSISTANT_MODEL);
+        std::fs::remove_dir_all(dir).ok();
 
         for (key, value) in [
             ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "0"),

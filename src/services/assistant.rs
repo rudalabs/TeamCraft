@@ -3,7 +3,7 @@
 //! question or the answer). See `crate::assistant` for the tool loop.
 
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::{
     assistant::{self, Answer, AssistantError, McpTools, Question, ToolUse, Trace},
@@ -31,6 +31,90 @@ pub fn enabled(st: &AppState) -> bool {
     st.assistant.is_some()
 }
 
+/// The audit details of a run (no question text, no answer).
+fn audit_details(
+    question: &Question,
+    allow_drafts: bool,
+    model: &str,
+    trace: &Trace,
+    outcome: &str,
+) -> Value {
+    json!({
+        "action": question.action.as_str(),
+        "question_chars": question.text.chars().count(),
+        "context": {
+            "item": question.item,
+            "revision": question.revision,
+            "change": question.change,
+        },
+        "allow_drafts": allow_drafts,
+        "model": model,
+        "tools": trace.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        "steps": trace.steps,
+        "input_tokens": trace.input_tokens,
+        "output_tokens": trace.output_tokens,
+        "outcome": outcome,
+    })
+}
+
+async fn record_run(
+    st: &AppState,
+    me: &Actor,
+    action: assistant::Action,
+    details: Value,
+) -> AppResult<()> {
+    let mut conn = st.db.acquire().await?;
+    audit::record(
+        &mut conn,
+        Some(me),
+        "assistant.run",
+        "assistant",
+        None,
+        format!("Assistant: {}", action.label()),
+        details,
+    )
+    .await
+}
+
+/// Records a run that was abandoned before it finished (the client closed
+/// the connection, so the request future was dropped): the model calls and
+/// tool calls made until then – possibly a draft change order – still get
+/// their audit record.
+struct CancelGuard {
+    st: AppState,
+    me: Actor,
+    question: Question,
+    allow_drafts: bool,
+    model: String,
+    trace: Trace,
+    finished: bool,
+}
+
+impl Drop for CancelGuard {
+    fn drop(&mut self) {
+        // nothing came back from the API yet: nothing to record
+        if self.finished || self.trace.steps == 0 {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let details = audit_details(
+            &self.question,
+            self.allow_drafts,
+            &self.model,
+            &self.trace,
+            "cancelled",
+        );
+        let (st, me, action) = (self.st.clone(), self.me.clone(), self.question.action);
+        runtime.spawn(async move {
+            if let Err(e) = record_run(&st, &me, action, details).await {
+                tracing::warn!(error = %e, "recording a cancelled assistant run failed");
+            }
+        });
+    }
+}
+
 /// Asks the assistant. The tools run with the rights of `me`; the draft
 /// tools are only offered when `question.allow_drafts` is set and `me` may
 /// edit.
@@ -45,7 +129,15 @@ pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run
     let system = assistant::system_prompt(me, allow_drafts);
     let instruction = question.instruction();
     let tools = McpTools { state: st, me };
-    let mut trace = Trace::default();
+    let mut guard = CancelGuard {
+        st: st.clone(),
+        me: me.clone(),
+        question,
+        allow_drafts,
+        model: client.model.clone(),
+        trace: Trace::default(),
+        finished: false,
+    };
     let result = tokio::time::timeout(
         assistant::RUN_TIMEOUT,
         assistant::run_loop(
@@ -56,7 +148,7 @@ pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run
             &system,
             &instruction,
             allow_drafts,
-            &mut trace,
+            &mut guard.trace,
         ),
     )
     .await
@@ -68,38 +160,24 @@ pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run
         Err(e) => e.code(),
     };
     if let Err(e) = &result {
-        tracing::warn!(user = %me.username, action = question.action.as_str(), error = %e, "assistant run failed");
+        tracing::warn!(user = %me.username, action = guard.question.action.as_str(), error = %e, "assistant run failed");
     }
-    let mut conn = st.db.acquire().await?;
-    audit::record(
-        &mut conn,
-        Some(me),
-        "assistant.run",
-        "assistant",
-        None,
-        format!("Assistant: {}", question.action.label()),
-        json!({
-            "action": question.action.as_str(),
-            "question_chars": question.text.chars().count(),
-            "context": {
-                "item": question.item,
-                "revision": question.revision,
-                "change": question.change,
-            },
-            "allow_drafts": allow_drafts,
-            "model": client.model,
-            "tools": trace.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
-            "steps": trace.steps,
-            "input_tokens": trace.input_tokens,
-            "output_tokens": trace.output_tokens,
-            "outcome": outcome,
-        }),
-    )
-    .await?;
+    // From here on the normal record below is written; the guard must not
+    // write a second one (the request may still be dropped while it runs).
+    guard.finished = true;
+    let details = audit_details(
+        &guard.question,
+        allow_drafts,
+        &client.model,
+        &guard.trace,
+        outcome,
+    );
+    record_run(st, me, guard.question.action, details).await?;
 
     let answer = result.map_err(AssistantError::into_app_error)?;
+    let trace = std::mem::take(&mut guard.trace);
     Ok(Run {
-        action: question.action,
+        action: guard.question.action,
         answer,
         tools: trace.tools,
         steps: trace.steps,

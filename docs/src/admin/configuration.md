@@ -73,7 +73,8 @@ Fixed limits per question: 16 000 output tokens per model call, 800 000
 tokens in total, 240 seconds, and at most 4 questions running at the same
 time on the server. Each question is recorded in the audit log
 (`assistant.run`: user, quick action, question length, tools used, token
-counts, never the question or the answer).
+counts and the outcome – `cancelled` when the client closed the connection
+before the answer – never the question or the answer).
 
 ## Tests
 
