@@ -39,7 +39,7 @@
 | `src/main.rs`                        | CLI: serve, migrate, user, vault check, rescan-references, healthcheck, mcp (stdio bridge)           |
 | `src/lib.rs`                         | `AppState`, router, health endpoints, security headers                                               |
 | `src/domain.rs`                      | roles, lifecycle, revision letters, skins, validation                                                |
-| `src/services/`                      | items, revisions, files, BOM, changes, references, impacts, simulations, projects, users, …         |
+| `src/services/`                      | items, revisions, files, chunked uploads, BOM, changes, references, impacts, simulations, projects, users, … |
 | `src/web/`, `templates/`, `static/`  | HTML interface                                                                                       |
 | `src/api/`                           | REST API                                                                                             |
 | `src/mcp/`                           | MCP server for AI assistants (`POST /api/v1/mcp`): JSON-RPC, tools and prompts over the services     |

@@ -2597,7 +2597,8 @@
         field("Comment", comment, "stored with every new version")
       ]);
       dialog("Check in " + rev.item_number + "/" + rev.code, body, [
-        { label: "Cancel", onClick: function (d) { d.close(); } },
+        // also stops a running chunked upload – nothing is stored then
+        { label: "Cancel", onClick: function (d) { call("cancel_upload").catch(function () {}); setStatus(""); d.close(); } },
         {
           label: "Check in and release", primary: true, submit: true, onClick: function (d) {
             var files = boxes.filter(function (b) { return b.input.checked; }).map(function (b) { return b.name; });
@@ -3833,6 +3834,12 @@
     initShell();
     initZoom();
     TAURI.event.listen("menu", function (e) { handleMenu(e.payload); });
+    // large files are sent in resumable chunks: show how far they are
+    TAURI.event.listen("upload-progress", function (e) {
+      var p = e.payload || {};
+      var pct = p.total ? Math.floor(100 * p.sent / p.total) : 100;
+      setStatus("Uploading " + p.file + " – " + fmtSize(p.sent) + " of " + fmtSize(p.total) + " (" + pct + " %) …");
+    });
     TAURI.event.listen("agent", function (e) { onAgentEvent(e.payload); });
     TAURI.event.listen("workspace-progress", function (e) { onGetProgress(e.payload); });
     $("status-get-cancel").addEventListener("click", function () {

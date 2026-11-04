@@ -12,14 +12,14 @@ use std::{
 
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Notify;
 
 use crate::{
     acp,
-    api::{self, Api, ApiError},
+    api::{self, Api, ApiError, Transfer},
     cadexport, folderimport, layout,
     settings::{self, Settings},
     signin, workspace, AppState,
@@ -515,16 +515,54 @@ pub async fn workspace_checkin(
     comment: String,
 ) -> CmdResult<Value> {
     let api = signed_in_api(&state)?;
+    let root = workspace_root(&app, &state);
+    let cancel = new_upload(&state);
+    let progress = progress_events(app);
+    let transfer = Transfer {
+        cancel: &cancel,
+        progress: &progress,
+    };
     workspace::check_in(
         &api,
-        &workspace_root(&app, &state),
+        &root,
         project.as_deref(),
         &item,
         &code,
         &files,
         &comment,
+        &transfer,
     )
     .await
+}
+
+/// A fresh cancel switch for the upload that starts now (`cancel_upload`
+/// flips the switch of the running one).
+fn new_upload(state: &State<'_, AppState>) -> Arc<AtomicBool> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    *state.upload_cancel.lock().expect("upload lock") = cancel.clone();
+    cancel
+}
+
+/// Reports the progress of large uploads to the user interface
+/// (event `upload-progress`: `{file, sent, total}`).
+fn progress_events(app: AppHandle) -> impl Fn(&str, u64, u64) + Send + Sync {
+    move |file: &str, sent: u64, total: u64| {
+        let _ = app.emit(
+            "upload-progress",
+            json!({ "file": file, "sent": sent, "total": total }),
+        );
+    }
+}
+
+/// Stops the running upload before its next chunk; chunks already on the
+/// server are discarded and nothing is stored.
+#[tauri::command]
+pub fn cancel_upload(state: State<'_, AppState>) {
+    state
+        .upload_cancel
+        .lock()
+        .expect("upload lock")
+        .store(true, Ordering::Relaxed);
 }
 
 /// Opens the folder of a revision (or a file of it) with the system's
@@ -645,6 +683,7 @@ mod tests {
 /// folder later mirrors the original folder structure.
 #[tauri::command]
 pub async fn upload_files(
+    app: AppHandle,
     state: State<'_, AppState>,
     item: String,
     code: String,
@@ -662,17 +701,26 @@ pub async fn upload_files(
         .into_iter()
         .map(|(name, folder)| (name, Value::String(layout::folder_for_upload(&folder))))
         .collect();
-    api.multipart(
+    let cancel = new_upload(&state);
+    let progress = progress_events(app);
+    let transfer = Transfer {
+        cancel: &cancel,
+        progress: &progress,
+    };
+    api.send_files(
         &format!(
             "/items/{}/revisions/{}/files",
             workspace::enc(&item),
             workspace::enc(&code)
         ),
+        &item,
+        &code,
         &files,
         &[
             ("comment", comment.unwrap_or_default()),
             ("folders", Value::Object(folders).to_string()),
         ],
+        &transfer,
     )
     .await
 }

@@ -92,6 +92,42 @@ Per file, a workspace is in one of these states (desktop Workspace tab,
 * Uploads show a progress bar; **Cancel upload** stops the transfer
   immediately and nothing changes on the server.
 
+## Large files: chunked, resumable uploads
+
+CAD assemblies and simulation results reach several gigabytes. Sending them
+in one request means starting over after every network hiccup, so API
+clients – and the desktop app for files above 32 MiB – upload them in
+**chunks**:
+
+1. `POST /api/v1/uploads` announces the file (revision, name, size,
+   optionally its SHA-256 and the base version). The server refuses at once
+   what it would refuse later: a file larger than `TEAMCRAFT_MAX_UPLOAD_MB`,
+   a revision you have not checked out, or a base the server file has moved
+   on from.
+2. `PATCH /api/v1/uploads/{id}` appends one chunk (at most
+   `TEAMCRAFT_UPLOAD_CHUNK_MB`) at the offset the server confirmed last. A
+   chunk at any other offset is refused with **409** and the server's offset,
+   so after a broken connection the client asks (`HEAD`/`GET`) and resumes
+   there – bytes of an interrupted chunk that were never confirmed are cut
+   off. Each chunk is on disk before its offset is confirmed.
+3. `POST /api/v1/uploads/{id}/finish` – or the upload id in the `uploads`
+   field of a multipart check-in – hashes the received file, checks size and
+   SHA-256 (a mismatch resets the upload to offset 0), moves it into the
+   content-addressed vault and stores the version through the same code as
+   every other upload: check-out required, base-version guard, audit log,
+   notifications, one transaction with the other files of the check-in.
+
+The chunks are collected in `uploads/` below the vault directory (the same
+file system as `objects/`, so the finished file is moved, not copied); only
+one chunk per request is held in memory, which is why
+`TEAMCRAFT_MAX_UPLOAD_MB` can be raised for large files without more memory.
+Uploads are private to the user who started them. An unfinished upload
+expires 24 hours after its last chunk; the server removes expired uploads and
+their data at start-up and every hour. Each user may have at most 16
+unfinished uploads at a time, so the space they reserve stays bounded
+(16 × `TEAMCRAFT_MAX_UPLOAD_MB` per user). `DELETE /api/v1/uploads/{id}`
+cancels one at once.
+
 ## Favorites, saved searches, Save As
 
 * **☆ Favorite** on a revision page keeps the item in **Vault → ★ Favorites**
