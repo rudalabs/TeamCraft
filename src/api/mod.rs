@@ -771,13 +771,24 @@ async fn get_item(
     ))
 }
 
+#[derive(Deserialize)]
+struct WhereUsedQuery {
+    /// Walk up this many levels (multi-level report with `level` and
+    /// `child_number` per row); without it the single-level list.
+    levels: Option<i32>,
+}
+
 async fn where_used(
     State(st): State<AppState>,
     ApiUser(_me): ApiUser,
     Path(number): Path<String>,
+    Query(q): Query<WhereUsedQuery>,
 ) -> AppResult<Json<Value>> {
     let item = items::get_by_number(&st.db, &number).await?;
-    Ok(Json(json!(items::where_used(&st.db, item.id).await?)))
+    Ok(Json(match q.levels {
+        None => json!(items::where_used(&st.db, item.id).await?),
+        Some(levels) => json!(items::where_used_levels(&st.db, item.id, levels).await?),
+    }))
 }
 
 #[derive(Deserialize)]

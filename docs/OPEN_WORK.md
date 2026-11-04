@@ -51,8 +51,8 @@ the known gaps with details. Last update: 2026-11-04.
   BREP, Parasolid, JT, … (E57: `e57` crate)
 - [x] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview, per project group (feature 4)
 - [ ] Custom attributes per item and file type, classification (standard/purchased parts), attribute search (feature 5)
-- [x] Item copy ("Save as" with files and BOM) – done; open: supersede/replace, alternate parts, multi-level where-used
-  (feature 6)
+- [x] Item copy ("Save as" with files and BOM) – done; multi-level where-used in the API and MCP (`levels`); open:
+  supersede/replace, alternate parts, multi-level where-used in the web UI (feature 6)
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
 - [x] Engineering change requests (ECR) before the change order: raised by anybody incl. viewers (web, API, desktop
   revision tab and workspace file, screenshot/PDF attachments), discussion, triage/decision by the CAD editors of the
@@ -248,7 +248,7 @@ The history up to the open-source release is squashed into the first commit
    further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to
    attributes.
 6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate
-   parts, multi-level where-used.
+   parts, multi-level where-used (API and MCP: done, `levels=N`).
 7. **BOM comparison** between revisions with Excel export (`rust_xlsxwriter`,
    MIT/Apache-2.0): done – direct lines, and over all levels with a revision
    rule (`depth=all`); the expanded BOM itself exports as Excel too.

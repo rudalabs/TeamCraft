@@ -69,6 +69,7 @@ fn field_entry(fields: &[(&str, String)], field: &str, name: &str) -> Option<Val
         .find(|(key, _)| key.eq_ignore_ascii_case(name))
         .map(|(_, value)| value)
 }
+
 /// The assistant runs several model and tool steps (server limit: 240 s).
 const ASSISTANT_TIMEOUT: Duration = Duration::from_secs(300);
 

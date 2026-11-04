@@ -284,6 +284,9 @@ pub async fn list(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<FileRecord>
 /// The files of several revisions in one query, ordered by revision, folder
 /// and name.
 pub async fn list_many(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<FileRecord>> {
+    if revision_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     Ok(sqlx::query_as::<_, FileRecord>(&format!(
         "{FILE_SELECT} WHERE f.revision_id = ANY($1)
          ORDER BY f.revision_id, lower(f.folder), lower(f.filename)"
@@ -294,6 +297,19 @@ pub async fn list_many(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Fi
     .into_iter()
     .map(with_format)
     .collect())
+}
+
+/// [`list_many`] grouped by revision (each group in folder and name order).
+pub async fn list_many_by_revision(
+    pool: &PgPool,
+    revision_ids: &[Uuid],
+) -> AppResult<std::collections::HashMap<Uuid, Vec<FileRecord>>> {
+    let mut out: std::collections::HashMap<Uuid, Vec<FileRecord>> =
+        std::collections::HashMap::new();
+    for f in list_many(pool, revision_ids).await? {
+        out.entry(f.revision_id).or_default().push(f);
+    }
+    Ok(out)
 }
 
 pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<FileRecord> {

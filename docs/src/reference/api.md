@@ -133,11 +133,19 @@ in all of my check-outs – or the listed ones – **without new files**, one
 transaction and one audit record per revision. The answer lists every
 revision with `ok` and `error`, plus `checked_in`, `failed` and a `summary`.
 
+### Where-used over several levels
+
+`GET /items/{number}/where-used` lists the parent revisions whose BOM uses
+the item. With `?levels=N` (1–25) it walks up further – parents of the
+parents – and every row also carries `level` (1 = direct parent) and
+`child_number` (the item used on that line). Each item is reported on the
+lowest level it is reached on; the report stops at 2000 rows.
+
 ## Main resources
 
 | Resource         | Endpoints                                                                                                                             |
 |------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| Items            | `GET/POST /items`, `GET /items/{number}`, where-used, history, impacts, watch                                                         |
+| Items            | `GET/POST /items`, `GET /items/{number}`, `where-used` (`levels=1…25` for parents of parents), history, impacts, watch               |
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
 | Worklist         | `GET /worklist` (check-outs, reviews, impacts, statistics), `POST /worklist/checkin-all`                                              |
 | Files            | `POST …/files` (multipart, `folder`/`folders`), `GET/PATCH /files/{id}` (metadata, folder), `/content`, `/versions`, `/restore`, `/mesh`, `/thumbnail`, `…/workset` |

@@ -124,7 +124,8 @@
     release: "M5 21V4|M5 4h12l-2.5 4 2.5 4H5",
     eye: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z|M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6",
     request: "M4 4h16v12H9l-5 4z|M12 7v4|M12 13.5v.5",
-    ask: "M4 5h16v11H9l-5 4z|M8 9h8|M8 12h5"
+    ask: "M4 5h16v11H9l-5 4z|M8 9h8|M8 12h5",
+    agent: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z|M19 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"
   };
 
   // Keep in sync with RequestReason in src/domain.rs.
@@ -388,6 +389,10 @@
       renderActive();
       refreshWorklistCount();
       pollNotifications(true);
+      // an agent that kept running while the window reloaded
+      agentProfiles().then(function () { return call("agent_status"); }).then(function (s) {
+        if (s && !agent.running) { agent.running = s; agent.busy = s.busy; updateAgentControls(); schedulePaint(true); }
+      }, function () {});
       checkWorkspaceLayout();
     }).catch(function (err) {
       if (!(err && err.status === 401)) showConnect("signin", errorText(err));
@@ -396,7 +401,11 @@
 
   function initShell() {
     document.querySelectorAll(".rail button[data-view]").forEach(function (btn) {
-      btn.addEventListener("click", function () { selectView(btn.getAttribute("data-view")); });
+      btn.addEventListener("click", function () {
+        var view = btn.getAttribute("data-view");
+        if (view === "agent") openAgent();
+        else selectView(view);
+      });
     });
     $("search-form").addEventListener("submit", function (e) {
       e.preventDefault();
@@ -594,7 +603,7 @@
     var nav = $("navigator");
     clear(nav);
     nav.appendChild(h("p.loading", { text: "Loading" }));
-    var render = { home: renderHome, worklist: renderWorklist, changes: renderChanges, search: renderSearch, notifications: renderNotifications }[view] || renderHome;
+    var render = { home: renderHome, worklist: renderWorklist, changes: renderChanges, search: renderSearch, notifications: renderNotifications, agent: renderAgentView }[view] || renderHome;
     Promise.resolve().then(render).catch(function (err) {
       clear(nav);
       nav.appendChild(h("p.notice.error", { text: errorText(err) }));
@@ -802,6 +811,9 @@
 
   function activate(key) {
     state.active = key;
+    var t = findTab(key);
+    if (t && (t.kind === "revision" || t.kind === "change")) agent.contextKey = key;
+    if (state.view === "agent") schedulePaint(true);
     renderTabs();
     renderActive();
     markSelection();
@@ -833,7 +845,7 @@
         role: "tab", "aria-selected": t.key === state.active ? "true" : "false", title: t.title,
         on: { click: function () { if (state.active !== t.key) activate(t.key); } }
       }, [
-        h("span.ico", { text: t.kind === "change" ? "⇄" : t.kind === "request" ? "✎" : "◆" }),
+        h("span.ico", { text: t.kind === "change" ? "⇄" : t.kind === "request" ? "✎" : t.kind === "agent" ? "✦" : "◆" }),
         h("span.tab-label", { text: t.title }),
         h("button.close", { type: "button", title: "Close (Ctrl+W)", "aria-label": "Close", on: { click: function (e) { e.stopPropagation(); closeTab(t.key); } } }, "×")
       ]));
@@ -853,6 +865,10 @@
       renderWelcome(body, toolbar);
       return;
     }
+    if (tab.kind === "agent") {
+      renderAgentTab(body);
+      return;
+    }
     body.appendChild(h("p.loading", { text: "Loading " + tab.title }));
     var load = tab.kind === "change" ? loadChange(tab) : tab.kind === "request" ? loadRequest(tab) : loadRevision(tab);
     load.then(function () {
@@ -862,6 +878,7 @@
       if (tab.kind === "change") renderChange(tab, body, toolbar);
       else if (tab.kind === "request") renderRequest(tab, body, toolbar);
       else renderRevision(tab, body, toolbar);
+      if (state.view === "agent" && agent.contextKey === tab.key) schedulePaint(true);
     }).catch(function (err) {
       // a failed load or a bug while rendering: never leave an empty tab
       if (state.active !== tab.key) return;
@@ -1127,6 +1144,525 @@
     }
   }
 
+  // ======================================================================
+  // Agent (ACP) – a local agent the user configured (Claude Code through its
+  // ACP adapter, Gemini CLI …). Rust (src/acp.rs) runs it in the workspace
+  // folder and hands it TeamCraft's MCP server with the user's sign-in; here:
+  // the conversation, tool calls, the plan and permission prompts.
+  // ======================================================================
+
+  // The MCP prompts of the server (src/mcp/tools.rs), sent as the message.
+  var AGENT_PROMPTS = [
+    { name: "release_notes", label: "Release notes", needs: "revision" },
+    { name: "release_check", label: "Release check", needs: "revision" },
+    { name: "review_change", label: "Review this change", needs: "change" },
+    { name: "worklist_triage", label: "Triage my worklist", needs: null }
+  ];
+
+  // Longest agent message shown (characters), as MAX_CHUNK in src/acp.rs.
+  var AGENT_MAX_TEXT = 200000;
+
+  var TOOL_STATUS = { pending: "Waiting", in_progress: "Running", completed: "Done", failed: "Failed", cancelled: "Cancelled" };
+
+  var agent = {
+    profiles: null,   // { agents: [{name, command, args}], selected }
+    running: null,    // the session as Rust describes it
+    starting: false,
+    early: [],        // events that arrived while the session was starting
+    busy: false,
+    panel: null,      // conversation and composer, kept across renders
+    log: null,
+    input: null,
+    current: null,    // the agent message being streamed
+    tools: {},
+    toolOrder: [],
+    plan: [],
+    permissions: {},
+    contextKey: null, // the revision or change tab the agent is told about
+    paint: false,
+    navDirty: false,
+    dirtyBlocks: []
+  };
+
+  function agentProfiles() {
+    if (agent.profiles) return Promise.resolve(agent.profiles);
+    return call("agent_profiles").then(function (p) { agent.profiles = p; return p; });
+  }
+
+  function openAgent() {
+    if (state.view !== "agent") selectView("agent");
+    if (state.active !== "agent") openTab({ key: "agent", kind: "agent", title: "Agent" });
+  }
+
+  /** What the user looks at: the last revision or change tab. */
+  function agentContext() {
+    var tab = agent.contextKey && findTab(agent.contextKey);
+    if (!tab || !tab.data) return null;
+    if (tab.kind === "change") return { change: tab.data.change.number, title: tab.data.change.title };
+    return { item: tab.data.rev.item_number, revision: tab.data.rev.code, title: tab.data.rev.name };
+  }
+
+  function agentContextLabel() {
+    var c = agentContext();
+    if (!c) return null;
+    return (c.change ? c.change : c.item + "/" + c.revision) + (c.title ? " " + c.title : "");
+  }
+
+  function ensureAgentPanel() {
+    if (agent.panel) return agent.panel;
+    agent.log = h("div.agent-log", { "aria-live": "polite" });
+    agent.input = h("textarea", {
+      rows: "3", maxlength: "20000", placeholder: "Ask the agent – Enter sends, Shift+Enter starts a new line",
+      on: {
+        keydown: function (e) {
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submitAgent(); }
+        }
+      }
+    });
+    var send = h("button.primary", { type: "submit" }, "Send");
+    agent.sendButton = send;
+    agent.contextEl = h("span.hint.agent-context");
+    agent.panel = h("div.agent-panel", null, [
+      agent.log,
+      h("form.agent-composer", { on: { submit: function (e) { e.preventDefault(); submitAgent(); } } }, [
+        agent.input,
+        h("div.agent-composer-row", null, [agent.contextEl, send])
+      ])
+    ]);
+    agentEmptyState();
+    return agent.panel;
+  }
+
+  function agentEmptyState() {
+    if (agent.log.firstChild) return;
+    agent.log.appendChild(h("div.agent-empty", null, [
+      h("h3", { text: "Agent" }),
+      h("p", { text: "Work with a local AI agent – Claude Code, Gemini CLI or any agent that speaks the Agent Client Protocol. It uses TeamCraft's tools with your rights: search, structures, where-used, change orders, release checks." }),
+      h("p.hint", { text: "Start an agent in the navigator on the left. Prompts and the data it looks up go to the agent's AI provider." })
+    ]));
+  }
+
+  function clearAgentEmpty() {
+    var empty = agent.log && agent.log.querySelector(".agent-empty");
+    if (empty) empty.remove();
+  }
+
+  function scrollAgent() {
+    var log = agent.log;
+    if (!log) return;
+    // follow the stream only when the user has not scrolled up
+    if (log.scrollHeight - log.scrollTop - log.clientHeight < 120) log.scrollTop = log.scrollHeight;
+  }
+
+  function agentRow(el) {
+    ensureAgentPanel();
+    clearAgentEmpty();
+    var follow = agent.log.scrollHeight - agent.log.scrollTop - agent.log.clientHeight < 120;
+    agent.log.appendChild(el);
+    if (follow) agent.log.scrollTop = agent.log.scrollHeight;
+    return el;
+  }
+
+  function agentNote(text, kind) {
+    agent.current = null;
+    agentRow(h("p.agent-note" + (kind ? "." + kind : ""), { text: text }));
+  }
+
+  /** Message and thought chunks: one growing block per message. */
+  function agentChunk(kind, text) {
+    var cur = agent.current;
+    if (!cur || cur.kind !== kind) {
+      var body = h("div");
+      var el = kind === "thought"
+        ? h("details.agent-thought", null, [h("summary", { text: "Thinking" }), body])
+        : h("div.agent-msg.agent", null, body);
+      cur = agent.current = { kind: kind, text: "", body: body };
+      agentRow(el);
+    }
+    // bounded: every frame redraws the whole message
+    if (cur.full) return;
+    if (cur.text.length + text.length > AGENT_MAX_TEXT) {
+      text = text.slice(0, Math.max(0, AGENT_MAX_TEXT - cur.text.length)) + "\n\n… (the rest of this message is not shown)";
+      cur.full = true;
+    }
+    cur.text += text;
+    if (!cur.dirty) { cur.dirty = true; agent.dirtyBlocks.push(cur); }
+    schedulePaint();
+  }
+
+  /** Redraws the streamed markdown (and, with `nav`, the navigator) at most once per frame. */
+  function schedulePaint(nav) {
+    if (nav) agent.navDirty = true;
+    if (agent.paint) return;
+    agent.paint = true;
+    requestAnimationFrame(function () {
+      agent.paint = false;
+      var blocks = agent.dirtyBlocks;
+      agent.dirtyBlocks = [];
+      blocks.forEach(function (cur) {
+        cur.dirty = false;
+        clear(cur.body);
+        cur.body.appendChild(cur.kind === "thought" ? h("p", { text: cur.text }) : markdownLite(cur.text));
+      });
+      if (blocks.length) scrollAgent();
+      if (agent.navDirty) {
+        agent.navDirty = false;
+        if (state.view === "agent") renderAgentNav();
+      }
+    });
+  }
+
+  function agentTool(p) {
+    var t = agent.tools[p.id];
+    if (!t) {
+      t = agent.tools[p.id] = { title: p.id, kind: "other", status: "pending", text: null };
+      agent.toolOrder.push(p.id);
+      t.el = h("div.agent-tool");
+      agent.current = null;
+      agentRow(t.el);
+    }
+    ["title", "kind", "status", "text"].forEach(function (k) { if (p[k] !== null && p[k] !== undefined) t[k] = p[k]; });
+    clear(t.el);
+    t.el.className = "agent-tool status-" + t.status;
+    append(t.el, [
+      h("span.agent-tool-dot", { "aria-hidden": "true" }),
+      h("span.agent-tool-title", { text: t.title }),
+      h("span.badge", { text: TOOL_STATUS[t.status] || label(t.status) })
+    ]);
+    if (t.text) t.el.appendChild(h("details.agent-tool-out", null, [h("summary", { text: "Output" }), h("pre", { text: t.text })]));
+    schedulePaint(true);
+  }
+
+  function agentPermission(p) {
+    var tool = p.tool_id && agent.tools[p.tool_id];
+    var title = tool && tool.title && tool.title !== p.tool_id ? tool.title : p.title;
+    var buttons = h("div.row", null, [
+      p.can_allow ? h("button.primary", { type: "button", on: { click: function () { answer(true); } } }, "Allow once") : null,
+      h("button", { type: "button", on: { click: function () { answer(false); } } }, "Reject")
+    ]);
+    var card = h("div.agent-permission", { role: "alert" }, [
+      h("strong", { text: "The agent asks for permission" }),
+      h("p", { text: title }),
+      p.can_allow ? null : h("p.hint", { text: "The agent offers no one-time permission – TeamCraft Desktop never grants permanent ones." }),
+      buttons
+    ]);
+    agent.current = null;
+    // keys restart with every session: the session is part of the name
+    var id = p.session + ":" + p.key;
+    agent.permissions[id] = { card: card, buttons: buttons };
+    agentRow(card);
+    function answer(allow) {
+      buttons.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
+      call("agent_permission", { session: p.session, key: p.key, allow: allow }).then(function () {
+        donePermission(id, allow ? "Allowed once." : "Rejected.");
+      }, function (err) { donePermission(id, errorText(err)); });
+    }
+  }
+
+  function donePermission(id, text) {
+    var perm = agent.permissions[id];
+    if (!perm) return;
+    delete agent.permissions[id];
+    perm.card.classList.add("answered");
+    perm.buttons.replaceWith(h("p.hint", { text: text || "No longer needed." }));
+  }
+
+  /** The session ended: its open permission cards can no longer be answered. */
+  function endAgentPermissions() {
+    Object.keys(agent.permissions).forEach(function (id) { donePermission(id); });
+  }
+
+  function onAgentEvent(p) {
+    if (agent.starting) { agent.early.push(p); return; }
+    if (!agent.running || p.session !== agent.running.session) return;
+    switch (p.type) {
+      case "message": agentChunk("message", p.text); break;
+      case "thought": agentChunk("thought", p.text); break;
+      case "tool": agentTool(p); break;
+      case "plan": agent.plan = p.entries || []; schedulePaint(true); break;
+      case "permission": agentPermission(p); break;
+      case "permission_done": donePermission(p.session + ":" + p.key); break;
+      case "file_read": if (!p.ok) agentNote("Refused to read " + p.path + " (only the workspace folder is shared).", "warn"); break;
+      case "notice": agentNote(p.text, "info"); break;
+      case "exited":
+        agentNote(p.text, "error");
+        endAgentPermissions();
+        agent.running = null;
+        agent.busy = false;
+        updateAgentControls();
+        schedulePaint(true);
+        break;
+    }
+  }
+
+  function updateAgentControls() {
+    if (!agent.panel) return;
+    var ready = !!agent.running && !agent.busy;
+    agent.sendButton.disabled = !ready;
+    agent.input.disabled = !agent.running;
+    var ctx = agentContextLabel();
+    agent.contextEl.textContent = agent.running
+      ? (agent.busy ? "Working … " : "") + (ctx ? "Context: " + ctx : "No context – open a revision or change to give the agent one")
+      : "No agent running";
+    if (state.active === "agent") renderAgentToolbar();
+  }
+
+  function startAgent(name) {
+    if (agent.starting) return;
+    agent.starting = true;
+    agent.early = [];
+    schedulePaint(true);
+    setStatus("Starting " + name + " – the first start can take a while …");
+    call("agent_start", { name: name }).then(function (s) {
+      setStatus("");
+      agent.starting = false;
+      endAgentPermissions(); // the previous session was stopped
+      agent.running = s;
+      agent.busy = false;
+      agent.tools = {};
+      agent.toolOrder = [];
+      agent.plan = [];
+      agent.profiles.selected = name;
+      var who = (s.info.agent || name) + (s.info.version ? " " + s.info.version : "");
+      agentNote(who + " is ready in " + state.session.workspace_dir + (s.info.teamcraft_tools ? " – with TeamCraft's tools." : "."), "ok");
+      agent.early.forEach(onAgentEvent);
+      agent.early = [];
+      updateAgentControls();
+      schedulePaint(true);
+      if (agent.input) agent.input.focus();
+    }, function (err) {
+      setStatus("");
+      agent.starting = false;
+      agent.early = [];
+      agentNote(errorText(err), "error");
+      schedulePaint(true);
+    });
+  }
+
+  function stopAgent() {
+    call("agent_stop").then(function () {
+      if (agent.running) agentNote("The agent was stopped.");
+      endAgentPermissions();
+      agent.running = null;
+      agent.busy = false;
+      updateAgentControls();
+      schedulePaint(true);
+    }, function (e) { toast(errorText(e), "error"); });
+  }
+
+  function cancelAgent() {
+    if (!agent.busy) return;
+    call("agent_cancel").catch(function (e) { toast(errorText(e), "error"); });
+  }
+
+  function submitAgent() {
+    var text = agent.input.value.trim();
+    if (!text) { agent.input.focus(); return; }
+    if (sendAgent(text, null)) agent.input.value = "";
+  }
+
+  /** Sends a message; `shown` replaces the text in the conversation (quick prompts). */
+  function sendAgent(text, shown) {
+    if (!agent.running || agent.busy) return false;
+    agent.current = null;
+    agentRow(h("div.agent-msg.user", { text: shown || text }));
+    agent.busy = true;
+    updateAgentControls();
+    schedulePaint(true);
+    call("agent_prompt", { text: text, context: agentContext() }).then(function (stop) {
+      finishTurn(stop);
+    }, function (err) {
+      finishTurn(null);
+      agentNote(errorText(err), "error");
+    });
+    return true;
+  }
+
+  function finishTurn(stop) {
+    agent.busy = false;
+    agent.current = null;
+    var notes = {
+      cancelled: "Cancelled.",
+      max_tokens: "The agent stopped at its token limit.",
+      max_turn_requests: "The agent stopped after too many steps in one turn.",
+      refusal: "The agent refused to continue."
+    };
+    if (stop && notes[stop]) agentNote(notes[stop], stop === "cancelled" ? "" : "warn");
+    if (stop === "cancelled") {
+      agent.toolOrder.forEach(function (id) {
+        var t = agent.tools[id];
+        if (t.status === "pending" || t.status === "in_progress") agentTool({ id: id, status: "cancelled" });
+      });
+    }
+    updateAgentControls();
+    schedulePaint(true);
+    refreshWorklistCount();
+  }
+
+  /** A quick prompt: the server's MCP prompt text, filled with the context. */
+  function quickPrompt(p) {
+    var c = agentContext() || {};
+    var args = p.needs === "revision" ? { item: c.item, revision: c.revision } : p.needs === "change" ? { change: c.change } : {};
+    api("POST", "/mcp", { jsonrpc: "2.0", id: 1, method: "prompts/get", params: { name: p.name, arguments: args } }).then(function (r) {
+      if (r && r.error) throw new Error(r.error.message);
+      var msg = r && r.result && r.result.messages && r.result.messages[0];
+      var text = msg && msg.content && msg.content.text;
+      if (!text) throw new Error("The server has no prompt " + p.name + ".");
+      sendAgent(text, p.label + (p.needs === "revision" ? " – " + c.item + "/" + c.revision : p.needs === "change" ? " – " + c.change : ""));
+    }).catch(function (e) { toast(errorText(e), "error"); });
+  }
+
+  function renderAgentNav() {
+    if (state.view !== "agent") return Promise.resolve();
+    return agentProfiles().then(function (p) {
+      if (state.view !== "agent") return;
+      var nav = $("navigator");
+      var scroll = nav.scrollTop;
+      clear(nav);
+      nav.appendChild(navHead("Agent", [
+        h("button.small", { type: "button", title: "Configure agents", on: { click: agentSettingsDialog } }, "Agents…")
+      ]));
+      if (!p.agents.length) {
+        nav.appendChild(h("div.agent-nav", null, [
+          h("p", { text: "No agent configured yet." }),
+          h("p.hint", { text: "Add Claude Code (through its ACP adapter), Gemini CLI or another agent that speaks the Agent Client Protocol. TeamCraft starts nothing on its own." }),
+          h("button.primary", { type: "button", on: { click: agentSettingsDialog } }, "Set up an agent…")
+        ]));
+        return;
+      }
+      var running = agent.running;
+      var pick = h("select", { "aria-label": "Agent", disabled: !!running || agent.starting },
+        p.agents.map(function (a) {
+          var name = running ? running.name : p.selected;
+          return h("option", { value: a.name, selected: a.name === name }, a.name);
+        }));
+      var start = running
+        ? h("button", { type: "button", title: "End the agent process", on: { click: stopAgent } }, "Stop")
+        : h("button.primary", { type: "button", disabled: agent.starting, on: { click: function () { startAgent(pick.value); } } }, agent.starting ? "Starting…" : "Start");
+      var info = running
+        ? [h("span.badge.badge-released", { text: agent.busy ? "working" : "ready" }), " ", (running.info.agent || running.name) + (running.info.version ? " " + running.info.version : ""),
+          h("br"), h("span.hint", { text: running.info.teamcraft_tools ? "With TeamCraft's tools (your rights)" : "Without TeamCraft's tools – the agent cannot use MCP over HTTP" })]
+        : [h("span.hint", { text: agent.starting ? "Starting …" : "Not running" })];
+      var ctx = agentContext();
+      var quick = AGENT_PROMPTS.map(function (q) {
+        var ok = running && !agent.busy && running.info.teamcraft_tools &&
+          (!q.needs || (q.needs === "revision" ? ctx && ctx.item : ctx && ctx.change));
+        return h("button.chip", {
+          type: "button", disabled: !ok, title: q.needs && !ok ? "Open a " + q.needs + " first" : "Uses the TeamCraft prompt " + q.name,
+          on: { click: function () { openAgent(); quickPrompt(q); } }
+        }, q.label);
+      });
+      var plan = agent.plan.length ? h("ol.agent-plan", null, agent.plan.map(function (e) {
+        return h("li.status-" + e.status, { text: e.content });
+      })) : h("p.empty", { text: "No plan shared yet." });
+      var tools = agent.toolOrder.length ? h("ul.tree", null, agent.toolOrder.slice(-40).reverse().map(function (id) {
+        var t = agent.tools[id];
+        return h("li", null, h("div.node", {
+          title: t.title, on: { click: function () { openAgent(); if (t.el) t.el.scrollIntoView({ block: "center" }); } }
+        }, [h("span.label", { text: t.title }), h("span.meta", null, h("span.badge", { text: TOOL_STATUS[t.status] || label(t.status) }))]));
+      })) : h("p.empty", { text: "No tool calls yet." });
+      nav.appendChild(h("div.agent-nav", null, [
+        h("div.row", null, [pick, start]),
+        h("p.small", null, info),
+        h("h3", { text: "Context" }),
+        h("p.small", { text: agentContextLabel() || "None – open a revision or change order" }),
+        h("h3", { text: "Quick prompts" }),
+        h("div.assistant-quick", null, quick),
+        h("h3", { text: "Plan" }), plan,
+        h("h3", { text: "Tool calls" }), tools
+      ]));
+      nav.scrollTop = scroll;
+    });
+  }
+
+  /** Toolbar button of a revision or change: opens the agent with it as context. */
+  function agentButton(tab) {
+    if (!agent.profiles || !agent.profiles.agents.length) return null;
+    return tool("Agent", "agent", function () {
+      agent.contextKey = tab.key;
+      openAgent();
+    }, { title: "Work on this with your local agent (" + (agent.running ? agent.running.name : "not started") + ")" });
+  }
+
+  /** The rail's Agent view: controls in the navigator, the conversation as a tab. */
+  function renderAgentView() {
+    if (!findTab("agent")) openTab({ key: "agent", kind: "agent", title: "Agent" });
+    return renderAgentNav();
+  }
+
+  function renderAgentToolbar() {
+    var toolbar = $("toolbar");
+    clear(toolbar);
+    append(toolbar, [
+      tool("Cancel", "cancel", cancelAgent, { disabled: !agent.busy, danger: agent.busy, title: "Stop the running turn (session/cancel)" }),
+      tool("Clear", "refresh", function () {
+        clear(agent.log); agent.current = null; agentEmptyState();
+      }, { title: "Clear the conversation view (the agent keeps its session)" }),
+      h("span.sep"),
+      tool("Workspace", "folder", function () { openWorkspaceFolder(null); }, { title: "Open the workspace folder – the agent's working directory" }),
+      tool("Agents…", "edit", agentSettingsDialog, { title: "Configure agents" })
+    ]);
+  }
+
+  function renderAgentTab(body) {
+    body.appendChild(ensureAgentPanel());
+    renderAgentToolbar();
+    updateAgentControls();
+    scrollAgent();
+    if (agent.running && !agent.busy) agent.input.focus();
+  }
+
+  var AGENT_PRESETS = [
+    { name: "Claude Code", command: "npx", args: "-y @zed-industries/claude-code-acp", hint: "Needs Node.js; npx installs the ACP adapter from npm on the first start. Sign in once with `claude` in a terminal or set ANTHROPIC_API_KEY." },
+    { name: "Gemini CLI", command: "gemini", args: "--experimental-acp", hint: "Needs the Gemini CLI installed (npm install -g @google/gemini-cli) and signed in." }
+  ];
+
+  function agentSettingsDialog() {
+    call("agent_profiles").then(function (p) {
+      var windows = /Windows/i.test(navigator.userAgent);
+      var rows = h("div.stack");
+      function addRow(a, hint) {
+        var name = h("input", { type: "text", value: a.name, maxlength: "60", placeholder: "Claude Code" });
+        var cmd = h("input", { type: "text", value: a.command, spellcheck: "false", placeholder: windows ? "npx.cmd or C:\\…\\agent.exe" : "npx or /usr/local/bin/gemini" });
+        var args = h("input", { type: "text", value: a.args, spellcheck: "false", placeholder: "--experimental-acp" });
+        var row = h("div.agent-row", null, [
+          h("div.agent-row-fields", null, [field("Name", name), field("Program", cmd), field("Arguments", args)]),
+          hint ? h("p.hint", { text: hint }) : null,
+          h("button.small", { type: "button", on: { click: function () { row.remove(); } } }, "Remove")
+        ]);
+        row.agentEntry = function () { return { name: name.value, command: cmd.value, args: args.value }; };
+        rows.appendChild(row);
+        return name;
+      }
+      p.agents.forEach(function (a) { addRow(a); });
+      var presets = AGENT_PRESETS.map(function (pr) {
+        return h("button.chip", { type: "button", on: { click: function () {
+          addRow({ name: pr.name, command: windows && pr.command === "npx" ? "npx.cmd" : pr.command, args: pr.args }, pr.hint).focus();
+        } } }, "+ " + pr.name);
+      }).concat([h("button.chip", { type: "button", on: { click: function () { addRow({ name: "", command: "", args: "" }).focus(); } } }, "+ Other agent")]);
+      var body = h("div.stack", null, [
+        h("p.hint", { text: "An agent is a program on this computer that speaks the Agent Client Protocol (ACP). TeamCraft starts it only when you press Start, in your workspace folder, and gives it TeamCraft's tools with your sign-in – it can do in TeamCraft what you can do, but never submit, approve or release." }),
+        h("p.hint", { text: "Through TeamCraft it may only read files in the workspace folder – no writing, no terminal. The agent is still a program running as you: its own tools ask for permission here, answer them with care. Desktop apps often do not see your shell's PATH – an absolute program path is safest." }),
+        rows,
+        h("div.assistant-quick", null, presets)
+      ]);
+      dialog("Agents", body, [
+        { label: "Close", onClick: function (d) { d.close(); } },
+        {
+          label: "Save", primary: true, submit: true, onClick: function (d) {
+            var entries = Array.prototype.map.call(rows.children, function (r) { return r.agentEntry(); });
+            call("set_agent_profiles", { agents: entries }).then(function (saved) {
+              agent.profiles = saved;
+              d.close();
+              toast(saved.agents.length === 1 ? "1 agent saved" : saved.agents.length + " agents saved");
+              if (state.view === "agent") renderAgentNav();
+            }, function (err) { d.fail(err); });
+          }
+        }
+      ], { wide: true });
+    }, function (e) { toast(errorText(e), "error"); });
+  }
+
   function openRevision(number, code, sub) {
     openTab({ key: "rev:" + number + ":" + code, kind: "revision", number: number, code: code, title: number + "/" + code, sub: sub || "overview" });
   }
@@ -1212,6 +1748,7 @@
           ["release_notes", "Draft release notes"], ["release_check", "Check before release"]
         ]);
       }, { title: "Ask TeamCraft: release notes, release check or any question about this revision" }) : null,
+      agentButton(tab),
       tool("Pack and Go…", "download", function () { savePackage(rev, null); }, { title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json) – for sending, not for working" }),
       tool("Open folder", "folder", function () { openWorkspaceFolder(tab); }, { title: "Open the working folder of this revision" }),
       tool("Browser", "web", function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, { title: "Open this revision in the web UI" }),
@@ -2269,6 +2806,7 @@
       assistantEnabled() ? tool("Ask…", "ask", function () {
         assistantDialog({ change: c.number }, c.number, [["review_brief", "Brief me for this review"]]);
       }, { title: "Ask TeamCraft: a briefing for the review – what changes, impact, risks, open questions" }) : null,
+      agentButton(tab),
       tool("Browser", "web", function () { call("open_web", { path: "/changes/" + c.id }).catch(function (e) { toast(errorText(e), "error"); }); }, { title: "Open this change in the web UI (reviewers, items, cancel …)" }),
       tool("Refresh", "refresh", reloadActive)
     ]);
@@ -3157,6 +3695,11 @@
         TAURI.dialog ? h("button", { type: "button", on: { click: function () {
           TAURI.dialog.open({ directory: true, defaultPath: ws.value }).then(function (dir) { if (dir) ws.value = dir; });
         } } }, "Choose…") : null])),
+      h("h3", { text: "Agents" }),
+      h("div.row", null, [
+        h("span.hint", { text: "Local AI agents (ACP) that work with TeamCraft's tools – none until you add one." }),
+        h("button", { type: "button", on: { click: function () { dlg.close(); agentSettingsDialog(); } } }, "Agents…")
+      ]),
       h("h3", { text: "Account" }),
       h("p", null, ["Signed in to ", h("strong", { text: state.session.server_url }), " as ", h("strong", { text: state.me.display_name }), " (" + label(state.me.role) + ") on ", h("span", { text: state.session.device })]),
       h("div.row", null, [
@@ -3186,6 +3729,10 @@
       state.tabs = [];
       state.active = null;
       state.me = null;
+      endAgentPermissions();
+      agent.running = null; // signing out stops the agent (src/commands.rs)
+      agent.busy = false;
+      agent.contextKey = null;
       showConnect(changeServer ? "server" : "signin");
     }, function (e) { toast(errorText(e), "error"); });
   }
@@ -3267,6 +3814,7 @@
       case "go-home": selectView("home"); break;
       case "go-worklist": selectView("worklist"); break;
       case "go-changes": selectView("changes"); break;
+      case "go-agent": openAgent(); break;
       case "open-workspace": openWorkspaceFolder(activeTab() && activeTab().kind === "revision" ? activeTab() : null); break;
       case "open-web": {
         var t = activeTab();
@@ -3292,6 +3840,7 @@
       var pct = p.total ? Math.floor(100 * p.sent / p.total) : 100;
       setStatus("Uploading " + p.file + " – " + fmtSize(p.sent) + " of " + fmtSize(p.total) + " (" + pct + " %) …");
     });
+    TAURI.event.listen("agent", function (e) { onAgentEvent(e.payload); });
     TAURI.event.listen("workspace-progress", function (e) { onGetProgress(e.payload); });
     $("status-get-cancel").addEventListener("click", function () {
       $("status-get-text").textContent = "Stopping …";

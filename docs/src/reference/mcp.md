@@ -85,7 +85,7 @@ at 2000 rows, other lists at 500 entries, and the whole result at 1 MiB.
 | `get_item`             | Master data and all revisions                                                                                         |
 | `get_revision`         | Attributes, files (format, version, size, uploader, SHA-256), BOM lines, item references, CAD file references matched to items, referrers, change orders |
 | `get_bom`              | Expanded multi-level BOM as flat rows with mass and cost roll-ups; `rule` = `latest`, `released`, `as_released`       |
-| `where_used`           | Parents that use an item                                                                                              |
+| `where_used`           | Parents that use an item; `levels` (1–25) walks further up, each row with its `level` and the item used (`via`)      |
 | `item_history`         | Audit log of the item and its revisions                                                                               |
 | `list_changes`         | Change orders, optionally by status                                                                                   |
 | `get_change`           | Revisions, reviews, release readiness (blockers, warnings) and impact analysis                                        |
