@@ -14,8 +14,8 @@ the known gaps with details. Last update: 2026-11-04.
 - [ ] SOLIDWORKS 2015+ files: the preview image and the referenced file names sit in compressed segments of the
   container – inflate them before the preview search and the reference scan (gap test in `tests/cad_fixtures.rs`,
   found with the NIST files)
-- [ ] Reference scan: false references in real files – earlier file names and binary noise in NX parts, the export name
-  in the STEP header (`FILE_NAME`), noise in JT files (gap test in `tests/cad_fixtures.rs`)
+- [ ] Reference scan: false references in real files – earlier file names and binary noise in NX parts, noise in JT
+  files (gap test in `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is ignored
 
 **General**
 
