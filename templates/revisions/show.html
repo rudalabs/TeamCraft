@@ -50,6 +50,7 @@
     {% if can.add_to_change %}
     <a class="button" href="/changes/new?revision={{ rev.id }}">Release via new change…</a>
     {% endif %}
+    <a class="button" href="/requests/new?revision={{ rev.id }}" title="Report a problem or propose a change to {{ rev.item_number }}/{{ rev.code }} (change request)">Request change…{% if open_requests %}<span class="badge badge-count" title="{{ open_requests|length }} open change request(s)">{{ open_requests|length }}</span>{% endif %}</a>
     {% if can.obsolete %}
     <form method="post" action="/revisions/{{ rev.id }}/obsolete"
           data-confirm="Mark {{ rev.item_number }}/{{ rev.code }} as obsolete? This cannot be undone.">
@@ -74,6 +75,10 @@
 
 {% if not is_latest %}
 <div class="notice">You are looking at an older revision. <a href="/revisions/{{ latest_id }}">Go to the latest revision.</a></div>
+{% endif %}
+{% if open_requests %}
+<div class="notice">{{ open_requests|length }} open change request{% if open_requests|length != 1 %}s{% endif %} on {{ rev.item_number }}:
+  {% for r in open_requests %}<a href="/requests/{{ r.id }}">{{ r.number }}</a> {{ r.title }} ({{ r.status|label }}){% if not loop.last %} · {% endif %}{% endfor %}</div>
 {% endif %}
 {% if open_change %}
 <div class="notice">This revision is part of change <a href="/changes/{{ open_change.id }}">{{ open_change.number }} – {{ open_change.title }}</a> ({{ open_change.status|label }}).</div>
@@ -261,7 +266,8 @@
         <td class="num">{{ f.size_bytes|filesize }}</td>
         <td class="small nowrap">{{ m.time(f.uploaded_at) }} · {{ f.uploaded_by_name }}</td>
         <td class="mono small" title="{{ f.sha256 }}">{{ f.sha256[:12] }}…</td>
-        <td class="right">
+        <td class="right nowrap">
+          <a class="button small" href="/requests/new?revision={{ rev.id }}&amp;file={{ f.filename|urlencode }}" title="Request a change to {{ f.filename }}">Request…</a>
           {% if can.edit %}
           <form class="inline" method="post" action="/files/{{ f.id }}/delete" data-confirm="Remove {{ f.filename }} and all its versions from this revision?">
             <input type="hidden" name="back" value="{{ back }}#files">

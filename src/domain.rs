@@ -777,6 +777,189 @@ pub fn review_outcome(decisions: &[Decision]) -> ReviewOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// Change requests (ECR) – the step before a change order (ECO)
+// ---------------------------------------------------------------------------
+
+/// Formats an automatically generated change request number, e.g. `ECR-000007`.
+pub fn format_request_number(value: i64) -> String {
+    format!("ECR-{value:06}")
+}
+
+/// Status of an engineering change request.
+///
+/// ```text
+///   new ──▶ in_triage ──▶ accepted ──▶ implemented (linked change order released)
+///    │          │      ──▶ rejected
+///    │          │      ──▶ deferred ──▶ in_triage (reopened) / accepted / rejected
+///    └──────────┴──▶ withdrawn (by the requester)
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestStatus {
+    New,
+    InTriage,
+    Accepted,
+    Rejected,
+    Deferred,
+    Implemented,
+    Withdrawn,
+}
+
+impl RequestStatus {
+    pub const ALL: [RequestStatus; 7] = [
+        RequestStatus::New,
+        RequestStatus::InTriage,
+        RequestStatus::Accepted,
+        RequestStatus::Rejected,
+        RequestStatus::Deferred,
+        RequestStatus::Implemented,
+        RequestStatus::Withdrawn,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RequestStatus::New => "new",
+            RequestStatus::InTriage => "in_triage",
+            RequestStatus::Accepted => "accepted",
+            RequestStatus::Rejected => "rejected",
+            RequestStatus::Deferred => "deferred",
+            RequestStatus::Implemented => "implemented",
+            RequestStatus::Withdrawn => "withdrawn",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RequestStatus::New => "New",
+            RequestStatus::InTriage => "In Triage",
+            RequestStatus::Accepted => "Accepted",
+            RequestStatus::Rejected => "Rejected",
+            RequestStatus::Deferred => "Deferred",
+            RequestStatus::Implemented => "Implemented",
+            RequestStatus::Withdrawn => "Withdrawn",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<RequestStatus> {
+        let s = s.trim().to_ascii_lowercase();
+        RequestStatus::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+
+    /// Not finished yet: still waiting for a decision or for its change order.
+    pub fn is_open(self) -> bool {
+        matches!(
+            self,
+            RequestStatus::New
+                | RequestStatus::InTriage
+                | RequestStatus::Accepted
+                | RequestStatus::Deferred
+        )
+    }
+
+    /// Allowed status transitions. Everything else is rejected.
+    pub fn can_transition_to(self, to: RequestStatus) -> bool {
+        use RequestStatus::*;
+        matches!(
+            (self, to),
+            (New, InTriage)
+                | (New | InTriage | Deferred, Accepted | Rejected)
+                | (New | InTriage, Deferred)
+                | (Deferred, InTriage)
+                | (New | InTriage, Withdrawn)
+                | (Accepted, Implemented)
+        )
+    }
+}
+
+/// Why a change is requested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestReason {
+    Defect,
+    Improvement,
+    Cost,
+    Manufacturing,
+    Supplier,
+    Safety,
+    Customer,
+    Other,
+}
+
+impl RequestReason {
+    pub const ALL: [RequestReason; 8] = [
+        RequestReason::Defect,
+        RequestReason::Improvement,
+        RequestReason::Cost,
+        RequestReason::Manufacturing,
+        RequestReason::Supplier,
+        RequestReason::Safety,
+        RequestReason::Customer,
+        RequestReason::Other,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RequestReason::Defect => "defect",
+            RequestReason::Improvement => "improvement",
+            RequestReason::Cost => "cost",
+            RequestReason::Manufacturing => "manufacturing",
+            RequestReason::Supplier => "supplier",
+            RequestReason::Safety => "safety",
+            RequestReason::Customer => "customer",
+            RequestReason::Other => "other",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RequestReason::Defect => "Defect / error",
+            RequestReason::Improvement => "Improvement",
+            RequestReason::Cost => "Cost reduction",
+            RequestReason::Manufacturing => "Manufacturing / assembly",
+            RequestReason::Supplier => "Supplier / purchasing",
+            RequestReason::Safety => "Safety / compliance",
+            RequestReason::Customer => "Customer request",
+            RequestReason::Other => "Other",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<RequestReason> {
+        let s = s.trim().to_ascii_lowercase();
+        if s.is_empty() {
+            return Some(RequestReason::Other);
+        }
+        RequestReason::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+}
+
+/// The decision of the triage on a change request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestDecision {
+    Accept,
+    Reject,
+    Defer,
+}
+
+impl RequestDecision {
+    pub fn parse(s: &str) -> Option<RequestDecision> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "accept" | "accepted" => Some(RequestDecision::Accept),
+            "reject" | "rejected" => Some(RequestDecision::Reject),
+            "defer" | "deferred" => Some(RequestDecision::Defer),
+            _ => None,
+        }
+    }
+
+    pub fn status(self) -> RequestStatus {
+        match self {
+            RequestDecision::Accept => RequestStatus::Accepted,
+            RequestDecision::Reject => RequestStatus::Rejected,
+            RequestDecision::Defer => RequestStatus::Deferred,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BOM revision rules
 // ---------------------------------------------------------------------------
 
@@ -1014,18 +1197,22 @@ pub enum NotificationKind {
     ItemUpdate,
     /// Somebody else released your check-out.
     Unlock,
+    /// A change request you raised, are assigned to, watch or have to triage
+    /// was raised, commented, assigned, decided or implemented.
+    ChangeRequest,
     /// Test message from the account page.
     Test,
 }
 
 impl NotificationKind {
     /// The kinds a user can switch off.
-    pub const MUTABLE: [NotificationKind; 5] = [
+    pub const MUTABLE: [NotificationKind; 6] = [
         NotificationKind::ReviewRequested,
         NotificationKind::ChangeUpdate,
         NotificationKind::Impact,
         NotificationKind::ItemUpdate,
         NotificationKind::Unlock,
+        NotificationKind::ChangeRequest,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -1035,6 +1222,7 @@ impl NotificationKind {
             NotificationKind::Impact => "impact",
             NotificationKind::ItemUpdate => "item_update",
             NotificationKind::Unlock => "unlock",
+            NotificationKind::ChangeRequest => "change_request",
             NotificationKind::Test => "test",
         }
     }
@@ -1046,6 +1234,9 @@ impl NotificationKind {
             NotificationKind::Impact => "Checks needed on my items (change propagation)",
             NotificationKind::ItemUpdate => "Items I watch: new revisions, releases, check-ins",
             NotificationKind::Unlock => "Somebody released my check-out",
+            NotificationKind::ChangeRequest => {
+                "Change requests I raised, triage, am assigned to or watch"
+            }
             NotificationKind::Test => "Test messages",
         }
     }
@@ -1057,6 +1248,7 @@ impl NotificationKind {
             NotificationKind::Impact,
             NotificationKind::ItemUpdate,
             NotificationKind::Unlock,
+            NotificationKind::ChangeRequest,
             NotificationKind::Test,
         ]
         .into_iter()
@@ -1873,6 +2065,81 @@ mod tests {
     fn password_policy() {
         assert!(validate_password("short").is_err());
         assert!(validate_password("long enough pw").is_ok());
+    }
+
+    #[test]
+    fn change_request_transitions() {
+        use RequestStatus::*;
+        // the regular path: raised → triage → accepted → implemented
+        assert!(New.can_transition_to(InTriage));
+        assert!(InTriage.can_transition_to(Accepted));
+        assert!(Accepted.can_transition_to(Implemented));
+        // decisions straight from new, and out of deferred
+        assert!(New.can_transition_to(Accepted));
+        assert!(New.can_transition_to(Rejected));
+        assert!(InTriage.can_transition_to(Deferred));
+        assert!(Deferred.can_transition_to(InTriage));
+        assert!(Deferred.can_transition_to(Accepted));
+        assert!(Deferred.can_transition_to(Rejected));
+        // the requester withdraws only before a decision
+        assert!(New.can_transition_to(Withdrawn));
+        assert!(InTriage.can_transition_to(Withdrawn));
+        assert!(!Accepted.can_transition_to(Withdrawn));
+        assert!(!Deferred.can_transition_to(Withdrawn));
+        // implemented only through a released change order
+        assert!(!New.can_transition_to(Implemented));
+        assert!(!InTriage.can_transition_to(Implemented));
+        assert!(!Accepted.can_transition_to(Rejected));
+        // final states
+        for end in [Rejected, Implemented, Withdrawn] {
+            assert!(!end.is_open());
+            for to in RequestStatus::ALL {
+                assert!(!end.can_transition_to(to), "{end:?} → {to:?}");
+            }
+        }
+        for s in RequestStatus::ALL {
+            assert!(!s.can_transition_to(s), "no self transition for {s:?}");
+            assert_eq!(RequestStatus::parse(s.as_str()), Some(s));
+        }
+        assert!(New.is_open() && Accepted.is_open() && Deferred.is_open());
+        assert_eq!(RequestStatus::parse(" IN_TRIAGE "), Some(InTriage));
+        assert_eq!(RequestStatus::parse("open"), None);
+    }
+
+    #[test]
+    fn change_request_reasons_and_decisions() {
+        for r in RequestReason::ALL {
+            assert_eq!(RequestReason::parse(r.as_str()), Some(r));
+        }
+        assert_eq!(RequestReason::parse(""), Some(RequestReason::Other));
+        assert_eq!(RequestReason::parse("bogus"), None);
+        assert_eq!(
+            RequestDecision::parse("accept").map(RequestDecision::status),
+            Some(RequestStatus::Accepted)
+        );
+        assert_eq!(
+            RequestDecision::parse("Defer").map(RequestDecision::status),
+            Some(RequestStatus::Deferred)
+        );
+        assert_eq!(RequestDecision::parse("approve"), None);
+        // the desktop app has its own copy of the reasons
+        let app = include_str!("../desktop/ui/app.js");
+        for r in RequestReason::ALL {
+            assert!(
+                app.contains(&format!(
+                    "{{ value: \"{}\", label: \"{}\" }}",
+                    r.as_str(),
+                    r.label()
+                )),
+                "desktop/ui/app.js lists the reason {}",
+                r.as_str()
+            );
+        }
+        assert_eq!(format_request_number(7), "ECR-000007");
+        assert_eq!(
+            NotificationKind::parse("change_request"),
+            Some(NotificationKind::ChangeRequest)
+        );
     }
 
     #[test]

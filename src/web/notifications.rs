@@ -71,14 +71,19 @@ async fn set_watch(
 ) -> AppResult<Response> {
     let back = util::safe_redirect_target(form.back.as_deref());
     let watch = form.watch == "1";
+    let what = if entity_type == "change_request" {
+        "change request"
+    } else {
+        entity_type
+    };
     let result = notifications::set_watch(&st.db, &ctx.me, entity_type, id, watch).await;
     finish(st, result, &back, |watching| {
         (
             back.clone(),
             if watching {
-                format!("You watch this {entity_type} now – changes show up under Notifications")
+                format!("You watch this {what} now – changes show up under Notifications")
             } else {
-                format!("You no longer watch this {entity_type}")
+                format!("You no longer watch this {what}")
             },
         )
     })
@@ -100,6 +105,15 @@ pub async fn watch_change(
     Form(form): Form<WatchForm>,
 ) -> AppResult<Response> {
     set_watch(&st, &ctx, "change", id, form).await
+}
+
+pub async fn watch_request(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<WatchForm>,
+) -> AppResult<Response> {
+    set_watch(&st, &ctx, "change_request", id, form).await
 }
 
 /// The settings form sends every kind the user wants as `want=<kind>`

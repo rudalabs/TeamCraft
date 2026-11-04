@@ -274,6 +274,8 @@ pub async fn file_bytes(
         "version-mesh" => format!("/file-versions/{id}/mesh"),
         // preview image stored in Inventor / Solid Edge / SolidWorks files
         "thumbnail" => format!("/files/{id}/thumbnail"),
+        // screenshots and PDFs attached to a change request
+        "request-attachment" => format!("/change-request-attachments/{id}/content"),
         _ => return Err(ApiError::local("Unknown file kind.")),
     };
     let bytes = signed_in_api(&state)?.bytes(&path).await?;
@@ -668,6 +670,39 @@ pub async fn upload_files(
             ("comment", comment.unwrap_or_default()),
             ("folders", Value::Object(folders).to_string()),
         ],
+    )
+    .await
+}
+
+/// Largest attachment of a change request (the server enforces the same).
+const MAX_REQUEST_ATTACHMENT: u64 = 10 * 1024 * 1024;
+
+/// Attaches a screenshot, mark-up or PDF (chosen in the native file dialog)
+/// to a change request. The server accepts images and PDF only, decided by
+/// the content.
+#[tauri::command]
+pub async fn upload_request_attachment(
+    state: State<'_, AppState>,
+    number: String,
+    path: PathBuf,
+) -> CmdResult<Value> {
+    let api = signed_in_api(&state)?;
+    let size = tokio::fs::metadata(&path).await?.len();
+    if size > MAX_REQUEST_ATTACHMENT {
+        return Err(ApiError::local(format!(
+            "{} is larger than 10 MiB.",
+            path.display()
+        )));
+    }
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| ApiError::local(format!("{} has no usable file name.", path.display())))?
+        .to_string();
+    api.multipart(
+        &format!("/change-requests/{}/attachments", workspace::enc(&number)),
+        &[(name, path.clone())],
+        &[],
     )
     .await
 }

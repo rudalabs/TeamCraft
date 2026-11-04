@@ -2,9 +2,9 @@
 
 {% macro badge(value) -%}
 <span class="badge badge-{{ value }}">
-  {%- if value in ["released", "approved", "pass"] %}<img src="/static/media/icons/Green_tick.svg?v={{ assets }}" alt="">
-  {%- elif value in ["in_review", "pending"] %}<img src="/static/media/icons/Yellow_circle.svg?v={{ assets }}" alt="">
-  {%- elif value in ["rejected", "obsolete", "cancelled", "fail"] %}<img src="/static/media/icons/Red_cross.svg?v={{ assets }}" alt="">
+  {%- if value in ["released", "approved", "accepted", "implemented", "pass"] %}<img src="/static/media/icons/Green_tick.svg?v={{ assets }}" alt="">
+  {%- elif value in ["in_review", "pending", "in_triage"] %}<img src="/static/media/icons/Yellow_circle.svg?v={{ assets }}" alt="">
+  {%- elif value in ["rejected", "obsolete", "cancelled", "withdrawn", "fail"] %}<img src="/static/media/icons/Red_cross.svg?v={{ assets }}" alt="">
   {%- endif %}{{ value|label }}</span>
 {%- endmacro %}
 
@@ -33,6 +33,8 @@
 <a href="/revisions/{{ e.entity_id }}">{{ e.summary }}</a>
 {%- elif e.entity_type == "change" and e.entity_id -%}
 <a href="/changes/{{ e.entity_id }}">{{ e.summary }}</a>
+{%- elif e.entity_type == "change_request" and e.entity_id -%}
+<a href="/requests/{{ e.entity_id }}">{{ e.summary }}</a>
 {%- else -%}
 {{ e.summary }}
 {%- endif -%}

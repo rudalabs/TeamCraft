@@ -17,6 +17,8 @@
 //! | revision released, revised, made obsolete, checked in | watchers of the item                   |
 //! | dependent flagged (change propagation)  | creator of the dependent, author of its latest revision, its watchers |
 //! | check-out released by somebody else     | the holder of the lock                             |
+//! | change request raised                   | CAD editors of the affected project groups, watchers of the affected items |
+//! | change request triaged, assigned, commented, decided, implemented | requester, assignee, commenters, watchers of the request |
 //!
 //! Creating an item makes its creator a watcher.
 
@@ -41,9 +43,9 @@ pub struct Notice {
     pub body: String,
     /// Path in the web UI.
     pub link: String,
-    /// `change` or `revision` (for the desktop app), or empty.
+    /// `change`, `change_request` or `revision` (for the desktop app), or empty.
     pub subject_type: &'static str,
-    /// Change number or `<item number>/<revision code>`.
+    /// Change or request number, or `<item number>/<revision code>`.
     pub subject_ref: String,
 }
 
@@ -61,6 +63,23 @@ impl Notice {
             body,
             link: format!("/changes/{change_id}"),
             subject_type: "change",
+            subject_ref: number.to_string(),
+        }
+    }
+
+    pub fn request(
+        kind: NotificationKind,
+        request_id: Uuid,
+        number: &str,
+        title: String,
+        body: String,
+    ) -> Notice {
+        Notice {
+            kind,
+            title,
+            body,
+            link: format!("/requests/{request_id}"),
+            subject_type: "change_request",
             subject_ref: number.to_string(),
         }
     }
@@ -429,6 +448,14 @@ pub async fn set_watch(
                 .fetch_one(pool)
                 .await?
         }
+        "change_request" => {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM change_requests WHERE id = $1)",
+            )
+            .bind(entity_id)
+            .fetch_one(pool)
+            .await?
+        }
         _ => false,
     };
     if !exists {
@@ -493,6 +520,10 @@ pub async fn watched(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Watched>> {
          SELECT 'change', c.id, c.number, c.title, c.status, '/changes/' || c.id, NULL
          FROM watches w JOIN changes c ON c.id = w.entity_id
          WHERE w.user_id = $1 AND w.entity_type = 'change'
+         UNION ALL
+         SELECT 'change_request', cr.id, cr.number, cr.title, cr.status, '/requests/' || cr.id, NULL
+         FROM watches w JOIN change_requests cr ON cr.id = w.entity_id
+         WHERE w.user_id = $1 AND w.entity_type = 'change_request'
          ORDER BY 1, 3",
     )
     .bind(user_id)
@@ -541,5 +572,17 @@ mod tests {
         );
         assert_eq!(n.subject_ref, "ASM-000001/B");
         assert_eq!(n.link, format!("/revisions/{id}"));
+        let n = Notice::request(
+            NotificationKind::ChangeRequest,
+            id,
+            "ECR-000002",
+            "t".into(),
+            "b".into(),
+        );
+        assert_eq!(n.link, format!("/requests/{id}"));
+        assert_eq!(
+            (n.subject_type, n.subject_ref.as_str()),
+            ("change_request", "ECR-000002")
+        );
     }
 }
