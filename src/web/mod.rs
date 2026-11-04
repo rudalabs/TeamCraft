@@ -27,8 +27,8 @@ mod revisions;
 pub(crate) use bom::{package_response, package_rule};
 pub(crate) use imports::{options_from as import_options, receive as receive_import};
 pub(crate) use revisions::{
-    file_response, mesh_response, receive_uploads, thumbnail_response, upload_files,
-    version_response, warm_previews, Received,
+    file_response, mesh_response, receive_uploads, take_session_uploads, thumbnail_response,
+    upload_files, version_response, warm_previews, Received,
 };
 
 use axum::{

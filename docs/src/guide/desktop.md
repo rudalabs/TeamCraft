@@ -22,6 +22,10 @@ check-outs and reviews, and a **local workspace**:
   lock – based on the versions they were copied from, so a version somebody
   else checked in meanwhile is never overwritten (see
   [Concurrency](vault.md#concurrency-nothing-is-overwritten-silently));
+  files above 32 MiB are sent in resumable chunks with progress in the
+  status bar – a dropped connection resumes where it stopped, *Cancel*
+  stops the upload and nothing is stored (see
+  [Large files](vault.md#large-files-chunked-resumable-uploads));
 * *Check in all* in the worklist checks in every check-out without local
   changes and lists those that still have changes.
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and

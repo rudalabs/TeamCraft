@@ -1,17 +1,23 @@
 //! Commands the user interface calls through `window.__TAURI__.core.invoke`.
 //! Every network access and every file system access of the app is here.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 use reqwest::Method;
 use serde::Serialize;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Notify;
 
 use crate::{
-    api::{self, Api, ApiError},
+    api::{self, Api, ApiError, Transfer},
     cadexport, folderimport,
     settings::{self, Settings},
     signin, workspace, AppState,
@@ -459,16 +465,54 @@ pub async fn workspace_checkin(
     comment: String,
 ) -> CmdResult<Value> {
     let api = signed_in_api(&state)?;
+    let root = workspace_root(&app, &state);
+    let cancel = new_upload(&state);
+    let progress = progress_events(app);
+    let transfer = Transfer {
+        cancel: &cancel,
+        progress: &progress,
+    };
     workspace::check_in(
         &api,
-        &workspace_root(&app, &state),
+        &root,
         project.as_deref(),
         &item,
         &code,
         &files,
         &comment,
+        &transfer,
     )
     .await
+}
+
+/// A fresh cancel switch for the upload that starts now (`cancel_upload`
+/// flips the switch of the running one).
+fn new_upload(state: &State<'_, AppState>) -> Arc<AtomicBool> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    *state.upload_cancel.lock().expect("upload lock") = cancel.clone();
+    cancel
+}
+
+/// Reports the progress of large uploads to the user interface
+/// (event `upload-progress`: `{file, sent, total}`).
+fn progress_events(app: AppHandle) -> impl Fn(&str, u64, u64) + Send + Sync {
+    move |file: &str, sent: u64, total: u64| {
+        let _ = app.emit(
+            "upload-progress",
+            json!({ "file": file, "sent": sent, "total": total }),
+        );
+    }
+}
+
+/// Stops the running upload before its next chunk; chunks already on the
+/// server are discarded and nothing is stored.
+#[tauri::command]
+pub fn cancel_upload(state: State<'_, AppState>) {
+    state
+        .upload_cancel
+        .lock()
+        .expect("upload lock")
+        .store(true, Ordering::Relaxed);
 }
 
 /// Opens a revision folder (or a file in it) with the system's default
@@ -559,6 +603,7 @@ mod tests {
 /// `bracket.prt`).
 #[tauri::command]
 pub async fn upload_files(
+    app: AppHandle,
     state: State<'_, AppState>,
     item: String,
     code: String,
@@ -570,14 +615,23 @@ pub async fn upload_files(
     if files.is_empty() {
         return Ok(Value::Null);
     }
-    api.multipart(
+    let cancel = new_upload(&state);
+    let progress = progress_events(app);
+    let transfer = Transfer {
+        cancel: &cancel,
+        progress: &progress,
+    };
+    api.send_files(
         &format!(
             "/items/{}/revisions/{}/files",
             workspace::enc(&item),
             workspace::enc(&code)
         ),
+        &item,
+        &code,
         &files,
         &[("comment", comment.unwrap_or_default())],
+        &transfer,
     )
     .await
 }

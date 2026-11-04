@@ -390,6 +390,38 @@ async fn ensure_base(
     Err(AppError::Conflict(message))
 }
 
+/// Checks a planned upload against the current file before its bytes are
+/// sent (chunked uploads announce their base first), so a conflict is
+/// reported before gigabytes are transferred. The binding check runs again
+/// when the version is stored.
+pub async fn precheck_base(
+    pool: &PgPool,
+    revision_id: Uuid,
+    filename: &str,
+    base: &BaseVersion,
+    upload_sha256: Option<&str>,
+) -> AppResult<()> {
+    let mut conn = pool.acquire().await?;
+    let existing = sqlx::query_as::<_, Existing>(
+        "SELECT f.id, f.current_version, f.sha256, u.display_name AS uploaded_by_name,
+                f.uploaded_at
+         FROM files f JOIN users u ON u.id = f.uploaded_by
+         WHERE f.revision_id = $1 AND lower(f.filename) = lower($2)",
+    )
+    .bind(revision_id)
+    .bind(filename)
+    .fetch_optional(&mut *conn)
+    .await?;
+    ensure_base(
+        &mut conn,
+        filename,
+        base,
+        existing.as_ref(),
+        upload_sha256.unwrap_or(""),
+    )
+    .await
+}
+
 /// Stores uploads as new files or new versions inside the caller's
 /// transaction. The revision must be locked and checked as editable.
 pub(crate) async fn store_uploads(

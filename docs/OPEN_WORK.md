@@ -52,7 +52,9 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Backup/restore of the database and vault as CLI commands (`teamcraft backup`, `teamcraft restore`) – see
   [Operations](src/admin/operations.md)
 - [ ] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools
-- [ ] Chunked resumable uploads (tus) (feature 9)
+- [x] Chunked resumable uploads (feature 9): `/api/v1/uploads` (offset-checked chunks, resume, SHA-256 check, same
+  check-in code path), used by the desktop app for files above 32 MiB; open: chunked uploads from the web UI
+  (`static/app.js`)
 - [ ] README screenshots/GIFs: web pages captured in CI by `scripts/screenshots.sh` (PNGs still to commit); desktop app and GIFs open
 - [x] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
 - [x] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
@@ -217,7 +219,10 @@ The history up to the open-source release is squashed into the first commit
    MIT/Apache-2.0): done – direct lines, and over all levels with a revision
    rule (`depth=all`); the expanded BOM itself exports as Excel too.
 8. **Bulk import of a folder tree** (NAS/Drive) as items with files (candidate: `walkdir`, MIT/Unlicense).
-9. **Chunked resumable uploads** (tus protocol, `tus-js-client`); **backup/restore** of the database and vault is done
+9. **Chunked resumable uploads**: done without new dependencies – a tus-like protocol of our own (`POST /api/v1/uploads`,
+   `PATCH` with `Upload-Offset`, 409 on a wrong offset, `HEAD` to resume, `finish` or the `uploads` field of a
+   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; the desktop app uses it for large
+   files, the web UI still sends one multipart request. **Backup/restore** of the database and vault is done
    (`teamcraft backup`/`teamcraft restore` with `pg_dump`/`pg_restore`, unit tests for the manifest, argument building,
    hashes and path safety); the end-to-end check with the real client tools is still open (see the to-do list).
 

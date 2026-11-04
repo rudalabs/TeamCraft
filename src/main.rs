@@ -238,7 +238,9 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
         });
     }
 
-    // Housekeeping: remove expired sessions, stale OIDC states and staged imports.
+    // Housekeeping: remove expired sessions, stale OIDC states, staged imports
+    // and expired chunked uploads (the first tick runs at once, at start-up).
+    let vault = state.vault.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
@@ -252,6 +254,11 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed stale staged imports"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "staged import cleanup failed"),
+            }
+            match services::uploads::purge_expired(&pool, &vault).await {
+                Ok(n) if n > 0 => tracing::info!(removed = n, "removed expired uploads"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "upload cleanup failed"),
             }
         }
     });

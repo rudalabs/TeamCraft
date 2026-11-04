@@ -14,7 +14,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 
-use crate::api::{Api, ApiError};
+use crate::api::{Api, ApiError, Transfer};
 
 /// Folder of a revision inside the workspace – one subfolder per project
 /// group: `<workspace>/<project group>/<item number>/<revision>/`, so every
@@ -412,6 +412,8 @@ pub async fn download_all(
 
 /// Checks in: uploads the chosen files of the revision folder as new
 /// versions and releases the lock in one request (atomic on the server).
+/// Large files are sent before in resumable chunks (see [`Api::send_files`]).
+#[allow(clippy::too_many_arguments)]
 pub async fn check_in(
     api: &Api,
     root: &Path,
@@ -420,6 +422,7 @@ pub async fn check_in(
     code: &str,
     names: &[String],
     comment: &str,
+    transfer: &Transfer<'_>,
 ) -> Result<Value, ApiError> {
     let dir = revision_dir(root, project, item_number, code);
     let mut files = Vec::new();
@@ -440,17 +443,20 @@ pub async fn check_in(
     let mut bases = read_bases(&dir).await;
     let names: Vec<String> = files.iter().map(|(name, _)| name.clone()).collect();
     let result = api
-        .multipart(
+        .send_files(
             &format!(
                 "/items/{}/revisions/{}/checkin",
                 enc(item_number),
                 enc(code)
             ),
+            item_number,
+            code,
             &files,
             &[
                 ("comment", comment.to_string()),
                 ("bases", bases_field(&bases, &names)),
             ],
+            transfer,
         )
         .await?;
     // The checked-in content is the new base of the local files (best effort:

@@ -38,10 +38,21 @@ Migrations run automatically (`teamcraft serve --no-migrate` skips them).
 
 ## Files
 
-| Variable                  | Default        | Meaning                                        |
-|---------------------------|----------------|------------------------------------------------|
-| `TEAMCRAFT_VAULT_DIR`     | `./data/vault` | file vault and cached 3D previews – back it up |
-| `TEAMCRAFT_MAX_UPLOAD_MB` | `512`          | largest file per upload                        |
+| Variable                    | Default        | Meaning                                                                 |
+|-----------------------------|----------------|-------------------------------------------------------------------------|
+| `TEAMCRAFT_VAULT_DIR`       | `./data/vault` | file vault and cached 3D previews – back it up                          |
+| `TEAMCRAFT_MAX_UPLOAD_MB`   | `512`          | largest file per upload, also for chunked uploads                       |
+| `TEAMCRAFT_UPLOAD_CHUNK_MB` | `16`           | largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/…`), 1–1024 |
+
+Chunked uploads ([Large files](../guide/vault.md#large-files-chunked-resumable-uploads))
+hold one chunk in memory and write it to `uploads/` in the vault directory,
+so `TEAMCRAFT_MAX_UPLOAD_MB` can be raised for multi-gigabyte CAD or
+simulation files (e.g. `20480`) without more memory; a single multipart
+request (web UI, small files) still has to fit this limit as a whole, and a
+reverse proxy in front must allow request bodies of one chunk
+(`client_max_body_size` ≥ `TEAMCRAFT_UPLOAD_CHUNK_MB`) – or of the largest
+multipart upload. Make sure the vault's disk has room for the unfinished
+uploads too: each user may hold 16 of them for 24 hours.
 
 ## Sign-in
 
