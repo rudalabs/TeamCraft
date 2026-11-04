@@ -910,10 +910,24 @@ pub async fn agent_prompt(
         .map_err(ApiError::local)
 }
 
-/// The user's answer to a permission request: allow once or reject.
+/// The user's answer to a permission request: allow once or reject. The
+/// request is named by its session and key – keys restart with every
+/// session, so a card of an ended session must not answer a new request.
 #[tauri::command]
-pub async fn agent_permission(state: State<'_, AppState>, key: u64, allow: bool) -> CmdResult<()> {
-    let agent = current_agent(&state)?;
+pub async fn agent_permission(
+    state: State<'_, AppState>,
+    session: u64,
+    key: u64,
+    allow: bool,
+) -> CmdResult<()> {
+    let agent = state
+        .agent
+        .lock()
+        .expect("agent lock")
+        .as_ref()
+        .filter(|r| r.session == session)
+        .map(|r| r.agent.clone())
+        .ok_or_else(|| ApiError::local("This request is no longer open."))?;
     agent
         .answer_permission(key, allow)
         .await

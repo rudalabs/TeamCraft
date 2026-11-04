@@ -155,6 +155,9 @@ workspace folder as `cwd` and TeamCraft as an `http` entry in
 `session/update` (message and thought chunks, `tool_call`,
 `tool_call_update`, `plan`), `session/request_permission` and
 `fs/read_text_file`. It answers every other agent request with "method not
-found". If the agent asks for a sign-in first (`auth_required`), sign in
+found". At most 8 file reads run at once and at most 16 permission requests
+wait for an answer; further ones are refused or answered with `cancelled`.
+**Stop** closes the agent's input and ends the process, so an agent that
+`npx` or `cmd` started as a child process of its own ends too. If the agent asks for a sign-in first (`auth_required`), sign in
 once in a terminal with the agent's own command and start it again. The
 code is `desktop/src/acp.rs`.

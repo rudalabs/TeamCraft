@@ -42,8 +42,11 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::{
-    io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
-    sync::{oneshot, Mutex as AsyncMutex},
+    io::{
+        AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
+        BufReader,
+    },
+    sync::{oneshot, Mutex as AsyncMutex, Semaphore},
 };
 
 /// The ACP major version this client speaks.
@@ -63,6 +66,18 @@ const STDERR_LINE: usize = 400;
 const STDERR_LINES: usize = 12;
 /// Longest tool-call text forwarded to the user interface.
 const TOOL_TEXT: usize = 4_000;
+/// Longest tool-call or permission title forwarded to the user interface.
+const TITLE: usize = 300;
+/// Longest message or thought chunk forwarded to the user interface.
+pub const MAX_CHUNK: usize = 200_000;
+/// Most plan entries forwarded to the user interface.
+const MAX_PLAN: usize = 100;
+/// Most `fs/read_text_file` requests served at the same time; more are
+/// refused, so a flood of reads cannot hold gigabytes of file contents.
+const MAX_READS: usize = 8;
+/// Most permission requests open at the same time; more are answered with
+/// `cancelled` right away.
+const MAX_PERMISSIONS: usize = 16;
 
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
@@ -272,18 +287,23 @@ pub fn classify(line: &str) -> Incoming {
 
 type PendingMap = HashMap<u64, oneshot::Sender<Result<Value, RpcError>>>;
 
+type Writer = Box<dyn AsyncWrite + Send + Unpin>;
+
 /// The sending half of the connection plus the requests waiting for answers.
 pub struct Rpc {
-    writer: AsyncMutex<Box<dyn AsyncWrite + Send + Unpin>>,
+    /// `None` once closed: dropping the writer closes the agent's stdin, the
+    /// ACP way to end an agent – also one that `npx` or `cmd` started as a
+    /// grandchild, which killing the direct child does not reach.
+    writer: AsyncMutex<Option<Writer>>,
     pending: Mutex<PendingMap>,
     next_id: AtomicU64,
     closed: AtomicBool,
 }
 
 impl Rpc {
-    pub fn new(writer: Box<dyn AsyncWrite + Send + Unpin>) -> Rpc {
+    pub fn new(writer: Writer) -> Rpc {
         Rpc {
-            writer: AsyncMutex::new(writer),
+            writer: AsyncMutex::new(Some(writer)),
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(0),
             closed: AtomicBool::new(false),
@@ -297,19 +317,30 @@ impl Rpc {
         let mut line =
             serde_json::to_vec(msg).map_err(|e| RpcError::new(INTERNAL_ERROR, e.to_string()))?;
         line.push(b'\n');
-        let mut w = self.writer.lock().await;
+        let mut guard = self.writer.lock().await;
+        if self.closed.load(Ordering::SeqCst) {
+            *guard = None;
+        }
+        let Some(w) = guard.as_mut() else {
+            return Err(RpcError::closed());
+        };
         let write = async {
             w.write_all(&line).await?;
             w.flush().await
         };
-        match tokio::time::timeout(WRITE_TIMEOUT, write).await {
+        let result = match tokio::time::timeout(WRITE_TIMEOUT, write).await {
             Ok(Ok(())) => Ok(()),
             Ok(Err(_)) => Err(RpcError::closed()),
             Err(_) => Err(RpcError::new(
                 INTERNAL_ERROR,
                 "The agent does not read its input any more.",
             )),
+        };
+        // closed while this message was written: the writer goes now
+        if self.closed.load(Ordering::SeqCst) {
+            *guard = None;
         }
+        result
     }
 
     /// Sends a request and waits for its answer (`None` = no time limit).
@@ -365,10 +396,14 @@ impl Rpc {
         }
     }
 
-    /// No more messages: every waiting request fails.
+    /// No more messages: every waiting request fails and the agent's stdin
+    /// is closed (right away, or by a write in progress when it ends).
     pub fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
         self.pending.lock().expect("rpc lock").clear();
+        if let Ok(mut w) = self.writer.try_lock() {
+            *w = None;
+        }
     }
 }
 
@@ -484,19 +519,20 @@ pub fn translate_update(update: &Value) -> Option<Event> {
             text: chunk_text(&update["content"])?,
         }),
         "tool_call" | "tool_call_update" => Some(Event::Tool {
-            id: update["toolCallId"].as_str()?.to_string(),
-            title: opt_str(&update["title"]),
-            kind: opt_str(&update["kind"]),
-            status: opt_str(&update["status"]),
+            id: truncate(update["toolCallId"].as_str()?, TITLE),
+            title: update["title"].as_str().map(|t| truncate(t, TITLE)),
+            kind: update["kind"].as_str().map(|t| truncate(t, 40)),
+            status: update["status"].as_str().map(|t| truncate(t, 40)),
             text: tool_text(&update["content"]),
         }),
         "plan" => Some(Event::Plan {
             entries: update["entries"]
                 .as_array()?
                 .iter()
+                .take(MAX_PLAN)
                 .map(|e| PlanEntry {
                     content: truncate(e["content"].as_str().unwrap_or_default(), 500),
-                    status: e["status"].as_str().unwrap_or("pending").to_string(),
+                    status: truncate(e["status"].as_str().unwrap_or("pending"), 40),
                 })
                 .collect(),
         }),
@@ -506,8 +542,10 @@ pub fn translate_update(update: &Value) -> Option<Event> {
 
 fn chunk_text(content: &Value) -> Option<String> {
     match content["type"].as_str()? {
-        "text" => opt_str(&content["text"]),
-        "resource_link" => content["uri"].as_str().map(|u| format!("[{u}]")),
+        "text" => content["text"].as_str().map(|t| truncate(t, MAX_CHUNK)),
+        "resource_link" => content["uri"]
+            .as_str()
+            .map(|u| format!("[{}]", truncate(u, TITLE))),
         "image" => Some("[image]".into()),
         _ => None,
     }
@@ -660,9 +698,21 @@ pub async fn read_text_file(root: &Path, params: &Value) -> Result<String, RpcEr
             MAX_READ_FILE / 1024 / 1024
         )));
     }
-    let bytes = tokio::fs::read(&real)
+    // bounded: the file may have grown since the size check
+    let mut bytes = Vec::new();
+    tokio::fs::File::open(&real)
+        .await
+        .map_err(|e| denied(format!("{raw} cannot be read: {e}")))?
+        .take(MAX_READ_FILE + 1)
+        .read_to_end(&mut bytes)
         .await
         .map_err(|e| denied(format!("{raw} cannot be read: {e}")))?;
+    if bytes.len() as u64 > MAX_READ_FILE {
+        return Err(denied(format!(
+            "{raw} is larger than {} MiB.",
+            MAX_READ_FILE / 1024 / 1024
+        )));
+    }
     let text = String::from_utf8(bytes)
         .map_err(|_| denied(format!("{raw} is not a text file (CAD files are binary).")))?;
     Ok(slice_lines(
@@ -716,6 +766,9 @@ struct Shared {
     root: PathBuf,
     session_id: Mutex<Option<String>>,
     permissions: Mutex<HashMap<u64, PendingPermission>>,
+    /// `fs/read_text_file` requests being served (each holds up to
+    /// [`MAX_READ_FILE`] in memory).
+    reads: Arc<Semaphore>,
     next_key: AtomicU64,
     stderr: Tail,
 }
@@ -808,25 +861,54 @@ async fn dispatch(shared: &Arc<Shared>, msg: Incoming) {
                     let tool = &params["toolCall"];
                     let title = tool["title"]
                         .as_str()
-                        .map(|t| truncate(t, 300))
+                        .map(|t| truncate(t, TITLE))
                         .unwrap_or_else(|| "The agent wants to run a tool".into());
-                    shared.permissions.lock().expect("permission lock").insert(
-                        key,
-                        PendingPermission {
-                            rpc_id: id,
-                            options,
-                        },
-                    );
+                    let accepted = {
+                        let mut open = shared.permissions.lock().expect("permission lock");
+                        if open.len() >= MAX_PERMISSIONS {
+                            Err(id)
+                        } else {
+                            open.insert(
+                                key,
+                                PendingPermission {
+                                    rpc_id: id,
+                                    options,
+                                },
+                            );
+                            Ok(())
+                        }
+                    };
+                    if let Err(id) = accepted {
+                        shared
+                            .rpc
+                            .respond(id, Ok(json!({ "outcome": { "outcome": "cancelled" } })))
+                            .await;
+                        return;
+                    }
                     shared.sink.emit(Event::Permission {
                         key,
-                        tool_id: opt_str(&tool["toolCallId"]),
+                        tool_id: tool["toolCallId"].as_str().map(|t| truncate(t, TITLE)),
                         title,
                         can_allow,
                     });
                 }
                 "fs/read_text_file" => {
+                    let Ok(permit) = shared.reads.clone().try_acquire_owned() else {
+                        shared
+                            .rpc
+                            .respond(
+                                id,
+                                Err(RpcError::new(
+                                    INTERNAL_ERROR,
+                                    "Too many files are being read at once – try again.",
+                                )),
+                            )
+                            .await;
+                        return;
+                    };
                     let shared = shared.clone();
                     tokio::spawn(async move {
+                        let _permit = permit;
                         let result = read_text_file(&shared.root, &params).await;
                         shared.sink.emit(Event::FileRead {
                             path: truncate(params["path"].as_str().unwrap_or_default(), 500),
@@ -878,13 +960,39 @@ where
     let shared = Arc::new(Shared {
         rpc: rpc.clone(),
         sink,
-        root: root.clone(),
+        root,
         session_id: Mutex::new(None),
         permissions: Mutex::new(HashMap::new()),
+        reads: Arc::new(Semaphore::new(MAX_READS)),
         next_key: AtomicU64::new(1),
         stderr: opts.stderr.clone(),
     });
     tokio::spawn(read_loop(BufReader::new(reader), shared.clone()));
+    let result = handshake(&rpc, &shared, &opts).await;
+    match result {
+        Ok((info, session_id)) => Ok(Session {
+            shared,
+            info,
+            session_id,
+            busy: AtomicBool::new(false),
+            first: AtomicBool::new(true),
+            child: Mutex::new(None),
+        }),
+        Err(e) => {
+            // a failed start must not leave the agent waiting on its stdin
+            rpc.close();
+            Err(e)
+        }
+    }
+}
+
+/// `initialize` and `session/new`.
+async fn handshake(
+    rpc: &Rpc,
+    shared: &Shared,
+    opts: &Options,
+) -> Result<(AgentInfo, String), String> {
+    let root = &shared.root;
     let failed = |what: &str, e: RpcError| {
         let tail = shared.stderr_tail();
         if tail.is_empty() {
@@ -914,7 +1022,6 @@ where
         .map_err(|e| failed("The agent did not start", e))?;
     let version = init["protocolVersion"].as_u64();
     if version != Some(PROTOCOL_VERSION) {
-        rpc.close();
         return Err(format!(
             "The agent speaks ACP version {}; TeamCraft Desktop speaks version {PROTOCOL_VERSION}.",
             version.map(|v| v.to_string()).unwrap_or_else(|| "?".into())
@@ -968,14 +1075,7 @@ where
         session_id: session_id.clone(),
         teamcraft_tools: opts.mcp.is_some() && http,
     };
-    Ok(Session {
-        shared,
-        info,
-        session_id,
-        busy: AtomicBool::new(false),
-        first: AtomicBool::new(true),
-        child: Mutex::new(None),
-    })
+    Ok((info, session_id))
 }
 
 /// Starts the configured agent program and connects to it.
@@ -1149,7 +1249,7 @@ impl Drop for Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::{duplex, split, AsyncBufReadExt, DuplexStream, ReadHalf, WriteHalf};
+    use tokio::io::{duplex, AsyncBufReadExt, DuplexStream};
 
     #[derive(Default)]
     struct Recorder(Mutex<Vec<Event>>);
@@ -1178,8 +1278,8 @@ mod tests {
 
     /// The agent's end of the pipe: reads the client's messages, writes its own.
     struct FakeAgent {
-        lines: tokio::io::Lines<BufReader<ReadHalf<DuplexStream>>>,
-        out: WriteHalf<DuplexStream>,
+        lines: tokio::io::Lines<BufReader<DuplexStream>>,
+        out: DuplexStream,
     }
 
     impl FakeAgent {
@@ -1219,10 +1319,11 @@ mod tests {
         }
     }
 
-    fn pipes() -> (ReadHalf<DuplexStream>, WriteHalf<DuplexStream>, FakeAgent) {
-        let (client, agent) = duplex(1 << 16);
-        let (cr, cw) = split(client);
-        let (ar, aw) = split(agent);
+    /// One pipe per direction, like a child's stdin and stdout: dropping the
+    /// client's writer is an EOF for the agent.
+    fn pipes() -> (DuplexStream, DuplexStream, FakeAgent) {
+        let (cw, ar) = duplex(1 << 16);
+        let (aw, cr) = duplex(1 << 16);
         (
             cr,
             cw,
@@ -1722,6 +1823,143 @@ mod tests {
         assert_eq!(turn.await.unwrap().unwrap_err(), "The agent has ended.");
         sink.wait_for(|e| matches!(e, Event::Exited { .. })).await;
         assert!(session.cancel().await.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_symbolic_link_out_of_the_workspace_is_refused() {
+        let (_session, mut agent, _sink, _, dir) = started(true).await;
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "no").unwrap();
+        std::os::unix::fs::symlink(outside.path().join("secret.txt"), root.join("link.txt"))
+            .unwrap();
+        std::os::unix::fs::symlink(outside.path(), root.join("dir")).unwrap();
+        for (id, path) in [
+            (1, root.join("link.txt")),
+            (2, root.join("dir").join("secret.txt")),
+        ] {
+            agent
+                .send(
+                    json!({ "jsonrpc": "2.0", "id": id, "method": "fs/read_text_file",
+                    "params": { "sessionId": "sess_1", "path": path.to_string_lossy() } }),
+                )
+                .await;
+            let answer = agent.recv().await;
+            assert!(
+                answer["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("outside the TeamCraft workspace"),
+                "{answer}"
+            );
+        }
+    }
+
+    /// The client closed the agent's stdin (the agent reads EOF).
+    async fn stdin_closed(agent: &mut FakeAgent) -> bool {
+        matches!(
+            tokio::time::timeout(Duration::from_secs(5), agent.lines.next_line()).await,
+            Ok(Ok(None)) | Ok(Err(_))
+        )
+    }
+
+    #[tokio::test]
+    async fn stop_closes_the_agents_input() {
+        // an agent behind `npx`/`cmd` is a grandchild that killing the child
+        // does not reach – it ends when its stdin closes
+        let (session, mut agent, _sink, _, _dir) = started(true).await;
+        session.stop();
+        assert!(stdin_closed(&mut agent).await);
+        assert!(session.cancel().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_failed_start_closes_the_agents_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let (cr, cw, mut agent) = pipes();
+        let connecting = tokio::spawn({
+            let opts = options(dir.path());
+            async move { connect(cr, cw, Arc::new(Recorder::default()), opts).await }
+        });
+        let init = agent.recv().await;
+        agent
+            .send(json!({ "jsonrpc": "2.0", "id": init["id"], "result": { "protocolVersion": 1 } }))
+            .await;
+        let new = agent.recv().await;
+        agent
+            .send(json!({ "jsonrpc": "2.0", "id": new["id"], "error": { "code": -32603, "message": "boom" } }))
+            .await;
+        assert!(connecting.await.unwrap().is_err());
+        assert!(stdin_closed(&mut agent).await);
+    }
+
+    #[tokio::test]
+    async fn floods_of_permission_requests_and_reads_are_bounded() {
+        let (session, mut agent, sink, _, dir) = started(true).await;
+        for i in 0..=MAX_PERMISSIONS as u64 {
+            agent.send(json!({ "jsonrpc": "2.0", "id": 100 + i, "method": "session/request_permission", "params": {
+                "sessionId": "sess_1", "toolCall": { "toolCallId": format!("t{i}") },
+                "options": [{ "optionId": "ok", "name": "Allow", "kind": "allow_once" }] } })).await;
+        }
+        // the one too many is answered at once, the others wait for the user
+        let answer = agent.recv().await;
+        assert_eq!(answer["id"], 100 + MAX_PERMISSIONS as u64);
+        assert_eq!(answer["result"]["outcome"]["outcome"], "cancelled");
+        let shown = sink
+            .events()
+            .iter()
+            .filter(|e| matches!(e, Event::Permission { .. }))
+            .count();
+        assert_eq!(shown, MAX_PERMISSIONS);
+
+        let busy = session
+            .shared
+            .reads
+            .clone()
+            .try_acquire_many_owned(MAX_READS as u32)
+            .unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        let read = |id: u64| {
+            json!({ "jsonrpc": "2.0", "id": id, "method": "fs/read_text_file",
+            "params": { "sessionId": "sess_1", "path": root.join("a.txt").to_string_lossy() } })
+        };
+        agent.send(read(1)).await;
+        assert!(agent.recv().await["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("Too many"));
+        drop(busy);
+        agent.send(read(2)).await;
+        assert_eq!(agent.recv().await["result"]["content"], "a");
+    }
+
+    #[test]
+    fn agent_texts_are_bounded() {
+        let long = "x".repeat(MAX_CHUNK + 10);
+        let Some(Event::Message { text }) = translate_update(
+            &json!({ "sessionUpdate": "agent_message_chunk", "content": { "type": "text", "text": long } }),
+        ) else {
+            panic!("no message")
+        };
+        assert_eq!(text.chars().count(), MAX_CHUNK + 1);
+        let Some(Event::Tool { id, title, .. }) = translate_update(
+            &json!({ "sessionUpdate": "tool_call", "toolCallId": long, "title": long }),
+        ) else {
+            panic!("no tool")
+        };
+        assert_eq!(id.chars().count(), TITLE + 1);
+        assert_eq!(title.unwrap().chars().count(), TITLE + 1);
+        let entries: Vec<Value> = (0..MAX_PLAN + 5)
+            .map(|i| json!({ "content": i.to_string(), "status": "pending" }))
+            .collect();
+        let Some(Event::Plan { entries }) =
+            translate_update(&json!({ "sessionUpdate": "plan", "entries": entries }))
+        else {
+            panic!("no plan")
+        };
+        assert_eq!(entries.len(), MAX_PLAN);
     }
 
     #[tokio::test]

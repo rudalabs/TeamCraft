@@ -1111,6 +1111,9 @@
     { name: "worklist_triage", label: "Triage my worklist", needs: null }
   ];
 
+  // Longest agent message shown (characters), as MAX_CHUNK in src/acp.rs.
+  var AGENT_MAX_TEXT = 200000;
+
   var TOOL_STATUS = { pending: "Waiting", in_progress: "Running", completed: "Done", failed: "Failed", cancelled: "Cancelled" };
 
   var agent = {
@@ -1228,6 +1231,12 @@
       cur = agent.current = { kind: kind, text: "", body: body };
       agentRow(el);
     }
+    // bounded: every frame redraws the whole message
+    if (cur.full) return;
+    if (cur.text.length + text.length > AGENT_MAX_TEXT) {
+      text = text.slice(0, Math.max(0, AGENT_MAX_TEXT - cur.text.length)) + "\n\n… (the rest of this message is not shown)";
+      cur.full = true;
+    }
     cur.text += text;
     if (!cur.dirty) { cur.dirty = true; agent.dirtyBlocks.push(cur); }
     schedulePaint();
@@ -1290,22 +1299,29 @@
       buttons
     ]);
     agent.current = null;
-    agent.permissions[p.key] = { card: card, buttons: buttons };
+    // keys restart with every session: the session is part of the name
+    var id = p.session + ":" + p.key;
+    agent.permissions[id] = { card: card, buttons: buttons };
     agentRow(card);
     function answer(allow) {
       buttons.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
-      call("agent_permission", { key: p.key, allow: allow }).then(function () {
-        donePermission(p.key, allow ? "Allowed once." : "Rejected.");
-      }, function (err) { donePermission(p.key, errorText(err)); });
+      call("agent_permission", { session: p.session, key: p.key, allow: allow }).then(function () {
+        donePermission(id, allow ? "Allowed once." : "Rejected.");
+      }, function (err) { donePermission(id, errorText(err)); });
     }
   }
 
-  function donePermission(key, text) {
-    var perm = agent.permissions[key];
+  function donePermission(id, text) {
+    var perm = agent.permissions[id];
     if (!perm) return;
-    delete agent.permissions[key];
+    delete agent.permissions[id];
     perm.card.classList.add("answered");
     perm.buttons.replaceWith(h("p.hint", { text: text || "No longer needed." }));
+  }
+
+  /** The session ended: its open permission cards can no longer be answered. */
+  function endAgentPermissions() {
+    Object.keys(agent.permissions).forEach(function (id) { donePermission(id); });
   }
 
   function onAgentEvent(p) {
@@ -1317,11 +1333,12 @@
       case "tool": agentTool(p); break;
       case "plan": agent.plan = p.entries || []; schedulePaint(true); break;
       case "permission": agentPermission(p); break;
-      case "permission_done": donePermission(p.key); break;
+      case "permission_done": donePermission(p.session + ":" + p.key); break;
       case "file_read": if (!p.ok) agentNote("Refused to read " + p.path + " (only the workspace folder is shared).", "warn"); break;
       case "notice": agentNote(p.text, "info"); break;
       case "exited":
         agentNote(p.text, "error");
+        endAgentPermissions();
         agent.running = null;
         agent.busy = false;
         updateAgentControls();
@@ -1351,6 +1368,7 @@
     call("agent_start", { name: name }).then(function (s) {
       setStatus("");
       agent.starting = false;
+      endAgentPermissions(); // the previous session was stopped
       agent.running = s;
       agent.busy = false;
       agent.tools = {};
@@ -1376,6 +1394,7 @@
   function stopAgent() {
     call("agent_stop").then(function () {
       if (agent.running) agentNote("The agent was stopped.");
+      endAgentPermissions();
       agent.running = null;
       agent.busy = false;
       updateAgentControls();
@@ -3270,6 +3289,7 @@
       state.tabs = [];
       state.active = null;
       state.me = null;
+      endAgentPermissions();
       agent.running = null; // signing out stops the agent (src/commands.rs)
       agent.busy = false;
       agent.contextKey = null;
