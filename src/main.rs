@@ -38,6 +38,19 @@ enum Command {
     },
     /// Apply pending database migrations and exit.
     Migrate,
+    /// Write a backup of the database and the file vault into a directory.
+    Backup {
+        /// Target directory; it must not exist or be empty.
+        dir: std::path::PathBuf,
+    },
+    /// Restore the database and the file vault from a backup directory.
+    Restore {
+        /// Directory written by `teamcraft backup`.
+        dir: std::path::PathBuf,
+        /// Replace the contents of a database that already contains tables.
+        #[arg(long)]
+        force: bool,
+    },
     /// Manage local user accounts.
     User {
         #[command(subcommand)]
@@ -130,6 +143,8 @@ async fn main() -> ExitCode {
         Command::Healthcheck { addr } => return healthcheck(addr),
         Command::Serve { no_migrate } => serve(no_migrate).await,
         Command::Migrate => migrate().await,
+        Command::Backup { dir } => backup_command(dir),
+        Command::Restore { dir, force } => restore_command(dir, force).await,
         Command::User { command } => user_command(command).await,
         Command::Vault { command } => vault_command(command).await,
     };
@@ -283,6 +298,32 @@ async fn migrate() -> Result<ExitCode> {
     let pool = db::connect(&config).await?;
     db::migrate(&pool).await?;
     println!("database schema is up to date");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn backup_command(dir: std::path::PathBuf) -> Result<ExitCode> {
+    let config = load_config()?;
+    let summary = teamcraft::backup::backup(&config, &dir)?;
+    println!(
+        "backup written to '{}': {} vault object(s), {} byte database dump (sha256 {})",
+        dir.display(),
+        summary.vault_objects,
+        summary.db_dump_bytes,
+        summary.db_dump_sha256
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn restore_command(dir: std::path::PathBuf, force: bool) -> Result<ExitCode> {
+    let config = load_config()?;
+    let summary = teamcraft::backup::restore(&config, &dir, force).await?;
+    println!(
+        "restore from '{}' finished: {} vault object(s), {} copied, {} already present",
+        dir.display(),
+        summary.vault_objects,
+        summary.copied,
+        summary.skipped
+    );
     Ok(ExitCode::SUCCESS)
 }
 

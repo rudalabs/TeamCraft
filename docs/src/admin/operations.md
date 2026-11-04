@@ -7,13 +7,45 @@
 | `teamcraft healthcheck [--addr host:port]` | exit code of `/healthz`, for container health checks                   |
 | `teamcraft vault check [--verify-hashes]`  | every stored file present (and unchanged)                              |
 | `teamcraft migrate`                        | apply migrations without starting the server                           |
+| `teamcraft backup <dir>`                   | write database and vault backup (`pg_dump`)                            |
+| `teamcraft restore <dir> [--force]`        | verify and restore a backup (`pg_restore`)                             |
 
 ## Backups
 
-Back up the PostgreSQL database (`pg_dump`) and the vault directory (`TEAMCRAFT_VAULT_DIR`) together. The vault is
-content-addressed and
-append-only, so incremental file backups work well; `previews/` inside it is
-a cache and can be left out.
+`teamcraft backup <dir>` writes one backup directory; `<dir>` must not exist
+or be empty:
+
+| Path              | Content                                                              |
+|-------------------|----------------------------------------------------------------------|
+| `db.dump`         | `pg_dump --format=custom` of the configured database                 |
+| `vault/objects/…` | the content-addressed blobs (the `previews/` cache is not included)  |
+| `manifest.json`   | Unix timestamp, TeamCraft version, object count, SHA-256 of `db.dump` |
+
+The PostgreSQL client tools (`pg_dump`, `pg_restore`) must be installed on
+the machine that runs the command. The database password is handed to the
+child process in `PGPASSWORD` only. The database is dumped first and the
+vault afterwards; blobs are append-only, so every file that the dump
+references is included. Stop the server for a consistent point in time. If
+a backup fails, delete the target directory before retrying.
+
+Restore with the server stopped:
+
+```sh
+sudo -u teamcraft teamcraft restore <dir>            # database must be empty
+sudo -u teamcraft teamcraft restore <dir> --force    # replace an existing database
+```
+
+The command first verifies the manifest, the SHA-256 of `db.dump`, the
+object count and the SHA-256 of every vault object, then runs
+`pg_restore --clean --if-exists --no-owner` against the configured database
+and copies the vault back without overwriting blobs that are already
+present. Start the server afterwards; it applies newer migrations.
+
+* The target database must exist; TeamCraft does not create it.
+* `--force` replaces the objects contained in the backup; other objects in
+  the database stay, so a fresh, empty database is preferable.
+* Configuration and secrets (`.env`, the system `teamcraft.env`, TLS keys)
+  are not part of the backup; back them up separately.
 
 ## Performance
 
