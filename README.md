@@ -138,7 +138,7 @@ native PostgreSQL and the desktop app:
 | `domain`, `services` | the rules and the business logic – permissions, row locks, lifecycle checks and the audit entry in one transaction |
 | `vault`              | content-addressed file storage on disk, plus the cached 3D previews                                                |
 | `mesh`, `preview`    | pure-Rust readers for meshes, point clouds and STEP                                                                |
-| PostgreSQL 14+       | the only external service                                                                                          |
+| PostgreSQL 16+       | the only external service                                                                                          |
 
 Everything is built by `cargo` – no Node.js, no downloaded browser engines,
 no C++ CAD kernel. Details: [Architecture](https://rudalabs.github.io/TeamCraft/reference/architecture.html).

@@ -102,7 +102,7 @@ tests/             end-to-end tests; tests/common creates a temporary database (
 tests/fixtures/cad openly licensed NIST CAD files (Inventor, NX, SolidWorks, Creo, CATIA V5, STEP) with manifest.tsv, checked by tests/cad_fixtures.rs
 docs/              mdBook documentation (Doxygen-style theme in docs/theme/), published with rustdoc via GitHub Pages
 platforms/         short build-and-test guides: linux.md, macos.md, windows.md
-.github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 14/17, macOS/Windows builds), docs.yml, desktop.yml
+.github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 16/18, macOS/Windows builds), docs.yml, desktop.yml
 desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part of the server build)
 ```
 

@@ -2,7 +2,7 @@
 
 ## Build and run
 
-You need Rust (stable, via [rustup](https://rustup.rs)) and PostgreSQL 14+.
+You need Rust (stable, via [rustup](https://rustup.rs)) and PostgreSQL 16 or newer.
 The repository's `docker-compose.yml` starts a development database that
 needs no password:
 
