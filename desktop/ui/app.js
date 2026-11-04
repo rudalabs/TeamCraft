@@ -565,6 +565,7 @@
     clear(nav);
     nav.appendChild(navHead("Project groups", [
       h("button.small", { type: "button", title: "Copy the files of whole project groups into your workspace", on: { click: function () { getProjectsDialog(); } } }, "Get…"),
+      canEdit() ? h("button.small", { type: "button", title: "Import an existing CAD folder (Tools → Import CAD Folder…)", on: { click: function () { importFolderDialog(); } } }, "Import…") : null,
       canEdit() ? h("button.small", { type: "button", title: "New item (Ctrl+N)", on: { click: function () { newItemDialog(); } } }, [svgIcon(ICONS.plus), "New"]) : null
     ]));
     function group(title, list) {
@@ -2011,6 +2012,267 @@
     ], { wide: true });
   }
 
+  // ------------------------------------------- import of a CAD folder tree
+  // (docs/src/research/cad-folder-import.md)
+
+  var formatKindsPromise = null;
+  /** File extension → format kind ("part", "assembly", "drawing", …) from the server's format list. */
+  function formatKinds() {
+    if (!formatKindsPromise) {
+      formatKindsPromise = api("GET", "/formats").then(function (r) {
+        var kinds = {};
+        r.systems.forEach(function (s) {
+          s.formats.forEach(function (f) {
+            f.extensions.forEach(function (e) { if (!kinds[e]) kinds[e] = f.kind; });
+          });
+        });
+        return kinds;
+      }, function (err) { formatKindsPromise = null; throw err; });
+    }
+    return formatKindsPromise;
+  }
+
+  var ITEM_NUMBER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+  /** Kinds that become an item of their own (grouped by base name). */
+  var GROUPED_KINDS = ["part", "assembly", "model", "drawing", "exchange", "mesh", "visualization", "electronics"];
+
+  function splitName(name) {
+    var dot = name.lastIndexOf(".");
+    return dot > 0 ? { stem: name.slice(0, dot), ext: name.slice(dot + 1).toLowerCase() } : { stem: name, ext: "" };
+  }
+  function folderOf(rel) { return rel.split("/").slice(0, -1).join("/"); }
+
+  /** What the import will create: one item per part/assembly file with the
+   * drawings and exports of the same base name; the rest in one document item. */
+  function planImport(scan, kinds, opts) {
+    var byName = {}, duplicates = [];
+    scan.files.forEach(function (f) {
+      // Creo: only the newest iteration, under its logical name (bracket.prt.7 → bracket.prt)
+      var logical = f.name, iteration = 0;
+      var m = /^(.+\.([a-z0-9]+))\.(\d+)$/i.exec(f.name);
+      if (m && kinds[m[2].toLowerCase()]) { logical = m[1]; iteration = Number(m[3]); }
+      var key = logical.toLowerCase(), seen = byName[key];
+      if (!seen) { byName[key] = { file: f, logical: logical, iteration: iteration }; return; }
+      if (folderOf(seen.file.rel) === folderOf(f.rel)) {
+        if (iteration > seen.iteration) byName[key] = { file: f, logical: logical, iteration: iteration };
+      } else {
+        duplicates.push(f.rel + " – same name as " + seen.file.rel);
+      }
+    });
+    var entries = Object.keys(byName).map(function (k) { return byName[k]; })
+      .sort(function (a, b) { return a.file.rel.localeCompare(b.file.rel); });
+    var groups = {}, order = [], extras = [];
+    entries.forEach(function (e) {
+      var n = splitName(e.logical), kind = kinds[n.ext];
+      if (GROUPED_KINDS.indexOf(kind) < 0) return;
+      var key = n.stem.toLowerCase();
+      if (!groups[key]) { groups[key] = { name: n.stem, files: [], kinds: [] }; order.push(key); }
+      groups[key].files.push(e.file);
+      groups[key].kinds.push(kind);
+    });
+    entries.forEach(function (e) {
+      var n = splitName(e.logical);
+      if (GROUPED_KINDS.indexOf(kinds[n.ext]) >= 0) return;
+      var g = groups[n.stem.toLowerCase()];
+      if (g) g.files.push(e.file); else extras.push(e.file);
+    });
+    var items = order.map(function (key) {
+      var g = groups[key];
+      return {
+        key: key, name: g.name, files: g.files,
+        type: g.kinds.indexOf("assembly") >= 0 ? "assembly"
+          : g.kinds.some(function (k) { return k !== "drawing"; }) ? "part" : "document",
+        number: opts.numbersFromNames && ITEM_NUMBER.test(g.name) ? g.name.toUpperCase() : null
+      };
+    });
+    if (extras.length && opts.extras) {
+      items.push({ key: "\u0000project-files", name: "Project files – " + scan.folder_name, type: "document", files: extras, number: null });
+    }
+    return { items: items, duplicates: duplicates, extras: extras.length, ignored: scan.ignored, files: scan.files.length };
+  }
+
+  /** Items already imported from a folder (to continue an interrupted import). */
+  function importLog(folder) {
+    try { return JSON.parse(window.localStorage.getItem("teamcraft.import:" + state.session.server_url + ":" + folder)) || {}; }
+    catch (e) { return {}; }
+  }
+  function saveImportLog(folder, log) {
+    try { window.localStorage.setItem("teamcraft.import:" + state.session.server_url + ":" + folder, JSON.stringify(log)); }
+    catch (e) { /* the import still works, it just cannot be continued */ }
+  }
+
+  /** BOM lines for the parts the new assemblies reference (quantity 1). */
+  function bomFromReferences(created, progress) {
+    var lines = 0;
+    var assemblies = created.filter(function (c) { return c.item.type === "assembly"; });
+    return assemblies.reduce(function (chain, c, i) {
+      return chain.then(function () {
+        progress(i + 1, assemblies.length, "Structure of " + c.rev.item_number);
+        var base = "/items/" + enc(c.rev.item_number) + "/revisions/" + enc(c.rev.code);
+        return api("GET", base + "/references").then(function (refs) {
+          var children = [];
+          (refs.files || []).forEach(function (f) {
+            if (f.format_kind !== "assembly") return;
+            f.references.forEach(function (r) {
+              var m = r.matches.filter(function (x) { return !x.same_revision; })[0];
+              if (m && m.item_number !== c.rev.item_number && children.indexOf(m.item_number) < 0) children.push(m.item_number);
+            });
+          });
+          return children.reduce(function (ch, child) {
+            return ch.then(function () {
+              return api("POST", base + "/bom", { child: child, quantity: 1, notes: "From the CAD references – check the quantity" })
+                .then(function () { lines++; }, function () { /* e.g. it would be circular */ });
+            });
+          }, Promise.resolve());
+        }, function () { /* no references */ });
+      });
+    }, Promise.resolve()).then(function () { return lines; });
+  }
+
+  function importFolderDialog() {
+    if (!canEdit()) { toast("Viewers cannot import.", "error"); return; }
+    var projects = state.projects.filter(function (p) { return p.active && canEditProject(p.id); });
+    if (!projects.length) { toast("You are not a member of any project group – ask an admin to add you.", "error"); return; }
+    var folder = h("input", { type: "text", spellcheck: "false", placeholder: "Folder with the CAD files" });
+    var pick = TAURI.dialog ? h("button", { type: "button", on: { click: function () {
+      TAURI.dialog.open({ directory: true, title: "CAD folder to import" }).then(function (dir) { if (dir) { folder.value = dir; scanned = null; report.textContent = ""; } });
+    } } }, "Choose…") : null;
+    var project = h("select", null, projects.map(function (p) { return h("option", { value: p.code, text: p.code + " – " + p.name }); }));
+    var fromNames = h("input", { type: "checkbox" });
+    var extras = h("input", { type: "checkbox", checked: true });
+    var bom = h("input", { type: "checkbox", checked: true });
+    var report = h("div.stack");
+    var bar = h("progress.hidden", { max: "1", value: "0" });
+    var status = h("p.small", { role: "status" });
+    var scanned = null, kinds = null, plan = null, running = false, stop = false;
+
+    function options() { return { numbersFromNames: fromNames.checked, extras: extras.checked }; }
+    function progress(done, total, text) { bar.classList.remove("hidden"); bar.max = Math.max(total, 1); bar.value = done; status.textContent = text; }
+
+    function showPlan() {
+      plan = planImport(scanned, kinds, options());
+      var log = importLog(folder.value.trim());
+      var open = plan.items.filter(function (it) { return !log[it.key]; });
+      report.textContent = "";
+      append(report, [
+        h("p", null, [h("strong", { text: plan.files + " files" }), " → " + plan.items.length + " items (" +
+          plan.items.filter(function (it) { return it.type === "assembly"; }).length + " assemblies, " +
+          plan.items.filter(function (it) { return it.type === "part"; }).length + " parts, " +
+          plan.items.filter(function (it) { return it.type === "document"; }).length + " documents)" +
+          (plan.items.length - open.length ? " – " + (plan.items.length - open.length) + " already imported, skipped" : "") +
+          (plan.ignored ? " · " + plan.ignored + " lock/backup files left out" : "") +
+          (plan.extras && !extras.checked ? " · " + plan.extras + " other files not imported" : "")]),
+        plan.duplicates.length ? h("div.notice", null, [h("strong", { text: plan.duplicates.length + " duplicate file names – only the first file of each name is imported. Rename them in the CAD program (TeamCraft recognises CAD references by file name):" }),
+          h("ul.small", null, plan.duplicates.slice(0, 20).map(function (d) { return h("li", { text: d }); }))]) : null,
+        table(["Item", "Type", "Number", "Files"], open.slice(0, 200).map(function (it) {
+          return { cells: [it.name, label(it.type), it.number || h("span.dim", { text: "generated" }),
+            h("span.small", { text: it.files.map(function (f) { return f.name; }).join(", ") })] };
+        })),
+        open.length > 200 ? h("p.small.dim", { text: "… and " + (open.length - 200) + " more items" }) : null
+      ]);
+    }
+
+    function scanNow(d) {
+      var path = folder.value.trim();
+      if (!path) { d.fail("Choose the folder first."); return; }
+      status.textContent = "Scanning …";
+      Promise.all([call("scan_folder", { path: path }), formatKinds()]).then(function (r) {
+        scanned = r[0]; kinds = r[1];
+        status.textContent = "Scanned – nothing is uploaded yet. Check the list, then Import.";
+        showPlan();
+      }, function (err) { status.textContent = ""; d.fail(err); });
+    }
+    [fromNames, extras].forEach(function (box) { box.addEventListener("change", function () { if (scanned && !running) showPlan(); }); });
+
+    function importNow(d) {
+      if (running) return;
+      if (!plan) { d.fail("Scan the folder first."); return; }
+      var path = folder.value.trim(), log = importLog(path);
+      var todo = plan.items.filter(function (it) { return !log[it.key]; });
+      var created = [], failed = [];
+      running = true; stop = false;
+      todo.reduce(function (chain, it, i) {
+        return chain.then(function () {
+          if (stop) return;
+          progress(i + 1, todo.length, "Item " + (i + 1) + " of " + todo.length + ": " + it.name);
+          return api("POST", "/items", { item_type: it.type, name: it.name, project: project.value, number: it.number }).then(function (rev) {
+            // remembered at once, so a second run never creates it twice
+            log[it.key] = rev.item_number; saveImportLog(path, log);
+            created.push({ rev: rev, item: it });
+            return call("upload_files", { item: rev.item_number, code: rev.code, paths: it.files.map(function (f) { return f.path; }), comment: "Imported from " + scanned.folder_name })
+              .catch(function (err) { failed.push(rev.item_number + " (" + it.name + "): files not uploaded – " + errorText(err)); });
+          }, function (err) { failed.push(it.name + ": " + errorText(err)); });
+        });
+      }, Promise.resolve()).then(function () {
+        return bom.checked ? bomFromReferences(created, progress) : 0;
+      }).then(function (lines) {
+        // nothing stays locked: every new item is checked in
+        return created.reduce(function (chain, c, i) {
+          return chain.then(function () {
+            progress(i + 1, created.length, "Checking in " + c.rev.item_number);
+            return api("POST", "/items/" + enc(c.rev.item_number) + "/revisions/" + enc(c.rev.code) + "/checkin")
+              .catch(function (err) { failed.push(c.rev.item_number + ": check-in – " + errorText(err)); });
+          });
+        }, Promise.resolve()).then(function () { return lines; });
+      }).then(function (lines) {
+        running = false;
+        var text = (stop ? "Stopped – scan and import again to continue. " : "Done. ") + created.length + " items created" +
+          (bom.checked ? ", " + lines + " BOM lines from the CAD references (quantity 1 – check them)" : "") +
+          (failed.length ? ", " + failed.length + " problems: " + failed.slice(0, 5).join("; ") : "") + ".";
+        status.textContent = text;
+        toast(text, failed.length ? "error" : null);
+        if (created.length) { delete state.expanded[project.value]; if (state.view === "home") selectView("home"); refreshWorklistCount(); }
+        if (scanned) showPlan();
+      });
+    }
+
+    dialog("Import a CAD folder", h("div.stack", null, [
+      h("p", null, ["Brings an existing folder of CAD data into TeamCraft: one item per part or assembly, with the drawings and exports of the same name. The folder itself is not changed. ",
+        h("a", { href: "#", on: { click: function (e) { e.preventDefault(); importTutorial(); } } }, "How it works")]),
+      field("Folder", h("div.row", null, [folder, pick])),
+      field("Project group", project),
+      h("label.check", null, [fromNames, "Use file names as item numbers where they are valid – otherwise numbers are generated"]),
+      h("label.check", null, [extras, "Put project files (.ipj …) and other documents into one document item"]),
+      h("label.check", null, [bom, "Create BOM lines from the references found in the assemblies (quantity 1 – check them)"]),
+      report, bar, status
+    ]), [
+      { label: "Close", onClick: function (d) { stop = true; d.close(); } },
+      { label: "Scan", onClick: function (d) { if (!running) scanNow(d); } },
+      { label: "Import", primary: true, submit: true, onClick: importNow }
+    ], { wide: true });
+  }
+
+  /** The tutorial: how to bring existing CAD data into TeamCraft. */
+  function importTutorial() {
+    function step(title, points) {
+      return h("section.stack", null, [h("h3", { text: title }), h("ul", null, points.map(function (p) { return h("li", { text: p }); }))]);
+    }
+    dialog("How to import a CAD folder", h("div.stack.tutorial", null, [
+      h("p", { text: "Like Autodesk Vault's Autoloader or the data preparation of Teamcenter: prepare the data, scan it (nothing is uploaded), then import. Hundreds of files are fine." }),
+      step("1 · Prepare the data in the CAD program", [
+        "Collect each product into one clean folder with Pack and Go – Inventor: File → Save As → Pack and Go (with the project file .ipj); Solid Edge: Pack and Go in Design Manager or Revision Manager; SolidWorks: File → Pack and Go.",
+        "Open the top assembly once and fix missing references – broken links stay broken after the import.",
+        "Give every file a unique name. TeamCraft, like Teamcenter, recognises CAD references by file name: two different Bracket.ipt in two subfolders are reported as duplicates and only the first one is imported.",
+        "Optional: export STEP files next to the models for the 3D preview – or let the app create them later at check-in (Windows, with Inventor or Solid Edge)."
+      ]),
+      step("2 · Scan", [
+        "Tools → Import CAD Folder…: choose the folder and the project group, then Scan. The report lists the items that will be created, duplicate names and the files left out (lock and backup files, OldVersions folders).",
+        "One item per part or assembly file; its drawing and exports (STEP, STL, PDF …) with the same name go into the same item. Project files (.ipj …) and other documents go into one document item.",
+        "Item numbers are generated (PRT-…, ASM-…) – or taken from the file names when they are valid item numbers."
+      ]),
+      step("3 · Import", [
+        "Import creates the items and uploads the files, item by item, with progress. The source folder is only read.",
+        "Stop finishes the current item. The app remembers what was imported: scan and import again to continue.",
+        "At the end every new item is checked in, so nothing stays locked."
+      ]),
+      step("4 · Check and release", [
+        "Structure: assemblies get BOM lines for the parts they reference, with quantity 1. For exact quantities export the structured BOM from the CAD program (CSV or Excel) and use Import BOM on the assembly.",
+        "Look at the preview images and 3D views, fix what is missing, then release the product with one change order.",
+        "Team members get the files with Get… (Tools → Get Project Groups…) – one folder per project group."
+      ])
+    ]), [{ label: "Close", primary: true, onClick: function (d) { d.close(); } }], { wide: true });
+  }
+
   function openSettings() {
     var current = document.documentElement.getAttribute("data-skin");
     var ws = h("input", { type: "text", value: state.session.workspace_dir, spellcheck: "false" });
@@ -2135,6 +2397,8 @@
     switch (id) {
       case "new-item": newItemDialog(); break;
       case "get-projects": getProjectsDialog(); break;
+      case "import-folder": importFolderDialog(); break;
+      case "import-help": importTutorial(); break;
       case "settings": case "settings-app": openSettings(); break;
       case "sign-out": signOut(); break;
       case "refresh": selectView(state.view); reloadActive(); refreshWorklistCount(); break;

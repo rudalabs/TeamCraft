@@ -13,8 +13,9 @@ the known gaps with details. Last update: 2026-11-04.
   research and decisions in [docs/src/research/cad-previews.md](src/research/cad-previews.md)
 - [ ] Try the native previews on Windows with real files: preview images of Inventor, Solid Edge and SolidWorks files,
   *STEP* export with Inventor and with Solid Edge (desktop app)
-- [ ] Desktop: tutorial for importing existing CAD file trees (hundreds of files, project files such as Inventor `.ipj`)
-- [ ] Desktop: import of a CAD folder tree as items with files, BOM from the assembly references (needed for the
+- [ ] Try the CAD folder import with a real Inventor and a real Solid Edge project of hundreds of files (desktop app)
+- [x] Desktop: tutorial for importing existing CAD file trees (hundreds of files, project files such as Inventor `.ipj`)
+- [x] Desktop: import of a CAD folder tree as items with files, BOM from the assembly references (needed for the
   tutorial; feature 8)
 - [x] Desktop workspace: one subfolder per project group (alternatively git-style: only the chosen project groups are
   visible locally)

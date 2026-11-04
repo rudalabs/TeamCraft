@@ -86,7 +86,9 @@ release yet; the database schema is migrated automatically between versions.
 - **Notifications.** In-app bell, e-mail and Mattermost; watch items and
   changes.
 - **Desktop app.** A Tauri client for Linux, macOS and Windows with a local
-  workspace for check-out and check-in.
+  workspace (one folder per project group) for check-out and check-in, the
+  download of whole project groups and an import wizard for existing CAD
+  folders with a step-by-step tutorial.
 - **Audit log.** Every modification with user, time and details.
 
 ## Quick start

@@ -539,3 +539,7 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 /* Preview images stored in CAD files (Inventor, Solid Edge, SolidWorks) */
 .file-cell { display: inline-flex; align-items: center; gap: 0.5rem; }
 .file-thumb { width: 2.5rem; height: 2.5rem; object-fit: contain; border: 1px solid var(--border); border-radius: 4px; background: #fff; flex: none; }
+
+/* Import tutorial */
+.tutorial h3 { margin: 0.4rem 0 0.2rem; }
+.tutorial ul { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.35rem; }

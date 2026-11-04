@@ -67,3 +67,15 @@ check afterwards.
   [Analyze](https://soliddna.com/SEHelp/ST5/EN/a_h/analyze2ad.htm),
   [Add to Teamcenter](https://www.soliddna.com/SEHelp/ST5/EN/a_h/addtoteamcenter1a.htm),
   [Design Manager – flatten folder structure](https://support.sw.siemens.com/en-US/okba/PL8015842/Using-Design-Manager-to-flatten-folder-structure/index.html)
+
+## Status
+
+* **Implemented** in the desktop app: *Tools → Import CAD Folder…*
+  (`desktop/src/folderimport.rs` for the scan, the plan and the import in
+  `desktop/ui/app.js`) and the tutorial *Help → How to Import a CAD Folder*.
+  Imported items are remembered per folder (browser storage of the app), so
+  an interrupted import continues where it stopped.
+* Tested: the folder scan (unit test) and the planning with a sample tree
+  (items, duplicates, Creo iterations, project files). **Not yet tried with a
+  real Inventor or Solid Edge project of hundreds of files** – the BOM lines
+  depend on the heuristic reference scan of the server.

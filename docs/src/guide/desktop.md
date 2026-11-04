@@ -11,6 +11,10 @@ check-outs and reviews, and a **local workspace**:
   group and revision, `<workspace>/<group>/<item>/<revision>/`;
 * *Get…* (*Tools → Get Project Groups…*) copies the files of every item of
   chosen project groups into the workspace – for new team members;
+* *Import…* (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
+  scan first (nothing is uploaded), then one item per part or assembly with
+  its drawings and exports; *Help → How to Import a CAD Folder* is the
+  step-by-step tutorial (Pack and Go, unique file names, check and release);
 * the *Workspace* tab shows new and modified files;
 * *Check in…* uploads the selected files as new versions and releases the lock.
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and

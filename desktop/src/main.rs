@@ -9,6 +9,7 @@
 mod api;
 mod cadexport;
 mod commands;
+mod folderimport;
 mod settings;
 mod signin;
 mod workspace;
@@ -99,9 +100,11 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
     let tools = SubmenuBuilder::new(app, "Tools")
         .item(&item("open-workspace", "Open Workspace Folder", None)?)
         .item(&item("get-projects", "Get Project Groups…", None)?)
+        .item(&item("import-folder", "Import CAD Folder…", None)?)
         .item(&item("open-web", "Open in Browser", None)?)
         .build()?;
     let help = SubmenuBuilder::new(app, "Help")
+        .item(&item("import-help", "How to Import a CAD Folder", None)?)
         .item(&item("about", "About TeamCraft", None)?)
         .build()?;
     let menu = MenuBuilder::new(app);
@@ -159,6 +162,7 @@ fn main() {
             commands::upload_files,
             commands::cad_programs,
             commands::cad_export_step,
+            commands::scan_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TeamCraft Desktop");

@@ -12,7 +12,7 @@ use tokio::sync::Notify;
 
 use crate::{
     api::{self, Api, ApiError},
-    cadexport,
+    cadexport, folderimport,
     settings::{self, Settings},
     signin, workspace, AppState,
 };
@@ -657,4 +657,13 @@ pub async fn cad_export_step(
         .and_then(|n| n.to_str())
         .unwrap_or_default()
         .to_string())
+}
+
+/// Scans a CAD folder for the import wizard (nothing is uploaded).
+#[tauri::command]
+pub async fn scan_folder(path: PathBuf) -> CmdResult<folderimport::Scan> {
+    tokio::task::spawn_blocking(move || folderimport::scan(&path))
+        .await
+        .map_err(|e| ApiError::local(format!("The scan stopped: {e}")))?
+        .map_err(ApiError::local)
 }
