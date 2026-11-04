@@ -72,10 +72,18 @@ PostgreSQL.
   mass/cost roll-ups are then built in memory by pure code
   (`bom::assemble`, unit tested without a database). A 4000-line,
   11-level structure takes 13 queries (`tests/bom_performance.rs`).
+* **Working set** (`services::workset`, the desktop *Get*): uses the same
+  level-wise loading, but walks the loaded lines without building the
+  expanded tree (`bom::structure_revisions`: each sub-assembly once, in the
+  order of the expanded BOM). Each round of CAD references takes three
+  queries – referenced names, the items holding them, and their revisions
+  under the rule in one statement – whatever the number of files. The
+  4000-line structure takes 16 queries.
 * **Limits**: at most 5000 distinct assemblies are loaded, 64 levels shown
   and 100 000 lines expanded (shared sub-assemblies expand wherever they are
   used); larger structures are refused with a message instead of exhausting
-  the server.
+  the server. The working set has no expansion limit, but at most 5000
+  revisions.
 * **Where-used**: single level is one query; `levels=N` is one recursive
   query (`WITH RECURSIVE`, depth-limited, each item on its lowest level).
 * **Pages** run their independent queries concurrently (`tokio::try_join!`)

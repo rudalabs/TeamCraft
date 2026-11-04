@@ -437,24 +437,42 @@ pub(crate) struct StructureLine {
     pub child_unit_cost: Option<f64>,
 }
 
-/// Picks the child revision according to the rule.
-pub(crate) async fn resolve(
+/// An item and the revision the rule picks for it (see [`resolve_items`]).
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub(crate) struct ResolvedItem {
+    pub item_id: Uuid,
+    pub number: String,
+    /// `None` if no revision of the item matches the rule.
+    pub revision_id: Option<Uuid>,
+}
+
+/// Picks the revision of each item according to the rule – one query for
+/// all of them: `latest` = the newest revision, `released` / `as_released`
+/// = the newest released one (an item outside a BOM line has no frozen
+/// as-released revision). Unknown ids are left out.
+pub(crate) async fn resolve_items(
     pool: &PgPool,
-    item_id: Uuid,
+    item_ids: &[Uuid],
     rule: RevisionRule,
-) -> AppResult<Option<Revision>> {
-    let filter = match rule {
-        RevisionRule::Latest => "",
-        // Lines without an as-released configuration use the newest released revision.
-        RevisionRule::Released | RevisionRule::AsReleased => "AND r.state = 'released'",
-    };
-    Ok(sqlx::query_as::<_, Revision>(&format!(
-        "{} WHERE r.item_id = $1 {filter} ORDER BY r.seq DESC LIMIT 1",
-        revisions::REVISION_SELECT
-    ))
-    .bind(item_id)
-    .fetch_optional(pool)
-    .await?)
+) -> AppResult<HashMap<Uuid, ResolvedItem>> {
+    if item_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = sqlx::query_as::<_, ResolvedItem>(
+        "SELECT i.id AS item_id, i.number, p.id AS revision_id
+         FROM items i
+         LEFT JOIN LATERAL (
+             SELECT r.id FROM revisions r
+             WHERE r.item_id = i.id AND ($2 OR r.state = 'released')
+             ORDER BY r.seq DESC LIMIT 1
+         ) p ON true
+         WHERE i.id = ANY($1)",
+    )
+    .bind(item_ids)
+    .bind(rule == RevisionRule::Latest)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.item_id, r)).collect())
 }
 
 impl StructureLine {
@@ -510,7 +528,7 @@ const LEVEL_SQL: &str = "
 /// parent revision (each group ordered by find number). One query per BOM
 /// level; a revision used in several places is loaded once. Returns the
 /// lines and the number of queries.
-async fn load_structure(
+pub(crate) async fn load_structure(
     pool: &PgPool,
     root_id: Uuid,
     rule: RevisionRule,
@@ -565,6 +583,80 @@ pub async fn tree(pool: &PgPool, root_revision_id: Uuid, rule: RevisionRule) -> 
     )?;
     tree.queries = queries + 1;
     Ok(tree)
+}
+
+/// The distinct revisions of a loaded structure, without building the
+/// expanded tree (see [`structure_revisions`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StructureRevisions {
+    /// `(revision id, item id)` below the root (the root itself is not
+    /// included), in the order of their first appearance in the depth-first,
+    /// find-number-ordered expansion – the order of [`flatten`].
+    pub revisions: Vec<(Uuid, Uuid)>,
+    /// Item numbers of lines the rule could not resolve, first appearance first.
+    pub unresolved: Vec<String>,
+}
+
+/// Lists the revisions and unresolved items of the structure below `root_id`
+/// in the order `flatten(assemble(..))` would show them first, with the same
+/// depth limit and cycle check – but a sub-assembly used in many places is
+/// walked once (again only where it sits higher up, as the depth limit may
+/// then reach further), so shared structures cost no exponential expansion.
+pub(crate) fn structure_revisions(
+    root_id: Uuid,
+    lines_by_rev: &HashMap<Uuid, Vec<StructureLine>>,
+) -> StructureRevisions {
+    struct Walk<'a> {
+        lines_by_rev: &'a HashMap<Uuid, Vec<StructureLine>>,
+        seen: HashSet<Uuid>,
+        unresolved: HashSet<String>,
+        /// Shallowest level at which the lines of a revision were walked.
+        walked_at: HashMap<Uuid, usize>,
+        out: StructureRevisions,
+    }
+    impl Walk<'_> {
+        /// Walks the lines of `rev_id`, which sit at `level`.
+        fn lines(&mut self, rev_id: Uuid, level: usize, path: &mut Vec<Uuid>) {
+            let Some(lines) = self.lines_by_rev.get(&rev_id) else {
+                return;
+            };
+            for l in lines {
+                let Some(child) = l.child_revision_id else {
+                    if self.unresolved.insert(l.child_number.clone()) {
+                        self.out.unresolved.push(l.child_number.clone());
+                    }
+                    continue;
+                };
+                if self.seen.insert(child) {
+                    self.out.revisions.push((child, l.child_item_id));
+                }
+                if level >= MAX_DEPTH || path.contains(&child) {
+                    continue;
+                }
+                // Walked before at this level or higher up: nothing new below.
+                if self
+                    .walked_at
+                    .get(&child)
+                    .is_some_and(|&at| at <= level + 1)
+                {
+                    continue;
+                }
+                self.walked_at.insert(child, level + 1);
+                path.push(child);
+                self.lines(child, level + 1, path);
+                path.pop();
+            }
+        }
+    }
+    let mut walk = Walk {
+        lines_by_rev,
+        seen: HashSet::from([root_id]),
+        unresolved: HashSet::new(),
+        walked_at: HashMap::from([(root_id, 1)]),
+        out: StructureRevisions::default(),
+    };
+    walk.lines(root_id, 1, &mut vec![root_id]);
+    walk.out
 }
 
 /// Builds the tree from the loaded lines (pure): cycle detection along the
@@ -1047,5 +1139,129 @@ mod tests {
         }
         let err = assemble(RevisionRule::Latest, root, "R".into(), &structure(lines)).unwrap_err();
         assert!(err.to_string().contains("too large"), "{err}");
+    }
+
+    // ----- structure_revisions (the working set's walk) -----
+
+    /// What the working set derived from the expanded tree before
+    /// `structure_revisions` existed: every revision of `flatten(tree)` once,
+    /// first appearance first, and the unresolved item numbers.
+    fn revisions_from_tree(tree: &BomTree) -> StructureRevisions {
+        let mut seen = HashSet::from([tree.root.id]);
+        let mut out = StructureRevisions::default();
+        for row in flatten(&tree.children) {
+            match &row.node.revision {
+                Some(r) => {
+                    if seen.insert(r.id) {
+                        out.revisions.push((r.id, row.node.item_id));
+                    }
+                }
+                None => {
+                    if !out.unresolved.contains(&row.node.item_number) {
+                        out.unresolved.push(row.node.item_number.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// A line from `parent` to `revs[child]` whose item is `items[child]`.
+    fn dline(
+        revs: &[ResolvedRevision],
+        items: &[Uuid],
+        parent: usize,
+        child: usize,
+        find: i32,
+    ) -> StructureLine {
+        let mut l = sline(
+            revs[parent].id,
+            &format!("ITM-{child:04}"),
+            find,
+            1.0,
+            Some(&revs[child]),
+        );
+        l.child_item_id = items[child];
+        l
+    }
+
+    fn compare(root: &ResolvedRevision, map: &HashMap<Uuid, Vec<StructureLine>>) -> bool {
+        let Ok(tree) = assemble(RevisionRule::Latest, root.clone(), "R".into(), map) else {
+            return false; // too large to expand the old way
+        };
+        assert_eq!(
+            structure_revisions(root.id, map),
+            revisions_from_tree(&tree)
+        );
+        true
+    }
+
+    #[test]
+    fn structure_revisions_match_the_expanded_tree() {
+        // Random acyclic structures with shared sub-assemblies and unresolved
+        // lines (a tiny LCG keeps the test deterministic without a dependency).
+        let mut seed: u64 = 0x5eed;
+        let mut next = move |n: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let mut compared = 0;
+        for _ in 0..200 {
+            let n = 2 + next(30) as usize;
+            let revs: Vec<ResolvedRevision> = (0..n).map(|_| rev("A", Some(1.0), None)).collect();
+            let items: Vec<Uuid> = (0..n).map(|_| Uuid::new_v4()).collect();
+            let mut lines = Vec::new();
+            for parent in 0..n - 1 {
+                let mut find = 0;
+                for _ in 0..next(4) {
+                    find += 10;
+                    if next(6) == 0 {
+                        let number = format!("UNRESOLVED-{}", next(3));
+                        lines.push(sline(revs[parent].id, &number, find, 1.0, None));
+                    } else {
+                        let child = parent + 1 + next((n - parent - 1) as u64) as usize;
+                        lines.push(dline(&revs, &items, parent, child, find));
+                    }
+                }
+            }
+            compared += usize::from(compare(&revs[0], &structure(lines)));
+        }
+        assert!(compared > 100, "only {compared} structures compared");
+    }
+
+    #[test]
+    fn structure_revisions_rewalk_where_the_depth_limit_cut_off() {
+        // root → c1 → … → c(MAX_DEPTH-2) → s → q → r, and root → s directly
+        // (find no. 20): below the deep s only q is shown (r is too deep),
+        // below the shallow s also r – both ways must find r.
+        let n = MAX_DEPTH + 2;
+        let revs: Vec<ResolvedRevision> = (0..n).map(|_| rev("A", None, None)).collect();
+        let items: Vec<Uuid> = (0..n).map(|_| Uuid::new_v4()).collect();
+        let (s, q, r) = (n - 3, n - 2, n - 1);
+        let mut lines = Vec::new();
+        for i in 0..s {
+            lines.push(dline(&revs, &items, i, i + 1, 10));
+        }
+        lines.push(dline(&revs, &items, 0, s, 20));
+        lines.push(dline(&revs, &items, s, q, 10));
+        lines.push(dline(&revs, &items, q, r, 10));
+        let map = structure(lines);
+        assert!(compare(&revs[0], &map));
+        let walked = structure_revisions(revs[0].id, &map);
+        assert_eq!(walked.revisions.last().map(|x| x.0), Some(revs[r].id));
+        assert_eq!(walked.revisions.len(), n - 1);
+
+        // a cycle stops like in the tree
+        let a = rev("A", None, None);
+        let b = rev("A", None, None);
+        let map = structure(vec![
+            sline(a.id, "B", 10, 1.0, Some(&b)),
+            sline(b.id, "A", 10, 1.0, Some(&a)),
+        ]);
+        let walked = structure_revisions(a.id, &map);
+        assert_eq!(walked.revisions.len(), 1);
+        assert!(compare(&a, &map));
     }
 }
