@@ -32,8 +32,8 @@ the known gaps with details. Last update: 2026-11-04.
 - [ ] BOM comparison between revisions, Excel export (feature 7)
 - [ ] Chunked resumable uploads (tus); backup/restore of database and vault as CLI commands (feature 9)
 - [ ] README screenshots/GIFs: dashboard, vault explorer, revision page, 3D viewer, BOM, desktop app
-- [ ] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
-- [ ] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
+- [x] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
+- [x] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
 - [ ] Test the heuristics with real CAD files: CAD reference scan, BOM table columns, embedded previews
 - [ ] Test e-mail (SMTP) and Mattermost notifications against real servers
 
@@ -132,11 +132,10 @@ in the README licence table, follow the definition of done in `CLAUDE.md`.
   dashboard, vault explorer,
   revision page, 3D viewer (STEP), BOM page, desktop app; store them in
   `docs/src/images/` and use them in the README and the book.
-- **Docs site:** `mdbook build docs` could not be run locally; the first
-  real build is the `Docs` workflow. GitHub Pages has to be enabled once (*Settings → Pages → Source: GitHub Actions*).
-- **CI:** the new workflows (`ci.yml`, `docs.yml`, `desktop.yml`) have not
-  run yet; the macOS and Windows builds of server and desktop app are
-  unverified.
+- **CI:** `ci.yml`, `docs.yml` and `desktop.yml` pass (`c7b3236`), the docs
+  are live at <https://rudalabs.github.io/TeamCraft/>. The tests run on Linux
+  only; macOS and Windows are build checks – server and desktop app were not
+  run there yet.
 - **3D preview:** STEP is read with truck (planes, B-splines, cylinders, …);
   real exports of the CAD programs were not tested, and assembly placements (`mapped_item`) may be ignored – parts of an
   assembly can then overlap.
