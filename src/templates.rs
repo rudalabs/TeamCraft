@@ -652,12 +652,24 @@ mod tests {
                               "active": true, "source": "oidc", "added_at": TS, "manager": true }],
                 "candidates": [user()], "is_member": true, "can_edit": true, "oidc_enabled": true,
                 "can_manage": true,
+                "numbering": { "scheme": "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}", "is_default": false,
+                               "next": [{ "item_type": "part", "label": "Part", "number": "ROCKET-PRT-2026-0001" }] },
+                "scheme_input": "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}", "previewing": true,
+                "scheme_error": "Invalid numbering scheme 'x': <bad>", "default_scheme": "{TYPE}-{SEQ:6}",
             })),
         );
         assert!(html.contains("CAD editor"));
         assert!(html.contains("via IdP group"));
         assert!(html.contains("manager"), "project managers are marked");
         assert!(html.contains("Add member"), "managers add members");
+        assert!(
+            html.contains("ROCKET-PRT-2026-0001"),
+            "next numbers are shown"
+        );
+        assert!(html.contains("preview – not saved"));
+        assert!(html.contains("value=\"{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}\""));
+        assert!(html.contains("&lt;bad&gt;"), "scheme errors are escaped");
+        assert!(html.contains("/numbering\""), "managers edit the scheme");
         render(
             &env,
             "admin/users.html",

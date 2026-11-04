@@ -8,19 +8,22 @@
 //! at every SSO login) stays with the administrators, because it grants
 //! membership to people outside TeamCraft's control.
 
+use chrono::Utc;
+use serde::Serialize;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::{self, Role},
+    domain::{self, ItemType, Role},
     error::{AppError, AppResult},
     models::{Project, ProjectMember},
     services::{audit, users},
 };
 
 const COLUMNS: &str = "id, code, name, description, active, created_at, oidc_group, created_by,
+    number_scheme,
     (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = projects.id) AS member_count";
 
 pub async fn list(pool: &PgPool, only_active: bool) -> AppResult<Vec<Project>> {
@@ -241,6 +244,106 @@ pub async fn update(
     .await?;
     tx.commit().await?;
     Ok(project)
+}
+
+/// Sets the numbering scheme of a project group (managers and admins); an
+/// empty scheme returns to the built-in `{TYPE}-{SEQ:6}`. Existing item
+/// numbers never change.
+pub async fn set_number_scheme(
+    pool: &PgPool,
+    actor: &Actor,
+    id: Uuid,
+    raw: &str,
+) -> AppResult<Project> {
+    let scheme = match raw.trim() {
+        "" => None,
+        s => Some(domain::NumberScheme::parse(s)?.as_string()),
+    };
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, Project>(&format!(
+        "SELECT {COLUMNS} FROM projects WHERE id = $1 FOR UPDATE"
+    ))
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::not_found("Project not found."))?;
+    require_manager(&mut tx, actor, id).await?;
+    let project = sqlx::query_as::<_, Project>(&format!(
+        "UPDATE projects SET number_scheme = $2 WHERE id = $1 RETURNING {COLUMNS}"
+    ))
+    .bind(id)
+    .bind(&scheme)
+    .fetch_one(&mut *tx)
+    .await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "project.numbering",
+        "project",
+        Some(id),
+        format!(
+            "Numbering scheme of project {}: {}",
+            project.code,
+            scheme.as_deref().unwrap_or(domain::DEFAULT_NUMBER_SCHEME)
+        ),
+        json!({ "before": current.number_scheme, "after": scheme }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(project)
+}
+
+/// What a numbering scheme gives in a project group.
+#[derive(Clone, Debug, Serialize)]
+pub struct NumberingPreview {
+    /// The scheme in canonical spelling.
+    pub scheme: String,
+    /// Whether it is the built-in scheme.
+    pub is_default: bool,
+    /// The next generated number per item type.
+    pub next: Vec<NextNumber>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NextNumber {
+    pub item_type: ItemType,
+    pub label: &'static str,
+    pub number: String,
+}
+
+/// The numbers the next new items would get with `scheme` (the project's own
+/// scheme when `None`), without using up any. Manually entered numbers that
+/// are already taken are skipped when an item is created, so the real number
+/// can be higher.
+pub async fn numbering_preview(
+    pool: &PgPool,
+    project: &Project,
+    scheme: Option<&str>,
+) -> AppResult<NumberingPreview> {
+    let scheme = match scheme.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => domain::NumberScheme::parse(s)?,
+        None => domain::NumberScheme::of_project(project.number_scheme.as_deref())?,
+    };
+    let now = Utc::now();
+    let mut next = Vec::new();
+    for item_type in ItemType::ALL {
+        let ctx = domain::number_context(&project.code, item_type, now);
+        let used = sqlx::query_scalar::<_, i64>("SELECT value FROM counters WHERE name = $1")
+            .bind(scheme.counter_key(&ctx))
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(0);
+        next.push(NextNumber {
+            item_type,
+            label: item_type.label(),
+            number: scheme.format(&ctx, used + 1),
+        });
+    }
+    Ok(NumberingPreview {
+        is_default: scheme == domain::NumberScheme::default_scheme(),
+        scheme: scheme.as_string(),
+        next,
+    })
 }
 
 pub async fn members(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<ProjectMember>> {
