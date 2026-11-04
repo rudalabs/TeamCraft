@@ -77,7 +77,7 @@ committed and pushed right away – before the implementation starts.
 ## Architecture
 
 ```text
-src/main.rs        CLI (clap): serve (default), migrate, user, vault check, healthcheck, preview-mesh (hidden)
+src/main.rs        CLI (clap): serve (default), migrate, user, vault check, healthcheck, mcp (stdio bridge), preview-mesh (hidden)
 src/lib.rs         AppState, router (healthz/readyz, /api/v1, web UI), security headers, tracing
 src/config.rs      env configuration; every variable also as NAME_FILE; all optional for local use
 src/domain.rs      pure rules: Role, ItemType, LifecycleState, ChangeStatus, revision letters, numbering schemes, skins, validation
@@ -85,12 +85,18 @@ src/services/      business logic – the only code that writes to the database
                    (explorer.rs: vault explorer listing; projects.rs: self-service groups with managers;
                     references.rs: item and CAD file references; impacts.rs: change propagation to dependents;
                     notifications.rs: in-app notifications, watch lists, settings – created in the event's transaction;
-                    imports.rs: BOM import – one plan for preview and import, one transaction; staged_imports for the web flow)
+                    imports.rs: BOM import – one plan for preview and import, one transaction; staged_imports for the web flow;
+                    insights.rs: read-only BOM health check and duplicate files)
 src/web/           HTML handlers (cookie sessions, flash messages, CSRF origin check, error pages,
                    explorer.rs = /vault, auth_pages.rs incl. first-start /setup, imports.rs = BOM import)
 src/api/           JSON REST API (bearer tokens only, never cookies)
+src/mcp/           MCP server at POST /api/v1/mcp (stateless JSON-RPC, bearer PAT); tools.rs = tools + prompts
+                   over services::* (read-mostly, writes only draft changes); `teamcraft mcp` = stdio bridge in main.rs
 src/auth.rs        Argon2 passwords, tokens, cookies, WebUser/ApiUser extractors
 src/oidc.rs        OIDC authorization code + PKCE (any provider), group → role mapping
+src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over the Anthropic Messages API (reqwest, no SDK)
+                   with the MCP tools, Transport/Tools traits (fake in tests), markdown-lite → safe HTML;
+                   services/assistant.rs runs it for a user and writes the audit record (no content)
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck) → TCMESH01
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit

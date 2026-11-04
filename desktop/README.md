@@ -31,6 +31,7 @@ TeamCraft server – it is a client, not an offline copy.
 | Release and changes | *Release…* creates and submits a change order – with the unreleased dependencies (BOM children, drawings) by default; *Release readiness* panel with *Add all*; approve/reject from the worklist |
 | Change propagation | *Dependents to check*, *Check needed* banner with **Acknowledge…**, references, *As released* rule, impact analysis |
 | Notifications | Bell with unread count and toasts; **Watch** / **Unwatch** |
+| Ask TeamCraft | **Ask…** in revision and change tabs (only when the server has the assistant enabled): *Draft release notes*, *Check before release*, *Brief me for this review* or a free question; the server answers with Claude and the user's rights, read-only unless drafts are allowed |
 | Pack and Go, STL | ZIP of a revision and its structure; **Export STL…** from the 3D viewer |
 | Skins | The same skins as the web UI |
 

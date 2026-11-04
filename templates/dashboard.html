@@ -8,13 +8,21 @@
     <h1>Hello, {{ me.display_name }}</h1>
     <p class="subtitle">Product data of {{ instance_name }} at a glance.</p>
   </div>
-  {% if me.can_edit %}
+  {% if me.can_edit or assistant_enabled %}
   <div class="actions">
+    {% if assistant_enabled %}
+    <button type="button" data-toggle="assistant-panel" title="Triage your worklist or ask any question about the product data">Ask TeamCraft…</button>
+    {% endif %}
+    {% if me.can_edit %}
     {{ m.new_button("/items/new", "New item") }}
     {{ m.new_button("/changes/new", "New change") }}
+    {% endif %}
   </div>
   {% endif %}
 </div>
+{% if assistant_enabled %}
+{{ m.assistant_panel([["attention", "What needs my attention"]], "", "", "", "/") }}
+{% endif %}
 
 <div class="grid grid-stats">
   <div class="card stat"><div class="value">{{ stats.items }}</div><div class="label">Items</div></div>
