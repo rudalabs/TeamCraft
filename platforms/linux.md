@@ -9,7 +9,7 @@ Local build and test from the command line. Tested on Arch/CachyOS, Ubuntu
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust (stable)
 ```
 
-PostgreSQL 14 or newer – the simplest way is Docker:
+PostgreSQL 16 or newer – the simplest way is Docker:
 
 ```sh
 sudo pacman -S docker docker-compose          # Arch / CachyOS
