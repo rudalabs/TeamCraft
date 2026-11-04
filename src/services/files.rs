@@ -400,8 +400,13 @@ pub(crate) async fn store_uploads(
     comment: &str,
 ) -> AppResult<Vec<Stored>> {
     let mut stored = Vec::with_capacity(uploads.len());
+    // Names stored earlier in this call: several uploads of one name (Creo
+    // iterations bracket.prt.6 and .7) share one base, which only the first
+    // of them is checked against – the later ones build on it.
+    let mut seen = std::collections::HashSet::new();
     for upload in uploads {
         let filename = stored_name(&upload.filename);
+        let first_of_name = seen.insert(filename.to_lowercase());
         let format = upload.format.map(|f| f.id).unwrap_or("");
         let size = i64::try_from(upload.blob.size).unwrap_or(i64::MAX);
         let existing = sqlx::query_as::<_, Existing>(
@@ -414,7 +419,7 @@ pub(crate) async fn store_uploads(
         .bind(&filename)
         .fetch_optional(&mut *conn)
         .await?;
-        if let Some(base) = &upload.base {
+        if let Some(base) = upload.base.as_ref().filter(|_| first_of_name) {
             ensure_base(
                 conn,
                 &filename,

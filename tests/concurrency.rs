@@ -233,6 +233,50 @@ async fn check_in_refuses_files_that_moved_on() {
     app.teardown().await;
 }
 
+/// The web forms send the base of every file shown; several Creo iterations
+/// of one file in one upload share that base and must not refuse each other.
+#[tokio::test]
+async fn iterations_in_one_upload_share_their_base() {
+    let app = app_or_skip!();
+    let (_, max) = app.user_in("max", Role::Editor, &["ROVER"]).await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &max,
+            Some(json!({ "item_type": "part", "name": "Housing", "project": "ROVER" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let rev = "/api/v1/items/PRT-000001/revisions/A";
+    let r = app
+        .api_upload(&format!("{rev}/files"), &max, "housing.prt.1", b"it 1")
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let r = app
+        .api_multipart(
+            &format!("{rev}/files"),
+            &max,
+            &[("housing.prt.2", b"it 2"), ("housing.prt.3", b"it 3")],
+            &[("bases", r#"{"housing.prt": 1}"#)],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let r = app.api(Method::GET, rev, &max, None).await;
+    assert_eq!(r.json()["files"][0]["version"], 3, "{}", r.text());
+    // The base of the first upload of the name is still checked.
+    let r = app
+        .api_multipart(
+            &format!("{rev}/files"),
+            &max,
+            &[("housing.prt.4", b"it 4"), ("housing.prt.5", b"it 5")],
+            &[("bases", r#"{"housing.prt": 1}"#)],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+    app.teardown().await;
+}
+
 #[tokio::test]
 async fn web_upload_is_based_on_the_page_it_came_from() {
     let app = app_or_skip!();

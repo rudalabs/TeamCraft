@@ -31,7 +31,9 @@ multipart field `bases`, a JSON object from file name to the version number
 client checked out. If a file moved on since (e.g. after an administrator
 broke the lock and someone else checked in), the request is refused with
 **409 Conflict** and nothing is stored; identical content is never a
-conflict, and files without a base are stored as before.
+conflict, and files without a base are stored as before. Several uploads of
+one name in a request (Creo iterations `housing.prt.6`, `housing.prt.7`)
+share the base: the first is checked against it, the others build on it.
 
 ```sh
 curl -s -X POST -H "$H" -F file=@hub.step -F 'bases={"hub.step": 3}' \
