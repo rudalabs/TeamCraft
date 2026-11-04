@@ -157,6 +157,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{number}", get(get_change))
         .route("/changes/{number}/items", post(add_change_item))
         .route("/changes/{number}/reviewers", post(add_change_reviewer))
+        .route("/changes/{number}/readiness", get(change_readiness))
+        .route(
+            "/changes/{number}/dependencies",
+            post(add_change_dependencies),
+        )
         .route("/changes/{number}/submit", post(submit_change))
         .route("/changes/{number}/review", post(review_change))
         .route("/changes/{number}/withdraw", post(withdraw_change))
@@ -1411,6 +1416,33 @@ async fn add_change_reviewer(
     }
     changes::add_reviewer(&st.db, &me, change.id, &body.username).await?;
     Ok(Json(change_json(&st, &number).await?))
+}
+
+/// The release readiness of a change: unreleased (blocking) and obsolete or
+/// heuristic (warning) dependencies of its revisions.
+async fn change_readiness(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path(number): Path<String>,
+) -> AppResult<Json<Value>> {
+    let change = changes::get_by_number(&st.db, &number).await?;
+    let readiness = changes::readiness(&st.db, change.id).await?;
+    Ok(Json(
+        json!({ "ready": readiness.is_ready(), "blockers": readiness.blockers, "warnings": readiness.warnings }),
+    ))
+}
+
+/// Adds the in-work revisions of all unreleased dependencies, level by level.
+async fn add_change_dependencies(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(number): Path<String>,
+) -> AppResult<Json<Value>> {
+    let change = changes::get_by_number(&st.db, &number).await?;
+    let added = changes::add_dependencies(&st.db, &me, change.id).await?;
+    let mut value = change_json(&st, &number).await?;
+    value["added"] = json!(added);
+    Ok(Json(value))
 }
 
 async fn submit_change(

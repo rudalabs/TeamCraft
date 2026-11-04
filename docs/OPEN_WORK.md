@@ -140,6 +140,7 @@ The history up to the open-source release is squashed into the first commit
 | –  | Desktop: one workspace folder per project group; import of existing CAD folders                                                                                       | `8bf8e65`, `9557ffa` |
 | –  | Skins without distribution logos                                                                                                                                      | `099737e`            |
 | –  | Teamcenter working features: favorites, saved searches, Save As, BOM comparison                                                                                       | `9289aa4`            |
+| –  | Release readiness of change orders: unreleased BOM children and references block the submit, *Add all* (web, API, desktop) | this branch          |
 | –  | Work-in-progress / no-warranty notices (README, docs, web footer, desktop), `CONTRIBUTING.md`, `SECURITY.md`                                                          | `5c8eff3`            |
 
 ## Open – feature 3 (BOM from CAD)
