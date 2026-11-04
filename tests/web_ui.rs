@@ -164,7 +164,7 @@ async fn three_d_preview_pages_and_meshes() {
             &token,
             &[
                 ("fin.stl", b"solid fin\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid fin\n"),
-                ("fin.step", include_bytes!("data/cube.step")),
+                ("fin.step", include_bytes!("fixtures/cube.step")),
                 ("broken.stp", b"ISO-10303-21; not really a step file"),
                 ("notes.txt", b"plain text"),
             ],

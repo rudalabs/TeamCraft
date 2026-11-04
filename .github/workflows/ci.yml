@@ -67,7 +67,7 @@ jobs:
         run: |
           cargo run --locked --quiet -- migrate
           cargo run --locked --quiet -- vault check
-          cargo run --locked --quiet -- preview-mesh --format step --input tests/data/cube.step --output cube.tcm
+          cargo run --locked --quiet -- preview-mesh --format step --input tests/fixtures/cube.step --output cube.tcm
           test -s cube.tcm
 
   build:

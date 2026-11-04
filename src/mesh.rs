@@ -1650,7 +1650,7 @@ property uchar red\nproperty uchar green\nproperty uchar blue\nelement face 1\np
 
     #[test]
     fn step_box_is_tessellated() {
-        let mesh = read("step", include_bytes!("../tests/data/cube.step")).unwrap();
+        let mesh = read("step", include_bytes!("../tests/fixtures/cube.step")).unwrap();
         assert!(
             mesh.triangle_count() >= 12,
             "{} triangles",
