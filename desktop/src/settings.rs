@@ -26,6 +26,12 @@ pub struct Settings {
     pub workspace_dir: Option<PathBuf>,
     /// Zoom factor of the user interface (Ctrl + mouse wheel), 1.0 = 100 %.
     pub zoom: Option<f64>,
+    /// Local ACP agents the user configured (Claude Code adapter, Gemini CLI,
+    /// …); none by default – nothing is downloaded or started on its own.
+    #[serde(default)]
+    pub agents: Vec<crate::acp::AgentProfile>,
+    /// Name of the agent picked last.
+    pub agent: Option<String>,
     /// Not stored in settings.json.
     #[serde(skip)]
     pub token: Option<String>,
