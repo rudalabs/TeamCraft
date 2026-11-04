@@ -95,6 +95,43 @@ database.
 | the documentation | `mdbook build docs` (mdBook 0.5)                                    |
 | the web UI        | check the changed pages in a browser (no CSP errors in the console) |
 
+## Updating the README screenshots
+
+The screenshots in `media/screenshots/` are made by
+[`scripts/screenshots.sh`](scripts/screenshots.sh), never by hand, so that they
+always show the same demo data. The script needs a running TeamCraft with an
+**empty** database that listens on localhost. It creates the administrator
+through the first-start page and two editors, the project group ROVER, parts
+and assemblies with the NIST files from `tests/fixtures/cad`, a multi-level
+BOM, a released and a pending change order, check-outs and notifications. It
+then drives headless Chrome through chromedriver's WebDriver API (with `curl`
+and `jq`, no Node or Python) and saves the pages as PNGs: 1440 × 900 for the
+desktop and 390 pixels wide for the phone. The passwords and API tokens are
+generated for each run and never printed.
+
+1. Run the **Screenshots** workflow (`.github/workflows/screenshots.yml`):
+   *Actions → Screenshots → Run workflow*, or open a pull request that changes
+   the script or the workflow. It builds the release binary, starts it against
+   an empty PostgreSQL 17 and runs the script.
+2. Download the `screenshots` artifact of the run (kept for 30 days), for
+   example with `gh run download <run-id> -n screenshots -D media/screenshots`.
+3. Look at every image, then commit the PNGs in `media/screenshots/`. The
+   workflow never commits anything itself.
+
+To run it locally against a throw-away database and vault (Chrome and a
+matching chromedriver installed):
+
+```sh
+docker compose exec db createdb -U teamcraft teamcraft_shots
+TEAMCRAFT_DATABASE_URL=postgres://teamcraft@localhost:5432/teamcraft_shots \
+TEAMCRAFT_VAULT_DIR=/tmp/teamcraft-shots ./target/release/teamcraft serve &
+BASE_URL=http://127.0.0.1:8080 OUT_DIR=/tmp/shots scripts/screenshots.sh
+```
+
+New pages for the README are added as a `shot` line in the `capture`
+function of the script and as an image in the *Screenshots* section of the
+README, with alt text that describes what the image shows.
+
 ## Code conventions
 
 [Architecture](docs/src/reference/architecture.md) gives an overview of the
