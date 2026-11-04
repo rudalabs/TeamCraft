@@ -1,5 +1,7 @@
-# TeamCraft Desktop: formatting, lints and tests on Linux, macOS and
-# Windows. Installers are not built or published.
+# TeamCraft Desktop: formatting, lints, tests and a start-up smoke test on
+# Linux (x86_64, ARM64), macOS (ARM64) and Windows (x86_64, ARM64 preview),
+# plus a syntax check of the user interface (desktop/ui/*.js).
+# Installers are not built or published.
 name: Desktop app
 
 on:
@@ -27,22 +29,48 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
+  ui:
+    name: desktop UI (JavaScript syntax)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # The runner's own Node.js is only used to parse the files – the app
+      # itself has no build step and no Node.js dependency.
+      - name: Parse every script of the desktop and web UI
+        run: |
+          set -e
+          for f in desktop/ui/*.js static/*.js; do
+            echo "node --check $f"
+            node --check "$f"
+          done
+
   test:
     name: desktop (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    # ARM64 Windows runners are still a preview: report, but never block.
+    continue-on-error: ${{ matrix.os == 'windows-11-arm' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest, windows-latest]
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - macos-latest # ARM64
+          - windows-latest
+          - windows-11-arm
     steps:
       - uses: actions/checkout@v4
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xvfb
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -56,3 +84,44 @@ jobs:
           cargo fmt --all -- --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
+      - name: Build the app
+        working-directory: desktop
+        run: cargo build --locked
+
+      # Start the real app (web view, menu, settings) with a fresh profile and
+      # check it is still running after 20 seconds: catches crashes at start-up
+      # that unit tests cannot see. Without a server it shows its connect page.
+      - name: Smoke test (Linux, virtual display)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set +e
+          xvfb-run -a env WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+            timeout 20 desktop/target/debug/teamcraft-desktop > smoke.log 2>&1
+          status=$?
+          cat smoke.log
+          # 124 = still running when the timeout stopped it
+          if [ "$status" -ne 124 ]; then echo "the app exited early with $status"; exit 1; fi
+          if grep -q "panicked" smoke.log; then echo "the app panicked"; exit 1; fi
+      - name: Smoke test (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          desktop/target/debug/teamcraft-desktop > smoke.log 2>&1 &
+          pid=$!
+          sleep 20
+          cat smoke.log
+          if ! kill -0 "$pid" 2>/dev/null; then echo "the app exited early"; exit 1; fi
+          kill "$pid"
+          if grep -q "panicked" smoke.log; then echo "the app panicked"; exit 1; fi
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "desktop\target\debug\teamcraft-desktop.exe" -PassThru `
+            -RedirectStandardOutput smoke.out -RedirectStandardError smoke.err
+          Start-Sleep -Seconds 20
+          Get-Content smoke.out, smoke.err -ErrorAction SilentlyContinue
+          if ($p.HasExited) { Write-Error "the app exited early with $($p.ExitCode)"; exit 1 }
+          Stop-Process -Id $p.Id -Force
+          if (Select-String -Path smoke.err -Pattern "panicked" -Quiet) { Write-Error "the app panicked"; exit 1 }
