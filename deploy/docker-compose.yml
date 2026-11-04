@@ -1,0 +1,83 @@
+# TeamCraft server with PostgreSQL – production setup for one Linux host.
+#
+# Installed by deploy/install.sh into /opt/teamcraft (or ~/teamcraft), next to:
+#   .env              TEAMCRAFT_VERSION and TEAMCRAFT_BIND (written by install.sh)
+#   teamcraft.env     server configuration (from teamcraft.env.example)
+#   secrets/db_password   database password (generated, never printed)
+#
+#   docker compose ps                 status
+#   docker compose logs -f teamcraft  logs
+#   docker compose pull && docker compose up -d   upgrade (data stays in the volumes)
+#
+# Guide: https://rudalabs.github.io/TeamCraft/admin/docker.html
+# (The docker-compose.yml in the repository root is the development database.)
+
+name: teamcraft-server
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: teamcraft
+      POSTGRES_DB: teamcraft
+      # Read once, when the volume is initialised; network logins need it
+      # (scram-sha-256).
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    volumes:
+      - db:/var/lib/postgresql/data
+    # No published port: only the teamcraft container talks to the database.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teamcraft -d teamcraft"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    stop_grace_period: 60s
+
+  teamcraft:
+    image: ghcr.io/rudalabs/teamcraft:${TEAMCRAFT_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: [teamcraft.env]
+    # These belong to this compose file and take precedence over teamcraft.env.
+    environment:
+      TEAMCRAFT_BIND_ADDR: 0.0.0.0:8080
+      TEAMCRAFT_DB_HOST: db
+      TEAMCRAFT_DB_PORT: "5432"
+      TEAMCRAFT_DB_NAME: teamcraft
+      TEAMCRAFT_DB_USER: teamcraft
+      TEAMCRAFT_DB_PASSWORD_FILE: /run/secrets/db_password
+      TEAMCRAFT_DB_SSLMODE: disable
+      TEAMCRAFT_VAULT_DIR: /var/lib/teamcraft/vault
+    secrets: [db_password]
+    ports:
+      # Only this computer by default; TEAMCRAFT_BIND=0.0.0.0:8080 in .env
+      # serves the network (better: a reverse proxy with TLS in front).
+      - "${TEAMCRAFT_BIND:-127.0.0.1:8080}:8080"
+    volumes:
+      - vault:/var/lib/teamcraft
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/teamcraft", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+# Compose mounts the file as it is on the host (no uid/mode mapping), and both
+# the postgres user and the teamcraft user (65532) read it: install.sh makes
+# the file readable and protects it with the owner-only secrets/ directory.
+secrets:
+  db_password:
+    file: ./secrets/db_password
+
+volumes:
+  db:
+  vault:

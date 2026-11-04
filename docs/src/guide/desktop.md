@@ -15,8 +15,15 @@ check-outs and reviews, and a **local workspace**:
   scan first (nothing is uploaded), then one item per part or assembly with
   its drawings and exports; *Help → How to Import a CAD Folder* is the
   step-by-step tutorial (Pack and Go, unique file names, check and release);
-* the *Workspace* tab shows new and modified files;
-* *Check in…* uploads the selected files as new versions and releases the lock.
+* the *Workspace* tab shows up-to-date, modified, outdated, conflicting, new
+  and missing files and who holds the lock for how long; opening an outdated
+  file or one somebody else has checked out asks first;
+* *Check in…* uploads the selected files as new versions and releases the
+  lock – based on the versions they were copied from, so a version somebody
+  else checked in meanwhile is never overwritten (see
+  [Concurrency](vault.md#concurrency-nothing-is-overwritten-silently));
+* *Check in all* in the worklist checks in every check-out without local
+  changes and lists those that still have changes.
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.

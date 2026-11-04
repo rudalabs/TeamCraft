@@ -26,6 +26,7 @@ pub mod mcp;
 pub mod mesh;
 pub mod models;
 pub mod notify;
+pub mod nxpart;
 pub mod oidc;
 pub mod preview;
 pub mod services;

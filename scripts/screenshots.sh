@@ -421,7 +421,7 @@ wait_js() {
 open_page() {
     wd POST "/session/$SESSION/url" "$(jq -nc --arg u "$BASE_URL$1" '{url: $u}')" >/dev/null
     wait_js 'document.readyState === "complete"' 60 "the page $1 to load"
-    if [[ $(js 'return location.pathname;') == /login ]]; then
+    if [[ $1 != /login && $(js 'return location.pathname;') == /login ]]; then
         die "$1 redirected to the login page"
     fi
     wait_js '!document.fonts || document.fonts.status === "loaded"' 30 "the web fonts"
@@ -453,7 +453,10 @@ shot() {
     open_page "$path"
     if [[ -n $scroll ]]; then
         [[ $(js 'var el = document.querySelector(arguments[0]);
-            if (el) { window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 24); }
+            // Below the sticky page header.
+            var bar = document.querySelector("header.topbar");
+            var offset = (bar ? bar.getBoundingClientRect().height : 0) + 16;
+            if (el) { window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - offset); }
             return Boolean(el);' "$(jq -nc --arg s "$scroll" '[$s]')") == true ]] ||
             die "$path has no element '$scroll'"
     fi

@@ -48,6 +48,10 @@ present. Start the server afterwards; it applies newer migrations.
 * Configuration and secrets (`.env`, the system `teamcraft.env`, TLS keys)
   are not part of the backup; back them up separately.
 
+The container image has no PostgreSQL client tools; the Docker installation
+backs up through the database container instead – see
+[Install with Docker → Backup and restore](docker.md#backup-and-restore).
+
 ## Performance
 
 * Pages run their database queries concurrently; the revision page needs one

@@ -675,6 +675,48 @@ mod tests {
         assert!(packaged.database.get_socket().is_some());
     }
 
+    /// The Docker installation: deploy/teamcraft.env.example plus the
+    /// `environment` of deploy/docker-compose.yml give a valid configuration.
+    #[test]
+    fn docker_deployment_configuration() {
+        let dir = std::env::temp_dir().join(format!("teamcraft-cfg-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let secret = dir.join("db_password");
+        std::fs::write(&secret, "generated-password\n").unwrap();
+
+        let example = include_str!("../deploy/teamcraft.env.example");
+        let mut vars: HashMap<String, String> = dotenvy::from_read_iter(example.as_bytes())
+            .map(|r| r.expect("valid line"))
+            .collect();
+        let compose = include_str!("../deploy/docker-compose.yml");
+        let mut from_compose = 0;
+        for line in compose.lines().map(str::trim) {
+            if let Some((key, value)) = line.split_once(": ") {
+                if key.starts_with("TEAMCRAFT_") {
+                    vars.insert(key.to_string(), value.trim_matches('"').to_string());
+                    from_compose += 1;
+                }
+            }
+        }
+        assert!(from_compose >= 5, "compose environment found");
+        assert_eq!(
+            vars["TEAMCRAFT_DB_PASSWORD_FILE"], "/run/secrets/db_password",
+            "the password comes from the Docker secret"
+        );
+        vars.insert(
+            "TEAMCRAFT_DB_PASSWORD_FILE".into(),
+            secret.to_str().unwrap().into(),
+        );
+
+        let cfg = Config::from_lookup(|k| vars.get(k).cloned()).expect("docker config");
+        assert_eq!(cfg.bind_addr.to_string(), "0.0.0.0:8080");
+        assert_eq!(cfg.database_display, "teamcraft@db:5432/teamcraft");
+        assert_eq!(cfg.vault_dir, PathBuf::from("/var/lib/teamcraft/vault"));
+        assert!(cfg.local_login);
+        assert!(!cfg.summary().contains("generated-password"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     #[test]
     fn url_and_https_detection() {
         let cfg = config_from(&[

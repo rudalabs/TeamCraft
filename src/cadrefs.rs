@@ -16,6 +16,7 @@
 //! read. The revision page therefore shows the names as "found in the file".
 
 use std::collections::HashSet;
+use std::io::{Read, Seek};
 use std::path::Path;
 
 use crate::cadformat::{self, FormatKind};
@@ -250,6 +251,16 @@ fn step_file_name_entity(content: &[u8]) -> Option<std::ops::Range<usize>> {
 /// The CAD file names referenced in `content`, without `own_name`; each name
 /// once (case-insensitive), in the order found.
 pub fn find(content: &[u8], own_name: &str) -> Vec<String> {
+    // NX parts: only the reference streams, never the history in the rest
+    // of the file ("Part renamed from …").
+    if let Some(streams) = crate::nxpart::reference_streams_in(content) {
+        return from_nx_streams(&streams, own_name);
+    }
+    finish(raw_names(content), own_name)
+}
+
+/// All names with a referencable extension, in the order found.
+fn raw_names(content: &[u8]) -> Vec<String> {
     let exts = extensions();
     // The export name in the STEP header is not a reference to another file.
     let skip = step_file_name_entity(content);
@@ -260,6 +271,11 @@ pub fn find(content: &[u8], own_name: &str) -> Vec<String> {
     utf16_runs(content, skip.as_ref(), |run| {
         names_in(run, &exts, &mut found)
     });
+    found
+}
+
+/// Normalised, without the file itself, each name once.
+fn finish(found: Vec<String>, own_name: &str) -> Vec<String> {
     let own = cadformat::normalize_name(own_name).to_lowercase();
     let mut seen = HashSet::new();
     found
@@ -271,20 +287,37 @@ pub fn find(content: &[u8], own_name: &str) -> Vec<String> {
         .collect()
 }
 
-/// Reads (the beginning of) a stored file and finds its references.
+/// Each reference stream of an NX part starts with the part itself – under
+/// the name it was saved with, which differs from the file name after a
+/// rename – followed by its components.
+fn from_nx_streams(streams: &[Vec<u8>], own_name: &str) -> Vec<String> {
+    let names = streams
+        .iter()
+        .flat_map(|s| raw_names(s).into_iter().skip(1))
+        .collect();
+    finish(names, own_name)
+}
+
+/// Reads a stored file and finds its references: NX parts through their
+/// stream directory (with seeks, so large parts are read completely),
+/// everything else from its first [`MAX_SCAN`] bytes.
 pub async fn scan_file(path: &Path, own_name: &str) -> Vec<String> {
-    use tokio::io::AsyncReadExt;
-    let Ok(file) = tokio::fs::File::open(path).await else {
-        return Vec::new();
-    };
-    let mut content = Vec::new();
-    if file.take(MAX_SCAN).read_to_end(&mut content).await.is_err() {
-        return Vec::new();
-    }
+    let path = path.to_path_buf();
     let own = own_name.to_string();
-    tokio::task::spawn_blocking(move || find(&content, &own))
-        .await
-        .unwrap_or_default()
+    tokio::task::spawn_blocking(move || -> std::io::Result<Vec<String>> {
+        let mut file = std::io::BufReader::new(std::fs::File::open(&path)?);
+        if let Some(streams) = crate::nxpart::reference_streams(&mut file, MAX_SCAN)? {
+            return Ok(from_nx_streams(&streams, &own));
+        }
+        let mut content = Vec::new();
+        file.seek(std::io::SeekFrom::Start(0))?;
+        file.take(MAX_SCAN).read_to_end(&mut content)?;
+        Ok(find(&content, &own))
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or_default()
 }
 
 #[cfg(test)]

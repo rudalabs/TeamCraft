@@ -66,6 +66,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
 
     Router::new()
         .route("/", get(dashboard::show))
+        .route("/checkouts/checkin-all", post(dashboard::checkin_all))
         .route("/vault", get(explorer::show))
         .route("/assistant", get(assistant::show).post(assistant::ask))
         // authentication

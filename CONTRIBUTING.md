@@ -231,6 +231,18 @@ x86_64/ARM64, macOS ARM64, Windows x86_64) and the desktop installers
 as workflow artifacts for 14 days. *Run workflow* on the Actions page builds
 any branch the same way.
 
+**Container image.** The same workflow builds `ghcr.io/rudalabs/teamcraft`
+from the `Dockerfile` on an amd64 and an arm64 runner and publishes it:
+`:edge` for every push to `main`, `:<version>`, `:<major>.<minor>` and
+`:latest` for a tag (`latest` also for 0.x, but not for suffixed versions
+such as `-rc.1`). A pull request that changes the `Dockerfile` or `deploy/`
+builds the image without publishing it. Before anything is published, a
+smoke test runs `deploy/install.sh` with the freshly built image against
+PostgreSQL and checks `/readyz`, an administrator, the health check, an
+upgrade run and the uninstall. Images are built by CI only – please don't
+publish your own builds under the project's name. Check `deploy/install.sh`
+with `bash -n` and `shellcheck` (CI runs both).
+
 **Cutting a release** (maintainers):
 
 1. Set the same version in `Cargo.toml`, `desktop/Cargo.toml` and
@@ -244,5 +256,4 @@ any branch the same way.
 
 The installers are not code-signed yet (macOS: ad-hoc signature, Windows:
 unsigned); signing needs certificates as repository secrets and is a
-follow-up. Nothing else is published (no container images, no package
-registries).
+follow-up. Nothing else is published (no package registries).

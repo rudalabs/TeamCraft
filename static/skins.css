@@ -43,7 +43,12 @@
 
   --accent: #9bdafa;
   --accent-soft: rgb(155 218 250 / 12%);
+  /* primary buttons: a gradient from → to, white text at 4.5:1 or more */
+  --primary-from: var(--c2);
+  --primary-to: var(--c1);
   --on-primary: #fff;
+  /* every other table row */
+  --zebra: rgb(255 255 255 / 1.8%);
   --danger: #ff7a7a;
   --danger-soft: rgb(255 122 122 / 12%);
   --ok: #47d6a2;
@@ -88,20 +93,23 @@
   --bg: #f8f8f8;
   --bg-raised: #ffffff;
   --surface: #ffffff;
-  --surface-hover: #ffffff;
+  /* a hint of the ice blue, so hovered rows stay visible on white */
+  --surface-hover: #f1f6f9;
   --surface-sunken: #efefef;
+  --zebra: rgb(64 64 64 / 2.4%);
   --border: rgb(64 64 64 / 13%);
   --border-strong: rgb(64 64 64 / 24%);
   --bar: rgb(255 255 255 / 88%);
   --text: #404040;
   --text-muted: #5e5e5e;
-  --text-dim: #7c7c7c;
+  /* 5:1 on the page background (#7c7c7c was 3.9:1, too faint for small labels) */
+  --text-dim: #6b6b6b;
   --link: #0761b0;
   --accent: #0761b0;
   --accent-soft: rgb(7 97 176 / 9%);
   --danger: #c0392b;
   --danger-soft: rgb(192 57 43 / 9%);
-  --ok: #14845a;
+  --ok: #107a52;
   --ok-soft: rgb(20 132 90 / 10%);
   /* the accent yellow as a highlight; readable dark text on it */
   --warn: #6b5a00;
@@ -127,6 +135,7 @@
   --bg-raised: #121920;
   --accent: #1793d1;
   --accent-soft: rgb(23 147 209 / 15%);
+  --primary-from: #137cb1;
   --link: #40bfde;
   --glow:
     radial-gradient(65% 55% at 85% -10%, rgb(23 147 209 / 28%), transparent 70%),
@@ -149,6 +158,7 @@
   --surface-sunken: rgb(0 10 10 / 60%);
   --accent: #00c9a7;
   --accent-soft: rgb(0 201 167 / 14%);
+  --primary-from: #007f66;
   --link: #00ccff;
   --ok: #00ffcc;
   --glow:
@@ -194,6 +204,7 @@
   --text-dim: #7f8c8d;
   --accent: #3daee9;
   --accent-soft: rgb(61 174 233 / 15%);
+  --primary-from: #1479c2;
   --link: #3daee9;
   --glow:
     radial-gradient(60% 50% at 50% -15%, rgb(29 153 243 / 22%), transparent 70%),
@@ -230,6 +241,9 @@
   --bg-raised: #0d1f19;
   --accent: #73ba25;
   --accent-soft: rgb(115 186 37 / 15%);
+  /* light green with dark text: the teal → slate gradient was 1.6:1 */
+  --primary-from: #8fd14f;
+  --primary-to: #73ba25;
   --on-primary: #0b1a05;
   --link: #8fd14f;
   --ok: #8fd14f;
@@ -254,6 +268,7 @@
   --surface-sunken: rgb(20 0 14 / 55%);
   --accent: #f47421;
   --accent-soft: rgb(244 116 33 / 15%);
+  --primary-from: #c7461a;
   --link: #ff9a57;
   --glow:
     radial-gradient(65% 55% at 85% -10%, rgb(233 84 32 / 28%), transparent 70%),
@@ -309,8 +324,21 @@
 
 /* Design tokens shared by the web UI and the desktop app. */
 :root {
+  /* spacing scale – margins, gaps and paddings use these steps */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  /* radii: small controls, controls and panels, cards and dialogs */
+  --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 18px;
+  /* motion: strong ease-out for presses and entrances, short durations */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-press: 140ms;
+  --dur-enter: 200ms;
   --sans: 'Montserrat', system-ui, -apple-system, 'Segoe UI', roboto, sans-serif;
   --display: 'Oswald', 'Montserrat', 'Arial Narrow', sans-serif;
   --mono: ui-monospace, 'SF Mono', 'Cascadia Code', consolas, monospace;
