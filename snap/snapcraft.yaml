@@ -56,6 +56,6 @@ parts:
   # the install hook, made executable at build time
   hooks:
     plugin: nil
-    source: snap/local
+    source: snap
     override-build: |
-      install -Dm755 "$CRAFT_PART_SRC/install-hook" "$CRAFT_PART_INSTALL/snap/hooks/install"
+      install -Dm755 "$CRAFT_PART_SRC/install-hook.sh" "$CRAFT_PART_INSTALL/snap/hooks/install"
