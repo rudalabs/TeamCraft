@@ -14,10 +14,10 @@
     { label: "Source", href: "https://github.com/rudalabs/TeamCraft", external: true }
   ];
 
-  // The Doxygen look is light: drop a dark theme remembered by mdBook.
-  try { localStorage.setItem("mdbook-theme", "light"); } catch (e) { /* private mode */ }
-  ["navy", "coal", "ayu", "rust"].forEach(function (t) { document.documentElement.classList.remove(t); });
-  document.documentElement.classList.add("light");
+  // One high-contrast scheme: drop any other theme remembered by mdBook.
+  try { localStorage.setItem("mdbook-theme", "coal"); } catch (e) { /* private mode */ }
+  ["light", "navy", "ayu", "rust"].forEach(function (t) { document.documentElement.classList.remove(t); });
+  document.documentElement.classList.add("coal");
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
