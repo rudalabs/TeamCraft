@@ -45,7 +45,7 @@
 </p>
 
 <p align="center">
-  <img src="media/screenshots/dashboard.png" width="860" alt="TeamCraft dashboard: change orders waiting for my review, revisions checked out by me and recent activity of the project group ROVER" />
+  <img src="media/screenshots/dashboard.png" width="860" alt="TeamCraft dashboard: item statistics, dependents to check after the release of the fasteners, a change order waiting for my review and the revision checked out by me" />
 </p>
 
 > [!WARNING]
@@ -156,7 +156,7 @@ captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh).
 <table>
   <tr>
     <td width="50%"><a href="media/screenshots/vault-explorer.png"><img src="media/screenshots/vault-explorer.png" alt="Vault explorer: the project group ROVER as a folder, items with state and lock owner, and the detail pane of the electronics enclosure with its files" /></a><br /><sub><b>Vault explorer</b> – project groups, lock owners, one-click check-out</sub></td>
-    <td width="50%"><a href="media/screenshots/revision-files.png"><img src="media/screenshots/revision-files.png" alt="Files of the mounting bracket revision: STEP, Inventor, SolidWorks and NX files with the preview images stored in the native CAD files and the file versions" /></a><br /><sub><b>Revision files</b> – versions and previews from Inventor and SolidWorks files</sub></td>
+    <td width="50%"><a href="media/screenshots/revision-files.png"><img src="media/screenshots/revision-files.png" alt="Files of the mounting bracket revision: STEP, Inventor, SolidWorks and NX files with their formats, the preview image stored in the Inventor file, the 3D button of the STEP file and a text file in version 2" /></a><br /><sub><b>Revision files</b> – formats, versions and embedded CAD previews</sub></td>
   </tr>
   <tr>
     <td width="50%"><a href="media/screenshots/viewer-3d.png"><img src="media/screenshots/viewer-3d.png" alt="3D viewer in the browser showing the STEP model of the NIST CTC-01 mounting bracket" /></a><br /><sub><b>3D viewer</b> – STEP tessellated on the server, drawn with WebGL</sub></td>
