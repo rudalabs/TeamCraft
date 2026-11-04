@@ -2,7 +2,7 @@
 //! revision rules, mass/cost roll-up, CSV and Excel export and cycle
 //! prevention.
 
-use std::collections::{hash_map::Entry, HashMap, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 use serde_json::json;
@@ -296,6 +296,20 @@ async fn touch(conn: &mut PgConnection, revision_id: Uuid) -> AppResult<()> {
 // ---------------------------------------------------------------------------
 // Multi-level expansion
 // ---------------------------------------------------------------------------
+//
+// The expansion is split in two halves:
+//
+// * [`load_structure`] reads the structure level by level – one query per
+//   BOM level, whatever the number of lines – and resolves the child
+//   revision of every line under the revision rule inside that query;
+// * [`assemble`] is pure: it builds the nested tree from the loaded lines
+//   with cycle detection and the mass/cost roll-ups (unit tested without a
+//   database).
+
+/// Upper bound for the number of lines of one expanded BOM. Shared
+/// sub-assemblies are expanded wherever they are used, so a small database
+/// structure can expand to a very large tree.
+const MAX_EXPANDED_LINES: usize = 100_000;
 
 /// The revision chosen for a BOM line under the active revision rule.
 #[derive(Clone, Debug, Serialize)]
@@ -348,6 +362,32 @@ pub struct BomNode {
     pub children: Vec<BomNode>,
 }
 
+impl BomNode {
+    /// A copy of the node without its sub-tree.
+    fn shallow(&self) -> BomNode {
+        BomNode {
+            line_id: self.line_id,
+            level: self.level,
+            find_number: self.find_number,
+            quantity: self.quantity,
+            notes: self.notes.clone(),
+            item_id: self.item_id,
+            item_number: self.item_number.clone(),
+            item_type: self.item_type.clone(),
+            unit: self.unit.clone(),
+            revision: self.revision.clone(),
+            unit_mass_kg: self.unit_mass_kg,
+            total_mass_kg: self.total_mass_kg,
+            unit_cost_total: self.unit_cost_total,
+            total_cost: self.total_cost,
+            mass_complete: self.mass_complete,
+            cost_complete: self.cost_complete,
+            cycle: self.cycle,
+            children: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct BomTree {
     pub rule: RevisionRule,
@@ -362,6 +402,9 @@ pub struct BomTree {
     pub line_count: usize,
     /// Number of lines whose child could not be resolved with the rule.
     pub unresolved_count: usize,
+    /// Database queries the expansion took (root + one per BOM level).
+    #[serde(skip)]
+    pub queries: usize,
 }
 
 /// One row of the flattened (indented) BOM, used by the UI and CSV export.
@@ -371,6 +414,27 @@ pub struct FlatBomRow {
     pub indent: String,
     pub has_children: bool,
     pub node: BomNode,
+}
+
+/// A BOM line of the loaded structure together with the child revision the
+/// revision rule picked for it (`child_revision_id` is `None` if none matched).
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub(crate) struct StructureLine {
+    pub id: Uuid,
+    pub parent_revision_id: Uuid,
+    pub child_item_id: Uuid,
+    pub child_number: String,
+    pub child_type: String,
+    pub child_unit: String,
+    pub find_number: i32,
+    pub quantity: f64,
+    pub notes: String,
+    pub child_revision_id: Option<Uuid>,
+    pub child_code: Option<String>,
+    pub child_state: Option<String>,
+    pub child_name: Option<String>,
+    pub child_mass_kg: Option<f64>,
+    pub child_unit_cost: Option<f64>,
 }
 
 /// Picks the child revision according to the rule.
@@ -393,63 +457,136 @@ pub(crate) async fn resolve(
     .await?)
 }
 
-/// Expands the full multi-level BOM below a revision.
-pub async fn tree(pool: &PgPool, root_revision_id: Uuid, rule: RevisionRule) -> AppResult<BomTree> {
-    let root = revisions::get(pool, root_revision_id).await?;
+impl StructureLine {
+    fn child(&self) -> Option<ResolvedRevision> {
+        self.child_revision_id.map(|id| ResolvedRevision {
+            id,
+            code: self.child_code.clone().unwrap_or_default(),
+            state: self.child_state.clone().unwrap_or_default(),
+            name: self.child_name.clone().unwrap_or_default(),
+            mass_kg: self.child_mass_kg,
+            unit_cost: self.child_unit_cost,
+        })
+    }
+}
 
-    // Breadth-first load of every revision reachable through the rule.
-    let as_released = rule == RevisionRule::AsReleased;
-    let mut lines_by_rev: HashMap<Uuid, Vec<BomLine>> = HashMap::new();
-    let mut resolved: HashMap<Uuid, Option<Revision>> = HashMap::new();
-    // As released: the exact child revisions released assemblies were released with.
-    let mut frozen: HashMap<Uuid, Revision> = HashMap::new();
-    let mut queue = VecDeque::from([root.id]);
-    while let Some(rev_id) = queue.pop_front() {
-        if lines_by_rev.contains_key(&rev_id) {
-            continue;
+/// The BOM lines of a set of parent revisions with their child revisions
+/// resolved by the rule, ordered by parent and find number – one query.
+///
+/// * `latest`: the newest revision of the child item;
+/// * `released`: its newest released revision;
+/// * `as_released`: the revision frozen in the line when the parent was
+///   released (`released_child_revision_id`), else like `released`.
+const LEVEL_SQL: &str = "
+    WITH l AS (
+        SELECT bl.id, bl.parent_revision_id, bl.child_item_id, bl.find_number, bl.quantity,
+               bl.notes, bl.released_child_revision_id
+        FROM bom_lines bl
+        WHERE bl.parent_revision_id = ANY($1)
+    ),
+    pick AS (
+        SELECT DISTINCT ON (r.item_id)
+               r.item_id, r.id, r.code, r.state, r.name, r.mass_kg, r.unit_cost
+        FROM revisions r
+        WHERE r.item_id IN (SELECT child_item_id FROM l)
+          AND ($2 OR r.state = 'released')
+        ORDER BY r.item_id, r.seq DESC
+    )
+    SELECT l.id, l.parent_revision_id, l.child_item_id, i.number AS child_number,
+           i.item_type AS child_type, i.unit AS child_unit, l.find_number, l.quantity, l.notes,
+           COALESCE(fr.id, p.id) AS child_revision_id,
+           CASE WHEN fr.id IS NULL THEN p.code ELSE fr.code END AS child_code,
+           CASE WHEN fr.id IS NULL THEN p.state ELSE fr.state END AS child_state,
+           CASE WHEN fr.id IS NULL THEN p.name ELSE fr.name END AS child_name,
+           CASE WHEN fr.id IS NULL THEN p.mass_kg ELSE fr.mass_kg END AS child_mass_kg,
+           CASE WHEN fr.id IS NULL THEN p.unit_cost ELSE fr.unit_cost END AS child_unit_cost
+    FROM l
+    JOIN items i ON i.id = l.child_item_id
+    LEFT JOIN revisions fr ON $3 AND fr.id = l.released_child_revision_id
+    LEFT JOIN pick p ON p.item_id = l.child_item_id
+    ORDER BY l.parent_revision_id, l.find_number";
+
+/// Loads every BOM line reachable from `root_id` under the rule, grouped by
+/// parent revision (each group ordered by find number). One query per BOM
+/// level; a revision used in several places is loaded once. Returns the
+/// lines and the number of queries.
+async fn load_structure(
+    pool: &PgPool,
+    root_id: Uuid,
+    rule: RevisionRule,
+) -> AppResult<(HashMap<Uuid, Vec<StructureLine>>, usize)> {
+    let mut lines_by_rev: HashMap<Uuid, Vec<StructureLine>> = HashMap::new();
+    let mut seen = HashSet::from([root_id]);
+    let mut frontier = vec![root_id];
+    let mut queries = 0;
+    // Lines below MAX_DEPTH are never shown, so their parents are not loaded.
+    for _ in 0..MAX_DEPTH {
+        if frontier.is_empty() {
+            break;
         }
-        if lines_by_rev.len() >= MAX_EXPANDED_REVISIONS {
+        if seen.len() > MAX_EXPANDED_REVISIONS {
             return Err(AppError::BadRequest(format!(
                 "The BOM is too large to expand (more than {MAX_EXPANDED_REVISIONS} assemblies)."
             )));
         }
-        let rev_lines = lines(pool, rev_id).await?;
-        for l in &rev_lines {
-            match l.released_child_revision_id {
-                Some(child_id) if as_released => {
-                    if let Entry::Vacant(slot) = frozen.entry(child_id) {
-                        let child = revisions::get(pool, child_id).await?;
-                        queue.push_back(child.id);
-                        slot.insert(child);
-                    }
-                }
-                _ => {
-                    if let Entry::Vacant(slot) = resolved.entry(l.child_item_id) {
-                        let child = resolve(pool, l.child_item_id, rule).await?;
-                        if let Some(c) = &child {
-                            queue.push_back(c.id);
-                        }
-                        slot.insert(child);
-                    }
+        let rows = sqlx::query_as::<_, StructureLine>(LEVEL_SQL)
+            .bind(&frontier)
+            .bind(rule == RevisionRule::Latest)
+            .bind(rule == RevisionRule::AsReleased)
+            .fetch_all(pool)
+            .await?;
+        queries += 1;
+        let mut next = Vec::new();
+        for row in rows {
+            if let Some(child) = row.child_revision_id {
+                if seen.insert(child) {
+                    next.push(child);
                 }
             }
+            lines_by_rev
+                .entry(row.parent_revision_id)
+                .or_default()
+                .push(row);
         }
-        lines_by_rev.insert(rev_id, rev_lines);
+        frontier = next;
     }
+    Ok((lines_by_rev, queries))
+}
 
-    let ctx = BuildCtx {
-        lines_by_rev: &lines_by_rev,
-        resolved: &resolved,
-        frozen: as_released.then_some(&frozen),
+/// Expands the full multi-level BOM below a revision.
+pub async fn tree(pool: &PgPool, root_revision_id: Uuid, rule: RevisionRule) -> AppResult<BomTree> {
+    let root = revisions::get(pool, root_revision_id).await?;
+    let (lines_by_rev, queries) = load_structure(pool, root.id, rule).await?;
+    let mut tree = assemble(
+        rule,
+        ResolvedRevision::from(&root),
+        root.item_number.clone(),
+        &lines_by_rev,
+    )?;
+    tree.queries = queries + 1;
+    Ok(tree)
+}
+
+/// Builds the tree from the loaded lines (pure): cycle detection along the
+/// path, the depth limit, roll-ups and line counts.
+pub(crate) fn assemble(
+    rule: RevisionRule,
+    root: ResolvedRevision,
+    root_item_number: String,
+    lines_by_rev: &HashMap<Uuid, Vec<StructureLine>>,
+) -> AppResult<BomTree> {
+    let mut builder = Builder {
+        lines_by_rev,
+        budget: MAX_EXPANDED_LINES,
     };
     let mut path = vec![root.id];
-    let children = ctx.build(root.id, 1, &mut path);
+    let children = builder.build(root.id, 1, &mut path)?;
     let (mass, mass_ok, cost, cost_ok) = rollup(root.mass_kg, root.unit_cost, &children);
     let (line_count, unresolved_count) = count_lines(&children);
     Ok(BomTree {
         rule,
-        root: ResolvedRevision::from(&root),
-        root_item_number: root.item_number.clone(),
+        root,
+        root_item_number,
         children,
         total_mass_kg: mass,
         total_cost: cost,
@@ -457,71 +594,71 @@ pub async fn tree(pool: &PgPool, root_revision_id: Uuid, rule: RevisionRule) -> 
         cost_complete: cost_ok,
         line_count,
         unresolved_count,
+        queries: 0,
     })
 }
 
-struct BuildCtx<'a> {
-    lines_by_rev: &'a HashMap<Uuid, Vec<BomLine>>,
-    resolved: &'a HashMap<Uuid, Option<Revision>>,
-    /// Rule "as released": revisions frozen in the BOM lines of released parents.
-    frozen: Option<&'a HashMap<Uuid, Revision>>,
+struct Builder<'a> {
+    lines_by_rev: &'a HashMap<Uuid, Vec<StructureLine>>,
+    /// Lines that may still be expanded (see [`MAX_EXPANDED_LINES`]).
+    budget: usize,
 }
 
-impl BuildCtx<'_> {
-    fn child_of(&self, line: &BomLine) -> Option<&Revision> {
-        match (self.frozen, line.released_child_revision_id) {
-            (Some(frozen), Some(id)) => frozen.get(&id),
-            _ => self
-                .resolved
-                .get(&line.child_item_id)
-                .and_then(|r| r.as_ref()),
-        }
-    }
-
-    fn build(&self, rev_id: Uuid, level: usize, path: &mut Vec<Uuid>) -> Vec<BomNode> {
+impl Builder<'_> {
+    fn build(
+        &mut self,
+        rev_id: Uuid,
+        level: usize,
+        path: &mut Vec<Uuid>,
+    ) -> AppResult<Vec<BomNode>> {
         let Some(rev_lines) = self.lines_by_rev.get(&rev_id) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
-        rev_lines
-            .iter()
-            .map(|l| {
-                let child_rev = self.child_of(l);
-                let cycle = child_rev.is_some_and(|r| path.contains(&r.id));
-                let children = match child_rev {
-                    Some(r) if !cycle && level < MAX_DEPTH => {
-                        path.push(r.id);
-                        let c = self.build(r.id, level + 1, path);
-                        path.pop();
-                        c
-                    }
-                    _ => Vec::new(),
-                };
-                let (unit_mass, mass_ok, unit_cost, cost_ok) = match child_rev {
-                    Some(r) => rollup(r.mass_kg, r.unit_cost, &children),
-                    None => (0.0, false, 0.0, false),
-                };
-                BomNode {
-                    line_id: l.id,
-                    level,
-                    find_number: l.find_number,
-                    quantity: l.quantity,
-                    notes: l.notes.clone(),
-                    item_id: l.child_item_id,
-                    item_number: l.child_number.clone(),
-                    item_type: l.child_type.clone(),
-                    unit: l.child_unit.clone(),
-                    revision: child_rev.map(ResolvedRevision::from),
-                    unit_mass_kg: unit_mass,
-                    total_mass_kg: unit_mass * l.quantity,
-                    unit_cost_total: unit_cost,
-                    total_cost: unit_cost * l.quantity,
-                    mass_complete: mass_ok && !cycle,
-                    cost_complete: cost_ok && !cycle,
-                    cycle,
-                    children,
+        if rev_lines.len() > self.budget {
+            return Err(AppError::BadRequest(format!(
+                "The BOM is too large to expand (more than {MAX_EXPANDED_LINES} lines)."
+            )));
+        }
+        self.budget -= rev_lines.len();
+        let mut nodes = Vec::with_capacity(rev_lines.len());
+        for l in rev_lines {
+            let child_rev = l.child();
+            let cycle = child_rev.as_ref().is_some_and(|r| path.contains(&r.id));
+            let children = match &child_rev {
+                Some(r) if !cycle && level < MAX_DEPTH => {
+                    path.push(r.id);
+                    let c = self.build(r.id, level + 1, path);
+                    path.pop();
+                    c?
                 }
-            })
-            .collect()
+                _ => Vec::new(),
+            };
+            let (unit_mass, mass_ok, unit_cost, cost_ok) = match &child_rev {
+                Some(r) => rollup(r.mass_kg, r.unit_cost, &children),
+                None => (0.0, false, 0.0, false),
+            };
+            nodes.push(BomNode {
+                line_id: l.id,
+                level,
+                find_number: l.find_number,
+                quantity: l.quantity,
+                notes: l.notes.clone(),
+                item_id: l.child_item_id,
+                item_number: l.child_number.clone(),
+                item_type: l.child_type.clone(),
+                unit: l.child_unit.clone(),
+                revision: child_rev,
+                unit_mass_kg: unit_mass,
+                total_mass_kg: unit_mass * l.quantity,
+                unit_cost_total: unit_cost,
+                total_cost: unit_cost * l.quantity,
+                mass_complete: mass_ok && !cycle,
+                cost_complete: cost_ok && !cycle,
+                cycle,
+                children,
+            });
+        }
+        Ok(nodes)
     }
 }
 
@@ -567,15 +704,13 @@ pub fn flatten(nodes: &[BomNode]) -> Vec<FlatBomRow> {
     let mut out = Vec::new();
     fn walk(nodes: &[BomNode], out: &mut Vec<FlatBomRow>) {
         for n in nodes {
-            let mut node = n.clone();
-            let children = std::mem::take(&mut node.children);
             out.push(FlatBomRow {
                 level: n.level,
                 indent: "\u{2003}".repeat(n.level.saturating_sub(1)),
-                has_children: !children.is_empty(),
-                node,
+                has_children: !n.children.is_empty(),
+                node: n.shallow(),
             });
-            walk(&children, out);
+            walk(&n.children, out);
         }
     }
     walk(nodes, &mut out);
@@ -762,6 +897,7 @@ mod tests {
             cost_complete: true,
             line_count: 2,
             unresolved_count: 0,
+            queries: 0,
         };
         let rows = flatten(&tree.children);
         assert_eq!(rows.len(), 2);
@@ -775,5 +911,141 @@ mod tests {
         assert_eq!(count_lines(&tree.children), (2, 0));
         let xlsx = to_xlsx(&tree).unwrap();
         assert!(xlsx.starts_with(b"PK"), "an .xlsx file is a ZIP archive");
+    }
+
+    // ----- assemble (the pure half of the expansion) -----
+
+    fn rev(code: &str, mass: Option<f64>, cost: Option<f64>) -> ResolvedRevision {
+        ResolvedRevision {
+            id: Uuid::new_v4(),
+            code: code.into(),
+            state: "released".into(),
+            name: format!("Revision {code}"),
+            mass_kg: mass,
+            unit_cost: cost,
+        }
+    }
+
+    /// A line below `parent` that resolved to `child` (`None` = unresolved).
+    fn sline(
+        parent: Uuid,
+        number: &str,
+        find: i32,
+        qty: f64,
+        child: Option<&ResolvedRevision>,
+    ) -> StructureLine {
+        StructureLine {
+            id: Uuid::new_v4(),
+            parent_revision_id: parent,
+            child_item_id: Uuid::new_v4(),
+            child_number: number.into(),
+            child_type: "part".into(),
+            child_unit: "each".into(),
+            find_number: find,
+            quantity: qty,
+            notes: String::new(),
+            child_revision_id: child.map(|c| c.id),
+            child_code: child.map(|c| c.code.clone()),
+            child_state: child.map(|c| c.state.clone()),
+            child_name: child.map(|c| c.name.clone()),
+            child_mass_kg: child.and_then(|c| c.mass_kg),
+            child_unit_cost: child.and_then(|c| c.unit_cost),
+        }
+    }
+
+    fn structure(lines: Vec<StructureLine>) -> HashMap<Uuid, Vec<StructureLine>> {
+        let mut map: HashMap<Uuid, Vec<StructureLine>> = HashMap::new();
+        for l in lines {
+            map.entry(l.parent_revision_id).or_default().push(l);
+        }
+        map
+    }
+
+    #[test]
+    fn assemble_rolls_up_shared_sub_assemblies() {
+        let root = rev("A", Some(1.0), Some(10.0));
+        let sub = rev("A", Some(0.5), Some(2.0));
+        let bolt = rev("B", Some(0.01), Some(0.1));
+        // root: 2 × sub, 4 × bolt; sub: 3 × bolt (the bolt revision is shared)
+        let map = structure(vec![
+            sline(root.id, "ASM-000002", 10, 2.0, Some(&sub)),
+            sline(root.id, "PRT-000001", 20, 4.0, Some(&bolt)),
+            sline(sub.id, "PRT-000001", 10, 3.0, Some(&bolt)),
+        ]);
+        let tree = assemble(RevisionRule::Latest, root, "ASM-000001".into(), &map).unwrap();
+        assert_eq!(tree.line_count, 3);
+        assert_eq!(tree.unresolved_count, 0);
+        assert!(tree.mass_complete && tree.cost_complete);
+        // sub unit: 0.5 + 3 × 0.01 = 0.53; root: 1 + 2 × 0.53 + 4 × 0.01
+        assert!((tree.children[0].unit_mass_kg - 0.53).abs() < 1e-9);
+        assert!((tree.total_mass_kg - (1.0 + 1.06 + 0.04)).abs() < 1e-9);
+        assert!((tree.total_cost - (10.0 + 2.0 * 2.3 + 0.4)).abs() < 1e-9);
+        assert_eq!(tree.children[0].children[0].level, 2);
+        assert_eq!(flatten(&tree.children).len(), 3);
+    }
+
+    #[test]
+    fn assemble_keeps_find_number_order_and_counts_unresolved() {
+        let root = rev("A", None, None);
+        let a = rev("A", Some(1.0), Some(1.0));
+        let map = structure(vec![
+            sline(root.id, "PRT-000001", 10, 1.0, Some(&a)),
+            sline(root.id, "PRT-000002", 20, 1.0, None),
+        ]);
+        let tree = assemble(RevisionRule::Released, root, "ASM-000001".into(), &map).unwrap();
+        let finds: Vec<i32> = tree.children.iter().map(|n| n.find_number).collect();
+        assert_eq!(finds, [10, 20]);
+        assert_eq!((tree.line_count, tree.unresolved_count), (2, 1));
+        assert!(tree.children[1].revision.is_none());
+        assert!(!tree.mass_complete && !tree.cost_complete);
+        assert!((tree.total_mass_kg - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn assemble_stops_at_cycles() {
+        let root = rev("A", Some(1.0), Some(1.0));
+        let sub = rev("A", Some(1.0), Some(1.0));
+        // root → sub → root (prevented on input, but the expansion must not loop)
+        let map = structure(vec![
+            sline(root.id, "ASM-000002", 10, 1.0, Some(&sub)),
+            sline(sub.id, "ASM-000001", 10, 1.0, Some(&root)),
+        ]);
+        let tree = assemble(RevisionRule::Latest, root, "ASM-000001".into(), &map).unwrap();
+        assert_eq!(tree.line_count, 2);
+        let back = &tree.children[0].children[0];
+        assert!(back.cycle && back.children.is_empty());
+        assert!(!back.mass_complete && !tree.mass_complete);
+        assert!(!tree.children[0].cycle);
+    }
+
+    #[test]
+    fn assemble_limits_depth_and_size() {
+        // a chain deeper than MAX_DEPTH stops expanding at MAX_DEPTH
+        let root = rev("A", Some(0.0), Some(0.0));
+        let mut parent = root.id;
+        let mut lines = Vec::new();
+        for i in 0..MAX_DEPTH + 5 {
+            let child = rev("A", Some(1.0), Some(1.0));
+            lines.push(sline(parent, &format!("ASM-{i:06}"), 10, 1.0, Some(&child)));
+            parent = child.id;
+        }
+        let tree = assemble(RevisionRule::Latest, root, "R".into(), &structure(lines)).unwrap();
+        assert_eq!(tree.line_count, MAX_DEPTH);
+        let rows = flatten(&tree.children);
+        assert_eq!(rows.last().unwrap().level, MAX_DEPTH);
+
+        // a shared sub-assembly used everywhere expands exponentially: refused
+        let root = rev("A", Some(0.0), Some(0.0));
+        let mut parent = root.id;
+        let mut lines = Vec::new();
+        for _ in 0..20 {
+            let child = rev("A", Some(1.0), Some(1.0));
+            for find in [10, 20] {
+                lines.push(sline(parent, "ASM", find, 1.0, Some(&child)));
+            }
+            parent = child.id;
+        }
+        let err = assemble(RevisionRule::Latest, root, "R".into(), &structure(lines)).unwrap_err();
+        assert!(err.to_string().contains("too large"), "{err}");
     }
 }

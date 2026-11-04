@@ -9,7 +9,7 @@ use crate::{
     auth::Actor,
     domain::{self, ItemType, LifecycleState, Role},
     error::{AppError, AppResult},
-    models::{Item, ItemSummary, Revision, WhereUsed},
+    models::{Item, ItemSummary, Revision, WhereUsed, WhereUsedLevel},
     services::{audit, files, next_counter, notifications, revisions, Page},
 };
 
@@ -533,6 +533,53 @@ pub async fn where_used(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<WhereUsed
          ORDER BY i.number, r.seq DESC",
     )
     .bind(item_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Most levels a multi-level where-used report walks up.
+pub const MAX_WHERE_USED_LEVELS: i32 = 25;
+/// Most usages a multi-level where-used report returns.
+pub const MAX_WHERE_USED_ROWS: i64 = 2000;
+
+/// Multi-level where-used: every BOM line that uses the item or (up to
+/// `levels` levels up) one of its parents, in one recursive query. Like the
+/// single-level report it looks at the BOMs of all revisions. Each item is
+/// reported on the lowest level it is reached on; BOMs are acyclic (cycles
+/// are refused on input), so the walk ends even without the level limit.
+pub async fn where_used_levels(
+    pool: &PgPool,
+    item_id: Uuid,
+    levels: i32,
+) -> AppResult<Vec<WhereUsedLevel>> {
+    let levels = levels.clamp(1, MAX_WHERE_USED_LEVELS);
+    Ok(sqlx::query_as::<_, WhereUsedLevel>(
+        "WITH RECURSIVE up(item_id, level) AS (
+             SELECT $1::uuid, 0
+             UNION
+             SELECT r.item_id, up.level + 1
+             FROM up
+             JOIN bom_lines bl ON bl.child_item_id = up.item_id
+             JOIN revisions r ON r.id = bl.parent_revision_id
+             WHERE up.level + 1 < $2
+         ),
+         reach AS (SELECT item_id, MIN(level) AS level FROM up GROUP BY item_id)
+         SELECT reach.level + 1 AS level, ci.number AS child_number,
+                bl.id AS line_id, r.id AS parent_revision_id, i.id AS parent_item_id,
+                i.number AS parent_number, r.code AS parent_code, r.name AS parent_name,
+                r.state AS parent_state, bl.find_number, bl.quantity, rc.code AS released_child_code
+         FROM reach
+         JOIN items ci ON ci.id = reach.item_id
+         JOIN bom_lines bl ON bl.child_item_id = reach.item_id
+         JOIN revisions r ON r.id = bl.parent_revision_id
+         JOIN items i ON i.id = r.item_id
+         LEFT JOIN revisions rc ON rc.id = bl.released_child_revision_id
+         ORDER BY 1, i.number, r.seq DESC, ci.number
+         LIMIT $3",
+    )
+    .bind(item_id)
+    .bind(levels)
+    .bind(MAX_WHERE_USED_ROWS)
     .fetch_all(pool)
     .await?)
 }

@@ -95,10 +95,11 @@ const TOOLS: &[Tool] = &[
     Tool {
         name: "where_used",
         title: "Where used",
-        description: "The parent revisions whose BOM uses an item (single level), with quantity and the \
-            revision they were released with.",
+        description: "The parent revisions whose BOM uses an item, with quantity and the revision they were \
+            released with. `levels` > 1 walks further up (parents of parents); every row names its level \
+            and the item used on that line (`via`).",
         effect: READ,
-        schema: schema_item,
+        schema: schema_where_used,
     },
     Tool {
         name: "item_history",
@@ -280,6 +281,16 @@ fn schema_revision() -> Value {
 fn schema_bom() -> Value {
     object(
         json!({ "item": p_item(), "revision": p_revision(), "rule": p_rule() }),
+        &["item"],
+    )
+}
+
+fn schema_where_used() -> Value {
+    object(
+        json!({
+            "item": p_item(),
+            "levels": p_limit(1, i64::from(items::MAX_WHERE_USED_LEVELS)),
+        }),
         &["item"],
     )
 }
@@ -879,10 +890,15 @@ async fn get_bom(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
 
 async fn where_used(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     let item = items::get_by_number(&st.db, &a.req_str("item")?).await?;
-    let (parents, truncated) = capped(items::where_used(&st.db, item.id).await?, MAX_LIST);
+    let levels = a.limit("levels", 1, i64::from(items::MAX_WHERE_USED_LEVELS))?;
+    let rows = items::where_used_levels(&st.db, item.id, levels as i32).await?;
+    let (rows, truncated) = capped(rows, MAX_LIST);
     Ok(json!({
         "item": item.number,
-        "used_in": parents.iter().map(|p| json!({
+        "levels": levels,
+        "used_in": rows.iter().map(|row| (row.level, &row.child_number, &row.usage)).map(|(level, via, p)| json!({
+            "level": level,
+            "via": via,
             "item": p.parent_number,
             "revision": p.parent_code,
             "name": p.parent_name,
