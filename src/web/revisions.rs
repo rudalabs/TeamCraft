@@ -16,12 +16,13 @@ use super::{finish, items::BackForm, render, WebCtx};
 use crate::{
     auth::{Actor, WebUser},
     cadformat::FormatKind,
-    domain::{self, LifecycleState, ReferenceKind, COMMON_UNITS},
+    domain::{self, BasisRole, ItemType, LifecycleState, ReferenceKind, COMMON_UNITS},
     error::{AppError, AppResult},
     models::FileRecord,
     preview::PreviewFormat,
     services::{
         audit, bom, changes, files, impacts, items, notifications, projects, references, revisions,
+        simulations,
     },
     thumbnail, util, AppState,
 };
@@ -161,6 +162,34 @@ pub async fn show(
         .map(|k| json!({ "value": k.as_str(), "label": k.label() }))
         .collect();
     let latest_id = all_revisions.first().map(|r| r.id);
+    // Simulations: basis links and result values of a simulation revision;
+    // for every other item the simulations based on it.
+    let is_simulation = rev.item_type == ItemType::Simulation.as_str();
+    let simulation = if is_simulation {
+        let (bases, results) = tokio::try_join!(
+            simulations::bases(&st.db, id),
+            simulations::results(&st.db, id)
+        )?;
+        let out_of_date = bases.iter().filter(|b| b.out_of_date.is_some()).count();
+        let roles: Vec<_> = BasisRole::ALL
+            .iter()
+            .map(|r| json!({ "value": r.as_str(), "label": r.label() }))
+            .collect();
+        json!({
+            "summary": simulations::summarize(&results),
+            "bases": bases,
+            "results": results,
+            "out_of_date": out_of_date,
+            "roles": roles,
+        })
+    } else {
+        serde_json::Value::Null
+    };
+    let based_simulations = if is_simulation {
+        Vec::new()
+    } else {
+        simulations::based_on_item(&st.db, item.id).await?
+    };
     render(
         &st,
         &ctx,
@@ -185,6 +214,8 @@ pub async fn show(
                 "kinds": reference_kinds,
             },
             "open_impacts": open_impacts,
+            "simulation": simulation,
+            "based_simulations": based_simulations,
             "watching": watching,
             "favorite": favorite,
             "resolved_impacts": resolved_impacts,

@@ -48,7 +48,8 @@ pub fn scans(format_id: &str) -> bool {
 
 /// Whether a file name ends with the extension of a file an assembly or a
 /// drawing can reference (parts, assemblies, drawings, models, exchange,
-/// mesh, visualisation and electronics formats – not documents, templates
+/// mesh, visualisation and electronics formats – not simulation models or
+/// results, documents, templates
 /// or archives).
 fn is_referencable(name: &str) -> bool {
     cadformat::detect(name, &[]).is_some_and(|f| {
@@ -57,6 +58,7 @@ fn is_referencable(name: &str) -> bool {
             FormatKind::Document
                 | FormatKind::Other
                 | FormatKind::Simulation
+                | FormatKind::Result
                 | FormatKind::Manufacturing
         )
     })

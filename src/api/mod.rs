@@ -6,6 +6,7 @@
 //! newest revision.
 
 mod personal;
+mod simulations;
 
 use axum::{
     extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State},
@@ -65,6 +66,41 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(get_references).post(add_reference),
         )
         .route("/references/{id}", axum::routing::delete(delete_reference))
+        // simulations
+        .route(
+            "/items/{number}/revisions/{code}/simulation",
+            get(simulations::get_simulation),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/bases",
+            get(simulations::list_bases).post(simulations::add_basis),
+        )
+        .route(
+            "/simulation-bases/{id}",
+            axum::routing::delete(simulations::delete_basis),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/results",
+            get(simulations::list_results)
+                .post(simulations::add_result)
+                .put(simulations::put_results),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/results/import",
+            post(simulations::import_results).layer(DefaultBodyLimit::max(import_limit)),
+        )
+        .route(
+            "/simulation-results/{id}",
+            patch(simulations::patch_result).delete(simulations::delete_result),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/compare",
+            get(simulations::compare),
+        )
+        .route(
+            "/items/{number}/simulations",
+            get(simulations::item_simulations),
+        )
         .route("/impacts", get(list_impacts))
         .route("/notifications", get(list_notifications))
         .route("/notifications/read", post(read_notifications))
@@ -252,6 +288,18 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/references  references, referrers, CAD file references, impacts",
             "POST   /api/v1/items/{number}/revisions/{code}/references  {item, kind: drawing|specification|reference, note?}",
             "DELETE /api/v1/references/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation  basis links (out of date?), result values (pass/fail), summary",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/bases",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/bases  {item, revision?, file? | file_version_id?, role: geometry|mesh|material|load_case|other, note?}",
+            "DELETE /api/v1/simulation-bases/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/results",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/results  {name, value, unit?, lower_limit?, upper_limit?, load_case?, solver?, solver_version?, note?}",
+            "PUT    /api/v1/items/{number}/revisions/{code}/simulation/results  {results: [...], replace?: true} – the result set of a solver run",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/results/import  multipart: file (CSV/Excel: name,value,unit,limit_low,limit_high,load_case), replace?",
+            "PATCH  /api/v1/simulation-results/{id}                   any result field",
+            "DELETE /api/v1/simulation-results/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/compare?with=A   result values of two revisions",
+            "GET    /api/v1/items/{number}/simulations                simulations based on the item (out of date?)",
             "GET    /api/v1/impacts                                   open impacts on items of my project groups",
             "GET    /api/v1/notifications?unread=true&limit=          my notifications and the unread count",
             "POST   /api/v1/notifications/read                        {ids?} – mark as read (all without a body)",
@@ -587,7 +635,9 @@ async fn create_item(
     ApiJson(body): ApiJson<CreateItem>,
 ) -> AppResult<Response> {
     let item_type = ItemType::parse(&body.item_type).ok_or_else(|| {
-        AppError::BadRequest("item_type must be part, assembly, document or software.".into())
+        AppError::BadRequest(
+            "item_type must be part, assembly, document, software or simulation.".into(),
+        )
     })?;
     let project_id = match body.project.as_deref().filter(|p| !p.trim().is_empty()) {
         Some(code) => Some(projects::get_by_code(&st.db, code).await?.id),
