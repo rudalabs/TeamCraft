@@ -16,6 +16,7 @@
       </select>
     </label>
     <button type="submit">Compare</button>
+    <button type="submit" formaction="/revisions/{{ rev.id }}/bom/compare.xlsx" title="The same comparison as an Excel workbook">Download Excel</button>
     <a class="button" href="/revisions/{{ rev.id }}/bom">← BOM</a>
   </form>
 </div>

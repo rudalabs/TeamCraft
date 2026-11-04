@@ -60,7 +60,7 @@
 All of the following works end to end today: creating a project group,
 adding items, checking files out and in, building the BOM, releasing through
 a reviewed change order and seeing what has to be checked after a release.
-It is covered by 106 unit tests and 32 end-to-end tests against a real
+It is covered by 107 unit tests and 32 end-to-end tests against a real
 PostgreSQL. Until the first release, the database schema is migrated
 automatically between commits, but nothing else about compatibility is
 promised.
@@ -202,7 +202,7 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | gltf, quick-xml, zip                 | glTF, 3MF/AMF, Pack and Go               | MIT / Apache-2.0                         |
 | csv, calamine, encoding_rs           | BOM import: CSV, Excel/ODS, Windows-1252 | MIT-Unlicense / MIT / MIT-Apache + BSD-3 |
 | cfb, crc32fast                       | previews stored in CAD files             | MIT / MIT-Apache                         |
-| rust_xlsxwriter (tests only)         | Excel files for the import tests         | MIT / Apache-2.0                         |
+| rust_xlsxwriter                      | BOM comparison export, Excel test files  | MIT / Apache-2.0                         |
 | reqwest, rustls, lettre              | HTTP client, TLS, e-mail                 | MIT / Apache-2.0                         |
 | argon2, sha2                         | password hashing, content hashes         | MIT / Apache-2.0                         |
 | Tauri 2                              | desktop app                              | MIT / Apache-2.0                         |

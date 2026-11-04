@@ -39,5 +39,8 @@ curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/cancel-checkout
 | Save As, compare | `POST …/revisions/{code}/save-as` `{number?, name?, project?, files?, bom?}`, `GET …/revisions/{code}/bom/compare?with={code}`        |
 | Formats          | `GET /formats` – the recognised CAD programs and formats                                                                              |
 
+The BOM comparison is also available as an Excel workbook of the same lines
+(same `with` query): `GET …/revisions/{code}/bom/compare.xlsx?with={code}`.
+
 Errors are JSON: `{"error": {"code": "conflict", "message": "…"}}` with the
 matching HTTP status (400, 401, 403, 404, 409, 413, 500).
