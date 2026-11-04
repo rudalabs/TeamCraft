@@ -1,7 +1,32 @@
 # Open work
 
-Status of the Prio-1 work plan (worked through in this order) and the known
-gaps. Last update: 2026-11-04.
+The to-do list of TeamCraft first – tick an entry (`[x]`) when it is done –,
+then the status of the Prio-1 work plan (worked through in this order) and
+the known gaps with details. Last update: 2026-11-04.
+
+## To-do
+
+- [ ] New item with files right away: file field in the web form and in the desktop dialog (an item is normally never without a file)
+- [ ] Previews of Inventor (`.ipt`, `.iam`, `.idw`, `.ipn`) and Solid Edge (`.par`, `.psm`, `.asm`, `.dft`, `.pwd`) files – the preview image stored in the file; 3D only through a STEP export or the vendor's licensed API
+- [ ] Desktop: tutorial for importing existing CAD file trees (hundreds of files, project files such as Inventor `.ipj`)
+- [ ] Desktop: import of a CAD folder tree as items with files, BOM from the assembly references (needed for the tutorial; feature 8)
+- [ ] Desktop workspace: one subfolder per project group (alternatively git-style: only the chosen project groups are visible locally)
+- [ ] Desktop: new members download everything of one or more project groups at once
+- [ ] Desktop: *Import BOM…* (CSV/Excel) on a checked-out assembly
+- [ ] Desktop: cancel long operations (check-in upload, Pack and Go) half-way
+- [ ] Browser check (Playwright, no console errors, no overflow at 390 px) of `/import` and `/import/{id}`
+- [ ] STEP assembly import → items + BOM (feature 3c)
+- [ ] 3D preview: test real STEP exports of the CAD programs and assembly placements (`mapped_item`); readers for IGES, BREP, Parasolid, JT, … (E57: `e57` crate)
+- [ ] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview (feature 4)
+- [ ] Custom attributes per item and file type, classification (standard/purchased parts), attribute search (feature 5)
+- [ ] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts, multi-level where-used (feature 6)
+- [ ] BOM comparison between revisions, Excel export (feature 7)
+- [ ] Chunked resumable uploads (tus); backup/restore of database and vault as CLI commands (feature 9)
+- [ ] README screenshots/GIFs: dashboard, vault explorer, revision page, 3D viewer, BOM, desktop app
+- [ ] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
+- [ ] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
+- [ ] Test the heuristics with real CAD files: CAD reference scan, BOM table columns, embedded previews
+- [ ] Test e-mail (SMTP) and Mattermost notifications against real servers
 
 ## Done
 
