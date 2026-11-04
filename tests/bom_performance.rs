@@ -217,3 +217,144 @@ async fn large_bom_expands_level_by_level() {
 
     app.teardown().await;
 }
+
+/// Inserts an item with its revisions `(code, state, mass)` (seq in order)
+/// and returns the item id and the revision ids.
+async fn item_with_revisions(
+    pool: &sqlx::PgPool,
+    user: Uuid,
+    number: &str,
+    item_type: &str,
+    revisions: &[(&str, &str, f64)],
+) -> (Uuid, Vec<Uuid>) {
+    let item = Uuid::new_v4();
+    sqlx::query("INSERT INTO items (id, number, item_type, created_by) VALUES ($1, $2, $3, $4)")
+        .bind(item)
+        .bind(number)
+        .bind(item_type)
+        .bind(user)
+        .execute(pool)
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for (seq, (code, state, mass)) in revisions.iter().enumerate() {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO revisions (id, item_id, seq, code, state, name, mass_kg, unit_cost,
+                                    created_by, released_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8,
+                     CASE WHEN $5 = 'released' THEN now() END)",
+        )
+        .bind(id)
+        .bind(item)
+        .bind(seq as i32 + 1)
+        .bind(*code)
+        .bind(*state)
+        .bind(format!("{number} {code}"))
+        .bind(*mass)
+        .bind(user)
+        .execute(pool)
+        .await
+        .unwrap();
+        ids.push(id);
+    }
+    (item, ids)
+}
+
+async fn bom_line(
+    pool: &sqlx::PgPool,
+    parent: Uuid,
+    child_item: Uuid,
+    find: i32,
+    frozen: Option<Uuid>,
+) {
+    sqlx::query(
+        "INSERT INTO bom_lines (id, parent_revision_id, child_item_id, find_number, quantity,
+                                released_child_revision_id)
+         VALUES ($1, $2, $3, $4, 1, $5)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(parent)
+    .bind(child_item)
+    .bind(find)
+    .bind(frozen)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The level-wise expansion picks the same child revisions as the former
+/// line-by-line resolution: frozen lines under *as released*, the newest
+/// (released) revision otherwise, unresolved lines without a match, and a
+/// cycle written past the input checks is stopped on the path.
+#[tokio::test]
+async fn expansion_resolves_rules_unresolved_lines_and_cycles() {
+    let app = app_or_skip!();
+    let (admin, _token) = app.user("root", Role::Admin).await;
+    let pool = &app.pool;
+    let (root_item, root) = item_with_revisions(
+        pool,
+        admin.id,
+        "ASM-R",
+        "assembly",
+        &[("A", "released", 1.0)],
+    )
+    .await;
+    let (sub_item, sub) = item_with_revisions(
+        pool,
+        admin.id,
+        "ASM-S",
+        "assembly",
+        &[
+            ("A", "released", 2.0),
+            ("B", "released", 3.0),
+            ("C", "in_work", 4.0),
+        ],
+    )
+    .await;
+    // only an in-work revision: unresolved under released / as released
+    let (wip_item, _) =
+        item_with_revisions(pool, admin.id, "PRT-W", "part", &[("A", "in_work", 5.0)]).await;
+    let root = root[0];
+    bom_line(pool, root, sub_item, 10, Some(sub[0])).await;
+    bom_line(pool, root, wip_item, 20, None).await;
+    // ASM-S A: back to the root (a cycle) and the in-work part
+    bom_line(pool, sub[0], root_item, 10, None).await;
+    bom_line(pool, sub[0], wip_item, 20, None).await;
+    bom_line(pool, sub[1], wip_item, 10, None).await;
+    bom_line(pool, sub[2], wip_item, 10, None).await;
+
+    for (rule, sub_code, lines, unresolved, cycle) in [
+        (RevisionRule::Latest, "C", 3, 0, false),
+        (RevisionRule::Released, "B", 3, 2, false),
+        (RevisionRule::AsReleased, "A", 4, 2, true),
+    ] {
+        let tree = bom::tree(pool, root, rule).await.expect("expand");
+        let name = rule.as_str();
+        assert_eq!(tree.line_count, lines, "{name}");
+        assert_eq!(tree.unresolved_count, unresolved, "{name}");
+        let s = &tree.children[0];
+        assert_eq!(s.item_number, "ASM-S", "{name}");
+        assert_eq!(s.revision.as_ref().unwrap().code, sub_code, "{name}");
+        let w = &tree.children[1];
+        assert_eq!(w.item_number, "PRT-W");
+        assert_eq!(w.revision.is_some(), rule == RevisionRule::Latest, "{name}");
+        let back = s.children.iter().find(|n| n.item_number == "ASM-R");
+        assert_eq!(back.is_some(), cycle, "{name}");
+        if let Some(back) = back {
+            assert!(back.cycle && back.children.is_empty(), "{name}");
+            assert!(!tree.mass_complete, "{name}");
+        }
+        if rule == RevisionRule::Latest {
+            // 1 + (4 + 5) + 5
+            assert!(
+                (tree.total_mass_kg - 15.0).abs() < 1e-9,
+                "{}",
+                tree.total_mass_kg
+            );
+            assert!(tree.mass_complete);
+        }
+    }
+
+    app.teardown().await;
+}
