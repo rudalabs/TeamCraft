@@ -10,6 +10,7 @@ mod api;
 mod cadexport;
 mod commands;
 mod folderimport;
+mod layout;
 mod settings;
 mod signin;
 mod workspace;
@@ -32,6 +33,8 @@ pub struct AppState {
     pub config_dir: PathBuf,
     /// Cancel signal of the running browser sign-in (one per attempt).
     pub sign_in_cancel: Mutex<Option<Arc<Notify>>>,
+    /// Cancel flag of the running Get (workspace downloads).
+    pub get_cancel: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Name of this computer, shown on the browser confirmation page and used for
@@ -128,6 +131,7 @@ fn main() {
                 client: api::client(),
                 config_dir,
                 sign_in_cancel: Mutex::new(None),
+                get_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             });
             build_menu(app)?;
             if let (Some(zoom), Some(window)) = (zoom, app.get_webview_window("main")) {
@@ -152,6 +156,10 @@ fn main() {
             commands::file_bytes,
             commands::workspace_checkout,
             commands::workspace_download,
+            commands::workspace_get,
+            commands::workspace_cancel,
+            commands::workspace_migration_plan,
+            commands::workspace_migrate,
             commands::workspace_status,
             commands::workspace_checkin,
             commands::workspace_open,
@@ -160,6 +168,7 @@ fn main() {
             commands::save_package,
             commands::save_stl,
             commands::upload_files,
+            commands::upload_request_attachment,
             commands::cad_programs,
             commands::cad_export_step,
             commands::scan_folder,

@@ -17,9 +17,11 @@ the known gaps with details. Last update: 2026-11-04.
   behind (request order tested in `tests/concurrency.rs`; still to do: test import against a real server)
 - [x] Bulk action "Check in all my check-outs" (desktop and web) – dashboard button and desktop worklist; the desktop
   checks in only revisions without local changes; `POST /api/v1/worklist/checkin-all`
-- [ ] SOLIDWORKS 2015+ files: the preview image and the referenced file names sit in compressed segments of the
-  container – inflate them before the preview search and the reference scan (gap test in `tests/cad_fixtures.rs`,
-  found with the NIST files)
+- [x] SOLIDWORKS 2015+ files: the preview image and the referenced file names sit in compressed segments of the
+  container – `src/swpart.rs` reads the Deflate sections (bounded, CRC-checked): preview from `PreviewPNG`, assembly
+  components from the component tree (`swXmlContents/COMPINSTANCETREE`, exactly the eight parts of the NIST
+  assembly); `teamcraft rescan-references` updates assemblies stored before (tested in `tests/cad_fixtures.rs`; still
+  to do: a real SOLIDWORKS drawing for the document-manager fallback)
 - [ ] Reference scan: false references in real files – NX parts fixed (stream container, `src/nxpart.rs`); open: noise in JT
   files (gap test in `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is ignored
 
@@ -36,6 +38,9 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Desktop workspace: one subfolder per project group (alternatively git-style: only the chosen project groups are
   visible locally)
 - [x] Desktop: new members download everything of one or more project groups at once
+- [x] Desktop working folder that mirrors the original folder structure (`files.folder`), read-only files until check-out,
+  *Get* of a structure (BOM + referenced CAD files, revision rule, progress, cancel), migration of the old layout
+- [ ] Desktop Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Desktop: *Import BOM…* (CSV/Excel) on a checked-out assembly
 - [ ] Desktop: cancel long operations (check-in upload, Pack and Go) half-way
 - [x] Browser check (no console errors, no overflow at 390 px) of `/import` and `/import/{id}`, with a STEP import
@@ -49,16 +54,43 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Item copy ("Save as" with files and BOM) – done; multi-level where-used in the API and MCP (`levels`); open:
   supersede/replace, alternate parts, multi-level where-used in the web UI (feature 6)
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
+- [x] Engineering change requests (ECR) before the change order: raised by anybody incl. viewers (web, API, desktop
+  revision tab and workspace file, screenshot/PDF attachments), discussion, triage/decision by the CAD editors of the
+  affected project groups, *Create change order* with the in-work revisions or link an open one, *implemented* on the
+  release of the change order (migration 0017)
+- [ ] MCP tools for change requests (`create_change_request`, a triage prompt) once the MCP server is merged
+- [ ] Browser check (no console errors, no overflow at 390 px) of `/requests`, `/requests/new` and `/requests/{id}`,
+  and the desktop request tab
+- [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI), e-mail digest of
+  new requests per project group
 - [x] Backup/restore of the database and vault as CLI commands (`teamcraft backup`, `teamcraft restore`) – see
   [Operations](src/admin/operations.md)
 - [ ] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools
 - [ ] Chunked resumable uploads (tus) (feature 9)
-- [ ] README screenshots/GIFs: web pages captured in CI by `scripts/screenshots.sh` (PNGs still to commit); desktop app and GIFs open
+- [x] README screenshots of the web pages: captured in CI by `scripts/screenshots.sh` (run 41919547600), committed in
+  `media/screenshots/`
+- [ ] Desktop app screenshots and short GIFs for the README
 - [x] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
 - [x] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
 - [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
   `SECURITY.md` points to
 - [ ] Test e-mail (SMTP) and Mattermost notifications against real servers
+
+**Simulation management (FEA/CFD)**
+
+- [x] v1: item type `simulation` (`SIM-`), basis links to item revisions and exact file versions, out-of-date
+  detection and change propagation (relation `simulation`), result values with limits and pass/fail, CSV/Excel import,
+  comparison between revisions, REST API, result file formats (VTK, CalculiX, Nastran, ANSYS, Abaqus, OpenFOAM,
+  Fluent, STAR-CCM+, CGNS, Exodus II, LS-DYNA) – guide in `docs/src/guide/simulation.md`
+- [ ] 3D preview of results: VTK (legacy and XML) and CalculiX `.frd` with a scalar field (colour map) in the viewer;
+  OpenFOAM case summary (solver, time steps) from `controlDict`
+- [ ] `.sim` detection: verify the STAR-CCM+ marker with real files (heuristic: "STAR-CCM+" near the start)
+- [ ] Read result values from a `teamcraft-results.json`/CSV next to the files at check-in
+- [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
+- [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
+  checked out read-only into `basis/`, check-in of selected result time steps only
+- [ ] Retention for large result files (`files.retention = 'latest'`) after chunked resumable uploads (feature 9)
+- [ ] Save As of a simulation: copy basis links and result values
 
 **All CAD programs**
 
@@ -99,7 +131,9 @@ the known gaps with details. Last update: 2026-11-04.
 **SOLIDWORKS**
 
 - [ ] STEP export through the locally installed SOLIDWORKS (API), like Inventor and Solid Edge
-- [ ] Test preview images of SOLIDWORKS 2014 and older (OLE files) with real files – 2015 and newer: see *Fixes*
+- [ ] Test preview images of SOLIDWORKS 2014 and older (OLE files) with real files – 2015 and newer: done (see *Fixes*)
+- [ ] Test the SOLIDWORKS 2015+ reader with drawings (`.slddrw`), nested sub-assemblies and other versions than 2018
+- [ ] Use the instance counts of the component tree (`swReference`, without `swExcludeFromBOM`) for BOM quantities
 - [ ] Take configurations and Toolbox parts into account in the import and the reference scan
 - [ ] Test the BOM import with real BOM exports
 

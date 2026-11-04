@@ -1,4 +1,62 @@
-# Change orders, reviews and notifications
+# Change requests, change orders, reviews and notifications
+
+## Change requests (ECR) → change orders (ECO)
+
+A **change request** (ECR, `ECR-000001`) is the step *before* a change
+order: somebody found a problem or has an idea – on the shop floor, in a
+simulation, in a test, in purchasing – and asks for a change. Every
+signed-in user may raise one, **viewers included**, and everybody may
+comment on it. A **change order** (ECO, `CHG-000001`) is the engineering
+work that answers it: it carries the new revisions through review to the
+release.
+
+```text
+ anybody signed in                     CAD editors of the affected project groups / admins
+ ─────────────────                     ──────────────────────────────────────────────────
+ Request change… ──▶ New ──▶ In Triage ──▶ Accepted ──▶ change order (ECO): create one with the
+  (revision page,     │          │                       in-work revisions, or link an open one
+   file row, desktop) │          │     ──▶ Deferred ──▶ In Triage (taken up again)     │
+                      │          │     ──▶ Rejected                                    │ released
+                      └──────────┴──▶ Withdrawn (by the requester, before the decision) ▼
+                                                                                Implemented
+```
+
+1. **Raise** – *Request change…* on a revision page, on a file row, in the
+   *Requests* list, or in the desktop app on a revision tab or a workspace
+   file. Give a title, the problem and the proposed solution, a reason
+   (defect, improvement, cost, manufacturing, supplier, safety, customer,
+   other), a priority and optionally a date it is needed by. The revision and
+   the file name are filled in. Screenshots, mark-ups and PDF reports can be
+   attached (PNG, JPEG, GIF, WebP or PDF, up to 10 MiB each – the type is
+   checked by the content, not the name). The CAD editors of the project
+   group of the item and the watchers of the item are notified; the
+   requester watches the request.
+2. **Discuss** – everybody comments in the discussion thread; the
+   requester, the assignee, everybody who commented and the watchers are
+   notified.
+3. **Triage** – a CAD editor of an affected project group (or an admin)
+   *starts the triage* (and is assigned if nobody is), assigns it to the
+   engineer who will do the work and decides:
+   * **Accept** – the change will be made;
+   * **Defer** – not now (reason required); *take up again* later;
+   * **Reject** – no change (reason required).
+   While no item is named, any CAD editor may triage; once the request is
+   decided, an item is added only by a member of its project group (or an
+   admin).
+4. **Implement** – an accepted request gets its change order: *Create change
+   order* creates a draft with the in-work revisions of the affected items
+   (items without a revision in work are listed – revise them and add the
+   revision to the draft), or *Link* an existing open change order. The
+   change order runs through review as usual.
+5. **Implemented** – when a linked change order is released, the request
+   becomes *implemented* in the same transaction, and everybody involved is
+   told.
+
+The requester can **withdraw** the request while it is *New* or *In Triage*.
+The revision page shows the open requests on its item (with their number on
+the *Request change…* button); the dashboard and the desktop worklist list
+the requests *assigned to me* and *my open requests*. Every step is in the
+audit log and in the status history of the request.
 
 ## Change orders
 
@@ -6,11 +64,13 @@ A change collects one or more revisions *in work*, a title, description,
 priority and reviewers.
 
 1. **Draft** – the author adds revisions (*Release via new change…* on a
-   revision page) and reviewers.
+   revision page) and reviewers – or the draft is created from an accepted
+   change request.
 2. **Submit** – the revisions move to *In Review*; they are frozen.
 3. Each reviewer **approves** or **rejects** with a reason. The author never
    reviews their own change.
-4. When everybody approved, **all revisions are released together**.
+4. When everybody approved, **all revisions are released together**, and
+   the accepted change requests the change implements become *implemented*.
    A rejection sends them back to *WIP*; fix, *reopen* and resubmit – or *cancel* the change (takes effect at once).
 
 ### Release readiness
@@ -34,8 +94,9 @@ unreleased dependencies* in the *Release…* dialog (on by default).
 
 ## Notifications
 
-The bell lists review requests, decisions, releases, checks needed and news
-about **watched** items and changes (*Watch* on any item or change page).
+The bell lists review requests, decisions, releases, checks needed, change
+requests and news about **watched** items, changes and change requests
+(*Watch* on any of their pages).
 Optionally TeamCraft sends them by e-mail (SMTP) and to Mattermost (mention
 or direct message). Every user chooses channels and mutes kinds on the
 account page; delivery runs from an outbox, so a slow mail server never

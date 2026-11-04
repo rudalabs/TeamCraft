@@ -43,6 +43,9 @@
 {{ m.assistant_panel([["review_brief", "Brief me for this review"]], "", "", change.number, "/changes/" ~ change.id) }}
 {% endif %}
 
+{% if implements %}
+<div class="notice">Implements {% for r in implements %}<a href="/requests/{{ r.id }}">{{ r.number }}</a> {{ r.title }} ({{ r.status|label }}){% if not loop.last %} · {% endif %}{% endfor %}{% if change.status != "released" %} – when this change is released, the accepted request{% if implements|length > 1 %}s become{% else %} becomes{% endif %} implemented{% endif %}.</div>
+{% endif %}
 {% if change.status == "draft" %}
 <div class="notice">Draft: add the revisions to release and at least one reviewer, then submit.{% if not can.submit and can.modify %} Submitting needs at least one revision, one reviewer and released dependencies (see <a href="#readiness">Release readiness</a>).{% endif %}</div>
 {% elif change.status == "in_review" %}

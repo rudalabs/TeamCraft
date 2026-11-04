@@ -82,7 +82,7 @@ pub async fn build(
     }
 
     let ids: Vec<Uuid> = revs.iter().map(|r| r.0).collect();
-    let mut files_of = files::list_many(pool, &ids).await?;
+    let mut files_of = files::list_many_by_revision(pool, &ids).await?;
     let mut entries = Vec::new();
     let mut manifest_revisions = Vec::new();
     for (id, number, code, name, state) in &revs {

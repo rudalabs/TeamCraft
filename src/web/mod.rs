@@ -22,10 +22,13 @@ mod items;
 mod notifications;
 mod personal;
 mod references;
+mod requests;
 mod revisions;
+mod simulations;
 
 pub(crate) use bom::{package_response, package_rule};
 pub(crate) use imports::{options_from as import_options, receive as receive_import};
+pub(crate) use requests::{attachment_response, receive_attachment};
 pub(crate) use revisions::{
     file_response, mesh_response, receive_uploads, thumbnail_response, upload_files,
     version_response, warm_previews, Received,
@@ -63,6 +66,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .unwrap_or(usize::MAX)
         .saturating_add(1024 * 1024);
     let import_limit = crate::services::imports::MAX_STEP_BYTES + 1024 * 1024;
+    let attachment_limit = crate::services::requests::MAX_ATTACHMENT_BYTES + 1024 * 1024;
 
     Router::new()
         .route("/", get(dashboard::show))
@@ -119,6 +123,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/files/{id}/download", get(revisions::download))
         .route("/files/{id}/thumbnail", get(revisions::thumbnail))
         .route("/files/{id}/delete", post(revisions::delete_file))
+        .route("/files/{id}/folder", post(revisions::set_file_folder))
         .route("/files/{id}/restore", post(revisions::restore_version))
         .route("/files/{id}/preview", get(revisions::preview))
         .route("/files/{id}/mesh", get(revisions::mesh))
@@ -164,6 +169,36 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/revisions/{id}/references", post(references::add))
         .route("/references/{id}/delete", post(references::delete))
         .route("/impacts/{id}/acknowledge", post(references::acknowledge))
+        // simulations: basis links, result values, comparison
+        .route(
+            "/revisions/{id}/simulation/bases",
+            post(simulations::add_basis),
+        )
+        .route(
+            "/simulation-bases/{id}/delete",
+            post(simulations::delete_basis),
+        )
+        .route(
+            "/revisions/{id}/simulation/results",
+            post(simulations::add_result),
+        )
+        .route(
+            "/revisions/{id}/simulation/results/import",
+            post(simulations::import_results).layer(DefaultBodyLimit::max(import_limit)),
+        )
+        .route(
+            "/revisions/{id}/simulation/results.csv",
+            get(simulations::results_csv),
+        )
+        .route(
+            "/revisions/{id}/simulation/compare",
+            get(simulations::compare),
+        )
+        .route("/simulation-results/{id}", post(simulations::update_result))
+        .route(
+            "/simulation-results/{id}/delete",
+            post(simulations::delete_result),
+        )
         .route("/notifications", get(notifications::page))
         .route("/notifications/read-all", post(notifications::read_all))
         .route("/notifications/{id}/open", get(notifications::open))
@@ -200,6 +235,39 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{id}/withdraw", post(changes::withdraw))
         .route("/changes/{id}/reopen", post(changes::reopen))
         .route("/changes/{id}/cancel", post(changes::cancel))
+        // change requests (ECR)
+        .route("/requests", get(requests::list).post(requests::create))
+        .route("/requests/new", get(requests::new_form))
+        .route("/requests/{id}", get(requests::show).post(requests::update))
+        .route("/requests/{id}/comments", post(requests::comment))
+        .route("/requests/{id}/triage", post(requests::triage))
+        .route("/requests/{id}/assign", post(requests::assign))
+        .route("/requests/{id}/decide", post(requests::decide))
+        .route("/requests/{id}/reopen", post(requests::reopen))
+        .route("/requests/{id}/withdraw", post(requests::withdraw))
+        .route(
+            "/requests/{id}/create-change",
+            post(requests::create_change),
+        )
+        .route("/requests/{id}/link-change", post(requests::link_change))
+        .route("/requests/{id}/items", post(requests::add_item))
+        .route(
+            "/requests/{id}/items/{item_id}/remove",
+            post(requests::remove_item),
+        )
+        .route(
+            "/requests/{id}/attachments",
+            post(requests::attach).layer(DefaultBodyLimit::max(attachment_limit)),
+        )
+        .route("/requests/{id}/watch", post(notifications::watch_request))
+        .route(
+            "/request-attachments/{id}",
+            get(requests::download_attachment),
+        )
+        .route(
+            "/request-attachments/{id}/delete",
+            post(requests::delete_attachment),
+        )
         // projects & administration
         .route(
             "/projects",

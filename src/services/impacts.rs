@@ -9,8 +9,10 @@
 //!    release was reviewed with the current components (*superseded*);
 //! 3. flags every **dependent** for a check: items whose latest revision uses
 //!    the released item in its BOM, references it (drawing, specification,
-//!    reference) or has a CAD file that references one of its files. Items
-//!    released in the same change are not flagged.
+//!    reference), has a CAD file that references one of its files, or is a
+//!    simulation based on another revision of it (or on a file version that
+//!    is no longer current; see `simulations`). Items released in the same
+//!    change are not flagged.
 //!
 //! When the latest revision of an item is made **obsolete**, its dependents
 //! are flagged the same way and its own open impacts are closed.
@@ -194,6 +196,27 @@ async fn flag_dependents(
          ORDER BY pr.item_id, ir.kind
          {UPSERT}"
     );
+    // Simulations based on a revision of the source item: flagged when a
+    // different revision is released, when the simulated file version is no
+    // longer the current one, or when the source becomes obsolete.
+    let by_simulation = format!(
+        "INSERT INTO impacts (id, item_id, revision_id, source_item_id, source_revision_id, event,
+                              relation, detail, change_id)
+         SELECT DISTINCT ON (pr.item_id) gen_random_uuid(), pr.item_id, pr.id, $1, $2, $3, 'simulation',
+                'based on ' || br.code ||
+                CASE WHEN sb.file_name <> '' THEN ', ' || sb.file_name || ' v' || sb.file_version ELSE '' END,
+                $4
+         FROM simulation_bases sb
+         JOIN revisions br ON br.id = sb.basis_revision_id
+         JOIN revisions pr ON pr.id = sb.revision_id
+         LEFT JOIN file_versions fv ON fv.id = sb.file_version_id
+         LEFT JOIN files f ON f.id = fv.file_id
+         WHERE br.item_id = $1 AND {LATEST} AND NOT (pr.item_id = ANY($5))
+           AND ($3 = 'obsolete' OR br.id <> $2
+                OR (sb.file_name <> '' AND (fv.id IS NULL OR fv.version <> f.current_version)))
+         ORDER BY pr.item_id, sb.role
+         {UPSERT}"
+    );
     // Assemblies using the source item (last, so the BOM wins if several apply).
     let by_bom = format!(
         "INSERT INTO impacts (id, item_id, revision_id, source_item_id, source_revision_id, event,
@@ -207,7 +230,7 @@ async fn flag_dependents(
          {UPSERT}"
     );
     let mut flagged = Vec::new();
-    for sql in [by_file, by_reference, by_bom] {
+    for sql in [by_file, by_simulation, by_reference, by_bom] {
         let ids = sqlx::query_scalar::<_, Uuid>(&sql)
             .bind(source.item_id)
             .bind(source.id)
@@ -300,6 +323,7 @@ async fn notify_flagged(
             "drawing" => "is a drawing of it",
             "specification" => "is a specification for it",
             "reference" => "references it",
+            "simulation" => "is a simulation based on it",
             _ => "has a CAD file that references its files",
         };
         let notice = Notice::revision_ref(
@@ -435,7 +459,7 @@ pub struct Dependent {
     pub revision_id: Uuid,
     pub revision_code: String,
     pub revision_state: String,
-    /// `bom`, `drawing`, `specification`, `reference` or `file`.
+    /// `bom`, `drawing`, `specification`, `reference`, `simulation` or `file`.
     pub relation: String,
     /// The item it uses or references.
     pub via_number: String,
@@ -459,6 +483,12 @@ pub async fn analysis(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Dep
              UNION
              SELECT ir.to_item_id, pr.item_id, ir.kind
              FROM item_references ir JOIN revisions pr ON pr.id = ir.from_revision_id
+             WHERE {LATEST}
+             UNION
+             SELECT br.item_id, pr.item_id, 'simulation'::text
+             FROM simulation_bases sb
+             JOIN revisions br ON br.id = sb.basis_revision_id
+             JOIN revisions pr ON pr.id = sb.revision_id
              WHERE {LATEST}
          ),
          up(root, item_id, level, relation, via, path) AS (

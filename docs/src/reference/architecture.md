@@ -36,15 +36,16 @@
 
 | Path                                 | Contents                                                                                             |
 |--------------------------------------|------------------------------------------------------------------------------------------------------|
-| `src/main.rs`                        | CLI: serve, migrate, user, vault check, healthcheck, mcp (stdio bridge)                              |
+| `src/main.rs`                        | CLI: serve, migrate, user, vault check, rescan-references, healthcheck, mcp (stdio bridge)           |
 | `src/lib.rs`                         | `AppState`, router, health endpoints, security headers                                               |
 | `src/domain.rs`                      | roles, lifecycle, revision letters, skins, validation                                                |
-| `src/services/`                      | items, revisions, files, BOM, changes, references, impacts, projects, users, notifications, explorer |
+| `src/services/`                      | items, revisions, files, BOM, changes, references, impacts, simulations, projects, users, …         |
 | `src/web/`, `templates/`, `static/`  | HTML interface                                                                                       |
 | `src/api/`                           | REST API                                                                                             |
 | `src/mcp/`                           | MCP server for AI assistants (`POST /api/v1/mcp`): JSON-RPC, tools and prompts over the services     |
 | `src/assistant.rs`                   | built-in assistant: tool loop over the Anthropic Messages API with the MCP tools, markdown rendering |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
+| `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache                                                                     |
 | `migrations/`                        | PostgreSQL schema                                                                                    |
 | `tests/`                             | end-to-end tests, each against its own temporary database                                            |

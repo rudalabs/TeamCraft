@@ -29,6 +29,20 @@ NX parts (NX 1980 and later) are read through their stream container
 its reference streams (not from the save history), the preview image from
 `/Root/images/preview`.
 
+SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
+Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
+files). TeamCraft inflates only the sections it needs, with a hard size
+limit and a CRC check: the preview image from `PreviewPNG`, the component
+files of an assembly from its component tree
+(`swXmlContents/COMPINSTANCETREE`: direct components, without virtual
+components and without the old names of renamed parts that the rest of the
+file still contains). Files without a component tree (drawings) use the
+names in the document manager's section (`SwDocContentMgr/SwDocContentMgrInfo`);
+this was not verified with a real drawing. SOLIDWORKS 2014 and older files
+are OLE files and are read as before. Assemblies stored with an older
+TeamCraft keep the references found then until the next check-in – or run
+`teamcraft rescan-references` once (see [Operations](../admin/operations.md)).
+
 `.prt` and `.asm` are told apart by content (Creo's `#UGC:` header, Solid
 Edge's OLE container); `.sc` must be a SolidCraft ZIP or JSON design.
 
@@ -88,6 +102,43 @@ KiCad (`.kicad_pcb` `.kicad_sch` `.kicad_pro` `.kicad_sym` `.kicad_mod`,
 refs), Altium, Eagle, Gerber and Excellon; OpenRocket, RockSim, RASAero,
 motor curves (`.eng` `.rse`); ANSYS Workbench, Abaqus, COMSOL; G-code;
 PDF, office documents, CSV, images and archives.
+
+## Simulation models and results (FEA, CFD)
+
+Recognised and versioned, not parsed or previewed (see
+[Simulations](../guide/simulation.md)). *Model* = setup or solver deck,
+*result* = solver output (kind *Simulation result*).
+
+| Program / format      | Extensions                                                                                |
+|-----------------------|-------------------------------------------------------------------------------------------|
+| ANSYS                 | `.wbpj` (Workbench), `.db` (model), `.rst` `.rth` (results)                               |
+| Abaqus                | `.cae` `.inp` (model), `.odb` `.sta` `.msg` (results)                                     |
+| Nastran               | `.bdf` `.nas` (input deck), `.op2` `.f06` (results)                                       |
+| CalculiX              | `.inp` (Abaqus syntax), `.frd` (results)                                                  |
+| LS-DYNA               | `.k` (keyword deck), `d3plot`, `d3plot01`, … `.d3plot` (results)                          |
+| COMSOL                | `.mph`                                                                                    |
+| NX / Simcenter        | `.sim` `.fem` `.afm`                                                                      |
+| OpenFOAM              | `controlDict` (marks the case), `.foam` (ParaView marker file)                            |
+| Fluent                | `.cas` `.cas.h5` (case), `.dat` `.dat.h5` (data / results)                                |
+| STAR-CCM+             | `.sim`                                                                                    |
+| VTK / ParaView        | `.vtk` (legacy), `.vtu` `.vtp` `.vts` `.vtr` `.vtm` (XML), `.pvd` (time-step collection)  |
+| CGNS, Exodus II       | `.cgns`; `.exo` `.e`                                                                      |
+
+Extensions that other programs use too are decided by the file content:
+
+* `.sim` is a STAR-CCM+ simulation when the beginning of the file names
+  STAR-CCM+, otherwise an NX simulation file (the more common case next to
+  CAD data). This is a heuristic; it was not verified with files of every
+  STAR-CCM+ version.
+* `.dat` counts only with Fluent's section syntax (`(0 "…")`, `(1 "…")`); all
+  other `.dat` files stay unclassified.
+* `.e` is Exodus II only as netCDF or HDF5 file; `.db` is not ANSYS when it
+  is an SQLite database, an OLE file (`Thumbs.db`) or text; `.rst` text files
+  are reStructuredText; `.msg` and `.sta` must be text (Outlook mails are
+  OLE files); `.odb` ZIP files are OpenDocument databases; `.bdf` files
+  starting with `STARTFONT` are bitmap fonts; `.k` must be text.
+
+Result files are never treated as CAD files referenced by assemblies.
 
 ## Why not every format is previewed
 

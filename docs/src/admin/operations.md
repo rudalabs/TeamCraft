@@ -7,6 +7,7 @@
 | `teamcraft healthcheck [--addr host:port]` | exit code of `/healthz`, for container health checks                   |
 | `teamcraft vault check [--verify-hashes]`  | every stored file present (and unchanged)                              |
 | `teamcraft migrate`                        | apply migrations without starting the server                           |
+| `teamcraft rescan-references [--format id]` | read the CAD file references of the stored files again (default: SOLIDWORKS assemblies and drawings), e.g. after an update that reads a format better |
 | `teamcraft backup <dir>`                   | write database and vault backup (`pg_dump`)                            |
 | `teamcraft restore <dir> [--force]`        | verify and restore a backup (`pg_restore`)                             |
 | `teamcraft mcp --server URL`               | stdio bridge for AI assistants to `POST /api/v1/mcp` ([MCP](../reference/mcp.md)) |

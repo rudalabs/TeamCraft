@@ -437,6 +437,26 @@ pub(crate) struct StructureLine {
     pub child_unit_cost: Option<f64>,
 }
 
+/// Picks the child revision according to the rule.
+pub(crate) async fn resolve(
+    pool: &PgPool,
+    item_id: Uuid,
+    rule: RevisionRule,
+) -> AppResult<Option<Revision>> {
+    let filter = match rule {
+        RevisionRule::Latest => "",
+        // Lines without an as-released configuration use the newest released revision.
+        RevisionRule::Released | RevisionRule::AsReleased => "AND r.state = 'released'",
+    };
+    Ok(sqlx::query_as::<_, Revision>(&format!(
+        "{} WHERE r.item_id = $1 {filter} ORDER BY r.seq DESC LIMIT 1",
+        revisions::REVISION_SELECT
+    ))
+    .bind(item_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
 impl StructureLine {
     fn child(&self) -> Option<ResolvedRevision> {
         self.child_revision_id.map(|id| ResolvedRevision {
