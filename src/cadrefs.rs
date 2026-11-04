@@ -152,8 +152,8 @@ fn names_in(run: &str, exts: &[&str], out: &mut Vec<String>) {
 fn byte_runs(content: &[u8], skip: Option<&std::ops::Range<usize>>, mut f: impl FnMut(&str)) {
     let mut start = None;
     for (i, &b) in content.iter().enumerate() {
-        let printable = ((0x20..0x7f).contains(&b) || b >= 0x80)
-            && !skip.is_some_and(|s| s.contains(&i));
+        let printable =
+            ((0x20..0x7f).contains(&b) || b >= 0x80) && !skip.is_some_and(|s| s.contains(&i));
         match (printable, start) {
             (true, None) => start = Some(i),
             (false, Some(s)) => {
@@ -254,8 +254,12 @@ pub fn find(content: &[u8], own_name: &str) -> Vec<String> {
     // The export name in the STEP header is not a reference to another file.
     let skip = step_file_name_entity(content);
     let mut found = Vec::new();
-    byte_runs(content, skip.as_ref(), |run| names_in(run, &exts, &mut found));
-    utf16_runs(content, skip.as_ref(), |run| names_in(run, &exts, &mut found));
+    byte_runs(content, skip.as_ref(), |run| {
+        names_in(run, &exts, &mut found)
+    });
+    utf16_runs(content, skip.as_ref(), |run| {
+        names_in(run, &exts, &mut found)
+    });
     let own = cadformat::normalize_name(own_name).to_lowercase();
     let mut seen = HashSet::new();
     found
