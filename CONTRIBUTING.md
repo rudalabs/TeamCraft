@@ -53,7 +53,7 @@ You need:
 
 * Rust stable, installed with [rustup](https://rustup.rs). The minimum
   supported version is 1.82.
-* PostgreSQL 14 or newer. The easiest option is the dev database from
+* PostgreSQL 16 or newer. The easiest option is the dev database from
   `docker-compose.yml`, which needs Docker with Compose v2.
 * For the desktop app only: the
   [Tauri prerequisites](https://tauri.app/start/prerequisites/) of your

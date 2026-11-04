@@ -17,7 +17,7 @@ optional, git-ignored `secrets/.env` file in the working directory.
 | `TEAMCRAFT_LOG_FORMAT`    | `text`                           | `text` or `json`                                                                |
 | `RUST_LOG`                | `info,tower_http=info,sqlx=warn` | log filter                                                                      |
 
-## Database (PostgreSQL 14+)
+## Database (PostgreSQL 16+)
 
 | Variable                                          | Default                                          | Meaning                                                                |
 |---------------------------------------------------|--------------------------------------------------|------------------------------------------------------------------------|
