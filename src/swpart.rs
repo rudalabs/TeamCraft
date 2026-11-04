@@ -566,13 +566,16 @@ mod tests {
         bytes.extend(section("Stray", b"stray"));
         bytes.extend_from_slice(&SIG);
         bytes.extend(section("Three", b"three"));
-        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/flood.bin");
+        // A file of its own in the system temp folder: the repository's
+        // `target/` need not exist (CARGO_TARGET_DIR elsewhere), and a shared
+        // name would race with parallel test runs.
+        let p = std::env::temp_dir().join(format!("teamcraft-swpart-{}.bin", uuid::Uuid::new_v4()));
         std::fs::write(&p, &bytes).unwrap();
         let sw = SwContainer::open(std::fs::File::open(&p).unwrap())
             .unwrap()
             .unwrap();
-        let _ = Cursor::new(0);
         let names: Vec<&str> = sw.sections().iter().map(|s| s.name.as_str()).collect();
+        let _ = std::fs::remove_file(&p);
         assert_eq!(names, ["One", "Two", "Three"]);
     }
 
