@@ -157,10 +157,7 @@ async fn compare_at(
     code: &str,
     with: &str,
 ) -> AppResult<(Revision, Revision, Vec<bom_compare::LineDiff>)> {
-    let (a, b) = tokio::try_join!(
-        revision_at(st, number, with),
-        revision_at(st, number, code)
-    )?;
+    let (a, b) = tokio::try_join!(revision_at(st, number, with), revision_at(st, number, code))?;
     let (before, after) = if a.seq <= b.seq { (a, b) } else { (b, a) };
     let diffs = bom_compare::compare(&st.db, before.id, after.id).await?;
     Ok((before, after, diffs))
