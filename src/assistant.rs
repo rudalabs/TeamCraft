@@ -9,8 +9,9 @@
 //!
 //! * Enabled only when `TEAMCRAFT_ANTHROPIC_API_KEY` is configured; the key
 //!   never leaves this module except in the `x-api-key` header.
-//! * Read-only by default: the draft tools (`create_change_draft`,
-//!   `add_to_change`) are only offered when the request allows drafts.
+//! * Read-only by default: the write tools (`create_change_draft`,
+//!   `add_to_change`, `create_change_request`, `comment_change_request`)
+//!   are only offered when the request allows drafts.
 //! * No SDK: plain JSON over the existing `reqwest` client. The HTTP part
 //!   sits behind [`Transport`] and the tools behind [`Tools`], so the loop
 //!   is tested without network or database.
@@ -265,12 +266,13 @@ impl Question {
 pub fn system_prompt(me: &Actor, allow_drafts: bool) -> String {
     let drafts = if allow_drafts {
         "Drafts are allowed in this conversation: you may create or extend DRAFT change orders with \
-         create_change_draft and add_to_change, but only when the request asks for it. Never claim that \
-         something was submitted, approved or released."
+         create_change_draft and add_to_change, raise a change request with create_change_request and \
+         comment on one with comment_change_request, but only when the request asks for it. Never claim \
+         that something was submitted, approved, released, triaged or decided."
     } else {
-        "This conversation is read-only: you cannot create or change anything. If a change order would \
-         help, say what it should contain – the user can create it in TeamCraft or ask again with drafts \
-         allowed."
+        "This conversation is read-only: you cannot create or change anything. If a change order, a change \
+         request or a comment would help, say what it should contain – the user can create it in TeamCraft \
+         or ask again with drafts allowed."
     };
     format!(
         "You are the assistant built into TeamCraft, answering on behalf of {name} (role: {role}); every \
@@ -1194,9 +1196,22 @@ mod tests {
         assert!(read_only.contains(&"bom_health".to_string()));
         assert!(!read_only.contains(&"create_change_draft".to_string()));
         assert!(!read_only.contains(&"add_to_change".to_string()));
+        assert!(!read_only.contains(&"create_change_request".to_string()));
+        assert!(!read_only.contains(&"comment_change_request".to_string()));
+        // the new read tools are always offered
+        for name in [
+            "list_change_requests",
+            "get_change_request",
+            "list_simulations",
+            "get_simulation",
+            "compare_simulation_results",
+        ] {
+            assert!(read_only.contains(&name.to_string()), "{name}");
+        }
         let with_drafts = names(true);
         assert!(with_drafts.contains(&"create_change_draft".to_string()));
-        assert_eq!(with_drafts.len(), read_only.len() + 2);
+        assert!(with_drafts.contains(&"create_change_request".to_string()));
+        assert_eq!(with_drafts.len(), read_only.len() + 4);
     }
 
     #[test]

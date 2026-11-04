@@ -9,9 +9,10 @@
 //! rights through the same `services::*` functions as the REST API.
 //! `teamcraft mcp` (see `main.rs`) bridges stdio clients to this endpoint.
 //!
-//! Tools are read-mostly (search, structure, changes, worklist, analyses).
-//! The few writes only prepare work – a draft change order – and never
-//! submit, approve or release: those decisions stay with people.
+//! Tools are read-mostly (search, structure, changes, change requests,
+//! simulations, worklist, analyses). The few writes only prepare work – a
+//! draft change order, a new change request, a comment – and never submit,
+//! approve, release, triage or decide: those decisions stay with people.
 
 pub mod tools;
 
@@ -42,12 +43,19 @@ document, software) has revisions A, B, C …; a revision is in_work, in_review,
 files (each with versions) and BOM lines to child items. A user checks a revision out (lock) to change it. \
 Revisions are released only through change orders (draft → in_review → released) reviewed by other people; a \
 change releases a whole product at once, so unreleased BOM children and drawings must be part of it \
-(release readiness). Item numbers look like PRT-000012; revision codes are letters, `latest` is the newest.\n\n\
+(release readiness). Item numbers look like PRT-000012; revision codes are letters, `latest` is the newest.\n\
+A change request (ECR-000004) reports a problem or proposes a change on items before any change order; CAD \
+editors of the affected project groups triage it and accept, defer or reject it, and an accepted request is \
+implemented by a change order. A simulation (SIM-000003, item type simulation) is based on item revisions \
+and file versions and holds result values with limits (pass/fail); it is out of date when a basis got a newer \
+release, became obsolete or its simulated file a newer version.\n\n\
 Use the tools to answer questions about the data – find items, explain structures and where-used, \
-summarise what changed between revisions, prepare change orders, check a BOM before a release. Quote item \
-numbers and revisions exactly as returned. You can draft change orders, but you cannot submit, approve or \
-release them – tell the user what is left for them to do. Prompts: release_notes, review_change, \
-release_check, worklist_triage.";
+summarise what changed between revisions, prepare change orders, check a BOM before a release, summarise \
+reported problems, check simulations and compare their results. Quote item, request and simulation numbers \
+and revisions exactly as returned. You can draft change orders, raise change requests and comment on them, \
+but only when the user asks; you cannot submit, approve or release change orders or triage and decide change \
+requests – tell the user what is left for them to do. Prompts: release_notes, review_change, release_check, \
+worklist_triage, triage_requests, simulation_status.";
 
 fn response(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })

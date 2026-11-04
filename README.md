@@ -142,8 +142,10 @@ promised.
 - **AI assistants (MCP).** A built-in Model Context Protocol server
   (`/api/v1/mcp`, plus a stdio bridge `teamcraft mcp`) lets Claude Code and
   other MCP clients search items and explain BOMs and where-used, compare
-  revisions, check a BOM before a release and draft change orders. It uses
-  your rights and never submits, approves or releases.
+  revisions, check a BOM before a release, draft change orders, summarise,
+  raise and comment on change requests, and check simulations (out of date,
+  pass/fail, results between revisions). It uses your rights and never
+  submits, approves, releases or decides a change request.
 - **Ask TeamCraft (optional).** With an Anthropic API key configured, the
   web UI and the desktop app offer quick actions – draft release notes,
   check before release, brief me for a review, what needs my attention –
