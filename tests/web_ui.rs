@@ -1055,6 +1055,7 @@ async fn notifications_in_the_web_ui() {
                 ("want", "change_update"),
                 ("want", "impact"),
                 ("want", "unlock"),
+                ("want", "change_request"),
                 ("mattermost", "on"),
                 ("mattermost_username", "Rolf.R"),
             ],
@@ -1585,5 +1586,166 @@ async fn numbering_scheme_on_the_project_page() {
         r.json()["item_number"],
         format!("ROCKET-PRT{:02}-001", year % 100)
     );
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn simulations_in_the_web_ui() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    let cookie = app.login("eng").await;
+    let origin = Some("http://localhost:8080");
+    for (item_type, name) in [("part", "Bracket"), ("simulation", "Bracket – modal")] {
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/items",
+                &eng,
+                Some(json!({ "item_type": item_type, "name": name, "project": "ROCKET" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    let revision_id = |number: &str| {
+        let uri = format!("/api/v1/items/{number}/revisions/A");
+        let eng = eng.clone();
+        let app = &app;
+        async move {
+            app.api(Method::GET, &uri, &eng, None).await.json()["revision"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+    };
+    let prt_a = revision_id("PRT-000001").await;
+    let sim_a = revision_id("SIM-000001").await;
+    app.api_upload(
+        "/api/v1/items/PRT-000001/revisions/A/files",
+        &eng,
+        "bracket.step",
+        b"ISO-10303-21;",
+    )
+    .await;
+
+    // The new-item form offers the type, the simulation page its cards.
+    let form = app
+        .get_page("/items/new?type=simulation", Some(&cookie))
+        .await
+        .text();
+    assert!(
+        form.contains("value=\"simulation\" selected"),
+        "type preselected"
+    );
+    let page = app
+        .get_page(&format!("/revisions/{sim_a}"), Some(&cookie))
+        .await
+        .text();
+    assert!(page.contains("id=\"simulation-basis\"") && page.contains("id=\"simulation-results\""));
+    assert!(page.contains("No basis yet"));
+
+    // Basis and results through the forms.
+    let r = app
+        .post_form(
+            &format!("/revisions/{sim_a}/simulation/bases"),
+            Some(&cookie),
+            origin,
+            &[
+                ("role", "geometry"),
+                ("item", "PRT-000001"),
+                ("revision", ""),
+                ("file", "bracket.step"),
+                ("note", ""),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let r = app
+        .post_form(
+            &format!("/revisions/{sim_a}/simulation/results"),
+            Some(&cookie),
+            origin,
+            &[
+                ("name", "First eigenfrequency"),
+                ("value", "182,5"),
+                ("unit", "Hz"),
+                ("lower_limit", "200"),
+                ("upper_limit", ""),
+                ("load_case", "modal"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let r = post_multipart(
+        &app,
+        &format!("/revisions/{sim_a}/simulation/results/import"),
+        &cookie,
+        (
+            "results.csv",
+            b"name;value;unit;limit_low;limit_high;load_case\nMax. displacement;0,35;mm;;0,5;LC1\n",
+        ),
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let page = app
+        .get_page(&format!("/revisions/{sim_a}"), Some(&cookie))
+        .await
+        .text();
+    for expected in [
+        "PRT-000001/A",
+        "bracket.step",
+        "Up to date",
+        "First eigenfrequency",
+        "Max. displacement",
+        "1 failed",
+        "1 passed",
+        "badge badge-fail",
+    ] {
+        assert!(page.contains(expected), "simulation page shows {expected}");
+    }
+    let csv = app
+        .get_page(
+            &format!("/revisions/{sim_a}/simulation/results.csv"),
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(csv.status, StatusCode::OK);
+    assert!(
+        csv.text().contains("Max. displacement,0.35,mm,,0.5,LC1"),
+        "{}",
+        csv.text()
+    );
+
+    // The part lists the simulation.
+    let part = app
+        .get_page(&format!("/revisions/{prt_a}"), Some(&cookie))
+        .await
+        .text();
+    assert!(
+        part.contains("id=\"simulations\"") && part.contains("SIM-000001/A"),
+        "{part}"
+    );
+
+    // A part a simulation is based on cannot be deleted.
+    let part_item = app
+        .api(Method::GET, "/api/v1/items/PRT-000001", &eng, None)
+        .await
+        .json()["item"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = app
+        .post_form(
+            &format!("/items/{part_item}/delete"),
+            Some(&cookie),
+            origin,
+            &[("back", format!("/revisions/{prt_a}").as_str())],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let r = app
+        .api(Method::GET, "/api/v1/items/PRT-000001", &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "the basis item still exists");
     app.teardown().await;
 }

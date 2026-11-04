@@ -17,6 +17,15 @@
 //!   (OLE compound document), `.sch` KiCad 5 (`EESchema`) or Eagle, `.sc` a
 //!   SolidCraft design (ZIP container or JSON) or a script, `.pdf` with an
 //!   embedded U3D/PRC model is a 3D PDF.
+//! * simulation models and results (FEA/CFD) are recognised the same way.
+//!   `.sim` is NX unless the file names STAR-CCM+ near its start; generic
+//!   extensions only count with matching content: `.dat` only with Fluent's
+//!   `(0 …)` sections, `.e` only as netCDF/HDF5 (Exodus II), `.db` not for
+//!   SQLite/OLE/text files, `.rst` not for text (reStructuredText), `.msg`
+//!   and `.sta` only as text (not Outlook mails), `.odb` not as ZIP
+//!   (OpenDocument database), `.bdf` not for bitmap fonts. OpenFOAM cases
+//!   are recognised by `controlDict` (or a `.foam` marker), LS-DYNA results
+//!   by `d3plot`, `d3plot01`, …
 //!
 //! Native formats are proprietary; TeamCraft identifies and versions them,
 //! scans the ones with readable references (see `cadrefs`) and previews the
@@ -47,8 +56,10 @@ pub enum FormatKind {
     Visualization,
     /// Electronics design (schematics, boards, Gerber).
     Electronics,
-    /// Simulation and analysis models.
+    /// Simulation and analysis models, solver input decks.
     Simulation,
+    /// Simulation results (fields, solver output, logs).
+    Result,
     /// Manufacturing data (CAM, G-code).
     Manufacturing,
     /// Documents and images.
@@ -58,7 +69,7 @@ pub enum FormatKind {
 }
 
 impl FormatKind {
-    pub const ALL: [FormatKind; 12] = [
+    pub const ALL: [FormatKind; 13] = [
         FormatKind::Part,
         FormatKind::Assembly,
         FormatKind::Drawing,
@@ -68,6 +79,7 @@ impl FormatKind {
         FormatKind::Visualization,
         FormatKind::Electronics,
         FormatKind::Simulation,
+        FormatKind::Result,
         FormatKind::Manufacturing,
         FormatKind::Document,
         FormatKind::Other,
@@ -84,6 +96,7 @@ impl FormatKind {
             FormatKind::Visualization => "visualization",
             FormatKind::Electronics => "electronics",
             FormatKind::Simulation => "simulation",
+            FormatKind::Result => "result",
             FormatKind::Manufacturing => "manufacturing",
             FormatKind::Document => "document",
             FormatKind::Other => "other",
@@ -101,6 +114,7 @@ impl FormatKind {
             FormatKind::Visualization => "Visualisation",
             FormatKind::Electronics => "Electronics",
             FormatKind::Simulation => "Simulation",
+            FormatKind::Result => "Simulation result",
             FormatKind::Manufacturing => "Manufacturing",
             FormatKind::Document => "Document",
             FormatKind::Other => "Other",
@@ -198,7 +212,9 @@ pub const SYSTEMS: &[CadSystem] = &[
     system!("eagle", "Eagle", "Eagle", "Autodesk"),
     system!("pcb-fab", "PCB manufacturing (Gerber, drill)", "PCB fab", "vendor independent", "gerber"),
     system!("rocketry", "Rocketry (OpenRocket, RockSim, RASAero)", "Rocketry", "various", "openrocket", "rocksim", "rasaero"),
-    system!("cae", "Simulation (ANSYS, Abaqus, COMSOL)", "Simulation", "various", "ansys", "abaqus", "comsol"),
+    system!("cae", "Simulation (ANSYS, Abaqus, COMSOL, Nastran, CalculiX, LS-DYNA)", "Simulation", "various", "ansys", "abaqus", "comsol", "nastran", "calculix", "ls-dyna", "lsdyna", "fea"),
+    system!("cfd", "CFD (OpenFOAM, Fluent, STAR-CCM+)", "CFD", "various", "openfoam", "fluent", "star-ccm+", "starccm"),
+    system!("cae-open", "Open simulation data (VTK, CGNS, Exodus II)", "VTK/CGNS", "vendor independent", "vtk", "paraview", "cgns", "exodus"),
     system!("cam", "CNC and 3D printer programs (G-code)", "G-code", "vendor independent", "gcode", "cnc"),
     system!("documents", "Documents and images", "Document", "various"),
 ];
@@ -350,6 +366,35 @@ pub const FORMATS: &[CadFormat] = &[
     cad_format!("abaqus-cae", "Abaqus model database", "cae", Simulation, ["cae"], OCTET),
     cad_format!("abaqus-input", "Abaqus input file", "cae", Simulation, ["inp"], "text/plain"),
     cad_format!("comsol", "COMSOL model", "cae", Simulation, ["mph"], OCTET),
+    cad_format!("abaqus-odb", "Abaqus output database (results)", "cae", Result, ["odb"], OCTET),
+    cad_format!("abaqus-status", "Abaqus status file", "cae", Result, ["sta"], "text/plain"),
+    cad_format!("abaqus-message", "Abaqus message file", "cae", Result, ["msg"], "text/plain"),
+    cad_format!("ansys-result", "ANSYS result file", "cae", Result, ["rst"], OCTET),
+    cad_format!("ansys-thermal-result", "ANSYS thermal result file", "cae", Result, ["rth"], OCTET),
+    cad_format!("ansys-database", "ANSYS Mechanical APDL database", "cae", Simulation, ["db"], OCTET),
+    cad_format!("nastran-bulk", "Nastran input deck (bulk data)", "cae", Simulation, ["bdf", "nas"], "text/plain"),
+    cad_format!("nastran-op2", "Nastran binary results (OP2)", "cae", Result, ["op2"], OCTET),
+    cad_format!("nastran-f06", "Nastran print output (F06)", "cae", Result, ["f06"], "text/plain"),
+    cad_format!("calculix-frd", "CalculiX results (FRD)", "cae", Result, ["frd"], "text/plain"),
+    cad_format!("lsdyna-keyword", "LS-DYNA keyword input deck", "cae", Simulation, ["k"], "text/plain"),
+    cad_format!("lsdyna-d3plot", "LS-DYNA results (d3plot)", "cae", Result, ["d3plot"], OCTET),
+    // CFD
+    cad_format!("openfoam-case", "OpenFOAM case (controlDict, .foam marker)", "cfd", Simulation, ["foam"], "text/plain"),
+    cad_format!("fluent-case", "Fluent case file", "cfd", Simulation, ["cas"], OCTET),
+    cad_format!("fluent-data", "Fluent data file (results)", "cfd", Result, ["dat"], OCTET),
+    cad_format!("fluent-case-h5", "Fluent case file (HDF5)", "cfd", Simulation, ["cas.h5"], OCTET),
+    cad_format!("fluent-data-h5", "Fluent data file (HDF5, results)", "cfd", Result, ["dat.h5"], OCTET),
+    cad_format!("starccm-sim", "STAR-CCM+ simulation", "cfd", Simulation, ["sim"], OCTET),
+    // Open simulation data formats
+    cad_format!("vtk-legacy", "VTK legacy data", "cae-open", Result, ["vtk"], OCTET),
+    cad_format!("vtk-unstructured", "VTK unstructured grid (XML)", "cae-open", Result, ["vtu"], "application/xml"),
+    cad_format!("vtk-polydata", "VTK polygonal data (XML)", "cae-open", Result, ["vtp"], "application/xml"),
+    cad_format!("vtk-structured", "VTK structured grid (XML)", "cae-open", Result, ["vts"], "application/xml"),
+    cad_format!("vtk-rectilinear", "VTK rectilinear grid (XML)", "cae-open", Result, ["vtr"], "application/xml"),
+    cad_format!("vtk-collection", "ParaView data collection (time steps)", "cae-open", Result, ["pvd"], "application/xml"),
+    cad_format!("vtk-multiblock", "VTK multiblock data set (XML)", "cae-open", Result, ["vtm"], "application/xml"),
+    cad_format!("cgns", "CGNS (CFD General Notation System)", "cae-open", Result, ["cgns"], OCTET),
+    cad_format!("exodus", "Exodus II mesh and results", "cae-open", Result, ["exo", "e"], OCTET),
     // CNC / 3D printer programs
     cad_format!("gcode", "G-code program", "cam", Manufacturing, ["gcode", "gco", "ngc", "nc", "bgcode"], "text/plain"),
     // Documents and images
@@ -367,7 +412,7 @@ pub const FORMATS: &[CadFormat] = &[
 
 /// Extensions shared by two formats; [`detect`] (and for 3D PDFs
 /// [`detect_stored`]) decides by content.
-pub const AMBIGUOUS: [&str; 3] = ["prt", "asm", "pdf"];
+pub const AMBIGUOUS: [&str; 4] = ["prt", "asm", "pdf", "sim"];
 
 /// Creo saves every iteration as `<name>.<ext>.<n>`.
 const CREO_ITERATED: [&str; 7] = ["prt", "asm", "drw", "frm", "lay", "sec", "mfg"];
@@ -437,9 +482,43 @@ fn looks_textual(head: &[u8]) -> bool {
 /// Classifies a file by its name and the first [`HEAD_LEN`] bytes of its
 /// content (pass `&[]` if the content is not at hand).
 pub fn detect(name: &str, head: &[u8]) -> Option<&'static CadFormat> {
+    if let Some(format) = detect_by_name(name) {
+        return Some(format);
+    }
     let iterated = creo_iteration(name).is_some();
     let ext = extension(name)?;
+    // `head` is empty when only the name is known: then the name decides.
+    let known = !head.is_empty();
     match ext.as_str() {
+        // NX simulation files and STAR-CCM+ simulations share .sim; STAR-CCM+
+        // names itself near the start of the file, everything else is NX.
+        "sim" if contains_ascii_ci(head, b"star-ccm") || contains_ascii_ci(head, b"starccm") => {
+            by_id("starccm-sim")
+        }
+        "sim" => by_id("nx-simulation"),
+        // Abaqus writes .msg and .sta as text; Outlook messages are OLE files.
+        "msg" | "sta" if known && !looks_textual(head) => None,
+        // ANSYS databases are binary; SQLite files and Windows thumbnail
+        // caches use .db too.
+        "db" if name.eq_ignore_ascii_case("thumbs.db")
+            || head.starts_with(b"SQLite format 3")
+            || is_ole(head)
+            || looks_textual(head) =>
+        {
+            None
+        }
+        // ANSYS results are binary; text .rst files are reStructuredText.
+        "rst" if looks_textual(head) => None,
+        // Bitmap fonts (BDF) start with STARTFONT, Nastran decks do not.
+        "bdf" if head.starts_with(b"STARTFONT") => None,
+        // OpenDocument databases (LibreOffice Base) are ZIP files.
+        "odb" if head.starts_with(b"PK\x03\x04") => None,
+        // .dat is everywhere; only Fluent's "(0 …)" section syntax counts.
+        "dat" if !is_fluent_sections(head) => None,
+        // Exodus II is netCDF or HDF5; other .e files are not.
+        "e" if known && !is_netcdf_or_hdf5(head) => None,
+        // LS-DYNA keyword decks are text.
+        "k" if known && !looks_textual(head) => None,
         // NX and Creo both use .prt; only Creo writes the "#UGC:" text header
         // and iteration suffixes.
         "prt" if iterated || is_creo(head) => by_id("creo-part"),
@@ -463,6 +542,55 @@ pub fn detect(name: &str, head: &[u8]) -> Option<&'static CadFormat> {
         "sc" => None,
         other => first_with_extension(other),
     }
+}
+
+/// Formats recognised by the whole file name rather than its extension:
+/// the OpenFOAM `controlDict` (marks a case folder), LS-DYNA `d3plot`,
+/// `d3plot01`, … and the two-part Fluent HDF5 extensions `.cas.h5` /
+/// `.dat.h5`.
+fn detect_by_name(name: &str) -> Option<&'static CadFormat> {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let lower = base.to_ascii_lowercase();
+    if base == "controlDict" {
+        return by_id("openfoam-case");
+    }
+    if let Some(rest) = lower.strip_prefix("d3plot") {
+        if rest.bytes().all(|b| b.is_ascii_digit()) {
+            return by_id("lsdyna-d3plot");
+        }
+    }
+    if lower.len() > ".cas.h5".len() && lower.ends_with(".cas.h5") {
+        return by_id("fluent-case-h5");
+    }
+    if lower.len() > ".dat.h5".len() && lower.ends_with(".dat.h5") {
+        return by_id("fluent-data-h5");
+    }
+    None
+}
+
+/// Case-insensitive search for an ASCII needle.
+fn contains_ascii_ci(head: &[u8], needle: &[u8]) -> bool {
+    head.windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle))
+}
+
+/// Fluent case and data files consist of `(<index> …)` sections, starting
+/// with a comment section `(0 "…")` or the header `(1 "…")`.
+fn is_fluent_sections(head: &[u8]) -> bool {
+    let start = head
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(head.len());
+    let rest = &head[start..];
+    rest.starts_with(b"(0 ") || rest.starts_with(b"(1 ") || rest.starts_with(b"(4 ")
+}
+
+/// netCDF classic/64-bit (`CDF\x01`, `CDF\x02`, `CDF\x05`) or HDF5 signature.
+fn is_netcdf_or_hdf5(head: &[u8]) -> bool {
+    head.starts_with(b"CDF\x01")
+        || head.starts_with(b"CDF\x02")
+        || head.starts_with(b"CDF\x05")
+        || head.starts_with(b"\x89HDF\r\n\x1a\n")
 }
 
 /// JSON design of SolidCraft (`"format": "solidcraft/N"`).
@@ -834,6 +962,109 @@ mod tests {
         assert_eq!(normalize_name("bracket.prt.7"), "bracket.prt");
         assert_eq!(normalize_name("bracket.stp"), "bracket.stp");
         assert_eq!(extension("Bracket.PRT.3").as_deref(), Some("prt"));
+    }
+
+    #[test]
+    fn simulation_models_and_results() {
+        let by_name = [
+            ("mesh.vtk", "vtk-legacy"),
+            ("field.VTU", "vtk-unstructured"),
+            ("surface.vtp", "vtk-polydata"),
+            ("grid.vts", "vtk-structured"),
+            ("grid.vtr", "vtk-rectilinear"),
+            ("run.pvd", "vtk-collection"),
+            ("blocks.vtm", "vtk-multiblock"),
+            ("job.frd", "calculix-frd"),
+            ("model.op2", "nastran-op2"),
+            ("model.f06", "nastran-f06"),
+            ("model.bdf", "nastran-bulk"),
+            ("model.nas", "nastran-bulk"),
+            ("file.rst", "ansys-result"),
+            ("file.rth", "ansys-thermal-result"),
+            ("file.db", "ansys-database"),
+            ("Job-1.odb", "abaqus-odb"),
+            ("Job-1.sta", "abaqus-status"),
+            ("Job-1.msg", "abaqus-message"),
+            ("flow.cgns", "cgns"),
+            ("mesh.exo", "exodus"),
+            ("mesh.e", "exodus"),
+            ("pipe.cas", "fluent-case"),
+            ("pipe.cas.h5", "fluent-case-h5"),
+            ("pipe-1-00100.DAT.H5", "fluent-data-h5"),
+            ("bracket.sim", "nx-simulation"),
+            ("bracket_fem1.fem", "nx-simulation"),
+            ("crash.k", "lsdyna-keyword"),
+            ("crash.d3plot", "lsdyna-d3plot"),
+            ("d3plot", "lsdyna-d3plot"),
+            ("d3plot07", "lsdyna-d3plot"),
+            ("controlDict", "openfoam-case"),
+            ("system/controlDict", "openfoam-case"),
+            ("pitzDaily.foam", "openfoam-case"),
+        ];
+        for (name, expected) in by_name {
+            assert_eq!(id(name, &[]), Some(expected), "{name}");
+        }
+        for (expected, kind) in [
+            ("vtk-unstructured", FormatKind::Result),
+            ("calculix-frd", FormatKind::Result),
+            ("nastran-bulk", FormatKind::Simulation),
+            ("fluent-data", FormatKind::Result),
+            ("openfoam-case", FormatKind::Simulation),
+        ] {
+            assert_eq!(by_id(expected).unwrap().kind, kind, "{expected}");
+        }
+        // decided by content
+        assert_eq!(
+            id("pipe.sim", b"\x00\x01STAR-CCM+ 2402 simulation"),
+            Some("starccm-sim")
+        );
+        assert_eq!(id("pipe.sim", b"\x00\x01\x02NX"), Some("nx-simulation"));
+        assert_eq!(id("pipe.dat", &[]), None, ".dat alone is not enough");
+        assert_eq!(
+            id("pipe.dat", b"(0 \"fluent data\")\n"),
+            Some("fluent-data")
+        );
+        assert_eq!(
+            id("pipe.dat", b"  (1 \"ANSYS Fluent 2024\")"),
+            Some("fluent-data")
+        );
+        assert_eq!(id("values.dat", b"1 2 3\n4 5 6\n"), None);
+        assert_eq!(id("mesh.e", b"CDF\x02\x00\x00\x00\x01"), Some("exodus"));
+        assert_eq!(id("mesh.e", b"\x89HDF\r\n\x1a\n\x00"), Some("exodus"));
+        assert_eq!(id("notes.e", b"plain text"), None);
+        assert_eq!(id("app.db", b"SQLite format 3\x00"), None);
+        assert_eq!(id("Thumbs.db", &[]), None);
+        assert_eq!(id("cache.db", &OLE_MAGIC), None);
+        assert_eq!(
+            id("file.db", b"\x00\x00\x00\x64ANSYS"),
+            Some("ansys-database")
+        );
+        assert_eq!(
+            id("README.rst", b"Title\n=====\n\nText"),
+            None,
+            "reStructuredText"
+        );
+        assert_eq!(
+            id("file.rst", b"\x00\x00\x00\x64\x00\x00"),
+            Some("ansys-result")
+        );
+        assert_eq!(id("mail.msg", &OLE_MAGIC), None, "Outlook message");
+        assert_eq!(
+            id("Job-1.msg", b" Abaqus 2024\n STEP 1\n"),
+            Some("abaqus-message")
+        );
+        assert_eq!(id("font.bdf", b"STARTFONT 2.1\n"), None);
+        assert_eq!(id("model.bdf", b"SOL 101\nCEND\n"), Some("nastran-bulk"));
+        assert_eq!(id("base.odb", b"PK\x03\x04"), None, "OpenDocument database");
+        assert_eq!(id("crash.k", b"*KEYWORD\n*NODE\n"), Some("lsdyna-keyword"));
+        assert_eq!(id("crash.k", b"\x00\x01\x02\x03"), None);
+        assert_eq!(id("d3plotter.txt", &[]), Some("text"), "not d3plot");
+        assert_eq!(id(".cas.h5", &[]), None, "no stem");
+        // the search knows the solvers
+        assert!(!ids_named_by("simulation").is_empty());
+        assert!(ids_named_by("OpenFOAM").contains(&"openfoam-case".to_string()));
+        assert!(ids_named_by("vtk").contains(&"vtk-unstructured".to_string()));
+        assert!(ids_named_by("Nastran").contains(&"nastran-op2".to_string()));
     }
 
     #[test]

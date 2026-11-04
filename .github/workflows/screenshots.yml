@@ -1,6 +1,8 @@
 # README screenshots: builds TeamCraft, starts it against an empty
 # PostgreSQL, seeds demo data and captures the pages with headless Chrome
-# (scripts/screenshots.sh). The PNGs are uploaded as the "screenshots"
+# (scripts/screenshots.sh). It also builds TeamCraft Desktop and captures it
+# signed in to the same server on a virtual X display (Xvfb, xdotool,
+# ImageMagick – desktop-*.png). The PNGs are uploaded as the "screenshots"
 # artifact; this workflow never commits anything – see CONTRIBUTING.md,
 # "Updating the README screenshots".
 name: Screenshots
@@ -27,7 +29,7 @@ jobs:
   screenshots:
     name: capture the README screenshots
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:17-alpine
@@ -48,9 +50,21 @@ jobs:
       TEAMCRAFT_INSTANCE_NAME: TeamCraft
     steps:
       - uses: actions/checkout@v4
+      - name: Desktop app and capture dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev xvfb xdotool imagemagick
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            desktop
       - run: cargo build --release --locked
+      - name: Build TeamCraft Desktop
+        working-directory: desktop
+        run: cargo build --locked
 
       - name: Start TeamCraft
         run: |
@@ -78,6 +92,7 @@ jobs:
         env:
           BASE_URL: http://127.0.0.1:8080
           OUT_DIR: ${{ runner.temp }}/screenshots
+          DESKTOP_APP: desktop/target/debug/teamcraft-desktop
         run: scripts/screenshots.sh
 
       - name: Server log

@@ -2,6 +2,7 @@
 //! Every network access and every file system access of the app is here.
 
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -10,15 +11,16 @@ use std::{
 };
 
 use reqwest::Method;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Notify;
 
 use crate::{
+    acp,
     api::{self, Api, ApiError, Transfer},
-    cadexport, folderimport,
+    cadexport, folderimport, layout,
     settings::{self, Settings},
     signin, workspace, AppState,
 };
@@ -207,6 +209,8 @@ pub async fn sign_in_token(state: State<'_, AppState>, token: String) -> CmdResu
 
 #[tauri::command]
 pub fn sign_out(state: State<'_, AppState>) -> CmdResult<()> {
+    // the agent works with the token that is about to go
+    stop_agent(&state);
     let mut s = state.settings.lock().expect("settings lock");
     s.save_token(&state.config_dir, None)
         .map_err(|e| ApiError::local(e.to_string()))
@@ -273,6 +277,8 @@ pub async fn file_bytes(
         "version-mesh" => format!("/file-versions/{id}/mesh"),
         // preview image stored in Inventor / Solid Edge / SolidWorks files
         "thumbnail" => format!("/files/{id}/thumbnail"),
+        // screenshots and PDFs attached to a change request
+        "request-attachment" => format!("/change-request-attachments/{id}/content"),
         _ => return Err(ApiError::local("Unknown file kind.")),
     };
     let bytes = signed_in_api(&state)?.bytes(&path).await?;
@@ -371,7 +377,24 @@ pub async fn save_stl(
     Ok(Some(target))
 }
 
-/// Check out: takes the lock on the server and fills the workspace folder.
+/// A progress reporter for Gets: `workspace-progress` events to the user
+/// interface. Every Get starts with a fresh cancel flag.
+fn progress_events(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+) -> (
+    Arc<AtomicBool>,
+    impl FnMut(&workspace::Progress) + Send + 'static,
+) {
+    state.get_cancel.store(false, Ordering::Relaxed);
+    let app = app.clone();
+    (state.get_cancel.clone(), move |p: &workspace::Progress| {
+        let _ = app.emit("workspace-progress", p);
+    })
+}
+
+/// Check out: takes the lock on the server and copies the files into the
+/// working folder; the files of the revision become writable.
 #[tauri::command]
 pub async fn workspace_checkout(
     app: AppHandle,
@@ -391,18 +414,21 @@ pub async fn workspace_checkout(
         None,
     )
     .await?;
-    workspace::download_all(
+    let (cancel, mut progress) = progress_events(&app, &state);
+    workspace::download_revision(
         &api,
         &workspace_root(&app, &state),
         project.as_deref(),
         &item,
         &code,
+        &cancel,
+        &mut progress,
     )
     .await
 }
 
-/// Copies the files of any revision (e.g. released ones) into the workspace
-/// without taking the lock.
+/// Copies the current files of a revision into the working folder without
+/// taking the lock (read-only on disk).
 #[tauri::command]
 pub async fn workspace_download(
     app: AppHandle,
@@ -412,7 +438,62 @@ pub async fn workspace_download(
     code: String,
 ) -> CmdResult<workspace::Downloaded> {
     let api = signed_in_api(&state)?;
-    workspace::download_all(
+    let (cancel, mut progress) = progress_events(&app, &state);
+    workspace::download_revision(
+        &api,
+        &workspace_root(&app, &state),
+        project.as_deref(),
+        &item,
+        &code,
+        &cancel,
+        &mut progress,
+    )
+    .await
+}
+
+/// "Get": a revision with its structure (BOM under the revision rule
+/// `latest` or `released`) and the CAD files it references – only missing
+/// and outdated files are downloaded, with progress events and cancel.
+#[tauri::command]
+pub async fn workspace_get(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    item: String,
+    code: String,
+    rule: Option<String>,
+) -> CmdResult<workspace::Downloaded> {
+    let api = signed_in_api(&state)?;
+    let (cancel, mut progress) = progress_events(&app, &state);
+    workspace::get_structure(
+        &api,
+        &workspace_root(&app, &state),
+        &item,
+        &code,
+        rule.as_deref().unwrap_or("latest"),
+        &cancel,
+        &mut progress,
+    )
+    .await
+}
+
+/// Stops the running Get after the current chunk; the files copied so far
+/// stay (the next Get continues with the rest).
+#[tauri::command]
+pub fn workspace_cancel(state: State<'_, AppState>) {
+    state.get_cancel.store(true, Ordering::Relaxed);
+}
+
+/// The files of a revision in the working folder compared with the server.
+#[tauri::command]
+pub async fn workspace_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project: Option<String>,
+    item: String,
+    code: String,
+) -> CmdResult<workspace::Status> {
+    let api = signed_in_api(&state)?;
+    workspace::status(
         &api,
         &workspace_root(&app, &state),
         project.as_deref(),
@@ -422,38 +503,7 @@ pub async fn workspace_download(
     .await
 }
 
-/// Local files of a revision compared with the server.
-#[tauri::command]
-pub async fn workspace_status(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    project: Option<String>,
-    item: String,
-    code: String,
-) -> CmdResult<Value> {
-    let api = signed_in_api(&state)?;
-    let files = api
-        .json(
-            Method::GET,
-            &format!(
-                "/items/{}/revisions/{}/files",
-                workspace::enc(&item),
-                workspace::enc(&code)
-            ),
-            None,
-        )
-        .await?;
-    let dir = workspace::revision_dir(
-        &workspace_root(&app, &state),
-        project.as_deref(),
-        &item,
-        &code,
-    );
-    let files = workspace::status(&dir, &files).await?;
-    Ok(json!({ "dir": dir, "exists": dir.is_dir(), "files": files }))
-}
-
-/// Check in the chosen workspace files (new versions) and release the lock.
+/// Check in the chosen files (new versions) and release the lock.
 #[tauri::command]
 pub async fn workspace_checkin(
     app: AppHandle,
@@ -515,8 +565,8 @@ pub fn cancel_upload(state: State<'_, AppState>) {
         .store(true, Ordering::Relaxed);
 }
 
-/// Opens a revision folder (or a file in it) with the system's default
-/// application; without item and revision the workspace root.
+/// Opens the folder of a revision (or a file of it) with the system's
+/// default application; without item and revision the workspace root.
 #[tauri::command]
 pub async fn workspace_open(
     app: AppHandle,
@@ -527,26 +577,54 @@ pub async fn workspace_open(
     file: Option<String>,
 ) -> CmdResult<()> {
     let root = workspace_root(&app, &state);
-    let dir = match (item, code) {
+    let target = match (item, code) {
         (Some(item), Some(code)) => {
-            workspace::revision_dir(&root, project.as_deref(), &item, &code)
+            let api = signed_in_api(&state)?;
+            match file {
+                // Creo: the newest iteration (bracket.prt.7) of bracket.prt.
+                Some(name) => {
+                    let (dir, found) =
+                        workspace::locate(&api, &root, project.as_deref(), &item, &code, &name)
+                            .await?;
+                    found.unwrap_or(dir)
+                }
+                None => {
+                    let rev =
+                        workspace::revision_files(&api, project.as_deref(), &item, &code).await?;
+                    workspace::main_dir(&root, project.as_deref(), &rev.files)
+                }
+            }
         }
         _ => root,
     };
-    std::fs::create_dir_all(&dir)?;
-    let target = match file {
-        // Creo: open the newest iteration (bracket.prt.7) of bracket.prt.
-        Some(name) if !name.contains(['/', '\\']) && name != ".." => {
-            workspace::newest_local(&dir, workspace::logical_name(&name).0)
-                .await?
-                .unwrap_or_else(|| dir.join(&name))
-        }
-        Some(_) => return Err(ApiError::local("Invalid file name.")),
-        None => dir,
-    };
+    if !target.exists() {
+        std::fs::create_dir_all(&target)?;
+    }
     app.opener()
         .open_path(target.to_string_lossy().to_string(), None::<&str>)
         .map_err(|e| ApiError::local(format!("Could not open {}: {e}", target.display())))
+}
+
+/// Folders of the old layout `<group>/<item>/<revision>/` and what moving
+/// them into the working-folder layout would do (nothing is changed).
+#[tauri::command]
+pub async fn workspace_migration_plan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<workspace::MigrationPlan> {
+    let api = signed_in_api(&state)?;
+    workspace::migration_plan(&api, &workspace_root(&app, &state)).await
+}
+
+/// Moves the old layout into the working-folder layout (never overwriting
+/// anything; every step in `.teamcraft/migration.log`).
+#[tauri::command]
+pub async fn workspace_migrate(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> CmdResult<workspace::MigrationPlan> {
+    let api = signed_in_api(&state)?;
+    workspace::migrate(&api, &workspace_root(&app, &state)).await
 }
 
 /// Opens a page of the web UI in the default browser (e.g. `/revisions/<id>`).
@@ -600,7 +678,9 @@ mod tests {
 /// Uploads local files into a revision the user has checked out: the files
 /// of a new item, or of an item created by the folder import. Creo
 /// iterations are uploaded under their logical name (`bracket.prt.7` →
-/// `bracket.prt`).
+/// `bracket.prt`). `folders` (file name → relative folder, from the folder
+/// import) gives every file its place in the project group, so the working
+/// folder later mirrors the original folder structure.
 #[tauri::command]
 pub async fn upload_files(
     app: AppHandle,
@@ -609,12 +689,18 @@ pub async fn upload_files(
     code: String,
     paths: Vec<PathBuf>,
     comment: Option<String>,
+    folders: Option<HashMap<String, String>>,
 ) -> CmdResult<Value> {
     let api = signed_in_api(&state)?;
     let files = upload_names(&paths)?;
     if files.is_empty() {
         return Ok(Value::Null);
     }
+    let folders: serde_json::Map<String, Value> = folders
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(name, folder)| (name, Value::String(layout::folder_for_upload(&folder))))
+        .collect();
     let cancel = new_upload(&state);
     let progress = progress_events(app);
     let transfer = Transfer {
@@ -630,8 +716,44 @@ pub async fn upload_files(
         &item,
         &code,
         &files,
-        &[("comment", comment.unwrap_or_default())],
+        &[
+            ("comment", comment.unwrap_or_default()),
+            ("folders", Value::Object(folders).to_string()),
+        ],
         &transfer,
+    )
+    .await
+}
+
+/// Largest attachment of a change request (the server enforces the same).
+const MAX_REQUEST_ATTACHMENT: u64 = 10 * 1024 * 1024;
+
+/// Attaches a screenshot, mark-up or PDF (chosen in the native file dialog)
+/// to a change request. The server accepts images and PDF only, decided by
+/// the content.
+#[tauri::command]
+pub async fn upload_request_attachment(
+    state: State<'_, AppState>,
+    number: String,
+    path: PathBuf,
+) -> CmdResult<Value> {
+    let api = signed_in_api(&state)?;
+    let size = tokio::fs::metadata(&path).await?.len();
+    if size > MAX_REQUEST_ATTACHMENT {
+        return Err(ApiError::local(format!(
+            "{} is larger than 10 MiB.",
+            path.display()
+        )));
+    }
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| ApiError::local(format!("{} has no usable file name.", path.display())))?
+        .to_string();
+    api.multipart(
+        &format!("/change-requests/{}/attachments", workspace::enc(&number)),
+        &[(name, path.clone())],
+        &[],
     )
     .await
 }
@@ -690,18 +812,21 @@ pub async fn cad_export_step(
     if file.contains(['/', '\\']) || file == ".." || file.is_empty() {
         return Err(ApiError::local(format!("'{file}' is not a file name.")));
     }
-    let dir = workspace::revision_dir(
+    let api = signed_in_api(&state)?;
+    let (_, found) = workspace::locate(
+        &api,
         &workspace_root(&app, &state),
         project.as_deref(),
         &item,
         &code,
-    );
-    let input = dir.join(&file);
-    if !input.is_file() {
+        &file,
+    )
+    .await?;
+    let Some(input) = found.filter(|p| p.is_file()) else {
         return Err(ApiError::local(format!(
-            "{file} is not in the workspace – check out or use “Get files” first."
+            "{file} is not in the working folder – check out or use “Get files” first."
         )));
-    }
+    };
     let output = tokio::task::spawn_blocking(move || cadexport::export_step(&input))
         .await
         .map_err(|e| ApiError::local(format!("The export stopped: {e}")))?
@@ -720,4 +845,321 @@ pub async fn scan_folder(path: PathBuf) -> CmdResult<folderimport::Scan> {
         .await
         .map_err(|e| ApiError::local(format!("The scan stopped: {e}")))?
         .map_err(ApiError::local)
+}
+
+// ---------------------------------------------------------------- ACP agents
+
+/// The agent session the desktop runs (at most one).
+pub struct RunningAgent {
+    /// Number of the session; its events carry it.
+    pub session: u64,
+    /// Name of the agent in the settings.
+    pub name: String,
+    pub agent: Arc<acp::Session>,
+}
+
+/// Events of an agent session go to the window as `agent` events.
+struct AgentSink {
+    app: AppHandle,
+    session: u64,
+}
+
+impl acp::Sink for AgentSink {
+    fn emit(&self, event: acp::Event) {
+        let _ = self.app.emit(
+            "agent",
+            acp::Envelope {
+                session: self.session,
+                event,
+            },
+        );
+    }
+}
+
+/// An agent as the settings dialog edits it: the arguments as one line.
+#[derive(Serialize, Deserialize)]
+pub struct AgentEntry {
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: String,
+}
+
+#[derive(Serialize)]
+pub struct AgentProfiles {
+    pub agents: Vec<AgentEntry>,
+    pub selected: Option<String>,
+}
+
+/// Arguments as one line again (quoted where they contain spaces).
+fn join_args(args: &[String]) -> String {
+    args.iter()
+        .map(|a| {
+            if a.is_empty() || a.chars().any(char::is_whitespace) {
+                format!("\"{a}\"")
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn profiles_of(s: &Settings) -> AgentProfiles {
+    AgentProfiles {
+        agents: s
+            .agents
+            .iter()
+            .map(|a| AgentEntry {
+                name: a.name.clone(),
+                command: a.command.clone(),
+                args: join_args(&a.args),
+            })
+            .collect(),
+        selected: s.agent.clone(),
+    }
+}
+
+/// The configured agents (Settings → Agents).
+#[tauri::command]
+pub fn agent_profiles(state: State<'_, AppState>) -> AgentProfiles {
+    profiles_of(&snapshot(&state))
+}
+
+/// Most agents the settings hold.
+const MAX_AGENTS: usize = 20;
+
+fn parse_profiles(agents: Vec<AgentEntry>) -> Result<Vec<acp::AgentProfile>, String> {
+    if agents.len() > MAX_AGENTS {
+        return Err(format!("At most {MAX_AGENTS} agents."));
+    }
+    let mut profiles: Vec<acp::AgentProfile> = Vec::new();
+    for a in agents {
+        let profile = acp::AgentProfile {
+            name: a.name.trim().to_string(),
+            command: a.command.trim().to_string(),
+            args: acp::split_args(&a.args),
+        };
+        profile.validate()?;
+        if profiles.iter().any(|p| p.name == profile.name) {
+            return Err(format!("Two agents are called “{}”.", profile.name));
+        }
+        profiles.push(profile);
+    }
+    Ok(profiles)
+}
+
+#[tauri::command]
+pub fn set_agent_profiles(
+    state: State<'_, AppState>,
+    agents: Vec<AgentEntry>,
+) -> CmdResult<AgentProfiles> {
+    let profiles = parse_profiles(agents).map_err(ApiError::local)?;
+    let s = update_settings(&state, |s| {
+        if !s
+            .agent
+            .as_ref()
+            .is_some_and(|name| profiles.iter().any(|p| &p.name == name))
+        {
+            s.agent = profiles.first().map(|p| p.name.clone());
+        }
+        s.agents = profiles;
+    })?;
+    Ok(profiles_of(&s))
+}
+
+#[derive(Serialize)]
+pub struct AgentState {
+    pub session: u64,
+    pub name: String,
+    pub info: acp::AgentInfo,
+    /// A prompt turn is running.
+    pub busy: bool,
+}
+
+fn describe(running: &RunningAgent) -> AgentState {
+    AgentState {
+        session: running.session,
+        name: running.name.clone(),
+        info: running.agent.info.clone(),
+        busy: running.agent.busy(),
+    }
+}
+
+fn current_agent(state: &State<'_, AppState>) -> CmdResult<Arc<acp::Session>> {
+    state
+        .agent
+        .lock()
+        .expect("agent lock")
+        .as_ref()
+        .map(|r| r.agent.clone())
+        .ok_or_else(|| ApiError::local("No agent is running – start one first."))
+}
+
+fn stop_agent(state: &State<'_, AppState>) {
+    let running = state.agent.lock().expect("agent lock").take();
+    if let Some(running) = running {
+        running.agent.stop();
+    }
+}
+
+/// The running agent session, if any (after a reload of the window).
+#[tauri::command]
+pub fn agent_status(state: State<'_, AppState>) -> Option<AgentState> {
+    state
+        .agent
+        .lock()
+        .expect("agent lock")
+        .as_ref()
+        .map(describe)
+}
+
+/// Starts a configured agent in the workspace folder and opens a session
+/// with TeamCraft's MCP server (the desktop's token, so the user's rights).
+#[tauri::command]
+pub async fn agent_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> CmdResult<AgentState> {
+    let api = signed_in_api(&state)?;
+    let profile = snapshot(&state)
+        .agents
+        .into_iter()
+        .find(|a| a.name == name)
+        .ok_or_else(|| ApiError::local(format!("There is no agent “{name}” in the settings.")))?;
+    stop_agent(&state);
+    let root = workspace_root(&app, &state);
+    std::fs::create_dir_all(&root)?;
+    let session = state.agent_seq.fetch_add(1, Ordering::SeqCst) + 1;
+    let sink = Arc::new(AgentSink {
+        app: app.clone(),
+        session,
+    });
+    let opts = acp::Options {
+        cwd: root,
+        mcp: api.token.clone().map(|token| acp::McpServer {
+            url: format!("{}/api/v1/mcp", api.base),
+            token,
+        }),
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        stderr: acp::Tail::default(),
+    };
+    let agent = Arc::new(
+        acp::spawn(&profile, sink, opts)
+            .await
+            .map_err(ApiError::local)?,
+    );
+    if state.agent_seq.load(Ordering::SeqCst) != session {
+        agent.stop();
+        return Err(ApiError::local("Another agent was started meanwhile."));
+    }
+    let _ = update_settings(&state, |s| s.agent = Some(name.clone()));
+    let running = RunningAgent {
+        session,
+        name,
+        agent,
+    };
+    let described = describe(&running);
+    let old = state.agent.lock().expect("agent lock").replace(running);
+    if let Some(old) = old {
+        old.agent.stop();
+    }
+    Ok(described)
+}
+
+/// Sends a message (with what the user is looking at) and waits for the end
+/// of the turn; the answer streams as `agent` events. Returns the stop reason.
+#[tauri::command]
+pub async fn agent_prompt(
+    state: State<'_, AppState>,
+    text: String,
+    context: Option<acp::PromptContext>,
+) -> CmdResult<String> {
+    let agent = current_agent(&state)?;
+    agent
+        .prompt(&text, &context.unwrap_or_default())
+        .await
+        .map_err(ApiError::local)
+}
+
+/// The user's answer to a permission request: allow once or reject. The
+/// request is named by its session and key – keys restart with every
+/// session, so a card of an ended session must not answer a new request.
+#[tauri::command]
+pub async fn agent_permission(
+    state: State<'_, AppState>,
+    session: u64,
+    key: u64,
+    allow: bool,
+) -> CmdResult<()> {
+    let agent = state
+        .agent
+        .lock()
+        .expect("agent lock")
+        .as_ref()
+        .filter(|r| r.session == session)
+        .map(|r| r.agent.clone())
+        .ok_or_else(|| ApiError::local("This request is no longer open."))?;
+    agent
+        .answer_permission(key, allow)
+        .await
+        .map_err(ApiError::local)
+}
+
+/// Stops the running turn of the agent.
+#[tauri::command]
+pub async fn agent_cancel(state: State<'_, AppState>) -> CmdResult<()> {
+    let agent = current_agent(&state)?;
+    agent.cancel().await.map_err(ApiError::local)
+}
+
+/// Ends the agent process.
+#[tauri::command]
+pub fn agent_stop(state: State<'_, AppState>) {
+    stop_agent(&state);
+}
+
+#[cfg(test)]
+mod agent_tests {
+    use super::*;
+
+    #[test]
+    fn agent_entries_round_trip() {
+        let profiles = parse_profiles(vec![
+            AgentEntry {
+                name: " Claude Code ".into(),
+                command: "npx".into(),
+                args: "-y @zed-industries/claude-code-acp".into(),
+            },
+            AgentEntry {
+                name: "Gemini".into(),
+                command: "gemini".into(),
+                args: "--experimental-acp --x \"a b\"".into(),
+            },
+        ])
+        .unwrap();
+        assert_eq!(profiles[0].name, "Claude Code");
+        assert_eq!(
+            profiles[0].args,
+            vec!["-y", "@zed-industries/claude-code-acp"]
+        );
+        assert_eq!(
+            join_args(&profiles[1].args),
+            "--experimental-acp --x \"a b\""
+        );
+        let twice = vec![
+            AgentEntry {
+                name: "A".into(),
+                command: "a".into(),
+                args: String::new(),
+            },
+            AgentEntry {
+                name: "A".into(),
+                command: "b".into(),
+                args: String::new(),
+            },
+        ];
+        assert!(parse_profiles(twice).is_err());
+    }
 }

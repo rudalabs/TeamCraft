@@ -87,6 +87,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
       <span>Search</span>
     </button>
+    <button type="button" data-view="agent" title="Agent – a local AI agent with TeamCraft's tools (Ctrl+4)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg>
+      <span>Agent</span>
+    </button>
     <div class="rail-spacer"></div>
     <img class="rail-mark" src="/static/media/logos/TeamCraft_Icon.svg" alt="">
   </nav>
@@ -103,6 +107,7 @@
   <footer class="statusbar">
     <span id="status-server" class="status-server"></span>
     <span id="status-msg" class="status-msg" role="status"></span>
+    <span id="status-get" class="status-get hidden" role="status"><progress id="status-get-bar" max="1" value="0"></progress><span id="status-get-text" class="status-get-text"></span><button id="status-get-cancel" type="button" title="Stop after the current part of the file – the files copied so far stay; the next Get continues">Cancel</button></span>
     <button id="status-zoom" class="status-zoom hidden" type="button" title="Zoom – Ctrl + mouse wheel, Ctrl + + / − / 0; click for 100 %"></button>
     <span id="status-ws" class="status-ws"></span>
   </footer>

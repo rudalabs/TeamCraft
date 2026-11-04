@@ -135,9 +135,21 @@ label.check input { width: auto; accent-color: var(--accent); }
 .badge-modified, .badge-new { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .badge-unchanged { color: var(--ok); }
 .badge-missing { color: var(--text-dim); }
+/* change requests (ECR) */
+.badge-in_triage { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.badge-accepted, .badge-implemented { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
+.badge-deferred, .badge-withdrawn { color: var(--text-dim); }
+ol.thread { list-style: none; margin: 0 0 0.6rem; padding: 0; display: grid; gap: 0.5rem; }
+.thread-entry { padding: 0.5rem 0.7rem; border: 1px solid var(--border); border-left: 3px solid var(--link); border-radius: 5px; background: var(--surface-sunken); overflow-wrap: anywhere; }
+.thread-meta { font-size: 0.8em; color: var(--text-muted); margin-bottom: 0.25rem; }
+.attachment-thumbs { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
+.attachment-thumb { width: 8rem; height: 6rem; object-fit: cover; border: 1px solid var(--border); border-radius: 5px; background: #fff; }
+/* workspace file states */
 .badge-outdated { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
-.badge-conflict { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
-tr.row-conflict td { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.badge-conflict, .badge-clash { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+tr.row-conflict td, tr.row-clash td { background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.ro-flag { font-size: 0.75rem; color: var(--text-dim); }
+.ws-path { display: block; font-size: 0.75rem; color: var(--text-dim); }
 
 /* File format chips (server: src/cadformat.rs); the kind sets the colour. */
 .fmt {
@@ -154,7 +166,7 @@ tr.row-conflict td { background: color-mix(in srgb, var(--danger) 8%, transparen
 .fmt-assembly { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
 .fmt-drawing { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
 .fmt-exchange, .fmt-mesh, .fmt-visualization { color: var(--text); border-color: var(--border-strong); }
-.fmt-electronics, .fmt-simulation, .fmt-manufacturing { border-style: dashed; }
+.fmt-electronics, .fmt-simulation, .fmt-result, .fmt-manufacturing { border-style: dashed; }
 
 /* ---------------------------------------------------------------- connect */
 
@@ -275,6 +287,10 @@ html.skin-light .skin-logo-dark { display: none; }
   white-space: nowrap; overflow: hidden;
 }
 .status-msg { flex: 1; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
+.status-get { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; overflow: hidden; }
+.status-get progress { width: 8rem; height: 0.55rem; }
+.status-get-text { overflow: hidden; text-overflow: ellipsis; max-width: 34rem; }
+.status-get button { font-size: 0.75rem; padding: 0.05rem 0.5rem; }
 .status-server::before { content: '●'; color: var(--ok); margin-right: 0.35rem; }
 
 /* ---------------------------------------------------------------- navigator */
@@ -622,3 +638,52 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 .assistant-text pre { overflow-x: auto; padding: 0.5rem 0.7rem; border-radius: 6px; background: var(--surface-sunken, var(--surface)); }
 .assistant-text .table-wrap { overflow-x: auto; margin: 0.3rem 0 0.7rem; }
 .assistant-answer .badge { margin: 0 0.15rem 0.15rem 0; }
+
+/* Agent (ACP): navigator controls, conversation tab, settings */
+.agent-nav { display: grid; gap: var(--space-2); margin: 0 0.25rem; }
+.agent-nav h3 { margin: var(--space-3) 0 0; }
+.agent-nav p { margin: 0; }
+.agent-nav select { flex: 1; min-width: 0; }
+.agent-nav .chip:disabled { opacity: 0.45; }
+.agent-plan { margin: 0; padding-left: 1.2rem; display: grid; gap: 0.2rem; font-size: 0.9em; }
+.agent-plan .status-completed { color: var(--text-dim); text-decoration: line-through; }
+.agent-plan .status-in_progress { color: var(--text); font-weight: 600; }
+
+.tab-body > .agent-panel { height: 100%; }
+.agent-panel { display: flex; flex-direction: column; gap: var(--space-3); max-width: 980px; margin: 0 auto; min-height: 0; }
+.agent-log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-1) var(--space-1) var(--space-3); }
+.agent-empty { max-width: 640px; margin: var(--space-6) auto; text-align: center; color: var(--text-muted); }
+.agent-empty h3 { font-size: 1rem; }
+.agent-msg { max-width: 92%; padding: var(--space-2) var(--space-3); border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); }
+.agent-msg.user { align-self: flex-end; white-space: pre-wrap; background: var(--accent-soft); border-color: var(--border-strong); }
+.agent-msg.agent { align-self: flex-start; box-shadow: var(--shadow-card); }
+.agent-msg .assistant-text > :first-child { margin-top: 0; }
+.agent-msg .assistant-text > :last-child { margin-bottom: 0; }
+.agent-thought { align-self: flex-start; max-width: 92%; color: var(--text-dim); font-size: 0.9em; }
+.agent-thought summary, .agent-tool-out summary { cursor: pointer; }
+.agent-thought p { margin: 0.3rem 0 0; white-space: pre-wrap; }
+.agent-tool { align-self: flex-start; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); max-width: 92%; padding: 0.2rem var(--space-2); border-radius: var(--radius-sm); border: 1px dashed var(--border-strong); font-size: 0.9em; color: var(--text-muted); }
+.agent-tool-title { font-family: var(--mono); overflow-wrap: anywhere; }
+.agent-tool-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--text-dim); flex: none; }
+.agent-tool.status-in_progress .agent-tool-dot { background: var(--warn); }
+.agent-tool.status-completed .agent-tool-dot { background: var(--ok); }
+.agent-tool.status-failed .agent-tool-dot { background: var(--danger); }
+.agent-tool-out { flex-basis: 100%; }
+.agent-tool-out pre { max-height: 16rem; overflow: auto; margin: 0.3rem 0 0; padding: var(--space-2); border-radius: var(--radius-sm); background: var(--surface-sunken); white-space: pre-wrap; font-size: 0.92em; }
+.agent-permission { align-self: stretch; display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius); border: 1px solid var(--border); border-left: 3px solid var(--warn); background: var(--warn-soft); }
+.agent-permission p { margin: 0; overflow-wrap: anywhere; }
+.agent-permission.answered { border-left-color: var(--border-strong); background: var(--surface); }
+.agent-note { margin: 0; align-self: center; max-width: 92%; color: var(--text-dim); font-size: 0.88em; text-align: center; white-space: pre-wrap; }
+.agent-note.ok { color: var(--ok); }
+.agent-note.info { color: var(--text-muted); }
+.agent-note.warn { color: var(--warn); }
+.agent-note.error { color: var(--danger); text-align: left; }
+.agent-composer { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-card); }
+.agent-composer textarea { min-height: 3.6rem; max-height: 30vh; }
+.agent-composer-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.agent-context { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.agent-row { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.agent-row-fields { display: grid; gap: var(--space-2); grid-template-columns: minmax(8rem, 1fr) minmax(8rem, 1.4fr) minmax(8rem, 2fr); }
+.agent-row > button { justify-self: end; }
+@media (max-width: 760px) { .agent-row-fields { grid-template-columns: 1fr; } }

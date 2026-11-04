@@ -353,6 +353,21 @@ dl.props dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .badge-viewer { color: var(--text-dim); }
 .badge-lock { color: var(--warn); background: var(--warn-soft); }
 .badge-member { color: var(--ok); }
+/* change requests (ECR) */
+.badge-new { color: var(--link); border-color: color-mix(in srgb, var(--link) 40%, transparent); }
+.badge-in_triage { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.badge-accepted, .badge-implemented { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
+.badge-deferred, .badge-withdrawn, .badge-reason { color: var(--text-dim); }
+.badge-withdrawn img { opacity: 0.55; filter: grayscale(1); }
+.badge-count { margin-left: 0.3rem; padding: 0 0.45rem; color: var(--warn); background: var(--warn-soft); }
+
+/* discussion thread of a change request */
+ol.thread { list-style: none; margin: 0 0 0.9rem; padding: 0; display: grid; gap: 0.6rem; }
+.thread-entry { padding: 0.6rem 0.8rem; border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px; background: var(--surface-sunken); min-width: 0; overflow-wrap: anywhere; }
+.thread-requester { border-left-color: var(--link); }
+.thread-meta { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.3rem; }
+.attachment-thumbs { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 0.8rem; }
+.attachment-thumbs img { width: 9rem; height: 6.5rem; object-fit: cover; display: block; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
 
 /* File format chips (src/cadformat.rs); the kind of the format sets the colour. */
 .fmt {
@@ -596,6 +611,7 @@ html[data-skin="teamcraft-day"] .login-logo-dark { display: block; }
 .saved-searches { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding-block: 0.6rem; }
 .saved-search { display: inline-flex; align-items: center; gap: 0.1rem; }
 .saved-searches form.inline input[type="text"] { width: 14rem; }
+.folder-form input[type="text"] { width: 11rem; padding: 0.2rem 0.4rem; font-size: 0.85em; }
 
 /* BOM comparison */
 .bom-change-added { color: var(--ok); background: var(--ok-soft); }
@@ -663,6 +679,19 @@ ul.file-refs { margin-bottom: 0.7rem; }
   width: 3rem; height: 3rem; object-fit: contain; display: block;
   border: 1px solid var(--border); border-radius: 4px; background: #fff;
 }
+
+/* simulations: pass/fail of result values, out-of-date bases */
+.badge-pass { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
+.badge-fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-soft); }
+.badge-none { color: var(--text-dim); }
+.badge-out_of_date { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.badge-up_to_date { color: var(--ok); }
+.fmt-result { color: var(--text-muted); border-style: dashed; border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+tr.result-fail td.num.value { color: var(--danger); font-weight: 600; }
+input.value { width: 8em; text-align: right; }
+input.limit { width: 6.5em; text-align: right; }
+input.unit { width: 4.5em; }
+.result-summary { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0 0 0.6rem; }
 
 /* Assistant ("Ask TeamCraft") */
 .assistant-panel { margin-bottom: 1.1rem; }

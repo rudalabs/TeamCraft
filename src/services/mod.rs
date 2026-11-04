@@ -23,11 +23,14 @@ pub mod personal;
 pub mod projects;
 pub mod readiness;
 pub mod references;
+pub mod requests;
 pub mod revisions;
 pub mod save_as;
+pub mod simulations;
 pub mod stats;
 pub mod uploads;
 pub mod users;
+pub mod workset;
 
 use sqlx::PgConnection;
 

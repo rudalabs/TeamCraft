@@ -183,7 +183,7 @@ fn cell_text(cell: &calamine::Data) -> String {
 }
 
 /// The cells of the first worksheet or of the CSV file.
-fn read_grid(filename: &str, bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
+pub(crate) fn read_grid(filename: &str, bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
     if is_spreadsheet(filename) {
         use calamine::Reader;
         let mut workbook = calamine::open_workbook_auto_from_rs(Cursor::new(bytes.to_vec()))
