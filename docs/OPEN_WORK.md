@@ -41,7 +41,10 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Item copy ("Save as" with files and BOM) – done; open: supersede/replace, alternate parts, multi-level where-used
   (feature 6)
 - [x] BOM comparison between revisions (single level) – done; open: multi-level comparison, Excel export (feature 7)
-- [ ] Chunked resumable uploads (tus); backup/restore of database and vault as CLI commands (feature 9)
+- [x] Backup/restore of the database and vault as CLI commands (`teamcraft backup`, `teamcraft restore`) – see
+  [Operations](src/admin/operations.md)
+- [ ] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools
+- [ ] Chunked resumable uploads (tus) (feature 9)
 - [ ] README screenshots/GIFs: dashboard, vault explorer, revision page, 3D viewer, BOM, desktop app
 - [x] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
 - [x] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
@@ -194,9 +197,9 @@ The history up to the open-source release is squashed into the first commit
 7. **BOM comparison** between revisions, Excel export (`rust_xlsxwriter`,
    MIT/Apache-2.0, already a dev-dependency).
 8. **Bulk import of a folder tree** (NAS/Drive) as items with files (candidate: `walkdir`, MIT/Unlicense).
-9. **Chunked resumable uploads** (tus protocol, `tus-js-client`) and **backup/restore** of database and vault as CLI
-   commands (`pg_dump` /
-   `pg_restore`), with tests and docs.
+9. **Chunked resumable uploads** (tus protocol, `tus-js-client`); **backup/restore** of the database and vault is done
+   (`teamcraft backup`/`teamcraft restore` with `pg_dump`/`pg_restore`, unit tests for the manifest, argument building,
+   hashes and path safety); the end-to-end check with the real client tools is still open (see the to-do list).
 
 Rules for all of them: research open source first (licences compatible with
 MPL-2.0: MIT, Apache-2.0, BSD, ISC, Zlib, MPL-2.0; LGPL only as a separately

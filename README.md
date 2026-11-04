@@ -150,6 +150,20 @@ curl -s -X POST -H "$H" -F file=@hub.step -F comment="wall 2 → 2.5 mm" \
 curl -s -H "$H" "$API/items?q=hub&system=solidworks"
 ```
 
+## Backup and restore
+
+```sh
+teamcraft backup /srv/backups/2026-11-04     # db.dump + vault/objects + manifest.json
+teamcraft restore /srv/backups/2026-11-04    # verifies every hash, then restores
+```
+
+Both commands need the PostgreSQL client tools (`pg_dump`, `pg_restore`).
+The backup directory must not exist or be empty. A restore refuses a
+database that already contains tables unless you pass `--force`, and the
+server should be stopped while it runs. Configuration and secrets are not
+part of a backup; see
+[Operations](https://rudalabs.github.io/TeamCraft/admin/operations.html).
+
 ## Works with SolidCraft and FieldCraft
 
 TeamCraft recognises [SolidCraft](https://github.com/tangency-labs/solidcraft)

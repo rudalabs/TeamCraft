@@ -10,6 +10,7 @@
 pub mod api;
 pub mod assets;
 pub mod auth;
+pub mod backup;
 pub mod bomtable;
 pub mod cadformat;
 pub mod cadrefs;
