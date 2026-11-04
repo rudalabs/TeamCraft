@@ -46,7 +46,7 @@ proprietary; TeamCraft does not read their geometry (see
 Instead it shows what other PLM systems show:
 
 * **The preview image stored in the file.** Inventor (`.ipt`, `.iam`,
-  `.idw`, `.ipn`), Solid Edge (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`) and
+  `.idw`, `.ipn`), Solid Edge (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`), NX (`.prt`, a JPEG) and
   SolidWorks files carry a picture the CAD program wrote when saving. It
   appears next to the file on the revision page and in the desktop app (`GET /api/v1/files/{id}/thumbnail`). Only the
   image is read; files saved

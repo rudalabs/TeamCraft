@@ -24,6 +24,11 @@ list is on every server at `/formats` and `GET /api/v1/formats`
 | SolidCraft, FieldCraft       | `.sc` `.solidcraft`, `.fieldcraft` – see [FieldCraft and SolidCraft](interop.md)                                             |
 | Rhino, Alias                 | `.3dm`, `.wire`                                                                                                              |
 
+NX parts (NX 1980 and later) are read through their stream container
+(`SPLMSSTR`, `src/nxpart.rs`): the referenced component files come only from
+its reference streams (not from the save history), the preview image from
+`/Root/images/preview`.
+
 `.prt` and `.asm` are told apart by content (Creo's `#UGC:` header, Solid
 Edge's OLE container); `.sc` must be a SolidCraft ZIP or JSON design.
 

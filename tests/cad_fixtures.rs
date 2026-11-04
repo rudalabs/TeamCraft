@@ -81,6 +81,30 @@ fn inventor_files_carry_a_preview_image() {
     }
 }
 
+#[test]
+fn nx_parts_carry_a_preview_image() {
+    let dir = fixture("mtc-assembly/nx");
+    let mut parts: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "prt"))
+        .collect();
+    parts.push(fixture("ctc-01/nx-1980/nist_ctc_01_asme1_nx1980_rd.prt"));
+    assert!(parts.len() >= 10);
+    for path in parts {
+        let image = thumbnail::extract(&path)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{}: no preview image", path.display()));
+        assert_eq!(image.content_type, "image/jpeg", "{}", path.display());
+        assert!(image.bytes.starts_with(&[0xFF, 0xD8, 0xFF]));
+        assert!(image.bytes.len() > 2_000, "{}", path.display());
+    }
+    // A JT file is not an NX part container.
+    assert!(thumbnail::extract(&dir.join("NIST mtc crada assembly.jt"))
+        .unwrap()
+        .is_none_or(|t| t.content_type != "image/jpeg"));
+}
+
 #[tokio::test]
 async fn the_nx_assembly_references_its_parts() {
     let dir = fixture("mtc-assembly/nx");
@@ -152,29 +176,40 @@ async fn solidworks_files_carry_previews_and_references() {
     );
 }
 
-/// Gap: false references – earlier file names in the save history and
-/// binary noise in NX parts, and noise in JT files.
+/// NX parts are read through their stream container (`nxpart`): only the
+/// reference streams count, not the save history ("Part renamed from …").
 #[tokio::test]
-#[ignore = "known gap: false references of the heuristic scan"]
-async fn parts_report_no_false_references() {
-    let box_part = fixture("mtc-assembly/nx/NIST mtc crada box.prt");
-    let refs = cadrefs::scan_file(&box_part, "NIST mtc crada box.prt").await;
+async fn nx_parts_report_no_false_references() {
     let dir = fixture("mtc-assembly/nx");
-    assert!(
-        refs.iter().all(|r| dir.join(r).is_file()),
-        "only files that exist next to it: {refs:?}"
-    );
-    for (rel, name) in [
-        (
-            "ctc-01/nx-1980/nist_ctc_01_asme1_nx1980_rd.prt",
-            "nist_ctc_01_asme1_nx1980_rd.prt",
-        ),
-        (
-            "mtc-assembly/nx/NIST mtc crada assembly.jt",
-            "NIST mtc crada assembly.jt",
-        ),
+    for part in [
+        "NIST mtc crada box.prt",
+        "91274A118 SHCS.prt",
+        "90591A141 HEX NUT.prt",
     ] {
-        let refs = cadrefs::scan_file(&fixture(rel), name).await;
-        assert!(refs.is_empty(), "{rel}: {refs:?}");
+        let refs = cadrefs::scan_file(&dir.join(part), part).await;
+        assert!(refs.is_empty(), "{part}: {refs:?}");
     }
+    let rel = "ctc-01/nx-1980/nist_ctc_01_asme1_nx1980_rd.prt";
+    let refs = cadrefs::scan_file(&fixture(rel), "nist_ctc_01_asme1_nx1980_rd.prt").await;
+    assert!(refs.is_empty(), "{rel}: {refs:?}");
+    // The assembly names exactly its eight components.
+    let name = "NIST mtc crada assembly.prt";
+    let mut refs = cadrefs::scan_file(&dir.join(name), name).await;
+    refs.sort();
+    assert_eq!(refs.len(), 8, "{refs:?}");
+    assert!(refs.iter().all(|r| dir.join(r).is_file()), "{refs:?}");
+    // Scanning the bytes in memory gives the same result.
+    let bytes = std::fs::read(dir.join(name)).unwrap();
+    let mut in_memory = cadrefs::find(&bytes, name);
+    in_memory.sort();
+    assert_eq!(in_memory, refs);
+}
+
+/// Gap: binary noise in JT files is read as file names.
+#[tokio::test]
+#[ignore = "known gap: false references of the heuristic scan in JT files"]
+async fn jt_files_report_no_false_references() {
+    let rel = "mtc-assembly/nx/NIST mtc crada assembly.jt";
+    let refs = cadrefs::scan_file(&fixture(rel), "NIST mtc crada assembly.jt").await;
+    assert!(refs.is_empty(), "{rel}: {refs:?}");
 }
