@@ -42,8 +42,11 @@ say plainly which checks ran and which did not.
   The project runs in `dontAsk` mode – never work around a denied command.
 * No organisation-specific names, logos, seed data or deployment files,
   and nothing that resembles Siemens Teamcenter or Microsoft Teams branding.
-* Do not create downloadable/installable releases (no installer or image
-  publishing in CI) until the user asks for it.
+* Releases: `.github/workflows/release.yml` builds the server binaries and
+  desktop installers as artifacts on every push to `main` and publishes a
+  GitHub Release for a `v*` tag (CONTRIBUTING.md, "Releases and versions").
+  Never push a tag, bump the version or publish anything else (container
+  images, package registries) unless the user asks for that release.
 
 ## Git rules
 
