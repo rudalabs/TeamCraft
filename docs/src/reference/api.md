@@ -81,7 +81,7 @@ curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
 
 | Request                         | Meaning                                                                                                                                                                          |
 |---------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `POST /uploads`                 | `{item, revision, filename, size, sha256?, content_type?, base?}` → **201** with the session; 413 above `TEAMCRAFT_MAX_UPLOAD_MB`, 409 if the revision is not checked out by you or `base` is outdated |
+| `POST /uploads`                 | `{item, revision, filename, size, sha256?, content_type?, base?, folder?}` → **201** with the session (`folder` = place in the project group, see below; omitted = keep the file's folder); 413 above `TEAMCRAFT_MAX_UPLOAD_MB`, 409 if the revision is not checked out by you or `base` is outdated |
 | `PATCH /uploads/{id}`           | header `Upload-Offset`, body = the next chunk (≤ `chunk_bytes`) → the session with the new `offset`; **409** with the server's `Upload-Offset` header at any other offset, 400 beyond `size` |
 | `HEAD`/`GET /uploads/{id}`      | headers `Upload-Offset`, `Upload-Length`; `GET` also as JSON (`offset`, `size`, `complete`, `expires_at`)                                                                       |
 | `POST /uploads/{id}/finish`     | body optional `{comment?, check_in?}`: verify size and SHA-256, store the new file or version (`check_in: true` also releases the check-out) → `{files, revision}`; 409 while incomplete, 400 if the content does not match (the upload is reset to offset 0) |
@@ -90,9 +90,9 @@ curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
 Instead of `finish`, complete uploads can join a multipart **check-in** or
 upload: the field `uploads` lists their ids (`["…", "…"]` or `id,id`), and
 they are stored together with the `file` parts in one transaction – the
-desktop app checks in this way. A session's own `base` wins over the
-`bases` field; `folder`/`folders` apply to them like to the `file` parts.
-Sessions are private (other users get 404), expire 24 hours
+desktop app checks in this way. A session's own `base` and `folder` win
+over the `bases`, `folders` and `folder` fields; either way the
+base-version guard of the check-in applies. Sessions are private (other users get 404), expire 24 hours
 after the last chunk and are limited to 16 unfinished ones per user. When
 storing fails after the content was verified (for example a 409 because the
 file moved on), the session keeps the verified content, so `finish` can be

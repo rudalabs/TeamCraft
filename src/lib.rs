@@ -9,6 +9,9 @@
 //! * [`mcp`] – Model Context Protocol server at `/api/v1/mcp` for AI assistants
 //! * [`assistant`] – built-in assistant (Claude via the Anthropic API) using the MCP tools
 
+// The endpoint list of `GET /api/v1` is one long `json!` literal.
+#![recursion_limit = "256"]
+
 pub mod api;
 pub mod assets;
 pub mod assistant;

@@ -100,7 +100,9 @@ clients – and the desktop app for files above 32 MiB – upload them in
 **chunks**:
 
 1. `POST /api/v1/uploads` announces the file (revision, name, size,
-   optionally its SHA-256 and the base version). The server refuses at once
+   optionally its SHA-256, the base version and its folder in the project
+   group – the desktop app sends the folder of the working folder, so the
+   file keeps its place there). The server refuses at once
    what it would refuse later: a file larger than `TEAMCRAFT_MAX_UPLOAD_MB`,
    a revision you have not checked out, or a base the server file has moved
    on from.

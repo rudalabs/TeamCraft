@@ -67,8 +67,8 @@ the known gaps with details. Last update: 2026-11-04.
   [Operations](src/admin/operations.md)
 - [ ] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools
 - [x] Chunked resumable uploads (feature 9): `/api/v1/uploads` (offset-checked chunks, resume, SHA-256 check, same
-  check-in code path), used by the desktop app for files above 32 MiB; open: chunked uploads from the web UI
-  (`static/app.js`)
+  check-in code path, base version and folder per session), used by the desktop app for files above 32 MiB; open:
+  chunked uploads from the web UI (`static/app.js`)
 - [x] README screenshots of the web pages: captured in CI by `scripts/screenshots.sh` (run 41919547600), committed in
   `media/screenshots/`
 - [ ] Desktop app screenshots and short GIFs for the README

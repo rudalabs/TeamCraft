@@ -531,6 +531,119 @@ async fn check_in_with_chunked_files_keeps_the_base_guard() {
     app.teardown().await;
 }
 
+/// The folder of a file in its project group (files.folder, the desktop
+/// working folder) comes with the session or with the multipart fields.
+#[tokio::test]
+async fn chunked_uploads_keep_the_working_folder() {
+    let app = app_or_skip!();
+    let (_, max) = app.user_in("max", Role::Editor, &["ROVER"]).await;
+    item(&app, &max).await;
+    let folder_of = |files: &Value, name: &str| -> String {
+        files
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["filename"] == name)
+            .map(|f| f["folder"].as_str().unwrap_or("").to_string())
+            .unwrap_or_else(|| panic!("{name} missing: {files}"))
+    };
+
+    // an invalid folder is refused before any byte is sent
+    let r = start(
+        &app,
+        &max,
+        json!({ "item": "PRT-000001", "revision": "A", "filename": "frame.asm",
+                "size": 5, "folder": "../outside" }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+
+    // the session's own folder (normalised) …
+    let r = start(
+        &app,
+        &max,
+        json!({ "item": "PRT-000001", "revision": "A", "filename": "frame.asm",
+                "size": 5, "base": 0, "folder": "chassis\\frames/" }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(r.json()["folder"], "chassis/frames");
+    let own = r.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        patch(&app, &max, &own, 0, b"frame").await.status,
+        StatusCode::OK
+    );
+    // … and one without a folder that takes it from the `folders` field
+    let r = start(
+        &app,
+        &max,
+        json!({ "item": "PRT-000001", "revision": "A", "filename": "wheel.prt",
+                "size": 5 }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let joined = r.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        patch(&app, &max, &joined, 0, b"wheel").await.status,
+        StatusCode::OK
+    );
+    let r = app
+        .api_multipart(
+            &format!("{REV}/checkin"),
+            &max,
+            &[("notes.txt", b"small")],
+            &[
+                ("uploads", &format!("{own},{joined}")),
+                (
+                    "folders",
+                    r#"{"wheel.prt": "chassis/wheels", "frame.asm": "ignored", "notes.txt": "docs"}"#,
+                ),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let files = app
+        .api(Method::GET, &format!("{REV}/files"), &max, None)
+        .await
+        .json();
+    assert_eq!(folder_of(&files, "frame.asm"), "chassis/frames");
+    assert_eq!(folder_of(&files, "wheel.prt"), "chassis/wheels");
+    assert_eq!(folder_of(&files, "notes.txt"), "docs");
+
+    // a new version without a folder keeps the file where it is; finish
+    // applies the session's base guard (SHA-256 of version 1)
+    app.api(Method::POST, &format!("{REV}/checkout"), &max, None)
+        .await;
+    let r = start(
+        &app,
+        &max,
+        json!({ "item": "PRT-000001", "revision": "A", "filename": "frame.asm",
+                "size": 6, "base": sha(b"frame") }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let next = r.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        patch(&app, &max, &next, 0, b"frame2").await.status,
+        StatusCode::OK
+    );
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/uploads/{next}/finish"),
+            &max,
+            Some(json!({ "check_in": true })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let files = app
+        .api(Method::GET, &format!("{REV}/files"), &max, None)
+        .await
+        .json();
+    assert_eq!(folder_of(&files, "frame.asm"), "chassis/frames");
+    app.teardown().await;
+}
+
 #[tokio::test]
 async fn concurrent_chunks_at_one_offset_are_serialised() {
     let app = app_or_skip!();

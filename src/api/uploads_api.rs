@@ -1,7 +1,7 @@
 //! Chunked, resumable uploads (`/api/v1/uploads`, see `services::uploads`).
 //!
 //! ```text
-//! POST   /uploads              {item, revision, filename, size, sha256?, content_type?, base?}
+//! POST   /uploads              {item, revision, filename, size, sha256?, content_type?, base?, folder?}
 //! PATCH  /uploads/{id}         Upload-Offset: <n>, body = the next chunk
 //! HEAD   /uploads/{id}         Upload-Offset / Upload-Length (GET: the same as JSON)
 //! POST   /uploads/{id}/finish  {comment?, check_in?}
@@ -40,6 +40,7 @@ fn session_json(st: &AppState, s: &UploadSession) -> Value {
         "offset": s.received_bytes,
         "complete": s.complete(),
         "sha256": s.sha256,
+        "folder": s.folder,
         "chunk_bytes": st.config.upload_chunk_bytes,
         "created_at": s.created_at,
         "expires_at": s.expires_at,
@@ -81,6 +82,9 @@ pub(super) struct CreateBody {
     /// Version number (`0` = new file) or SHA-256 the upload is based on.
     #[serde(default)]
     base: Option<Value>,
+    /// Folder inside the project group (the desktop working folder).
+    #[serde(default)]
+    folder: Option<String>,
 }
 
 pub(super) async fn create(
@@ -104,6 +108,7 @@ pub(super) async fn create(
             sha256: body.sha256,
             content_type: body.content_type,
             base,
+            folder: body.folder,
         },
         st.config.max_upload_bytes,
     )
