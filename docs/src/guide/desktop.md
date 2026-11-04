@@ -31,6 +31,10 @@ check-outs and reviews, and a **local working folder**:
   and makes the files read-only again;
 * *Check in all* in the worklist checks in every check-out without local
   changes and lists those that still have changes;
+* *Request change…* on a revision tab and *Request…* on a file (Files and
+  Workspace tabs) raise a [change request](changes.md) with the item,
+  revision and file name filled in and an optional screenshot or PDF; the
+  worklist lists the requests assigned to you and your open ones;
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.

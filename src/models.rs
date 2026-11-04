@@ -312,6 +312,75 @@ pub struct ChangeReview {
     pub decided_at: Option<DateTime<Utc>>,
 }
 
+/// An engineering change request (ECR).
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct ChangeRequest {
+    pub id: Uuid,
+    pub number: String,
+    pub title: String,
+    pub description: String,
+    pub reason: String,
+    pub priority: String,
+    pub status: String,
+    pub requested_by: Uuid,
+    pub requested_by_name: String,
+    pub assignee: Option<Uuid>,
+    pub assignee_name: Option<String>,
+    pub assignee_username: Option<String>,
+    pub decision_comment: String,
+    pub decided_by: Option<Uuid>,
+    pub decided_by_name: Option<String>,
+    pub decided_at: Option<DateTime<Utc>>,
+    pub due_date: Option<chrono::NaiveDate>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub closed_at: Option<DateTime<Utc>>,
+    /// Number of affected items (list views).
+    pub item_count: i64,
+}
+
+/// An item affected by a change request.
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct RequestItem {
+    pub item_id: Uuid,
+    pub item_number: String,
+    pub item_type: String,
+    pub project_id: Option<Uuid>,
+    pub project_code: Option<String>,
+    /// The revision the problem was found in (if given).
+    pub revision_id: Option<Uuid>,
+    pub revision_code: Option<String>,
+    pub revision_state: Option<String>,
+    /// Name, code, state and id of the latest revision.
+    pub name: String,
+    pub latest_revision_id: Uuid,
+    pub latest_code: String,
+    pub latest_state: String,
+    pub note: String,
+}
+
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct RequestComment {
+    pub id: Uuid,
+    pub author_id: Uuid,
+    pub author_name: String,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct RequestAttachment {
+    pub id: Uuid,
+    pub request_id: Uuid,
+    pub filename: String,
+    pub content_type: String,
+    pub size_bytes: i64,
+    pub sha256: String,
+    pub uploaded_by: Uuid,
+    pub uploaded_by_name: String,
+    pub uploaded_at: DateTime<Utc>,
+}
+
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct AuditEntry {
     pub id: i64,

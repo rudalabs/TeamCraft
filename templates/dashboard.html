@@ -8,7 +8,6 @@
     <h1>Hello, {{ me.display_name }}</h1>
     <p class="subtitle">Product data of {{ instance_name }} at a glance.</p>
   </div>
-  {% if me.can_edit or assistant_enabled %}
   <div class="actions">
     {% if assistant_enabled %}
     <button type="button" data-toggle="assistant-panel" title="Triage your worklist or ask any question about the product data">Ask TeamCraft…</button>
@@ -16,9 +15,10 @@
     {% if me.can_edit %}
     {{ m.new_button("/items/new", "New item") }}
     {{ m.new_button("/changes/new", "New change") }}
+    {% else %}
+    {{ m.new_button("/requests/new", "Request change") }}
     {% endif %}
   </div>
-  {% endif %}
 </div>
 {% if assistant_enabled %}
 {{ m.assistant_panel([["attention", "What needs my attention"]], "", "", "", "/") }}
@@ -115,6 +115,44 @@
       </tbody>
     </table>
     {% else %}<p class="empty">No open changes.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Requests assigned to me</h2>
+    {% if assigned_requests %}
+    <table>
+      <tbody>
+      {% for r in assigned_requests %}
+        <tr>
+          <td class="nowrap"><a href="/requests/{{ r.id }}">{{ r.number }}</a></td>
+          <td>{{ r.title }}</td>
+          <td>{{ m.badge(r.status) }}</td>
+          <td class="small muted nowrap">{% if r.due_date %}due {{ r.due_date }}{% else %}{{ r.requested_by_name }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">No change requests assigned to you.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>My open requests</h2>
+      <a class="button small" href="/requests/new">Request change</a>
+    </div>
+    {% if my_requests %}
+    <table>
+      <tbody>
+      {% for r in my_requests %}
+        <tr>
+          <td class="nowrap"><a href="/requests/{{ r.id }}">{{ r.number }}</a></td>
+          <td>{{ r.title }}</td>
+          <td>{{ m.badge(r.status) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p class="empty">Found a problem? Raise a change request – the CAD editors of the item take it from there.</p>{% endif %}
   </section>
 
   <section class="card span-all">
