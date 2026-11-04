@@ -82,6 +82,8 @@ pub struct Config {
     /// Root directory of the file vault (and of the cached 3D previews).
     pub vault_dir: PathBuf,
     pub max_upload_bytes: u64,
+    /// Largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/{id}`).
+    pub upload_chunk_bytes: u64,
     pub session_ttl: Duration,
     /// Adds the `Secure` attribute to cookies (required when served via HTTPS).
     pub cookie_secure: bool,
@@ -229,6 +231,10 @@ impl Config {
         if max_upload_mb == 0 {
             bail!("TEAMCRAFT_MAX_UPLOAD_MB must be at least 1");
         }
+        let upload_chunk_mb = env.parse_or("TEAMCRAFT_UPLOAD_CHUNK_MB", 16u64)?;
+        if !(1..=1024).contains(&upload_chunk_mb) {
+            bail!("TEAMCRAFT_UPLOAD_CHUNK_MB must be between 1 and 1024");
+        }
 
         let session_ttl_hours = env.parse_or("TEAMCRAFT_SESSION_TTL_HOURS", 72u64)?;
         if session_ttl_hours == 0 {
@@ -351,6 +357,7 @@ impl Config {
             db_max_connections,
             vault_dir,
             max_upload_bytes: max_upload_mb * 1024 * 1024,
+            upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
             cookie_secure,
             log_format,
@@ -367,12 +374,13 @@ impl Config {
     /// Password-free summary for the startup log.
     pub fn summary(&self) -> String {
         format!(
-            "bind={} public_url={} database={} vault={} max_upload={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} mattermost_notifications={} assistant={}",
+            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} mattermost_notifications={} assistant={}",
             self.bind_addr,
             self.public_url,
             self.database_display,
             self.vault_dir.display(),
             self.max_upload_bytes / (1024 * 1024),
+            self.upload_chunk_bytes / (1024 * 1024),
             self.session_ttl.as_secs() / 3600,
             self.cookie_secure,
             self.oidc.as_ref().map(|o| o.issuer_url.as_str()).unwrap_or("disabled"),
@@ -555,6 +563,7 @@ mod tests {
         assert_eq!(cfg.bind_addr.to_string(), "127.0.0.1:8080");
         assert_eq!(cfg.public_url, "http://localhost:8080");
         assert_eq!(cfg.max_upload_bytes, 512 * 1024 * 1024);
+        assert_eq!(cfg.upload_chunk_bytes, 16 * 1024 * 1024);
         assert!(!cfg.cookie_secure);
         assert_eq!(cfg.log_format, LogFormat::Text);
         assert!(cfg.bootstrap_admin.is_none());
@@ -811,6 +820,11 @@ mod tests {
         assert!(config_from(&[
             ("TEAMCRAFT_DB_PASSWORD", "x"),
             ("TEAMCRAFT_MAX_UPLOAD_MB", "0")
+        ])
+        .is_err());
+        assert!(config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_UPLOAD_CHUNK_MB", "0")
         ])
         .is_err());
         assert!(config_from(&[

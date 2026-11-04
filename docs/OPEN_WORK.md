@@ -51,8 +51,8 @@ the known gaps with details. Last update: 2026-11-04.
   BREP, Parasolid, JT, … (E57: `e57` crate)
 - [x] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview, per project group (feature 4)
 - [ ] Custom attributes per item and file type, classification (standard/purchased parts), attribute search (feature 5)
-- [x] Item copy ("Save as" with files and BOM) – done; open: supersede/replace, alternate parts, multi-level where-used
-  (feature 6)
+- [x] Item copy ("Save as" with files and BOM) – done; multi-level where-used in the API and MCP (`levels`); open:
+  supersede/replace, alternate parts, multi-level where-used in the web UI (feature 6)
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
 - [x] Engineering change requests (ECR) before the change order: raised by anybody incl. viewers (web, API, desktop
   revision tab and workspace file, screenshot/PDF attachments), discussion, triage/decision by the CAD editors of the
@@ -66,7 +66,9 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Backup/restore of the database and vault as CLI commands (`teamcraft backup`, `teamcraft restore`) – see
   [Operations](src/admin/operations.md)
 - [ ] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools
-- [ ] Chunked resumable uploads (tus) (feature 9)
+- [x] Chunked resumable uploads (feature 9): `/api/v1/uploads` (offset-checked chunks, resume, SHA-256 check, same
+  check-in code path), used by the desktop app for files above 32 MiB; open: chunked uploads from the web UI
+  (`static/app.js`)
 - [x] README screenshots of the web pages: captured in CI by `scripts/screenshots.sh` (run 41919547600), committed in
   `media/screenshots/`
 - [ ] Desktop app screenshots and short GIFs for the README
@@ -246,12 +248,15 @@ The history up to the open-source release is squashed into the first commit
    further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to
    attributes.
 6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate
-   parts, multi-level where-used.
+   parts, multi-level where-used (API and MCP: done, `levels=N`).
 7. **BOM comparison** between revisions with Excel export (`rust_xlsxwriter`,
    MIT/Apache-2.0): done – direct lines, and over all levels with a revision
    rule (`depth=all`); the expanded BOM itself exports as Excel too.
 8. **Bulk import of a folder tree** (NAS/Drive) as items with files (candidate: `walkdir`, MIT/Unlicense).
-9. **Chunked resumable uploads** (tus protocol, `tus-js-client`); **backup/restore** of the database and vault is done
+9. **Chunked resumable uploads**: done without new dependencies – a tus-like protocol of our own (`POST /api/v1/uploads`,
+   `PATCH` with `Upload-Offset`, 409 on a wrong offset, `HEAD` to resume, `finish` or the `uploads` field of a
+   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; the desktop app uses it for large
+   files, the web UI still sends one multipart request. **Backup/restore** of the database and vault is done
    (`teamcraft backup`/`teamcraft restore` with `pg_dump`/`pg_restore`, unit tests for the manifest, argument building,
    hashes and path safety); the end-to-end check with the real client tools is still open (see the to-do list).
 

@@ -284,6 +284,9 @@ pub async fn list(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<FileRecord>
 /// The files of several revisions in one query, ordered by revision, folder
 /// and name.
 pub async fn list_many(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<FileRecord>> {
+    if revision_ids.is_empty() {
+        return Ok(Vec::new());
+    }
     Ok(sqlx::query_as::<_, FileRecord>(&format!(
         "{FILE_SELECT} WHERE f.revision_id = ANY($1)
          ORDER BY f.revision_id, lower(f.folder), lower(f.filename)"
@@ -294,6 +297,19 @@ pub async fn list_many(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Fi
     .into_iter()
     .map(with_format)
     .collect())
+}
+
+/// [`list_many`] grouped by revision (each group in folder and name order).
+pub async fn list_many_by_revision(
+    pool: &PgPool,
+    revision_ids: &[Uuid],
+) -> AppResult<std::collections::HashMap<Uuid, Vec<FileRecord>>> {
+    let mut out: std::collections::HashMap<Uuid, Vec<FileRecord>> =
+        std::collections::HashMap::new();
+    for f in list_many(pool, revision_ids).await? {
+        out.entry(f.revision_id).or_default().push(f);
+    }
+    Ok(out)
 }
 
 pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<FileRecord> {
@@ -501,6 +517,38 @@ async fn ensure_base(
         }
     };
     Err(AppError::Conflict(message))
+}
+
+/// Checks a planned upload against the current file before its bytes are
+/// sent (chunked uploads announce their base first), so a conflict is
+/// reported before gigabytes are transferred. The binding check runs again
+/// when the version is stored.
+pub async fn precheck_base(
+    pool: &PgPool,
+    revision_id: Uuid,
+    filename: &str,
+    base: &BaseVersion,
+    upload_sha256: Option<&str>,
+) -> AppResult<()> {
+    let mut conn = pool.acquire().await?;
+    let existing = sqlx::query_as::<_, Existing>(
+        "SELECT f.id, f.current_version, f.sha256, u.display_name AS uploaded_by_name,
+                f.uploaded_at
+         FROM files f JOIN users u ON u.id = f.uploaded_by
+         WHERE f.revision_id = $1 AND lower(f.filename) = lower($2)",
+    )
+    .bind(revision_id)
+    .bind(filename)
+    .fetch_optional(&mut *conn)
+    .await?;
+    ensure_base(
+        &mut conn,
+        filename,
+        base,
+        existing.as_ref(),
+        upload_sha256.unwrap_or(""),
+    )
+    .await
 }
 
 /// Stores uploads as new files or new versions inside the caller's

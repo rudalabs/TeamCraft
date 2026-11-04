@@ -28,7 +28,10 @@ check-outs and reviews, and a **local working folder**:
   lock – based on the versions they were copied from, so a version somebody
   else checked in meanwhile is never overwritten (see
   [Concurrency](vault.md#concurrency-nothing-is-overwritten-silently)) –
-  and makes the files read-only again;
+  and makes the files read-only again; files above 32 MiB are sent in
+  resumable chunks with progress in the status bar – a dropped connection
+  resumes where it stopped, *Cancel* stops the upload and nothing is stored
+  (see [Large files](vault.md#large-files-chunked-resumable-uploads));
 * *Check in all* in the worklist checks in every check-out without local
   changes and lists those that still have changes;
 * *Request change…* on a revision tab and *Request…* on a file (Files and
@@ -41,6 +44,16 @@ check-outs and reviews, and a **local working folder**:
 * *Ask…* in a revision or change tab opens [Ask TeamCraft](assistant.md)
   (release notes, release check, review briefing, free questions) when the
   server has the assistant enabled.
+* *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`) works with a local AI agent
+  that you set up under *Settings → Agents…*, for example Claude Code
+  through its ACP adapter or Gemini CLI. None is set up by default. The app
+  starts the agent in the workspace folder and gives it TeamCraft's tools
+  with your rights. The conversation streams in a tab of its own, with tool
+  calls, the agent's plan, permission prompts (*Allow once* / *Reject*),
+  *Cancel* and quick prompts (release notes, release check, change review,
+  worklist triage). Through the app the agent may only read text files in
+  the workspace folder; it gets no write access and no terminal. See
+  [ACP agents](assistant.md#acp-agents-in-the-desktop-app).
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a
 TeamCraft page) or with a personal access token. The app uses the same skins

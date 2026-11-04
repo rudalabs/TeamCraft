@@ -88,13 +88,95 @@ POST /api/v1/assistant
 `capabilities.assistant`. Without a key the `POST` endpoint answers `404`.
 When the AI service is overloaded or busy it answers `503`.
 
-## Follow-up: local agents in the desktop app (ACP)
+## ACP agents in the desktop app
 
-The [Agent Client Protocol](https://agentclientprotocol.com) (ACP) connects
-editors to coding agents that run on the user's machine (Claude Code,
-Gemini CLI and others). A planned follow-up is to let the desktop app act as
-an ACP client. A local agent would then work on the workspace of a
-checked-out revision and reach the PDM data through the MCP server with the
-user's own token. The server would need no API key. This is **not
-implemented yet**. Today, local agents connect through
-[MCP](../reference/mcp.md).
+*Ask TeamCraft* runs on the server with the administrator's API key. The
+desktop app has a second option: it can work with an **agent on your own
+computer**. The [Agent Client Protocol](https://agentclientprotocol.com)
+(ACP) connects clients to such agents, for example Claude Code (through
+its ACP adapter) or Gemini CLI. The desktop app is the ACP client. The
+server needs no API key for this. The agent uses its own sign-in or key
+with its own provider.
+
+### Set it up
+
+1. **Settings → Agents…** (or **Agent** in the navigation rail →
+   **Set up an agent…**). No agent is set up by default, and TeamCraft
+   never installs or starts one on its own.
+2. Add an agent. The presets only fill in the fields:
+
+   | Agent       | Program                       | Arguments                            | Needs                                                                                 |
+   |-------------|-------------------------------|--------------------------------------|---------------------------------------------------------------------------------------|
+   | Claude Code | `npx` (Windows: `npx.cmd`)    | `-y @zed-industries/claude-code-acp` | Node.js; npx downloads the adapter from npm the first time; sign in with `claude` once or set `ANTHROPIC_API_KEY` |
+   | Gemini CLI  | `gemini`                      | `--experimental-acp`                 | `npm install -g @google/gemini-cli`, then sign in once with `gemini`                   |
+
+   Any other program that speaks ACP over stdio works too. Desktop apps
+   often do not see the `PATH` of your shell (macOS in particular). If the
+   program is not found, enter its absolute path, for example
+   `/opt/homebrew/bin/gemini`. Package names change: check the adapter's
+   own documentation if `npx` reports an unknown package.
+3. Open **Agent** (rail, **View → Agent**, `Ctrl+4`), pick the agent and
+   press **Start**.
+
+### Working with it
+
+- The **conversation** is a tab of its own. Answers stream in as they are
+  written. Tool calls appear in the conversation and in the navigator with
+  their status (waiting, running, done, failed). The agent's **plan** is
+  shown in the navigator if the agent shares one.
+- **Context:** each message tells the agent which revision or change order
+  you last had open. The **Agent** button in a revision or change toolbar
+  opens the agent with that object as context.
+- **Quick prompts** use the server's [MCP prompts](../reference/mcp.md):
+  *Release notes* and *Release check* for the open revision, *Review this
+  change* for the open change order, *Triage my worklist* anywhere.
+- **Permission requests** of the agent show up in the conversation with
+  **Allow once** and **Reject**. The desktop app never grants an "always"
+  permission.
+- **Cancel** in the toolbar stops the running turn. **Stop** in the
+  navigator ends the agent process. Signing out stops it too.
+
+### What the agent can reach
+
+- **TeamCraft's tools with your rights.** The desktop app passes the
+  server's MCP endpoint (`<server>/api/v1/mcp`) to the agent when the
+  session starts, with your desktop sign-in (the personal access token) as
+  the `Authorization` header. The agent can do in TeamCraft exactly what
+  you can do through the MCP tools: read, and draft change orders. It
+  cannot submit, approve or release. An agent without support for MCP over
+  HTTP gets no TeamCraft tools; the navigator says so.
+- **The workspace folder.** The agent runs in your workspace folder (its
+  working directory). Through the desktop app it may only **read** text
+  files there (`fs/read_text_file`, at most 4 MiB). Paths outside the
+  folder are refused, also when a symbolic link points outside.
+- **No writing and no terminal through TeamCraft.** The desktop app does
+  not offer the ACP capabilities `fs/write_text_file` and `terminal`.
+  Changes to CAD data should go through check-out and check-in, with
+  versions, locks and an audit trail. An agent that edits files behind the
+  PDM's back would bypass that. A terminal would give the agent a shell
+  through the desktop app.
+- **But it is your program.** The agent process runs with your operating
+  system rights. These limits apply to what it asks the desktop app to do.
+  Its own built-in tools (editing files, running commands) are governed by
+  the agent's own permission requests, and the desktop app shows those to
+  you. Answer them with care.
+
+Your messages and the data the agent looks up go to the agent's AI
+provider under the agent's own terms. TeamCraft's audit log shows the MCP
+tool calls as yours.
+
+### Protocol details
+
+The desktop app speaks ACP version 1 (JSON-RPC 2.0, one message per line,
+at most 8 MiB per message) and calls `initialize`, `session/new` (with the
+workspace folder as `cwd` and TeamCraft as an `http` entry in
+`mcpServers`), `session/prompt` and `session/cancel`. It handles
+`session/update` (message and thought chunks, `tool_call`,
+`tool_call_update`, `plan`), `session/request_permission` and
+`fs/read_text_file`. It answers every other agent request with "method not
+found". At most 8 file reads run at once and at most 16 permission requests
+wait for an answer; further ones are refused or answered with `cancelled`.
+**Stop** closes the agent's input and ends the process, so an agent that
+`npx` or `cmd` started as a child process of its own ends too. If the agent asks for a sign-in first (`auth_required`), sign in
+once in a terminal with the agent's own command and start it again. The
+code is `desktop/src/acp.rs`.

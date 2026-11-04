@@ -29,7 +29,7 @@ use tokio::io::AsyncReadExt;
 
 pub use crate::layout::{is_ignored, logical_name, safe_name};
 use crate::{
-    api::{Api, ApiError},
+    api::{Api, ApiError, Transfer},
     layout::{self, Entry, GetAction, MigrationAction, OldFile, ServerFile, State},
 };
 
@@ -818,8 +818,10 @@ pub async fn locate(
 /// Checks in: uploads the chosen files as new versions and releases the
 /// lock in one request (atomic on the server). Every file names the version
 /// it is based on, so the server refuses (409) to overwrite a newer one; new
-/// files are sent with the folder they sit in. Afterwards the files are
+/// files are sent with the folder they sit in. Large files are sent before
+/// in resumable chunks (see [`Api::send_files`]). Afterwards the files are
 /// read-only again.
+#[allow(clippy::too_many_arguments)]
 pub async fn check_in(
     api: &Api,
     root: &Path,
@@ -828,6 +830,7 @@ pub async fn check_in(
     code: &str,
     names: &[String],
     comment: &str,
+    transfer: &Transfer<'_>,
 ) -> Result<Value, ApiError> {
     let rev = revision_files(api, project, item, code).await?;
     let mut state = State::load(root);
@@ -879,14 +882,17 @@ pub async fn check_in(
         files.push((logical.to_string(), path));
     }
     let result = api
-        .multipart(
+        .send_files(
             &format!("{}/checkin", rev_path(item, code)),
+            item,
+            code,
             &files,
             &[
                 ("comment", comment.to_string()),
                 ("bases", Value::Object(bases).to_string()),
                 ("folders", Value::Object(folders).to_string()),
             ],
+            transfer,
         )
         .await?;
     // The checked-in content is the new base of the local files, and the
