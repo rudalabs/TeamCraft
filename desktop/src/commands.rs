@@ -1,16 +1,20 @@
 //! Commands the user interface calls through `window.__TAURI__.core.invoke`.
 //! Every network access and every file system access of the app is here.
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{atomic::Ordering, Arc},
+};
 
 use reqwest::Method;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Notify;
 
 use crate::{
+    acp,
     api::{self, Api, ApiError},
     cadexport, folderimport,
     settings::{self, Settings},
@@ -201,6 +205,8 @@ pub async fn sign_in_token(state: State<'_, AppState>, token: String) -> CmdResu
 
 #[tauri::command]
 pub fn sign_out(state: State<'_, AppState>) -> CmdResult<()> {
+    // the agent works with the token that is about to go
+    stop_agent(&state);
     let mut s = state.settings.lock().expect("settings lock");
     s.save_token(&state.config_dir, None)
         .map_err(|e| ApiError::local(e.to_string()))
@@ -666,4 +672,307 @@ pub async fn scan_folder(path: PathBuf) -> CmdResult<folderimport::Scan> {
         .await
         .map_err(|e| ApiError::local(format!("The scan stopped: {e}")))?
         .map_err(ApiError::local)
+}
+
+// ---------------------------------------------------------------- ACP agents
+
+/// The agent session the desktop runs (at most one).
+pub struct RunningAgent {
+    /// Number of the session; its events carry it.
+    pub session: u64,
+    /// Name of the agent in the settings.
+    pub name: String,
+    pub agent: Arc<acp::Session>,
+}
+
+/// Events of an agent session go to the window as `agent` events.
+struct AgentSink {
+    app: AppHandle,
+    session: u64,
+}
+
+impl acp::Sink for AgentSink {
+    fn emit(&self, event: acp::Event) {
+        let _ = self.app.emit(
+            "agent",
+            acp::Envelope {
+                session: self.session,
+                event,
+            },
+        );
+    }
+}
+
+/// An agent as the settings dialog edits it: the arguments as one line.
+#[derive(Serialize, Deserialize)]
+pub struct AgentEntry {
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: String,
+}
+
+#[derive(Serialize)]
+pub struct AgentProfiles {
+    pub agents: Vec<AgentEntry>,
+    pub selected: Option<String>,
+}
+
+/// Arguments as one line again (quoted where they contain spaces).
+fn join_args(args: &[String]) -> String {
+    args.iter()
+        .map(|a| {
+            if a.is_empty() || a.chars().any(char::is_whitespace) {
+                format!("\"{a}\"")
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn profiles_of(s: &Settings) -> AgentProfiles {
+    AgentProfiles {
+        agents: s
+            .agents
+            .iter()
+            .map(|a| AgentEntry {
+                name: a.name.clone(),
+                command: a.command.clone(),
+                args: join_args(&a.args),
+            })
+            .collect(),
+        selected: s.agent.clone(),
+    }
+}
+
+/// The configured agents (Settings → Agents).
+#[tauri::command]
+pub fn agent_profiles(state: State<'_, AppState>) -> AgentProfiles {
+    profiles_of(&snapshot(&state))
+}
+
+/// Most agents the settings hold.
+const MAX_AGENTS: usize = 20;
+
+fn parse_profiles(agents: Vec<AgentEntry>) -> Result<Vec<acp::AgentProfile>, String> {
+    if agents.len() > MAX_AGENTS {
+        return Err(format!("At most {MAX_AGENTS} agents."));
+    }
+    let mut profiles: Vec<acp::AgentProfile> = Vec::new();
+    for a in agents {
+        let profile = acp::AgentProfile {
+            name: a.name.trim().to_string(),
+            command: a.command.trim().to_string(),
+            args: acp::split_args(&a.args),
+        };
+        profile.validate()?;
+        if profiles.iter().any(|p| p.name == profile.name) {
+            return Err(format!("Two agents are called “{}”.", profile.name));
+        }
+        profiles.push(profile);
+    }
+    Ok(profiles)
+}
+
+#[tauri::command]
+pub fn set_agent_profiles(
+    state: State<'_, AppState>,
+    agents: Vec<AgentEntry>,
+) -> CmdResult<AgentProfiles> {
+    let profiles = parse_profiles(agents).map_err(ApiError::local)?;
+    let s = update_settings(&state, |s| {
+        if !s
+            .agent
+            .as_ref()
+            .is_some_and(|name| profiles.iter().any(|p| &p.name == name))
+        {
+            s.agent = profiles.first().map(|p| p.name.clone());
+        }
+        s.agents = profiles;
+    })?;
+    Ok(profiles_of(&s))
+}
+
+#[derive(Serialize)]
+pub struct AgentState {
+    pub session: u64,
+    pub name: String,
+    pub info: acp::AgentInfo,
+    /// A prompt turn is running.
+    pub busy: bool,
+}
+
+fn describe(running: &RunningAgent) -> AgentState {
+    AgentState {
+        session: running.session,
+        name: running.name.clone(),
+        info: running.agent.info.clone(),
+        busy: running.agent.busy(),
+    }
+}
+
+fn current_agent(state: &State<'_, AppState>) -> CmdResult<Arc<acp::Session>> {
+    state
+        .agent
+        .lock()
+        .expect("agent lock")
+        .as_ref()
+        .map(|r| r.agent.clone())
+        .ok_or_else(|| ApiError::local("No agent is running – start one first."))
+}
+
+fn stop_agent(state: &State<'_, AppState>) {
+    let running = state.agent.lock().expect("agent lock").take();
+    if let Some(running) = running {
+        running.agent.stop();
+    }
+}
+
+/// The running agent session, if any (after a reload of the window).
+#[tauri::command]
+pub fn agent_status(state: State<'_, AppState>) -> Option<AgentState> {
+    state
+        .agent
+        .lock()
+        .expect("agent lock")
+        .as_ref()
+        .map(describe)
+}
+
+/// Starts a configured agent in the workspace folder and opens a session
+/// with TeamCraft's MCP server (the desktop's token, so the user's rights).
+#[tauri::command]
+pub async fn agent_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> CmdResult<AgentState> {
+    let api = signed_in_api(&state)?;
+    let profile = snapshot(&state)
+        .agents
+        .into_iter()
+        .find(|a| a.name == name)
+        .ok_or_else(|| ApiError::local(format!("There is no agent “{name}” in the settings.")))?;
+    stop_agent(&state);
+    let root = workspace_root(&app, &state);
+    std::fs::create_dir_all(&root)?;
+    let session = state.agent_seq.fetch_add(1, Ordering::SeqCst) + 1;
+    let sink = Arc::new(AgentSink {
+        app: app.clone(),
+        session,
+    });
+    let opts = acp::Options {
+        cwd: root,
+        mcp: api.token.clone().map(|token| acp::McpServer {
+            url: format!("{}/api/v1/mcp", api.base),
+            token,
+        }),
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        stderr: acp::Tail::default(),
+    };
+    let agent = Arc::new(
+        acp::spawn(&profile, sink, opts)
+            .await
+            .map_err(ApiError::local)?,
+    );
+    if state.agent_seq.load(Ordering::SeqCst) != session {
+        agent.stop();
+        return Err(ApiError::local("Another agent was started meanwhile."));
+    }
+    let _ = update_settings(&state, |s| s.agent = Some(name.clone()));
+    let running = RunningAgent {
+        session,
+        name,
+        agent,
+    };
+    let described = describe(&running);
+    let old = state.agent.lock().expect("agent lock").replace(running);
+    if let Some(old) = old {
+        old.agent.stop();
+    }
+    Ok(described)
+}
+
+/// Sends a message (with what the user is looking at) and waits for the end
+/// of the turn; the answer streams as `agent` events. Returns the stop reason.
+#[tauri::command]
+pub async fn agent_prompt(
+    state: State<'_, AppState>,
+    text: String,
+    context: Option<acp::PromptContext>,
+) -> CmdResult<String> {
+    let agent = current_agent(&state)?;
+    agent
+        .prompt(&text, &context.unwrap_or_default())
+        .await
+        .map_err(ApiError::local)
+}
+
+/// The user's answer to a permission request: allow once or reject.
+#[tauri::command]
+pub async fn agent_permission(state: State<'_, AppState>, key: u64, allow: bool) -> CmdResult<()> {
+    let agent = current_agent(&state)?;
+    agent
+        .answer_permission(key, allow)
+        .await
+        .map_err(ApiError::local)
+}
+
+/// Stops the running turn of the agent.
+#[tauri::command]
+pub async fn agent_cancel(state: State<'_, AppState>) -> CmdResult<()> {
+    let agent = current_agent(&state)?;
+    agent.cancel().await.map_err(ApiError::local)
+}
+
+/// Ends the agent process.
+#[tauri::command]
+pub fn agent_stop(state: State<'_, AppState>) {
+    stop_agent(&state);
+}
+
+#[cfg(test)]
+mod agent_tests {
+    use super::*;
+
+    #[test]
+    fn agent_entries_round_trip() {
+        let profiles = parse_profiles(vec![
+            AgentEntry {
+                name: " Claude Code ".into(),
+                command: "npx".into(),
+                args: "-y @zed-industries/claude-code-acp".into(),
+            },
+            AgentEntry {
+                name: "Gemini".into(),
+                command: "gemini".into(),
+                args: "--experimental-acp --x \"a b\"".into(),
+            },
+        ])
+        .unwrap();
+        assert_eq!(profiles[0].name, "Claude Code");
+        assert_eq!(
+            profiles[0].args,
+            vec!["-y", "@zed-industries/claude-code-acp"]
+        );
+        assert_eq!(
+            join_args(&profiles[1].args),
+            "--experimental-acp --x \"a b\""
+        );
+        let twice = vec![
+            AgentEntry {
+                name: "A".into(),
+                command: "a".into(),
+                args: String::new(),
+            },
+            AgentEntry {
+                name: "A".into(),
+                command: "b".into(),
+                args: String::new(),
+            },
+        ];
+        assert!(parse_profiles(twice).is_err());
+    }
 }

@@ -6,6 +6,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod acp;
 mod api;
 mod cadexport;
 mod commands;
@@ -16,7 +17,7 @@ mod workspace;
 
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{atomic::AtomicU64, Arc, Mutex},
 };
 
 use tauri::{
@@ -32,6 +33,10 @@ pub struct AppState {
     pub config_dir: PathBuf,
     /// Cancel signal of the running browser sign-in (one per attempt).
     pub sign_in_cancel: Mutex<Option<Arc<Notify>>>,
+    /// The running ACP agent session, if one was started.
+    pub agent: Mutex<Option<commands::RunningAgent>>,
+    /// Number of the last agent session (events carry it).
+    pub agent_seq: AtomicU64,
 }
 
 /// Name of this computer, shown on the browser confirmation page and used for
@@ -92,6 +97,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&item("go-home", "Home", Some("CmdOrCtrl+1"))?)
         .item(&item("go-worklist", "My Worklist", Some("CmdOrCtrl+2"))?)
         .item(&item("go-changes", "Changes", Some("CmdOrCtrl+3"))?)
+        .item(&item("go-agent", "Agent", Some("CmdOrCtrl+4"))?)
         .separator()
         .item(&item("zoom-in", "Zoom In (Ctrl + wheel)", None)?)
         .item(&item("zoom-out", "Zoom Out", None)?)
@@ -128,6 +134,8 @@ fn main() {
                 client: api::client(),
                 config_dir,
                 sign_in_cancel: Mutex::new(None),
+                agent: Mutex::new(None),
+                agent_seq: AtomicU64::new(0),
             });
             build_menu(app)?;
             if let (Some(zoom), Some(window)) = (zoom, app.get_webview_window("main")) {
@@ -163,6 +171,14 @@ fn main() {
             commands::cad_programs,
             commands::cad_export_step,
             commands::scan_folder,
+            commands::agent_profiles,
+            commands::set_agent_profiles,
+            commands::agent_status,
+            commands::agent_start,
+            commands::agent_prompt,
+            commands::agent_permission,
+            commands::agent_cancel,
+            commands::agent_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TeamCraft Desktop");

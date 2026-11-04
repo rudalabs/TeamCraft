@@ -30,6 +30,16 @@ check-outs and reviews, and a **local workspace**:
 * *Ask…* in a revision or change tab opens [Ask TeamCraft](assistant.md)
   (release notes, release check, review briefing, free questions) when the
   server has the assistant enabled.
+* *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`) works with a local AI agent
+  that you set up under *Settings → Agents…*, for example Claude Code
+  through its ACP adapter or Gemini CLI. None is set up by default. The app
+  starts the agent in the workspace folder and gives it TeamCraft's tools
+  with your rights. The conversation streams in a tab of its own, with tool
+  calls, the agent's plan, permission prompts (*Allow once* / *Reject*),
+  *Cancel* and quick prompts (release notes, release check, change review,
+  worklist triage). Through the app the agent may only read text files in
+  the workspace folder; it gets no write access and no terminal. See
+  [ACP agents](assistant.md#acp-agents-in-the-desktop-app).
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a
 TeamCraft page) or with a personal access token. The app uses the same skins

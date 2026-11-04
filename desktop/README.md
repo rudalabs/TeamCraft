@@ -32,11 +32,12 @@ TeamCraft server – it is a client, not an offline copy.
 | Change propagation | *Dependents to check*, *Check needed* banner with **Acknowledge…**, references, *As released* rule, impact analysis |
 | Notifications | Bell with unread count and toasts; **Watch** / **Unwatch** |
 | Ask TeamCraft | **Ask…** in revision and change tabs (only when the server has the assistant enabled): *Draft release notes*, *Check before release*, *Brief me for this review* or a free question; the server answers with Claude and the user's rights, read-only unless drafts are allowed |
+| Agent (ACP) | **Agent** in the rail (`Ctrl/Cmd+4`): a local agent you configure under *Settings → Agents…* (Claude Code through its ACP adapter, Gemini CLI, any [Agent Client Protocol](https://agentclientprotocol.com) agent; none by default). The app starts it in the workspace folder and hands it TeamCraft's MCP server with your token. Streamed conversation, tool calls, plan, permission prompts (*Allow once* / *Reject*), *Cancel*, quick prompts from the server's MCP prompts, the open revision or change as context. Through the app the agent may only read text files in the workspace – no writing, no terminal. See [the guide](../docs/src/guide/assistant.md#acp-agents-in-the-desktop-app) |
 | Pack and Go, STL | ZIP of a revision and its structure; **Export STL…** from the 3D viewer |
 | Skins | The same skins as the web UI |
 
 Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
-`Ctrl/Cmd+1/2/3` Home/Worklist/Changes, `Ctrl/Cmd+W` close tab; zoom with
+`Ctrl/Cmd+1/2/3/4` Home/Worklist/Changes/Agent, `Ctrl/Cmd+W` close tab; zoom with
 `Ctrl` + mouse wheel or `Ctrl/Cmd` + `+` / `-` / `0`.
 
 ## Continuous integration
@@ -93,7 +94,8 @@ src/commands.rs    the commands the UI calls (every network and file access)
 src/api.rs         REST client (/api/v1, bearer token) – the web view never talks to the server
 src/signin.rs      browser sign-in: PKCE, loopback listener on 127.0.0.1
 src/workspace.rs   check-out folders, SHA-256 comparison with base versions (outdated / conflict), check-in upload
-src/settings.rs    settings.json and the token file
+src/settings.rs    settings.json (incl. the configured agents) and the token file
+src/acp.rs         Agent Client Protocol client: agent subprocess, JSON-RPC over stdio, session, permissions, workspace-only reads
 ui/                index.html, app.css (layout), app.js (all views)
 capabilities/      Tauri permissions of the window (dialogs only – files and URLs are opened by Rust)
 icons/             app icons, rendered from icons/app-icon.svg with `tauri icon`
