@@ -47,7 +47,7 @@ the known gaps with details. Last update: 2026-11-04.
   [Operations](src/admin/operations.md)
 - [ ] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools
 - [ ] Chunked resumable uploads (tus) (feature 9)
-- [ ] README screenshots/GIFs: dashboard, vault explorer, revision page, 3D viewer, BOM, desktop app
+- [ ] README screenshots/GIFs: web pages captured in CI by `scripts/screenshots.sh` (PNGs still to commit); desktop app and GIFs open
 - [x] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
 - [x] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
 - [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
@@ -219,10 +219,11 @@ in the README licence table, follow the definition of done in `CLAUDE.md`.
 
 ## Known gaps outside the plan
 
-- **README screenshots / GIFs** are missing: they need a browser session (Claude in Chrome was not connected). Planned:
-  dashboard, vault explorer,
-  revision page, 3D viewer (STEP), BOM page, desktop app; store them in
-  `docs/src/images/` and use them in the README and the book.
+- **README screenshots:** `scripts/screenshots.sh` and the *Screenshots*
+  workflow capture dashboard, vault explorer, revision page, 3D viewer (STEP),
+  BOM, change order, notifications and a phone view in CI; the PNGs go into
+  `media/screenshots/` (see CONTRIBUTING.md). Still missing: the desktop app
+  and GIFs, and the screenshots in the book.
 - **CI:** `ci.yml`, `docs.yml` and `desktop.yml` pass (`099737e`), the docs
   are live at <https://rudalabs.github.io/TeamCraft/>. The tests run on Linux
   only; macOS and Windows are build checks – server and desktop app were not
