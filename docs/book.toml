@@ -9,7 +9,8 @@ src = "src"
 site-url = "/TeamCraft/"
 git-repository-url = "https://github.com/rudalabs/TeamCraft"
 edit-url-template = "https://github.com/rudalabs/TeamCraft/edit/main/docs/{path}"
-# high-contrast dark scheme (docs/theme/doxygen.css), also on light desktops
+# colours follow the browser: Dracula by default, Doxygen light when the
+# browser prefers a light theme (docs/theme/doxygen.css)
 default-theme = "coal"
 preferred-dark-theme = "coal"
 # Doxygen-style look: title area, tab bar, navigation tree (theme/doxygen.*)

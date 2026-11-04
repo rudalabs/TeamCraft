@@ -14,10 +14,9 @@
     { label: "Source", href: "https://github.com/rudalabs/TeamCraft", external: true }
   ];
 
-  // One high-contrast scheme: drop any other theme remembered by mdBook.
-  try { localStorage.setItem("mdbook-theme", "coal"); } catch (e) { /* private mode */ }
-  ["light", "navy", "ayu", "rust"].forEach(function (t) { document.documentElement.classList.remove(t); });
-  document.documentElement.classList.add("coal");
+  // The colours follow the browser (prefers-color-scheme, see doxygen.css);
+  // a theme remembered by mdBook's (hidden) theme picker is dropped.
+  try { localStorage.removeItem("mdbook-theme"); } catch (e) { /* private mode */ }
 
   function el(tag, attrs, children) {
     var node = document.createElement(tag);
