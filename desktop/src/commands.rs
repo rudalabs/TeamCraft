@@ -517,7 +517,7 @@ pub async fn workspace_checkin(
     let api = signed_in_api(&state)?;
     let root = workspace_root(&app, &state);
     let cancel = new_upload(&state);
-    let progress = progress_events(app);
+    let progress = upload_progress_events(app);
     let transfer = Transfer {
         cancel: &cancel,
         progress: &progress,
@@ -544,8 +544,9 @@ fn new_upload(state: &State<'_, AppState>) -> Arc<AtomicBool> {
 }
 
 /// Reports the progress of large uploads to the user interface
-/// (event `upload-progress`: `{file, sent, total}`).
-fn progress_events(app: AppHandle) -> impl Fn(&str, u64, u64) + Send + Sync {
+/// (event `upload-progress`: `{file, sent, total}`; Gets use
+/// [`progress_events`]).
+fn upload_progress_events(app: AppHandle) -> impl Fn(&str, u64, u64) + Send + Sync {
     move |file: &str, sent: u64, total: u64| {
         let _ = app.emit(
             "upload-progress",
@@ -702,7 +703,7 @@ pub async fn upload_files(
         .map(|(name, folder)| (name, Value::String(layout::folder_for_upload(&folder))))
         .collect();
     let cancel = new_upload(&state);
-    let progress = progress_events(app);
+    let progress = upload_progress_events(app);
     let transfer = Transfer {
         cancel: &cancel,
         progress: &progress,
