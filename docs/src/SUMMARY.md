@@ -34,3 +34,4 @@
     - [Previews of native CAD files](research/cad-previews.md)
     - [Importing existing CAD folder trees](research/cad-folder-import.md)
     - [Popular features of Teamcenter and VistaPoint](research/teamcenter-vistapoint.md)
+    - [Openly licensed CAD files for end-to-end tests](research/cad-test-files.md)
