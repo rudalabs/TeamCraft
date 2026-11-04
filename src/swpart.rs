@@ -39,10 +39,11 @@
 //!
 //! Hostile input: offsets and sizes are never trusted. Sections are found by
 //! a bounded search ([`MAX_SEARCH`] bytes looked at byte by byte, at most
-//! [`MAX_SECTIONS`] sections), the data of a section after the signature is
-//! skipped with a seek, and inflating stops one byte after the stored size;
-//! sections larger than the caller's limit are not inflated at all
-//! (decompression bombs end there).
+//! [`MAX_SECTIONS`] sections, the file read in chunks that are each read
+//! about once), the data of a section after the signature is skipped, and
+//! inflating stops one byte after the stored size; sections larger than the
+//! caller's limit are not inflated at all (decompression bombs end there),
+//! and at most [`MAX_TRIES`] sections of one name are inflated.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -70,6 +71,9 @@ pub const MAX_SEARCH: u64 = 64 * 1024 * 1024;
 /// Bytes before each section header (the same in all sections of a file).
 const SIGNATURE: usize = 4;
 const CHUNK: usize = 64 * 1024;
+/// Most sections of the same name inflated by one [`SwContainer::read`]
+/// (the NIST files have every name once).
+pub const MAX_TRIES: usize = 4;
 
 /// A section of the container: where its compressed data lies in the file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,6 +84,9 @@ pub struct Section {
     pub compressed: u64,
     pub size: u64,
     pub crc: u32,
+    /// Found after the signature (or the section that revealed it); the
+    /// sections found before are only plausible headers.
+    pub confirmed: bool,
 }
 
 fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
@@ -124,6 +131,7 @@ fn parse_header(buf: &[u8], at: u64, file_len: u64) -> Option<Section> {
         compressed: u64::from(compressed),
         size: u64::from(size),
         crc,
+        confirmed: false,
     })
 }
 
@@ -225,21 +233,30 @@ struct Window {
 impl Window {
     /// Up to `len` bytes from `pos` (fewer only at the end of the file).
     fn get<R: Read + Seek>(&mut self, reader: &mut R, pos: u64, len: usize) -> io::Result<&[u8]> {
+        let rest = self.rest(reader, pos, len)?;
+        Ok(&rest[..len.min(rest.len())])
+    }
+
+    /// The buffered bytes from `pos` on, at least `min` of them (fewer only
+    /// at the end of the file). The buffer is refilled only when fewer are
+    /// buffered, so a search that moves forward through the file reads each
+    /// chunk about once – not once per marker it looks at.
+    fn rest<R: Read + Seek>(&mut self, reader: &mut R, pos: u64, min: usize) -> io::Result<&[u8]> {
         let end = self.start + self.data.len() as u64;
         let inside = pos >= self.start
             && pos <= end
-            && (self.at_eof || pos + len as u64 <= end)
+            && (self.at_eof || pos.saturating_add(min as u64) <= end)
             && !self.data.is_empty();
         if !inside {
-            self.data.resize(CHUNK.max(len), 0);
+            let want = CHUNK.max(min);
+            self.data.resize(want, 0);
             let n = read_at(reader, pos, &mut self.data)?;
             self.data.truncate(n);
-            self.at_eof = n < CHUNK.max(len);
+            self.at_eof = n < want;
             self.start = pos;
         }
-        let from = (pos - self.start) as usize;
-        let to = (from + len).min(self.data.len());
-        Ok(&self.data[from..to])
+        let from = usize::try_from(pos - self.start).unwrap_or(usize::MAX);
+        Ok(self.data.get(from..).unwrap_or_default())
     }
 }
 
@@ -276,8 +293,9 @@ impl<R: Read + Seek> SwContainer<R> {
         let mut window = Window::default();
         let mut signature: Option<[u8; 4]> = None;
         while pos < file_len && searched < MAX_SEARCH && sections.len() < MAX_SECTIONS {
-            // Search the next marker from `pos`.
-            let chunk = window.get(reader, pos, CHUNK)?;
+            // Search the next marker from `pos` in what is buffered (at least
+            // a whole header, unless the file ends earlier).
+            let chunk = window.rest(reader, pos, FIXED + MAX_NAME)?;
             let n = chunk.len();
             let Some(i) = find_marker(chunk) else {
                 if n < MARKER.len() {
@@ -298,13 +316,14 @@ impl<R: Read + Seek> SwContainer<R> {
             let header = window.get(reader, at, FIXED + MAX_NAME)?;
             let section = parse_header(header, at, file_len)
                 .filter(|_| signature.is_none() || before == signature);
-            let Some(section) = section else {
+            let Some(mut section) = section else {
                 pos = at + 1;
                 continue;
             };
             let end = section.offset + section.compressed;
-            sections.push(section);
             if signature.is_some() {
+                section.confirmed = true;
+                sections.push(section);
                 pos = end;
                 continue;
             }
@@ -314,10 +333,12 @@ impl<R: Read + Seek> SwContainer<R> {
                 && before.is_some_and(|b| after[..SIGNATURE] == b)
             {
                 signature = before;
+                section.confirmed = true;
                 pos = end;
             } else {
                 pos = at + 1;
             }
+            sections.push(section);
         }
         Ok(sections)
     }
@@ -328,14 +349,21 @@ impl<R: Read + Seek> SwContainer<R> {
 
     /// The uncompressed data of the named section, if it exists, is at most
     /// `max` bytes long and inflates correctly (size and CRC-32). Should the
-    /// name occur more than once, the first section that inflates wins.
+    /// name occur more than once, the first section that inflates wins –
+    /// confirmed sections first (real files also hold header-like records
+    /// with the names of real sections before the signature is known). Of
+    /// each kind only the first [`MAX_TRIES`] are tried: each may inflate up
+    /// to `max` bytes before it fails, so a file full of bogus copies of one
+    /// section must not multiply that work.
     pub fn read(&mut self, name: &str, max: u64) -> io::Result<Option<Vec<u8>>> {
-        let candidates: Vec<Section> = self
-            .sections
-            .iter()
-            .filter(|s| s.name == name && s.size <= max)
-            .cloned()
-            .collect();
+        let named = |confirmed: bool| {
+            self.sections
+                .iter()
+                .filter(move |s| s.name == name && s.size <= max && s.confirmed == confirmed)
+                .take(MAX_TRIES)
+                .cloned()
+        };
+        let candidates: Vec<Section> = named(true).chain(named(false)).collect();
         for s in candidates {
             self.reader.seek(SeekFrom::Start(s.offset))?;
             let input = (&mut self.reader).take(s.compressed);
@@ -538,7 +566,12 @@ mod tests {
         bytes.extend(section("Stray", b"stray"));
         bytes.extend_from_slice(&SIG);
         bytes.extend(section("Three", b"three"));
-        let sw = SwContainer::open(Cursor::new(&bytes)).unwrap().unwrap();
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/flood.bin");
+        std::fs::write(&p, &bytes).unwrap();
+        let sw = SwContainer::open(std::fs::File::open(&p).unwrap())
+            .unwrap()
+            .unwrap();
+        let _ = Cursor::new(0);
         let names: Vec<&str> = sw.sections().iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["One", "Two", "Three"]);
     }
@@ -823,7 +856,91 @@ mod tests {
             bytes.extend_from_slice(&MARKER);
             bytes.extend_from_slice(&[0xff; 26]);
         }
-        let sw = SwContainer::open(Cursor::new(&bytes)).unwrap().unwrap();
+        let mut reader = CountingReader {
+            inner: Cursor::new(&bytes),
+            reads: 0,
+        };
+        let sw = SwContainer::open(&mut reader).unwrap().unwrap();
         assert_eq!(sw.sections().len(), 1);
+        // Each chunk is read about once, not once per marker (20 000 here):
+        // on a real file every refill is a seek and a read system call.
+        let chunks = bytes.len() / CHUNK + 1;
+        assert!(reader.reads <= 4 * chunks + 8, "{} reads", reader.reads);
+    }
+
+    /// Counts the read calls that reach the file.
+    struct CountingReader<R> {
+        inner: R,
+        reads: usize,
+    }
+
+    impl<R: Read> Read for CountingReader<R> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.reads += 1;
+            self.inner.read(buf)
+        }
+    }
+
+    impl<R: Seek> Seek for CountingReader<R> {
+        fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn bogus_copies_of_a_section_are_tried_only_a_few_times() {
+        // Wrong CRCs: each copy inflates completely before it is refused.
+        let bad = || raw_section("Dup", &deflate(b"abc"), 3, 1);
+        let mut sections: Vec<Vec<u8>> = (0..MAX_TRIES).map(|_| bad()).collect();
+        sections.push(section("Dup", b"abc"));
+        let bytes = container(&sections);
+        let mut sw = SwContainer::open(Cursor::new(&bytes)).unwrap().unwrap();
+        assert_eq!(sw.sections().len(), MAX_TRIES + 1);
+        assert!(sw.read("Dup", 100).unwrap().is_none(), "beyond the tries");
+        // Within the tries the first good copy wins.
+        let bytes = container(&[bad(), section("Dup", b"abc"), bad()]);
+        let mut sw = SwContainer::open(Cursor::new(&bytes)).unwrap().unwrap();
+        assert_eq!(sw.read("Dup", 100).unwrap().unwrap(), b"abc");
+    }
+
+    #[test]
+    fn damaged_nist_files_never_panic() {
+        // Truncations and flipped bytes all over two real files: whatever
+        // comes out, every section lies inside the file and reading works.
+        for name in [
+            "nist_mtc_crada_assembly_rev-D.SLDASM",
+            "nist_mtc_crada_box_rev-D.SLDPRT",
+        ] {
+            let bytes = fixture(name);
+            let check = |data: &[u8]| {
+                let Some(mut sw) = SwContainer::open(Cursor::new(data)).unwrap() else {
+                    return;
+                };
+                assert!(sw
+                    .sections()
+                    .iter()
+                    .all(|s| s.offset + s.compressed <= data.len() as u64));
+                for name in [PREVIEW_SECTION, "Header2", "Contents/Config-0"] {
+                    sw.read(name, 1 << 20).unwrap();
+                }
+                let _ = reference_data(Cursor::new(data), 1 << 20).unwrap();
+            };
+            let step = bytes.len() / 60;
+            for cut in (0..bytes.len()).step_by(step) {
+                check(&bytes[..cut]);
+            }
+            let mut state = 0x2545_f491_4f6c_dd1du64;
+            for _ in 0..60 {
+                let mut damaged = bytes.clone();
+                for _ in 0..8 {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    let at = (state % damaged.len() as u64) as usize;
+                    damaged[at] = (state >> 32) as u8;
+                }
+                check(&damaged);
+            }
+        }
     }
 }
