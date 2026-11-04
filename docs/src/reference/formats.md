@@ -29,6 +29,20 @@ NX parts (NX 1980 and later) are read through their stream container
 its reference streams (not from the save history), the preview image from
 `/Root/images/preview`.
 
+SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
+Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
+files). TeamCraft inflates only the sections it needs, with a hard size
+limit and a CRC check: the preview image from `PreviewPNG`, the component
+files of an assembly from its component tree
+(`swXmlContents/COMPINSTANCETREE`: direct components, without virtual
+components and without the old names of renamed parts that the rest of the
+file still contains). Files without a component tree (drawings) use the
+names in the document manager's section (`SwDocContentMgr/SwDocContentMgrInfo`);
+this was not verified with a real drawing. SOLIDWORKS 2014 and older files
+are OLE files and are read as before. Assemblies stored with an older
+TeamCraft keep the references found then until the next check-in – or run
+`teamcraft rescan-references` once (see [Operations](../admin/operations.md)).
+
 `.prt` and `.asm` are told apart by content (Creo's `#UGC:` header, Solid
 Edge's OLE container); `.sc` must be a SolidCraft ZIP or JSON design.
 

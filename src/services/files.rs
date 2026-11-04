@@ -167,6 +167,55 @@ pub async fn scan_unscanned_references(pool: &PgPool, vault: &Vault) -> AppResul
     Ok(count)
 }
 
+/// Reads the references of the current file versions of the given formats
+/// again and replaces the stored ones – after a reader improved (e.g.
+/// SOLIDWORKS 2015+ files, whose compressed sections were not read before).
+/// Formats that are not scanned for references are skipped. Each version is
+/// replaced in its own transaction, so an interrupted run can simply be
+/// repeated. Returns how many versions were scanned.
+pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String]) -> AppResult<u64> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        version_id: Uuid,
+        filename: String,
+        sha256: String,
+    }
+    let formats: Vec<&str> = formats
+        .iter()
+        .map(String::as_str)
+        .filter(|f| cadrefs::scans(f))
+        .collect();
+    let rows = sqlx::query_as::<_, Row>(
+        "SELECT fv.id AS version_id, f.filename, fv.sha256
+         FROM file_versions fv JOIN files f ON f.id = fv.file_id AND fv.version = f.current_version
+         WHERE f.format = ANY($1)
+         ORDER BY fv.id",
+    )
+    .bind(&formats)
+    .fetch_all(pool)
+    .await?;
+    let mut count = 0;
+    for row in rows {
+        let names = match vault.object_path(&row.sha256) {
+            Ok(path) => cadrefs::scan_file(&path, &row.filename).await,
+            Err(_) => continue,
+        };
+        let mut tx = pool.begin().await?;
+        sqlx::query("SELECT 1 FROM file_versions WHERE id = $1 FOR UPDATE")
+            .bind(row.version_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM file_references WHERE file_version_id = $1")
+            .bind(row.version_id)
+            .execute(&mut *tx)
+            .await?;
+        references::store_file_references(&mut tx, row.version_id, &names).await?;
+        tx.commit().await?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 fn with_format(mut file: FileRecord) -> FileRecord {
     file.format_info = cadformat::info(&file.format);
     file

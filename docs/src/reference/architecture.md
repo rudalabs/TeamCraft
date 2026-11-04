@@ -45,6 +45,7 @@
 | `src/mcp/`                           | MCP server for AI assistants (`POST /api/v1/mcp`): JSON-RPC, tools and prompts over the services     |
 | `src/assistant.rs`                   | built-in assistant: tool loop over the Anthropic Messages API with the MCP tools, markdown rendering |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
+| `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache                                                                     |
 | `migrations/`                        | PostgreSQL schema                                                                                    |
 | `tests/`                             | end-to-end tests, each against its own temporary database                                            |
