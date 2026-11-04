@@ -575,13 +575,18 @@ desktop_profile() {
 }
 
 start_xvfb() {
+    # A display that already answers would pass the readiness check below
+    # while our Xvfb exits – and the app would run on a foreign screen.
+    if xdotool getdisplaygeometry >/dev/null 2>&1; then
+        die "X display $DESKTOP_DISPLAY is already in use (set DESKTOP_DISPLAY to a free one)"
+    fi
     log "starting Xvfb on $DESKTOP_DISPLAY (1440x900)"
     Xvfb "$DESKTOP_DISPLAY" -screen 0 1440x900x24 -nolisten tcp >"$WORK/xvfb.log" 2>&1 &
     XVFB_PID=$!
     local i
     for ((i = 0; i < 30; i++)); do
-        xdotool getdisplaygeometry >/dev/null 2>&1 && return 0
         kill -0 "$XVFB_PID" 2>/dev/null || die "Xvfb exited: $(tail -n 5 "$WORK/xvfb.log")"
+        xdotool getdisplaygeometry >/dev/null 2>&1 && return 0
         sleep 1
     done
     die "Xvfb did not start on $DESKTOP_DISPLAY"
@@ -593,10 +598,10 @@ start_xvfb() {
 settle() {
     local min=$1 what=$2 start=$SECONDS colors diff
     sleep "$min"
-    import -window root "$WORK/settle-a.png"
+    import -window root "$WORK/settle-a.png" || die "could not capture the screen ($what)"
     while true; do
         sleep 1
-        import -window root "$WORK/settle-b.png"
+        import -window root "$WORK/settle-b.png" || die "could not capture the screen ($what)"
         kill -0 "$APP_PID" 2>/dev/null || die "the desktop app exited while waiting for $what"
         colors=$(convert "$WORK/settle-b.png" -format '%k' info: 2>/dev/null || echo 0)
         diff=$(compare -metric AE "$WORK/settle-a.png" "$WORK/settle-b.png" null: 2>&1 || true)
@@ -621,7 +626,7 @@ desktop_snap() {
 }
 
 desktop_key() {
-    xdotool key --clearmodifiers "$@"
+    xdotool key --clearmodifiers "$@" || die "xdotool could not press $*"
 }
 
 capture_desktop() {
@@ -666,7 +671,8 @@ capture_desktop() {
 # desktop_click X Y – left click at screen position X,Y, then the pointer
 # goes back to the status bar.
 desktop_click() {
-    xdotool mousemove "$1" "$2" click 1 mousemove 1430 895
+    xdotool mousemove "$1" "$2" click 1 mousemove 1430 895 ||
+        die "xdotool could not click at $1,$2"
 }
 
 main() {

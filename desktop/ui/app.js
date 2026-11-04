@@ -822,6 +822,9 @@
       // a failed load or a bug while rendering: never leave an empty tab
       if (state.active !== tab.key) return;
       clear(body);
+      // a render error may have left half a toolbar whose buttons act on
+      // data the tab no longer shows
+      clear(toolbar);
       body.appendChild(h("p.notice.error", { text: errorText(err) }));
     });
   }
