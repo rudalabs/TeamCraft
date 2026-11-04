@@ -1055,6 +1055,7 @@ async fn notifications_in_the_web_ui() {
                 ("want", "change_update"),
                 ("want", "impact"),
                 ("want", "unlock"),
+                ("want", "change_request"),
                 ("mattermost", "on"),
                 ("mattermost_username", "Rolf.R"),
             ],
