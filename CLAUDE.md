@@ -98,6 +98,7 @@ templates/         MiniJinja templates, embedded via include_str!
 static/            CSS (skins.css shared with the desktop app) / JS (app.js, viewer.js) / fonts, embedded
 migrations/        sqlx migrations, embedded, applied on start
 tests/             end-to-end tests; tests/common creates a temporary database (with fixture project groups) per test
+tests/fixtures/cad openly licensed NIST CAD files (Inventor, NX, SolidWorks, Creo, CATIA V5, STEP) with manifest.tsv, checked by tests/cad_fixtures.rs
 docs/              mdBook documentation (Doxygen-style theme in docs/theme/), published with rustdoc via GitHub Pages
 platforms/         short build-and-test guides: linux.md, macos.md, windows.md
 .github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 14/17, macOS/Windows builds), docs.yml, desktop.yml

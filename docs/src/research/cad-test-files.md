@@ -50,3 +50,23 @@ in these files: preview images (Inventor, SolidWorks), referenced part files
   MTC: [Design, Manufacturing, and Inspection Data for a Box Assembly](https://smstestbed.nist.gov/tdp/mtc/)
 * [inventor-kit on PyPI](https://pypi.org/project/inventor-kit/)
 * [SolidEdgeCommunity/Samples](https://github.com/SolidEdgeCommunity/Samples)
+
+## Results with the files (2026-11-04)
+
+What TeamCraft found in the NIST files (`tests/cad_fixtures.rs`):
+
+* **Format detection:** all 32 files are recognised correctly – NX parts by
+  their `SPLMSSTR` header, the Creo iteration `.prt.5`, CATIA V5, JT and ACIS
+  included.
+* **Preview images:** Inventor 2021 parts carry a PNG of about 26 kB, which
+  is found. SolidWorks 2018 files carry none that can be found: since 2015
+  SolidWorks keeps its streams in compressed segments of its own container.
+* **Reference scan:** the NX assembly names all eight part files. The
+  SolidWorks 2018 assembly names none (compressed, see above). False
+  references: NX parts report earlier file names of their save history and
+  binary noise, the STEP header its export name (`FILE_NAME`), JT files
+  noise.
+* **3D preview:** the small STEP files are tessellated.
+
+The gaps are ignored tests in `tests/cad_fixtures.rs` and fixes in
+`docs/OPEN_WORK.md`.
