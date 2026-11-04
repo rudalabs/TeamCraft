@@ -11,9 +11,10 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use super::{finish, parse_opt_uuid, render, WebCtx};
+use super::{finish, parse_opt_uuid, render, xlsx_response, WebCtx};
 use crate::{
     error::{AppError, AppResult},
+    models::Revision,
     services::{
         bom_compare, items, personal, projects, revisions,
         save_as::{self, SaveAs},
@@ -173,15 +174,33 @@ pub struct CompareQuery {
     with: Option<String>,
 }
 
-pub async fn bom_compare(
-    State(st): State<AppState>,
-    ctx: WebCtx,
-    Path(id): Path<Uuid>,
-    Query(q): Query<CompareQuery>,
-) -> AppResult<Response> {
+/// The two revisions of a comparison and their BOM differences.
+struct Comparison {
+    /// The revision whose page asked for the comparison.
+    rev: Revision,
+    /// All revisions of the item (choice in the page).
+    revisions: Vec<Revision>,
+    before: Revision,
+    after: Revision,
+    diffs: Vec<bom_compare::LineDiff>,
+}
+
+impl Comparison {
+    /// File name of the Excel download.
+    fn file_name(&self) -> String {
+        format!(
+            "bom-compare-{}-{}-{}.xlsx",
+            self.rev.item_number, self.before.code, self.after.code
+        )
+    }
+}
+
+/// Loads both revisions (older first) and compares their BOMs. `with` is a
+/// revision id; the default is the previous revision of the item.
+async fn comparison(st: &AppState, id: Uuid, with: Option<&str>) -> AppResult<Comparison> {
     let rev = revisions::get(&st.db, id).await?;
     let all = items::revisions(&st.db, rev.item_id).await?;
-    let other_id = match parse_opt_uuid("Revision", q.with.as_deref())? {
+    let other_id = match parse_opt_uuid("Revision", with)? {
         Some(other) => other,
         // the revision before this one, else the one after it
         None => all
@@ -206,18 +225,47 @@ pub async fn bom_compare(
         (rev.clone(), other)
     };
     let diffs = bom_compare::compare(&st.db, before.id, after.id).await?;
-    let summary = bom_compare::summary(&diffs);
+    Ok(Comparison {
+        rev,
+        revisions: all,
+        before,
+        after,
+        diffs,
+    })
+}
+
+pub async fn bom_compare(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Query(q): Query<CompareQuery>,
+) -> AppResult<Response> {
+    let cmp = comparison(&st, id, q.with.as_deref()).await?;
+    let summary = bom_compare::summary(&cmp.diffs);
     render(
         &st,
         &ctx,
         "revisions/bom_compare.html",
         json!({
-            "rev": rev,
-            "before": before,
-            "after": after,
-            "revisions": all,
-            "diffs": diffs,
+            "rev": cmp.rev,
+            "before": cmp.before,
+            "after": cmp.after,
+            "revisions": cmp.revisions,
+            "diffs": cmp.diffs,
             "summary": summary,
         }),
     )
+}
+
+/// `GET /revisions/{id}/bom/compare.xlsx` – the comparison as an Excel
+/// workbook (same `with` query as the page).
+pub async fn bom_compare_xlsx(
+    State(st): State<AppState>,
+    _ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Query(q): Query<CompareQuery>,
+) -> AppResult<Response> {
+    let cmp = comparison(&st, id, q.with.as_deref()).await?;
+    let bytes = bom_compare::to_xlsx(&cmp.diffs)?;
+    Ok(xlsx_response(bytes, &cmp.file_name()))
 }

@@ -88,6 +88,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/items/{number}/revisions/{code}/bom/compare",
             get(personal::bom_compare),
         )
+        .route(
+            "/items/{number}/revisions/{code}/bom/compare.xlsx",
+            get(personal::bom_compare_xlsx),
+        )
         .route("/items/{number}/watch", post(watch_item).delete(watch_item))
         .route(
             "/changes/{number}/watch",
@@ -234,6 +238,7 @@ async fn index() -> Json<Value> {
             "DELETE /api/v1/searches/{id}",
             "POST   /api/v1/items/{number}/revisions/{code}/save-as   {number?, name?, project?, files?, bom?} – new item from this revision",
             "GET    /api/v1/items/{number}/revisions/{code}/bom/compare?with=A   added / removed / changed BOM lines",
+            "GET    /api/v1/items/{number}/revisions/{code}/bom/compare.xlsx?with=A   the same comparison as an Excel workbook",
             "POST   /api/v1/changes/{number}/watch                    watch a change (DELETE: stop)",
             "POST   /api/v1/impacts/{id}/acknowledge                  {note} – the dependent needs no change",
             "GET    /api/v1/items/{number}/revisions/{code}/files",

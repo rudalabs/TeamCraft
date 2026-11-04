@@ -14,13 +14,14 @@ use super::{revision_at, ApiJson};
 use crate::{
     auth::ApiUser,
     error::AppResult,
+    models::Revision,
     services::{
         bom_compare,
         explorer::{self, Listing},
         items, personal, projects,
         save_as::{self, SaveAs},
     },
-    AppState,
+    web, AppState,
 };
 
 /// `GET /favorites` – the caller's favorites with their latest revision.
@@ -149,6 +150,19 @@ pub(super) struct CompareQuery {
     with: String,
 }
 
+/// Both revisions of a comparison (older first) and their BOM differences.
+async fn compare_at(
+    st: &AppState,
+    number: &str,
+    code: &str,
+    with: &str,
+) -> AppResult<(Revision, Revision, Vec<bom_compare::LineDiff>)> {
+    let (a, b) = tokio::try_join!(revision_at(st, number, with), revision_at(st, number, code))?;
+    let (before, after) = if a.seq <= b.seq { (a, b) } else { (b, a) };
+    let diffs = bom_compare::compare(&st.db, before.id, after.id).await?;
+    Ok((before, after, diffs))
+}
+
 /// `GET /items/{number}/revisions/{code}/bom/compare?with=A`
 pub(super) async fn bom_compare(
     State(st): State<AppState>,
@@ -156,16 +170,26 @@ pub(super) async fn bom_compare(
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Json<Value>> {
-    let (a, b) = tokio::try_join!(
-        revision_at(&st, &number, &q.with),
-        revision_at(&st, &number, &code)
-    )?;
-    let (before, after) = if a.seq <= b.seq { (a, b) } else { (b, a) };
-    let diffs = bom_compare::compare(&st.db, before.id, after.id).await?;
+    let (before, after, diffs) = compare_at(&st, &number, &code, &q.with).await?;
+    let summary = bom_compare::summary(&diffs);
     Ok(Json(json!({
         "before": before.code,
         "after": after.code,
-        "summary": bom_compare::summary(&diffs),
+        "summary": summary,
         "lines": diffs,
     })))
+}
+
+/// `GET /items/{number}/revisions/{code}/bom/compare.xlsx?with=A` – the same
+/// comparison as the JSON endpoint, as an Excel workbook.
+pub(super) async fn bom_compare_xlsx(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<CompareQuery>,
+) -> AppResult<Response> {
+    let (before, after, diffs) = compare_at(&st, &number, &code, &q.with).await?;
+    let bytes = bom_compare::to_xlsx(&diffs)?;
+    let filename = format!("bom-compare-{}-{}-{}.xlsx", number, before.code, after.code);
+    Ok(web::xlsx_response(bytes, &filename))
 }
