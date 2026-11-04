@@ -202,6 +202,18 @@ pub struct WhereUsed {
     pub released_child_code: Option<String>,
 }
 
+/// One usage in a multi-level where-used report: `child_number` is used in
+/// the parent, which is `level` levels above the item asked about.
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct WhereUsedLevel {
+    pub level: i32,
+    /// The item used in the parent (the item asked about on level 1).
+    pub child_number: String,
+    #[sqlx(flatten)]
+    #[serde(flatten)]
+    pub usage: WhereUsed,
+}
+
 /// A reference of a revision to another item besides the BOM (drawing of,
 /// specification for, references).
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
