@@ -27,7 +27,7 @@ TeamCraft server – it is a client, not an offline copy.
 | Whole project groups locally | *Get…* in the navigator (*Tools → Get Project Groups…*): copies the files of every item of the chosen groups – latest released or latest revision – into the workspace, one folder per group; unchanged files are skipped, locally modified files kept. For new team members or a fresh computer |
 | Import a CAD folder | *Import…* in the navigator (*Tools → Import CAD Folder…*): scans an existing folder (dry run: items, duplicate file names, skipped lock/backup files), then creates one item per part or assembly with the drawings and exports of the same name, project files in one document item, optional BOM lines from the assembly references, and checks everything in; a final report lists the new items and files, BOM lines, check-ins and problems (with *Open* for the top assembly); interrupted imports continue where they stopped. Tutorial: *Help → How to Import a CAD Folder* |
 | New item | *New* (`Ctrl/Cmd+N`): choose the CAD files first – name and type follow from the first file; they are uploaded right after the item is created |
-| Release and changes | *Release…* creates and submits a change order; approve/reject from the worklist |
+| Release and changes | *Release…* creates and submits a change order – with the unreleased dependencies (BOM children, drawings) by default; *Release readiness* panel with *Add all*; approve/reject from the worklist |
 | Change propagation | *Dependents to check*, *Check needed* banner with **Acknowledge…**, references, *As released* rule, impact analysis |
 | Notifications | Bell with unread count and toasts; **Watch** / **Unwatch** |
 | Pack and Go, STL | ZIP of a revision and its structure; **Export STL…** from the 3D viewer |
