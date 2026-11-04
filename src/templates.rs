@@ -25,6 +25,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "revisions/bom.html",
     "revisions/bom_compare.html",
     "revisions/save_as.html",
+    "revisions/simulation_compare.html",
     "changes/list.html",
     "changes/new.html",
     "changes/show.html",
@@ -526,6 +527,139 @@ mod tests {
                 "hint for native files without a neutral export"
             );
         }
+
+        // Simulations: basis links and results on the simulation, the
+        // simulations based on a part on the part
+        let basis = |out_of_date: Option<&str>| {
+            json!({ "id": ME, "revision_id": OTHER, "role": "geometry", "note": "fillet <r2>",
+                    "basis_item_id": OTHER, "basis_number": "PRT-000001", "basis_type": "part",
+                    "basis_revision_id": OTHER, "basis_code": "A", "basis_state": "released",
+                    "basis_name": "Bracket", "file_version_id": ME, "file_id": OTHER,
+                    "file_name": "bracket.step", "file_version": 2, "file_current_version": 3,
+                    "released_revision_id": ME, "released_code": "B", "created_at": TS,
+                    "out_of_date": out_of_date })
+        };
+        let sim_result = |name: &str, status: &str, upper: Option<f64>| {
+            json!({ "id": ME, "revision_id": OTHER, "position": 1, "name": name, "value": 182.5,
+                    "unit": "MPa", "lower_limit": null, "upper_limit": upper, "load_case": "LC1",
+                    "solver": "CalculiX", "solver_version": "2.21", "note": "", "updated_at": TS,
+                    "status": status })
+        };
+        let basis_roles: Vec<_> = crate::domain::BasisRole::ALL
+            .iter()
+            .map(|r| json!({ "value": r.as_str(), "label": r.label() }))
+            .collect();
+        for (state, checked_out) in [("in_work", false), ("released", false)] {
+            let mut rev = revision(state, checked_out);
+            rev["item_type"] = json!("simulation");
+            rev["item_number"] = json!("SIM-000001");
+            let mut sim_item = item();
+            sim_item["item_type"] = json!("simulation");
+            let editable = state == "in_work";
+            let html = render(
+                &env,
+                "revisions/show.html",
+                with_common(json!({
+                    "rev": rev.clone(), "item": sim_item, "revisions": [rev.clone(), revision("released", false)],
+                    "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
+                    "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
+                    "history": [], "projects": [], "units": units(), "references": references.clone(),
+                    "open_impacts": [], "resolved_impacts": [],
+                    "simulation": {
+                        "bases": [basis(Some("PRT-000001/B was released (simulated: A)")), basis(None)],
+                        "results": [sim_result("Max. stress <vM>", "pass", Some(250.0)),
+                                    sim_result("Safety factor", "fail", None),
+                                    sim_result("Mass", "none", None)],
+                        "summary": { "total": 3, "pass": 1, "fail": 1, "without_limits": 1 },
+                        "out_of_date": 1, "roles": basis_roles.clone(),
+                    },
+                    "based_simulations": [],
+                    "can": if editable { can_all.clone() } else { json!({}) }, "max_upload_mb": 512,
+                    "lifecycle": {
+                        "states": crate::domain::LifecycleState::ALL,
+                        "next": crate::domain::rules_from(crate::domain::LifecycleState::parse(state).unwrap()),
+                        "rules": crate::domain::LIFECYCLE_RULES,
+                    },
+                })),
+            );
+            for expected in [
+                "Based on",
+                "B was released (simulated: A)",
+                "bracket.step",
+                "fillet &lt;r2&gt;",
+                "Out of date",
+                "Up to date",
+                "Max. stress &lt;vM&gt;",
+                "badge badge-pass",
+                "badge badge-fail",
+                "1 failed",
+                "no limit",
+                "/simulation/compare",
+                "/simulation/results.csv",
+            ] {
+                assert!(html.contains(expected), "simulation page shows {expected}");
+            }
+            assert!(!html.contains("id=\"bom\""), "no BOM card for simulations");
+            assert!(!html.contains("id=\"simulations\""));
+            assert_eq!(
+                html.contains("/simulation/results/import") && html.contains("/simulation/bases"),
+                editable,
+                "editing only while checked out"
+            );
+        }
+        let html = render(
+            &env,
+            "revisions/show.html",
+            with_common(json!({
+                "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
+                "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
+                "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
+                "history": [], "projects": [], "units": units(), "references": references.clone(),
+                "open_impacts": [], "resolved_impacts": [], "simulation": null,
+                "based_simulations": [{
+                    "simulation_item_id": OTHER, "simulation_number": "SIM-000001", "simulation_code": "A",
+                    "simulation_state": "in_work", "simulation_name": "Bracket – static <LC1>",
+                    "result_count": 3, "failed_count": 1, "open_impact_id": ME,
+                    "basis": basis(Some("PRT-000001/B was released (simulated: A)")) }],
+                "can": {}, "max_upload_mb": 512,
+                "lifecycle": {
+                    "states": crate::domain::LifecycleState::ALL,
+                    "next": crate::domain::rules_from(crate::domain::LifecycleState::Released),
+                    "rules": crate::domain::LIFECYCLE_RULES,
+                },
+            })),
+        );
+        for expected in [
+            "id=\"simulations\"",
+            "SIM-000001/A",
+            "Bracket – static &lt;LC1&gt;",
+            "1 of 3 failed",
+            "check open",
+            "Out of date",
+        ] {
+            assert!(html.contains(expected), "part page shows {expected}");
+        }
+        let diff = |change: &str, before: Value, after: Value, delta: Value| {
+            json!({ "change": change, "name": "Stress <max>", "load_case": "LC1", "unit": "MPa",
+                    "before": before, "after": after, "delta": delta,
+                    "delta_percent": if delta.is_null() { Value::Null } else { json!(-10.0) } })
+        };
+        let html = render(
+            &env,
+            "revisions/simulation_compare.html",
+            with_common(json!({
+                "rev": revision("in_work", false), "before": revision("released", false),
+                "after": revision("in_work", false), "revisions": [revision("released", false)],
+                "diffs": [diff("changed", sim_result("Stress", "fail", Some(150.0)),
+                               sim_result("Stress", "pass", Some(250.0)), json!(-20.0)),
+                          diff("added", Value::Null, sim_result("Mass", "none", None), Value::Null),
+                          diff("removed", sim_result("Old", "pass", Some(1e9)), Value::Null, Value::Null)],
+                "summary": { "added": 1, "removed": 1, "changed": 1, "unchanged": 0 },
+            })),
+        );
+        assert!(html.contains("1 added · 1 removed · 1 changed · 0 unchanged"));
+        assert!(html.contains("Stress &lt;max&gt;") && html.contains("-10 %"));
+        assert!(html.contains("badge badge-fail") && html.contains("badge badge-pass"));
 
         // 3D preview: the server delivers the mesh, the page only draws it
         let preview = |format: &str, is_current: bool| {

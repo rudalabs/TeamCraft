@@ -182,14 +182,18 @@ pub enum ItemType {
     Assembly,
     Document,
     Software,
+    /// An analysis (FEA, CFD, …): model, solver deck, results and report,
+    /// linked to the revisions it is based on (see `services::simulations`).
+    Simulation,
 }
 
 impl ItemType {
-    pub const ALL: [ItemType; 4] = [
+    pub const ALL: [ItemType; 5] = [
         ItemType::Part,
         ItemType::Assembly,
         ItemType::Document,
         ItemType::Software,
+        ItemType::Simulation,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -198,6 +202,7 @@ impl ItemType {
             ItemType::Assembly => "assembly",
             ItemType::Document => "document",
             ItemType::Software => "software",
+            ItemType::Simulation => "simulation",
         }
     }
 
@@ -207,6 +212,7 @@ impl ItemType {
             ItemType::Assembly => "Assembly",
             ItemType::Document => "Document",
             ItemType::Software => "Software",
+            ItemType::Simulation => "Simulation",
         }
     }
 
@@ -217,6 +223,7 @@ impl ItemType {
             ItemType::Assembly => "ASM",
             ItemType::Document => "DOC",
             ItemType::Software => "SW",
+            ItemType::Simulation => "SIM",
         }
     }
 
@@ -226,6 +233,7 @@ impl ItemType {
             "assembly" => Some(ItemType::Assembly),
             "document" => Some(ItemType::Document),
             "software" => Some(ItemType::Software),
+            "simulation" => Some(ItemType::Simulation),
             _ => None,
         }
     }
@@ -858,6 +866,135 @@ impl ReferenceKind {
 }
 
 // ---------------------------------------------------------------------------
+// Simulations
+// ---------------------------------------------------------------------------
+
+/// What a simulation takes from the revision it is based on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BasisRole {
+    /// The analysed geometry (part, assembly).
+    Geometry,
+    /// A mesh / FE model kept as its own item.
+    Mesh,
+    /// Material data (specification, data sheet).
+    Material,
+    /// Where the loads come from (load specification, test report).
+    LoadCase,
+    Other,
+}
+
+impl BasisRole {
+    pub const ALL: [BasisRole; 5] = [
+        BasisRole::Geometry,
+        BasisRole::Mesh,
+        BasisRole::Material,
+        BasisRole::LoadCase,
+        BasisRole::Other,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BasisRole::Geometry => "geometry",
+            BasisRole::Mesh => "mesh",
+            BasisRole::Material => "material",
+            BasisRole::LoadCase => "load_case",
+            BasisRole::Other => "other",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BasisRole::Geometry => "Geometry",
+            BasisRole::Mesh => "Mesh",
+            BasisRole::Material => "Material",
+            BasisRole::LoadCase => "Load case",
+            BasisRole::Other => "Other",
+        }
+    }
+
+    /// Also accepts `load-case` and `load case`.
+    pub fn parse(s: &str) -> Option<BasisRole> {
+        match s
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['-', ' '], "_")
+            .as_str()
+        {
+            "geometry" => Some(BasisRole::Geometry),
+            "mesh" => Some(BasisRole::Mesh),
+            "material" => Some(BasisRole::Material),
+            "load_case" => Some(BasisRole::LoadCase),
+            "other" => Some(BasisRole::Other),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a result value is within its limits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultStatus {
+    Pass,
+    Fail,
+    /// No limit given: the value is informative only (`"none"`).
+    #[serde(rename = "none")]
+    NoLimits,
+}
+
+impl ResultStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResultStatus::Pass => "pass",
+            ResultStatus::Fail => "fail",
+            ResultStatus::NoLimits => "none",
+        }
+    }
+}
+
+/// Pass when `lower <= value <= upper` (limits inclusive, either may be
+/// missing), fail otherwise; [`ResultStatus::NoLimits`] without limits.
+pub fn result_status(value: f64, lower: Option<f64>, upper: Option<f64>) -> ResultStatus {
+    if lower.is_none() && upper.is_none() {
+        return ResultStatus::NoLimits;
+    }
+    let above_lower = lower.is_none_or(|l| value >= l);
+    let below_upper = upper.is_none_or(|u| value <= u);
+    if value.is_finite() && above_lower && below_upper {
+        ResultStatus::Pass
+    } else {
+        ResultStatus::Fail
+    }
+}
+
+/// Validates a result value and its limits (finite numbers, lower ≤ upper).
+pub fn validate_result_numbers(
+    name: &str,
+    value: f64,
+    lower: Option<f64>,
+    upper: Option<f64>,
+) -> Result<(), AppError> {
+    if !value.is_finite() {
+        return Err(AppError::BadRequest(format!(
+            "{name}: the value must be a finite number."
+        )));
+    }
+    if lower.is_some_and(|v| !v.is_finite()) || upper.is_some_and(|v| !v.is_finite()) {
+        return Err(AppError::BadRequest(format!(
+            "{name}: the limits must be finite numbers."
+        )));
+    }
+    if let (Some(l), Some(u)) = (lower, upper) {
+        if l > u {
+            return Err(AppError::BadRequest(format!(
+                "{name}: the lower limit {l} is above the upper limit {u}."
+            )));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Notifications
 // ---------------------------------------------------------------------------
 
@@ -1334,6 +1471,53 @@ mod tests {
         assert!(validate_non_negative("Mass", Some(f64::NAN)).is_err());
         assert!(validate_quantity(0.0).is_err());
         assert_eq!(validate_quantity(2.0).unwrap(), 2.0);
+    }
+
+    #[test]
+    fn simulation_items_and_basis_roles() {
+        let ctx = NumberContext {
+            project: "ROVER",
+            item_type: ItemType::Simulation,
+            year: 2026,
+            month: 3,
+        };
+        assert_eq!(NumberScheme::default_scheme().format(&ctx, 3), "SIM-000003");
+        assert_eq!(ItemType::parse(" Simulation "), Some(ItemType::Simulation));
+        for t in ItemType::ALL {
+            assert_eq!(ItemType::parse(t.as_str()), Some(t));
+        }
+        for r in BasisRole::ALL {
+            assert_eq!(BasisRole::parse(r.as_str()), Some(r));
+        }
+        assert_eq!(BasisRole::parse("Load-Case"), Some(BasisRole::LoadCase));
+        assert_eq!(BasisRole::parse("load case"), Some(BasisRole::LoadCase));
+        assert_eq!(BasisRole::parse("sketch"), None);
+    }
+
+    #[test]
+    fn result_pass_fail() {
+        use ResultStatus::{Fail, Pass};
+        assert_eq!(result_status(5.0, None, None), ResultStatus::NoLimits);
+        assert_eq!(result_status(5.0, Some(1.0), Some(10.0)), Pass);
+        assert_eq!(result_status(1.0, Some(1.0), Some(10.0)), Pass, "inclusive");
+        assert_eq!(
+            result_status(10.0, Some(1.0), Some(10.0)),
+            Pass,
+            "inclusive"
+        );
+        assert_eq!(result_status(0.5, Some(1.0), Some(10.0)), Fail);
+        assert_eq!(result_status(11.0, Some(1.0), Some(10.0)), Fail);
+        // only an upper limit (max. stress), only a lower one (safety factor)
+        assert_eq!(result_status(180e6, None, Some(200e6)), Pass);
+        assert_eq!(result_status(210e6, None, Some(200e6)), Fail);
+        assert_eq!(result_status(1.4, Some(1.5), None), Fail);
+        assert_eq!(result_status(-3.0, Some(-5.0), None), Pass);
+        assert_eq!(result_status(f64::NAN, Some(0.0), None), Fail);
+        assert_eq!(Pass.as_str(), "pass");
+        assert!(validate_result_numbers("Stress", 1.0, Some(2.0), Some(1.0)).is_err());
+        assert!(validate_result_numbers("Stress", f64::INFINITY, None, None).is_err());
+        assert!(validate_result_numbers("Stress", 1.0, Some(f64::NAN), None).is_err());
+        assert!(validate_result_numbers("Stress", 1.0, Some(1.0), Some(1.0)).is_ok());
     }
 
     #[test]

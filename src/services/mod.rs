@@ -21,6 +21,7 @@ pub mod projects;
 pub mod references;
 pub mod revisions;
 pub mod save_as;
+pub mod simulations;
 pub mod stats;
 pub mod users;
 

@@ -133,7 +133,7 @@ label.check input { width: auto; accent-color: var(--accent); }
 .fmt-assembly { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
 .fmt-drawing { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
 .fmt-exchange, .fmt-mesh, .fmt-visualization { color: var(--text); border-color: var(--border-strong); }
-.fmt-electronics, .fmt-simulation, .fmt-manufacturing { border-style: dashed; }
+.fmt-electronics, .fmt-simulation, .fmt-result, .fmt-manufacturing { border-style: dashed; }
 
 /* ---------------------------------------------------------------- connect */
 

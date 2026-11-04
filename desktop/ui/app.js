@@ -30,7 +30,8 @@
     { value: "part", label: "Part" },
     { value: "assembly", label: "Assembly" },
     { value: "document", label: "Document" },
-    { value: "software", label: "Software" }
+    { value: "software", label: "Software" },
+    { value: "simulation", label: "Simulation" }
   ];
 
   var state = {
@@ -552,7 +553,7 @@
   }
 
   function typeIcon(type) {
-    return { part: "◆", assembly: "▣", document: "▤", software: "◇" }[type] || "•";
+    return { part: "◆", assembly: "▣", document: "▤", software: "◇", simulation: "◎" }[type] || "•";
   }
 
   function renderHome() {
@@ -1242,6 +1243,7 @@
       case "drawing": return "is a drawing of " + target;
       case "specification": return "is a specification for " + target;
       case "reference": return "references " + target;
+      case "simulation": return "is a simulation based on " + target;
       case "file": return "has a CAD file that references " + (target === "it" ? "its files" : "files of " + target);
       default: return "depends on " + target;
     }

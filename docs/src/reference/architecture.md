@@ -39,7 +39,7 @@
 | `src/main.rs`                        | CLI: serve, migrate, user, vault check, healthcheck                                                  |
 | `src/lib.rs`                         | `AppState`, router, health endpoints, security headers                                               |
 | `src/domain.rs`                      | roles, lifecycle, revision letters, skins, validation                                                |
-| `src/services/`                      | items, revisions, files, BOM, changes, references, impacts, projects, users, notifications, explorer |
+| `src/services/`                      | items, revisions, files, BOM, changes, references, impacts, simulations, projects, users, …         |
 | `src/web/`, `templates/`, `static/`  | HTML interface                                                                                       |
 | `src/api/`                           | REST API                                                                                             |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |

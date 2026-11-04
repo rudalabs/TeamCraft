@@ -62,14 +62,14 @@ pub fn max_bytes(filename: &str) -> usize {
     }
 }
 
-/// "BOM tables can be at most 20 MiB." / "STEP files …"
+/// "Tables (BOM, result values) can be at most 20 MiB." / "STEP files …"
 pub fn too_large(filename: &str) -> AppError {
     AppError::PayloadTooLarge(format!(
         "{} can be at most {} MiB.",
         if stepbom::is_step(filename) {
             "STEP files"
         } else {
-            "BOM tables"
+            "Tables (BOM, result values)"
         },
         max_bytes(filename) / 1024 / 1024
     ))

@@ -12,7 +12,7 @@ use crate::{
     services::{
         audit, impacts,
         notifications::{self, Notice},
-        references,
+        references, simulations,
     },
 };
 
@@ -391,6 +391,8 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     .execute(&mut *tx)
     .await?;
     let references = references::copy_to_revision(&mut tx, src.id, new_id).await?;
+    let (simulation_bases, simulation_results) =
+        simulations::copy_to_revision(&mut tx, src.id, new_id).await?;
     let lines = sqlx::query(
         "INSERT INTO bom_lines (id, parent_revision_id, child_item_id, find_number, quantity, notes)
          SELECT gen_random_uuid(), $2, child_item_id, find_number, quantity, notes
@@ -412,7 +414,8 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
             src.item_number, src.code
         ),
         json!({ "item_id": src.item_id, "from": src.code, "files": files, "bom_lines": lines,
-                "references": references }),
+                "references": references, "simulation_bases": simulation_bases,
+                "simulation_results": simulation_results }),
     )
     .await?;
     let new_rev = lock(&mut tx, new_id).await?;

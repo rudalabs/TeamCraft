@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Compare results {{ before.item_number }}/{{ before.code }} – {{ after.code }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <p class="kicker">Result comparison</p>
+    <h1><a class="mono" href="/revisions/{{ before.id }}">{{ before.item_number }}/{{ before.code }}</a> → <a class="mono" href="/revisions/{{ after.id }}">{{ after.item_number }}/{{ after.code }}</a></h1>
+    <p class="subtitle">{{ summary.added }} added · {{ summary.removed }} removed · {{ summary.changed }} changed · {{ summary.unchanged }} unchanged</p>
+  </div>
+  <form class="inline" method="get" action="/revisions/{{ rev.id }}/simulation/compare">
+    <label class="check">Compare {{ rev.code }} with
+      <select name="with">
+        {% for r in revisions %}{% if r.id != rev.id %}<option value="{{ r.id }}" {% if r.id == before.id or r.id == after.id %}selected{% endif %}>{{ r.code }} · {{ r.state|label }}</option>{% endif %}{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Compare</button>
+    <a class="button" href="/revisions/{{ rev.id }}#simulation-results">← Results</a>
+  </form>
+</div>
+
+<div class="card">
+  {% if diffs %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Change</th><th>Result</th><th>Load case</th>
+        <th class="num">{{ before.code }}</th><th class="num">{{ after.code }}</th><th>Unit</th>
+        <th class="num">Δ</th><th class="num">Δ %</th><th>Status {{ before.code }} → {{ after.code }}</th></tr>
+    </thead>
+    <tbody>
+    {% for d in diffs %}
+      <tr class="bom-diff bom-diff-{{ d.change }}">
+        <td><span class="badge bom-change-{{ d.change }}">{{ d.change|label }}</span></td>
+        <td>{{ d.name }}</td>
+        <td class="small">{{ d.load_case }}</td>
+        <td class="num">{% if d.before %}{{ d.before.value }}{% if d.before.unit != d.unit %} {{ d.before.unit }}{% endif %}{% else %}—{% endif %}</td>
+        <td class="num">{% if d.after %}{{ d.after.value }}{% else %}—{% endif %}</td>
+        <td class="small">{{ d.unit }}</td>
+        <td class="num">{% if d.delta is not none and d.change == "changed" %}{{ d.delta|num(6) }}{% else %}—{% endif %}</td>
+        <td class="num">{% if d.delta_percent is not none and d.change == "changed" %}{{ d.delta_percent|num(1) }} %{% else %}—{% endif %}</td>
+        <td class="nowrap">{% if d.before and d.before.status != "none" %}{{ m.badge(d.before.status) }}{% elif d.before %}<span class="dim small">no limit</span>{% endif %}{% if d.before and d.after %} → {% endif %}{% if d.after and d.after.status != "none" %}{{ m.badge(d.after.status) }}{% elif d.after %}<span class="dim small">no limit</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">Values are matched by name and load case (case-insensitive). Δ % is relative to {{ before.code }} and only shown when the unit did not change.</p>
+  {% else %}
+  <p class="empty">Neither revision has result values.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -84,6 +84,43 @@ refs), Altium, Eagle, Gerber and Excellon; OpenRocket, RockSim, RASAero,
 motor curves (`.eng` `.rse`); ANSYS Workbench, Abaqus, COMSOL; G-code;
 PDF, office documents, CSV, images and archives.
 
+## Simulation models and results (FEA, CFD)
+
+Recognised and versioned, not parsed or previewed (see
+[Simulations](../guide/simulation.md)). *Model* = setup or solver deck,
+*result* = solver output (kind *Simulation result*).
+
+| Program / format      | Extensions                                                                                |
+|-----------------------|-------------------------------------------------------------------------------------------|
+| ANSYS                 | `.wbpj` (Workbench), `.db` (model), `.rst` `.rth` (results)                               |
+| Abaqus                | `.cae` `.inp` (model), `.odb` `.sta` `.msg` (results)                                     |
+| Nastran               | `.bdf` `.nas` (input deck), `.op2` `.f06` (results)                                       |
+| CalculiX              | `.inp` (Abaqus syntax), `.frd` (results)                                                  |
+| LS-DYNA               | `.k` (keyword deck), `d3plot`, `d3plot01`, … `.d3plot` (results)                          |
+| COMSOL                | `.mph`                                                                                    |
+| NX / Simcenter        | `.sim` `.fem` `.afm`                                                                      |
+| OpenFOAM              | `controlDict` (marks the case), `.foam` (ParaView marker file)                            |
+| Fluent                | `.cas` `.cas.h5` (case), `.dat` `.dat.h5` (data / results)                                |
+| STAR-CCM+             | `.sim`                                                                                    |
+| VTK / ParaView        | `.vtk` (legacy), `.vtu` `.vtp` `.vts` `.vtr` `.vtm` (XML), `.pvd` (time-step collection)  |
+| CGNS, Exodus II       | `.cgns`; `.exo` `.e`                                                                      |
+
+Extensions that other programs use too are decided by the file content:
+
+* `.sim` is a STAR-CCM+ simulation when the beginning of the file names
+  STAR-CCM+, otherwise an NX simulation file (the more common case next to
+  CAD data). This is a heuristic; it was not verified with files of every
+  STAR-CCM+ version.
+* `.dat` counts only with Fluent's section syntax (`(0 "…")`, `(1 "…")`); all
+  other `.dat` files stay unclassified.
+* `.e` is Exodus II only as netCDF or HDF5 file; `.db` is not ANSYS when it
+  is an SQLite database, an OLE file (`Thumbs.db`) or text; `.rst` text files
+  are reStructuredText; `.msg` and `.sta` must be text (Outlook mails are
+  OLE files); `.odb` ZIP files are OpenDocument databases; `.bdf` files
+  starting with `STARTFONT` are bitmap fonts; `.k` must be text.
+
+Result files are never treated as CAD files referenced by assemblies.
+
 ## Why not every format is previewed
 
 Most native formats are proprietary and undocumented; reading their geometry

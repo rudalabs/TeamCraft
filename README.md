@@ -95,7 +95,13 @@ promised.
 - **Change propagation.** References inside CAD files (SolidWorks, Inventor,
   Solid Edge, CATIA, NX, STEP, KiCad, …) are tracked; a release flags every
   dependent for a check.
-- **130+ file formats, 170+ extensions.** Native files of SolidWorks, NX, Creo, CATIA,
+- **Simulation management.** Simulation items (FEA, CFD) linked to the exact
+  part revisions and file versions they analysed, flagged *out of date* when
+  the design changes; key result values with limits and pass/fail, CSV/Excel
+  import, comparison between revisions and a REST API for solver scripts.
+  Result formats (VTK, CalculiX, Nastran, ANSYS, Abaqus, OpenFOAM, Fluent,
+  CGNS, Exodus II, LS-DYNA, …) are recognised.
+- **160+ file formats, 200+ extensions.** Native files of SolidWorks, NX, Creo, CATIA,
   Inventor, Fusion, Solid Edge, AutoCAD, Revit, Navisworks, MicroStation,
   Archicad, Rhino, Blender, Maya, 3ds Max, Houdini, SolidCraft, FieldCraft,
   … plus STEP, IGES, Parasolid, JT, IFC, glTF, USD, E57, LAS and more.
