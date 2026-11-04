@@ -5,6 +5,7 @@
 //! ```text
 //! objects/ab/cd/abcdef0123…   blob named by the SHA-256 of its content
 //! tmp/                         uploads in progress (same file system → atomic rename)
+//! uploads/<session id>         chunked, resumable uploads (services::uploads)
 //! ```
 //!
 //! Identical files are stored once, no matter how many revisions reference
@@ -39,6 +40,7 @@ impl Vault {
         let vault = Vault { root: root.into() };
         fs::create_dir_all(vault.objects_dir()).await?;
         fs::create_dir_all(vault.tmp_dir()).await?;
+        fs::create_dir_all(vault.uploads_dir()).await?;
         vault.clean_tmp(Duration::from_secs(24 * 3600)).await?;
         Ok(vault)
     }
@@ -134,6 +136,128 @@ impl Vault {
         fs::write(&probe, b"ok").await?;
         fs::remove_file(&probe).await?;
         Ok(())
+    }
+
+    /// Directory of the chunked uploads in progress. It is on the vault's
+    /// file system, so a completed upload moves into `objects/` atomically.
+    pub fn uploads_dir(&self) -> PathBuf {
+        self.root.join("uploads")
+    }
+
+    fn staging_path(&self, session: Uuid) -> PathBuf {
+        self.uploads_dir().join(session.simple().to_string())
+    }
+
+    /// Creates the (empty) staging file of a chunked upload.
+    pub async fn create_staging(&self, session: Uuid) -> AppResult<()> {
+        fs::File::create(self.staging_path(session)).await?;
+        Ok(())
+    }
+
+    /// Writes a chunk at `offset` of a staging file and flushes it to disk.
+    /// Anything behind `offset` (the rest of an interrupted earlier chunk
+    /// that was never confirmed) is cut off first, so the file always
+    /// equals the confirmed bytes plus this chunk.
+    pub async fn write_staged(&self, session: Uuid, offset: u64, chunk: &[u8]) -> AppResult<()> {
+        use tokio::io::AsyncSeekExt;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .open(self.staging_path(session))
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    AppError::Conflict(
+                        "The data of this upload is gone – start the upload again.".into(),
+                    )
+                } else {
+                    AppError::Io(e)
+                }
+            })?;
+        let len = file.metadata().await?.len();
+        if len < offset {
+            return Err(AppError::Conflict(
+                "The data of this upload is incomplete – start the upload again.".into(),
+            ));
+        }
+        file.set_len(offset).await?;
+        file.seek(std::io::SeekFrom::Start(offset)).await?;
+        file.write_all(chunk).await?;
+        file.flush().await?;
+        file.sync_data().await?;
+        Ok(())
+    }
+
+    /// SHA-256 and length of a staging file (read once, from disk – the
+    /// chunks may have arrived across server restarts).
+    pub async fn hash_staged(&self, session: Uuid) -> AppResult<StoredBlob> {
+        use tokio::io::AsyncReadExt;
+        let mut file = fs::File::open(self.staging_path(session)).await?;
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; 1024 * 1024];
+        let mut size = 0u64;
+        loop {
+            let n = file.read(&mut buf).await?;
+            if n == 0 {
+                break;
+            }
+            size += n as u64;
+            hasher.update(&buf[..n]);
+        }
+        Ok(StoredBlob {
+            sha256: hex::encode(hasher.finalize()),
+            size,
+        })
+    }
+
+    /// Moves a verified staging file to its content address (or drops it if
+    /// identical content is stored already).
+    pub async fn adopt_staged(&self, session: Uuid, sha256: &str) -> AppResult<()> {
+        let source = self.staging_path(session);
+        let target = self.object_path(sha256)?;
+        if fs::try_exists(&target).await? {
+            fs::remove_file(&source).await?;
+        } else {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).await?;
+            }
+            fs::rename(&source, &target).await?;
+        }
+        Ok(())
+    }
+
+    /// Removes the staging file of a session (no error if there is none).
+    pub async fn remove_staged(&self, session: Uuid) -> AppResult<()> {
+        match fs::remove_file(self.staging_path(session)).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(AppError::Io(e)),
+        }
+    }
+
+    /// Staging files not changed for `older_than`, with their session id.
+    pub async fn stale_staged(&self, older_than: Duration) -> AppResult<Vec<Uuid>> {
+        let mut stale = Vec::new();
+        let mut entries = fs::read_dir(self.uploads_dir()).await?;
+        let now = SystemTime::now();
+        while let Some(entry) = entries.next_entry().await? {
+            let Some(id) = entry
+                .file_name()
+                .to_str()
+                .and_then(|n| Uuid::try_parse(n).ok())
+            else {
+                continue;
+            };
+            let old = entry
+                .metadata()
+                .await
+                .and_then(|m| m.modified())
+                .map(|modified| now.duration_since(modified).unwrap_or_default() > older_than)
+                .unwrap_or(false);
+            if old {
+                stale.push(id);
+            }
+        }
+        Ok(stale)
     }
 
     async fn clean_tmp(&self, older_than: Duration) -> std::io::Result<()> {
@@ -264,6 +388,36 @@ mod tests {
             tmp.next_entry().await.unwrap().is_none(),
             "temp file removed on drop"
         );
+        fs::remove_dir_all(root).await.ok();
+    }
+
+    #[tokio::test]
+    async fn staged_chunks_resume_and_move_into_the_vault() {
+        let root = temp_root();
+        let vault = Vault::open(&root).await.unwrap();
+        let id = Uuid::new_v4();
+        vault.create_staging(id).await.unwrap();
+        vault.write_staged(id, 0, b"hello ").await.unwrap();
+        // an interrupted chunk left bytes behind that were never confirmed …
+        vault.write_staged(id, 6, b"wor").await.unwrap();
+        // … the resent chunk at the confirmed offset replaces them
+        vault.write_staged(id, 6, b"vault").await.unwrap();
+        assert!(matches!(
+            vault.write_staged(id, 99, b"gap").await,
+            Err(AppError::Conflict(_))
+        ));
+        let blob = vault.hash_staged(id).await.unwrap();
+        assert_eq!(blob.size, 11);
+        assert_eq!(blob.sha256, hex::encode(Sha256::digest(b"hello vault")));
+        vault.adopt_staged(id, &blob.sha256).await.unwrap();
+        assert!(vault.verify(&blob.sha256).await.unwrap());
+        // identical content again: the staging file is dropped, the blob stays
+        let twin = Uuid::new_v4();
+        vault.create_staging(twin).await.unwrap();
+        vault.write_staged(twin, 0, b"hello vault").await.unwrap();
+        vault.adopt_staged(twin, &blob.sha256).await.unwrap();
+        assert!(vault.stale_staged(Duration::ZERO).await.unwrap().is_empty());
+        vault.remove_staged(twin).await.unwrap();
         fs::remove_dir_all(root).await.ok();
     }
 

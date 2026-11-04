@@ -22,7 +22,7 @@ use crate::{
     preview::PreviewFormat,
     services::{
         audit, bom, changes, files, impacts, items, notifications, projects, references, requests,
-        revisions, simulations,
+        revisions, simulations, uploads,
     },
     thumbnail, util, AppState,
 };
@@ -507,7 +507,8 @@ pub(crate) async fn upload_files(
     multipart: &mut Multipart,
 ) -> AppResult<Vec<files::Stored>> {
     files::ensure_can_attach(&st.db, actor, revision_id).await?;
-    let received = receive_uploads(st, multipart).await?;
+    let mut received = receive_uploads(st, multipart).await?;
+    let sessions = take_session_uploads(st, actor, revision_id, &mut received).await?;
     let stored = files::attach(
         &st.db,
         actor,
@@ -516,8 +517,51 @@ pub(crate) async fn upload_files(
         &received.comment,
     )
     .await?;
+    uploads::forget(&st.db, &st.vault, &sessions).await;
     warm_previews(st, &received.uploads);
     Ok(stored)
+}
+
+/// Adds the chunked uploads listed in the `uploads` field (ids of complete
+/// `/api/v1/uploads` sessions of the actor) to the received files, so large
+/// files join a multipart upload or check-in – stored in the same
+/// transaction. A session's own base wins over the `bases` field; the
+/// `folder`/`folders` fields apply to them like to the `file` parts. Returns
+/// the session ids, to be forgotten once the versions are stored.
+pub(crate) async fn take_session_uploads(
+    st: &AppState,
+    actor: &Actor,
+    revision_id: Uuid,
+    received: &mut Received,
+) -> AppResult<Vec<Uuid>> {
+    let Some(raw) = received.fields.get("uploads") else {
+        return Ok(Vec::new());
+    };
+    let ids = uploads::parse_ids(raw)?;
+    let bases = match received.fields.get("bases") {
+        Some(raw) => files::parse_bases(raw)?,
+        None => Default::default(),
+    };
+    let (folder, folders) = files::parse_folders(
+        received.fields.get("folder").map(String::as_str),
+        received.fields.get("folders").map(String::as_str),
+    )?;
+    for id in &ids {
+        let mut upload =
+            uploads::complete(&st.db, &st.vault, actor, *id, Some(revision_id)).await?;
+        if upload.base.is_none() {
+            upload.base = bases
+                .get(&files::stored_name(&upload.filename).to_lowercase())
+                .cloned();
+        }
+        files::apply_folders(
+            std::slice::from_mut(&mut upload),
+            folder.as_deref(),
+            &folders,
+        );
+        received.uploads.push(upload);
+    }
+    Ok(ids)
 }
 
 /// Starts the 3D preview conversion of freshly stored files in the

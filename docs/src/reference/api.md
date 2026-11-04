@@ -58,6 +58,46 @@ which), `conflict` (changed locally and on the server since the base), `new`
 (only local) or `missing` (only on the server). Without a base, unknown local
 content counts as `modified`.
 
+### Large files: chunked, resumable uploads
+
+Files of several GB go up in chunks that survive broken connections
+(similar to the tus protocol; see [Large files](../guide/vault.md#large-files-chunked-resumable-uploads)):
+
+```sh
+SIZE=$(stat -c %s results.op2); SHA=$(sha256sum results.op2 | cut -d' ' -f1)
+curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
+     -d "{\"item\": \"PRT-000001\", \"revision\": \"A\", \"filename\": \"results.op2\",
+          \"size\": $SIZE, \"sha256\": \"$SHA\", \"base\": 3}" $API/uploads
+# 201 {"id": "…", "offset": 0, "size": …, "chunk_bytes": 16777216, "location": "/api/v1/uploads/…", …}
+split -b 16M -d results.op2 part.; OFFSET=0
+for p in part.*; do
+  curl -s -X PATCH -H "$H" -H "Upload-Offset: $OFFSET" --data-binary @$p $API/uploads/$ID
+  OFFSET=$((OFFSET + $(stat -c %s $p)))
+done
+curl -sI -H "$H" $API/uploads/$ID                      # Upload-Offset / Upload-Length: where to resume
+curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
+     -d '{"comment": "run 7", "check_in": true}' $API/uploads/$ID/finish
+```
+
+| Request                         | Meaning                                                                                                                                                                          |
+|---------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `POST /uploads`                 | `{item, revision, filename, size, sha256?, content_type?, base?}` → **201** with the session; 413 above `TEAMCRAFT_MAX_UPLOAD_MB`, 409 if the revision is not checked out by you or `base` is outdated |
+| `PATCH /uploads/{id}`           | header `Upload-Offset`, body = the next chunk (≤ `chunk_bytes`) → the session with the new `offset`; **409** with the server's `Upload-Offset` header at any other offset, 400 beyond `size` |
+| `HEAD`/`GET /uploads/{id}`      | headers `Upload-Offset`, `Upload-Length`; `GET` also as JSON (`offset`, `size`, `complete`, `expires_at`)                                                                       |
+| `POST /uploads/{id}/finish`     | body optional `{comment?, check_in?}`: verify size and SHA-256, store the new file or version (`check_in: true` also releases the check-out) → `{files, revision}`; 409 while incomplete, 400 if the content does not match (the upload is reset to offset 0) |
+| `DELETE /uploads/{id}`          | cancel; the received data is deleted                                                                                                                                              |
+
+Instead of `finish`, complete uploads can join a multipart **check-in** or
+upload: the field `uploads` lists their ids (`["…", "…"]` or `id,id`), and
+they are stored together with the `file` parts in one transaction – the
+desktop app checks in this way. A session's own `base` wins over the
+`bases` field; `folder`/`folders` apply to them like to the `file` parts.
+Sessions are private (other users get 404), expire 24 hours
+after the last chunk and are limited to 16 unfinished ones per user. When
+storing fails after the content was verified (for example a 409 because the
+file moved on), the session keeps the verified content, so `finish` can be
+repeated without sending the bytes again.
+
 ### Working folder: folders and the working set
 
 Every file has a `folder` inside its project group (`""` = the top), the
@@ -109,6 +149,7 @@ lowest level it is reached on; the report stops at 2000 rows.
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
 | Worklist         | `GET /worklist` (check-outs, reviews, impacts, statistics), `POST /worklist/checkin-all`                                              |
 | Files            | `POST …/files` (multipart, `folder`/`folders`), `GET/PATCH /files/{id}` (metadata, folder), `/content`, `/versions`, `/restore`, `/mesh`, `/thumbnail`, `…/workset` |
+| Uploads          | `POST /uploads`, `PATCH/HEAD/GET/DELETE /uploads/{id}`, `POST /uploads/{id}/finish` – chunked, resumable uploads of large files        |
 | BOM              | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP) |
 | BOM import       | `POST /bom-imports` (new assembly), `POST …/bom/import` (into a checked-out revision); multipart `file` = CSV/Excel table or STEP assembly, `dry_run=true` returns the plan |
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
