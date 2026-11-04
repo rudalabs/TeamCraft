@@ -6,6 +6,7 @@
 //! * [`services`] – business logic on top of PostgreSQL, used by both front ends
 //! * [`web`] – server-rendered HTML user interface (cookie sessions)
 //! * [`api`] – JSON REST API under `/api/v1` (bearer tokens)
+//! * [`mcp`] – Model Context Protocol server at `/api/v1/mcp` for AI assistants
 
 pub mod api;
 pub mod assets;
@@ -19,6 +20,7 @@ pub mod db;
 pub mod delivery;
 pub mod domain;
 pub mod error;
+pub mod mcp;
 pub mod mesh;
 pub mod models;
 pub mod notify;

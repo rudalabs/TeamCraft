@@ -13,6 +13,7 @@ pub mod explorer;
 pub mod files;
 pub mod impacts;
 pub mod imports;
+pub mod insights;
 pub mod items;
 pub mod notifications;
 pub mod package;

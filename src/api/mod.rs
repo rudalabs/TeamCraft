@@ -42,6 +42,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/me", get(me))
         .route("/desktop/token", post(desktop_token))
         .route("/worklist", get(worklist))
+        .route("/mcp", post(crate::mcp::http).get(crate::mcp::http_get))
         .route("/formats", get(formats))
         .route("/projects", get(list_projects).post(create_project))
         .route(
@@ -214,6 +215,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/projects/{code}/members                   {username, manager?} – managers and admins",
             "GET    /api/v1/projects/{code}/numbering?scheme=         next generated item numbers per type; scheme = preview another scheme",
             "PUT    /api/v1/projects/{code}/numbering                 {scheme} e.g. {PROJECT}-{TYPE}-{YYYY}-{SEQ:4}, empty = {TYPE}-{SEQ:6} – managers and admins",
+            "POST   /api/v1/mcp                                       Model Context Protocol (JSON-RPC 2.0) for AI assistants, see the MCP reference",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
             "GET    /api/v1/items?q=&type=&project=&state=&system=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo",
             "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?}",
