@@ -308,6 +308,140 @@
   {% endif %}
 </section>
 
+{% if simulation %}
+<section class="card" id="simulation-basis">
+  <div class="card-head">
+    <h2>Based on</h2>
+    {% if simulation.bases %}{% if simulation.out_of_date %}<span class="badge badge-out_of_date">Out of date</span>{% else %}<span class="badge badge-up_to_date">Up to date</span>{% endif %}{% endif %}
+  </div>
+  <p class="hint">The revisions and exact file versions this simulation was computed with. A newer release of a basis, an obsolete basis or a newer version of a simulated file makes the simulation out of date.</p>
+  {% if simulation.bases %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Role</th><th>Item</th><th>Name</th><th>Simulated</th><th>Status</th>{% if can.edit %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for b in simulation.bases %}
+      <tr>
+        <td class="small nowrap">{% for r in simulation.roles %}{% if r.value == b.role %}{{ r.label }}{% endif %}{% endfor %}</td>
+        <td class="mono nowrap"><a href="/revisions/{{ b.basis_revision_id }}">{{ b.basis_number }}/{{ b.basis_code }}</a></td>
+        <td>{{ b.basis_name }}{% if b.note %} <span class="small muted">· {{ b.note }}</span>{% endif %}</td>
+        <td class="small">{{ m.badge(b.basis_state) }}{% if b.file_name %} · {% if b.file_id %}<a href="/files/{{ b.file_id }}/download">{{ b.file_name }}</a>{% else %}{{ b.file_name }}{% endif %} <span class="mono">v{{ b.file_version }}</span>{% endif %}</td>
+        <td class="small">{% if b.out_of_date %}<span class="badge badge-out_of_date" title="{{ b.out_of_date }}">Out of date</span> {{ b.out_of_date }}{% if b.released_revision_id and b.released_code != b.basis_code %} · <a href="/revisions/{{ b.released_revision_id }}">open {{ b.released_code }}</a>{% endif %}{% else %}<span class="badge badge-up_to_date">Up to date</span>{% endif %}</td>
+        {% if can.edit %}
+        <td class="right">
+          <form class="inline" method="post" action="/simulation-bases/{{ b.id }}/delete">
+            <input type="hidden" name="back" value="{{ back }}#simulation-basis">
+            <button class="small danger" type="submit">Remove</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No basis yet – add the part or assembly revision that was analysed.</p>{% endif %}
+  {% if can.edit %}
+  <h3>Add basis</h3>
+  <form class="inline" method="post" action="/revisions/{{ rev.id }}/simulation/bases">
+    <select name="role" aria-label="Role of the basis">
+      {% for r in simulation.roles %}<option value="{{ r.value }}">{{ r.label }}</option>{% endfor %}
+    </select>
+    <input type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Basis item">
+    <input class="find" type="text" name="revision" placeholder="latest" aria-label="Revision code">
+    <input type="text" name="file" placeholder="File name (optional, pins its current version)" aria-label="Simulated file">
+    <input type="text" name="note" placeholder="Note (optional)" maxlength="500" aria-label="Note">
+    <button type="submit">Add</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card" id="simulation-results">
+  <div class="card-head">
+    <h2>Results</h2>
+    <div class="actions">
+      {% if revisions|length > 1 %}<a class="button small" href="/revisions/{{ rev.id }}/simulation/compare">Compare with another revision</a>{% endif %}
+      {% if simulation.results %}<a class="button small" href="/revisions/{{ rev.id }}/simulation/results.csv">CSV</a>{% endif %}
+    </div>
+  </div>
+  {% if simulation.results %}
+  <p class="result-summary">
+    {% if simulation.summary.fail %}<span class="badge badge-fail">{{ simulation.summary.fail }} failed</span>{% endif %}
+    {% if simulation.summary.pass %}<span class="badge badge-pass">{{ simulation.summary.pass }} passed</span>{% endif %}
+    {% if simulation.summary.without_limits %}<span class="badge badge-none">{{ simulation.summary.without_limits }} without limits</span>{% endif %}
+  </p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Result</th><th>Load case</th><th class="num">Value</th><th>Unit</th><th class="num">Lower limit</th><th class="num">Upper limit</th><th>Status</th><th>Solver</th>{% if can.edit %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for r in simulation.results %}
+      <tr class="result-{{ r.status }}">
+        {% if can.edit %}
+        <td>
+          <form id="result-{{ r.id }}" class="inline" method="post" action="/simulation-results/{{ r.id }}">
+            <input type="hidden" name="back" value="{{ back }}#simulation-results">
+            <input type="hidden" name="solver" value="{{ r.solver }}">
+            <input type="hidden" name="solver_version" value="{{ r.solver_version }}">
+            <input type="hidden" name="note" value="{{ r.note }}">
+            <input type="text" name="name" value="{{ r.name }}" maxlength="200" required aria-label="Result name">
+          </form>
+        </td>
+        <td><input form="result-{{ r.id }}" type="text" name="load_case" value="{{ r.load_case }}" maxlength="200" aria-label="Load case"></td>
+        <td class="num value"><input form="result-{{ r.id }}" class="value" type="text" name="value" value="{{ r.value }}" inputmode="decimal" required aria-label="Value"></td>
+        <td><input form="result-{{ r.id }}" class="unit" type="text" name="unit" value="{{ r.unit }}" maxlength="32" aria-label="Unit"></td>
+        <td class="num"><input form="result-{{ r.id }}" class="limit" type="text" name="lower_limit" value="{% if r.lower_limit is not none %}{{ r.lower_limit }}{% endif %}" inputmode="decimal" aria-label="Lower limit"></td>
+        <td class="num"><input form="result-{{ r.id }}" class="limit" type="text" name="upper_limit" value="{% if r.upper_limit is not none %}{{ r.upper_limit }}{% endif %}" inputmode="decimal" aria-label="Upper limit"></td>
+        {% else %}
+        <td>{{ r.name }}{% if r.note %} <span class="small muted">· {{ r.note }}</span>{% endif %}</td>
+        <td class="small">{{ r.load_case }}</td>
+        <td class="num value">{{ r.value }}</td>
+        <td class="small">{{ r.unit }}</td>
+        <td class="num">{% if r.lower_limit is not none %}{{ r.lower_limit }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="num">{% if r.upper_limit is not none %}{{ r.upper_limit }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        {% endif %}
+        <td>{% if r.status != "none" %}{{ m.badge(r.status) }}{% else %}<span class="muted small">no limit</span>{% endif %}</td>
+        <td class="small nowrap">{{ r.solver }}{% if r.solver_version %} {{ r.solver_version }}{% endif %}</td>
+        {% if can.edit %}
+        <td class="right nowrap">
+          <button form="result-{{ r.id }}" class="small" type="submit">Save</button>
+          <form class="inline" method="post" action="/simulation-results/{{ r.id }}/delete">
+            <input type="hidden" name="back" value="{{ back }}#simulation-results">
+            <button class="small danger" type="submit">Remove</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">Pass when lower limit ≤ value ≤ upper limit (limits inclusive, either may be empty).</p>
+  {% else %}<p class="empty">No result values yet.</p>{% endif %}
+  {% if can.edit %}
+  <h3>Add result</h3>
+  <form class="inline" method="post" action="/revisions/{{ rev.id }}/simulation/results">
+    <input type="text" name="name" placeholder="Name, e.g. Max. von Mises stress" maxlength="200" required aria-label="Result name">
+    <input class="value" type="text" name="value" placeholder="Value" inputmode="decimal" required aria-label="Value">
+    <input class="unit" type="text" name="unit" placeholder="Unit" maxlength="32" aria-label="Unit">
+    <input class="limit" type="text" name="lower_limit" placeholder="Min" inputmode="decimal" aria-label="Lower limit">
+    <input class="limit" type="text" name="upper_limit" placeholder="Max" inputmode="decimal" aria-label="Upper limit">
+    <input type="text" name="load_case" placeholder="Load case" maxlength="200" aria-label="Load case">
+    <input type="text" name="solver" placeholder="Solver" maxlength="100" aria-label="Solver">
+    <input class="unit" type="text" name="solver_version" placeholder="Version" maxlength="100" aria-label="Solver version">
+    <button type="submit">Add</button>
+  </form>
+  <h3>Import from CSV or Excel</h3>
+  <form class="inline" method="post" action="/revisions/{{ rev.id }}/simulation/results/import" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" required>
+    <label class="check"><input type="checkbox" name="replace" value="1"> Replace all values</label>
+    <button type="submit">Import</button>
+    <span class="hint">columns <span class="mono">name,value,unit,limit_low,limit_high,load_case</span> (optional: solver, solver_version, note) · same name and load case = update</span>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if not simulation or lines %}
 <section class="card" id="bom">
   <div class="card-head">
     <h2>Bill of materials (single level)</h2>
@@ -369,6 +503,7 @@
   </form>
   {% endif %}
 </section>
+{% endif %}
 
 <section class="card" id="references">
   <h2>References</h2>
@@ -487,6 +622,32 @@
   </ul>
   {% endif %}
 </section>
+
+{% if not simulation and (based_simulations or rev.item_type in ["part", "assembly"]) %}
+<section class="card" id="simulations">
+  <h2>Simulations</h2>
+  {% if based_simulations %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Simulation</th><th>Name</th><th>State</th><th>Based on</th><th>Results</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for s in based_simulations %}
+      <tr>
+        <td class="mono nowrap"><a href="/revisions/{{ s.basis.revision_id }}">{{ s.simulation_number }}/{{ s.simulation_code }}</a></td>
+        <td>{{ s.simulation_name }}{% if s.basis.note %} <span class="small muted">· {{ s.basis.note }}</span>{% endif %}</td>
+        <td>{{ m.badge(s.simulation_state) }}</td>
+        <td class="small"><span class="mono">{{ s.basis.basis_code }}</span> · {{ s.basis.role|label }}{% if s.basis.file_name %} · {{ s.basis.file_name }} <span class="mono">v{{ s.basis.file_version }}</span>{% endif %}</td>
+        <td class="small nowrap">{% if s.failed_count %}<span class="badge badge-fail">{{ s.failed_count }} of {{ s.result_count }} failed</span>{% elif s.result_count %}{{ s.result_count }} values{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="small">{% if s.basis.out_of_date %}<span class="badge badge-out_of_date" title="{{ s.basis.out_of_date }}">Out of date</span> {{ s.basis.out_of_date }}{% else %}<span class="badge badge-up_to_date">Up to date</span>{% endif %}{% if s.open_impact_id %} · <a href="/revisions/{{ s.basis.revision_id }}">check open</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No simulation is based on {{ rev.item_number }} yet.</p>{% endif %}
+  {% if me.role != "viewer" %}<p class="hint">Create an item of type <a href="/items/new?type=simulation">Simulation</a> and add {{ rev.item_number }}/{{ rev.code }} as its basis.</p>{% endif %}
+</section>
+{% endif %}
 
 <div class="grid grid-2">
   <section class="card">

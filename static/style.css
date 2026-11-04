@@ -664,6 +664,19 @@ ul.file-refs { margin-bottom: 0.7rem; }
   border: 1px solid var(--border); border-radius: 4px; background: #fff;
 }
 
+/* simulations: pass/fail of result values, out-of-date bases */
+.badge-pass { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
+.badge-fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-soft); }
+.badge-none { color: var(--text-dim); }
+.badge-out_of_date { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.badge-up_to_date { color: var(--ok); }
+.fmt-result { color: var(--text-muted); border-style: dashed; border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+tr.result-fail td.num.value { color: var(--danger); font-weight: 600; }
+input.value { width: 8em; text-align: right; }
+input.limit { width: 6.5em; text-align: right; }
+input.unit { width: 4.5em; }
+.result-summary { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin: 0 0 0.6rem; }
+
 /* Assistant ("Ask TeamCraft") */
 .assistant-panel { margin-bottom: 1.1rem; }
 .assistant-quick button { font-weight: 600; }

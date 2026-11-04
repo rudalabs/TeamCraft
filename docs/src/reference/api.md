@@ -74,6 +74,7 @@ revision with `ok` and `error`, plus `checked_in`, `failed` and a `summary`.
 | BOM              | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP) |
 | BOM import       | `POST /bom-imports` (new assembly), `POST …/bom/import` (into a checked-out revision); multipart `file` = CSV/Excel table or STEP assembly, `dry_run=true` returns the plan |
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
+| Simulations      | `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
 | Changes          | `GET/POST /changes`, items, reviewers, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact`      |
 | Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                 |
 | Notifications    | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                   |
@@ -89,6 +90,36 @@ Both compare the direct lines; `depth=all` compares every level, with the
 children resolved by `rule=latest|released|as_released` (each line then has
 its `level` and the resolved `revision` on both sides). The expanded BOM
 itself downloads as Excel workbook: `GET …/revisions/{code}/bom.xlsx?rule=`.
+
+## Simulations
+
+A simulation revision (item type `simulation`) links the revisions it was
+computed with and stores its key result values (see
+[Simulations](../guide/simulation.md)). Writes need the simulation revision
+checked out by the caller.
+
+| Endpoint                                                      | Body / result                                                                                                                  |
+|---------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| `GET …/revisions/{code}/simulation`                           | `{revision, out_of_date, summary, bases, results}`; every basis has `out_of_date` (reason or `null`), every result `status`    |
+| `GET/POST …/revisions/{code}/simulation/bases`                | `{item, revision?, file? \| file_version_id?, role: geometry\|mesh\|material\|load_case\|other, note?}` – default: latest revision |
+| `DELETE /simulation-bases/{id}`                               | removes a basis link                                                                                                           |
+| `GET/POST …/revisions/{code}/simulation/results`              | `{name, value, unit?, lower_limit?, upper_limit?, load_case?, solver?, solver_version?, note?}` (`limit_low`/`limit_high` too) |
+| `PUT …/revisions/{code}/simulation/results`                   | `{results: [...], replace?: true}` – the result set of a solver run in one transaction; same name and load case = update      |
+| `POST …/revisions/{code}/simulation/results/import`           | multipart `file` (CSV/TSV/Excel `name,value,unit,limit_low,limit_high,load_case`), `replace=true` optional                     |
+| `PATCH/DELETE /simulation-results/{id}`                       | change any field (`null` clears a limit) or remove                                                                             |
+| `GET …/revisions/{code}/simulation/compare?with={code}`       | `{before, after, summary, diffs}` – matched by name and load case, with `delta` and `delta_percent`                           |
+| `GET /items/{number}/simulations`                             | simulations whose latest revision is based on the item, with `out_of_date` and `open_impact_id`                               |
+
+A solver script after a run:
+
+```sh
+curl -s -X POST -H "$H" $API/items/SIM-000003/revisions/B/checkout
+curl -s -X PUT -H "$H" -H 'Content-Type: application/json' \
+     -d '{"results": [{"name": "Max. von Mises stress", "value": 182.5, "unit": "MPa",
+                       "upper_limit": 250, "load_case": "LC1", "solver": "CalculiX", "solver_version": "2.21"}]}' \
+     $API/items/SIM-000003/revisions/B/simulation/results
+curl -s -X POST -H "$H" -F file=@job.frd $API/items/SIM-000003/revisions/B/checkin
+```
 
 Errors are JSON: `{"error": {"code": "conflict", "message": "…"}}` with the
 matching HTTP status (400, 401, 403, 404, 409, 413, 500).

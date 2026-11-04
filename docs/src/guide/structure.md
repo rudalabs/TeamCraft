@@ -46,7 +46,8 @@ missing BOM lines are suggested.
 ## Change propagation
 
 When a change releases a new revision (or a revision becomes obsolete), every
-dependent – via BOM, references or CAD file references – is flagged **Check needed**. A CAD editor acknowledges it with
+dependent – via BOM, references, CAD file references or as the basis of a
+[simulation](simulation.md) – is flagged **Check needed**. A CAD editor acknowledges it with
 a note (*form, fit and
 function unchanged*) or revises and releases the dependent, which resolves
 the check and propagates one level further. Every change shows this **impact analysis** before it is approved.

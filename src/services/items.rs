@@ -495,6 +495,12 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
             "The item is part of a change; remove it from the change first.".into(),
         ));
     }
+    if crate::services::simulations::item_is_basis(&mut tx, item_id).await? {
+        return Err(AppError::Conflict(
+            "A simulation is based on the item; remove it from the simulation's basis first."
+                .into(),
+        ));
+    }
     sqlx::query("DELETE FROM items WHERE id = $1")
         .bind(item_id)
         .execute(&mut *tx)

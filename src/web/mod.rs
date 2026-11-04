@@ -23,6 +23,7 @@ mod notifications;
 mod personal;
 mod references;
 mod revisions;
+mod simulations;
 
 pub(crate) use bom::{package_response, package_rule};
 pub(crate) use imports::{options_from as import_options, receive as receive_import};
@@ -164,6 +165,36 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/revisions/{id}/references", post(references::add))
         .route("/references/{id}/delete", post(references::delete))
         .route("/impacts/{id}/acknowledge", post(references::acknowledge))
+        // simulations: basis links, result values, comparison
+        .route(
+            "/revisions/{id}/simulation/bases",
+            post(simulations::add_basis),
+        )
+        .route(
+            "/simulation-bases/{id}/delete",
+            post(simulations::delete_basis),
+        )
+        .route(
+            "/revisions/{id}/simulation/results",
+            post(simulations::add_result),
+        )
+        .route(
+            "/revisions/{id}/simulation/results/import",
+            post(simulations::import_results).layer(DefaultBodyLimit::max(import_limit)),
+        )
+        .route(
+            "/revisions/{id}/simulation/results.csv",
+            get(simulations::results_csv),
+        )
+        .route(
+            "/revisions/{id}/simulation/compare",
+            get(simulations::compare),
+        )
+        .route("/simulation-results/{id}", post(simulations::update_result))
+        .route(
+            "/simulation-results/{id}/delete",
+            post(simulations::delete_result),
+        )
         .route("/notifications", get(notifications::page))
         .route("/notifications/read-all", post(notifications::read_all))
         .route("/notifications/{id}/open", get(notifications::open))

@@ -60,6 +60,22 @@ the known gaps with details. Last update: 2026-11-04.
   `SECURITY.md` points to
 - [ ] Test e-mail (SMTP) and Mattermost notifications against real servers
 
+**Simulation management (FEA/CFD)**
+
+- [x] v1: item type `simulation` (`SIM-`), basis links to item revisions and exact file versions, out-of-date
+  detection and change propagation (relation `simulation`), result values with limits and pass/fail, CSV/Excel import,
+  comparison between revisions, REST API, result file formats (VTK, CalculiX, Nastran, ANSYS, Abaqus, OpenFOAM,
+  Fluent, STAR-CCM+, CGNS, Exodus II, LS-DYNA) – guide in `docs/src/guide/simulation.md`
+- [ ] 3D preview of results: VTK (legacy and XML) and CalculiX `.frd` with a scalar field (colour map) in the viewer;
+  OpenFOAM case summary (solver, time steps) from `controlDict`
+- [ ] `.sim` detection: verify the STAR-CCM+ marker with real files (heuristic: "STAR-CCM+" near the start)
+- [ ] Read result values from a `teamcraft-results.json`/CSV next to the files at check-in
+- [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
+- [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
+  checked out read-only into `basis/`, check-in of selected result time steps only
+- [ ] Retention for large result files (`files.retention = 'latest'`) after chunked resumable uploads (feature 9)
+- [ ] Save As of a simulation: copy basis links and result values
+
 **All CAD programs**
 
 - [ ] (research first) CAD add-ins through the official APIs (Inventor API, Solid Edge API, SolidWorks API, NX Open):
