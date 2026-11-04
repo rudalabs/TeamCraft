@@ -28,8 +28,11 @@ say plainly which checks ran and which did not.
 
 ## Hard rules
 
-* **Never build container images** – no `docker build`, `docker compose build`,
-  `docker compose up --build`.
+* **Never build container images locally** – no `docker build`, `docker buildx`,
+  `docker compose build`, `docker compose up --build`. The `Dockerfile` and
+  `deploy/` may be edited; the image is built only by GitHub Actions
+  (`release.yml`: build-only on pull requests, published to ghcr.io only for
+  pushes to `main` (`:edge`) and `v*` tags).
 * **Python** only as script files in `./local/`, run with
   `.venv/bin/python ./local/<script>.py` – the user reviews every script. No `python -c`.
 * **Secrets** live only in `secrets/` (git-ignored as a whole). Never print
@@ -43,10 +46,12 @@ say plainly which checks ran and which did not.
 * No organisation-specific names, logos, seed data or deployment files,
   and nothing that resembles Siemens Teamcenter or Microsoft Teams branding.
 * Releases: `.github/workflows/release.yml` builds the server binaries and
-  desktop installers as artifacts on every push to `main` and publishes a
-  GitHub Release for a `v*` tag (CONTRIBUTING.md, "Releases and versions").
-  Never push a tag, bump the version or publish anything else (container
-  images, package registries) unless the user asks for that release.
+  desktop installers as artifacts on every push to `main`, publishes the
+  container image `ghcr.io/rudalabs/teamcraft` (`:edge` from `main`,
+  `:<version>`/`:latest` from tags) and a GitHub Release for a `v*` tag
+  (CONTRIBUTING.md, "Releases and versions"). Never push a tag, bump the
+  version or publish anything else (package registries) unless the user asks
+  for that release.
 
 ## Git rules
 
@@ -105,7 +110,10 @@ tests/             end-to-end tests; tests/common creates a temporary database (
 tests/fixtures/cad openly licensed NIST CAD files (Inventor, NX, SolidWorks, Creo, CATIA V5, STEP) with manifest.tsv, checked by tests/cad_fixtures.rs
 docs/              mdBook documentation (Doxygen-style theme in docs/theme/), published with rustdoc via GitHub Pages
 platforms/         short build-and-test guides: linux.md, macos.md, windows.md
-.github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 16/18, macOS/Windows builds), docs.yml, desktop.yml
+Dockerfile         server image (rust builder → distroless/cc, non-root, HEALTHCHECK), built by CI only
+deploy/            production Docker install: docker-compose.yml (teamcraft + postgres), teamcraft.env.example, install.sh
+.github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 16/18, macOS/Windows builds), docs.yml, desktop.yml,
+                   release.yml (binaries, installers, image + Docker install smoke test)
 desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part of the server build)
 ```
 

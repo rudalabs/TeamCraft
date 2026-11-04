@@ -15,6 +15,7 @@
 
 # Administration
 
+- [Install with Docker](admin/docker.md)
 - [Configuration](admin/configuration.md)
 - [Users, roles and single sign-on](admin/users.md)
 - [Operations](admin/operations.md)
