@@ -162,6 +162,48 @@ mod tests {
         assert_eq!(again.status(), StatusCode::NOT_MODIFIED);
     }
 
+    /// Every design token the stylesheets use without a fallback is declared
+    /// somewhere (skins.css, style.css, or the desktop app.css that loads
+    /// skins.css): an undefined `var(--x)` silently drops the declaration.
+    #[test]
+    fn css_tokens_are_defined() {
+        let sheets = [
+            ("static/skins.css", include_str!("../static/skins.css")),
+            ("static/style.css", include_str!("../static/style.css")),
+            ("desktop/ui/app.css", include_str!("../desktop/ui/app.css")),
+        ];
+        let declared: std::collections::HashSet<&str> = sheets
+            .iter()
+            .flat_map(|(_, css)| css.match_indices("--").map(|(start, _)| &css[start..]))
+            .filter_map(|s| {
+                let (name, rest) = custom_property(s)?;
+                rest.trim_start().starts_with(':').then_some(name)
+            })
+            .collect();
+        assert!(declared.contains("--radius-sm") && declared.contains("--primary-from"));
+        for (file, css) in sheets {
+            for (start, _) in css.match_indices("var(") {
+                let after = &css[start + 4..];
+                let Some((name, rest)) = custom_property(after) else {
+                    continue;
+                };
+                if rest.trim_start().starts_with(',') {
+                    continue; // has a fallback
+                }
+                assert!(declared.contains(name), "{file}: {name} is not declared");
+            }
+        }
+    }
+
+    /// `--name` at the start of `s` and the text after it.
+    fn custom_property(s: &str) -> Option<(&str, &str)> {
+        let body = s.strip_prefix("--")?;
+        let len = body
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .unwrap_or(body.len());
+        (len > 0).then(|| (&s[..len + 2], &body[len..]))
+    }
+
     /// SVGs must scale (viewBox) and must not contain active content.
     #[test]
     fn media_svgs_scale_and_are_inert() {

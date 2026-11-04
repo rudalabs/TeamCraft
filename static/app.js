@@ -11,6 +11,24 @@
     }
   });
 
+  // A POST form that is on its way is marked busy, so a second click cannot
+  // send it twice (CSS: form[aria-busy]). Buttons are not disabled: that
+  // would drop the name/value of the clicked button from the request.
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (form.getAttribute("aria-busy") === "true") { event.preventDefault(); return; }
+    if (event.defaultPrevented || form.method !== "post" || form.target) return;
+    setTimeout(function () {
+      if (event.defaultPrevented) return; // the upload handler took over
+      form.setAttribute("aria-busy", "true");
+      setTimeout(function () { form.removeAttribute("aria-busy"); }, 8000);
+    }, 0);
+  });
+  // Back/forward cache: a page restored from history is idle again.
+  window.addEventListener("pageshow", function () {
+    document.querySelectorAll("form[aria-busy]").forEach(function (f) { f.removeAttribute("aria-busy"); });
+  });
+
   // File uploads (attach, check in): progress bar and a "Cancel upload"
   // button that stops the transfer at once. Without JavaScript the form is
   // simply submitted.
