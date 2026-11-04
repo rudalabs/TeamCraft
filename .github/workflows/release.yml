@@ -1,0 +1,426 @@
+# Builds and publishes TeamCraft:
+#
+# * a tag `v<version>` (e.g. `v0.2.0`) → GitHub Release with the server
+#   binaries, the desktop installers and SHA256SUMS.txt; 0.x versions and
+#   versions with a suffix (`v1.0.0-rc.1`) are marked as pre-release;
+# * a push to main, a pull request that changes this file, or "Run workflow"
+#   → the same files as workflow artifacts (kept 14 days), no release.
+#
+# Container image ghcr.io/rudalabs/teamcraft (Dockerfile, built natively on
+# an amd64 and an arm64 runner, merged into one multi-platform image):
+# * push to main → :edge;
+# * tag v<version> → :<version> and :<major>.<minor>, plus :latest for every
+#   version without a suffix – also 0.x, although its GitHub Release is a
+#   pre-release, so that deploy/install.sh has a "newest release" before 1.0;
+# * pull request that changes the Dockerfile or deploy/ → build only, no push;
+# * every image build is followed by a smoke test of the whole Docker install
+#   (deploy/install.sh with the freshly built image, loaded in the runner).
+# Images are never built on a developer machine for this project.
+#
+# The tag must match the version in Cargo.toml, desktop/Cargo.toml and
+# desktop/tauri.conf.json. Installers are not code-signed yet (see
+# CONTRIBUTING.md, "Releases").
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["**.md", "docs/**", "platforms/**"]
+  # A change of the release pipeline builds everything once; a change of the
+  # Docker files builds and tests the image only.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "deploy/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  IMAGE: ghcr.io/rudalabs/teamcraft
+  # docker/metadata-action tags (see the header).
+  IMAGE_TAGS: |
+    type=edge,branch=main
+    type=semver,pattern={{version}}
+    type=semver,pattern={{major}}.{{minor}}
+    type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
+
+jobs:
+  version:
+    name: version check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+      artifacts: ${{ steps.changes.outputs.artifacts }}
+      image: ${{ steps.changes.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      # Pull requests build only what they change: binaries and installers for
+      # a change of this file, the image for a change of the Docker files.
+      - id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifacts=true image=true
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            changed=$(git diff --name-only HEAD^1 HEAD)
+            echo "$changed"
+            grep -qx '.github/workflows/release.yml' <<<"$changed" || artifacts=false
+            grep -qE '^(Dockerfile|\.dockerignore|deploy/|\.github/workflows/release\.yml)' <<<"$changed" || image=false
+          fi
+          echo "artifacts=$artifacts image=$image"
+          echo "artifacts=$artifacts" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+      - id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          server=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          desktop=$(sed -n 's/^version = "\(.*\)"$/\1/p' desktop/Cargo.toml | head -1)
+          tauri=$(jq -r .version desktop/tauri.conf.json)
+          echo "server $server, desktop $desktop, tauri.conf.json $tauri"
+          if [ "$server" != "$desktop" ] || [ "$server" != "$tauri" ]; then
+            echo "::error::the three version fields differ"; exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/* ]] && [ "${GITHUB_REF_NAME#v}" != "$server" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $server"; exit 1
+          fi
+          pre=false
+          if [[ "$server" == 0.* || "$server" == *-* ]]; then pre=true; fi
+          echo "version=$server" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$pre" >> "$GITHUB_OUTPUT"
+
+  server:
+    name: server (${{ matrix.target }})
+    needs: version
+    if: needs.version.outputs.artifacts == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - run: cargo build --release --locked
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="teamcraft-${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp LICENSE README.md "dist/$name/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp target/release/teamcraft.exe "dist/$name/"
+            (cd dist && 7z a -tzip "$name.zip" "$name" > /dev/null)
+          else
+            cp target/release/teamcraft "dist/$name/"
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              cp -r packaging/linux "dist/$name/packaging"
+            fi
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+          fi
+          rm -rf "dist/$name"
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.target }}
+          path: dist/*
+          retention-days: 14
+          if-no-files-found: error
+
+  desktop:
+    name: desktop (${{ matrix.os }})
+    needs: version
+    if: needs.version.outputs.artifacts == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, bundles: "deb,rpm,appimage" }
+          - { os: ubuntu-24.04-arm, bundles: "deb,rpm" }
+          - { os: macos-latest, bundles: "app,dmg" }
+          - { os: windows-latest, bundles: "msi,nsis" }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev rpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+          key: release-bundle
+      - name: Tauri CLI
+        shell: bash
+        run: command -v cargo-tauri || cargo install tauri-cli --version "^2" --locked
+      - name: Build the installers
+        working-directory: desktop
+        shell: bash
+        # Bundling is off in tauri.conf.json so that local builds stay fast.
+        run: cargo tauri build --bundles ${{ matrix.bundles }} --config '{"bundle":{"active":true}}'
+      - name: Collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          b=desktop/target/release/bundle
+          find "$b" -maxdepth 2 -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
+            -o -name '*.dmg' -o -name '*.msi' -o -name '*-setup.exe' \) -exec cp {} dist/ \;
+          # The macOS .app is a folder: ship it zipped next to the .dmg.
+          if [ -d "$b/macos" ]; then
+            for app in "$b"/macos/*.app; do
+              ditto -c -k --keepParent "$app" "dist/$(basename "$app" .app)_${{ needs.version.outputs.version }}_aarch64.app.zip"
+            done
+          fi
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.os }}
+          path: dist/*
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    # After the image: install.sh installs the newest release, whose image
+    # must already be on ghcr.io.
+    needs: [version, server, desktop, image-manifest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      # Only the binaries and installers – not the image-digest-* artifacts.
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: server-*
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: desktop-*
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          flags=(--verify-tag --generate-notes --title "TeamCraft ${{ needs.version.outputs.version }}")
+          if [ "${{ needs.version.outputs.prerelease }}" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "$GITHUB_REF_NAME" dist/* "${flags[@]}"
+
+  # ---- container image ------------------------------------------------------
+
+  image:
+    name: image (${{ matrix.arch }})
+    needs: version
+    if: needs.version.outputs.image == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, arch: amd64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    env:
+      # Published only for pushes (main and v* tags) to this repository;
+      # pull requests, forks and "Run workflow" only build.
+      PUSH: ${{ github.event_name == 'push' && github.repository == 'rudalabs/TeamCraft' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: env.PUSH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: ${{ env.IMAGE_TAGS }}
+          labels: org.opencontainers.image.licenses=MPL-2.0
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ steps.meta.outputs.version || 'dev' }}
+          cache-from: type=gha,scope=image-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=image-${{ matrix.arch }}
+          # Pushed by digest; the manifest job below adds the tags.
+          outputs: ${{ env.PUSH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=cacheonly' }}
+      - name: Keep the digest
+        if: env.PUSH == 'true'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v4
+        if: env.PUSH == 'true'
+        with:
+          name: image-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  image-manifest:
+    name: image manifest
+    needs: [version, image, docker-smoke]
+    if: github.event_name == 'push' && github.repository == 'rudalabs/TeamCraft'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: image-digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: ${{ env.IMAGE_TAGS }}
+      - name: Create the multi-platform image
+        working-directory: ${{ runner.temp }}/digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          tags=()
+          while read -r tag; do tags+=(-t "$tag"); done < <(jq -r '.tags[]' <<<"$DOCKER_METADATA_OUTPUT_JSON")
+          sources=()
+          for digest in *; do sources+=("$IMAGE@sha256:$digest"); done
+          docker buildx imagetools create "${tags[@]}" \
+            --annotation "index:org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --annotation "index:org.opencontainers.image.licenses=MPL-2.0" \
+            --annotation "index:org.opencontainers.image.description=TeamCraft PDM/PLM server" \
+            --annotation "index:org.opencontainers.image.version=${{ steps.meta.outputs.version }}" \
+            "${sources[@]}"
+      - name: Inspect
+        run: docker buildx imagetools inspect "$IMAGE:${{ steps.meta.outputs.version }}"
+
+  # The whole Docker installation, as a user runs it: install.sh (dry run and
+  # real), the compose file with PostgreSQL, /readyz, the first administrator,
+  # the container health check, an upgrade run and the uninstall. The image is
+  # built from the cache of the image job and loaded into this runner – nothing
+  # is published here.
+  docker-smoke:
+    name: Docker install smoke test
+    needs: [version, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TC_DIR: /tmp/teamcraft-smoke
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint the installer
+        run: |
+          bash -n deploy/install.sh
+          shellcheck --version
+          shellcheck deploy/install.sh
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image (amd64, from the cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE }}:ci
+          cache-from: type=gha,scope=image-amd64
+      - name: install.sh --dry-run
+        run: ./deploy/install.sh --dry-run --yes --version ci --dir "$TC_DIR"
+      - name: Install
+        run: ./deploy/install.sh --yes --no-pull --version ci --dir "$TC_DIR"
+      - name: Check the installation
+        working-directory: ${{ env.TC_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS http://127.0.0.1:8080/readyz; echo
+          test "$(stat -c %a secrets)" = 700
+          test "$(stat -c %a teamcraft.env)" = 600
+          docker compose ps
+          # runs as the unprivileged user of the image
+          test "$(docker inspect --format '{{.Config.User}}' "$(docker compose ps -q teamcraft)")" = "65532:65532"
+          printf 'smoke-test-password-%s\n' "$RANDOM$RANDOM" \
+            | docker compose exec -T teamcraft teamcraft user create --username admin --role admin
+          docker compose exec -T teamcraft teamcraft user list | grep '^admin '
+          docker compose exec -T teamcraft teamcraft vault check
+          # the login page is served
+          curl -fsS -o "$RUNNER_TEMP/login.html" http://127.0.0.1:8080/login
+          grep -qi '<form' "$RUNNER_TEMP/login.html"
+          # the image's HEALTHCHECK (teamcraft healthcheck) reports healthy
+          for _ in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' "$(docker compose ps -q teamcraft)")
+            [ "$status" = healthy ] && break
+            sleep 3
+          done
+          echo "health: $status"
+          test "$status" = healthy
+      - name: Upgrade run keeps the data
+        run: |
+          ./deploy/install.sh --yes --no-pull --version ci --dir "$TC_DIR"
+          cd "$TC_DIR" && docker compose exec -T teamcraft teamcraft user list | grep '^admin '
+      - name: Uninstall keeps the data, reinstall finds it
+        run: |
+          ./deploy/install.sh --uninstall --dir "$TC_DIR"
+          ./deploy/install.sh --yes --no-pull --version ci --dir "$TC_DIR"
+          cd "$TC_DIR" && docker compose exec -T teamcraft teamcraft user list | grep '^admin '
+      - name: Logs
+        if: always()
+        working-directory: ${{ env.TC_DIR }}
+        run: docker compose logs --no-color || true
+      - name: Purge
+        if: always()
+        run: ./deploy/install.sh --uninstall --purge --yes --dir "$TC_DIR" || true

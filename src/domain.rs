@@ -231,9 +231,223 @@ impl ItemType {
     }
 }
 
-/// Formats an automatically generated item number, e.g. `PRT-000042`.
-pub fn format_item_number(item_type: ItemType, value: i64) -> String {
-    format!("{}-{:06}", item_type.number_prefix(), value)
+/// Numbering scheme used when a project group has none: the type prefix and a
+/// six-digit sequence, e.g. `PRT-000042`.
+pub const DEFAULT_NUMBER_SCHEME: &str = "{TYPE}-{SEQ:6}";
+
+/// Widest sequence a scheme may ask for (`{SEQ:12}`).
+const MAX_SEQ_WIDTH: usize = 12;
+
+/// A numbering scheme for generated item numbers, e.g.
+/// `{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}` → `ROVER-PRT-2026-0007`.
+///
+/// Placeholders: `{PROJECT}` (project code), `{TYPE}` (PRT, ASM, DOC, SW),
+/// `{YYYY}`, `{YY}`, `{MM}` (creation date, UTC) and exactly one `{SEQ:n}`
+/// (sequence, zero-padded to `n` digits; `{SEQ}` pads nothing). Everything
+/// else is literal text from the item-number alphabet `A–Z 0–9 . _ -`.
+///
+/// Each distinct expansion of the scheme without the sequence counts on its
+/// own: `{PROJECT}-{SEQ:4}` counts per project group, a scheme with `{YYYY}`
+/// starts at 1 every year, a scheme without `{TYPE}` shares one sequence
+/// between all item types.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NumberScheme {
+    parts: Vec<SchemePart>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SchemePart {
+    Text(String),
+    Project,
+    Type,
+    Year4,
+    Year2,
+    Month,
+    Seq(usize),
+}
+
+/// The values a scheme is expanded with.
+#[derive(Clone, Copy, Debug)]
+pub struct NumberContext<'a> {
+    pub project: &'a str,
+    pub item_type: ItemType,
+    pub year: i32,
+    pub month: u32,
+}
+
+/// The values for an item of `item_type` in project group `project` created at `at`.
+pub fn number_context(
+    project: &str,
+    item_type: ItemType,
+    at: chrono::DateTime<chrono::Utc>,
+) -> NumberContext<'_> {
+    use chrono::Datelike;
+    NumberContext {
+        project,
+        item_type,
+        year: at.year(),
+        month: at.month(),
+    }
+}
+
+impl NumberScheme {
+    /// Parses and validates a scheme; placeholders are case-insensitive and
+    /// the literal text is upper-cased like item numbers.
+    pub fn parse(raw: &str) -> Result<NumberScheme, AppError> {
+        let s = raw.trim().to_ascii_uppercase();
+        let bad = |why: &str| {
+            AppError::BadRequest(format!("Invalid numbering scheme '{}': {why}", raw.trim()))
+        };
+        if s.is_empty() {
+            return Err(bad("it is empty."));
+        }
+        if s.len() > 100 {
+            return Err(bad("use at most 100 characters."));
+        }
+        let mut parts = Vec::new();
+        let mut text = String::new();
+        let mut rest = s.as_str();
+        while let Some(c) = rest.chars().next() {
+            if c == '{' {
+                let end = rest
+                    .find('}')
+                    .ok_or_else(|| bad("a '{' has no closing '}'."))?;
+                let token = &rest[1..end];
+                let part = match token {
+                    "PROJECT" => SchemePart::Project,
+                    "TYPE" => SchemePart::Type,
+                    "YYYY" => SchemePart::Year4,
+                    "YY" => SchemePart::Year2,
+                    "MM" => SchemePart::Month,
+                    "SEQ" => SchemePart::Seq(1),
+                    _ => match token.strip_prefix("SEQ:").map(str::parse::<usize>) {
+                        Some(Ok(n)) if (1..=MAX_SEQ_WIDTH).contains(&n) => SchemePart::Seq(n),
+                        Some(_) => {
+                            return Err(bad(&format!(
+                                "the sequence width in {{{token}}} must be 1 to {MAX_SEQ_WIDTH}."
+                            )))
+                        }
+                        None => {
+                            return Err(bad(&format!(
+                                "unknown placeholder {{{token}}}; use {{PROJECT}}, {{TYPE}}, {{YYYY}}, {{YY}}, {{MM}} or {{SEQ:n}}."
+                            )))
+                        }
+                    },
+                };
+                if !text.is_empty() {
+                    parts.push(SchemePart::Text(std::mem::take(&mut text)));
+                }
+                parts.push(part);
+                rest = &rest[end + 1..];
+            } else if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                text.push(c);
+                rest = &rest[1..];
+            } else {
+                return Err(bad(&format!(
+                    "'{c}' is not allowed; use A–Z, 0–9, '.', '_', '-' and placeholders in braces."
+                )));
+            }
+        }
+        if !text.is_empty() {
+            parts.push(SchemePart::Text(text));
+        }
+        match parts
+            .iter()
+            .filter(|p| matches!(p, SchemePart::Seq(_)))
+            .count()
+        {
+            0 => return Err(bad("it needs a sequence placeholder such as {SEQ:4}.")),
+            1 => {}
+            _ => return Err(bad("use the sequence placeholder only once.")),
+        }
+        if let Some(SchemePart::Text(t)) = parts.first() {
+            if !t.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+                return Err(bad("item numbers start with a letter or digit."));
+            }
+        }
+        let scheme = NumberScheme { parts };
+        if scheme.max_len() > 64 {
+            return Err(bad(&format!(
+                "numbers could get {} characters long, item numbers have at most 64 (a project code has up to 32).",
+                scheme.max_len()
+            )));
+        }
+        Ok(scheme)
+    }
+
+    /// The built-in scheme `{TYPE}-{SEQ:6}`.
+    pub fn default_scheme() -> NumberScheme {
+        NumberScheme::parse(DEFAULT_NUMBER_SCHEME).expect("valid default scheme")
+    }
+
+    /// The stored scheme of a project group, or the default.
+    pub fn of_project(stored: Option<&str>) -> Result<NumberScheme, AppError> {
+        match stored.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(s) => NumberScheme::parse(s),
+            None => Ok(NumberScheme::default_scheme()),
+        }
+    }
+
+    /// Longest possible number (project codes have up to 32 characters, the
+    /// sequence is counted with its padding width).
+    fn max_len(&self) -> usize {
+        self.parts
+            .iter()
+            .map(|p| match p {
+                SchemePart::Text(t) => t.len(),
+                SchemePart::Project => 32,
+                SchemePart::Type => 3,
+                SchemePart::Year4 => 4,
+                SchemePart::Year2 | SchemePart::Month => 2,
+                SchemePart::Seq(n) => *n,
+            })
+            .sum()
+    }
+
+    /// The scheme in its canonical spelling (upper case, `{SEQ:n}`).
+    pub fn as_string(&self) -> String {
+        self.expand_with(|p| match p {
+            SchemePart::Text(t) => t.clone(),
+            SchemePart::Project => "{PROJECT}".into(),
+            SchemePart::Type => "{TYPE}".into(),
+            SchemePart::Year4 => "{YYYY}".into(),
+            SchemePart::Year2 => "{YY}".into(),
+            SchemePart::Month => "{MM}".into(),
+            SchemePart::Seq(1) => "{SEQ}".into(),
+            SchemePart::Seq(n) => format!("{{SEQ:{n}}}"),
+        })
+    }
+
+    fn expand_with(&self, f: impl Fn(&SchemePart) -> String) -> String {
+        self.parts.iter().map(f).collect()
+    }
+
+    fn fixed(part: &SchemePart, ctx: &NumberContext<'_>) -> String {
+        match part {
+            SchemePart::Text(t) => t.clone(),
+            SchemePart::Project => ctx.project.to_string(),
+            SchemePart::Type => ctx.item_type.number_prefix().to_string(),
+            SchemePart::Year4 => format!("{:04}", ctx.year),
+            SchemePart::Year2 => format!("{:02}", ctx.year.rem_euclid(100)),
+            SchemePart::Month => format!("{:02}", ctx.month),
+            SchemePart::Seq(_) => "{SEQ}".into(),
+        }
+    }
+
+    /// Name of the counter that numbers this expansion: everything but the
+    /// sequence filled in, e.g. `num:ROVER-PRT-2026-{SEQ}`. The padding width
+    /// is not part of it, so widening `{SEQ:4}` to `{SEQ:6}` keeps counting.
+    pub fn counter_key(&self, ctx: &NumberContext<'_>) -> String {
+        format!("num:{}", self.expand_with(|p| Self::fixed(p, ctx)))
+    }
+
+    /// The item number for sequence value `seq`.
+    pub fn format(&self, ctx: &NumberContext<'_>, seq: i64) -> String {
+        self.expand_with(|p| match p {
+            SchemePart::Seq(n) => format!("{seq:0n$}", n = *n),
+            other => Self::fixed(other, ctx),
+        })
+    }
 }
 
 /// Formats an automatically generated change number, e.g. `CHG-000007`.
@@ -1048,9 +1262,274 @@ pub fn like_pattern(query: &str) -> String {
     out
 }
 
+// ---------------------------------------------------------------------------
+// Concurrency: base versions and the sync state of workspace files
+// ---------------------------------------------------------------------------
+
+/// The server version a client based a change of a file on – the version it
+/// checked out, by number or by content hash. A check-in that names a base is
+/// refused when the file moved on since (optimistic concurrency).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BaseVersion {
+    /// Version number; `0` means "this file is new, it must not exist yet".
+    Version(i32),
+    /// SHA-256 (lower-case hex) of the content the client started from.
+    Sha256(String),
+}
+
+impl BaseVersion {
+    /// `3` or `"3"` → version 3, a 64-digit hex string → SHA-256.
+    pub fn from_json(value: &serde_json::Value) -> Result<BaseVersion, AppError> {
+        let invalid = || {
+            AppError::BadRequest(
+                "A base must be a version number or the SHA-256 of the checked-out content.".into(),
+            )
+        };
+        match value {
+            serde_json::Value::Number(n) => n
+                .as_i64()
+                .and_then(|v| i32::try_from(v).ok())
+                .filter(|v| *v >= 0)
+                .map(BaseVersion::Version)
+                .ok_or_else(invalid),
+            serde_json::Value::String(s) => BaseVersion::parse(s).ok_or_else(invalid),
+            _ => Err(invalid()),
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<BaseVersion> {
+        let raw = raw.trim();
+        let raw = raw.strip_prefix('v').unwrap_or(raw);
+        if raw.len() == 64 && raw.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Some(BaseVersion::Sha256(raw.to_ascii_lowercase()));
+        }
+        if !raw.is_empty() && raw.len() <= 9 && raw.bytes().all(|b| b.is_ascii_digit()) {
+            return raw.parse().ok().map(BaseVersion::Version);
+        }
+        None
+    }
+}
+
+/// The server side of a file for the concurrency checks.
+#[derive(Clone, Copy, Debug)]
+pub struct ServerFile<'a> {
+    pub version: i32,
+    pub sha256: &'a str,
+}
+
+/// Why a check-in with a stated base is refused, if it is.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BaseConflict {
+    /// The file moved on: the client started from another version.
+    Moved,
+    /// The client expected a new file, but one with that name exists now.
+    AddedMeanwhile,
+    /// The client changed a file that was removed on the server.
+    Removed,
+}
+
+/// Checks an upload against the current server file. Identical content is
+/// never a conflict (nothing would be overwritten).
+pub fn check_base(
+    base: &BaseVersion,
+    current: Option<ServerFile<'_>>,
+    upload_sha256: &str,
+) -> Result<(), BaseConflict> {
+    match (base, current) {
+        (_, Some(cur)) if cur.sha256 == upload_sha256 => Ok(()),
+        (BaseVersion::Version(0), None) => Ok(()),
+        (BaseVersion::Version(0), Some(_)) => Err(BaseConflict::AddedMeanwhile),
+        (_, None) => Err(BaseConflict::Removed),
+        (BaseVersion::Version(v), Some(cur)) if *v == cur.version => Ok(()),
+        (BaseVersion::Sha256(s), Some(cur)) if s.eq_ignore_ascii_case(cur.sha256) => Ok(()),
+        (_, Some(_)) => Err(BaseConflict::Moved),
+    }
+}
+
+/// State of a workspace file compared with the server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileSyncState {
+    /// The local file is the current version.
+    UpToDate,
+    /// Changed locally; the server still has the version it was based on.
+    Modified,
+    /// Unchanged locally, but the server has a newer version – get it.
+    Outdated,
+    /// Changed locally **and** on the server since the local base: a check-in
+    /// would overwrite somebody else's work.
+    Conflict,
+    /// Only local: not on the server yet.
+    New,
+    /// Only on the server: not in the workspace.
+    Missing,
+}
+
+impl FileSyncState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FileSyncState::UpToDate => "up_to_date",
+            FileSyncState::Modified => "modified",
+            FileSyncState::Outdated => "outdated",
+            FileSyncState::Conflict => "conflict",
+            FileSyncState::New => "new",
+            FileSyncState::Missing => "missing",
+        }
+    }
+}
+
+/// Compares a local file (`local_sha256`) with the server file.
+///
+/// `history` holds `(version, sha256)` of every version of the file. Without
+/// a stated base, local content equal to an older version counts as
+/// outdated, and unknown content as modified (the base is then assumed to be
+/// the current version). With a base, local content that differs from both
+/// the base and the current version is a conflict once the server moved on.
+pub fn sync_state(
+    current: Option<ServerFile<'_>>,
+    history: &[(i32, &str)],
+    local_sha256: Option<&str>,
+    base: Option<&BaseVersion>,
+) -> FileSyncState {
+    let (cur, local) = match (current, local_sha256) {
+        (None, None) => return FileSyncState::Missing,
+        (None, Some(_)) => return FileSyncState::New,
+        (Some(_), None) => return FileSyncState::Missing,
+        (Some(cur), Some(local)) => (cur, local.to_ascii_lowercase()),
+    };
+    if cur.sha256.eq_ignore_ascii_case(&local) {
+        return FileSyncState::UpToDate;
+    }
+    let base_sha = match base {
+        Some(BaseVersion::Sha256(s)) => Some(s.to_ascii_lowercase()),
+        Some(BaseVersion::Version(v)) => history
+            .iter()
+            .find(|(n, _)| n == v)
+            .map(|(_, s)| s.to_ascii_lowercase()),
+        None => None,
+    };
+    match base_sha {
+        Some(base) if base.eq_ignore_ascii_case(cur.sha256) => FileSyncState::Modified,
+        Some(base) if base == local => FileSyncState::Outdated,
+        Some(_) => FileSyncState::Conflict,
+        // An unknown base version (e.g. 0 for "new") with an existing file:
+        // the file appeared on the server meanwhile.
+        None if base.is_some() => FileSyncState::Conflict,
+        None if history.iter().any(|(_, s)| s.eq_ignore_ascii_case(&local)) => {
+            FileSyncState::Outdated
+        }
+        None => FileSyncState::Modified,
+    }
+}
+
+/// `3 days`, `5 h`, `12 min`, `just now` – the age of a lock or an event.
+pub fn format_age(seconds: i64) -> String {
+    let s = seconds.max(0);
+    match s {
+        0..=59 => "just now".into(),
+        60..=3_599 => format!("{} min", s / 60),
+        3_600..=86_399 => format!("{} h", s / 3_600),
+        86_400..=172_799 => "1 day".into(),
+        _ => format!("{} days", s / 86_400),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_versions() {
+        let sha = "AB".repeat(32);
+        assert_eq!(
+            BaseVersion::parse(&sha),
+            Some(BaseVersion::Sha256("ab".repeat(32)))
+        );
+        assert_eq!(BaseVersion::parse(" 3 "), Some(BaseVersion::Version(3)));
+        assert_eq!(BaseVersion::parse("v12"), Some(BaseVersion::Version(12)));
+        assert_eq!(BaseVersion::parse(""), None);
+        assert_eq!(BaseVersion::parse("-1"), None);
+        assert_eq!(BaseVersion::parse("abc"), None);
+        assert_eq!(
+            BaseVersion::from_json(&serde_json::json!(2)).unwrap(),
+            BaseVersion::Version(2)
+        );
+        assert!(BaseVersion::from_json(&serde_json::json!(-2)).is_err());
+        assert!(BaseVersion::from_json(&serde_json::json!(null)).is_err());
+
+        let cur = Some(ServerFile {
+            version: 4,
+            sha256: "c4",
+        });
+        assert_eq!(check_base(&BaseVersion::Version(4), cur, "new"), Ok(()));
+        assert_eq!(
+            check_base(&BaseVersion::Version(3), cur, "new"),
+            Err(BaseConflict::Moved)
+        );
+        assert_eq!(
+            check_base(&BaseVersion::Version(3), cur, "c4"),
+            Ok(()),
+            "identical content overwrites nothing"
+        );
+        assert_eq!(
+            check_base(&BaseVersion::Sha256("C4".into()), cur, "new"),
+            Ok(())
+        );
+        assert_eq!(
+            check_base(&BaseVersion::Sha256("c3".into()), cur, "new"),
+            Err(BaseConflict::Moved)
+        );
+        assert_eq!(
+            check_base(&BaseVersion::Version(0), cur, "new"),
+            Err(BaseConflict::AddedMeanwhile)
+        );
+        assert_eq!(check_base(&BaseVersion::Version(0), None, "new"), Ok(()));
+        assert_eq!(
+            check_base(&BaseVersion::Version(2), None, "new"),
+            Err(BaseConflict::Removed)
+        );
+    }
+
+    #[test]
+    fn sync_states() {
+        use FileSyncState::*;
+        let history = [(1, "a1"), (2, "a2"), (3, "a3")];
+        let cur = Some(ServerFile {
+            version: 3,
+            sha256: "a3",
+        });
+        let v = |n| BaseVersion::Version(n);
+        assert_eq!(sync_state(cur, &history, Some("a3"), None), UpToDate);
+        assert_eq!(sync_state(cur, &history, Some("A3"), Some(&v(1))), UpToDate);
+        assert_eq!(sync_state(cur, &history, Some("a1"), None), Outdated);
+        assert_eq!(sync_state(cur, &history, Some("zz"), None), Modified);
+        assert_eq!(sync_state(cur, &history, Some("zz"), Some(&v(3))), Modified);
+        assert_eq!(sync_state(cur, &history, Some("a2"), Some(&v(2))), Outdated);
+        assert_eq!(sync_state(cur, &history, Some("zz"), Some(&v(2))), Conflict);
+        assert_eq!(
+            sync_state(
+                cur,
+                &history,
+                Some("zz"),
+                Some(&BaseVersion::Sha256("a1".into()))
+            ),
+            Conflict
+        );
+        assert_eq!(sync_state(cur, &history, Some("zz"), Some(&v(0))), Conflict);
+        assert_eq!(sync_state(None, &[], Some("zz"), None), New);
+        assert_eq!(sync_state(cur, &history, None, None), Missing);
+        assert_eq!(FileSyncState::UpToDate.as_str(), "up_to_date");
+    }
+
+    #[test]
+    fn ages() {
+        assert_eq!(format_age(-5), "just now");
+        assert_eq!(format_age(59), "just now");
+        assert_eq!(format_age(60), "1 min");
+        assert_eq!(format_age(3_600 * 5 + 7), "5 h");
+        assert_eq!(format_age(86_400 + 1), "1 day");
+        assert_eq!(format_age(86_400 * 9), "9 days");
+    }
 
     #[test]
     fn skins() {
@@ -1217,8 +1696,16 @@ mod tests {
 
     #[test]
     fn item_numbers() {
-        assert_eq!(format_item_number(ItemType::Part, 42), "PRT-000042");
-        assert_eq!(format_item_number(ItemType::Software, 1), "SW-000001");
+        let ctx = |t| NumberContext {
+            project: "ROVER",
+            item_type: t,
+            year: 2026,
+            month: 3,
+        };
+        let default = NumberScheme::default_scheme();
+        assert_eq!(default.format(&ctx(ItemType::Part), 42), "PRT-000042");
+        assert_eq!(default.format(&ctx(ItemType::Software), 1), "SW-000001");
+        assert_eq!(default.counter_key(&ctx(ItemType::Part)), "num:PRT-{SEQ}");
         assert_eq!(format_change_number(7), "CHG-000007");
         assert_eq!(
             normalize_item_number(" exp-prop-0012 ").unwrap(),
@@ -1228,6 +1715,57 @@ mod tests {
         assert!(normalize_item_number("-ABC").is_err());
         assert!(normalize_item_number("A/B").is_err());
         assert!(normalize_item_number(&"A".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn numbering_schemes() {
+        let ctx = NumberContext {
+            project: "ROVER",
+            item_type: ItemType::Assembly,
+            year: 2026,
+            month: 3,
+        };
+        let s = NumberScheme::parse(" {project}-{Type}-{YYYY}-{SEQ:4} ").unwrap();
+        assert_eq!(s.as_string(), "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}");
+        assert_eq!(s.format(&ctx, 7), "ROVER-ASM-2026-0007");
+        assert_eq!(s.format(&ctx, 123_456), "ROVER-ASM-2026-123456");
+        assert_eq!(s.counter_key(&ctx), "num:ROVER-ASM-2026-{SEQ}");
+        // The padding width does not change the counter.
+        let wider = NumberScheme::parse("{PROJECT}-{TYPE}-{YYYY}-{SEQ:6}").unwrap();
+        assert_eq!(wider.counter_key(&ctx), s.counter_key(&ctx));
+
+        let s = NumberScheme::parse("x{YY}{MM}.{SEQ}").unwrap();
+        assert_eq!(s.format(&ctx, 12), "X2603.12");
+        assert_eq!(s.as_string(), "X{YY}{MM}.{SEQ}");
+        assert_eq!(
+            NumberScheme::of_project(Some("  ")).unwrap(),
+            NumberScheme::default_scheme()
+        );
+        assert_eq!(
+            NumberScheme::of_project(None).unwrap().as_string(),
+            DEFAULT_NUMBER_SCHEME
+        );
+
+        for bad in [
+            "",
+            "PRT-0001",                             // no sequence
+            "{SEQ}-{SEQ:3}",                        // two sequences
+            "{SEQ:0}",                              // width out of range
+            "{SEQ:13}",                             // width out of range
+            "{SEQ:x}",                              // width not a number
+            "{DATE}-{SEQ}",                         // unknown placeholder
+            "{TYPE-{SEQ}",                          // unclosed brace
+            "{TYPE} {SEQ}",                         // space
+            "A/{SEQ}",                              // slash
+            "-{SEQ}",                               // starts with '-'
+            "{PROJECT}-{PROJECT}-{SEQ:4}",          // up to 69 characters
+            &format!("{}{{SEQ}}", "A".repeat(100)), // too long
+        ] {
+            assert!(
+                NumberScheme::parse(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
     }
 
     #[test]

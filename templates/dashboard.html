@@ -9,6 +9,9 @@
     <p class="subtitle">Product data of {{ instance_name }} at a glance.</p>
   </div>
   <div class="actions">
+    {% if assistant_enabled %}
+    <button type="button" data-toggle="assistant-panel" title="Triage your worklist or ask any question about the product data">Ask TeamCraft…</button>
+    {% endif %}
     {% if me.can_edit %}
     {{ m.new_button("/items/new", "New item") }}
     {{ m.new_button("/changes/new", "New change") }}
@@ -17,6 +20,9 @@
     {% endif %}
   </div>
 </div>
+{% if assistant_enabled %}
+{{ m.assistant_panel([["attention", "What needs my attention"]], "", "", "", "/") }}
+{% endif %}
 
 <div class="grid grid-stats">
   <div class="card stat"><div class="value">{{ stats.items }}</div><div class="label">Items</div></div>
@@ -70,7 +76,14 @@
   </section>
 
   <section class="card">
-    <h2>Checked out by me</h2>
+    <div class="card-head">
+      <h2>Checked out by me</h2>
+      {% if checkouts %}
+      <form method="post" action="/checkouts/checkin-all">
+        <button class="small" type="submit" title="Release every lock you hold – the revisions keep their current files">Check in all</button>
+      </form>
+      {% endif %}
+    </div>
     {% if checkouts %}
     <table>
       <tbody>
@@ -78,11 +91,12 @@
         <tr>
           <td class="nowrap"><a href="/revisions/{{ r.id }}">{{ r.item_number }}/{{ r.code }}</a></td>
           <td>{{ r.name }}</td>
-          <td class="small muted nowrap">{{ m.time(r.checked_out_at) }}</td>
+          <td class="small muted nowrap" title="Checked out {{ r.checked_out_at|dt }}">for {{ r.checked_out_at|age }}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
+    <p class="hint">“Check in all” releases the locks without new files – upload changed files with the revision's own check-in first (the desktop app checks in only revisions without local changes).</p>
     {% else %}<p class="empty">No check-outs.</p>{% endif %}
   </section>
 

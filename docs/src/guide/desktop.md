@@ -15,8 +15,15 @@ check-outs and reviews, and a **local workspace**:
   scan first (nothing is uploaded), then one item per part or assembly with
   its drawings and exports; *Help → How to Import a CAD Folder* is the
   step-by-step tutorial (Pack and Go, unique file names, check and release);
-* the *Workspace* tab shows new and modified files;
-* *Check in…* uploads the selected files as new versions and releases the lock.
+* the *Workspace* tab shows up-to-date, modified, outdated, conflicting, new
+  and missing files and who holds the lock for how long; opening an outdated
+  file or one somebody else has checked out asks first;
+* *Check in…* uploads the selected files as new versions and releases the
+  lock – based on the versions they were copied from, so a version somebody
+  else checked in meanwhile is never overwritten (see
+  [Concurrency](vault.md#concurrency-nothing-is-overwritten-silently));
+* *Check in all* in the worklist checks in every check-out without local
+  changes and lists those that still have changes;
 * *Request change…* on a revision tab and *Request…* on a file (Files and
   Workspace tabs) raise a [change request](changes.md) with the item,
   revision and file name filled in and an optional screenshot or PDF; the
@@ -24,6 +31,9 @@ check-outs and reviews, and a **local workspace**:
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.
+* *Ask…* in a revision or change tab opens [Ask TeamCraft](assistant.md)
+  (release notes, release check, review briefing, free questions) when the
+  server has the assistant enabled.
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a
 TeamCraft page) or with a personal access token. The app uses the same skins

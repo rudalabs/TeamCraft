@@ -14,6 +14,7 @@
 
 <div align="center">
 
+[![Download][badge-download]][download]
 [![Linux][badge-linux]][linux]
 [![macOS][badge-macos]][macos]
 [![Windows][badge-windows]][windows]
@@ -26,7 +27,7 @@
   <a href="https://github.com/rudalabs/TeamCraft/actions/workflows/desktop.yml"><img src="https://github.com/rudalabs/TeamCraft/actions/workflows/desktop.yml/badge.svg?branch=main" alt="Desktop app" /></a>
   <a href="https://github.com/rudalabs/TeamCraft/actions/workflows/docs.yml"><img src="https://github.com/rudalabs/TeamCraft/actions/workflows/docs.yml/badge.svg?branch=main" alt="Docs" /></a>
   <a href="https://www.repostatus.org/#wip"><img src="https://www.repostatus.org/badges/latest/wip.svg" alt="Project status: WIP – initial development is in progress, but there has not yet been a stable, usable release suitable for the public." /></a>
-  <img src="https://img.shields.io/badge/release-none_yet_(0.1.0--dev)-orange" alt="Release: none yet" />
+  <a href="https://github.com/rudalabs/TeamCraft/releases"><img src="https://img.shields.io/github/v/release/rudalabs/TeamCraft?include_prereleases&label=release" alt="Latest release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MPL--2.0-blue" alt="Licence: MPL-2.0" /></a>
   <img src="https://img.shields.io/badge/built%20with-Rust-dea584?logo=rust&logoColor=white" alt="Built with Rust" />
   <img src="https://img.shields.io/badge/database-PostgreSQL-336791?logo=postgresql&logoColor=white" alt="PostgreSQL" />
@@ -34,12 +35,17 @@
 
 <p align="center">
   <a href="https://rudalabs.github.io/TeamCraft/">Documentation</a> ·
+  <a href="#download">Download</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/guide/tour.html">Feature tour</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/reference/formats.html">File formats</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/reference/api.html">REST API</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/api/teamcraft/index.html">Rust API</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+<p align="center">
+  <img src="media/screenshots/dashboard.png" width="860" alt="TeamCraft dashboard: item statistics, dependents to check after the release of the fasteners, a change order waiting for my review and the revision checked out by me" />
 </p>
 
 > [!WARNING]
@@ -68,7 +74,12 @@ promised.
 
 - **Check-out / check-in.** Exclusive locks per revision; check-in stores the
   new file versions and releases the lock in one transaction. Cancel
-  check-out and *Cancel upload* take effect immediately.
+  check-out and *Cancel upload* take effect immediately. Check-ins are
+  checked against the version each file was based on, so a version
+  somebody else checked in meanwhile is refused (409) instead of being
+  overwritten; per-file status (up to date, modified, outdated, conflict),
+  lock age and *Check in all my check-outs* on the dashboard and in the
+  desktop worklist.
 - **Vault explorer.** Project groups as folders, every item with its lock
   owner, files and one-click check-out / check-in in a detail pane.
 - **Versions and rollback.** Every upload of a file name is a new version;
@@ -102,7 +113,7 @@ promised.
   [truck](https://github.com/ricosjp/truck) kernel), STL, OBJ, PLY, OFF, 3MF,
   AMF, glTF/GLB, 3DS and point clouds – converted once on the server, in an
   isolated process with a time limit, and drawn by a small WebGL viewer.
-- **Previews of native CAD files.** The preview image Inventor, Solid Edge
+- **Previews of native CAD files.** The preview image Inventor, Solid Edge, NX
   and SolidWorks store in their files is shown next to them; on Windows the
   desktop app creates STEP exports with your own Inventor or Solid Edge at
   check-in for the 3D view (see `docs/src/research/cad-previews.md`).
@@ -111,15 +122,87 @@ promised.
 - **Teams.** Viewer, CAD editor and admin roles; self-service project groups
   managed by their creators; single sign-on with any OpenID Connect
   provider and group synchronisation.
+- **Numbering schemes.** Generated item numbers per project group from
+  `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`, with a preview of the next
+  numbers.
 - **Notifications.** In-app bell, e-mail and Mattermost; watch items,
   changes and change requests.
 - **Desktop app.** A Tauri client for Linux, macOS and Windows with a local
   workspace (one folder per project group) for check-out and check-in, the
   download of whole project groups and an import wizard for existing CAD
   folders with a step-by-step tutorial.
+- **AI assistants (MCP).** A built-in Model Context Protocol server
+  (`/api/v1/mcp`, plus a stdio bridge `teamcraft mcp`) lets Claude Code and
+  other MCP clients search items and explain BOMs and where-used, compare
+  revisions, check a BOM before a release and draft change orders. It uses
+  your rights and never submits, approves or releases.
+- **Ask TeamCraft (optional).** With an Anthropic API key configured, the
+  web UI and the desktop app offer quick actions – draft release notes,
+  check before release, brief me for a review, what needs my attention –
+  and a free question box. Claude answers on the server with the same tools
+  and your rights, read-only unless you allow drafts.
 - **Audit log.** Every modification with user, time and details.
 
+## Download
+
+Builds of every tagged version are on the
+**[Releases page](https://github.com/rudalabs/TeamCraft/releases)** – 0.x
+versions are pre-releases (see the warning above):
+
+| | Linux x86_64 | Linux ARM64 | macOS (Apple silicon) | Windows x86_64 |
+|---|---|---|---|---|
+| **Server** (`teamcraft`) | `.tar.gz` | `.tar.gz` | `.tar.gz` | `.zip` |
+| **Desktop app** | `.AppImage`, `.deb`, `.rpm` | `.deb`, `.rpm` | `.dmg`, `.app.zip` | `.msi`, `-setup.exe` |
+
+Check a download against `SHA256SUMS.txt` (`sha256sum -c --ignore-missing
+SHA256SUMS.txt`). The installers are **not code-signed** yet: macOS asks to
+confirm the first start (*right-click → Open*), Windows SmartScreen shows
+*More info → Run anyway*. The newest build of `main` is attached as artifacts
+to the latest run of the
+[Release workflow](https://github.com/rudalabs/TeamCraft/actions/workflows/release.yml)
+(14 days, signed-in GitHub users). Linux packages for Arch (AUR), snap and
+Flatpak are described in [packaging/](packaging/README.md).
+
+## Screenshots
+
+Demo data from the openly licensed [NIST CAD test files](tests/fixtures/cad/README.md),
+captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh).
+
+<table>
+  <tr>
+    <td width="50%"><a href="media/screenshots/vault-explorer.png"><img src="media/screenshots/vault-explorer.png" alt="Vault explorer: the project group ROVER as a folder, items with state and lock owner, and the detail pane of the electronics enclosure with its files" /></a><br /><sub><b>Vault explorer</b> – project groups, lock owners, one-click check-out</sub></td>
+    <td width="50%"><a href="media/screenshots/revision-files.png"><img src="media/screenshots/revision-files.png" alt="Files of the mounting bracket revision: STEP, Inventor, SolidWorks and NX files with their formats, the preview image stored in the Inventor file, the 3D button of the STEP file and a text file in version 2" /></a><br /><sub><b>Revision files</b> – formats, versions and embedded CAD previews</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/viewer-3d.png"><img src="media/screenshots/viewer-3d.png" alt="3D viewer in the browser showing the STEP model of the NIST CTC-01 mounting bracket" /></a><br /><sub><b>3D viewer</b> – STEP tessellated on the server, drawn with WebGL</sub></td>
+    <td width="50%"><a href="media/screenshots/bom.png"><img src="media/screenshots/bom.png" alt="Multi-level bill of materials of the sensor mast assembly with quantities, states and mass and cost roll-up" /></a><br /><sub><b>Multi-level BOM</b> – revision rules, mass and cost roll-up</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/change-review.png"><img src="media/screenshots/change-review.png" alt="Change order in review: affected revisions, reviewers with one approval and one pending decision, and the impact analysis" /></a><br /><sub><b>Change order</b> – four-eyes review and impact analysis</sub></td>
+    <td width="50%"><a href="media/screenshots/revision.png"><img src="media/screenshots/revision.png" alt="Revision page of the mounting bracket: attributes, lifecycle state, check-out lock and actions" /></a><br /><sub><b>Revision</b> – attributes, lifecycle and lock</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/notifications.png"><img src="media/screenshots/notifications.png" alt="Notifications: review requests, approvals and the release of the standard fasteners" /></a><br /><sub><b>Notifications</b> – in-app, e-mail and Mattermost</sub></td>
+    <td width="50%" align="center"><a href="media/screenshots/mobile-dashboard.png"><img src="media/screenshots/mobile-dashboard.png" width="200" alt="The dashboard on a 390 pixel wide phone screen" /></a><br /><sub><b>On the phone</b> – the same pages, responsive</sub></td>
+  </tr>
+</table>
+
 ## Quick start
+
+**Install on Linux with Docker** – TeamCraft and PostgreSQL in containers,
+data in Docker volumes, nothing to build:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rudalabs/TeamCraft/main/deploy/install.sh | bash
+```
+
+The script installs into `/opt/teamcraft` (`--user`: `~/teamcraft`), generates
+the database password, starts everything on <http://localhost:8080> and offers
+to create the first administrator. Run it again to upgrade; `--dry-run` shows
+every step first. Details, backups and TLS:
+[Install with Docker](https://rudalabs.github.io/TeamCraft/admin/docker.html).
+
+**From source** (development, macOS, Windows):
 
 ```sh
 git clone https://github.com/rudalabs/TeamCraft.git && cd TeamCraft
@@ -143,7 +226,7 @@ native PostgreSQL and the desktop app:
 | `domain`, `services` | the rules and the business logic – permissions, row locks, lifecycle checks and the audit entry in one transaction |
 | `vault`              | content-addressed file storage on disk, plus the cached 3D previews                                                |
 | `mesh`, `preview`    | pure-Rust readers for meshes, point clouds and STEP                                                                |
-| PostgreSQL 14+       | the only external service                                                                                          |
+| PostgreSQL 16+       | the only external service                                                                                          |
 
 Everything is built by `cargo` – no Node.js, no downloaded browser engines,
 no C++ CAD kernel. Details: [Architecture](https://rudalabs.github.io/TeamCraft/reference/architecture.html).
@@ -158,6 +241,20 @@ curl -s -X POST -H "$H" -F file=@hub.step -F comment="wall 2 → 2.5 mm" \
 curl -s -H "$H" "$API/items?q=hub&system=solidworks"
 ```
 
+## Backup and restore
+
+```sh
+teamcraft backup /srv/backups/2026-11-04     # db.dump + vault/objects + manifest.json
+teamcraft restore /srv/backups/2026-11-04    # verifies every hash, then restores
+```
+
+Both commands need the PostgreSQL client tools (`pg_dump`, `pg_restore`).
+The backup directory must not exist or be empty. A restore refuses a
+database that already contains tables unless you pass `--force`, and the
+server should be stopped while it runs. Configuration and secrets are not
+part of a backup; see
+[Operations](https://rudalabs.github.io/TeamCraft/admin/operations.html).
+
 ## Works with SolidCraft and FieldCraft
 
 TeamCraft recognises [SolidCraft](https://github.com/tangency-labs/solidcraft)
@@ -170,7 +267,8 @@ export and analysis together in one revision.
 ## Documentation
 
 The documentation is published at **<https://rudalabs.github.io/TeamCraft/>**
-(built from [`docs/`](docs) with mdBook, plus the rustdoc API reference):
+(built from [`docs/src`](docs/src/SUMMARY.md) with mdBook, plus the
+[rustdoc API reference](https://rudalabs.github.io/TeamCraft/api/teamcraft/index.html)):
 user guide, administration (configuration, SSO, operations) and reference (file formats, REST API, architecture). A
 running server lists its API at
 `GET /api/v1` and its formats at `/formats`.
@@ -220,6 +318,8 @@ SolidWorks, NX, Creo, CATIA, Inventor, Fusion,
 Revit and the other product names are trademarks of their respective
 owners; TeamCraft is not affiliated with them.
 
+[badge-download]: https://img.shields.io/badge/Download-Releases-16a34a?style=for-the-badge&logo=github&logoColor=white
+[download]: https://github.com/rudalabs/TeamCraft/releases
 [badge-linux]: https://img.shields.io/badge/Linux-Build_from_source-E95420?style=for-the-badge&logo=linux&logoColor=white
 [badge-macos]: https://img.shields.io/badge/macOS-Build_from_source-333333?style=for-the-badge&logo=apple&logoColor=white
 [badge-windows]: https://img.shields.io/badge/Windows-Build_from_source-0078D6?style=for-the-badge

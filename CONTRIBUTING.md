@@ -53,7 +53,7 @@ You need:
 
 * Rust stable, installed with [rustup](https://rustup.rs). The minimum
   supported version is 1.82.
-* PostgreSQL 14 or newer. The easiest option is the dev database from
+* PostgreSQL 16 or newer. The easiest option is the dev database from
   `docker-compose.yml`, which needs Docker with Compose v2.
 * For the desktop app only: the
   [Tauri prerequisites](https://tauri.app/start/prerequisites/) of your
@@ -95,6 +95,43 @@ database.
 | the documentation | `mdbook build docs` (mdBook 0.5)                                    |
 | the web UI        | check the changed pages in a browser (no CSP errors in the console) |
 
+## Updating the README screenshots
+
+The screenshots in `media/screenshots/` are made by
+[`scripts/screenshots.sh`](scripts/screenshots.sh), never by hand, so that they
+always show the same demo data. The script needs a running TeamCraft with an
+**empty** database that listens on localhost. It creates the administrator
+through the first-start page and two editors, the project group ROVER, parts
+and assemblies with the NIST files from `tests/fixtures/cad`, a multi-level
+BOM, a released and a pending change order, check-outs and notifications. It
+then drives headless Chrome through chromedriver's WebDriver API (with `curl`
+and `jq`, no Node or Python) and saves the pages as PNGs: 1440 × 900 for the
+desktop and 390 pixels wide for the phone. The passwords and API tokens are
+generated for each run and never printed.
+
+1. Run the **Screenshots** workflow (`.github/workflows/screenshots.yml`):
+   *Actions → Screenshots → Run workflow*, or open a pull request that changes
+   the script or the workflow. It builds the release binary, starts it against
+   an empty PostgreSQL 17 and runs the script.
+2. Download the `screenshots` artifact of the run (kept for 30 days), for
+   example with `gh run download <run-id> -n screenshots -D media/screenshots`.
+3. Look at every image, then commit the PNGs in `media/screenshots/`. The
+   workflow never commits anything itself.
+
+To run it locally against a throw-away database and vault (Chrome and a
+matching chromedriver installed):
+
+```sh
+docker compose exec db createdb -U teamcraft teamcraft_shots
+TEAMCRAFT_DATABASE_URL=postgres://teamcraft@localhost:5432/teamcraft_shots \
+TEAMCRAFT_VAULT_DIR=/tmp/teamcraft-shots ./target/release/teamcraft serve &
+BASE_URL=http://127.0.0.1:8080 OUT_DIR=/tmp/shots scripts/screenshots.sh
+```
+
+New pages for the README are added as a `shot` line in the `capture`
+function of the script and as an image in the *Screenshots* section of the
+README, with alt text that describes what the image shows.
+
 ## Code conventions
 
 [Architecture](docs/src/reference/architecture.md) gives an overview of the
@@ -107,8 +144,8 @@ code base. These are the most important rules:
   * validates lifecycle transitions (`LifecycleState::can_transition_to`);
   * writes the audit entry (`audit::record`).
 
-  The web handlers (`src/web/`) and API handlers (`src/api/`) stay thin and
-  call the same service functions.
+  The web handlers (`src/web/`), API handlers (`src/api/`) and MCP tools
+  (`src/mcp/`) stay thin and call the same service functions.
 * **SQL** uses runtime queries (`sqlx::query_as::<_, T>` with `FromRow`), not
   the `query!` macros, so building needs no database.
 * **Schema changes** go into a new numbered file in `migrations/`. Never edit
@@ -183,8 +220,40 @@ rest of the project.
 
 ## Releases and versions
 
-There is no release yet. `main` is the development branch, and the version
-stays at `0.1.0` until the first release. Once releases start, version
-numbers will follow [Semantic Versioning](https://semver.org), and a
-`CHANGELOG.md` will list the changes. While the version is still `0.x`, any
+`main` is the development branch. Version numbers follow
+[Semantic Versioning](https://semver.org); while the version is `0.x`, any
 release may contain breaking changes.
+
+**Build artifacts.** Every push to `main` runs
+`.github/workflows/release.yml`, which builds the server binaries (Linux
+x86_64/ARM64, macOS ARM64, Windows x86_64) and the desktop installers
+(AppImage, `.deb`, `.rpm`, `.dmg`, `.msi`, NSIS `-setup.exe`) and keeps them
+as workflow artifacts for 14 days. *Run workflow* on the Actions page builds
+any branch the same way.
+
+**Container image.** The same workflow builds `ghcr.io/rudalabs/teamcraft`
+from the `Dockerfile` on an amd64 and an arm64 runner and publishes it:
+`:edge` for every push to `main`, `:<version>`, `:<major>.<minor>` and
+`:latest` for a tag (`latest` also for 0.x, but not for suffixed versions
+such as `-rc.1`). A pull request that changes the `Dockerfile` or `deploy/`
+builds the image without publishing it. Before anything is published, a
+smoke test runs `deploy/install.sh` with the freshly built image against
+PostgreSQL and checks `/readyz`, an administrator, the health check, an
+upgrade run and the uninstall. Images are built by CI only – please don't
+publish your own builds under the project's name. Check `deploy/install.sh`
+with `bash -n` and `shellcheck` (CI runs both).
+
+**Cutting a release** (maintainers):
+
+1. Set the same version in `Cargo.toml`, `desktop/Cargo.toml` and
+   `desktop/tauri.conf.json` (the workflow refuses a mismatch), run
+   `cargo check` and `cargo check --manifest-path desktop/Cargo.toml` so both
+   `Cargo.lock` files follow, and commit.
+2. Tag and push: `git tag -a v0.2.0 -m "TeamCraft 0.2.0" && git push origin v0.2.0`.
+3. The workflow builds everything again from the tag, writes
+   `SHA256SUMS.txt` and creates the GitHub Release with generated notes –
+   as a **pre-release** for `0.x` and suffixed versions (`1.0.0-rc.1`).
+
+The installers are not code-signed yet (macOS: ad-hoc signature, Windows:
+unsigned); signing needs certificates as repository secrets and is a
+follow-up. Nothing else is published (no package registries).

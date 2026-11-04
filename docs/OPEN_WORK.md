@@ -8,13 +8,19 @@ the known gaps with details. Last update: 2026-11-04.
 
 **Fixes**
 
-- [ ] Folder import: find out why all imported items stayed in "My check-outs" after the last import and fix it (test
-  import against the server)
-- [ ] Bulk action "Check in all my check-outs" (desktop and web)
+- [x] Folder import: find out why all imported items stayed in "My check-outs" after the last import and fix it – the
+  import checked the new items in only at the very end, after every item, upload and the BOM step, in one promise
+  chain: an interrupted import (dialog closed by reloading, app closed, sign-in expired, network gone) or an exception
+  in the BOM step skipped the whole check-in phase, and a second run skipped the logged items, so they were never
+  checked in. Now every item is checked in right after its files, assemblies are checked out once more for their BOM
+  lines and always checked in again, and a run releases the check-outs an earlier run of the same folder left
+  behind (request order tested in `tests/concurrency.rs`; still to do: test import against a real server)
+- [x] Bulk action "Check in all my check-outs" (desktop and web) – dashboard button and desktop worklist; the desktop
+  checks in only revisions without local changes; `POST /api/v1/worklist/checkin-all`
 - [ ] SOLIDWORKS 2015+ files: the preview image and the referenced file names sit in compressed segments of the
   container – inflate them before the preview search and the reference scan (gap test in `tests/cad_fixtures.rs`,
   found with the NIST files)
-- [ ] Reference scan: false references in real files – earlier file names and binary noise in NX parts, noise in JT
+- [ ] Reference scan: false references in real files – NX parts fixed (stream container, `src/nxpart.rs`); open: noise in JT
   files (gap test in `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is ignored
 
 **General**
@@ -38,7 +44,7 @@ the known gaps with details. Last update: 2026-11-04.
 - [ ] Try the STEP assembly import with real exports of Inventor, SolidWorks, Solid Edge, Fusion, CATIA and NX
 - [ ] 3D preview: test real STEP exports of the CAD programs and assembly placements (`mapped_item`); readers for IGES,
   BREP, Parasolid, JT, … (E57: `e57` crate)
-- [ ] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview (feature 4)
+- [x] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview, per project group (feature 4)
 - [ ] Custom attributes per item and file type, classification (standard/purchased parts), attribute search (feature 5)
 - [x] Item copy ("Save as" with files and BOM) – done; open: supersede/replace, alternate parts, multi-level where-used
   (feature 6)
@@ -52,8 +58,11 @@ the known gaps with details. Last update: 2026-11-04.
   and the desktop request tab
 - [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI), e-mail digest of
   new requests per project group
-- [ ] Chunked resumable uploads (tus); backup/restore of database and vault as CLI commands (feature 9)
-- [ ] README screenshots/GIFs: dashboard, vault explorer, revision page, 3D viewer, BOM, desktop app
+- [x] Backup/restore of the database and vault as CLI commands (`teamcraft backup`, `teamcraft restore`) – see
+  [Operations](src/admin/operations.md)
+- [ ] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools
+- [ ] Chunked resumable uploads (tus) (feature 9)
+- [ ] README screenshots/GIFs: web pages captured in CI by `scripts/screenshots.sh` (PNGs still to commit); desktop app and GIFs open
 - [x] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
 - [x] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
 - [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
@@ -66,8 +75,10 @@ the known gaps with details. Last update: 2026-11-04.
   check out, "save and check in", "get latest" inside the CAD program
 - [ ] Check-in takes dependent files along automatically (from the reference scan)
 - [ ] Create viewables (STEP) in the background without blocking the check-in
-- [ ] Status per file: up to date, modified, locked by X, outdated
-- [ ] Report conflicts early, already when a file is opened
+- [x] Status per file: up to date, modified, locked by X, outdated, conflict – desktop Workspace tab and
+  `…/file-status`; check-ins are checked against the base version of every file (409 instead of overwriting)
+- [x] Report conflicts early, already when a file is opened – the desktop asks before opening an outdated,
+  conflicting or foreign-locked file (inside the CAD program still needs the add-ins)
 - [ ] Sync file properties with item attributes: part number, name, material, mass
 - [ ] Recognise standard and library parts (Content Center, Toolbox, Standard Parts) and treat them as purchased parts
   instead of importing them again and again
@@ -146,6 +157,7 @@ The history up to the open-source release is squashed into the first commit
 | –  | Desktop: one workspace folder per project group; import of existing CAD folders                                                                                       | `8bf8e65`, `9557ffa` |
 | –  | Skins without distribution logos                                                                                                                                      | `099737e`            |
 | –  | Teamcenter working features: favorites, saved searches, Save As, BOM comparison                                                                                       | `9289aa4`            |
+| –  | Release readiness of change orders: unreleased BOM children and references block the submit, *Add all* (web, API, desktop) | this branch          |
 | –  | Work-in-progress / no-warranty notices (README, docs, web footer, desktop), `CONTRIBUTING.md`, `SECURITY.md`                                                          | `5c8eff3`            |
 
 ## Open – feature 3 (BOM from CAD)
@@ -195,12 +207,15 @@ The history up to the open-source release is squashed into the first commit
   geometry of the parts is not split into the new items; a STEP file
   imported *into* a checked-out revision is not attached to it.
 
-## Open – features 4 to 9 (not started)
+## Open – features 4 to 9
 
-4. **Configurable numbering schemes** (`{PROJECT}`, `{TYPE}`, `{YYYY}`,
-   `{SEQ:n}`) with preview. Numbers are generated in `items::create_tx`
-   (`domain::format_item_number` + counters); the BOM import uses
-   `create_tx`, so it picks up the schemes automatically.
+4. **Configurable numbering schemes**: done – one scheme per project group
+   (`projects.number_scheme`, `domain::NumberScheme`) with `{PROJECT}`,
+   `{TYPE}`, `{YYYY}`, `{YY}`, `{MM}` and `{SEQ:n}`, preview of the next
+   numbers on the group page and via `GET /api/v1/projects/{code}/numbering`.
+   Counters are named after the expansion without the sequence. Open: a
+   separate scheme per item type within a group, an instance-wide default
+   other than `{TYPE}-{SEQ:6}`.
 5. **Custom attributes** per item type and file type, classification (standard/purchased parts), attribute search. The
    BOM import can then map
    further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to
@@ -211,9 +226,9 @@ The history up to the open-source release is squashed into the first commit
    MIT/Apache-2.0): done – direct lines, and over all levels with a revision
    rule (`depth=all`); the expanded BOM itself exports as Excel too.
 8. **Bulk import of a folder tree** (NAS/Drive) as items with files (candidate: `walkdir`, MIT/Unlicense).
-9. **Chunked resumable uploads** (tus protocol, `tus-js-client`) and **backup/restore** of database and vault as CLI
-   commands (`pg_dump` /
-   `pg_restore`), with tests and docs.
+9. **Chunked resumable uploads** (tus protocol, `tus-js-client`); **backup/restore** of the database and vault is done
+   (`teamcraft backup`/`teamcraft restore` with `pg_dump`/`pg_restore`, unit tests for the manifest, argument building,
+   hashes and path safety); the end-to-end check with the real client tools is still open (see the to-do list).
 
 Rules for all of them: research open source first (licences compatible with
 MPL-2.0: MIT, Apache-2.0, BSD, ISC, Zlib, MPL-2.0; LGPL only as a separately
@@ -222,10 +237,11 @@ in the README licence table, follow the definition of done in `CLAUDE.md`.
 
 ## Known gaps outside the plan
 
-- **README screenshots / GIFs** are missing: they need a browser session (Claude in Chrome was not connected). Planned:
-  dashboard, vault explorer,
-  revision page, 3D viewer (STEP), BOM page, desktop app; store them in
-  `docs/src/images/` and use them in the README and the book.
+- **README screenshots:** `scripts/screenshots.sh` and the *Screenshots*
+  workflow capture dashboard, vault explorer, revision page, 3D viewer (STEP),
+  BOM, change order, notifications and a phone view in CI; the PNGs go into
+  `media/screenshots/` (see CONTRIBUTING.md). Still missing: the desktop app
+  and GIFs, and the screenshots in the book.
 - **CI:** `ci.yml`, `docs.yml` and `desktop.yml` pass (`099737e`), the docs
   are live at <https://rudalabs.github.io/TeamCraft/>. The tests run on Linux
   only; macOS and Windows are build checks – server and desktop app were not

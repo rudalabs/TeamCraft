@@ -34,14 +34,20 @@
       <button class="danger" type="submit" title="Cancel {{ change.number }} at once (cannot be undone)">Cancel change</button>
     </form>
     {% endif %}
+    {% if assistant_enabled %}
+    <button type="button" data-toggle="assistant-panel" title="A briefing for the review: what changes, impact, risks, open questions">Ask TeamCraft…</button>
+    {% endif %}
   </div>
 </div>
+{% if assistant_enabled %}
+{{ m.assistant_panel([["review_brief", "Brief me for this review"]], "", "", change.number, "/changes/" ~ change.id) }}
+{% endif %}
 
 {% if implements %}
 <div class="notice">Implements {% for r in implements %}<a href="/requests/{{ r.id }}">{{ r.number }}</a> {{ r.title }} ({{ r.status|label }}){% if not loop.last %} · {% endif %}{% endfor %}{% if change.status != "released" %} – when this change is released, the accepted request{% if implements|length > 1 %}s become{% else %} becomes{% endif %} implemented{% endif %}.</div>
 {% endif %}
 {% if change.status == "draft" %}
-<div class="notice">Draft: add the revisions to release and at least one reviewer, then submit.{% if not can.submit and can.modify %} Submitting needs at least one revision and one reviewer.{% endif %}</div>
+<div class="notice">Draft: add the revisions to release and at least one reviewer, then submit.{% if not can.submit and can.modify %} Submitting needs at least one revision, one reviewer and released dependencies (see <a href="#readiness">Release readiness</a>).{% endif %}</div>
 {% elif change.status == "in_review" %}
 <div class="notice">In review since {{ m.time(change.submitted_at) }}. All reviewers must approve; a single rejection sends the revisions back to In Work.</div>
 {% elif change.status == "rejected" %}
@@ -162,6 +168,63 @@
   </form>
   {% endif %}
 </section>
+
+{% if readiness and items %}
+<section class="card" id="readiness">
+  <div class="card-head">
+    <h2>Release readiness</h2>
+    {% if can.add_dependencies %}
+    <form class="inline" method="post" action="/changes/{{ change.id }}/dependencies">
+      <button class="small primary" type="submit" title="Add the in-work revisions of all unreleased dependencies – level by level – to {{ change.number }}">Add all to this change</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if readiness.blockers %}
+  <p class="readiness readiness-blocked">
+    {{ readiness.blockers|length }} {% if readiness.blockers|length == 1 %}dependency is{% else %}dependencies are{% endif %}
+    not released. A change releases a whole product at once: add {% if readiness.blockers|length == 1 %}it{% else %}them{% endif %}
+    to this change or release {% if readiness.blockers|length == 1 %}it{% else %}them{% endif %} first, then submit.
+  </p>
+  {% else %}
+  <p class="readiness readiness-ok">
+    <img src="/static/media/icons/Green_tick.svg?v={{ assets }}" alt="">
+    Ready: every BOM line and reference is released or part of this change.
+  </p>
+  {% endif %}
+  {% if readiness_rows %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Dependency</th><th>Name</th><th>Needed by</th><th>State</th>{% if can.modify %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for d in readiness_rows %}
+      <tr>
+        <td class="mono nowrap"><a href="/revisions/{{ d.latest_revision_id }}">{{ d.item_number }}/{{ d.latest_code }}</a></td>
+        <td>{{ d.item_name }}</td>
+        <td class="small"><span class="mono">{{ d.revision_label }}</span> {{ m.relation(d.relation) }}</td>
+        <td class="nowrap">
+          {{ m.badge(d.latest_state) }}
+          {% if d.other_change %}<span class="small muted">in {{ d.other_change }}</span>{% endif %}
+          {% if d.problem == "obsolete" %}<span class="small muted">warning: obsolete, replace it</span>
+          {% elif not d.blocking %}<span class="small muted">warning: found by the CAD file scan</span>{% endif %}
+        </td>
+        {% if can.modify %}
+        <td class="right">
+          {% if d.addable and change.status == "draft" %}
+          <form class="inline" method="post" action="/changes/{{ change.id }}/items">
+            <input type="hidden" name="item_number" value="{{ d.item_number }}">
+            <button class="small" type="submit">Add</button>
+          </form>
+          {% endif %}
+        </td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
 
 <section class="card" id="impact">
   <h2>Impact analysis</h2>

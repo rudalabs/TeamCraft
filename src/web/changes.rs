@@ -176,6 +176,13 @@ pub async fn show(
     let watching = notifications::is_watching(&st.db, ctx.me.id, "change", id).await?;
     let implements = requests::for_change(&st.db, id).await?;
     let status = changes::status_of(&change);
+    // Release readiness: only meaningful before the change goes into review.
+    let readiness = if matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected) {
+        Some(changes::readiness(&st.db, id).await?)
+    } else {
+        None
+    };
+    let ready = readiness.as_ref().is_none_or(|r| r.is_ready());
     let me = &ctx.me;
     let is_owner = me.can_edit() && (change.created_by == me.id || me.is_admin());
     let modifiable = is_owner && status.is_modifiable();
@@ -195,7 +202,10 @@ pub async fn show(
     let can = json!({
         "modify": modifiable,
         "edit_text": is_owner && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
-        "submit": modifiable && !affected.is_empty() && !reviews.is_empty(),
+        "submit": modifiable && !affected.is_empty() && !reviews.is_empty() && ready,
+        "add_dependencies": modifiable
+            && status == ChangeStatus::Draft
+            && readiness.as_ref().is_some_and(|r| !r.addable_blockers().is_empty()),
         "withdraw": is_owner && status == ChangeStatus::InReview,
         "reopen": is_owner && status == ChangeStatus::Rejected,
         "cancel": is_owner && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
@@ -209,6 +219,8 @@ pub async fn show(
             "change": change,
             "status_label": status.label(),
             "impact": impact,
+            "readiness_rows": readiness.as_ref().map(|r| r.blockers.iter().chain(&r.warnings).cloned().collect::<Vec<_>>()).unwrap_or_default(),
+            "readiness": readiness,
             "watching": watching,
             "implements": implements,
             "items": affected,
@@ -272,6 +284,27 @@ pub async fn add_item(
     .await;
     finish(&st, result, &back, |label| {
         (back.clone(), format!("Added {label}"))
+    })
+}
+
+/// "Add all" in the release readiness card: the unreleased dependencies.
+pub async fn add_dependencies(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let back = format!("/changes/{id}");
+    let result = changes::add_dependencies(&st.db, &ctx.me, id).await;
+    finish(&st, result, &back, |added| {
+        let text = match added.len() {
+            0 => {
+                "Nothing to add – the remaining dependencies are in review elsewhere, not in work or in another project group"
+                    .into()
+            }
+            1 => format!("Added {}", added[0]),
+            n => format!("Added {n} revisions: {}", added.join(", ")),
+        };
+        (back.clone(), text)
     })
 }
 

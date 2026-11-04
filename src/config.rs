@@ -72,6 +72,10 @@ pub struct Config {
     pub instance_name: String,
     /// PostgreSQL connection options (contains the password – never log it).
     pub database: PgConnectOptions,
+    /// Password of the database connection, for tools that receive it in
+    /// their environment (`PGPASSWORD` of `pg_dump`/`pg_restore`).
+    /// Secret – never log it.
+    pub database_password: Option<String>,
     /// Human readable, password-free description of the database target.
     pub database_display: String,
     pub db_max_connections: u32,
@@ -94,6 +98,33 @@ pub struct Config {
     pub smtp: Option<SmtpConfig>,
     /// Notifications to Mattermost. `None` = disabled.
     pub mattermost: Option<MattermostConfig>,
+    /// The built-in assistant (Claude via the Anthropic API). `None` = disabled.
+    pub assistant: Option<AssistantConfig>,
+}
+
+/// Default model of the assistant.
+pub const DEFAULT_ASSISTANT_MODEL: &str = "claude-opus-5-5";
+/// Default for the most model calls of one assistant run.
+pub const DEFAULT_ASSISTANT_MAX_STEPS: u32 = 12;
+
+#[derive(Clone)]
+pub struct AssistantConfig {
+    /// Anthropic API key (secret – never log it).
+    pub api_key: String,
+    /// Claude model id, e.g. `claude-opus-5-5`.
+    pub model: String,
+    /// Most model calls (tool-use rounds) of one run.
+    pub max_steps: u32,
+}
+
+impl std::fmt::Debug for AssistantConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AssistantConfig")
+            .field("api_key", &"<redacted>")
+            .field("model", &self.model)
+            .field("max_steps", &self.max_steps)
+            .finish()
+    }
 }
 
 #[derive(Clone)]
@@ -183,7 +214,7 @@ impl Config {
             .get("TEAMCRAFT_INSTANCE_NAME")?
             .unwrap_or_else(|| "TeamCraft".to_string());
 
-        let (database, database_display) = database_options(&env)?;
+        let (database, database_display, database_password) = database_options(&env)?;
 
         let db_max_connections = env.parse_or("TEAMCRAFT_DB_MAX_CONNECTIONS", 10u32)?;
         if db_max_connections == 0 {
@@ -275,12 +306,47 @@ impl Config {
             }
             None => None,
         };
+        // A key file with only blanks counts as "not set", like an empty variable.
+        let api_key = env
+            .get("TEAMCRAFT_ANTHROPIC_API_KEY")?
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+        let assistant = match api_key {
+            Some(api_key) => {
+                if api_key.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                    bail!("TEAMCRAFT_ANTHROPIC_API_KEY must not contain spaces or line breaks");
+                }
+                let model = env
+                    .get("TEAMCRAFT_ASSISTANT_MODEL")?
+                    .map(|m| m.trim().to_string())
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or_else(|| DEFAULT_ASSISTANT_MODEL.to_string());
+                if !model
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | ':' | '@'))
+                {
+                    bail!("TEAMCRAFT_ASSISTANT_MODEL must be a model id such as {DEFAULT_ASSISTANT_MODEL}");
+                }
+                let max_steps =
+                    env.parse_or("TEAMCRAFT_ASSISTANT_MAX_STEPS", DEFAULT_ASSISTANT_MAX_STEPS)?;
+                if !(1..=50).contains(&max_steps) {
+                    bail!("TEAMCRAFT_ASSISTANT_MAX_STEPS must be between 1 and 50");
+                }
+                Some(AssistantConfig {
+                    api_key,
+                    model,
+                    max_steps,
+                })
+            }
+            None => None,
+        };
 
         Ok(Config {
             bind_addr,
             public_url,
             instance_name,
             database,
+            database_password,
             database_display,
             db_max_connections,
             vault_dir,
@@ -294,13 +360,14 @@ impl Config {
             mattermost_error_webhook,
             smtp,
             mattermost,
+            assistant,
         })
     }
 
     /// Password-free summary for the startup log.
     pub fn summary(&self) -> String {
         format!(
-            "bind={} public_url={} database={} vault={} max_upload={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} mattermost_notifications={}",
+            "bind={} public_url={} database={} vault={} max_upload={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} mattermost_notifications={} assistant={}",
             self.bind_addr,
             self.public_url,
             self.database_display,
@@ -315,6 +382,7 @@ impl Config {
             self.mattermost
                 .as_ref()
                 .map_or("off", |m| if m.direct { "direct" } else { "channel" }),
+            self.assistant.as_ref().map_or("off", |a| a.model.as_str()),
         )
     }
 }
@@ -404,7 +472,7 @@ fn parse_bool(raw: &str) -> Result<bool> {
 /// in passwords and works nicely with secret files.
 fn database_options<F: Fn(&str) -> Option<String>>(
     env: &Env<F>,
-) -> Result<(PgConnectOptions, String)> {
+) -> Result<(PgConnectOptions, String, Option<String>)> {
     let url = match env.get("TEAMCRAFT_DATABASE_URL")? {
         Some(url) => Some(url),
         None => env.get("DATABASE_URL")?,
@@ -419,7 +487,14 @@ fn database_options<F: Fn(&str) -> Option<String>>(
             options.get_port(),
             options.get_database().unwrap_or("?")
         );
-        return Ok((options, display));
+        // The client tools authenticate like the server does; passwords with
+        // characters that need percent-encoding are better set with
+        // TEAMCRAFT_DB_PASSWORD(_FILE).
+        let password = reqwest::Url::parse(&url)
+            .ok()
+            .and_then(|parsed| parsed.password().map(str::to_string))
+            .filter(|password| !password.is_empty());
+        return Ok((options, display, password));
     }
 
     let host = env
@@ -458,7 +533,7 @@ fn database_options<F: Fn(&str) -> Option<String>>(
         options = options.socket(&host);
     }
     let display = format!("{user}@{host}:{port}/{name}");
-    Ok((options, display))
+    Ok((options, display, password))
 }
 
 #[cfg(test)]
@@ -484,6 +559,7 @@ mod tests {
         assert_eq!(cfg.log_format, LogFormat::Text);
         assert!(cfg.bootstrap_admin.is_none());
         assert_eq!(cfg.database_display, "teamcraft@localhost:5432/teamcraft");
+        assert_eq!(cfg.database_password.as_deref(), Some("secret"));
         assert!(!cfg.summary().contains("secret"));
     }
 
@@ -565,6 +641,7 @@ mod tests {
         assert_eq!(cfg.database_display, "teamcraft@localhost:5432/teamcraft");
         assert!(cfg.local_login);
         assert_eq!(cfg.vault_dir, PathBuf::from("./data/vault"));
+        assert!(cfg.database_password.is_none());
     }
 
     /// The packaged configuration: the local PostgreSQL socket, peer authentication.
@@ -598,6 +675,48 @@ mod tests {
         assert!(packaged.database.get_socket().is_some());
     }
 
+    /// The Docker installation: deploy/teamcraft.env.example plus the
+    /// `environment` of deploy/docker-compose.yml give a valid configuration.
+    #[test]
+    fn docker_deployment_configuration() {
+        let dir = std::env::temp_dir().join(format!("teamcraft-cfg-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let secret = dir.join("db_password");
+        std::fs::write(&secret, "generated-password\n").unwrap();
+
+        let example = include_str!("../deploy/teamcraft.env.example");
+        let mut vars: HashMap<String, String> = dotenvy::from_read_iter(example.as_bytes())
+            .map(|r| r.expect("valid line"))
+            .collect();
+        let compose = include_str!("../deploy/docker-compose.yml");
+        let mut from_compose = 0;
+        for line in compose.lines().map(str::trim) {
+            if let Some((key, value)) = line.split_once(": ") {
+                if key.starts_with("TEAMCRAFT_") {
+                    vars.insert(key.to_string(), value.trim_matches('"').to_string());
+                    from_compose += 1;
+                }
+            }
+        }
+        assert!(from_compose >= 5, "compose environment found");
+        assert_eq!(
+            vars["TEAMCRAFT_DB_PASSWORD_FILE"], "/run/secrets/db_password",
+            "the password comes from the Docker secret"
+        );
+        vars.insert(
+            "TEAMCRAFT_DB_PASSWORD_FILE".into(),
+            secret.to_str().unwrap().into(),
+        );
+
+        let cfg = Config::from_lookup(|k| vars.get(k).cloned()).expect("docker config");
+        assert_eq!(cfg.bind_addr.to_string(), "0.0.0.0:8080");
+        assert_eq!(cfg.database_display, "teamcraft@db:5432/teamcraft");
+        assert_eq!(cfg.vault_dir, PathBuf::from("/var/lib/teamcraft/vault"));
+        assert!(cfg.local_login);
+        assert!(!cfg.summary().contains("generated-password"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     #[test]
     fn url_and_https_detection() {
         let cfg = config_from(&[
@@ -610,6 +729,7 @@ mod tests {
         assert!(cfg.cookie_secure);
         assert_eq!(cfg.log_format, LogFormat::Json);
         assert_eq!(cfg.database_display, "db:5433/plm (from URL)");
+        assert_eq!(cfg.database_password.as_deref(), Some("p"));
     }
 
     #[test]
@@ -698,5 +818,75 @@ mod tests {
             ("TEAMCRAFT_COOKIE_SECURE", "maybe")
         ])
         .is_err());
+    }
+
+    #[test]
+    fn assistant_settings() {
+        let cfg = config_from(&[("TEAMCRAFT_DB_PASSWORD", "x")]).unwrap();
+        assert!(cfg.assistant.is_none(), "disabled without a key");
+        assert!(cfg.summary().contains("assistant=off"));
+
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_ANTHROPIC_API_KEY", "sk-test-key-123"),
+        ])
+        .unwrap();
+        let a = cfg.assistant.as_ref().unwrap();
+        assert_eq!(a.model, DEFAULT_ASSISTANT_MODEL);
+        assert_eq!(a.max_steps, DEFAULT_ASSISTANT_MAX_STEPS);
+        assert!(
+            !cfg.summary().contains("sk-test-key-123"),
+            "no key in the log"
+        );
+        assert!(
+            !format!("{a:?}").contains("sk-test-key-123"),
+            "no key in Debug"
+        );
+
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_ANTHROPIC_API_KEY", "k"),
+            ("TEAMCRAFT_ASSISTANT_MODEL", "claude-sonnet-5-5"),
+            ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "5"),
+        ])
+        .unwrap();
+        let a = cfg.assistant.unwrap();
+        assert_eq!((a.model.as_str(), a.max_steps), ("claude-sonnet-5-5", 5));
+
+        // key and model files with only blanks: "not set", not an empty key
+        let dir = std::env::temp_dir().join(format!("teamcraft-cfg-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let blank = dir.join("blank");
+        std::fs::write(&blank, "  \n").unwrap();
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_ANTHROPIC_API_KEY_FILE", blank.to_str().unwrap()),
+        ])
+        .unwrap();
+        assert!(cfg.assistant.is_none(), "blank key file = disabled");
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_ANTHROPIC_API_KEY", "k"),
+            ("TEAMCRAFT_ASSISTANT_MODEL_FILE", blank.to_str().unwrap()),
+        ])
+        .unwrap();
+        assert_eq!(cfg.assistant.unwrap().model, DEFAULT_ASSISTANT_MODEL);
+        std::fs::remove_dir_all(dir).ok();
+
+        for (key, value) in [
+            ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "0"),
+            ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "500"),
+            ("TEAMCRAFT_ASSISTANT_MODEL", "claude opus"),
+        ] {
+            assert!(
+                config_from(&[
+                    ("TEAMCRAFT_DB_PASSWORD", "x"),
+                    ("TEAMCRAFT_ANTHROPIC_API_KEY", "k"),
+                    (key, value),
+                ])
+                .is_err(),
+                "{key}={value}"
+            );
+        }
     }
 }

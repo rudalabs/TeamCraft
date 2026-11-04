@@ -43,6 +43,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "imports/preview.html",
     "notifications.html",
     "account.html",
+    "assistant.html",
 ];
 
 pub fn environment(instance_name: &str) -> Result<Environment<'static>, minijinja::Error> {
@@ -55,6 +56,7 @@ pub fn environment(instance_name: &str) -> Result<Environment<'static>, minijinj
     env.add_filter("filesize", filter_filesize);
     env.add_filter("label", filter_label);
     env.add_filter("urlencode", |value: String| util::pct_encode(&value));
+    env.add_filter("age", filter_age);
     env.add_global("instance_name", instance_name.to_string());
     env.add_global("version", env!("CARGO_PKG_VERSION"));
     // cache busting of the embedded stylesheets, scripts and logos
@@ -73,6 +75,20 @@ fn filter_dt(value: Option<String>) -> String {
                 .to_string(),
             Err(_) => v,
         },
+        None => "—".to_string(),
+    }
+}
+
+/// RFC 3339 timestamp → its age now (`3 days`, `5 h`, `just now`), e.g.
+/// how long a lock has been held; `—` for none.
+fn filter_age(value: Option<String>) -> String {
+    match value
+        .as_deref()
+        .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
+    {
+        Some(t) => crate::domain::format_age(
+            (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds(),
+        ),
         None => "—".to_string(),
     }
 }
@@ -491,7 +507,7 @@ mod tests {
                     "references": references.clone(), "open_impacts": [impact(None)],
                     "resolved_impacts": [impact(Some("acknowledged"))],
                     "open_requests": [request("in_triage")],
-                    "can": can_all.clone(), "max_upload_mb": 512,
+                    "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
                     "lifecycle": {
                         "states": crate::domain::LifecycleState::ALL,
                         "next": crate::domain::rules_from(crate::domain::LifecycleState::parse(state).unwrap()),
@@ -548,6 +564,14 @@ mod tests {
                 html.contains("No 3D preview for native CAD files"),
                 state == "released",
                 "hint for native files without a neutral export"
+            );
+            assert_eq!(
+                html.contains("Draft release notes")
+                    && html.contains("Check before release")
+                    && html.contains("name=\"item\" value=\"PRT-000001\"")
+                    && html.contains("name=\"revision\" value=\"B\""),
+                state == "released",
+                "assistant quick actions only when enabled"
             );
         }
 
@@ -773,12 +797,24 @@ mod tests {
                               "active": true, "source": "oidc", "added_at": TS, "manager": true }],
                 "candidates": [user()], "is_member": true, "can_edit": true, "oidc_enabled": true,
                 "can_manage": true,
+                "numbering": { "scheme": "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}", "is_default": false,
+                               "next": [{ "item_type": "part", "label": "Part", "number": "ROCKET-PRT-2026-0001" }] },
+                "scheme_input": "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}", "previewing": true,
+                "scheme_error": "Invalid numbering scheme 'x': <bad>", "default_scheme": "{TYPE}-{SEQ:6}",
             })),
         );
         assert!(html.contains("CAD editor"));
         assert!(html.contains("via IdP group"));
         assert!(html.contains("manager"), "project managers are marked");
         assert!(html.contains("Add member"), "managers add members");
+        assert!(
+            html.contains("ROCKET-PRT-2026-0001"),
+            "next numbers are shown"
+        );
+        assert!(html.contains("preview – not saved"));
+        assert!(html.contains("value=\"{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}\""));
+        assert!(html.contains("&lt;bad&gt;"), "scheme errors are escaped");
+        assert!(html.contains("/numbering\""), "managers edit the scheme");
         render(
             &env,
             "admin/users.html",
@@ -965,6 +1001,79 @@ mod tests {
         assert!(
             html.contains("skin-card selected"),
             "current skin is marked"
+        );
+
+        // the assistant: dashboard quick action, change briefing, answer page
+        let dashboard = |enabled: bool| {
+            let mut data = with_common(json!({
+                "stats": { "items": 0, "revisions_in_work": 0, "revisions_in_review": 0, "revisions_released": 0,
+                           "open_changes": 0, "files": 0, "stored_bytes": 0 },
+                "checkouts": [], "reviews": [], "my_changes": [], "activity": [], "impacts": [],
+            }));
+            data["assistant_enabled"] = json!(enabled);
+            render(&env, "dashboard.html", data)
+        };
+        let html = dashboard(true);
+        assert!(html.contains("What needs my attention") && html.contains("action=\"/assistant\""));
+        assert!(
+            html.contains("Allow drafting change orders"),
+            "editors may allow drafts"
+        );
+        assert!(
+            !dashboard(false).contains("/assistant"),
+            "hidden when disabled"
+        );
+
+        let mut data = with_common(json!({
+            "change": change("in_review"), "status_label": "In review", "items": [], "reviews": [],
+            "candidates": [], "history": [], "priorities": ["low"], "impact": [],
+            "can": { "modify": false, "edit_text": false, "submit": false, "withdraw": false, "reopen": false,
+                     "cancel": false, "review": true },
+        }));
+        data["assistant_enabled"] = json!(true);
+        let html = render(&env, "changes/show.html", data);
+        assert!(
+            html.contains("Brief me for this review")
+                && html.contains("name=\"change\" value=\"CHG-000001\"")
+        );
+
+        let answer = crate::assistant::render_markdown("## Scope\n- PRT-000001 <b>");
+        let html = render(
+            &env,
+            "assistant.html",
+            with_common(json!({
+                "actions": [["review_brief", "Brief me for this review"]],
+                "form": { "question": "Is it <ready>?", "item": "", "revision": "", "change": "CHG-000001" },
+                "back": "/changes/x", "error": null,
+                "run": { "label": "Brief me for this review", "html": answer, "text": "x", "truncated": true,
+                         "tools": [{ "name": "get_change", "ok": true }, { "name": "bom_health", "ok": false }],
+                         "steps": 3, "model": "claude-opus-5-5", "allow_drafts": false },
+            })),
+        );
+        for expected in [
+            "<h3>Scope</h3>",
+            "<a href=\"/i/PRT-000001\">PRT-000001</a> &lt;b&gt;",
+            "Is it &lt;ready&gt;?",
+            "get_change",
+            "badge badge-rejected",
+            "3 steps",
+            "read-only",
+            "cut off",
+            "changes&#x2f;x\" data-back>Back</a>",
+        ] {
+            assert!(html.contains(expected), "assistant page shows {expected}");
+        }
+        let html = render(
+            &env,
+            "assistant.html",
+            with_common(json!({
+                "actions": [["attention", "What needs my attention"]],
+                "form": { "question": "", "item": "", "revision": "", "change": "" },
+                "back": "/", "error": "Type a question first.", "run": null,
+            })),
+        );
+        assert!(
+            html.contains("Type a question first.") && html.contains("What needs my attention")
         );
     }
 

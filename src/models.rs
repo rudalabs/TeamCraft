@@ -46,6 +46,9 @@ pub struct Project {
     /// Who created the group (`None` for groups created by administrators
     /// before self-service groups existed).
     pub created_by: Option<Uuid>,
+    /// Numbering scheme for generated item numbers (`None` = the built-in
+    /// `{TYPE}-{SEQ:6}`), see `domain::NumberScheme`.
+    pub number_scheme: Option<String>,
 }
 
 /// A member of a project group.

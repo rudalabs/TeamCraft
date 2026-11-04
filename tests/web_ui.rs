@@ -1522,3 +1522,68 @@ async fn new_item_with_files() {
     assert_eq!(count, 1);
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn numbering_scheme_on_the_project_page() {
+    use chrono::Datelike;
+    let app = app_or_skip!();
+    app.user("root", Role::Admin).await;
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    let cookie = app.login("root").await;
+    let origin = Some("http://localhost:8080");
+    let rocket = app.project_id("ROCKET").await;
+    let page = format!("/projects/{rocket}");
+    let year = chrono::Utc::now().year();
+
+    let html = app.get_page(&page, Some(&cookie)).await.text();
+    assert!(html.contains("Item numbers") && html.contains("(built-in default)"));
+    assert!(html.contains("PRT-000001") && html.contains("SW-000001"));
+
+    // the preview button shows the numbers of a scheme without saving it
+    let html = app
+        .get_page(
+            &format!("{page}?scheme=%7BPROJECT%7D-%7BTYPE%7D%7BYY%7D-%7BSEQ:3%7D"),
+            Some(&cookie),
+        )
+        .await
+        .text();
+    assert!(html.contains("preview – not saved"), "{html}");
+    assert!(html.contains(&format!("ROCKET-DOC{:02}-001", year % 100)));
+    let html = app
+        .get_page(&format!("{page}?scheme=%7BTYPE%7D"), Some(&cookie))
+        .await
+        .text();
+    assert!(html.contains("flash-error") && html.contains("sequence placeholder"));
+    assert!(
+        html.contains("PRT-000001"),
+        "falls back to the saved scheme"
+    );
+
+    // saving it
+    let r = app
+        .post_form(
+            &format!("{page}/numbering"),
+            Some(&cookie),
+            origin,
+            &[("scheme", "{PROJECT}-{TYPE}{YY}-{SEQ:3}")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let html = app.get_page(&page, Some(&cookie)).await.text();
+    assert!(html.contains("value=\"{PROJECT}-{TYPE}{YY}-{SEQ:3}\""));
+    assert!(!html.contains("(built-in default)"));
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &eng,
+            Some(json!({ "item_type": "part", "name": "Fin", "project": "ROCKET" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(
+        r.json()["item_number"],
+        format!("ROCKET-PRT{:02}-001", year % 100)
+    );
+    app.teardown().await;
+}

@@ -6,10 +6,14 @@
 //! * [`services`] – business logic on top of PostgreSQL, used by both front ends
 //! * [`web`] – server-rendered HTML user interface (cookie sessions)
 //! * [`api`] – JSON REST API under `/api/v1` (bearer tokens)
+//! * [`mcp`] – Model Context Protocol server at `/api/v1/mcp` for AI assistants
+//! * [`assistant`] – built-in assistant (Claude via the Anthropic API) using the MCP tools
 
 pub mod api;
 pub mod assets;
+pub mod assistant;
 pub mod auth;
+pub mod backup;
 pub mod bomtable;
 pub mod cadformat;
 pub mod cadrefs;
@@ -18,9 +22,11 @@ pub mod db;
 pub mod delivery;
 pub mod domain;
 pub mod error;
+pub mod mcp;
 pub mod mesh;
 pub mod models;
 pub mod notify;
+pub mod nxpart;
 pub mod oidc;
 pub mod preview;
 pub mod services;
@@ -63,6 +69,8 @@ pub struct AppState {
     pub oidc: Option<Arc<OidcClient>>,
     /// Cached 3D preview meshes (see `preview`).
     pub previews: Arc<Previews>,
+    /// The built-in assistant; `None` without `TEAMCRAFT_ANTHROPIC_API_KEY`.
+    pub assistant: Option<Arc<assistant::Assistant>>,
 }
 
 impl AppState {
@@ -80,6 +88,12 @@ impl AppState {
             None => None,
         };
         let previews = Arc::new(Previews::new(&vault));
+        let assistant = match &config.assistant {
+            Some(a) => Some(Arc::new(
+                assistant::Assistant::new(a).context("setting up the assistant failed")?,
+            )),
+            None => None,
+        };
         Ok(AppState {
             db,
             config: Arc::new(config),
@@ -87,6 +101,7 @@ impl AppState {
             vault,
             oidc,
             previews,
+            assistant,
         })
     }
 }

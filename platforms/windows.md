@@ -10,7 +10,7 @@ winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsof
 winget install Git.Git
 ```
 
-PostgreSQL 14 or newer – either [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+PostgreSQL 16 or newer – either [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 (WSL 2 backend) or the native installer (`winget install PostgreSQL.PostgreSQL.17`).
 With the native installer, create the role in *SQL Shell (psql)* as `postgres`:
 

@@ -3,8 +3,8 @@
 ## Items and revisions
 
 An **item** is a part, assembly, document or software component with a
-unique number – `PRT-000042`, `ASM-…`, `DOC-…`, `SW-…`, or a number of your
-own scheme. Its state of development is kept in **revisions** `A, B, …, Y,
+unique number – generated from the numbering scheme of its project group
+(built in: `PRT-000042`, `ASM-…`, `DOC-…`, `SW-…`) or typed in by hand. Its state of development is kept in **revisions** `A, B, …, Y,
 AA, …` (I, O, Q, S, X and Z are skipped, as in ASME Y14.35). A revision
 carries the attributes (name, description, material, mass, unit cost), the
 files and the bill of materials.
@@ -40,6 +40,28 @@ machine, a customer project, a building, a vehicle or a rover. CAD editors start
 managers edit the group and add or remove members. A group can also be bound
 to a group of the identity provider (administrators only); its members are
 then synchronised at every single sign-on.
+
+## Item numbers
+
+Each project group has a **numbering scheme** for the numbers TeamCraft
+generates when the number field is left empty – in the web UI, the REST API,
+the BOM import and *Save as*. Managers set it on the group's page, where
+*Preview* shows the next number per item type before anything is saved.
+
+| Placeholder | Becomes                                                                 |
+|-------------|-------------------------------------------------------------------------|
+| `{PROJECT}` | the project code, e.g. `ROVER`                                          |
+| `{TYPE}`    | `PRT`, `ASM`, `DOC` or `SW`                                             |
+| `{YYYY}`    | the year of creation (UTC); `{YY}` its last two digits, `{MM}` the month |
+| `{SEQ:n}`   | the sequence, zero-padded to *n* digits (1–12); exactly once            |
+
+Everything else is literal text from `A–Z 0–9 . _ -`. The built-in scheme is
+`{TYPE}-{SEQ:6}`; `{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}` gives `ROVER-PRT-2026-0007`.
+Every distinct expansion counts on its own: a scheme with `{YYYY}` starts at 1
+each year, one without `{TYPE}` shares the sequence between all item types,
+and groups with the built-in scheme share its counters. Changing the padding
+width keeps counting. Numbers that are already taken (typed in by hand) are
+skipped, and existing items never change their numbers.
 
 ## Audit log
 

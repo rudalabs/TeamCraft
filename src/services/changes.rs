@@ -29,7 +29,7 @@ use crate::{
     services::{
         audit, impacts, next_counter,
         notifications::{self, Notice},
-        requests, revisions, users, Page,
+        readiness, requests, revisions, users, Page,
     },
 };
 
@@ -379,8 +379,9 @@ pub async fn add_item(
     Ok(())
 }
 
-/// [`add_item`] inside the caller's transaction. User errors are raised
-/// before anything is written, so the caller may skip a revision and go on.
+/// [`add_item`] inside the caller's transaction (used when a change request
+/// creates its change order). User errors are raised before anything is
+/// written, so the caller may skip a revision and go on. Returns its label.
 pub(crate) async fn add_item_in(
     tx: &mut PgConnection,
     actor: &Actor,
@@ -390,7 +391,20 @@ pub(crate) async fn add_item_in(
     let change = lock(&mut *tx, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
+    add_item_tx(&mut *tx, actor, &change, revision_id).await?;
     let rev = revisions::lock(&mut *tx, revision_id).await?;
+    Ok(revisions::label(&rev))
+}
+
+/// Adds a revision to a locked draft change. Returns whether it was new.
+async fn add_item_tx(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    change: &Change,
+    revision_id: Uuid,
+) -> AppResult<bool> {
+    let change_id = change.id;
+    let rev = revisions::lock(conn, revision_id).await?;
     // Only members of the item's project group may put it up for release.
     revisions::ensure_project_access(&rev, actor)?;
     if revisions::state_of(&rev) != LifecycleState::InWork {
@@ -407,7 +421,7 @@ pub(crate) async fn add_item_in(
     )
     .bind(revision_id)
     .bind(change_id)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut *conn)
     .await?;
     if let Some(other) = other {
         return Err(AppError::Conflict(format!(
@@ -420,13 +434,13 @@ pub(crate) async fn add_item_in(
     )
     .bind(change_id)
     .bind(revision_id)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?
     .rows_affected();
     if inserted > 0 {
-        touch(&mut *tx, change_id).await?;
+        touch(conn, change_id).await?;
         audit::record(
-            &mut *tx,
+            conn,
             Some(actor),
             "change.add_item",
             "change",
@@ -436,7 +450,59 @@ pub(crate) async fn add_item_in(
         )
         .await?;
     }
-    Ok(revisions::label(&rev))
+    Ok(inserted > 0)
+}
+
+/// The release readiness of a change (see `services::readiness`).
+pub async fn readiness(pool: &PgPool, change_id: Uuid) -> AppResult<readiness::Readiness> {
+    let mut conn = pool.acquire().await?;
+    readiness::check(&mut conn, change_id).await
+}
+
+/// Upper bound for the rounds of [`add_dependencies`]: each round adds the
+/// next level of unreleased dependencies.
+const MAX_DEPENDENCY_ROUNDS: usize = 64;
+
+/// Adds the in-work revisions of all unreleased dependencies – and, level by
+/// level, their own unreleased dependencies – to a draft change, in one
+/// transaction. Returns the labels of the added revisions.
+pub async fn add_dependencies(
+    pool: &PgPool,
+    actor: &Actor,
+    change_id: Uuid,
+) -> AppResult<Vec<String>> {
+    let mut tx = pool.begin().await?;
+    let change = lock(&mut tx, change_id).await?;
+    ensure_owner(&change, actor)?;
+    ensure_status(&change, &[ChangeStatus::Draft])?;
+    let mut added = Vec::new();
+    for _ in 0..MAX_DEPENDENCY_ROUNDS {
+        let ids = readiness::check(&mut tx, change_id)
+            .await?
+            .addable_blockers();
+        if ids.is_empty() {
+            break;
+        }
+        let mut progress = false;
+        for id in ids {
+            // A dependency of another project group (e.g. a shared library
+            // part) is left for its members; it stays a blocker, but does
+            // not stop the others from being added.
+            let rev = revisions::lock(&mut tx, id).await?;
+            if revisions::ensure_project_access(&rev, actor).is_err() {
+                continue;
+            }
+            if add_item_tx(&mut tx, actor, &change, id).await? {
+                progress = true;
+                added.push(revisions::label(&rev));
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+    tx.commit().await?;
+    Ok(added)
 }
 
 pub async fn remove_item(
@@ -611,6 +677,17 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
                 )));
             }
         }
+    }
+    let ready = readiness::check(&mut tx, change_id).await?;
+    if !ready.is_ready() {
+        return Err(AppError::Conflict(format!(
+            "{} cannot be submitted: {} not released – {}. Add {} to this change or release {} first.",
+            change.number,
+            if ready.blockers.len() == 1 { "a dependency is" } else { "dependencies are" },
+            ready.blocker_summary(),
+            if ready.blockers.len() == 1 { "it" } else { "them" },
+            if ready.blockers.len() == 1 { "it" } else { "them" },
+        )));
     }
     let labels = transition_items(&mut tx, change_id, LifecycleState::InReview).await?;
     reset_reviews(&mut tx, change_id).await?;

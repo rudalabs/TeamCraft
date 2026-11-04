@@ -11,10 +11,12 @@
 - [BOM, references and change propagation](guide/structure.md)
 - [Change requests, change orders and notifications](guide/changes.md)
 - [Desktop app](guide/desktop.md)
+- [Ask TeamCraft (assistant)](guide/assistant.md)
 - [Manual test tour](guide/tour.md)
 
 # Administration
 
+- [Install with Docker](admin/docker.md)
 - [Configuration](admin/configuration.md)
 - [Users, roles and single sign-on](admin/users.md)
 - [Operations](admin/operations.md)
@@ -23,6 +25,7 @@
 
 - [Supported file formats](reference/formats.md)
 - [REST API](reference/api.md)
+- [MCP server (AI assistants)](reference/mcp.md)
 - [Architecture](reference/architecture.md)
 - [FieldCraft and SolidCraft](reference/interop.md)
 - [Evaluation of other PLM systems](reference/evaluation.md)

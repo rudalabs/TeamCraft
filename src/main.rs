@@ -38,6 +38,19 @@ enum Command {
     },
     /// Apply pending database migrations and exit.
     Migrate,
+    /// Write a backup of the database and the file vault into a directory.
+    Backup {
+        /// Target directory; it must not exist or be empty.
+        dir: std::path::PathBuf,
+    },
+    /// Restore the database and the file vault from a backup directory.
+    Restore {
+        /// Directory written by `teamcraft backup`.
+        dir: std::path::PathBuf,
+        /// Replace the contents of a database that already contains tables.
+        #[arg(long)]
+        force: bool,
+    },
     /// Manage local user accounts.
     User {
         #[command(subcommand)]
@@ -47,6 +60,21 @@ enum Command {
     Vault {
         #[command(subcommand)]
         command: VaultCommand,
+    },
+    /// Bridge an MCP client that speaks stdio (e.g. Claude Desktop) to the
+    /// MCP endpoint of a TeamCraft server. The personal access token is read
+    /// from TEAMCRAFT_TOKEN or --token-file.
+    Mcp {
+        /// Base URL of the TeamCraft server.
+        #[arg(
+            long,
+            env = "TEAMCRAFT_SERVER",
+            default_value = "http://localhost:8080"
+        )]
+        server: String,
+        /// File that contains the personal access token (instead of TEAMCRAFT_TOKEN).
+        #[arg(long)]
+        token_file: Option<std::path::PathBuf>,
     },
     /// Exit with status 0 if the server answers on /healthz (for container health checks).
     Healthcheck {
@@ -128,8 +156,11 @@ async fn main() -> ExitCode {
     let result = match cli.command.unwrap_or(Command::Serve { no_migrate: false }) {
         Command::PreviewMesh { .. } => unreachable!("handled above"),
         Command::Healthcheck { addr } => return healthcheck(addr),
+        Command::Mcp { server, token_file } => mcp_bridge(&server, token_file.as_deref()).await,
         Command::Serve { no_migrate } => serve(no_migrate).await,
         Command::Migrate => migrate().await,
+        Command::Backup { dir } => backup_command(dir),
+        Command::Restore { dir, force } => restore_command(dir, force).await,
         Command::User { command } => user_command(command).await,
         Command::Vault { command } => vault_command(command).await,
     };
@@ -283,6 +314,32 @@ async fn migrate() -> Result<ExitCode> {
     let pool = db::connect(&config).await?;
     db::migrate(&pool).await?;
     println!("database schema is up to date");
+    Ok(ExitCode::SUCCESS)
+}
+
+fn backup_command(dir: std::path::PathBuf) -> Result<ExitCode> {
+    let config = load_config()?;
+    let summary = teamcraft::backup::backup(&config, &dir)?;
+    println!(
+        "backup written to '{}': {} vault object(s), {} byte database dump (sha256 {})",
+        dir.display(),
+        summary.vault_objects,
+        summary.db_dump_bytes,
+        summary.db_dump_sha256
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn restore_command(dir: std::path::PathBuf, force: bool) -> Result<ExitCode> {
+    let config = load_config()?;
+    let summary = teamcraft::backup::restore(&config, &dir, force).await?;
+    println!(
+        "restore from '{}' finished: {} vault object(s), {} copied, {} already present",
+        dir.display(),
+        summary.vault_objects,
+        summary.copied,
+        summary.skipped
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -453,5 +510,241 @@ fn healthcheck(addr: Option<String>) -> ExitCode {
             eprintln!("unhealthy: {e:#}");
             ExitCode::FAILURE
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `teamcraft mcp`: stdio ↔ Streamable HTTP bridge
+// ---------------------------------------------------------------------------
+
+/// Longest JSON-RPC message (one line) the bridge forwards.
+const MCP_MAX_LINE: usize = 4 * 1024 * 1024;
+
+/// `http://host:8080` (or the full `…/api/v1/mcp`) → the MCP endpoint.
+fn mcp_endpoint(server: &str) -> Result<String> {
+    let base = server.trim().trim_end_matches('/');
+    if !(base.starts_with("http://") || base.starts_with("https://")) {
+        bail!("--server must start with http:// or https://");
+    }
+    Ok(if base.ends_with("/api/v1/mcp") {
+        base.to_string()
+    } else {
+        format!("{base}/api/v1/mcp")
+    })
+}
+
+#[derive(Debug, PartialEq)]
+enum Line {
+    Eof,
+    Text(Vec<u8>),
+    /// Longer than the limit; the rest of the line was skipped.
+    TooLong,
+}
+
+/// Reads one `\n`-terminated line of at most `max` bytes without buffering
+/// more than that.
+async fn read_line_bounded<R>(r: &mut R, max: usize) -> std::io::Result<Line>
+where
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    use tokio::io::AsyncBufReadExt;
+    let mut buf = Vec::new();
+    let mut too_long = false;
+    loop {
+        let chunk = r.fill_buf().await?;
+        if chunk.is_empty() {
+            return Ok(if too_long {
+                Line::TooLong
+            } else if buf.is_empty() {
+                Line::Eof
+            } else {
+                Line::Text(buf)
+            });
+        }
+        let newline = chunk.iter().position(|b| *b == b'\n');
+        let part = &chunk[..newline.unwrap_or(chunk.len())];
+        if !too_long {
+            if buf.len() + part.len() > max {
+                too_long = true;
+                buf = Vec::new();
+            } else {
+                buf.extend_from_slice(part);
+            }
+        }
+        let consumed = newline.map_or(chunk.len(), |i| i + 1);
+        r.consume(consumed);
+        if newline.is_some() {
+            return Ok(if too_long {
+                Line::TooLong
+            } else {
+                Line::Text(buf)
+            });
+        }
+    }
+}
+
+/// The id of a single JSON-RPC request (notifications and batches: `None`).
+fn mcp_request_id(line: &[u8]) -> Option<serde_json::Value> {
+    let v: serde_json::Value = serde_json::from_slice(line).ok()?;
+    v.get("method")?;
+    v.get("id").filter(|id| !id.is_null()).cloned()
+}
+
+fn mcp_error_line(id: serde_json::Value, code: i64, message: &str) -> Vec<u8> {
+    serde_json::json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+        .to_string()
+        .into_bytes()
+}
+
+/// Posts one message; `Ok(None)` = accepted without an answer (202).
+async fn mcp_forward(
+    client: &reqwest::Client,
+    endpoint: &str,
+    token: &str,
+    body: Vec<u8>,
+) -> std::result::Result<Option<Vec<u8>>, String> {
+    let response = client
+        .post(endpoint)
+        .bearer_auth(token)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(
+            reqwest::header::ACCEPT,
+            "application/json, text/event-stream",
+        )
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("TeamCraft is not reachable: {}", e.without_url()))?;
+    let status = response.status();
+    if status == reqwest::StatusCode::ACCEPTED {
+        return Ok(None);
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("reading the answer failed: {}", e.without_url()))?;
+    if status.is_success() {
+        return Ok((!bytes.is_empty()).then(|| bytes.to_vec()));
+    }
+    let detail = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    Err(match status.as_u16() {
+        401 => "TeamCraft rejected the token (401): create a new personal access token on the account page".into(),
+        _ => format!("TeamCraft answered HTTP {status} {detail}").trim().to_string(),
+    })
+}
+
+/// `teamcraft mcp`: newline-delimited JSON-RPC from stdin to
+/// `POST /api/v1/mcp`, answers to stdout. Diagnostics go to stderr; the
+/// token is never printed.
+async fn mcp_bridge(server: &str, token_file: Option<&std::path::Path>) -> Result<ExitCode> {
+    use tokio::io::AsyncWriteExt;
+    let token = match token_file {
+        Some(path) => std::fs::read_to_string(path)
+            .with_context(|| format!("cannot read the token file {}", path.display()))?,
+        None => std::env::var("TEAMCRAFT_TOKEN")
+            .context("set TEAMCRAFT_TOKEN to a personal access token (or pass --token-file)")?,
+    };
+    let token = token.trim().to_string();
+    if token.is_empty() || token.contains(char::is_whitespace) {
+        bail!("the personal access token is empty or malformed");
+    }
+    let endpoint = mcp_endpoint(server)?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(300))
+        .user_agent(concat!("teamcraft-mcp/", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    let mut stdin = tokio::io::BufReader::new(tokio::io::stdin());
+    let mut stdout = tokio::io::stdout();
+    loop {
+        let line = match read_line_bounded(&mut stdin, MCP_MAX_LINE).await? {
+            Line::Eof => break,
+            Line::TooLong => {
+                eprintln!("teamcraft mcp: skipped a message longer than {MCP_MAX_LINE} bytes");
+                Some(mcp_error_line(
+                    serde_json::Value::Null,
+                    -32600,
+                    "message too long",
+                ))
+            }
+            Line::Text(text) if text.iter().all(u8::is_ascii_whitespace) => continue,
+            Line::Text(text) => {
+                let id = mcp_request_id(&text);
+                match mcp_forward(&client, &endpoint, &token, text).await {
+                    Ok(answer) => answer,
+                    Err(message) => {
+                        eprintln!("teamcraft mcp: {message}");
+                        id.map(|id| mcp_error_line(id, -32000, &message))
+                    }
+                }
+            }
+        };
+        if let Some(mut answer) = line {
+            // One message per line: re-encode anything that is not compact.
+            if answer.trim_ascii_end().contains(&b'\n') {
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&answer) {
+                    answer = v.to_string().into_bytes();
+                }
+            }
+            while answer.last().is_some_and(u8::is_ascii_whitespace) {
+                answer.pop();
+            }
+            answer.push(b'\n');
+            stdout.write_all(&answer).await?;
+            stdout.flush().await?;
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mcp_endpoint_accepts_base_or_full_url() {
+        assert_eq!(
+            mcp_endpoint("http://pdm:8080/").unwrap(),
+            "http://pdm:8080/api/v1/mcp"
+        );
+        assert_eq!(
+            mcp_endpoint("https://pdm.example/api/v1/mcp").unwrap(),
+            "https://pdm.example/api/v1/mcp"
+        );
+        assert!(mcp_endpoint("pdm:8080").is_err());
+    }
+
+    #[tokio::test]
+    async fn lines_are_read_with_a_bound() {
+        let mut input: &[u8] = b"{\"a\":1}\nxxxxxxxxxxxx\n{\"b\":2}";
+        assert_eq!(
+            read_line_bounded(&mut input, 8).await.unwrap(),
+            Line::Text(b"{\"a\":1}".to_vec())
+        );
+        assert_eq!(
+            read_line_bounded(&mut input, 8).await.unwrap(),
+            Line::TooLong
+        );
+        assert_eq!(
+            read_line_bounded(&mut input, 8).await.unwrap(),
+            Line::Text(b"{\"b\":2}".to_vec())
+        );
+        assert_eq!(read_line_bounded(&mut input, 8).await.unwrap(), Line::Eof);
+    }
+
+    #[test]
+    fn only_requests_have_an_id_to_answer() {
+        assert_eq!(
+            mcp_request_id(br#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#),
+            Some(serde_json::json!(3))
+        );
+        assert_eq!(
+            mcp_request_id(br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#),
+            None
+        );
+        assert_eq!(mcp_request_id(b"not json"), None);
     }
 }

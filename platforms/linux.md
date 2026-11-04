@@ -1,5 +1,21 @@
 # TeamCraft on Linux
 
+## Just run it: Docker
+
+To use TeamCraft on a Linux server or desktop without building anything:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/rudalabs/TeamCraft/main/deploy/install.sh | bash
+```
+
+TeamCraft and PostgreSQL run as containers from `/opt/teamcraft`
+(`--user`: `~/teamcraft`); running the script again upgrades. Options,
+backups, TLS and uninstalling:
+[Install with Docker](https://rudalabs.github.io/TeamCraft/admin/docker.html).
+The rest of this page builds TeamCraft from source.
+
+## Build from source
+
 Local build and test from the command line. Tested on Arch/CachyOS, Ubuntu
 24.04 and Fedora 41.
 
@@ -9,7 +25,7 @@ Local build and test from the command line. Tested on Arch/CachyOS, Ubuntu
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust (stable)
 ```
 
-PostgreSQL 14 or newer – the simplest way is Docker:
+PostgreSQL 16 or newer – the simplest way is Docker:
 
 ```sh
 sudo pacman -S docker docker-compose          # Arch / CachyOS

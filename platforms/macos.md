@@ -10,7 +10,7 @@ xcode-select --install                                           # compiler and 
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust (stable)
 ```
 
-PostgreSQL 14 or newer – either [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+PostgreSQL 16 or newer – either [Docker Desktop](https://www.docker.com/products/docker-desktop/)
 or Homebrew:
 
 ```sh

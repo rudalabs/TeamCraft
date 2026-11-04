@@ -1,4 +1,5 @@
-# PostgreSQL for local development and tests – not a production setup.
+# PostgreSQL for local development and tests – not a production setup
+# (that is deploy/docker-compose.yml, installed by deploy/install.sh).
 #
 #   docker compose up -d db     start (data stays in the named volume)
 #   docker compose ps           status

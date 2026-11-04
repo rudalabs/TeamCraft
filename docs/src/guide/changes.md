@@ -73,6 +73,25 @@ priority and reviewers.
    the accepted change requests the change implements become *implemented*.
    A rejection sends them back to *WIP*; fix, *reopen* and resubmit – or *cancel* the change (takes effect at once).
 
+### Release readiness
+
+A change releases a whole product at once. Before it can be submitted,
+every revision in it is checked against what it depends on:
+
+| Dependency | Not released and not in this change | Obsolete |
+|---|---|---|
+| BOM lines | blocks the submit | warning |
+| item references (drawing, specification, reference) | blocks the submit | warning |
+| CAD file references (found by the file scan) | warning | warning |
+
+The *Release readiness* card of a draft change lists them. *Add* puts a
+single in-work revision into the change. *Add all to this change* adds
+all of them, and level by level their own unreleased dependencies, in one
+step. Dependencies that are in review in another change have to be
+released there first. Dependencies of a project group you are not a member
+of are skipped by *Add all*; a member has to add or release them. The desktop app does the same with *Include
+unreleased dependencies* in the *Release…* dialog (on by default).
+
 ## Notifications
 
 The bell lists review requests, decisions, releases, checks needed, change

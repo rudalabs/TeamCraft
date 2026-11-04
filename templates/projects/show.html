@@ -95,4 +95,35 @@
     {% endif %}
   </section>
 </div>
+
+<section class="card" id="numbering">
+  <h2>Item numbers</h2>
+  <p>Scheme <span class="mono">{{ numbering.scheme }}</span>
+    {% if previewing %}<span class="badge badge-in_work">preview – not saved</span>{% elif not project.number_scheme %}<span class="muted small">(built-in default)</span>{% endif %}</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Item type</th><th>Next generated number</th></tr></thead>
+    <tbody>
+    {% for n in numbering.next %}<tr><td>{{ n.label }}</td><td class="mono">{{ n.number }}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if can_manage %}
+  <form class="stack" method="post" action="/projects/{{ project.id }}/numbering">
+    {% if scheme_error %}<div class="flash flash-error" role="alert">{{ scheme_error }}</div>{% endif %}
+    <label>Numbering scheme <span class="hint">empty = {{ default_scheme }}</span>
+      <input class="mono" type="text" name="scheme" value="{{ scheme_input }}" maxlength="100" placeholder="{{ default_scheme }}" autocomplete="off">
+    </label>
+    <div class="actions">
+      <button type="submit" formmethod="get" formaction="/projects/{{ project.id }}#numbering">Preview</button>
+      <button class="primary" type="submit">Save</button>
+    </div>
+  </form>
+  {% endif %}
+  <p class="hint">Placeholders: <span class="mono">{PROJECT}</span> project code, <span class="mono">{TYPE}</span> PRT/ASM/DOC/SW,
+    <span class="mono">{YYYY}</span>, <span class="mono">{YY}</span>, <span class="mono">{MM}</span> creation date (UTC) and
+    <span class="mono">{SEQ:n}</span> the sequence with <em>n</em> digits, e.g. <span class="mono">{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}</span>.
+    Each expansion counts on its own (a scheme with <span class="mono">{YYYY}</span> starts at 1 every year). The scheme applies to new items
+    created here, in the BOM import and by “Save as”; numbers typed in by hand and existing items keep their numbers.</p>
+</section>
 {% endblock %}

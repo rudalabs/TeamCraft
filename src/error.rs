@@ -25,6 +25,10 @@ pub enum AppError {
     Unauthorized,
     #[error("{0}")]
     PayloadTooLarge(String),
+    /// An external service the request depends on failed or is busy
+    /// (`503`); the message is shown to the user, nothing is reported.
+    #[error("{0}")]
+    Unavailable(String),
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("I/O error: {0}")]
@@ -58,6 +62,7 @@ impl AppError {
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            AppError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::Database(sqlx::Error::RowNotFound) => StatusCode::NOT_FOUND,
             AppError::Database(_)
             | AppError::Io(_)
@@ -74,6 +79,7 @@ impl AppError {
             AppError::Forbidden(_) => "forbidden",
             AppError::Unauthorized => "unauthorized",
             AppError::PayloadTooLarge(_) => "payload_too_large",
+            AppError::Unavailable(_) => "unavailable",
             AppError::Database(sqlx::Error::RowNotFound) => "not_found",
             AppError::Database(_)
             | AppError::Io(_)
@@ -110,7 +116,7 @@ impl AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status();
-        if status.is_server_error() {
+        if status.is_server_error() && !matches!(self, AppError::Unavailable(_)) {
             tracing::error!(error = %self, "request failed");
             crate::notify::report_error(&self.to_string());
         }

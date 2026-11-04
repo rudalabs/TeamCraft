@@ -28,8 +28,11 @@ say plainly which checks ran and which did not.
 
 ## Hard rules
 
-* **Never build container images** – no `docker build`, `docker compose build`,
-  `docker compose up --build`.
+* **Never build container images locally** – no `docker build`, `docker buildx`,
+  `docker compose build`, `docker compose up --build`. The `Dockerfile` and
+  `deploy/` may be edited; the image is built only by GitHub Actions
+  (`release.yml`: build-only on pull requests, published to ghcr.io only for
+  pushes to `main` (`:edge`) and `v*` tags).
 * **Python** only as script files in `./local/`, run with
   `.venv/bin/python ./local/<script>.py` – the user reviews every script. No `python -c`.
 * **Secrets** live only in `secrets/` (git-ignored as a whole). Never print
@@ -42,8 +45,13 @@ say plainly which checks ran and which did not.
   The project runs in `dontAsk` mode – never work around a denied command.
 * No organisation-specific names, logos, seed data or deployment files,
   and nothing that resembles Siemens Teamcenter or Microsoft Teams branding.
-* Do not create downloadable/installable releases (no installer or image
-  publishing in CI) until the user asks for it.
+* Releases: `.github/workflows/release.yml` builds the server binaries and
+  desktop installers as artifacts on every push to `main`, publishes the
+  container image `ghcr.io/rudalabs/teamcraft` (`:edge` from `main`,
+  `:<version>`/`:latest` from tags) and a GitHub Release for a `v*` tag
+  (CONTRIBUTING.md, "Releases and versions"). Never push a tag, bump the
+  version or publish anything else (package registries) unless the user asks
+  for that release.
 
 ## Git rules
 
@@ -69,27 +77,34 @@ committed and pushed right away – before the implementation starts.
 ## Architecture
 
 ```text
-src/main.rs        CLI (clap): serve (default), migrate, user, vault check, healthcheck, preview-mesh (hidden)
+src/main.rs        CLI (clap): serve (default), migrate, user, vault check, healthcheck, mcp (stdio bridge), preview-mesh (hidden)
 src/lib.rs         AppState, router (healthz/readyz, /api/v1, web UI), security headers, tracing
 src/config.rs      env configuration; every variable also as NAME_FILE; all optional for local use
-src/domain.rs      pure rules: Role, ItemType, LifecycleState, ChangeStatus, revision letters, skins, validation
+src/domain.rs      pure rules: Role, ItemType, LifecycleState, ChangeStatus, revision letters, numbering schemes, skins, validation
 src/services/      business logic – the only code that writes to the database
                    (explorer.rs: vault explorer listing; projects.rs: self-service groups with managers;
                     references.rs: item and CAD file references; impacts.rs: change propagation to dependents;
                     notifications.rs: in-app notifications, watch lists, settings – created in the event's transaction;
-                    imports.rs: BOM import – one plan for preview and import, one transaction; staged_imports for the web flow)
+                    imports.rs: BOM import – one plan for preview and import, one transaction; staged_imports for the web flow;
+                    insights.rs: read-only BOM health check and duplicate files)
 src/web/           HTML handlers (cookie sessions, flash messages, CSRF origin check, error pages,
                    explorer.rs = /vault, auth_pages.rs incl. first-start /setup, imports.rs = BOM import)
 src/api/           JSON REST API (bearer tokens only, never cookies)
+src/mcp/           MCP server at POST /api/v1/mcp (stateless JSON-RPC, bearer PAT); tools.rs = tools + prompts
+                   over services::* (read-mostly, writes only draft changes); `teamcraft mcp` = stdio bridge in main.rs
 src/auth.rs        Argon2 passwords, tokens, cookies, WebUser/ApiUser extractors
 src/oidc.rs        OIDC authorization code + PKCE (any provider), group → role mapping
+src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over the Anthropic Messages API (reqwest, no SDK)
+                   with the MCP tools, Transport/Tools traits (fake in tests), markdown-lite → safe HTML;
+                   services/assistant.rs runs it for a user and writes the audit record (no content)
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck) → TCMESH01
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
 src/textindex.rs   text extraction from uploads for the full-text search
 src/cadformat.rs   file formats of CAD/BIM/DCC/mesh/point-cloud programs, stored in files.format
 src/cadrefs.rs     file names referenced inside CAD files (assemblies, drawings, STEP, KiCad) for reference tracking
-src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks files (OLE via cfb, PNG or DIB → BMP), cached in previews/
+src/nxpart.rs      NX part stream container (SPLMSSTR): directory, reference streams, preview stream – read with seeks
+src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/
 src/bomtable.rs    BOM tables exported by CAD programs (CSV/TSV, Excel, ODS): header synonyms, levels, units – heuristic
 src/stepbom.rs     product structure of STEP assemblies (own Part 21 reader: PRODUCT … NEXT_ASSEMBLY_USAGE_OCCURRENCE) → BomTable
 src/assets.rs      embedded CSS/JS/logos/fonts, cache busting (?v=<asset hash>, ETag)
@@ -102,7 +117,10 @@ tests/             end-to-end tests; tests/common creates a temporary database (
 tests/fixtures/cad openly licensed NIST CAD files (Inventor, NX, SolidWorks, Creo, CATIA V5, STEP) with manifest.tsv, checked by tests/cad_fixtures.rs
 docs/              mdBook documentation (Doxygen-style theme in docs/theme/), published with rustdoc via GitHub Pages
 platforms/         short build-and-test guides: linux.md, macos.md, windows.md
-.github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 14/17, macOS/Windows builds), docs.yml, desktop.yml
+Dockerfile         server image (rust builder → distroless/cc, non-root, HEALTHCHECK), built by CI only
+deploy/            production Docker install: docker-compose.yml (teamcraft + postgres), teamcraft.env.example, install.sh
+.github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 16/18, macOS/Windows builds), docs.yml, desktop.yml,
+                   release.yml (binaries, installers, image + Docker install smoke test)
 desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part of the server build)
 ```
 
