@@ -1,17 +1,21 @@
 # Open work
 
 Status of the Prio-1 work plan (worked through in this order) and the known
-gaps. Last update: 2026-11-03.
+gaps. Last update: 2026-11-04.
 
 ## Done
 
 | # | Feature | Commit |
 |---|---------|--------|
-| – | File formats of all common CAD programs | `c60bed0` |
-| 1 | Assembly/reference tracking with change propagation | `bb4e28b` |
-| 2 | Notifications: bell, page, API, e-mail (SMTP), Mattermost, watch lists, per-user opt-out, desktop | `4e428c8` |
-| 3a | Pack and Go ZIP (files + `bom.csv` + `manifest.json`), STL export from the 3D viewer | `fdcb626` |
-| 3b | CSV/Excel BOM import: reader (`src/bomtable.rs`), service (`src/services/imports.rs`), web UI (upload → preview → import), REST API, unit and integration tests, docs | this commit and `2633664` |
+| – | File formats of all common CAD programs | `70a7f8d` |
+| 1 | Assembly/reference tracking with change propagation | `a79cde1` |
+| 2 | Notifications: bell, page, API, e-mail (SMTP), Mattermost, watch lists, per-user opt-out, desktop | `1218faa` |
+| 3a | Pack and Go ZIP (files + `bom.csv` + `manifest.json`), STL export from the 3D viewer | `e1065f7` |
+| – | Open-source release: pure-Rust 3D preview (`src/mesh.rs`, truck for STEP), 130+ formats, no WARR branding/seeds/GitLab, self-service project groups | `2e3cbe2` |
+| – | Vault explorer (`/vault`), immediate cancel buttons, upload progress with cancel, no start-up hangs | `1288741` |
+| – | First start without configuration (create the administrator in the browser) | `931ab77` |
+| – | mdBook docs with Doxygen-style theme + rustdoc on GitHub Pages, `platforms/` guides, GitHub CI, new README | `7db3670` |
+| 3b | CSV/Excel BOM import: reader (`src/bomtable.rs`), service (`src/services/imports.rs`), web UI (upload → preview → import), REST API, unit and integration tests, docs | `921deb0`, `45333f2` |
 
 ## Open – feature 3 (BOM from CAD)
 
@@ -48,10 +52,13 @@ gaps. Last update: 2026-11-03.
 - The STEP file is attached to the new root revision. Staging for the web
   flow: `staged_imports` already has the `sha256` column and the kind `step`
   (store the upload in the vault, not in the row).
-- Research result: `ruststep` 0.4 (Apache-2.0) rejected – outdated
-  dependencies (derive_more 0.99, itertools 0.10, thiserror 1, unmaintained
-  Inflector) and a heavy proc-macro schema layer; `occt-import-js` is not
-  enough (runs in the browser only, gives names but no product structure).
+- Research result: `ruststep` 0.4 (Apache-2.0) rejected as a direct
+  dependency – outdated dependencies (derive_more 0.99, itertools 0.10,
+  thiserror 1, unmaintained Inflector) and a heavy proc-macro schema layer.
+  Note: the 3D preview now uses `truck-stepio`, which pulls in `ruststep`
+  anyway; its `Table` gives the shells but no product structure, so the own
+  Part 21 reader for `PRODUCT` / `NEXT_ASSEMBLY_USAGE_OCCURRENCE` is still
+  the plan.
 
 ## Open – features 4 to 9 (not started)
 
@@ -80,11 +87,23 @@ in the README licence table, follow the definition of done in `CLAUDE.md`.
 
 ## Known gaps outside the plan
 
-- `DEPLOYMENT.md` was deleted on purpose, but `README.md`, `CLAUDE.md`
-  (conventions: "the table in DEPLOYMENT.md §7"), `LOCAL_TESTING.md`,
-  `.gitlab-ci.yml` and `src/web/mod.rs` still mention it – the references
-  should be removed or pointed to the README (maintainer's decision).
-- The macOS build of the desktop app in CI was not checked.
+- **README screenshots / GIFs** are missing: they need a browser session
+  (Claude in Chrome was not connected). Planned: dashboard, vault explorer,
+  revision page, 3D viewer (STEP), BOM page, desktop app; store them in
+  `docs/src/images/` and use them in the README and the book.
+- **Docs site:** `mdbook build docs` could not be run locally; the first
+  real build is the `Docs` workflow. GitHub Pages has to be enabled once
+  (*Settings → Pages → Source: GitHub Actions*).
+- **CI:** the new workflows (`ci.yml`, `docs.yml`, `desktop.yml`) have not
+  run yet; the macOS and Windows builds of server and desktop app are
+  unverified.
+- **3D preview:** STEP is read with truck (planes, B-splines, cylinders, …);
+  real exports of the CAD programs were not tested, and assembly placements
+  (`mapped_item`) may be ignored – parts of an assembly can then overlap.
+  IGES, BREP, Parasolid, JT, FBX, DAE, USD and E57 are recognised but not
+  previewed (no pure-Rust readers yet; candidates: `e57` crate for E57).
+- **Desktop app:** long operations (check-in upload, Pack and Go) cannot be
+  cancelled half-way yet; only the browser sign-in can.
 - CAD file reference scanning (`src/cadrefs.rs`) is a heuristic and was not
   tested with real files of the CAD programs.
 - E-mail (SMTP) and Mattermost delivery were only tested against fakes, not
