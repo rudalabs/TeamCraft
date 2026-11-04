@@ -818,7 +818,8 @@
       clear(toolbar);
       if (tab.kind === "change") renderChange(tab, body, toolbar);
       else renderRevision(tab, body, toolbar);
-    }, function (err) {
+    }).catch(function (err) {
+      // a failed load or a bug while rendering: never leave an empty tab
       if (state.active !== tab.key) return;
       clear(body);
       body.appendChild(h("p.notice.error", { text: errorText(err) }));
@@ -1147,7 +1148,7 @@
     append(toolbar, [
       tool("Check out", "checkout", function () { doCheckout(tab); }, { primary: can.checkout, disabled: !can.checkout, title: "Take the lock and copy the files into your workspace" }),
       tool("Check in…", "checkin", function () { checkinDialog(tab); }, { disabled: !can.checkin, title: "Upload changed files from the workspace and release the lock" }),
-      tool(rev.checked_out_by && rev.checked_out_by !== me.id ? "Force unlock" : "Cancel check-out", "cancel", function () { doCancelCheckout(tab); }, { disabled: !can.cancel }),
+      tool(rev.checked_out_by && rev.checked_out_by !== state.me.id ? "Force unlock" : "Cancel check-out", "cancel", function () { doCancelCheckout(tab); }, { disabled: !can.cancel }),
       h("span.sep"),
       tool("Edit", "edit", function () { editDialog(tab); }, { disabled: !can.edit, title: "Edit the attributes (requires the check-out)" }),
       tool("Release…", "release", function () { releaseDialog(tab); }, { disabled: !can.release, title: "Create a change order with reviewers and submit it" }),
