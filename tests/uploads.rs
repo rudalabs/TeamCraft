@@ -532,6 +532,133 @@ async fn check_in_with_chunked_files_keeps_the_base_guard() {
 }
 
 #[tokio::test]
+async fn concurrent_chunks_at_one_offset_are_serialised() {
+    let app = app_or_skip!();
+    let (_, max) = app.user_in("max", Role::Editor, &["ROVER"]).await;
+    item(&app, &max).await;
+    let r = start(
+        &app,
+        &max,
+        json!({ "item": "PRT-000001", "revision": "A", "filename": "twice.bin",
+                "size": 8, "sha256": sha(b"aaaabbbb") }),
+    )
+    .await;
+    let id = r.json()["id"].as_str().unwrap().to_string();
+    // Two clients (or a retry racing its original) send a chunk at offset 0
+    // at the same time: the row lock lets exactly one of them through.
+    let (a, b) = tokio::join!(
+        patch(&app, &max, &id, 0, b"aaaa"),
+        patch(&app, &max, &id, 0, b"xxxx")
+    );
+    let mut statuses = [a.status, b.status];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::OK, StatusCode::CONFLICT]);
+    let winner: &[u8] = if a.status == StatusCode::OK {
+        b"aaaa"
+    } else {
+        b"xxxx"
+    };
+    assert_eq!(
+        head(&app, &max, &id)
+            .await
+            .header("upload-offset")
+            .as_deref(),
+        Some("4")
+    );
+    assert_eq!(
+        patch(&app, &max, &id, 4, b"bbbb").await.status,
+        StatusCode::OK
+    );
+    let staging = app
+        .vault()
+        .await
+        .uploads_dir()
+        .join(Uuid::parse_str(&id).unwrap().simple().to_string());
+    assert_eq!(std::fs::read(&staging).unwrap(), [winner, b"bbbb"].concat());
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn a_lost_staging_file_is_recovered_or_reset() {
+    let app = app_or_skip!();
+    let (_, max) = app.user_in("max", Role::Editor, &["ROVER"]).await;
+    item(&app, &max).await;
+    let finish = |id: String| {
+        let app = &app;
+        let max = &max;
+        async move {
+            app.api(
+                Method::POST,
+                &format!("/api/v1/uploads/{id}/finish"),
+                max,
+                None,
+            )
+            .await
+        }
+    };
+    let uploads_dir = app.vault().await.uploads_dir();
+    let staging_of = |id: &str| uploads_dir.join(Uuid::parse_str(id).unwrap().simple().to_string());
+    // The content is in the vault already (e.g. an earlier finish moved the
+    // staging file there, then its transaction failed).
+    let r = app
+        .api_multipart(
+            &format!("{REV}/files"),
+            &max,
+            &[("other.bin", b"payload!")],
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+
+    // With the announced SHA-256 the content is recovered from the vault.
+    let r = start(
+        &app,
+        &max,
+        json!({ "item": "PRT-000001", "revision": "A", "filename": "lost.bin",
+                "size": 8, "sha256": sha(b"payload!") }),
+    )
+    .await;
+    let id = r.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        patch(&app, &max, &id, 0, b"payload!").await.status,
+        StatusCode::OK
+    );
+    std::fs::remove_file(staging_of(&id)).unwrap();
+    let r = finish(id.clone()).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+
+    // Without it the upload is reset to offset 0 (409), not wedged with 500s.
+    let r = start(
+        &app,
+        &max,
+        json!({ "item": "PRT-000001", "revision": "A", "filename": "gone.bin", "size": 4 }),
+    )
+    .await;
+    let id = r.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        patch(&app, &max, &id, 0, b"data").await.status,
+        StatusCode::OK
+    );
+    std::fs::remove_file(staging_of(&id)).unwrap();
+    let r = finish(id.clone()).await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+    assert_eq!(
+        head(&app, &max, &id)
+            .await
+            .header("upload-offset")
+            .as_deref(),
+        Some("0")
+    );
+    assert_eq!(
+        patch(&app, &max, &id, 0, b"data").await.status,
+        StatusCode::OK
+    );
+    let r = finish(id).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    app.teardown().await;
+}
+
+#[tokio::test]
 async fn expired_sessions_are_removed() {
     let app = app_or_skip!();
     let (_, max) = app.user_in("max", Role::Editor, &["ROVER"]).await;

@@ -262,8 +262,9 @@ pub async fn create(
     };
 
     let mut tx = pool.begin().await?;
-    // Serialises the quota check of one user.
-    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+    // Serialises the quota check of one user (NO KEY: rows that merely
+    // reference the user, e.g. audit entries, are not blocked).
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE")
         .bind(actor.id)
         .execute(&mut *tx)
         .await?;
@@ -404,20 +405,28 @@ pub async fn complete(
                     session.filename, session.received_bytes, session.total_bytes
                 )));
             }
-            let blob = vault.hash_staged(id).await?;
-            if let Err(e) = verify_content(session.total(), session.sha256.as_deref(), &blob) {
-                vault.create_staging(id).await?;
-                sqlx::query(
-                    "UPDATE upload_sessions SET received_bytes = 0, updated_at = now()
-                     WHERE id = $1",
-                )
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
-                tx.commit().await?;
-                return Err(e);
+            let (blob, staged) = match staged_blob(vault, &session).await {
+                Ok(found) => found,
+                Err(e @ (AppError::BadRequest(_) | AppError::Conflict(_))) => {
+                    // Start over at offset 0 (also clears a recorded hash
+                    // whose blob is missing, so new chunks are accepted).
+                    vault.create_staging(id).await?;
+                    sqlx::query(
+                        "UPDATE upload_sessions
+                         SET received_bytes = 0, stored_sha256 = NULL, updated_at = now()
+                         WHERE id = $1",
+                    )
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+                    tx.commit().await?;
+                    return Err(e);
+                }
+                Err(e) => return Err(e),
+            };
+            if staged {
+                vault.adopt_staged(id, &blob.sha256).await?;
             }
-            vault.adopt_staged(id, &blob.sha256).await?;
             sqlx::query("UPDATE upload_sessions SET stored_sha256 = $2 WHERE id = $1")
                 .bind(id)
                 .bind(&blob.sha256)
@@ -431,6 +440,35 @@ pub async fn complete(
         files::Upload::classify(vault, blob, session.filename.clone(), &session.content_type).await;
     upload.base = session.base();
     Ok(upload)
+}
+
+/// The verified content of a fully received upload and whether its staging
+/// file still has to move into the vault. A staging file that is gone
+/// although all bytes were confirmed was moved into the vault by an earlier
+/// [`complete`] whose transaction then failed (database error, crash): with
+/// an announced SHA-256 that is in the vault the content is recovered,
+/// otherwise the upload has to start over (409).
+async fn staged_blob(vault: &Vault, session: &UploadSession) -> AppResult<(StoredBlob, bool)> {
+    match vault.hash_staged(session.id).await {
+        Ok(blob) => {
+            verify_content(session.total(), session.sha256.as_deref(), &blob)?;
+            Ok((blob, true))
+        }
+        Err(AppError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => match &session.sha256 {
+            Some(sha) if vault.exists(sha).await => Ok((
+                StoredBlob {
+                    sha256: sha.clone(),
+                    size: session.total(),
+                },
+                false,
+            )),
+            _ => Err(AppError::Conflict(format!(
+                "The data of the upload of {} is gone – it was reset, upload it again.",
+                session.filename
+            ))),
+        },
+        Err(e) => Err(e),
+    }
 }
 
 /// Removes sessions whose content became file versions. Best effort: the
