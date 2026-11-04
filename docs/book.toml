@@ -9,8 +9,9 @@ src = "src"
 site-url = "/TeamCraft/"
 git-repository-url = "https://github.com/rudalabs/TeamCraft"
 edit-url-template = "https://github.com/rudalabs/TeamCraft/edit/main/docs/{path}"
+# the Doxygen look is light, also on dark desktops
 default-theme = "light"
-preferred-dark-theme = "navy"
+preferred-dark-theme = "light"
 # Doxygen-style look: title area, tab bar, navigation tree (theme/doxygen.*)
 additional-css = ["theme/doxygen.css"]
 additional-js = ["theme/doxygen.js"]

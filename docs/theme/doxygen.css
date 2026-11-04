@@ -1,11 +1,14 @@
-/* TeamCraft documentation: an mdBook (0.5) dressed like a classic Doxygen
- * site – title area with logo and brief, tab bar, light navigation tree,
- * Doxygen tables, code fragments and footer. The banner and the tab bar are
- * inserted by doxygen.js. Colours after Doxygen's default stylesheet. */
+/* TeamCraft documentation in the look of a classic Doxygen site (e.g. the
+ * RTAB-Map API docs): title area with logo, project number and brief, tab
+ * bar with the search box, navigation tree, page title band, Doxygen tables
+ * and code fragments, and the breadcrumb/footer bar at the bottom.
+ * mdBook 0.5 renders the pages; doxygen.js adds banner, tabs and footer and
+ * moves the search box. The Doxygen look is light only (book.toml). */
 
 :root {
   --dox-title-h: 56px;
   --dox-tabs-h: 36px;
+  --dox-foot-h: 30px;
   --dox-top: calc(var(--dox-title-h) + var(--dox-tabs-h));
   --dox-link: #3d578c;
   --dox-link-visited: #4665a2;
@@ -14,36 +17,63 @@
   --dox-line: #c4cfe5;
   --dox-tree: #f9fafc;
   --dox-tab-text: #283a5d;
-  --dox-tab: linear-gradient(to bottom, #fbfcfe 0%, #e8edf6 48%, #d5ddee 100%);
+  --dox-tab: linear-gradient(to bottom, #fbfcfe 0%, #e8edf6 48%, #d3dbec 100%);
   --dox-tab-active: linear-gradient(to bottom, #6b86bf 0%, #4665a2 50%, #34497a 100%);
+  --dox-header: linear-gradient(to bottom, #ffffff 0%, #f9fafc 60%, #f1f4f9 100%);
   --dox-font: Roboto, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --dox-ui-font: "Lucida Grande", Geneva, Helvetica, Arial, sans-serif;
-  --content-max-width: 960px;
+  --dox-mono: "JetBrains Mono", "DejaVu Sans Mono", Consolas, monospace;
+  --content-max-width: 100%;
+  --sidebar-target-width: 270px;
+  --menu-bar-height: 0px;
 }
 
-html.light {
+/* the same light Doxygen palette for every mdBook theme class */
+html, html.light, html.navy, html.coal, html.ayu, html.rust {
   --bg: #ffffff;
   --fg: #000000;
   --links: var(--dox-link);
   --sidebar-bg: var(--dox-tree);
-  --sidebar-fg: #364149;
+  --sidebar-fg: #283a5d;
+  --sidebar-non-existant: #8a9ab8;
   --sidebar-active: #ffffff;
   --sidebar-spacer: var(--dox-line);
   --sidebar-header-border-color: var(--dox-rule);
-  --inline-code-color: #4665a2;
-  --table-border-color: #2d4068;
-  --table-header-bg: #374f7f;
-  --table-alternate-bg: #f7f8fb;
-  --quote-bg: #f4f6fa;
-  --quote-border: var(--dox-line);
-  --searchbar-bg: #ffffff;
-  --searchbar-border-color: #b6c4df;
-  --searchresults-li-bg: #eef2f9;
-  --search-mark-bg: #c9d6ee;
-  --theme-popup-bg: #f9fafc;
+  --scrollbar: #b6c4df;
   --icons: #4665a2;
   --icons-hover: #283a5d;
+  --inline-code-color: #4665a2;
+  --theme-popup-bg: #f9fafc;
+  --theme-popup-border: var(--dox-line);
+  --theme-hover: #e8edf6;
+  --quote-bg: #f4f6fa;
+  --quote-border: var(--dox-line);
+  --table-border-color: #2d4068;
+  --table-header-bg: #374f7f;
+  --table-alternate-bg: #ffffff;
+  --searchbar-border-color: #b6c4df;
+  --searchbar-bg: #ffffff;
+  --searchbar-fg: #000000;
+  --searchbar-shadow-color: #8a9ab8;
+  --searchresults-header-fg: #364d7c;
+  --searchresults-border-color: var(--dox-line);
+  --searchresults-li-bg: #e8edf6;
+  --search-mark-bg: #ffe08a;
+  --color-scheme: light;
+  color-scheme: light;
+  background: #ffffff;
 }
+
+body { background: #ffffff; color: #000; }
+
+/* ------------------------------------------------------------ mdBook chrome */
+
+#mdbook-menu-bar,
+#mdbook-menu-bar-hover-placeholder,
+.nav-wrapper,
+.nav-wide-wrapper,
+#mdbook-theme-toggle,
+#mdbook-theme-list { display: none !important; }
 
 /* ------------------------------------------------------------------ banner */
 
@@ -60,19 +90,16 @@ html.light {
   height: var(--dox-title-h);
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 14px;
+  padding: 0 10px;
   background: #ffffff;
   border-bottom: 1px solid #5373b4;
   box-sizing: border-box;
-  color: #000;
 }
-
-#dox-titlearea img { width: 40px; height: 40px; }
-#dox-titlearea a { color: inherit; text-decoration: none; display: flex; align-items: center; gap: 12px; }
-#dox-projectname { font: 200% Tahoma, Arial, sans-serif; line-height: 1.1; }
-#dox-projectnumber { font: 50% Tahoma, Arial, sans-serif; margin-left: 4px; color: #50607a; }
-#dox-projectbrief { font: 90% Tahoma, Arial, sans-serif; color: #2d3d5f; }
+#dox-titlearea a { color: #000; text-decoration: none; display: flex; align-items: center; gap: 10px; }
+#dox-titlearea img { width: 42px; height: 42px; }
+#dox-projectname { font: 200% Tahoma, Arial, sans-serif; line-height: 1.15; }
+#dox-projectnumber { font: 50% Tahoma, Arial, sans-serif; margin-left: 6px; }
+#dox-projectbrief { font: 90% Tahoma, Arial, sans-serif; }
 
 #dox-tabs {
   height: var(--dox-tabs-h);
@@ -81,142 +108,231 @@ html.light {
   display: flex;
   align-items: stretch;
   box-sizing: border-box;
-  overflow-x: auto;
-  scrollbar-width: none;
+  padding: 0 10px 0 0;
 }
-
-#dox-tabs ul { display: flex; margin: 0; padding: 0; list-style: none; }
+#dox-tabs ul { display: flex; margin: 0; padding: 0; list-style: none; overflow-x: auto; scrollbar-width: none; }
 #dox-tabs li { display: flex; }
-#dox-tabs a {
+#dox-tabs a,
+#dox-menu-toggle {
   display: flex;
   align-items: center;
-  padding: 0 20px;
-  font-size: 13px;
-  font-weight: bold;
+  padding: 0 14px;
+  font: bold 13px var(--dox-ui-font);
   white-space: nowrap;
   color: var(--dox-tab-text);
   text-decoration: none;
   text-shadow: 0 1px 1px rgb(255 255 255 / 90%);
-  border-right: 1px solid #b6c4df;
+  background: none;
+  border: 0;
+  cursor: pointer;
 }
 #dox-tabs a:hover,
-#dox-tabs li.current a {
+#dox-tabs li.current a,
+#dox-menu-toggle:hover {
   background: var(--dox-tab-active);
   color: #fff;
   text-shadow: 0 1px 1px rgb(0 0 0 / 100%);
 }
 #dox-tabs .dox-spacer { flex: 1; }
 
-/* make room for the fixed banner */
-#mdbook-sidebar { top: var(--dox-top); }
-#mdbook-page-wrapper { padding-top: var(--dox-top); }
-#mdbook-menu-bar.sticky { top: var(--dox-top) !important; }
+/* the search box at the right end of the tab bar, as in Doxygen */
+#dox-search { display: flex; align-items: center; }
+#dox-search #mdbook-searchbar-outer { margin: 0; padding: 0; max-width: none; }
+#dox-search #mdbook-searchbar {
+  width: 210px;
+  height: 22px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 8px 0 24px;
+  font: 13px var(--dox-ui-font);
+  color: #000;
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='10' cy='10' r='6' fill='none' stroke='%23656565' stroke-width='2.4'/%3E%3Cpath d='M15 15l6 6' stroke='%23656565' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat 6px 50% / 13px;
+  border: 0;
+  border-radius: 0.65em;
+  box-shadow: inset 0.5px 0.5px 3px 0 #555;
+  outline: none;
+}
+#dox-search #mdbook-searchbar:focus { box-shadow: inset 0.5px 0.5px 3px 0 #555, 0 0 0 2px #9cafd4; }
+
+/* search results as Doxygen's popup below the search box */
+#mdbook-search-wrapper {
+  position: fixed;
+  top: var(--dox-top);
+  right: 10px;
+  width: min(560px, calc(100vw - 20px));
+  max-height: 70vh;
+  overflow: auto;
+  z-index: 250;
+  margin: 0;
+  padding: 6px 10px;
+  background: #fff;
+  border: 1px solid #8a9ab8;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 22%);
+  font: 13px var(--dox-ui-font);
+  box-sizing: border-box;
+}
+#mdbook-search-wrapper.hidden { display: none; }
+#mdbook-searchresults-outer { border: 0; margin: 0; padding: 0; }
+#mdbook-searchresults a { color: var(--dox-link); }
+
+/* ------------------------------------------------------------- page frame */
+
+#mdbook-sidebar { top: var(--dox-top); bottom: var(--dox-foot-h); }
+#mdbook-page-wrapper { padding-top: var(--dox-top); padding-bottom: var(--dox-foot-h); }
+.page { padding: 0; }
 
 /* ------------------------------------------------------- navigation tree */
 
-html.light #mdbook-sidebar {
+#mdbook-sidebar {
   background: var(--dox-tree);
-  border-right: 1px solid var(--dox-line);
-  font-family: var(--dox-ui-font);
-  font-size: 13px;
+  font: 13px var(--dox-ui-font);
+  border-right: 0;
 }
-html.light #mdbook-sidebar a { color: #283a5d; }
-html.light #mdbook-sidebar a:hover { color: #000; text-decoration: underline; }
-html.light #mdbook-sidebar a.active {
+#mdbook-sidebar .sidebar-scrollbox { padding: 8px 0 8px 6px; }
+#mdbook-sidebar ol { line-height: 1.75; }
+#mdbook-sidebar li { margin: 0; }
+#mdbook-sidebar a { color: #283a5d; text-decoration: none; display: block; padding: 0 8px; }
+#mdbook-sidebar a:hover { text-decoration: underline; }
+#mdbook-sidebar a.active {
   background: var(--dox-tab-active);
   color: #fff !important;
   text-shadow: 0 1px 1px rgb(0 0 0 / 100%);
-  border-radius: 2px;
-  padding: 1px 6px;
-  margin-left: -6px;
+  text-decoration: none;
 }
-html.light #mdbook-sidebar .part-title {
-  color: var(--dox-head);
+/* no "1.2." section numbers – Doxygen shows plain names */
+#mdbook-sidebar strong[aria-hidden="true"] { display: none; }
+#mdbook-sidebar .part-title {
+  margin: 10px 0 2px;
+  padding: 0 8px 2px;
+  color: #000;
   font-weight: bold;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border-bottom: 1px solid var(--dox-line);
-  padding-bottom: 3px;
+  font-size: 13px;
 }
-
-/* the mdBook menu bar becomes Doxygen's light "nav path" strip */
-html.light #mdbook-menu-bar {
-  background: var(--dox-tree);
-  border-bottom: 1px solid var(--dox-line);
+#mdbook-sidebar .part-title::before { content: "▾ "; color: #9cafd4; font-size: 80%; }
+#mdbook-sidebar .chapter-fold-toggle { color: #9cafd4; }
+#mdbook-sidebar .spacer { background: transparent; height: 4px; }
+/* Doxygen's splitter between tree and content */
+#mdbook-sidebar-resize-handle,
+.sidebar-resize-handle {
+  width: 6px;
+  background: linear-gradient(to right, #e8edf6 0%, #d3dbec 50%, #b6c4df 100%);
 }
-html.light .menu-title { font-family: var(--dox-ui-font); font-size: 15px; color: #364149; }
+#mdbook-sidebar-resize-handle .sidebar-resize-indicator,
+.sidebar-resize-handle .sidebar-resize-indicator { display: none; }
 
 /* ---------------------------------------------------------------- content */
 
-html.light .content main {
+#mdbook-content { padding: 0; }
+#mdbook-content main {
+  max-width: none;
+  margin: 0;
+  padding: 0 12px 24px;
   font: 400 14px/22px var(--dox-font);
   color: #000;
 }
-html.light .content a { color: var(--dox-link); text-decoration: none; }
-html.light .content a:visited { color: var(--dox-link-visited); }
-html.light .content a:hover { text-decoration: underline; }
+#mdbook-content main a { color: var(--dox-link); text-decoration: none; }
+#mdbook-content main a:visited { color: var(--dox-link-visited); }
+#mdbook-content main a:hover { text-decoration: underline; }
 
-/* page title like Doxygen's div.header */
-html.light .content main > h1:first-child {
-  font-size: 150%;
-  font-weight: bold;
-  margin: 0 0 18px;
-  padding: 10px 12px 8px;
-  background: var(--dox-tree);
+/* page title like Doxygen's div.header / div.title */
+#mdbook-content main > h1:first-child {
+  margin: 0 -12px 16px;
+  padding: 5px 10px 5px 22px;
+  font: bold 150%/28px var(--dox-font);
+  background: var(--dox-header);
   border-bottom: 1px solid var(--dox-line);
 }
-html.light .content main > h1:first-child a { color: #000; }
+#mdbook-content main > h1:first-child a { color: #000; }
 
-/* h2 like Doxygen's group headers */
-html.light .content main h2 {
+/* group headers */
+#mdbook-content main h2 {
+  margin: 1.75em 0 0.6em;
+  padding: 8px 0 4px;
   font-size: 150%;
   font-weight: normal;
   color: var(--dox-head);
   border-bottom: 1px solid var(--dox-rule);
-  padding: 8px 0 4px;
-  margin-top: 1.75em;
 }
-html.light .content main h3 { color: var(--dox-head); font-size: 120%; }
+#mdbook-content main h3 { color: #000; font-size: 120%; margin-top: 1.4em; }
+#mdbook-content main h2 a, #mdbook-content main h3 a { color: inherit; }
 
 /* tables like Doxygen's markdownTable */
-html.light .content table { border-collapse: collapse; margin: 8px 0 16px; }
-html.light .content table th {
-  background: var(--table-header-bg);
+#mdbook-content main table { border-collapse: collapse; margin: 8px 0 18px; width: auto; }
+#mdbook-content main table th {
+  background: #374f7f;
   color: #fff;
-  font-size: 105%;
-  padding: 5px 8px 4px;
-  border: 1px solid var(--table-border-color);
+  font-size: 110%;
+  padding: 5px 7px 4px;
+  border: 1px solid #2d4068;
+  text-align: left;
 }
-html.light .content table td { border: 1px solid var(--table-border-color); padding: 3px 8px 2px; }
-html.light .content table tbody tr:nth-child(2n) { background: var(--table-alternate-bg); }
+#mdbook-content main table td { border: 1px solid #2d4068; padding: 3px 7px 2px; background: #fff; }
+#mdbook-content main table td code { font-size: 90%; }
 
 /* code like Doxygen's div.fragment */
-html.light .content pre {
+#mdbook-content main pre {
+  margin: 4px 8px 4px 2px;
+  padding: 4px 6px;
   background: #fbfcfd;
   border: 1px solid var(--dox-line);
   border-radius: 0;
+  font: 13px/1.35 var(--dox-mono);
 }
-html.light .content pre > code.hljs { background: transparent; }
-html.light .content :not(pre) > code {
-  background: #f4f6fa;
-  border: 1px solid #dde3ef;
-  padding: 0 3px;
+#mdbook-content main pre > code,
+#mdbook-content main pre > code.hljs { background: transparent; color: #000; padding: 0; font-family: var(--dox-mono); }
+#mdbook-content main :not(pre) > code {
+  color: #000;
+  background: transparent;
+  font-family: var(--dox-mono);
+  font-size: 92%;
+  padding: 0;
+}
+#mdbook-content main blockquote {
+  margin: 0 24px 0 4px;
+  padding: 0 12px;
+  background: #f7f8fb;
+  border-left: 2px solid #9cafd4;
 }
 
-/* Doxygen's footer */
-.dox-footer {
-  margin-top: 40px;
-  padding: 8px 4px;
-  border-top: 1px solid var(--dox-line);
-  text-align: right;
-  font: 12px var(--dox-ui-font);
-  color: #2a3d61;
-}
-.dox-footer img { height: 14px; vertical-align: -2px; margin-left: 4px; }
+/* Doxygen's code colours */
+.hljs-keyword, .hljs-selector-tag { color: #008000; }
+.hljs-type, .hljs-built_in, .hljs-class .hljs-title { color: #604020; }
+.hljs-comment, .hljs-quote { color: #800000; font-style: normal; }
+.hljs-string, .hljs-regexp, .hljs-symbol { color: #002080; }
+.hljs-number, .hljs-literal { color: #008080; }
+.hljs-meta, .hljs-attr, .hljs-attribute { color: #806020; }
+.hljs-title, .hljs-section { color: #000; font-weight: normal; }
+.hljs-variable, .hljs-template-variable, .hljs-params { color: #000; }
 
-@media (max-width: 640px) {
+/* --------------------------------------------- breadcrumb and footer bar */
+
+#dox-navpath {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--dox-foot-h);
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 15px 0 10px;
+  box-sizing: border-box;
+  background: var(--dox-tab);
+  border-top: 1px solid #c2cde4;
+  font: 11px var(--dox-ui-font);
+  color: #8aa0cc;
+}
+#dox-navpath a { color: #283a5d; font-weight: bold; text-decoration: none; }
+#dox-navpath a:hover { color: #6884bd; }
+#dox-navpath .dox-sep { color: #8aa0cc; padding: 0 2px; }
+#dox-navpath .dox-crumb { color: #364d7c; font-weight: bold; }
+#dox-navpath .dox-generated { margin-left: auto; color: #364d7c; font-size: 8pt; white-space: nowrap; }
+
+@media (max-width: 720px) {
   :root { --dox-title-h: 48px; }
   #dox-projectbrief { display: none; }
-  #dox-tabs a { padding: 0 12px; }
+  #dox-tabs a { padding: 0 10px; }
+  #dox-search #mdbook-searchbar { width: 130px; }
+  #dox-navpath .dox-generated { display: none; }
 }
