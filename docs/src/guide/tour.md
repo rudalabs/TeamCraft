@@ -1,7 +1,7 @@
 # Manual test tour
 
-A 20-minute walk through every feature on a local server
-(`docker compose up -d db && cargo run`, then <http://localhost:8080>).
+A 20-minute walk through every feature on a local server (`docker compose up -d db && cargo run`,
+then <http://localhost:8080>).
 Use two browsers (or a private window) for the two-person steps.
 
 ## 1. Accounts and project groups
@@ -14,15 +14,15 @@ Use two browsers (or a private window) for the two-person steps.
 
 ## 2. Items, check-out and check-in
 
-1. *Items → New item*: choose `hub.step` and `hub.stl` as files – the name
-   *hub* and the type *part* are filled in; change the name to *Wheel hub*,
+1. *Items → New item*: choose `hub.step` and `hub.stl` as files – the name *hub* and the type *part* are filled in;
+   change the name to *Wheel hub*,
    project group `ROVER`. The item is created with both files; revision A is
    in work and checked out to erika (🔒 badge).
 2. Open **3D** for each file. The STEP model is
    tessellated on the server – try *Download STL*.
 3. *Vault → My check-outs*: the item is listed; select it, **Check in** a
-   changed `hub.step` with a comment. The upload shows a progress bar; try
-   **Cancel upload** on a large file – nothing changes.
+   changed `hub.step` with a comment. The upload shows a progress bar; try **Cancel upload** on a large file – nothing
+   changes.
 4. As **rolf**: the item is read-only while erika holds the lock; after the
    check-in rolf can *Check out*. **Cancel check-out** releases it at once.
 

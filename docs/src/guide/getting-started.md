@@ -28,7 +28,7 @@ installations and the desktop app:
    manages the group and adds the team members.
 3. **Users** (admins): create accounts for your team, or connect single
    sign-on (see [Users, roles and SSO](../admin/users.md)).
-4. **Items → New item**: choose the CAD file(s) first – the model, its
+4. **Items → New item**: choose the CAD file (s) first – the model, its
    drawing and a STEP export for the 3D preview. Name and type are taken from
    the first file (an assembly for `.iam`, `.asm`, `.sldasm`, …). The item is
    created together with its files; its first revision *A* is *in work* and
@@ -44,12 +44,12 @@ teamcraft user create --username admin --role admin      # prompts for the passw
 
 ## Command line
 
-| Command | Purpose |
-|---|---|
-| `teamcraft` / `teamcraft serve` | run the web server (applies migrations) |
-| `teamcraft migrate` | apply migrations and exit |
-| `teamcraft user create --username U --role viewer\|editor\|admin [--project CODE]` | local account |
-| `teamcraft user set-password --username U` | reset a password |
-| `teamcraft user list` | all accounts |
-| `teamcraft vault check [--verify-hashes]` | every stored file present (and intact)? |
-| `teamcraft healthcheck` | exit 0 when the server answers on `/healthz` |
+| Command                                                                            | Purpose                                      |
+|------------------------------------------------------------------------------------|----------------------------------------------|
+| `teamcraft` / `teamcraft serve`                                                    | run the web server (applies migrations)      |
+| `teamcraft migrate`                                                                | apply migrations and exit                    |
+| `teamcraft user create --username U --role viewer\|editor\|admin [--project CODE]` | local account                                |
+| `teamcraft user set-password --username U`                                         | reset a password                             |
+| `teamcraft user list`                                                              | all accounts                                 |
+| `teamcraft vault check [--verify-hashes]`                                          | every stored file present (and intact)?      |
+| `teamcraft healthcheck`                                                            | exit 0 when the server answers on `/healthz` |

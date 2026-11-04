@@ -25,11 +25,11 @@ Meshes, point clouds and STEP models open in a WebGL viewer in the browser
 and in the desktop app. Drag to rotate, wheel or pinch to zoom, arrow keys to
 turn, double-click to reset; *Z up / Y up* switches the convention.
 
-| Previewed | Formats |
-|---|---|
-| B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`) |
-| Meshes | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS |
-| Point clouds | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces |
+| Previewed           | Formats                                                          |
+|---------------------|------------------------------------------------------------------|
+| B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                   |
+| Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS |
+| Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces          |
 
 The server converts a file **once**, in a separate process with a time limit,
 and caches the result next to the vault; uploads start the conversion in the

@@ -57,9 +57,8 @@ release yet; the database schema is migrated automatically between versions.
   after ASME Y14.35; released data never changes, the next revision does.
 - **Change orders.** Collect revisions, assign reviewers, four-eyes approval,
   all revisions released atomically, impact analysis before approval.
-- **Structure.** Multi-level BOM with mass and cost roll-up, revision rules
-  *latest*, *latest released* and *as released*, where-used, CSV export and
-  *Pack and Go* ZIP of a whole assembly.
+- **Structure.** Multi-level BOM with mass and cost roll-up, revision rules *latest*, *latest released* and *as
+  released*, where-used, CSV export and *Pack and Go* ZIP of a whole assembly.
 - **BOM import.** Items and multi-level BOMs from the BOM tables of CAD
   programs (Inventor, SolidWorks, Solid Edge, Fusion, Creo, NX, hand-made
   lists) as CSV/TSV, Excel or OpenDocument – English and German columns,
@@ -94,8 +93,8 @@ docker compose up -d db     # PostgreSQL on 127.0.0.1, no password needed
 cargo run --release         # applies the migrations, serves http://localhost:8080
 ```
 
-Open <http://localhost:8080> and create the administrator on the login page
-(offered once, while the server listens on localhost). Then *Projects → New
+Open <http://localhost:8080> and create the administrator on the login page (offered once, while the server listens on
+localhost). Then *Projects → New
 project group*, *Items → New item* with a STEP file, and open it in 3D.
 
 No configuration is needed for a local test. Step-by-step guides, including
@@ -104,13 +103,13 @@ native PostgreSQL and the desktop app:
 
 ## How it fits together
 
-| Layer | |
-|---|---|
-| `teamcraft` binary | web interface, REST API (`/api/v1`) and CLI in one process; templates, migrations and assets are embedded |
+| Layer                |                                                                                                                    |
+|----------------------|--------------------------------------------------------------------------------------------------------------------|
+| `teamcraft` binary   | web interface, REST API (`/api/v1`) and CLI in one process; templates, migrations and assets are embedded          |
 | `domain`, `services` | the rules and the business logic – permissions, row locks, lifecycle checks and the audit entry in one transaction |
-| `vault` | content-addressed file storage on disk, plus the cached 3D previews |
-| `mesh`, `preview` | pure-Rust readers for meshes, point clouds and STEP |
-| PostgreSQL 14+ | the only external service |
+| `vault`              | content-addressed file storage on disk, plus the cached 3D previews                                                |
+| `mesh`, `preview`    | pure-Rust readers for meshes, point clouds and STEP                                                                |
+| PostgreSQL 14+       | the only external service                                                                                          |
 
 Everything is built by `cargo` – no Node.js, no downloaded browser engines,
 no C++ CAD kernel. Details: [Architecture](https://rudalabs.github.io/TeamCraft/reference/architecture.html).
@@ -129,8 +128,8 @@ curl -s -H "$H" "$API/items?q=hub&system=solidworks"
 
 TeamCraft recognises [SolidCraft](https://github.com/tangency-labs/solidcraft)
 designs (`.sc`, checked by content) and
-[FieldCraft](https://github.com/tangency-labs/fieldcraft) models
-(`.fieldcraft`), and previews their STEP and 3MF exports – keep design,
+[FieldCraft](https://github.com/tangency-labs/fieldcraft) models (`.fieldcraft`), and previews their STEP and 3MF
+exports – keep design,
 export and analysis together in one revision.
 [More](https://rudalabs.github.io/TeamCraft/reference/interop.html).
 
@@ -138,8 +137,8 @@ export and analysis together in one revision.
 
 The documentation is published at **<https://rudalabs.github.io/TeamCraft/>**
 (built from [`docs/`](docs) with mdBook, plus the rustdoc API reference):
-user guide, administration (configuration, SSO, operations) and reference
-(file formats, REST API, architecture). A running server lists its API at
+user guide, administration (configuration, SSO, operations) and reference (file formats, REST API, architecture). A
+running server lists its API at
 `GET /api/v1` and its formats at `/formats`.
 
 ## Contributing
@@ -150,8 +149,8 @@ cargo clippy --all-targets -- -D warnings
 cargo test                  # end-to-end tests need the database: docker compose up -d db
 ```
 
-CI runs the same checks on Linux, macOS and Windows
-([`.github/workflows`](.github/workflows)). Database changes are new numbered
+CI runs the same checks on Linux, macOS and Windows ([`.github/workflows`](.github/workflows)). Database changes are new
+numbered
 files in `migrations/`; every mutation goes through `src/services/`. Open
 work and known gaps are listed in [docs/OPEN_WORK.md](docs/OPEN_WORK.md).
 
@@ -164,19 +163,19 @@ combined with code under other licences in larger works.
 Third-party components (complete list with versions in `Cargo.lock` and
 `desktop/Cargo.lock`):
 
-| Component | Used for | Licence |
-|---|---|---|
-| axum, tower, hyper, tokio | web server, async runtime | MIT |
-| sqlx | PostgreSQL access, migrations | MIT / Apache-2.0 |
-| MiniJinja | HTML templates | Apache-2.0 |
-| truck (truck-stepio, truck-meshalgo) | STEP reading and tessellation | Apache-2.0 |
-| gltf, quick-xml, zip | glTF, 3MF/AMF, Pack and Go | MIT / Apache-2.0 |
-| csv, calamine, encoding_rs | BOM import: CSV, Excel/ODS, Windows-1252 | MIT-Unlicense / MIT / MIT-Apache + BSD-3 |
-| rust_xlsxwriter (tests only) | Excel files for the import tests | MIT / Apache-2.0 |
-| reqwest, rustls, lettre | HTTP client, TLS, e-mail | MIT / Apache-2.0 |
-| argon2, sha2 | password hashing, content hashes | MIT / Apache-2.0 |
-| Tauri 2 | desktop app | MIT / Apache-2.0 |
-| Montserrat, Oswald | fonts | SIL OFL 1.1 |
+| Component                            | Used for                                 | Licence                                  |
+|--------------------------------------|------------------------------------------|------------------------------------------|
+| axum, tower, hyper, tokio            | web server, async runtime                | MIT                                      |
+| sqlx                                 | PostgreSQL access, migrations            | MIT / Apache-2.0                         |
+| MiniJinja                            | HTML templates                           | Apache-2.0                               |
+| truck (truck-stepio, truck-meshalgo) | STEP reading and tessellation            | Apache-2.0                               |
+| gltf, quick-xml, zip                 | glTF, 3MF/AMF, Pack and Go               | MIT / Apache-2.0                         |
+| csv, calamine, encoding_rs           | BOM import: CSV, Excel/ODS, Windows-1252 | MIT-Unlicense / MIT / MIT-Apache + BSD-3 |
+| rust_xlsxwriter (tests only)         | Excel files for the import tests         | MIT / Apache-2.0                         |
+| reqwest, rustls, lettre              | HTTP client, TLS, e-mail                 | MIT / Apache-2.0                         |
+| argon2, sha2                         | password hashing, content hashes         | MIT / Apache-2.0                         |
+| Tauri 2                              | desktop app                              | MIT / Apache-2.0                         |
+| Montserrat, Oswald                   | fonts                                    | SIL OFL 1.1                              |
 
 The distribution logos in `media/icons/` (Arch Linux, CachyOS, EndeavourOS,
 KDE, Kubuntu, openSUSE, Ubuntu) are trademarks of their owners and only

@@ -17,23 +17,23 @@ files and the bill of materials.
   └──reject/withdraw┘
 ```
 
-| Transition | How | Who |
-|---|---|---|
-| WIP → In Review | submit a change order containing the revision | the change's author (CAD editor of the item's project group) or an admin |
-| In Review → Released | automatically when every reviewer approved – all revisions of the change together | the assigned reviewers, never the author (four-eyes principle) |
-| In Review → WIP | a reviewer rejects with a reason, or the author withdraws | reviewers; author or admin |
-| Released → Obsolete | *Mark obsolete* (final) | CAD editors of the project group, admins |
+| Transition           | How                                                                               | Who                                                                      |
+|----------------------|-----------------------------------------------------------------------------------|--------------------------------------------------------------------------|
+| WIP → In Review      | submit a change order containing the revision                                     | the change's author (CAD editor of the item's project group) or an admin |
+| In Review → Released | automatically when every reviewer approved – all revisions of the change together | the assigned reviewers, never the author (four-eyes principle)           |
+| In Review → WIP      | a reviewer rejects with a reason, or the author withdraws                         | reviewers; author or admin                                               |
+| Released → Obsolete  | *Mark obsolete* (final)                                                           | CAD editors of the project group, admins                                 |
 
 Only WIP revisions change, and only while they are checked out. Released
 data never changes – further work happens in a new revision (*Revise*).
 
 ## Project groups and roles
 
-| Role | May |
-|---|---|
-| Viewer | read everything |
+| Role       | May                                                                                                 |
+|------------|-----------------------------------------------------------------------------------------------------|
+| Viewer     | read everything                                                                                     |
 | CAD editor | create and change items of the project groups they belong to, create project groups, review changes |
-| Admin | everything, plus users, all project groups and lock overrides |
+| Admin      | everything, plus users, all project groups and lock overrides                                       |
 
 Every item belongs to a **project group** (a rocket, a rover, a product
 line). CAD editors start their own groups and become their **managers**:

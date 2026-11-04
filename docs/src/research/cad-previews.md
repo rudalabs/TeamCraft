@@ -7,12 +7,12 @@
 
 ## How other PLM systems do it
 
-| System | 2D thumbnail | 3D view |
-|---|---|---|
-| Autodesk Vault | Inventor writes a thumbnail into the file when saving (512 × 512 since Inventor 2023); Vault does not render anything, it extracts that image at check-in | visualization files (DWF/DWFx) published at check-in by the Inventor add-in, or later by the *Job Processor*, which runs a licensed Inventor |
-| Siemens Teamcenter with Solid Edge | the preview stored in the file | the Solid Edge integration (SEEC) writes JT files **through Solid Edge at check-in** – Siemens' recommended practice; the alternative are server-side translation services (Dispatcher) with licensed translators |
-| SolidWorks PDM, PTC Windchill (for comparison) | the preview stream of the file | conversion tasks or CAD workers that run the licensed CAD program |
-| Open-source tools, e.g. [`cad-preview`](https://github.com/cinderblock/cad-preview) (MIT, JavaScript) | read the preview image embedded in the file: Inventor files are OLE compound documents with a PNG in a stream, Solid Edge files OLE compound documents with a Windows DIB thumbnail; old SolidWorks files have a `PreviewPNG` stream, newer ones a 640 × 480 PNG in their own container | none |
+| System                                                                                                | 2D thumbnail                                                                                                                                                                                                                                                                            | 3D view                                                                                                                                                                                                           |
+|-------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Autodesk Vault                                                                                        | Inventor writes a thumbnail into the file when saving (512 × 512 since Inventor 2023); Vault does not render anything, it extracts that image at check-in                                                                                                                               | visualization files (DWF/DWFx) published at check-in by the Inventor add-in, or later by the *Job Processor*, which runs a licensed Inventor                                                                      |
+| Siemens Teamcenter with Solid Edge                                                                    | the preview stored in the file                                                                                                                                                                                                                                                          | the Solid Edge integration (SEEC) writes JT files **through Solid Edge at check-in** – Siemens' recommended practice; the alternative are server-side translation services (Dispatcher) with licensed translators |
+| SolidWorks PDM, PTC Windchill (for comparison)                                                        | the preview stream of the file                                                                                                                                                                                                                                                          | conversion tasks or CAD workers that run the licensed CAD program                                                                                                                                                 |
+| Open-source tools, e.g. [`cad-preview`](https://github.com/cinderblock/cad-preview) (MIT, JavaScript) | read the preview image embedded in the file: Inventor files are OLE compound documents with a PNG in a stream, Solid Edge files OLE compound documents with a Windows DIB thumbnail; old SolidWorks files have a `PreviewPNG` stream, newer ones a 640 × 480 PNG in their own container | none                                                                                                                                                                                                              |
 
 The common pattern:
 
@@ -25,12 +25,12 @@ The common pattern:
 
 ## What is possible for an open-source project
 
-| Option | Feasible? | Decision |
-|---|---|---|
-| Read the embedded preview image on the server | yes – the container is the OLE compound file format documented by Microsoft ([MS-CFB], [MS-OLEPS]); only the image is read (PNG, or a DIB turned into a BMP), no proprietary geometry | **implement** – pure Rust with the `cfb` crate (MIT) |
-| Read the native geometry on the server for a 3D view | no – the formats are undocumented; readers exist only as vendor SDKs (Inventor Server / Design Automation, Parasolid, Solid Edge SDK) under commercial licences that cannot be redistributed with an open-source project, and reverse engineering is excluded by the project rules | **skip** – impossible due to licensing |
-| Conversion server with a licensed CAD program (like the Job Processor or the Dispatcher) | needs a licensed CAD installation that converts for everybody; student and education licences are personal and meant for learning, not for a shared conversion service | **skip** for the open-source project; an organisation with commercial licences can still do it outside TeamCraft (upload the STEP) |
-| Export through the user's own CAD installation in the desktop app (like the Inventor add-in for Vault or SEEC for Teamcenter) | yes – on Windows, when every user has Inventor or Solid Edge installed under their own licence (student licences included, within their terms) | **implement** – the desktop app asks the local CAD program for a STEP export next to the native file; the STEP is checked in with it and shown by TeamCraft's pure-Rust 3D preview |
+| Option                                                                                                                        | Feasible?                                                                                                                                                                                                                                                                          | Decision                                                                                                                                                                           |
+|-------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Read the embedded preview image on the server                                                                                 | yes – the container is the OLE compound file format documented by Microsoft ([MS-CFB], [MS-OLEPS]); only the image is read (PNG, or a DIB turned into a BMP), no proprietary geometry                                                                                              | **implement** – pure Rust with the `cfb` crate (MIT)                                                                                                                               |
+| Read the native geometry on the server for a 3D view                                                                          | no – the formats are undocumented; readers exist only as vendor SDKs (Inventor Server / Design Automation, Parasolid, Solid Edge SDK) under commercial licences that cannot be redistributed with an open-source project, and reverse engineering is excluded by the project rules | **skip** – impossible due to licensing                                                                                                                                             |
+| Conversion server with a licensed CAD program (like the Job Processor or the Dispatcher)                                      | needs a licensed CAD installation that converts for everybody; student and education licences are personal and meant for learning, not for a shared conversion service                                                                                                             | **skip** for the open-source project; an organisation with commercial licences can still do it outside TeamCraft (upload the STEP)                                                 |
+| Export through the user's own CAD installation in the desktop app (like the Inventor add-in for Vault or SEEC for Teamcenter) | yes – on Windows, when every user has Inventor or Solid Edge installed under their own licence (student licences included, within their terms)                                                                                                                                     | **implement** – the desktop app asks the local CAD program for a STEP export next to the native file; the STEP is checked in with it and shown by TeamCraft's pure-Rust 3D preview |
 
 How the desktop export works:
 
@@ -56,8 +56,8 @@ How the desktop export works:
 * **Solid Edge Student Edition** is free for active students and intended for
   academic course work; its files cannot be opened in commercial versions of
   Solid Edge.
-* **Inventor Read-only Mode** (part of every Inventor installation) and
-  **Inventor View** (with Vault or standalone) open files without consuming a
+* **Inventor Read-only Mode** (part of every Inventor installation) and **Inventor View** (with Vault or standalone)
+  open files without consuming a
   licence, but they are viewers – they cannot be automated for exports.
 
 ## Status
@@ -90,8 +90,7 @@ How the desktop export works:
   [Solid Edge Student Edition](https://resources.sw.siemens.com/en-US/download-solid-edge-student-edition),
   [Inventor Read-only Mode](https://help.autodesk.com/cloudhelp/2020/ENU/Inventor-Help/files/GUID-64995BEF-2E8F-4074-BEFC-116D295FC8BD.htm)
 * Container formats: [MS-CFB] Compound File Binary File Format,
-  [MS-OLEPS] Object Linking and Embedding Property Set Data Structures
-  (Microsoft Open Specifications)
+  [MS-OLEPS] Object Linking and Embedding Property Set Data Structures (Microsoft Open Specifications)
 
 [MS-CFB]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb/
 [MS-OLEPS]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-oleps/

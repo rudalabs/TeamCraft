@@ -1,17 +1,17 @@
 # Operations
 
-| Endpoint / command | Purpose |
-|---|---|
-| `GET /healthz` | liveness: the process serves HTTP (`ok`) |
-| `GET /readyz` | readiness: database reachable and vault writable (JSON, 503 otherwise) |
-| `teamcraft healthcheck [--addr host:port]` | exit code of `/healthz`, for container health checks |
-| `teamcraft vault check [--verify-hashes]` | every stored file present (and unchanged) |
-| `teamcraft migrate` | apply migrations without starting the server |
+| Endpoint / command                         | Purpose                                                                |
+|--------------------------------------------|------------------------------------------------------------------------|
+| `GET /healthz`                             | liveness: the process serves HTTP (`ok`)                               |
+| `GET /readyz`                              | readiness: database reachable and vault writable (JSON, 503 otherwise) |
+| `teamcraft healthcheck [--addr host:port]` | exit code of `/healthz`, for container health checks                   |
+| `teamcraft vault check [--verify-hashes]`  | every stored file present (and unchanged)                              |
+| `teamcraft migrate`                        | apply migrations without starting the server                           |
 
 ## Backups
 
-Back up the PostgreSQL database (`pg_dump`) and the vault directory
-(`TEAMCRAFT_VAULT_DIR`) together. The vault is content-addressed and
+Back up the PostgreSQL database (`pg_dump`) and the vault directory (`TEAMCRAFT_VAULT_DIR`) together. The vault is
+content-addressed and
 append-only, so incremental file backups work well; `previews/` inside it is
 a cache and can be left out.
 

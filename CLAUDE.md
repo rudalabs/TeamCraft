@@ -8,19 +8,19 @@ License: MPL-2.0 (`LICENSE`). No organisation-specific branding or deployment.
 
 ## Commands
 
-| Task                   | Command                                                                                     |
-|------------------------|---------------------------------------------------------------------------------------------|
-| Type-check             | `cargo check --all-targets`                                                                 |
-| Format (CI-enforced)   | `cargo fmt --all`                                                                           |
-| Lint (CI-enforced)     | `cargo clippy --all-targets -- -D warnings`                                                 |
-| Unit tests, no DB      | `cargo test --lib`                                                                          |
-| Start the dev database | `docker compose up -d db` (trust auth on 127.0.0.1; status: `docker compose ps`)            |
-| All tests              | `cargo test` (needs the dev database)                                                       |
-| Run the server         | `cargo run` → <http://localhost:8080> (reads the optional `secrets/.env`)                   |
+| Task                   | Command                                                                                                                            |
+|------------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| Type-check             | `cargo check --all-targets`                                                                                                        |
+| Format (CI-enforced)   | `cargo fmt --all`                                                                                                                  |
+| Lint (CI-enforced)     | `cargo clippy --all-targets -- -D warnings`                                                                                        |
+| Unit tests, no DB      | `cargo test --lib`                                                                                                                 |
+| Start the dev database | `docker compose up -d db` (trust auth on 127.0.0.1; status: `docker compose ps`)                                                   |
+| All tests              | `cargo test` (needs the dev database)                                                                                              |
+| Run the server         | `cargo run` → <http://localhost:8080> (reads the optional `secrets/.env`)                                                          |
 | CLI                    | `./target/debug/teamcraft user list`, `… user create --username x --role editor --project ROVER`, `… vault check`, `… healthcheck` |
-| Smoke test             | `curl -s http://localhost:8080/healthz`, `curl -s http://localhost:8080/readyz`             |
-| Rust API docs          | `cargo doc --no-deps --lib`                                                                 |
-| Desktop app            | `cargo run/test/clippy --manifest-path desktop/Cargo.toml` (Linux: WebKitGTK dev packages)  |
+| Smoke test             | `curl -s http://localhost:8080/healthz`, `curl -s http://localhost:8080/readyz`                                                    |
+| Rust API docs          | `cargo doc --no-deps --lib`                                                                                                        |
+| Desktop app            | `cargo run/test/clippy --manifest-path desktop/Cargo.toml` (Linux: WebKitGTK dev packages)                                         |
 
 Start long-running processes (`cargo run`) in the background and stop them when
 done. After code changes run fmt, clippy and the tests before reporting success;

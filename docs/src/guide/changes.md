@@ -11,8 +11,7 @@ priority and reviewers.
 3. Each reviewer **approves** or **rejects** with a reason. The author never
    reviews their own change.
 4. When everybody approved, **all revisions are released together**.
-   A rejection sends them back to *WIP*; fix, *reopen* and resubmit – or
-   *cancel* the change (takes effect at once).
+   A rejection sends them back to *WIP*; fix, *reopen* and resubmit – or *cancel* the change (takes effect at once).
 
 ## Notifications
 

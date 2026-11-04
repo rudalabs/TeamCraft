@@ -18,8 +18,8 @@
 
 * **One binary**: `teamcraft` is web server, REST API and CLI. Templates,
   migrations, stylesheets, scripts, fonts and logos are embedded.
-* **Services** are the only code that writes: they check permissions
-  (`Actor::require`), lock rows (`FOR UPDATE`), validate lifecycle transitions
+* **Services** are the only code that writes: they check permissions (`Actor::require`), lock rows (`FOR UPDATE`),
+  validate lifecycle transitions
   and write the audit entry in the same transaction. Web and API handlers
   are thin and call the same functions.
 * **SQL** uses runtime queries (`sqlx::query_as` + `FromRow`), so building
@@ -34,21 +34,21 @@
 
 ## Source layout
 
-| Path | Contents |
-|---|---|
-| `src/main.rs` | CLI: serve, migrate, user, vault check, healthcheck |
-| `src/lib.rs` | `AppState`, router, health endpoints, security headers |
-| `src/domain.rs` | roles, lifecycle, revision letters, skins, validation |
-| `src/services/` | items, revisions, files, BOM, changes, references, impacts, projects, users, notifications, explorer |
-| `src/web/`, `templates/`, `static/` | HTML interface |
-| `src/api/` | REST API |
-| `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files |
-| `src/mesh.rs`, `src/preview.rs` | 3D readers and the preview cache |
-| `migrations/` | PostgreSQL schema |
-| `tests/` | end-to-end tests, each against its own temporary database |
-| `desktop/` | the Tauri desktop client (separate Cargo project) |
-| `docs/` | this documentation (mdBook) |
-| `platforms/` | build and test guides for Linux, macOS and Windows |
+| Path                                 | Contents                                                                                             |
+|--------------------------------------|------------------------------------------------------------------------------------------------------|
+| `src/main.rs`                        | CLI: serve, migrate, user, vault check, healthcheck                                                  |
+| `src/lib.rs`                         | `AppState`, router, health endpoints, security headers                                               |
+| `src/domain.rs`                      | roles, lifecycle, revision letters, skins, validation                                                |
+| `src/services/`                      | items, revisions, files, BOM, changes, references, impacts, projects, users, notifications, explorer |
+| `src/web/`, `templates/`, `static/`  | HTML interface                                                                                       |
+| `src/api/`                           | REST API                                                                                             |
+| `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
+| `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache                                                                     |
+| `migrations/`                        | PostgreSQL schema                                                                                    |
+| `tests/`                             | end-to-end tests, each against its own temporary database                                            |
+| `desktop/`                           | the Tauri desktop client (separate Cargo project)                                                    |
+| `docs/`                              | this documentation (mdBook)                                                                          |
+| `platforms/`                         | build and test guides for Linux, macOS and Windows                                                   |
 
 ## Pure Rust
 

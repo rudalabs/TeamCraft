@@ -25,17 +25,17 @@ curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/cancel-checkout
 
 ## Main resources
 
-| Resource | Endpoints |
-|---|---|
-| Items | `GET/POST /items`, `GET /items/{number}`, where-used, history, impacts, watch |
-| Revisions | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `revise`, `obsolete` |
-| Files | `POST …/files` (multipart), `GET /files/{id}` (metadata), `/content`, `/versions`, `/restore`, `/mesh` (3D preview) |
-| BOM | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP) |
-| References | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts` |
-| Changes | `GET/POST /changes`, items, reviewers, `submit`, `review`, `withdraw`, `impact` |
-| Projects | `GET/POST /projects`, `GET/POST /projects/{code}/members` |
-| Notifications | `GET /notifications`, `POST /notifications/read`, settings, watches |
-| Formats | `GET /formats` – the recognised CAD programs and formats |
+| Resource      | Endpoints                                                                                                                             |
+|---------------|---------------------------------------------------------------------------------------------------------------------------------------|
+| Items         | `GET/POST /items`, `GET /items/{number}`, where-used, history, impacts, watch                                                         |
+| Revisions     | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `revise`, `obsolete`                  |
+| Files         | `POST …/files` (multipart), `GET /files/{id}` (metadata), `/content`, `/versions`, `/restore`, `/mesh` (3D preview)                   |
+| BOM           | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP) |
+| References    | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
+| Changes       | `GET/POST /changes`, items, reviewers, `submit`, `review`, `withdraw`, `impact`                                                       |
+| Projects      | `GET/POST /projects`, `GET/POST /projects/{code}/members`                                                                             |
+| Notifications | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                   |
+| Formats       | `GET /formats` – the recognised CAD programs and formats                                                                              |
 
 Errors are JSON: `{"error": {"code": "conflict", "message": "…"}}` with the
 matching HTTP status (400, 401, 403, 404, 409, 413, 500).
