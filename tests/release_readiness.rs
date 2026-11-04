@@ -268,3 +268,79 @@ async fn a_change_releases_a_whole_product() {
 
     app.teardown().await;
 }
+
+/// "Add all" skips a dependency of another project group (it stays a
+/// blocker) instead of failing for all of them.
+#[tokio::test]
+async fn add_all_skips_dependencies_of_other_project_groups() {
+    let app = app_or_skip!();
+    let (_, author) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    let (_, other) = app.user_in("otto", Role::Editor, &["ROVER"]).await;
+
+    let bolt = item(&app, &author, "part", "Bolt").await;
+    let top = item(&app, &author, "assembly", "Engine mount").await;
+    let r = post(
+        &app,
+        &other,
+        "/api/v1/items",
+        Some(json!({ "item_type": "part", "name": "Rover wheel", "project": "ROVER" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let wheel = r.json()["item_number"].as_str().unwrap().to_string();
+    for child in [&bolt, &wheel] {
+        let r = post(
+            &app,
+            &author,
+            &format!("/api/v1/items/{top}/revisions/A/bom"),
+            Some(json!({ "child": child, "quantity": 1 })),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    let r = post(
+        &app,
+        &author,
+        "/api/v1/changes",
+        Some(json!({ "title": "Mixed groups" })),
+    )
+    .await;
+    let chg = r.json()["number"].as_str().unwrap().to_string();
+    let r = post(
+        &app,
+        &author,
+        &format!("/api/v1/changes/{chg}/items"),
+        Some(json!({ "item": top })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+
+    let r = post(
+        &app,
+        &author,
+        &format!("/api/v1/changes/{chg}/dependencies"),
+        None,
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let added: Vec<String> = r.json()["added"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(added, vec![format!("{bolt}/A")]);
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/changes/{chg}/readiness"),
+            &author,
+            None,
+        )
+        .await;
+    let ready = r.json();
+    assert_eq!(ready["ready"], false, "{ready}");
+    assert_eq!(numbers(&ready["blockers"]), vec![wheel.clone()]);
+
+    app.teardown().await;
+}

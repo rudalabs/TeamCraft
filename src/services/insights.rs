@@ -170,7 +170,11 @@ pub async fn bom_health(
                         ),
                     ),
                 }
-                if n.children.is_empty() && r.mass_kg.is_none() {
+                // Documents and software carry no mass.
+                if n.children.is_empty()
+                    && r.mass_kg.is_none()
+                    && !matches!(n.item_type.as_str(), "document" | "software")
+                {
                     add(
                         Issue::MissingMass,
                         format!("{}/{} has no mass", n.item_number, r.code),
