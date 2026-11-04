@@ -63,9 +63,38 @@ Migrations run automatically (`teamcraft serve --no-migrate` skips them).
 | `TEAMCRAFT_MATTERMOST_DIRECT`  | `true`: direct messages, `false` (default): mention in the webhook's channel                                          |
 | `MATTERMOST_ERROR_WEBHOOK`     | incoming webhook that receives internal server errors (rate limited)                                                  |
 
+## Assistant (optional)
+
+The built-in assistant ([Ask TeamCraft](../guide/assistant.md)) is off
+until an Anthropic API key is configured. Without a key the buttons are
+hidden and `/assistant` and `POST /api/v1/assistant` answer `404`.
+
+| Variable                        | Default           | Meaning                                                                                       |
+|---------------------------------|-------------------|-----------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_ANTHROPIC_API_KEY`   | –                 | Anthropic API key; enables the assistant. A secret: prefer `_FILE`, it is never logged        |
+| `TEAMCRAFT_ASSISTANT_MODEL`     | `claude-opus-5-5` | Claude model id                                                                               |
+| `TEAMCRAFT_ASSISTANT_MAX_STEPS` | `12`              | most model calls (tool rounds) per question, 1–50                                             |
+
+Fixed limits per question: 16 000 output tokens per model call, 800 000
+tokens in total, 240 seconds, and at most 4 questions running at the same
+time on the server. Each question is recorded in the audit log
+(`assistant.run`: user, quick action, question length, tools used, token
+counts and the outcome – `cancelled` when the client closed the connection
+before the answer – never the question or the answer).
+
 ## Tests
 
 | Variable                      | Meaning                                                                                                                              |
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
 | `TEAMCRAFT_TEST_DATABASE_URL` | server for the integration tests (default: the configuration above); each test creates and drops its own `teamcraft_test_*` database |
 | `TEAMCRAFT_REQUIRE_DB_TESTS`  | fail instead of skipping when no database is reachable (CI)                                                                          |
+
+## MCP stdio bridge (client side)
+
+Only `teamcraft mcp`, the bridge for AI assistants that run on a user's
+machine, reads these. The server does not (see [MCP server](../reference/mcp.md)).
+
+| Variable           | Meaning                                                                         |
+|--------------------|---------------------------------------------------------------------------------|
+| `TEAMCRAFT_SERVER` | base URL of the TeamCraft server (default `http://localhost:8080`)              |
+| `TEAMCRAFT_TOKEN`  | the user's personal access token (or `--token-file`); it is never printed |
