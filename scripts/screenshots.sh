@@ -552,25 +552,26 @@ capture() {
 # TeamCraft Desktop (Tauri) on a virtual X display
 # ---------------------------------------------------------------------------
 #
-# The app has no deep links or start-up options, so it is driven like a user
-# with its own keyboard shortcuts (Ctrl+2 worklist, Ctrl+3 changes, Ctrl+F
-# search) sent by xdotool. The Xvfb display has no window manager: the
+# The app has no deep links or start-up options, so xdotool drives it like a
+# user: its own keyboard shortcut Ctrl+2 (worklist) and clicks on navigator
+# rows at fixed positions. The Xvfb display has no window manager: the
 # 1440x900 window is moved to the top left corner and the whole screen is
 # captured with ImageMagick.
 
 # Pre-seeds a fresh profile exactly where the app keeps it
 # (desktop/src/settings.rs: $XDG_CONFIG_HOME/io.github.rudalabs.teamcraft):
-# server address, a workspace folder in $WORK and a personal access token of
-# admin in the token file (mode 600), so the app starts signed in.
+# the server address and a personal access token of admin in the token file
+# (mode 600), so the app starts signed in.
 desktop_profile() {
     local dir=$WORK/xdg-config/io.github.rudalabs.teamcraft token
-    mkdir -p "$dir" "$WORK/xdg-data" "$WORK/xdg-cache" "$WORK/desktop-workspace"
+    mkdir -p "$dir" "$WORK/xdg-data" "$WORK/xdg-cache"
     chmod 700 "$dir"
     token=$(new_token admin readme-desktop-screenshots)
     mask "$token"
     (umask 077 && printf '%s' "$token" >"$dir/token")
-    jq -n --arg url "$BASE_URL" --arg ws "$WORK/desktop-workspace" \
-        '{server_url: $url, workspace_dir: $ws}' >"$dir/settings.json"
+    # No workspace folder: the status bar shows the default one (nothing is
+    # checked out, so the app never creates it).
+    jq -n --arg url "$BASE_URL" '{server_url: $url}' >"$dir/settings.json"
 }
 
 start_xvfb() {
@@ -646,19 +647,26 @@ capture_desktop() {
     log "  window $win: $(xdotool getwindowgeometry "$win" 2>/dev/null | tr '\n' ' ')"
 
     settle 8 "the start screen"
+    # The rows of the navigator sit at fixed places for the demo data
+    # (1440x900, default zoom); check the images when the layout changes.
+    desktop_click 140 151 # project group ROVER: expand
+    settle 2 "the items of ROVER"
     desktop_snap desktop-home
     desktop_key ctrl+2
     settle 2 "the worklist"
     desktop_snap desktop-worklist
-    desktop_key ctrl+3
-    settle 2 "the change orders"
-    desktop_snap desktop-changes
-    desktop_key ctrl+f
-    sleep 0.5
-    xdotool type --delay 40 bracket
-    desktop_key Return
-    settle 2 "the search results"
-    desktop_snap desktop-search
+    desktop_click 217 151 # "Checked out by me": the mounting bracket
+    settle 2 "the revision tab"
+    desktop_snap desktop-revision
+    desktop_click 210 207 # "Waiting for my review": the enclosure change
+    settle 2 "the change order tab"
+    desktop_snap desktop-change
+}
+
+# desktop_click X Y – left click at screen position X,Y, then the pointer
+# goes back to the status bar.
+desktop_click() {
+    xdotool mousemove "$1" "$2" click 1 mousemove 1430 895
 }
 
 main() {
