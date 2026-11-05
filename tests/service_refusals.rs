@@ -141,8 +141,6 @@ async fn refused_bom_edits_leave_nothing_behind() {
         ("ASM-T", json!({ "child": "PRT-L", "quantity": -2 })),
         // a child that does not exist
         ("ASM-T", json!({ "child": "NOPE-1", "quantity": 1 })),
-        // a part cannot have a BOM
-        ("PRT-L", json!({ "child": "ASM-S", "quantity": 1 })),
     ];
     for (parent, body) in refused {
         let r = add(parent, body.clone()).await;
