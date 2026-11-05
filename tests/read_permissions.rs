@@ -935,7 +935,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
     let routes = all_routes();
     let before = counts(&app).await;
     let before_rows = id_rows().await;
-    assert_eq!(before_rows.matches(" | ").count(), 3, "{before_rows}");
+    assert_eq!(before_rows.matches(" | ").count(), 4, "{before_rows}");
     for (who, token, actor) in [
         ("outsider_editor", &out_editor, &out_editor_actor),
         ("outsider_viewer", &out_viewer, &out_viewer_actor),
