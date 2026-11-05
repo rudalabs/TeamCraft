@@ -41,7 +41,7 @@ question starts fresh: the assistant does not remember earlier questions.
 
 - **Read-only by default.** It can read what you can read and nothing else.
 - **Drafts only when you allow them.** CAD editors can tick *Allow drafting
-  change orders*. The assistant can then create a draft change order, add
+  change orders, change requests and comments*. The assistant can then create a draft change order, add
   revisions to one of your drafts, raise a change request or comment on
   one – only when your question asks for it. It never submits, approves,
   releases or makes anything obsolete, and it never triages, accepts,

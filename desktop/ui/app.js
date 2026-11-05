@@ -1123,7 +1123,7 @@
       h("p.hint", { text: "Claude reads the PDM data of " + subject + " with your rights. Read-only unless you allow drafts – it never submits, approves or releases. The question and the data the tools return are sent to Anthropic." }),
       h("div.assistant-quick", null, quick),
       field("Your question", question, "optional with a quick action"),
-      drafts ? h("label.check", null, [drafts, "Allow drafting change orders"]) : null,
+      drafts ? h("label.check", null, [drafts, "Allow drafting change orders, change requests and comments"]) : null,
       status,
       answer
     ]);
