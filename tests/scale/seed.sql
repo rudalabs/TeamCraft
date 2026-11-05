@@ -43,9 +43,9 @@ SELECT gen_random_uuid(), 'scale.u' || lpad(n::text, 4, '0'), 'Scale User ' || n
        now() - interval '400 days'
 FROM generate_series(1, 500) n;
 CREATE TEMP TABLE seed_users AS
-SELECT row_number() OVER (ORDER BY username)::int AS n, id, username
+SELECT row_number() OVER (ORDER BY username)::int AS un, id, username
 FROM users WHERE username LIKE 'scale.u%';
-CREATE UNIQUE INDEX ON seed_users (n);
+CREATE UNIQUE INDEX ON seed_users (un);
 
 INSERT INTO projects (id, code, name, description, created_at)
 SELECT gen_random_uuid(), 'P' || lpad(n::text, 2, '0'), 'Product line ' || n,
@@ -59,7 +59,7 @@ CREATE UNIQUE INDEX ON seed_projects (n);
 INSERT INTO project_members (project_id, user_id)
 SELECT DISTINCT p.id, u.id
 FROM seed_users u
-CROSS JOIN LATERAL (VALUES (u.n % 40), ((u.n * 7) % 40), ((u.n * 13) % 40)) m(project)
+CROSS JOIN LATERAL (VALUES (u.un % 40), ((u.un * 7) % 40), ((u.un * 13) % 40)) m(project)
 JOIN seed_projects p ON p.n = m.project;
 INSERT INTO project_members (project_id, user_id, manager)
 SELECT p.id, b.id, true FROM seed_projects p CROSS JOIN seed_busy b;
@@ -100,7 +100,7 @@ SELECT s.id, s.number, CASE s.kind WHEN 'standard' THEN 'part' ELSE s.kind END,
        'each', p.id, u.id, now() - interval '300 days' + s.g * interval '1 minute'
 FROM seed_items s
 JOIN seed_projects p ON p.n = s.project
-JOIN seed_users u ON u.n = s.g % 500 + 1;
+JOIN seed_users u ON u.un = s.g % 500 + 1;
 
 -- step: revisions
 -- Older revisions are released; the latest one is released, in work
@@ -138,7 +138,7 @@ SELECT r.id, s.id, r.seq, chr(64 + r.seq), r.state,
             THEN now() - interval '300 days' + s.g * interval '1 minute' + r.seq * interval '21 days' END
 FROM seed_revs r
 JOIN seed_items s USING (g)
-JOIN seed_users u ON u.n = s.g % 500 + 1
+JOIN seed_users u ON u.un = s.g % 500 + 1
 CROSS JOIN seed_busy b;
 
 -- step: bom lines
@@ -196,7 +196,7 @@ SELECT r.rn, gen_random_uuid() AS id, r.id AS revision_id, s.g, s.kind,
        now() - interval '300 days' + s.g * interval '1 minute' + r.seq * interval '20 days' AS at
 FROM seed_revs r
 JOIN seed_items s USING (g)
-JOIN seed_users u ON u.n = r.rn % 500 + 1;
+JOIN seed_users u ON u.un = r.rn % 500 + 1;
 
 INSERT INTO files (id, revision_id, filename, content_type, size_bytes, sha256, uploaded_by,
                    uploaded_at, current_version, format, folder)
@@ -238,12 +238,12 @@ FROM seed_revs r
 JOIN seed_items d ON d.g = r.g AND d.kind = 'document'
 CROSS JOIN LATERAL generate_series(0, 9) m
 JOIN seed_items p ON p.kind = 'part' AND p.project = d.project AND p.idx = (d.idx * 10 + m) % 1623
-JOIN seed_users u ON u.n = r.rn % 500 + 1
+JOIN seed_users u ON u.un = r.rn % 500 + 1
 ON CONFLICT DO NOTHING;
 
 -- step: changes
 CREATE TEMP TABLE seed_changes AS
-SELECT n, gen_random_uuid() AS id,
+SELECT n AS cn, gen_random_uuid() AS id,
        CASE WHEN n = 1 THEN 'in_review'
             WHEN n % 10 < 6 THEN 'released'
             WHEN n % 10 = 6 THEN 'draft'
@@ -251,26 +251,26 @@ SELECT n, gen_random_uuid() AS id,
             WHEN n % 20 = 9 THEN 'rejected'
             ELSE 'cancelled' END AS status
 FROM generate_series(1, 20000) n;
-CREATE UNIQUE INDEX ON seed_changes (n);
+CREATE UNIQUE INDEX ON seed_changes (cn);
 ANALYZE seed_changes;
 
 INSERT INTO changes (id, number, title, description, priority, status, created_by, created_at,
                      updated_at, submitted_at, closed_at)
-SELECT c.id, 'ECO-' || lpad(c.n::text, 6, '0'),
-       CASE WHEN c.n = 1 THEN 'Product line 1: switch every fastener to the new standard'
-            ELSE 'Change ' || c.n || ': ' || (ARRAY['update tolerances', 'new supplier', 'cost down',
-                 'fix interference', 'material change', 'drawing update'])[1 + c.n % 6] END,
+SELECT c.id, 'ECO-' || lpad(c.cn::text, 6, '0'),
+       CASE WHEN c.cn = 1 THEN 'Product line 1: switch every fastener to the new standard'
+            ELSE 'Change ' || c.cn || ': ' || (ARRAY['update tolerances', 'new supplier', 'cost down',
+                 'fix interference', 'material change', 'drawing update'])[1 + c.cn % 6] END,
        'Synthetic change of the scale check',
-       (ARRAY['low', 'normal', 'normal', 'high', 'critical'])[1 + c.n % 5],
+       (ARRAY['low', 'normal', 'normal', 'high', 'critical'])[1 + c.cn % 5],
        c.status,
-       CASE WHEN c.n % 250 = 3 THEN b.id ELSE u.id END,
-       now() - interval '200 days' + c.n * interval '10 minutes',
-       now() - interval '200 days' + c.n * interval '11 minutes',
-       CASE WHEN c.status <> 'draft' THEN now() - interval '200 days' + c.n * interval '11 minutes' END,
+       CASE WHEN c.cn % 250 = 3 THEN b.id ELSE u.id END,
+       now() - interval '200 days' + c.cn * interval '10 minutes',
+       now() - interval '200 days' + c.cn * interval '11 minutes',
+       CASE WHEN c.status <> 'draft' THEN now() - interval '200 days' + c.cn * interval '11 minutes' END,
        CASE WHEN c.status IN ('released', 'cancelled')
-            THEN now() - interval '200 days' + c.n * interval '12 minutes' END
+            THEN now() - interval '200 days' + c.cn * interval '12 minutes' END
 FROM seed_changes c
-JOIN seed_users u ON u.n = c.n % 500 + 1
+JOIN seed_users u ON u.un = c.cn % 500 + 1
 CROSS JOIN seed_busy b;
 
 -- ECO-000001: the latest revisions of 2000 parts of group P01; every other
@@ -280,13 +280,13 @@ SELECT c.id, r.id, now() - interval '1 day'
 FROM seed_changes c
 JOIN seed_items s ON s.kind = 'part' AND s.project = 0 AND s.idx < 2000
 JOIN seed_revs r ON r.g = s.g AND r.latest
-WHERE c.n = 1;
+WHERE c.cn = 1;
 INSERT INTO change_items (change_id, revision_id, added_at)
-SELECT c.id, r.id, now() - interval '200 days' + c.n * interval '10 minutes'
+SELECT c.id, r.id, now() - interval '200 days' + c.cn * interval '10 minutes'
 FROM seed_changes c
 CROSS JOIN LATERAL generate_series(0, 4) k
-JOIN seed_revs r ON r.rn = 1 + ((c.n * 5 + k)::bigint * 7919) % (SELECT count(*) FROM seed_revs)
-WHERE c.n > 1
+JOIN seed_revs r ON r.rn = 1 + ((c.cn * 5 + k)::bigint * 7919) % (SELECT count(*) FROM seed_revs)
+WHERE c.cn > 1
 ON CONFLICT DO NOTHING;
 
 -- Two reviewers per change; the busy user also reviews ~100 changes in
@@ -296,13 +296,13 @@ SELECT c.id, u.id,
        CASE c.status WHEN 'released' THEN 'approved' WHEN 'rejected' THEN 'rejected' ELSE 'pending' END,
        '', CASE WHEN c.status IN ('released', 'rejected') THEN now() - interval '10 days' END
 FROM seed_changes c
-CROSS JOIN LATERAL (VALUES (c.n % 500 + 1), ((c.n * 7 + 3) % 500 + 1)) v(user_n)
-JOIN seed_users u ON u.n = v.user_n
+CROSS JOIN LATERAL (VALUES (c.cn % 500 + 1), ((c.cn * 7 + 3) % 500 + 1)) v(user_n)
+JOIN seed_users u ON u.un = v.user_n
 ON CONFLICT DO NOTHING;
 INSERT INTO change_reviews (change_id, reviewer_id, decision)
 SELECT c.id, b.id, 'pending'
 FROM seed_changes c CROSS JOIN seed_busy b
-WHERE c.n = 1 OR c.n % 200 = 7
+WHERE c.cn = 1 OR c.cn % 200 = 7
 ON CONFLICT DO NOTHING;
 
 -- step: change requests
@@ -317,7 +317,7 @@ SELECT gen_random_uuid(), 'ECR-' || lpad(n::text, 6, '0'), 'Request ' || n || ':
        now() - interval '100 days' + n * interval '20 minutes',
        now() - interval '100 days' + n * interval '21 minutes'
 FROM generate_series(1, 5000) n
-JOIN seed_users u ON u.n = n % 500 + 1
+JOIN seed_users u ON u.un = n % 500 + 1
 CROSS JOIN seed_busy b;
 INSERT INTO change_request_items (request_id, item_id)
 SELECT cr.id, s.id
@@ -336,21 +336,21 @@ SELECT now() - n * interval '13 seconds', u.id, u.username,
        'revision', r.id, 'Synthetic revision event ' || n, '{}'::jsonb
 FROM generate_series(1, 1200000) n
 JOIN seed_revs r ON r.rn = 1 + (n * 7) % (SELECT count(*) FROM seed_revs)
-JOIN seed_users u ON u.n = n % 500 + 1;
+JOIN seed_users u ON u.un = n % 500 + 1;
 INSERT INTO audit_log (at, user_id, username, action, entity_type, entity_id, summary, details)
 SELECT now() - n * interval '31 seconds', u.id, u.username,
        (ARRAY['item.create', 'item.update'])[1 + n % 2],
        'item', s.id, 'Synthetic item event ' || n, '{}'::jsonb
 FROM generate_series(1, 500000) n
 JOIN seed_items s ON s.g = 1 + (n * 3) % 100000
-JOIN seed_users u ON u.n = n % 500 + 1;
+JOIN seed_users u ON u.un = n % 500 + 1;
 INSERT INTO audit_log (at, user_id, username, action, entity_type, entity_id, summary, details)
 SELECT now() - n * interval '53 seconds', u.id, u.username,
        (ARRAY['change.create', 'change.submit', 'change.review', 'change.release'])[1 + n % 4],
        'change', c.id, 'Synthetic change event ' || n, '{}'::jsonb
 FROM generate_series(1, 300000) n
-JOIN seed_changes c ON c.n = 1 + n % 20000
-JOIN seed_users u ON u.n = n % 500 + 1;
+JOIN seed_changes c ON c.cn = 1 + n % 20000
+JOIN seed_users u ON u.un = n % 500 + 1;
 
 -- step: notifications, impacts, watches
 INSERT INTO notifications (id, user_id, kind, title, body, link, actor_name, created_at, read_at)
@@ -360,7 +360,7 @@ SELECT gen_random_uuid(), u.id,
        '/changes', 'Scale User', now() - n * interval '1 minute',
        CASE WHEN n % 10 <> 0 THEN now() - n * interval '1 minute' END
 FROM generate_series(1, 470000) n
-JOIN seed_users u ON u.n = n % 500 + 1;
+JOIN seed_users u ON u.un = n % 500 + 1;
 INSERT INTO notifications (id, user_id, kind, title, body, link, actor_name, created_at, read_at)
 SELECT gen_random_uuid(), b.id,
        (ARRAY['item_update', 'change_update', 'impact', 'review_requested'])[1 + n % 4],
@@ -382,22 +382,22 @@ JOIN seed_items a ON a.g = 1 + n % 30000
 JOIN seed_revs ar ON ar.g = a.g AND ar.latest
 JOIN seed_items p ON p.g = 30051 + (n * 13) % 64950
 JOIN seed_revs pr ON pr.g = p.g AND pr.latest
-JOIN seed_users u ON u.n = n % 500 + 1
+JOIN seed_users u ON u.un = n % 500 + 1
 ON CONFLICT DO NOTHING;
 
 INSERT INTO watches (user_id, entity_type, entity_id)
 SELECT b.id, 'item', s.id FROM seed_items s CROSS JOIN seed_busy b WHERE s.g <= 5000;
 INSERT INTO watches (user_id, entity_type, entity_id)
-SELECT b.id, 'change', c.id FROM seed_changes c CROSS JOIN seed_busy b WHERE c.n % 100 = 1;
+SELECT b.id, 'change', c.id FROM seed_changes c CROSS JOIN seed_busy b WHERE c.cn % 100 = 1;
 INSERT INTO watches (user_id, entity_type, entity_id)
 SELECT u.id, 'item', s.id
 FROM generate_series(1, 100000) n
-JOIN seed_users u ON u.n = n % 500 + 1
+JOIN seed_users u ON u.un = n % 500 + 1
 JOIN seed_items s ON s.g = 1 + (n * 7) % 100000
 ON CONFLICT DO NOTHING;
 INSERT INTO favorites (user_id, item_id)
 SELECT b.id, s.id FROM seed_items s CROSS JOIN seed_busy b WHERE s.g % 500 = 1;
 
 -- step: counters
-INSERT INTO counters (name, value) VALUES ('change', 20000), ('change_request', 5000)
+INSERT INTO counters (name, value) VALUES ('change', 20000), ('change_request', 5000), ('scale:seeded', 1)
 ON CONFLICT (name) DO UPDATE SET value = GREATEST(counters.value, EXCLUDED.value);

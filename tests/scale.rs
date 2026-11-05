@@ -270,11 +270,17 @@ async fn prepare(admin: &PgConnectOptions, db_name: &str) -> (PgPool, Seeded) {
     db::migrate(&pool).await.expect("migrations apply");
     let mut steps = vec![("migrations".to_string(), started.elapsed())];
 
-    let seeded: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM items WHERE number = 'ASM-000001')")
-            .fetch_one(&pool)
-            .await
-            .expect("check the seed");
+    let (seeded, items): (bool, bool) = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM counters WHERE name = 'scale:seeded'),
+                EXISTS(SELECT 1 FROM items)",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("check the seed");
+    assert!(
+        seeded || !items,
+        "{db_name} has items but no complete seed (an earlier seed failed?): drop the database and run again"
+    );
     if seeded {
         return (
             pool,
