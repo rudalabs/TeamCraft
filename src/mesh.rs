@@ -6,6 +6,11 @@
 //! coordinates; [`Mesh::encode`] writes the compact binary form that
 //! `static/viewer.js` draws (`TCMESH01`, little endian).
 //!
+//! Simulation results (VTK, VTU/VTP, CalculiX FRD, see [`crate::simmesh`])
+//! additionally carry per-vertex scalar [`Field`]s that the viewer colours
+//! with a colour map; the section is optional and flagged, so older viewers
+//! and cached meshes keep working.
+//!
 //! The readers are defensive: sizes are limited, indices are checked and a
 //! malformed file is an error, never a panic or an endless loop. The server
 //! still runs them in a separate process with a time limit (see `preview`).
@@ -22,7 +27,7 @@ pub const MAX_POINTS: usize = 3_000_000;
 
 const MAGIC: &[u8; 8] = b"TCMESH01";
 /// Colour of parts without own colour when they are merged with coloured ones.
-const NEUTRAL: [u8; 3] = [176, 188, 200];
+pub(crate) const NEUTRAL: [u8; 3] = [176, 188, 200];
 
 /// Triangles (or points when `indices` is empty) in model coordinates.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -35,6 +40,67 @@ pub struct Mesh {
     pub colors: Vec<u8>,
     /// Number of bodies / objects (for the status line of the viewer).
     pub parts: u32,
+    /// Scalar result fields, one value per vertex (simulation results).
+    pub fields: Vec<Field>,
+}
+
+/// Fields a mesh carries at most (the viewer offers them in a selector).
+pub const MAX_FIELDS: usize = 8;
+
+/// A scalar result field on the vertices of a [`Mesh`]: a measured value,
+/// the magnitude of a vector or the von Mises stress of a tensor. Values
+/// that are not finite mark vertices without a value (drawn neutral).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Field {
+    pub name: String,
+    /// Unit if the file names one, otherwise empty.
+    pub unit: String,
+    pub values: Vec<f32>,
+}
+
+impl Field {
+    /// Smallest and largest finite value (`(0, 0)` when there is none).
+    pub fn range(&self) -> (f32, f32) {
+        let mut lo = f32::INFINITY;
+        let mut hi = f32::NEG_INFINITY;
+        for &v in &self.values {
+            if v.is_finite() {
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+        if lo > hi {
+            (0.0, 0.0)
+        } else {
+            (lo, hi)
+        }
+    }
+}
+
+/// Stops of the colour map (perceptually uniform, after matplotlib's
+/// "viridis", CC0). `static/viewer.js` has the same table.
+const COLOR_MAP: [[u8; 3]; 9] = [
+    [68, 1, 84],
+    [71, 45, 123],
+    [59, 82, 139],
+    [44, 114, 142],
+    [33, 145, 140],
+    [40, 174, 128],
+    [94, 201, 98],
+    [173, 220, 48],
+    [253, 231, 37],
+];
+
+/// Colour of `t` in `0..=1` on the colour map (NaN = neutral grey).
+pub fn color_map(t: f32) -> [u8; 3] {
+    if !t.is_finite() {
+        return NEUTRAL;
+    }
+    let x = t.clamp(0.0, 1.0) * (COLOR_MAP.len() - 1) as f32;
+    let i = (x.floor() as usize).min(COLOR_MAP.len() - 2);
+    let f = x - i as f32;
+    let (a, b) = (COLOR_MAP[i], COLOR_MAP[i + 1]);
+    std::array::from_fn(|k| (a[k] as f32 + (b[k] as f32 - a[k] as f32) * f).round() as u8)
 }
 
 impl Mesh {
@@ -61,6 +127,20 @@ impl Mesh {
     /// either every vertex or none has a colour).
     pub fn append(&mut self, mut other: Mesh) {
         let offset = self.vertex_count() as u32;
+        // fields: those both meshes have (by name) survive
+        if self.positions.is_empty() {
+            self.fields = std::mem::take(&mut other.fields);
+        } else {
+            let mut theirs = std::mem::take(&mut other.fields);
+            self.fields
+                .retain_mut(|f| match theirs.iter_mut().find(|o| o.name == f.name) {
+                    Some(o) => {
+                        f.values.append(&mut o.values);
+                        true
+                    }
+                    None => false,
+                });
+        }
         if self.colors.is_empty() != other.colors.is_empty() {
             if self.colors.is_empty() {
                 self.colors = NEUTRAL.repeat(self.vertex_count());
@@ -85,6 +165,14 @@ impl Mesh {
         }
         if !self.colors.is_empty() && self.colors.len() != self.positions.len() {
             bail!("Internal error: colours do not match the vertices.");
+        }
+        if self.fields.len() > MAX_FIELDS
+            || self
+                .fields
+                .iter()
+                .any(|f| f.values.len() != self.vertex_count())
+        {
+            bail!("Internal error: result fields do not match the vertices.");
         }
         if self.triangle_count() > MAX_TRIANGLES {
             bail!(
@@ -122,20 +210,38 @@ impl Mesh {
     ///
     /// ```text
     /// 0   "TCMESH01"
-    /// 8   u32 vertices   12  u32 indices   16  u32 parts   20  u32 flags (1 = colours)
+    /// 8   u32 vertices   12  u32 indices   16  u32 parts
+    /// 20  u32 flags (1 = colours, 2 = fields)
     /// 24  f32 × 6 bounding box
     /// 48  f32 × 3·vertices, u32 × indices, u8 × 3·vertices (colours, padded to 4 bytes)
+    ///     only with flag 2, after that:
+    ///     u32 field count, then per field
+    ///     u32 n, n bytes name (UTF-8), u32 m, m bytes unit, padding to 4 bytes,
+    ///     f32 min, f32 max, f32 × vertices (NaN = no value)
     /// ```
+    ///
+    /// Viewers that do not know flag 2 ignore the trailing section; meshes
+    /// with fields also carry the first field as colours for them.
     pub fn encode(&self) -> Vec<u8> {
+        let field_bytes: usize = self
+            .fields
+            .iter()
+            .map(|f| 20 + f.name.len() + f.unit.len() + f.values.len() * 4)
+            .sum();
         let mut out = Vec::with_capacity(
-            48 + self.positions.len() * 4 + self.indices.len() * 4 + self.colors.len() + 4,
+            52 + self.positions.len() * 4
+                + self.indices.len() * 4
+                + self.colors.len()
+                + field_bytes
+                + 4,
         );
         out.extend_from_slice(MAGIC);
+        let flags = u32::from(!self.colors.is_empty()) | (u32::from(!self.fields.is_empty()) << 1);
         for v in [
             self.vertex_count() as u32,
             self.indices.len() as u32,
             self.parts.max(1),
-            u32::from(!self.colors.is_empty()),
+            flags,
         ] {
             out.extend_from_slice(&v.to_le_bytes());
         }
@@ -152,16 +258,59 @@ impl Mesh {
         while out.len() % 4 != 0 {
             out.push(0);
         }
+        if !self.fields.is_empty() {
+            out.extend_from_slice(&(self.fields.len() as u32).to_le_bytes());
+            for f in &self.fields {
+                for s in [&f.name, &f.unit] {
+                    out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+                    out.extend_from_slice(s.as_bytes());
+                }
+                while out.len() % 4 != 0 {
+                    out.push(0);
+                }
+                let (lo, hi) = f.range();
+                out.extend_from_slice(&lo.to_le_bytes());
+                out.extend_from_slice(&hi.to_le_bytes());
+                for v in &f.values {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+        }
         out
     }
 
-    /// Reads [`Mesh::encode`] output (tests, tools).
+    /// Sets the colours from the first field (for viewers that do not know
+    /// fields); vertices without a value are neutral.
+    pub fn bake_colors(&mut self) {
+        let Some(field) = self.fields.first() else {
+            return;
+        };
+        let (lo, hi) = field.range();
+        let span = if hi > lo { hi - lo } else { 1.0 };
+        self.colors = field
+            .values
+            .iter()
+            .flat_map(|&v| {
+                color_map(if v.is_finite() {
+                    (v - lo) / span
+                } else {
+                    f32::NAN
+                })
+            })
+            .collect();
+    }
+
+    /// Reads [`Mesh::encode`] output (tests, tools). Every size is checked,
+    /// so a damaged cache file is an error, not a panic.
     pub fn decode(data: &[u8]) -> Result<Mesh> {
         if data.len() < 48 || &data[..8] != MAGIC {
             bail!("not a TeamCraft mesh");
         }
-        let u = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap()) as usize;
-        let (vertices, indices, parts, flags) = (u(8), u(12), u(16), u(20));
+        let u = |at: usize| -> Result<usize> {
+            let b = data.get(at..at + 4).context("truncated mesh")?;
+            Ok(u32::from_le_bytes(b.try_into()?) as usize)
+        };
+        let (vertices, indices, parts, flags) = (u(8)?, u(12)?, u(16)?, u(20)?);
         let colors = if flags & 1 == 1 { vertices * 3 } else { 0 };
         let need = 48 + vertices * 12 + indices * 4 + colors;
         if data.len() < need {
@@ -180,11 +329,43 @@ impl Mesh {
             .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
             .collect();
         let at = at + indices * 4;
+        let mut fields = Vec::new();
+        if flags & 2 == 2 {
+            let mut at = (at + colors).div_ceil(4) * 4;
+            let count = u(at)?;
+            at += 4;
+            if count > MAX_FIELDS {
+                bail!("too many fields");
+            }
+            for _ in 0..count {
+                let mut text = || -> Result<String> {
+                    let n = u(at)?;
+                    let s = data.get(at + 4..at + 4 + n).context("truncated mesh")?;
+                    at += 4 + n;
+                    Ok(String::from_utf8_lossy(s).into_owned())
+                };
+                let (name, unit) = (text()?, text()?);
+                at = at.div_ceil(4) * 4 + 8;
+                let end = vertices
+                    .checked_mul(4)
+                    .and_then(|n| n.checked_add(at))
+                    .context("truncated mesh")?;
+                let values = data
+                    .get(at..end)
+                    .context("truncated mesh")?
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                at = end;
+                fields.push(Field { name, unit, values });
+            }
+        }
         Ok(Mesh {
             positions,
             indices: index_values,
             colors: data[at..at + colors].to_vec(),
             parts: parts as u32,
+            fields,
         })
     }
 }
@@ -203,6 +384,9 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "pts" | "xyz" => text_points(data)?,
         "las" => las(data)?,
         "step" => step(data)?,
+        "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
+        "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
+        "calculix-frd" => crate::simmesh::frd(data)?,
         other => bail!("No 3D preview for the format '{other}'."),
     };
     mesh.check()?;
@@ -239,7 +423,7 @@ fn fan(mesh: &mut Mesh, polygon: &[u32]) {
     }
 }
 
-fn check_triangles(n: usize) -> Result<()> {
+pub(crate) fn check_triangles(n: usize) -> Result<()> {
     if n > MAX_TRIANGLES {
         bail!("The model has {n} triangles – more than the preview shows ({MAX_TRIANGLES}).");
     }
@@ -394,7 +578,7 @@ fn obj(data: &[u8]) -> Result<Mesh> {
 }
 
 /// Thins out a point cloud that has more than [`MAX_POINTS`] points.
-fn thin_out(mesh: &mut Mesh) {
+pub(crate) fn thin_out(mesh: &mut Mesh) {
     if !mesh.is_point_cloud() || mesh.vertex_count() <= MAX_POINTS {
         return;
     }
@@ -413,6 +597,9 @@ fn thin_out(mesh: &mut Mesh) {
             .step_by(stride)
             .flat_map(|c| c.to_vec())
             .collect();
+    }
+    for f in &mut mesh.fields {
+        f.values = f.values.iter().copied().step_by(stride).collect();
     }
 }
 

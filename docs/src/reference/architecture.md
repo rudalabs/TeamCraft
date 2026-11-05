@@ -30,7 +30,9 @@
   clouds and tessellates STEP with the truck kernel; `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child
   process with a time limit. The browser only draws the compact
-  `TCMESH01` buffer.
+  `TCMESH01` buffer; `simmesh.rs` turns VTK/VTU/VTP and CalculiX `.frd`
+  results into their outer surface with scalar fields (an optional, flagged
+  section of the same format) that the viewer colours with a colour map.
 
 ## Source layout
 
@@ -46,7 +48,7 @@
 | `src/assistant.rs`                   | built-in assistant: tool loop over the Anthropic Messages API with the MCP tools, markdown rendering |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |
-| `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache                                                                     |
+| `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs`: VTK/VTU/VTP/FRD simulation results with fields  |
 | `migrations/`                        | PostgreSQL schema                                                                                    |
 | `tests/`                             | end-to-end tests, each against its own temporary database                                            |
 | `desktop/`                           | the Tauri desktop client (separate Cargo project)                                                    |

@@ -3,8 +3,9 @@
 //! The server converts a file once into the compact mesh of [`crate::mesh`]
 //! and caches it next to the vault (`previews/ab/<sha256>.v<N>.tcm`); the
 //! browser (`static/viewer.js`) and the desktop app only draw it. Meshes,
-//! point clouds and STEP B-reps (tessellated with the `truck` kernel) are
-//! supported, see [`PreviewFormat`].
+//! point clouds, STEP B-reps (tessellated with the `truck` kernel) and
+//! simulation results (VTK, VTU/VTP, CalculiX FRD with result fields, see
+//! [`crate::simmesh`]) are supported, see [`PreviewFormat`].
 //!
 //! The conversion never blocks the web server: it runs in a separate
 //! `teamcraft preview-mesh` process with a time limit (in tests, where there is
@@ -48,10 +49,15 @@ pub enum PreviewFormat {
     Pts,
     Xyz,
     Las,
+    /// Simulation results (see `simmesh`): legacy VTK, VTU, VTP, CalculiX FRD.
+    VtkLegacy,
+    Vtu,
+    Vtp,
+    Frd,
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 13] = [
+    pub const ALL: [PreviewFormat; 17] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -65,6 +71,10 @@ impl PreviewFormat {
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
         PreviewFormat::Las,
+        PreviewFormat::VtkLegacy,
+        PreviewFormat::Vtu,
+        PreviewFormat::Vtp,
+        PreviewFormat::Frd,
     ];
 
     /// Detects the format from the file name (see `cadformat`).
@@ -93,7 +103,19 @@ impl PreviewFormat {
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
             PreviewFormat::Las => "las",
+            PreviewFormat::VtkLegacy => "vtk-legacy",
+            PreviewFormat::Vtu => "vtk-unstructured",
+            PreviewFormat::Vtp => "vtk-polydata",
+            PreviewFormat::Frd => "calculix-frd",
         }
+    }
+
+    /// Simulation results: the outer surface coloured by result fields.
+    pub fn is_result(self) -> bool {
+        matches!(
+            self,
+            PreviewFormat::VtkLegacy | PreviewFormat::Vtu | PreviewFormat::Vtp | PreviewFormat::Frd
+        )
     }
 
     /// B-rep formats are tessellated (slower) – the rest is read as is.
@@ -112,6 +134,9 @@ impl PreviewFormat {
     pub fn time_limit(self) -> Duration {
         if self.is_brep() {
             Duration::from_secs(180)
+        } else if self.is_result() {
+            // large volume meshes: boundary extraction and decompression
+            Duration::from_secs(120)
         } else {
             Duration::from_secs(60)
         }
@@ -357,6 +382,15 @@ mod tests {
         assert_eq!(PreviewFormat::of(".stl"), None);
         assert!(PreviewFormat::Step.is_brep() && !PreviewFormat::Stl.is_brep());
         assert!(PreviewFormat::Las.is_point_cloud());
+        assert_eq!(PreviewFormat::of("beam.vtu"), Some(PreviewFormat::Vtu));
+        assert_eq!(
+            PreviewFormat::of("beam.VTK"),
+            Some(PreviewFormat::VtkLegacy)
+        );
+        assert_eq!(PreviewFormat::of("skin.vtp"), Some(PreviewFormat::Vtp));
+        assert_eq!(PreviewFormat::of("job.frd"), Some(PreviewFormat::Frd));
+        assert_eq!(PreviewFormat::of("grid.vts"), None, "structured grids");
+        assert!(PreviewFormat::Frd.is_result() && !PreviewFormat::Stl.is_result());
         for p in PreviewFormat::ALL {
             assert_eq!(PreviewFormat::of_format(p.as_str()), Some(p));
             assert!(

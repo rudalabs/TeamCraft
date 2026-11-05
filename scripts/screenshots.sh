@@ -214,6 +214,47 @@ bom_line() {
             '{child: $c, quantity: $q, find_number: $f, notes: $n}')" >/dev/null
 }
 
+# result_vtu FILE – writes a small self-made FE result (ASCII VTU): a
+# cantilever of 24 × 4 × 4 hexahedra, clamped at x = 0, with a bending
+# stress and a displacement field (made-up numbers for the screenshot).
+result_vtu() {
+    awk -v nx=24 -v ny=4 -v nz=4 -v L=240 -v H=20 '
+    function id(i, j, k) { return i + (nx + 1) * (j + (ny + 1) * k) }
+    BEGIN {
+        n = (nx + 1) * (ny + 1) * (nz + 1); c = nx * ny * nz
+        print "<?xml version=\"1.0\"?>"
+        print "<!-- TeamCraft screenshot demo: cantilever FE result (self-made, made-up values) -->"
+        print "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">"
+        printf "<UnstructuredGrid><Piece NumberOfPoints=\"%d\" NumberOfCells=\"%d\">\n", n, c
+        print "<PointData Scalars=\"von Mises stress\">"
+        print "<DataArray type=\"Float32\" Name=\"von Mises stress\" format=\"ascii\">"
+        for (k = 0; k <= nz; k++) for (j = 0; j <= ny; j++) for (i = 0; i <= nx; i++) {
+            x = i * L / nx; z = (k / nz - 0.5) * 2
+            s = 180 * (1 - x / L) * z; t = 14 * (1 - z * z)
+            printf "%.3f ", sqrt(s * s + 3 * t * t)
+        }
+        print "</DataArray>"
+        print "<DataArray type=\"Float32\" Name=\"displacement\" NumberOfComponents=\"3\" format=\"ascii\">"
+        for (k = 0; k <= nz; k++) for (j = 0; j <= ny; j++) for (i = 0; i <= nx; i++) {
+            r = i / nx; printf "0 0 %.5f ", -0.8 * r * r * (3 - r) / 2
+        }
+        print "</DataArray></PointData>"
+        print "<Points><DataArray type=\"Float32\" NumberOfComponents=\"3\" format=\"ascii\">"
+        for (k = 0; k <= nz; k++) for (j = 0; j <= ny; j++) for (i = 0; i <= nx; i++)
+            printf "%g %g %g ", i * L / nx, j * H / ny, k * H / nz
+        print "</DataArray></Points>"
+        print "<Cells><DataArray type=\"Int32\" Name=\"connectivity\" format=\"ascii\">"
+        for (k = 0; k < nz; k++) for (j = 0; j < ny; j++) for (i = 0; i < nx; i++)
+            printf "%d %d %d %d %d %d %d %d\n", id(i, j, k), id(i + 1, j, k), id(i + 1, j + 1, k), id(i, j + 1, k),
+                id(i, j, k + 1), id(i + 1, j, k + 1), id(i + 1, j + 1, k + 1), id(i, j + 1, k + 1)
+        print "</DataArray><DataArray type=\"Int32\" Name=\"offsets\" format=\"ascii\">"
+        for (e = 1; e <= c; e++) printf "%d ", 8 * e
+        print "</DataArray><DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">"
+        for (e = 1; e <= c; e++) printf "12 "
+        print "</DataArray></Cells></Piece></UnstructuredGrid></VTKFile>"
+    }' >"$1"
+}
+
 checkin() { api "${2:-admin}" POST "/items/${NUM[$1]}/revisions/latest/checkin" >/dev/null; }
 checkout() { api "${2:-admin}" POST "/items/${NUM[$1]}/revisions/latest/checkout" >/dev/null; }
 
@@ -675,6 +716,25 @@ desktop_click() {
         die "xdotool could not click at $1,$2"
 }
 
+# Simulation result in the 3D viewer with its colour legend – extra images,
+# not used in the README. Seeded last, so the README images stay as they are.
+capture_simulation() {
+    log "adding a simulation with a 3D result"
+    item sim simulation "Mast arm static analysis"
+    result_vtu "$WORK/mast-arm-static.vtu"
+    local result
+    result=$(attach sim "$WORK/mast-arm-static.vtu" mast-arm-static.vtu)
+    checkin sim
+    viewport 1440 900 "$SCALE" false
+    open_page "/files/$result/preview"
+    wait_js 'document.getElementById("viewer-canvas").getAttribute("data-ready") !== null' 120 \
+        "the 3D view of the simulation result"
+    [[ $(js 'return document.querySelector(".viewer-legend") !== null;') == true ]] ||
+        die "the simulation result has no colour legend: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
+    snap simulation-result-3d
+    shot simulation-results "/revisions/${REV[sim]}" '#simulation-results'
+}
+
 main() {
     wait_for_server
     seed
@@ -682,6 +742,7 @@ main() {
     if [[ -n $DESKTOP_APP ]]; then
         capture_desktop
     fi
+    capture_simulation
     log "done: $(find "$OUT_DIR" -maxdepth 1 -name '*.png' | wc -l) screenshots in $OUT_DIR"
 }
 
