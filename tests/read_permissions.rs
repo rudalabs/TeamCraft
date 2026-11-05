@@ -1043,7 +1043,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         "item": hid, "revision": "A", "with": "A", "change": chg, "request": ecr,
         "number": ecr, "q": "hidden", "query": "hidden", "items": [hid], "title": "probe",
         "body": "probe", "comment": "probe", "levels": 3, "project": code, "from": "A",
-        "to": "A", "file": format!("{m}.txt"),
+        "to": "A", "file": format!("{m}.txt"), "version": 1, "offset": 0,
     });
     let sent = vec![
         hid.clone(),
@@ -1056,7 +1056,13 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_string())
         .collect();
-    assert!(tools.len() >= 22, "{tools:?}");
+    assert!(tools.len() >= 26, "{tools:?}");
+    for new in ["read_file_text", "impact_summary"] {
+        assert!(
+            tools.contains(new),
+            "{new} is covered by the outsider calls"
+        );
+    }
     for (who, token) in [
         ("outsider_editor", &out_editor),
         ("outsider_viewer", &out_viewer),

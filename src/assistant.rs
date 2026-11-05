@@ -66,15 +66,21 @@ pub enum Action {
     ReviewBrief,
     /// Worklist triage: what needs my attention.
     Attention,
+    /// What changing an item would touch (`impact_summary`).
+    Impact,
+    /// Whether the simulations based on an item are still valid.
+    SimulationStatus,
 }
 
 impl Action {
-    pub const ALL: [Action; 5] = [
+    pub const ALL: [Action; 7] = [
         Action::Ask,
         Action::ReleaseNotes,
         Action::ReleaseCheck,
         Action::ReviewBrief,
         Action::Attention,
+        Action::Impact,
+        Action::SimulationStatus,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -84,6 +90,8 @@ impl Action {
             Action::ReleaseCheck => "release_check",
             Action::ReviewBrief => "review_brief",
             Action::Attention => "attention",
+            Action::Impact => "impact",
+            Action::SimulationStatus => "simulation_status",
         }
     }
 
@@ -100,13 +108,18 @@ impl Action {
             Action::ReleaseCheck => "Check before release",
             Action::ReviewBrief => "Brief me for this review",
             Action::Attention => "What needs my attention",
+            Action::Impact => "What breaks if I change this?",
+            Action::SimulationStatus => "Are the simulations still valid?",
         }
     }
 
     /// The context the action needs: `"revision"`, `"change"` or `""`.
     pub fn needs(self) -> &'static str {
         match self {
-            Action::ReleaseNotes | Action::ReleaseCheck => "revision",
+            Action::ReleaseNotes
+            | Action::ReleaseCheck
+            | Action::Impact
+            | Action::SimulationStatus => "revision",
             Action::ReviewBrief => "change",
             Action::Ask | Action::Attention => "",
         }
@@ -228,6 +241,18 @@ impl Question {
                 t
             }
             Action::Attention => mcp_prompt("worklist_triage", json!({})),
+            Action::SimulationStatus => mcp_prompt(
+                "simulation_status",
+                json!({ "item": item, "revision": revision }),
+            ),
+            Action::Impact => format!(
+                "What would changing {item} touch? Call impact_summary with item={item} and levels=3 first; \
+                 use where_used, get_item or list_simulations only to explain something the summary shows. \
+                 Answer in four short sections: Dependents (released assemblies first, how many levels up), \
+                 Open work (change orders and change requests that already touch it), Simulations (out of \
+                 date or failing) and What to check first. Quote item numbers exactly and say plainly if \
+                 nothing depends on it."
+            ),
             Action::Ask => {
                 let mut t = self.text.clone();
                 let mut context = Vec::new();
@@ -1858,6 +1883,24 @@ mod tests {
             .unwrap()
             .instruction()
             .contains("my_worklist"));
+
+        // the quick actions that use the newer tools
+        let impact = q(Some("impact"), None, Some("PRT-000007"), None).unwrap();
+        let text = impact.instruction();
+        assert!(text.contains("impact_summary") && text.contains("PRT-000007"));
+        assert!(
+            q(Some("impact"), None, None, None).is_err(),
+            "needs an item"
+        );
+        let sims = q(Some("simulation_status"), None, Some("PRT-000007"), None).unwrap();
+        assert!(sims.instruction().contains("list_simulations"));
+        assert!(Action::ALL
+            .iter()
+            .all(|a| Action::parse(a.as_str()) == Some(*a)));
+        let tools: Vec<String> = tool_specs(false).iter().map(|t| t.name.clone()).collect();
+        for needed in ["impact_summary", "read_file_text"] {
+            assert!(tools.contains(&needed.to_string()), "{needed} is offered");
+        }
 
         let ask = Question::new(
             None,

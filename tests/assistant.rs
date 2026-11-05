@@ -28,7 +28,7 @@ async fn assistant_is_disabled_without_a_key() {
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(r.json()["enabled"], false);
     assert!(r.json()["model"].is_null());
-    assert_eq!(r.json()["actions"].as_array().unwrap().len(), 5);
+    assert_eq!(r.json()["actions"].as_array().unwrap().len(), 7);
 
     let r = app
         .api(

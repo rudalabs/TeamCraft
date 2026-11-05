@@ -14,6 +14,8 @@ CAD generation:
 |-----------------------|------------------------------|--------------------------------------------------------------------------------------------------|
 | Revision page         | **Draft release notes**      | what changed compared with the previous revision: attributes, files, BOM, open points            |
 | Revision page         | **Check before release**     | a checklist: blocking items (unreleased BOM children and references, check-outs) and warnings     |
+| Revision page         | **What breaks if I change this?** | the assemblies that use the item (released ones first), open change orders and requests that already touch it, simulations that would go out of date, what to check first |
+| Revision page         | **Are the simulations still valid?** | the simulations based on the item: which are out of date and why, failed results, what to re-run |
 | Change order page     | **Brief me for this review** | what changes, the impact on dependents outside the change, risks, questions for the author       |
 | Dashboard             | **What needs my attention**  | an ordered to-do list from your worklist: reviews, impacts, old check-outs, your drafts           |
 | Everywhere            | **Ask**                      | any question, e.g. "Which assemblies use PRT-000012, and are they released?"                     |
@@ -28,6 +30,11 @@ CAD generation:
   PRT-000012?" – the simulations based on it and why they no longer match.
 - "Summarise the results of SIM-000003 rev B vs A" – changed, added and
   removed result values with delta and pass/fail.
+- "What does the spec of PRT-000012 say about the coating?" – the assistant
+  reads the text that TeamCraft extracted from the attached files for the
+  search (STEP and IGES strings, text, CSV, JSON, XML, KiCad and similar
+  formats; not PDFs, images or binary CAD files). It can read only files
+  that you may open.
 - "Draft a change request from my notes: …" – with drafts allowed (see
   below), the assistant raises the request; otherwise it shows what the
   request should contain.
@@ -96,7 +103,8 @@ POST /api/v1/assistant
 
 `action` is one of `ask` (default, needs `question`), `release_notes` and
 `release_check` (need `context.item`, optional `context.revision`),
-`review_brief` (needs `context.change`) and `attention`. The answer contains
+`impact` and `simulation_status` (need `context.item`), `review_brief`
+(needs `context.change`) and `attention`. The answer contains
 `answer.text` (markdown), `answer.truncated`, `tools` (`[{name, ok}]`),
 `steps`, `model` and the token counts. `GET /api/v1/me` reports
 `capabilities.assistant`. While the assistant is off the `POST` endpoint answers `404`.

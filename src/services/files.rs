@@ -448,6 +448,74 @@ pub async fn get_version(
     Ok((version, filename))
 }
 
+/// Most characters one [`read_text`] call returns.
+pub const MAX_TEXT_PAGE_CHARS: i64 = 50_000;
+
+/// A page of the text that was extracted from a file version for the
+/// full-text search (see `textindex`).
+#[derive(Clone, Debug)]
+pub struct FileText {
+    pub file: FileRecord,
+    /// The version the text belongs to.
+    pub version: i32,
+    /// Characters of the whole extracted text.
+    pub total_chars: i64,
+    /// First character of `text` (0-based).
+    pub offset: i64,
+    pub text: String,
+    /// Whether text is extracted from files of this format at all.
+    pub extracted_format: bool,
+}
+
+/// Reads a page (`offset`, at most `limit` characters, capped at
+/// [`MAX_TEXT_PAGE_CHARS`]) of the extracted text of a file of a revision
+/// (`version`: default the current one). Hidden project groups answer like
+/// a missing revision; nothing is read from the vault, only the text the
+/// upload stored for the search.
+pub async fn read_text(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_id: Uuid,
+    filename: &str,
+    version: Option<i32>,
+    offset: i64,
+    limit: i64,
+) -> AppResult<FileText> {
+    // the access check of the revision's project group
+    let files = list(pool, actor, revision_id).await?;
+    let wanted = filename.trim();
+    let file = files
+        .into_iter()
+        .find(|f| f.filename.eq_ignore_ascii_case(wanted))
+        .ok_or_else(|| {
+            AppError::not_found(format!("File '{wanted}' not found in this revision."))
+        })?;
+    let version = version.unwrap_or(file.version);
+    let limit = limit.clamp(1, MAX_TEXT_PAGE_CHARS);
+    let offset = offset.max(0);
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT char_length(content_text)::bigint, substr(content_text, $3::int + 1, $4::int)
+         FROM file_versions WHERE file_id = $1 AND version = $2",
+    )
+    .bind(file.id)
+    .bind(version)
+    .bind(offset.min(i64::from(i32::MAX)))
+    .bind(limit)
+    .fetch_optional(pool)
+    .await?;
+    let (total_chars, text) = row
+        .ok_or_else(|| AppError::not_found(format!("File '{wanted}' has no version {version}.")))?;
+    let extracted_format = crate::textindex::indexes(&file.filename);
+    Ok(FileText {
+        file,
+        version,
+        total_chars,
+        offset,
+        text,
+        extracted_format,
+    })
+}
+
 pub(crate) async fn get_version_unchecked(
     pool: &PgPool,
     version_id: Uuid,

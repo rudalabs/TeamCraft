@@ -2107,7 +2107,8 @@
         watchTool(tab, "items", rev.item_number, d.watching),
         assistantEnabled() ? tool("Ask…", "ask", function () {
           assistantDialog({ item: rev.item_number, revision: rev.code }, rev.item_number + "/" + rev.code, [
-            ["release_notes", "Draft release notes"], ["release_check", "Check before release"]
+            ["release_notes", "Draft release notes"], ["release_check", "Check before release"],
+            ["impact", "What breaks if I change this?"], ["simulation_status", "Are the simulations still valid?"]
           ]);
         }, { title: "Ask TeamCraft: release notes, release check or any question about this revision" }) : null,
         agentButton(tab)
