@@ -2494,8 +2494,9 @@
           h("span.impact-event", null, [i.event === "released" ? "released" : badge("obsolete"),
             i.change_number ? " via " : null,
             i.change_number ? h("button.link.mono.plain-weight", { type: "button", on: { click: function () { openChange(i.change_number); } } }, i.change_number) : null]),
-          // the referencing file name sits in the row title: the short relation fits the column
-          h("span.impact-relation", { title: i.detail ? relationText(i.relation) + " · " + i.detail : null, text: relationShort(i.relation) }),
+          // a BOM line keeps its short detail (find no.); a referencing file name sits in the tooltip
+          h("span.impact-relation", { title: i.detail ? relationText(i.relation) + " · " + i.detail : null },
+            [relationShort(i.relation), i.detail && i.relation === "bom" ? h("span.impact-detail", { text: " · " + i.detail }) : null]),
           can ? h("button.small.ghost", { type: "button", on: { click: function () { acknowledgeDialog(i); } } }, "Acknowledge…") : null
         ]);
       })),
