@@ -44,8 +44,10 @@ pub struct TestApp {
     pub state: AppState,
     pub pool: PgPool,
     admin_options: PgConnectOptions,
-    db_name: String,
-    vault_dir: PathBuf,
+    /// Password of the test role, for the PostgreSQL client tools.
+    admin_password: Option<String>,
+    pub db_name: String,
+    pub vault_dir: PathBuf,
 }
 
 /// Project groups every test database starts with: (code, name, IdP group).
@@ -87,16 +89,23 @@ impl Response {
     }
 }
 
-/// Connection to the server on which the temporary databases are created.
-fn admin_options() -> Option<PgConnectOptions> {
+/// Connection to the server on which the temporary databases are created,
+/// and the password of its role (for `pg_dump`/`pg_restore`).
+fn admin_options() -> Option<(PgConnectOptions, Option<String>)> {
     if let Err(e) = config::load_local_env_file() {
         panic!("{} could not be parsed: {e}", config::LOCAL_ENV_FILE);
     }
     if let Ok(url) = std::env::var("TEAMCRAFT_TEST_DATABASE_URL") {
-        return Some(url.parse().expect("valid TEAMCRAFT_TEST_DATABASE_URL"));
+        let parsed = Config::from_lookup(|key| match key {
+            "TEAMCRAFT_DATABASE_URL" => Some(url.clone()),
+            "TEAMCRAFT_LOCAL_LOGIN" => Some("true".into()),
+            _ => None,
+        })
+        .expect("valid TEAMCRAFT_TEST_DATABASE_URL");
+        return Some((parsed.database, parsed.database_password));
     }
     match Config::from_env() {
-        Ok(config) => Some(config.database),
+        Ok(config) => Some((config.database, config.database_password)),
         Err(e) => {
             if require_db() {
                 panic!("TEAMCRAFT_REQUIRE_DB_TESTS is set but no database is configured: {e:#}");
@@ -114,7 +123,7 @@ pub async fn setup() -> Option<TestApp> {
 
 /// Like [`setup`], with additional configuration variables.
 pub async fn setup_with(extra: &'static [(&'static str, &'static str)]) -> Option<TestApp> {
-    let admin_options = admin_options()?;
+    let (admin_options, admin_password) = admin_options()?;
     let db_name = format!("teamcraft_test_{}", Uuid::new_v4().simple());
     let mut admin = match PgConnection::connect_with(&admin_options).await {
         Ok(conn) => conn,
@@ -173,12 +182,76 @@ pub async fn setup_with(extra: &'static [(&'static str, &'static str)]) -> Optio
         state,
         pool,
         admin_options,
+        admin_password,
         db_name,
         vault_dir,
     })
 }
 
 impl TestApp {
+    /// Configuration of database `database` on the test server with vault
+    /// `vault_dir` – what `teamcraft backup`/`restore` would read.
+    pub fn client_config(&self, database: &str, vault_dir: &std::path::Path) -> Config {
+        let o = &self.admin_options;
+        let vars: Vec<(&str, String)> = vec![
+            ("TEAMCRAFT_DB_HOST", o.get_host().to_string()),
+            ("TEAMCRAFT_DB_PORT", o.get_port().to_string()),
+            ("TEAMCRAFT_DB_USER", o.get_username().to_string()),
+            ("TEAMCRAFT_DB_NAME", database.to_string()),
+            (
+                "TEAMCRAFT_VAULT_DIR",
+                vault_dir.to_string_lossy().to_string(),
+            ),
+            ("TEAMCRAFT_LOCAL_LOGIN", "true".to_string()),
+        ];
+        let password = self.admin_password.clone();
+        Config::from_lookup(move |key| {
+            if key == "TEAMCRAFT_DB_PASSWORD" {
+                return password.clone();
+            }
+            vars.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone())
+        })
+        .expect("client configuration")
+    }
+
+    /// Creates an empty database next to the test database (dropped by
+    /// `teardown` of the app returned by [`TestApp::open`]).
+    pub async fn create_empty_database(&self, suffix: &str) -> String {
+        let name = format!("{}_{suffix}", self.db_name);
+        let mut admin = PgConnection::connect_with(&self.admin_options)
+            .await
+            .expect("connect to the test database server");
+        sqlx::query(&format!("CREATE DATABASE {name}"))
+            .execute(&mut admin)
+            .await
+            .expect("CREATE DATABASE");
+        admin.close().await.ok();
+        name
+    }
+
+    /// A second application on another database and vault of the same
+    /// server (e.g. a restored backup), without migrating or seeding it.
+    pub async fn open(&self, database: &str, vault_dir: PathBuf) -> TestApp {
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect_with(self.admin_options.clone().database(database))
+            .await
+            .expect("connect to the other database");
+        let config = self.client_config(database, &vault_dir);
+        let state = AppState::new(config, pool.clone())
+            .await
+            .expect("app state");
+        TestApp {
+            router: teamcraft::router(state.clone()),
+            state,
+            pool,
+            admin_options: self.admin_options.clone(),
+            admin_password: self.admin_password.clone(),
+            db_name: database.to_string(),
+            vault_dir,
+        }
+    }
+
     /// Drops the temporary database and vault.
     pub async fn teardown(self) {
         self.pool.close().await;

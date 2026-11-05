@@ -146,7 +146,7 @@ Restore into a fresh installation (same or newer version):
 ```sh
 cd /opt/teamcraft
 sudo docker compose stop teamcraft
-sudo docker compose exec -T db pg_restore -U teamcraft -d teamcraft --clean --if-exists < teamcraft-db.dump
+sudo docker compose exec -T db pg_restore -U teamcraft -d teamcraft --clean --if-exists --single-transaction < teamcraft-db.dump
 sudo docker run --rm -v teamcraft-server_vault:/vault -v "$PWD":/backup alpine \
   tar -xzf /backup/teamcraft-vault.tar.gz -C /vault
 sudo docker compose start teamcraft

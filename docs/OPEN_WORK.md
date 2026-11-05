@@ -78,7 +78,8 @@ the known gaps with details. Last update: 2026-11-04.
   new requests per project group
 - [x] Backup/restore of the database and vault as CLI commands (`teamcraft backup`, `teamcraft restore`) – see
   [Operations](src/admin/operations.md)
-- [ ] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools
+- [x] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools (2026-11-04,
+  PostgreSQL 17 on Windows; now an automated test, `tests/backup_restore.rs`, run in CI against PostgreSQL 16 and 18)
 - [x] Chunked resumable uploads (feature 9): `/api/v1/uploads` (offset-checked chunks, resume, SHA-256 check, same
   check-in code path, base version and folder per session), used by the desktop app for files above 32 MiB; open:
   chunked uploads from the web UI (`static/app.js`)
@@ -272,7 +273,12 @@ The history up to the open-source release is squashed into the first commit
    check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; the desktop app uses it for large
    files, the web UI still sends one multipart request. **Backup/restore** of the database and vault is done
    (`teamcraft backup`/`teamcraft restore` with `pg_dump`/`pg_restore`, unit tests for the manifest, argument building,
-   hashes and path safety); the end-to-end check with the real client tools is still open (see the to-do list).
+   hashes and path safety). End to end with the real client tools: `tests/backup_restore.rs` (backup, restore into a
+   fresh database and vault, identical row counts, file download and API token on the restored instance, `--force`,
+   atomic failure) runs in CI with `pg_dump`/`pg_restore` of the server's version, and the CLI smoke test runs
+   `teamcraft backup`/`restore`. Found and fixed on the way: a percent-encoded password in `TEAMCRAFT_DATABASE_URL`
+   reached `pg_dump` undecoded; a failed `restore --force` (an older backup over an upgraded database) left a
+   half-replaced database – `pg_restore` now runs with `--single-transaction`.
 
 Rules for all of them: research open source first (licences compatible with
 MPL-2.0: MIT, Apache-2.0, BSD, ISC, Zlib, MPL-2.0; LGPL only as a separately
