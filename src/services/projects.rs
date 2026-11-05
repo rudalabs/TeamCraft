@@ -141,6 +141,24 @@ pub async fn set_visibility(
     .bind(visibility.as_str())
     .fetch_one(&mut *tx)
     .await?;
+    if visibility == ProjectVisibility::Internal {
+        // the private counters go back into the shared ones (see
+        // `number_counter`); restricting starts them from the shared ones
+        let prefix = private_prefix(id);
+        sqlx::query(
+            "INSERT INTO counters (name, value)
+             SELECT 'num:' || substr(name, length($1) + 1), value FROM counters
+             WHERE left(name, length($1)) = $1
+             ON CONFLICT (name) DO UPDATE SET value = GREATEST(counters.value, EXCLUDED.value)",
+        )
+        .bind(&prefix)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM counters WHERE left(name, length($1)) = $1")
+            .bind(&prefix)
+            .execute(&mut *tx)
+            .await?;
+    }
     let summary = match visibility {
         ProjectVisibility::Restricted => format!("Restricted group {}", project.code),
         ProjectVisibility::Internal => format!("Opened group {} to all users", project.code),
@@ -358,9 +376,6 @@ pub async fn set_number_scheme(
     .await?
     .ok_or_else(|| AppError::not_found("Project not found."))?;
     require_manager(&mut tx, actor, id).await?;
-    if let Some(s) = &scheme {
-        ensure_private_counters(&mut tx, id, &current.code, s).await?;
-    }
     let project = sqlx::query_as::<_, Project>(&format!(
         "UPDATE projects SET number_scheme = $2 WHERE id = $1 RETURNING {COLUMNS}"
     ))
@@ -386,52 +401,6 @@ pub async fn set_number_scheme(
     Ok(project)
 }
 
-/// A restricted group with a scheme of its own has a private counter: no
-/// other group may save a scheme that expands to the same counter key
-/// (it would read and use up the restricted group's numbers). Checked for
-/// every restricted group, visible to the actor or not, with one message.
-async fn ensure_private_counters(
-    conn: &mut PgConnection,
-    id: Uuid,
-    code: &str,
-    scheme: &str,
-) -> AppResult<()> {
-    let scheme = domain::NumberScheme::parse(scheme)?;
-    if scheme == domain::NumberScheme::default_scheme() {
-        return Ok(());
-    }
-    let now = Utc::now();
-    let keys_of = |s: &domain::NumberScheme, code: &str| -> std::collections::HashSet<String> {
-        ItemType::ALL
-            .iter()
-            .map(|t| s.counter_key(&domain::number_context(code, *t, now)))
-            .collect()
-    };
-    let mine = keys_of(&scheme, code);
-    let others = sqlx::query_as::<_, (String, Option<String>)>(
-        "SELECT code, number_scheme FROM projects
-         WHERE visibility = 'restricted' AND id <> $1 AND number_scheme IS NOT NULL",
-    )
-    .bind(id)
-    .fetch_all(&mut *conn)
-    .await?;
-    for (other_code, other_scheme) in others {
-        let Ok(other) = domain::NumberScheme::of_project(other_scheme.as_deref()) else {
-            continue;
-        };
-        if other == domain::NumberScheme::default_scheme() {
-            continue;
-        }
-        if !mine.is_disjoint(&keys_of(&other, &other_code)) {
-            return Err(AppError::BadRequest(
-                "This numbering scheme is reserved; use a prefix of your own (e.g. {PROJECT}-…)."
-                    .into(),
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// What a numbering scheme gives in a project group.
 #[derive(Clone, Debug, Serialize)]
 pub struct NumberingPreview {
@@ -450,54 +419,94 @@ pub struct NextNumber {
     pub number: String,
 }
 
+/// Prefix of the private counters of a restricted group.
+fn private_prefix(project_id: Uuid) -> String {
+    format!("num@{project_id}:")
+}
+
+/// The counter that numbers `ctx` with `scheme` in a project group, and the
+/// shared counter it starts from (`None` for a shared counter).
+///
+/// Counters are named after the expanded scheme, so two groups whose schemes
+/// expand alike share one. A restricted group with a scheme of its own counts
+/// in a private counter instead (`num@<group id>:…`), so no other group can
+/// read or use up its numbers – whatever scheme the other group saves, and
+/// without any check that would tell it about the restricted group. The
+/// private counter starts at the shared one's value when it is first used
+/// (numbers counted while the group was internal), and is merged back into
+/// it when the group is opened to all users again. A restricted group with
+/// the built-in scheme shares the instance-wide counter (documented).
+pub(crate) fn number_counter(
+    project_id: Uuid,
+    visibility: &str,
+    scheme: &domain::NumberScheme,
+    ctx: &domain::NumberContext<'_>,
+) -> (String, Option<String>) {
+    let shared = scheme.counter_key(ctx);
+    if visibility == ProjectVisibility::Restricted.as_str()
+        && *scheme != domain::NumberScheme::default_scheme()
+    {
+        let rest = shared.strip_prefix("num:").unwrap_or(&shared);
+        (
+            format!("{}{rest}", private_prefix(project_id)),
+            Some(shared),
+        )
+    } else {
+        (shared, None)
+    }
+}
+
+/// The next value of a number counter (see [`number_counter`]).
+pub(crate) async fn next_number(
+    conn: &mut PgConnection,
+    counter: &str,
+    seed: Option<&str>,
+) -> AppResult<i64> {
+    if let Some(seed) = seed {
+        sqlx::query(
+            "INSERT INTO counters (name, value)
+             VALUES ($1, COALESCE((SELECT value FROM counters WHERE name = $2), 0))
+             ON CONFLICT (name) DO NOTHING",
+        )
+        .bind(counter)
+        .bind(seed)
+        .execute(&mut *conn)
+        .await?;
+    }
+    crate::services::next_counter(conn, counter).await
+}
+
 /// The numbers the next new items would get with `scheme` (the project's own
 /// scheme when `None`), without using up any. Manually entered numbers that
 /// are already taken are skipped when an item is created, so the real number
 /// can be higher.
 ///
-/// A scheme typed in for the preview is free text, so its counter key could
-/// be the private counter of a restricted group: such a preview reads only
-/// counters that a scheme of a group the actor sees uses, and starts at 1
-/// otherwise.
+/// A scheme typed in reads the counter the group would use with it; the
+/// counters of restricted groups with a scheme of their own are private
+/// (see [`number_counter`]), so no scheme reads them from another group.
 pub async fn numbering_preview(
     pool: &PgPool,
-    actor: &Actor,
     project: &Project,
     scheme: Option<&str>,
 ) -> AppResult<NumberingPreview> {
-    let own = domain::NumberScheme::of_project(project.number_scheme.as_deref())?;
     let scheme = match scheme.map(str::trim).filter(|s| !s.is_empty()) {
         Some(s) => domain::NumberScheme::parse(s)?,
-        None => own.clone(),
+        None => domain::NumberScheme::of_project(project.number_scheme.as_deref())?,
     };
     let now = Utc::now();
-    let readable: Option<std::collections::HashSet<String>> = if scheme == own {
-        None
-    } else {
-        let mut keys = std::collections::HashSet::new();
-        for p in list(pool, actor, false).await? {
-            let Ok(s) = domain::NumberScheme::of_project(p.number_scheme.as_deref()) else {
-                continue;
-            };
-            for item_type in ItemType::ALL {
-                keys.insert(s.counter_key(&domain::number_context(&p.code, item_type, now)));
-            }
-        }
-        Some(keys)
-    };
     let mut next = Vec::new();
     for item_type in ItemType::ALL {
         let ctx = domain::number_context(&project.code, item_type, now);
-        let key = scheme.counter_key(&ctx);
-        let used = if readable.as_ref().is_none_or(|keys| keys.contains(&key)) {
-            sqlx::query_scalar::<_, i64>("SELECT value FROM counters WHERE name = $1")
-                .bind(&key)
-                .fetch_optional(pool)
-                .await?
-                .unwrap_or(0)
-        } else {
-            0
-        };
+        let (counter, seed) = number_counter(project.id, &project.visibility, &scheme, &ctx);
+        let used = sqlx::query_scalar::<_, Option<i64>>(
+            "SELECT COALESCE((SELECT value FROM counters WHERE name = $1),
+                             (SELECT value FROM counters WHERE name = $2))",
+        )
+        .bind(&counter)
+        .bind(&seed)
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(0);
         next.push(NextNumber {
             item_type,
             label: item_type.label(),
@@ -614,7 +623,8 @@ pub async fn remove_member(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found("This user is not a member of the project group."))?;
-    // Locks are not released automatically; say so, so a manager can cancel them.
+    // Locks are not released automatically; say so, so a manager can cancel
+    // them (revisions::cancel_checkout allows that for former members).
     let held = held_checkouts(&mut tx, project_id, user_id).await?;
     let still = if held > 0 {
         format!(

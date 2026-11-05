@@ -7,10 +7,10 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::{self, ItemType, LifecycleState, Role},
+    domain::{self, ItemType, LifecycleState, ProjectVisibility, Role},
     error::{AppError, AppResult},
     models::{Item, ItemSummary, Revision, WhereUsed, WhereUsedLevel},
-    services::{access, audit, files, next_counter, notifications, revisions, Page},
+    services::{access, audit, files, notifications, projects, revisions, Page},
 };
 
 const ITEM_SELECT: &str = "
@@ -166,7 +166,9 @@ pub(crate) async fn latest_revision_unchecked(pool: &PgPool, item_id: Uuid) -> A
     .bind(item_id)
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| AppError::not_found("Item has no revisions."))
+    // every item has a revision: none means no item, and the message must
+    // be the one of a hidden item (`latest_revision`)
+    .ok_or_else(access::not_found_item)
 }
 
 /// The in-work or in-review revision of an item, if any.
@@ -319,13 +321,15 @@ pub(crate) async fn create_tx(
         AppError::BadRequest("Choose the project group the item belongs to.".into())
     })?;
     let tx = conn;
-    let (code, active, scheme) = sqlx::query_as::<_, (String, bool, Option<String>)>(
-        "SELECT code, active, number_scheme FROM projects WHERE id = $1",
-    )
-    .bind(project_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(access::unknown_project)?;
+    let (code, active, scheme, visibility) =
+        sqlx::query_as::<_, (String, bool, Option<String>, String)>(
+            // FOR SHARE: a visibility change moves the counters (number_counter)
+            "SELECT code, active, number_scheme, visibility FROM projects WHERE id = $1 FOR SHARE",
+        )
+        .bind(project_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(access::unknown_project)?;
     access::ensure_visible(actor, Some(project_id), access::unknown_project())?;
     if !active {
         return Err(AppError::BadRequest(format!(
@@ -345,10 +349,11 @@ pub(crate) async fn create_tx(
             // entered manually (or by another scheme) are skipped.
             let scheme = domain::NumberScheme::of_project(scheme.as_deref())?;
             let ctx = domain::number_context(&code, input.item_type, Utc::now());
-            let counter = scheme.counter_key(&ctx);
+            let (counter, seed) = projects::number_counter(project_id, &visibility, &scheme, &ctx);
             let mut attempts = 0;
             loop {
-                let generated = scheme.format(&ctx, next_counter(tx, &counter).await?);
+                let next = projects::next_number(tx, &counter, seed.as_deref()).await?;
+                let generated = scheme.format(&ctx, next);
                 let candidate = domain::normalize_item_number(&generated).map_err(|_| {
                     AppError::BadRequest(format!(
                         "The numbering scheme of the project group {code} gives the invalid item number '{generated}'; enter a number or change the scheme."
@@ -541,8 +546,9 @@ pub(crate) async fn ensure_may_take_out(
 }
 
 /// Deletes an item created by mistake. Only allowed while it has a single
-/// in-work revision, is not used in any BOM, not part of any change or
-/// change request and no simulation basis.
+/// in-work revision, is not used in any BOM, not part of any change, no
+/// simulation basis and – in a restricted group – no affected item of a
+/// change request.
 pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<String> {
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
@@ -598,14 +604,28 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
                 .into(),
         ));
     }
-    // A request is hidden while it names a hidden item; deleting the item
-    // (the row would cascade) would silently declassify the request.
-    let in_request = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM change_request_items WHERE item_id = $1)",
-    )
-    .bind(item_id)
-    .fetch_one(&mut *tx)
-    .await?;
+    // A request is hidden while it names a hidden item; deleting an item of
+    // a restricted group (the row would cascade) would silently declassify
+    // the request. Items of internal groups hide no request, so their rows
+    // simply go: refusing would tell the creator of a public item about a
+    // request they cannot see (and cannot edit).
+    let restricted = match item.project_id {
+        Some(p) => sqlx::query_scalar::<_, String>(
+            "SELECT visibility FROM projects WHERE id = $1 FOR SHARE",
+        )
+        .bind(p)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_some_and(|v| v == ProjectVisibility::Restricted.as_str()),
+        None => false,
+    };
+    let in_request = restricted
+        && sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM change_request_items WHERE item_id = $1)",
+        )
+        .bind(item_id)
+        .fetch_one(&mut *tx)
+        .await?;
     if in_request {
         return Err(AppError::Conflict(
             "The item is an affected item of a change request; remove it from the request first."

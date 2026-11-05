@@ -56,10 +56,10 @@ pub async fn project_show(
     // next to the field together with the current scheme's numbers.
     let candidate = q.scheme.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let (numbering, scheme_error) =
-        match projects::numbering_preview(&st.db, &ctx.me, &project, candidate).await {
+        match projects::numbering_preview(&st.db, &project, candidate).await {
             Ok(p) => (p, None),
             Err(AppError::BadRequest(msg)) => (
-                projects::numbering_preview(&st.db, &ctx.me, &project, None).await?,
+                projects::numbering_preview(&st.db, &project, None).await?,
                 Some(msg),
             ),
             Err(e) => return Err(e),

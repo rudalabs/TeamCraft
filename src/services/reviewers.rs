@@ -109,6 +109,15 @@ pub async fn suggest(
     limit: usize,
 ) -> AppResult<Vec<Suggestion>> {
     let change = changes::get(pool, actor, change_id).await?;
+    // Who may review depends on every item; with items the actor cannot see
+    // the list would tell who belongs to their groups (and adding a
+    // reviewer is refused anyway, see `changes::add_reviewer`).
+    {
+        let mut conn = pool.acquire().await?;
+        if !changes::sees_all_items(&mut conn, actor, change_id).await? {
+            return Ok(Vec::new());
+        }
+    }
     let sql = format!(
         "WITH ci AS MATERIALIZED (
              SELECT r.id AS revision_id, r.item_id, i.number, i.project_id

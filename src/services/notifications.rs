@@ -170,7 +170,8 @@ fn subject_kind(subject: Subject) -> Option<&'static str> {
 /// and everything its text names are visible, and none of the groups those
 /// items were in when it was written is hidden (`mentioned_projects`: this
 /// also covers items deleted since). Rows written before the subject was
-/// stored stay readable.
+/// stored got it from their link in migration 0027; personal ones (and
+/// old rows whose subject is gone) have none.
 pub(crate) fn notification_visible(n: &str, actor: &str, hidden: &str) -> String {
     format!(
         "(NOT ({n}.mentioned_projects && {hidden})

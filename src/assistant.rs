@@ -652,7 +652,9 @@ pub const TAINTED_WRITE: &str =
 /// notes) reaches the model and may tell it to copy restricted content into
 /// a comment or a draft that those users can read. So once a read in this
 /// run returned something a reader without the user's restricted groups
-/// would not have got, the text write tools refuse for the rest of the run.
+/// would not have got (or a write returned such an object, e.g. a draft
+/// with restricted dependencies), the text write tools refuse for the rest
+/// of the run.
 pub struct McpTools<'a> {
     pub state: &'a crate::AppState,
     pub me: &'a Actor,
@@ -669,7 +671,12 @@ impl<'a> McpTools<'a> {
         }
     }
 
-    /// `me` without its restricted groups: every restricted group hidden.
+    /// `me` without its restricted groups: every restricted group hidden,
+    /// and somebody else. Change orders and requests are also visible by
+    /// identity (author, reviewer, requester, assignee, the admin role in
+    /// the database), so the outsider gets an id that matches no user: what
+    /// the user reads only because of who they are counts as restricted
+    /// (fail closed – also their worklist and "mine" lists).
     async fn outsider(&self, me: &Actor) -> Result<Option<Actor>, AppError> {
         let restricted: Vec<uuid::Uuid> =
             sqlx::query_scalar("SELECT id FROM projects WHERE visibility = 'restricted'")
@@ -685,8 +692,70 @@ impl<'a> McpTools<'a> {
                 me.role
             },
             hidden_projects: restricted,
+            id: uuid::Uuid::new_v4(),
             ..me.clone()
         }))
+    }
+
+    /// Whether `name` with `input` returns something to the user that the
+    /// outsider would not get. Unknown answers count as yes (fail closed).
+    async fn differs_for_outsider(&self, me: &Actor, name: &str, input: &Value) -> bool {
+        let mine = mcp::tools::call(self.state, me, name, input).await;
+        self.differs_from(me, name, input, &mine).await
+    }
+
+    async fn differs_from(&self, me: &Actor, name: &str, input: &Value, mine: &Value) -> bool {
+        match self.outsider(me).await {
+            Ok(None) => false,
+            Ok(Some(outsider)) => {
+                comparable(&mcp::tools::call(self.state, &outsider, name, input).await)
+                    != comparable(mine)
+            }
+            Err(_) => true,
+        }
+    }
+
+    /// Whether the result of a write tool carries restricted content. A
+    /// write cannot be repeated as the outsider, so the object it returns
+    /// is read again as the user and as the outsider.
+    async fn write_taints(&self, me: &Actor, name: &str, result: &Value) -> bool {
+        if result["isError"] == true || name == "comment_change_request" {
+            // errors name what the model passed in; a comment returns only
+            // its own text
+            return false;
+        }
+        match self.outsider(me).await {
+            Ok(None) => return false,
+            Ok(Some(_)) => {}
+            Err(_) => return true,
+        }
+        let content = &result["structuredContent"];
+        let follow_up = if let Some(n) = content["change"]["number"].as_str() {
+            Some(("get_change", json!({ "change": n })))
+        } else {
+            content["change_request"]["number"]
+                .as_str()
+                .map(|n| ("get_change_request", json!({ "request": n })))
+        };
+        match follow_up {
+            Some((tool, input)) => self.differs_for_outsider(me, tool, &input).await,
+            None => true, // cut output or an unknown shape
+        }
+    }
+}
+
+/// A tool result for the outsider comparison: the structured content
+/// without what the user may do (`you_may` of a request depends on who
+/// asks and holds no content). Results without structured content (cut
+/// output, errors) are compared as they are.
+fn comparable(result: &Value) -> Value {
+    match result.get("structuredContent") {
+        Some(Value::Object(content)) => {
+            let mut content = content.clone();
+            content.remove("you_may");
+            Value::Object(content)
+        }
+        _ => result.clone(),
     }
 }
 
@@ -701,24 +770,20 @@ impl Tools for McpTools<'_> {
                 return mcp::tools::failure("The tool is not available right now.");
             }
         };
-        if TEXT_WRITE_TOOLS.contains(&name) {
-            if self.tainted.load(Ordering::SeqCst) {
-                return mcp::tools::failure(TAINTED_WRITE);
-            }
-            return mcp::tools::call(self.state, &me, name, input).await;
+        if TEXT_WRITE_TOOLS.contains(&name) && self.tainted.load(Ordering::SeqCst) {
+            return mcp::tools::failure(TAINTED_WRITE);
         }
         let result = mcp::tools::call(self.state, &me, name, input).await;
-        let read_only = mcp::tools::definitions()
-            .iter()
-            .any(|d| d["name"] == name && d["annotations"]["readOnlyHint"] == true);
-        if read_only && !self.tainted.load(Ordering::SeqCst) {
-            // the same read as somebody outside the user's restricted groups
-            let differs = match self.outsider(&me).await {
-                Ok(None) => false,
-                Ok(Some(outsider)) => {
-                    mcp::tools::call(self.state, &outsider, name, input).await != result
-                }
-                Err(_) => true, // unknown: fail closed
+        if !self.tainted.load(Ordering::SeqCst) {
+            let read_only = mcp::tools::definitions()
+                .iter()
+                .any(|d| d["name"] == name && d["annotations"]["readOnlyHint"] == true);
+            let differs = if read_only {
+                // the same read as somebody outside the user's restricted groups
+                self.differs_from(&me, name, input, &result).await
+            } else {
+                // write results (a draft's overview, added dependencies) too
+                self.write_taints(&me, name, &result).await
             };
             if differs {
                 self.tainted.store(true, Ordering::SeqCst);

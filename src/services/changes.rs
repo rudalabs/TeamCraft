@@ -788,6 +788,9 @@ pub async fn add_reviewer(
     let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
+    // The check below looks at every item; for items the actor cannot see
+    // it would tell who is a member of their group.
+    ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
     if reviewer.id == change.created_by {
         return Err(AppError::BadRequest(
             "The author of a change cannot review it (four-eyes principle).".into(),

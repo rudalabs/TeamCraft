@@ -1084,6 +1084,13 @@ pub async fn assign(
         return Err(not_now(&request));
     }
     if let Some(user) = &assignee {
+        // The check below looks at every item; for items the actor cannot
+        // see it would tell who is a member of their group.
+        if !projects.iter().all(|p| actor.can_see_project(*p)) {
+            return Err(AppError::Forbidden(
+                "You can no longer see all affected items of this request.".into(),
+            ));
+        }
         let blind = sqlx::query_scalar::<_, bool>(&format!(
             "SELECT EXISTS(SELECT 1 FROM change_request_items cri
                            JOIN items i ON i.id = cri.item_id

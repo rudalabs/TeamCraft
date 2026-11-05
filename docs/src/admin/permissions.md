@@ -76,7 +76,10 @@ Reviewers and assignees must be able to see every affected item;
 TeamCraft refuses others – also when an item is added later to a change
 with reviewers or to a request with an assignee. Submitting, reviewing and reopening a change
 needs the same – an author or reviewer who lost membership can still
-withdraw or cancel, but not approve blind.
+withdraw or cancel, but not approve blind. Adding a reviewer, assigning a
+request and the reviewer suggestions need it as well: whether somebody can
+see a hidden item would tell who belongs to its group, so an author who
+cannot see every item gets no suggestions and cannot add reviewers.
 
 ## Notifications, e-mail, chat, webhooks, assistant
 
@@ -113,7 +116,10 @@ withdraw or cancel, but not approve blind.
 * Text other users typed (request comments, names, notes) reaches the
   assistant and may try to make it copy restricted content into a comment
   or a draft that those users can read. Once a run has read something that
-  a reader outside the user's restricted groups would not get, the
+  a reader outside the user's restricted groups would not get (that reader
+  is also somebody else: what the user sees only as author, reviewer,
+  requester, assignee or admin counts, and so does their worklist), or a
+  draft the assistant created or extended holds such content, the
   assistant's text-writing tools (`create_change_draft`,
   `create_change_request`, `comment_change_request`) refuse for the rest of
   the run. External MCP clients act for the user without this check – the
@@ -124,8 +130,11 @@ withdraw or cancel, but not approve blind.
 Memberships and roles are loaded on every request (web, API tokens,
 desktop, MCP): removing a member takes effect on the next request. Nothing
 is deleted – watches and favorites of the lost items are hidden and come
-back with the access, check-outs stay (the removal message says how many;
-a manager or admin cancels them).
+back with the access, check-outs stay (the removal message says how many).
+A manager of the group (or an admin) cancels them on the revision page or
+with `POST /api/v1/items/{number}/revisions/{code}/cancel-checkout`:
+managers may release the check-outs of users who are no longer members of
+the group.
 
 Memberships synchronised from the identity provider change only at the
 user's next SSO login; a user removed from the IdP group keeps access until
@@ -145,11 +154,16 @@ These are inherent to a shared instance and documented on purpose:
   BOM import says "not available").
 * The shared default number counter shows how many items other groups
   create. Give restricted groups their own scheme, e.g.
-  `{PROJECT}-{TYPE}-{SEQ:4}`. The numbering preview of a scheme typed in
-  (not saved) counts on only for counters that a scheme of a group the
-  user sees uses; otherwise it starts at 1. A scheme of its own makes a
-  restricted group's counter private: no other group can save a scheme
-  that expands to the same counter ("This numbering scheme is reserved").
+  `{PROJECT}-{TYPE}-{SEQ:4}`. A restricted group with a scheme of its own
+  counts in a private counter: another group whose scheme expands to the
+  same text (also one saved before the restriction, or for a later year or
+  month) counts on its own, its numbering preview never shows the
+  restricted group's numbers, and no scheme is refused because of a
+  restricted group. The private counter starts where the shared one stood
+  when the group was restricted (numbers everybody could see then) and is
+  merged back when the group is opened again. Generated numbers that are
+  already taken are skipped, so the numbers another group gets with such a
+  scheme still show which numbers exist, like typing a number in does.
 * A BOM line that would close a cycle is refused even if the cycle runs
   through restricted assemblies ("would create a circular BOM structure"):
   the structure must stay a tree for everybody.
@@ -161,12 +175,23 @@ These are inherent to a shared instance and documented on purpose:
   0025 and 0026 mark the older impact, change and request entries with the
   items and changes they name (also items listed in the details that have
   left the change or request since), so these are redacted like new ones.
+  Older notifications get their subject (item, change, request) from their
+  link (migration 0027) and are hidden like new ones; only those whose
+  subject has been deleted since stay as they are.
+* Response times and caches: the preview meshes and shape signatures are
+  stored per file content (SHA-256) for the whole instance. Somebody who
+  uploads a file with exactly the same bytes as one in a restricted group
+  can tell from how fast its preview and its similar-parts card are ready
+  that the content exists already – they hold the file themselves, and no
+  hidden item is named.
 * Audit entries and notifications remember the groups of the items they
   name when they are written (migration 0026). They stay redacted for
   non-members of those groups after the item is deleted or moved out of
-  the group. An item that is an affected item of a change request cannot
-  be deleted (remove it from the request first), so deleting it never
-  makes a hidden request visible.
+  the group. An item of a restricted group that is an affected item of a
+  change request cannot be deleted (remove it from the request first), so
+  deleting it never makes a hidden request visible; a member who cannot
+  see that request learns that one exists. Items of internal groups hide
+  no request and are deleted with their request rows.
 * Response times of hidden and missing objects are not equalised.
 * Backups, the command line and `/admin/audit` contain everything
   (operators and administrators).
