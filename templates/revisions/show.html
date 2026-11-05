@@ -137,6 +137,9 @@
       <dt>Material</dt><dd>{{ rev.material or "—" }}</dd>
       <dt>Mass per unit</dt><dd>{% if rev.mass_kg is not none %}{{ rev.mass_kg|num(4) }} kg{% else %}—{% endif %}</dd>
       <dt>Unit cost</dt><dd>{% if rev.unit_cost is not none %}{{ rev.unit_cost|num(2) }} €{% else %}—{% endif %}</dd>
+      {% for a in attribute_rows %}
+      <dt{% if not a.active %} title="This attribute is no longer in use"{% endif %}>{{ a.label }}</dt><dd>{{ a.value }}{% if a.unit %} {{ a.unit }}{% endif %}</dd>
+      {% endfor %}
     </dl>
   </section>
 
@@ -149,6 +152,7 @@
       <dt>Item number</dt><dd class="mono">{{ item.number }}</dd>
       <dt>Type</dt><dd>{{ item.item_type|label }}</dd>
       <dt>Unit</dt><dd>{{ item.unit }}</dd>
+      <dt>Classification</dt><dd>{% for c in classifications %}{% if c.value == item.classification %}{{ c.label }}{% endif %}{% endfor %}</dd>
       <dt>Project group</dt><dd>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% else %}—{% endif %}</dd>
       <dt>Created</dt><dd>{{ m.time(item.created_at) }} by {{ item.created_by_name }}</dd>
       <dt>Short link</dt><dd class="mono small"><a href="/i/{{ item.number }}">/i/{{ item.number }}</a></dd>
@@ -165,6 +169,11 @@
         <label>Unit <span class="hint">only before the first release</span>
           <input type="text" name="unit" value="{{ item.unit }}" list="units" maxlength="16">
           <datalist id="units">{% for u in units %}<option value="{{ u }}">{% endfor %}</datalist>
+        </label>
+        <label>Classification
+          <select name="classification">
+            {% for c in classifications %}<option value="{{ c.value }}" {% if item.classification == c.value %}selected{% endif %}>{{ c.label }}</option>{% endfor %}
+          </select>
         </label>
       </div>
       <div class="actions"><button class="primary" type="submit">Save master data</button></div>

@@ -143,6 +143,9 @@ promised.
 - **Numbering schemes.** Generated item numbers per project group from
   `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`, with a preview of the next
   numbers.
+- **Custom attributes.** Vendor, order number, surface, RoHS … as text,
+  number, yes/no or choice list per item type, versioned with each revision;
+  in-house, purchased and standard parts; search by attribute value.
 - **Notifications.** In-app bell, e-mail and Mattermost; watch items,
   changes and change requests.
 - **Event webhooks.** Signed JSON for releases, changes, change requests and

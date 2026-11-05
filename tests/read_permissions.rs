@@ -157,6 +157,8 @@ fn fill(path: &str, h: &Hidden) -> Option<String> {
             ("{revision_id}", _) => h.revision_id.to_string(),
             ("{item_id}", _) => h.item_id.to_string(),
             ("{user_id}", _) => h.caller.to_string(),
+            // attribute definitions belong to no project group
+            ("{key}", "attributes") => "vendor".into(),
             // objects of no fixture: unknown ids must not reveal anything either
             ("{id}", _) | ("{delivery_id}", _) => random.clone(),
             _ => return None,
@@ -1370,9 +1372,15 @@ async fn visibility_is_managed_and_audited() {
         .fetch_one(&app.pool)
         .await
         .unwrap();
-    let moved =
-        teamcraft::services::items::update_master(&app.pool, &item, item_id, Some(rover), "each")
-            .await;
+    let moved = teamcraft::services::items::update_master(
+        &app.pool,
+        &item,
+        item_id,
+        Some(rover),
+        "each",
+        None,
+    )
+    .await;
     assert!(
         matches!(moved, Err(teamcraft::error::AppError::Forbidden(_))),
         "{moved:?}"
@@ -1798,6 +1806,8 @@ async fn texts_naming_restricted_objects_are_redacted() {
                 material: String::new(),
                 mass_kg: None,
                 unit_cost: None,
+                classification: Default::default(),
+                attributes: Vec::new(),
             },
         )
     };

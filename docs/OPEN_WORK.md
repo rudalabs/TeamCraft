@@ -64,7 +64,10 @@ the known gaps with details. Last update: 2026-11-05.
 - [ ] 3D preview: test real STEP exports of the CAD programs and assembly placements (`mapped_item`), length units;
   readers for IGES, BREP, Parasolid, JT, … (E57: `e57` crate)
 - [x] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview, per project group (feature 4)
-- [ ] Custom attributes per item and file type, classification (standard/purchased parts), attribute search (feature 5)
+- [x] Custom attributes per item type, classification (in-house/purchased/standard part), attribute search (feature 5) –
+  open: attributes per file type, mapping BOM import columns to attributes and classification
+- [ ] BOM import: map further columns (Inventor *BOM Structure = Purchased*, vendor …) to the classification and to
+  custom attributes (feature 5, second part; `bomtable` has to keep unmapped columns first)
 - [x] Item copy ("Save as" with files and BOM) – done; multi-level where-used in the API and MCP (`levels`); open:
   supersede/replace, alternate parts, multi-level where-used in the web UI (feature 6)
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
@@ -259,10 +262,13 @@ The history up to the open-source release is squashed into the first commit
    Counters are named after the expansion without the sequence. Open: a
    separate scheme per item type within a group, an instance-wide default
    other than `{TYPE}-{SEQ:6}`.
-5. **Custom attributes** per item type and file type, classification (standard/purchased parts), attribute search. The
-   BOM import can then map
-   further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to
-   attributes.
+5. **Custom attributes**: done for items – definitions under *Admin → Attributes* (`attribute_defs`: key, label,
+   text/number/yes-no/choice list, unit, item types, order, active), values per revision in `revisions.attributes`
+   (JSONB; versioned, copied by revise and *Save as*, part of the full-text search), the classification
+   in-house/purchased/standard part as item master data (`items.classification`), filters `class`, `attr` + `value`
+   (text contains, yes/no, `12`, `>=10`, `10..20`) in the item list, the REST API, saved searches and the MCP search.
+   Open: attributes per file type; the BOM import mapping further columns (e.g. Inventor *BOM Structure =
+   Purchased*, vendor) to the classification and attributes – `bomtable` drops unknown columns today.
 6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate
    parts, multi-level where-used (API and MCP: done, `levels=N`).
 7. **BOM comparison** between revisions with Excel export (`rust_xlsxwriter`,

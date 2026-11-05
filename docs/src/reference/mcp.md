@@ -87,7 +87,7 @@ at 2000 rows, other lists at 500 entries, and the whole result at 1 MiB.
 
 | Tool                   | What it does                                                                                                          |
 |------------------------|-----------------------------------------------------------------------------------------------------------------------|
-| `search_items`         | Full-text search (`q`, `type`, `project`, `state`, `system` = CAD program, `limit`)                                   |
+| `search_items`         | Full-text search (`q`, `type`, `project`, `state`, `system` = CAD program, `class`, `attr` + `value`, `limit`)          |
 | `get_item`             | Master data, all revisions, open change requests and the simulations based on the item                               |
 | `get_revision`         | Attributes, files (format, version, size, uploader, SHA-256), BOM lines, item references, CAD file references matched to items, referrers, change orders, open change requests; for a simulation its bases and results, otherwise the simulations based on the item |
 | `get_bom`              | Expanded multi-level BOM as flat rows with mass and cost roll-ups; `rule` = `latest`, `released`, `as_released`       |
