@@ -432,10 +432,13 @@ pub async fn checkin(
                 revisions::label(&rev)
             )));
         }
-        let received = receive_uploads(&st, &mut multipart).await?;
+        let mut received = receive_uploads(&st, &mut multipart).await?;
+        // Large files sent before in chunks by app.js (field `uploads`).
+        let sessions = take_session_uploads(&st, &ctx.me, id, &mut received).await?;
         let result =
             files::check_in(&st.db, &ctx.me, id, &received.uploads, &received.comment).await;
         if result.is_ok() {
+            uploads::forget(&st.db, &st.vault, &sessions).await;
             warm_previews(&st, &received.uploads);
         }
         result

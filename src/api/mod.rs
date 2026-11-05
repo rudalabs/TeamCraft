@@ -9,7 +9,7 @@ mod change_requests;
 mod interchange_api;
 mod personal;
 mod simulations;
-mod uploads_api;
+pub(crate) mod uploads_api;
 mod webhooks;
 
 use axum::{
