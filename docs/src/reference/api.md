@@ -206,6 +206,27 @@ parents – and every row also carries `level` (1 = direct parent) and
 `child_number` (the item used on that line). Each item is reported on the
 lowest level it is reached on; the report stops at 2000 rows.
 
+### Custom attributes and classification
+
+Administrators define attributes once; values are set per revision by key,
+as text, number, `true`/`false` or one of the choices (`null` or `""`
+removes a value, keys not sent keep theirs):
+
+```sh
+curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
+     -d '{"key": "length_mm", "data_type": "number", "label": "Length", "unit": "mm"}' $API/attributes
+curl -s -X PATCH -H "$H" -H 'Content-Type: application/json' \
+     -d '{"attributes": {"length_mm": 120.5, "vendor": null}}' $API/items/PRT-000001/revisions/A
+curl -s -X PATCH -H "$H" -H 'Content-Type: application/json' \
+     -d '{"classification": "purchased"}' $API/items/PRT-000001
+curl -s -H "$H" "$API/items?class=purchased&attr=length_mm&value=100..200"
+```
+
+`value` matches text and choices as a part (case-insensitive), yes/no
+attributes with `yes`/`no`, numbers with `12`, `>=10`, `<=20` or `10..20`; an
+empty `value` finds every item that has the attribute. Revisions and the
+item search return `attributes` (object by key) and `classification`.
+
 ### Alternates, supersession and replace in assemblies
 
 | Request                                            | Body / answer                                                                                     |
@@ -227,7 +248,8 @@ the caller cannot read are left out; a successor there is a placeholder with
 
 | Resource         | Endpoints                                                                                                                             |
 |------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| Items            | `GET/POST /items`, `GET /items/{number}`, `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch |
+| Items            | `GET/POST /items` (`class=`, `attr=` + `value=` filters), `GET/PATCH /items/{number}` (classification, unit, project), `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch |
+| Attributes       | `GET /attributes` (`all=true`: also inactive), `POST /attributes`, `PATCH /attributes/{key}` (admins); values in `attributes` of a revision |
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
 | Worklist         | `GET /worklist` (check-outs, reviews, impacts and `impact_groups`, statistics), `POST /worklist/checkin-all`                          |
 | Files            | `POST …/files` (multipart, `folder`/`folders`), `GET/PATCH /files/{id}` (metadata, folder), `/content`, `/versions`, `/restore`, `/mesh`, `/thumbnail`, `…/workset` |

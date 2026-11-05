@@ -6,6 +6,7 @@
 
 pub mod access;
 pub mod assistant;
+pub mod attributes;
 pub mod audit;
 pub mod bom;
 pub mod bom_compare;

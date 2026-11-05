@@ -7,15 +7,15 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::{self, ItemType, LifecycleState, ProjectVisibility, Role},
+    domain::{self, Classification, ItemType, LifecycleState, ProjectVisibility, Role},
     error::{AppError, AppResult},
     models::{Item, ItemSummary, Revision, WhereUsed, WhereUsedLevel},
-    services::{access, audit, files, notifications, projects, revisions, Page},
+    services::{access, attributes, audit, files, notifications, projects, revisions, Page},
 };
 
 const ITEM_SELECT: &str = "
     SELECT i.id, i.number, i.item_type, i.unit, i.project_id, p.code AS project_code,
-           i.created_by, u.display_name AS created_by_name, i.created_at
+           i.created_by, u.display_name AS created_by_name, i.created_at, i.classification
     FROM items i
     LEFT JOIN projects p ON p.id = i.project_id
     JOIN users u ON u.id = i.created_by";
@@ -31,6 +31,45 @@ pub struct ItemFilter {
     /// CAD program (`cadformat::SYSTEMS` id): only items whose latest revision
     /// has a file of one of its formats.
     pub system: Option<String>,
+    pub classification: Option<Classification>,
+    /// Custom attribute key: only items whose latest revision has a value
+    /// matching `attribute_value` (see `domain::parse_attribute_condition`).
+    pub attribute: Option<String>,
+    pub attribute_value: Option<String>,
+}
+
+/// Bind values of an attribute condition: key, LIKE pattern, yes/no, min, max.
+type AttributeBinds = (
+    Option<String>,
+    Option<String>,
+    Option<bool>,
+    Option<f64>,
+    Option<f64>,
+);
+
+async fn attribute_binds(pool: &PgPool, filter: &ItemFilter) -> AppResult<AttributeBinds> {
+    let Some(key) = filter.attribute.as_deref().filter(|k| !k.trim().is_empty()) else {
+        return Ok((None, None, None, None, None));
+    };
+    let def = attributes::get_by_key(pool, key)
+        .await
+        .map_err(|_| AppError::BadRequest(format!("Unknown attribute '{}'.", key.trim())))?;
+    let data_type =
+        domain::AttributeType::parse(&def.data_type).unwrap_or(domain::AttributeType::Text);
+    let condition = domain::parse_attribute_condition(
+        &def.label,
+        data_type,
+        filter.attribute_value.as_deref().unwrap_or(""),
+    )?;
+    let key = Some(def.key);
+    Ok(match condition {
+        domain::AttributeCondition::Present => (key, None, None, None, None),
+        domain::AttributeCondition::Contains(text) => {
+            (key, Some(domain::like_pattern(&text)), None, None, None)
+        }
+        domain::AttributeCondition::Bool(b) => (key, None, Some(b), None, None),
+        domain::AttributeCondition::Range(min, max) => (key, None, None, min, max),
+    })
 }
 
 /// Searches items; every row carries its latest revision.
@@ -41,16 +80,20 @@ pub async fn search(
     page: Page,
 ) -> AppResult<(Vec<ItemSummary>, i64)> {
     // $1 = LIKE pattern, $5 = prefix tsquery, $6 = formats the query names
-    // ("SolidWorks", "NX", "STEP"), $7 = formats of the CAD program filter.
-    // A match is any of: item number, name/description/material (substring or
-    // full-text), a file name, the extracted text of the current version of a
-    // file of the latest revision, or a file of a format the query names.
+    // ("SolidWorks", "NX", "STEP"), $7 = formats of the CAD program filter,
+    // $9 = classification, $10–$14 = attribute key, LIKE pattern, yes/no,
+    // min, max.
+    // A match is any of: item number, name/description/material or a custom
+    // attribute value (substring or full-text), a file name, the extracted
+    // text of the current version of a file of the latest revision, or a file
+    // of a format the query names.
     let from = format!(
         "
         FROM items i
         LEFT JOIN projects p ON p.id = i.project_id
         CROSS JOIN LATERAL (
-            SELECT r.id, r.code, r.state, r.name, r.description, r.material, r.search_vector
+            SELECT r.id, r.code, r.state, r.name, r.description, r.material, r.search_vector,
+                   r.attributes
             FROM revisions r WHERE r.item_id = i.id ORDER BY r.seq DESC LIMIT 1
         ) lr
         LEFT JOIN LATERAL (
@@ -64,6 +107,7 @@ pub async fn search(
         ) fm ON TRUE
         WHERE ($1::text IS NULL
                OR i.number ILIKE $1 OR lr.name ILIKE $1 OR lr.description ILIKE $1 OR lr.material ILIKE $1
+               OR jsonb_path_query_array(lr.attributes, '$.*')::text ILIKE $1
                OR ($5::text IS NOT NULL AND lr.search_vector @@ to_tsquery('simple', $5))
                OR fm.filename IS NOT NULL)
           AND ($2::text IS NULL OR i.item_type = $2)
@@ -71,9 +115,20 @@ pub async fn search(
           AND ($4::text IS NULL OR lr.state = $4)
           AND ($7::text[] IS NULL OR EXISTS (
                 SELECT 1 FROM files sf WHERE sf.revision_id = lr.id AND sf.format = ANY($7::text[])))
+          AND ($9::text IS NULL OR i.classification = $9)
+          AND ($10::text IS NULL OR (lr.attributes ? $10
+               AND ($11::text IS NULL OR lr.attributes ->> $10 ILIKE $11)
+               AND ($12::boolean IS NULL OR lr.attributes -> $10 = to_jsonb($12::boolean))
+               AND ($13::float8 IS NULL OR CASE WHEN jsonb_typeof(lr.attributes -> $10) = 'number'
+                    THEN (lr.attributes ->> $10)::float8 >= $13 ELSE FALSE END)
+               AND ($14::float8 IS NULL OR CASE WHEN jsonb_typeof(lr.attributes -> $10) = 'number'
+                    THEN (lr.attributes ->> $10)::float8 <= $14 ELSE FALSE END)))
           AND {}",
         access::item_visible("i", 8)
     );
+    let classification = filter.classification.map(Classification::as_str);
+    let (attr_key, attr_pattern, attr_bool, attr_min, attr_max) =
+        attribute_binds(pool, filter).await?;
     let query = filter
         .query
         .as_deref()
@@ -97,12 +152,12 @@ pub async fn search(
                 lr.id AS latest_revision_id, lr.code AS latest_code, lr.state AS latest_state, lr.name,
                 (SELECT rr.code FROM revisions rr WHERE rr.item_id = i.id AND rr.state = 'released'
                  ORDER BY rr.seq DESC LIMIT 1) AS released_code,
-                fm.filename AS matched_file
+                fm.filename AS matched_file, i.classification, lr.attributes
          {from}
          ORDER BY CASE WHEN $5::text IS NULL THEN 0
                        ELSE ts_rank(lr.search_vector, to_tsquery('simple', $5)) END DESC,
                   i.number
-         LIMIT $9 OFFSET $10"
+         LIMIT $15 OFFSET $16"
     ))
     .bind(&pattern)
     .bind(item_type)
@@ -112,6 +167,12 @@ pub async fn search(
     .bind(&named_formats)
     .bind(&system_formats)
     .bind(&actor.hidden_projects)
+    .bind(classification)
+    .bind(&attr_key)
+    .bind(&attr_pattern)
+    .bind(attr_bool)
+    .bind(attr_min)
+    .bind(attr_max)
     .bind(page.limit)
     .bind(page.offset)
     .fetch_all(pool)
@@ -125,6 +186,12 @@ pub async fn search(
         .bind(&named_formats)
         .bind(&system_formats)
         .bind(&actor.hidden_projects)
+        .bind(classification)
+        .bind(&attr_key)
+        .bind(&attr_pattern)
+        .bind(attr_bool)
+        .bind(attr_min)
+        .bind(attr_max)
         .fetch_one(pool)
         .await?;
     Ok((rows, total))
@@ -248,6 +315,10 @@ pub struct NewItem {
     pub material: String,
     pub mass_kg: Option<f64>,
     pub unit_cost: Option<f64>,
+    /// Make, purchased or standard part.
+    pub classification: Classification,
+    /// Custom attribute values, `key → value as text` (empty ones are skipped).
+    pub attributes: Vec<(String, String)>,
 }
 
 fn validate_unit(unit: &str) -> AppResult<String> {
@@ -308,9 +379,17 @@ pub(crate) async fn create_tx(
         material: input.material,
         mass_kg: input.mass_kg,
         unit_cost: input.unit_cost,
+        attributes: input.attributes,
     }
     .validated()?;
     let unit = validate_unit(&input.unit)?;
+    let attribute_values = attributes::apply_changes(
+        &mut *conn,
+        input.item_type.as_str(),
+        &serde_json::json!({}),
+        &attrs.attributes,
+    )
+    .await?;
     let manual_number = match input.number.as_deref().map(str::trim) {
         Some(n) if !n.is_empty() => Some(domain::normalize_item_number(n)?),
         _ => None,
@@ -434,8 +513,8 @@ pub(crate) async fn create_tx(
 
     let item_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO items (id, number, item_type, unit, project_id, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO items (id, number, item_type, unit, project_id, created_by, classification)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(item_id)
     .bind(&number)
@@ -443,6 +522,7 @@ pub(crate) async fn create_tx(
     .bind(&unit)
     .bind(project_id)
     .bind(actor.id)
+    .bind(input.classification.as_str())
     .execute(&mut *tx)
     .await
     .map_err(|e| {
@@ -452,8 +532,9 @@ pub(crate) async fn create_tx(
     let rev_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO revisions (id, item_id, seq, code, state, name, description, material,
-                                mass_kg, unit_cost, created_by, checked_out_by, checked_out_at)
-         VALUES ($1, $2, 1, $3, 'in_work', $4, $5, $6, $7, $8, $9, $9, now())",
+                                mass_kg, unit_cost, created_by, checked_out_by, checked_out_at,
+                                attributes)
+         VALUES ($1, $2, 1, $3, 'in_work', $4, $5, $6, $7, $8, $9, $9, now(), $10)",
     )
     .bind(rev_id)
     .bind(item_id)
@@ -464,6 +545,7 @@ pub(crate) async fn create_tx(
     .bind(attrs.mass_kg)
     .bind(attrs.unit_cost)
     .bind(actor.id)
+    .bind(&attribute_values)
     .execute(&mut *tx)
     .await?;
 
@@ -499,6 +581,7 @@ pub async fn update_master(
     item_id: Uuid,
     project_id: Option<Uuid>,
     unit: &str,
+    classification: Option<Classification>,
 ) -> AppResult<Item> {
     actor.require(Role::Editor)?;
     let unit = validate_unit(unit)?;
@@ -555,10 +638,14 @@ pub async fn update_master(
             ));
         }
     }
-    sqlx::query("UPDATE items SET project_id = $2, unit = $3 WHERE id = $1")
+    let classification = classification
+        .map(Classification::as_str)
+        .unwrap_or(current.classification.as_str());
+    sqlx::query("UPDATE items SET project_id = $2, unit = $3, classification = $4 WHERE id = $1")
         .bind(item_id)
         .bind(project_id)
         .bind(&unit)
+        .bind(classification)
         .execute(&mut *tx)
         .await?;
     audit::record(
@@ -568,7 +655,7 @@ pub async fn update_master(
         "item",
         Some(item_id),
         format!("Updated master data of {}", current.number),
-        json!({ "project_id": project_id, "unit": unit }),
+        json!({ "project_id": project_id, "unit": unit, "classification": classification }),
     )
     .await?;
     tx.commit().await?;

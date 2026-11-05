@@ -73,6 +73,26 @@ hand or imported), the counter continues after the highest existing number
 of the same pattern – so a new scheme can take over an existing numbering
 convention – and existing items never change their numbers.
 
+## Attributes and classification
+
+Besides name, description, material, mass and unit cost, a revision can
+carry **custom attributes** that administrators define under
+*Admin → Attributes*: a label, a key for the API (`vendor`, `length_mm`), a
+type – text, number, yes/no or a choice list – an optional unit, the item
+types it applies to and its position in the forms. Values are edited with
+the other attributes while the revision is in work, frozen on release and
+copied by *Revise* and *Save as*. Key and type are fixed once created;
+deactivating an attribute stops offering it, stored values stay visible.
+
+Every item also has a **classification** in its master data: *in-house*
+(the default), *purchased* or *standard part* – it can change at any time,
+like the project group.
+
+The item list filters by classification and by one attribute: text and
+choices match a part of the value, yes/no attributes `yes` or `no`, numbers
+`12`, `>=10`, `<=20` or `10..20`; an empty value finds every item that has
+the attribute. The search box also finds attribute values.
+
 ## Audit log
 
 Every modification is recorded with user, time and details – shown on every

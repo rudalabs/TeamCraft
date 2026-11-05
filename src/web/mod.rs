@@ -10,6 +10,7 @@
 mod account;
 mod admin;
 mod assistant;
+mod attributes;
 mod auth_pages;
 mod bom;
 mod changes;
@@ -319,6 +320,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/admin/audit", get(admin::audit))
+        .route(
+            "/admin/attributes",
+            get(attributes::list).post(attributes::create),
+        )
+        .route(
+            "/admin/attributes/{id}",
+            get(attributes::show).post(attributes::update),
+        )
         .route(
             "/admin/webhooks",
             get(webhooks::list).post(webhooks::create),

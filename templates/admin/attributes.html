@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Attributes{% endblock %}
+{% block nav_attributes %}active{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Attributes</h1>
+    <p class="subtitle">
+      Custom attributes of items – vendor, order number, surface, RoHS … – shown and edited next to name and material,
+      versioned with each revision and searchable in <a href="/items">Items</a>.
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  {% if rows %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Label</th><th>Key</th><th>Type</th><th>Unit</th><th>Item types</th><th class="right">Order</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="nowrap"><a href="/admin/attributes/{{ r.def.id }}">{{ r.def.label }}</a></td>
+        <td class="mono small">{{ r.def.key }}</td>
+        <td class="small">{{ r.type_label }}{% if r.def.choices %} <span class="muted">({{ r.def.choices|length }} choices)</span>{% endif %}</td>
+        <td class="small">{{ r.def.unit or "—" }}</td>
+        <td class="small">{% if r.def.item_types %}{% for t in r.def.item_types %}{{ t|label }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}all{% endif %}</td>
+        <td class="right">{{ r.def.position }}</td>
+        <td>{% if r.def.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">inactive</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty">No custom attributes yet. Add the first one below, e.g. <em>Vendor</em> (text) for purchased parts.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>New attribute</h2>
+  <form class="stack" method="post" action="/admin/attributes">
+    <div class="form-row">
+      <label>Label <input type="text" name="label" maxlength="100" required placeholder="Vendor"></label>
+      <label>Key <span class="hint">used by the API and imports; fixed once created</span>
+        <input class="mono" type="text" name="key" maxlength="40" required placeholder="vendor" pattern="[A-Za-z][A-Za-z0-9_ .\-]*" spellcheck="false" autocomplete="off"></label>
+    </div>
+    <div class="form-row">
+      <label>Type <span class="hint">fixed once created</span>
+        <select name="data_type">
+          {% for t in data_types %}<option value="{{ t.value }}">{{ t.label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Unit <span class="hint">optional, e.g. mm</span>
+        <input type="text" name="unit" maxlength="16"></label>
+      <label>Order <span class="hint">smaller first</span>
+        <input type="number" name="position" value="{{ next_position }}" step="1"></label>
+    </div>
+    <label>Choices <span class="hint">choice lists only – one per line</span>
+      <textarea name="choices" rows="3" placeholder="S235&#10;S355"></textarea></label>
+    <fieldset class="event-choices">
+      <legend>Applies to <span class="hint">none ticked = all item types</span></legend>
+      {% for t in item_types %}
+      <label class="check"><input type="checkbox" name="item_type" value="{{ t.value }}"> {{ t.label }}</label>
+      {% endfor %}
+    </fieldset>
+    <div class="actions"><button class="primary" type="submit">Create attribute</button></div>
+  </form>
+</div>
+{% endblock %}

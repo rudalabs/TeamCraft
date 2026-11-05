@@ -68,6 +68,12 @@ pub(super) struct NewSearch {
     state: String,
     #[serde(default)]
     system: String,
+    #[serde(default)]
+    class: String,
+    #[serde(default)]
+    attr: String,
+    #[serde(default)]
+    value: String,
 }
 
 pub(super) async fn create_search(
@@ -81,6 +87,9 @@ pub(super) async fn create_search(
         ("project", body.project.as_str()),
         ("state", body.state.as_str()),
         ("system", body.system.as_str()),
+        ("class", body.class.as_str()),
+        ("attr", body.attr.as_str()),
+        ("value", body.value.as_str()),
     ];
     let saved = personal::save_search(&st.db, &me, &body.name, &pairs).await?;
     Ok((StatusCode::CREATED, Json(json!(saved))).into_response())
