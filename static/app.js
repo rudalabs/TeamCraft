@@ -32,19 +32,239 @@
   // File uploads (attach, check in): progress bar and a "Cancel upload"
   // button that stops the transfer at once. Without JavaScript the form is
   // simply submitted.
+  //
+  // On forms with data-chunked="<revision id>", files above CHUNKED_ABOVE
+  // go first in chunks to /uploads (the sessions of /api/v1/uploads, see
+  // src/web/uploads.rs); the form then lists them in its `uploads` field and
+  // stores them with the other files in one transaction. A broken connection
+  // costs one chunk: the script retries, and when it gives up, submitting the
+  // same files again resumes where the server stopped (the session ids are
+  // remembered per revision and file in localStorage).
+  var CHUNKED_ABOVE = 32 * 1024 * 1024; // the desktop app's limit (desktop/src/api.rs)
+  var RETRIES = 6; // per chunk, waiting 1, 2, 4, … s
+
   function formatBytes(n) {
+    if (n <= 0) return "0 KiB";
     if (n < 1024 * 1024) return Math.max(1, Math.round(n / 1024)) + " KiB";
     return (n / 1024 / 1024).toFixed(1) + " MiB";
+  }
+
+  function sessionKey(revision, file) {
+    return "tc-upload:" + revision + ":" + file.name + ":" + file.size + ":" + file.lastModified;
+  }
+  function recall(key) {
+    try { return window.localStorage.getItem(key); } catch (e) { return null; }
+  }
+  function remember(key, id) {
+    try {
+      if (id) window.localStorage.setItem(key, id); else window.localStorage.removeItem(key);
+    } catch (e) { /* private mode: no resume after a reload */ }
+  }
+
+  // Goes to the redirect target of a script-sent form. A target on this very
+  // page (`/revisions/…#files` after an upload there) would only change the
+  // hash, so the page is reloaded to show the new files and the flash.
+  function navigate(target) {
+    var url;
+    try { url = new URL(target, window.location.href); } catch (e) { window.location.assign(target); return; }
+    if (url.pathname === window.location.pathname && url.search === window.location.search) {
+      if (url.hash) window.location.hash = url.hash;
+      window.location.reload();
+    } else {
+      window.location.assign(url.href);
+    }
+  }
+
+  function jsonOf(xhr) {
+    try { return JSON.parse(xhr.responseText); } catch (e) { return null; }
+  }
+  // The message of a JSON error answer ({"error": {"message": …}}).
+  function reasonOf(xhr) {
+    var body = jsonOf(xhr);
+    if (body && body.error && body.error.message) return body.error.message;
+    if (xhr.status === 401) return "Your session has ended – please sign in again.";
+    if (xhr.status === 413) return "The upload exceeds the size limit of this server.";
+    return "The server answered " + xhr.status + ".";
+  }
+  function failed(xhr) {
+    var error = new Error(reasonOf(xhr));
+    error.status = xhr.status;
+    return error;
+  }
+
+  // One upload job: every request goes through job.send, so "Cancel upload"
+  // can abort the one in flight.
+  function newJob() {
+    var job = { cancelled: false, xhr: null };
+    job.send = function (method, url, body, headers, onProgress) {
+      return new Promise(function (resolve, reject) {
+        if (job.cancelled) { reject(cancelledError()); return; }
+        var xhr = new XMLHttpRequest();
+        xhr.open(method, url);
+        xhr.setRequestHeader("X-TeamCraft-Script", "1");
+        Object.keys(headers || {}).forEach(function (h) { xhr.setRequestHeader(h, headers[h]); });
+        if (onProgress) {
+          xhr.upload.addEventListener("progress", function (e) { onProgress(e.loaded, e.lengthComputable ? e.total : 0); });
+        }
+        xhr.addEventListener("load", function () {
+          job.xhr = null;
+          // an answer that arrives after "Cancel upload" counts as cancelled
+          if (job.cancelled) reject(cancelledError()); else resolve(xhr);
+        });
+        xhr.addEventListener("error", function () {
+          job.xhr = null;
+          var error = new Error("The connection was interrupted.");
+          error.network = true;
+          reject(error);
+        });
+        xhr.addEventListener("abort", function () { job.xhr = null; reject(cancelledError()); });
+        job.xhr = xhr;
+        xhr.send(body === undefined ? null : body);
+      });
+    };
+    job.wait = function (ms) {
+      return new Promise(function (resolve, reject) {
+        setTimeout(function () { if (job.cancelled) reject(cancelledError()); else resolve(); }, ms);
+      });
+    };
+    job.cancel = function () {
+      job.cancelled = true;
+      if (job.xhr) job.xhr.abort();
+    };
+    return job;
+  }
+  function cancelledError() {
+    var error = new Error("cancelled");
+    error.cancelled = true;
+    return error;
+  }
+
+  // Sends one large file in chunks; resolves with the id of the complete
+  // upload session. onBytes(n) reports the bytes the server has (or is
+  // receiving) of this file.
+  function sendChunked(job, revision, file, onBytes, onSession) {
+    var key = sessionKey(revision, file);
+    var known = recall(key);
+
+    function open() {
+      var resumed = known
+        ? job.send("GET", "/uploads/" + encodeURIComponent(known)).then(function (xhr) {
+          var s = xhr.status === 200 ? jsonOf(xhr) : null;
+          if (s && s.revision_id === revision && s.size === file.size) return s;
+          remember(key, null); // finished, cancelled or expired meanwhile
+          return null;
+        }, function (e) {
+          if (e.cancelled) throw e;
+          return null;
+        })
+        : Promise.resolve(null);
+      return resumed.then(function (s) {
+        if (s) return s;
+        var body = JSON.stringify({
+          revision_id: revision,
+          filename: file.name,
+          size: file.size,
+          content_type: file.type || null
+        });
+        return job.send("POST", "/uploads", body, { "Content-Type": "application/json" }).then(function (xhr) {
+          var created = xhr.status === 201 ? jsonOf(xhr) : null;
+          if (!created) throw failed(xhr);
+          remember(key, created.id);
+          return created;
+        });
+      });
+    }
+
+    return open().then(function (session) {
+      onSession(session.id);
+      var id = encodeURIComponent(session.id);
+      var chunk = session.chunk_bytes > 0 ? session.chunk_bytes : 8 * 1024 * 1024;
+      var offset = session.offset;
+      var tries = 0;
+
+      function next() {
+        onBytes(offset);
+        if (offset >= file.size) return Promise.resolve(session.id);
+        var end = Math.min(file.size, offset + chunk);
+        var headers = { "Upload-Offset": String(offset), "Content-Type": "application/offset+octet-stream" };
+        var sentFrom = offset;
+        return job.send("PATCH", "/uploads/" + id, file.slice(offset, end), headers, function (loaded) {
+          onBytes(sentFrom + loaded);
+        }).then(function (xhr) {
+          var serverOffset = parseInt(xhr.getResponseHeader("Upload-Offset"), 10);
+          if (xhr.status === 200) {
+            offset = isNaN(serverOffset) ? end : serverOffset;
+            tries = 0;
+            return next();
+          }
+          // 409: the server has another offset (an earlier attempt arrived) – continue there.
+          if (xhr.status === 409 && !isNaN(serverOffset) && serverOffset !== sentFrom) {
+            offset = serverOffset;
+            return next();
+          }
+          if (xhr.status >= 500) return retry(failed(xhr));
+          throw failed(xhr);
+        }, function (e) {
+          if (e.cancelled) throw e;
+          return retry(e);
+        });
+      }
+
+      // Waits, asks the server where to continue and goes on.
+      function retry(cause) {
+        tries += 1;
+        if (tries > RETRIES) throw cause;
+        return job.wait(1000 * Math.pow(2, tries - 1)).then(function () {
+          return job.send("GET", "/uploads/" + id);
+        }).then(function (xhr) {
+          var s = xhr.status === 200 ? jsonOf(xhr) : null;
+          if (!s) {
+            if (xhr.status >= 500) return retry(failed(xhr));
+            remember(key, null);
+            throw failed(xhr);
+          }
+          offset = s.offset;
+          return next();
+        }, function (e) {
+          if (e.cancelled) throw e;
+          return retry(e.network ? e : cause);
+        });
+      }
+
+      return next();
+    });
   }
 
   document.querySelectorAll("form[enctype='multipart/form-data']").forEach(function (form) {
     form.addEventListener("submit", function (event) {
       if (event.defaultPrevented || !window.FormData || !window.XMLHttpRequest) return;
-      var chosen = Array.prototype.some.call(form.querySelectorAll("input[type=file]"), function (input) {
+      var inputs = Array.prototype.filter.call(form.querySelectorAll("input[type=file]"), function (input) {
         return input.files && input.files.length > 0;
       });
-      if (!chosen) return; // nothing to transfer: a normal submit is instant
+      if (inputs.length === 0) return; // nothing to transfer: a normal submit is instant
       event.preventDefault();
+
+      // Which files go in chunks (only where the form supports it).
+      var revision = form.getAttribute("data-chunked");
+      var canChunk = !!(revision && window.Promise && window.Blob && Blob.prototype.slice &&
+        FormData.prototype.delete);
+      var large = [];
+      var small = [];
+      inputs.forEach(function (input) {
+        Array.prototype.forEach.call(input.files, function (file) {
+          if (canChunk && input.name === "file" && file.size > CHUNKED_ABOVE) large.push(file);
+          else small.push({ name: input.name, file: file });
+        });
+      });
+      var data = new FormData(form);
+      if (large.length > 0) {
+        // The large files leave the form; it lists their upload sessions instead.
+        inputs.forEach(function (input) { data.delete(input.name); });
+        small.forEach(function (entry) { data.append(entry.name, entry.file, entry.file.name); });
+      }
+      var largeBytes = large.reduce(function (sum, f) { return sum + f.size; }, 0);
+      var smallBytes = small.reduce(function (sum, e) { return sum + e.file.size; }, 0);
+      var totalBytes = largeBytes + smallBytes;
 
       var buttons = form.querySelectorAll("button, input[type=submit]");
       var box = document.createElement("div");
@@ -75,41 +295,73 @@
           note.setAttribute("role", "status");
           note.textContent = message;
           form.appendChild(note);
-          setTimeout(function () { note.remove(); }, 6000);
+          setTimeout(function () { note.remove(); }, isError ? 15000 : 6000);
         }
       }
+      function show(sent, name) {
+        var percent = totalBytes > 0 ? Math.min(100, Math.floor((sent / totalBytes) * 100)) : 100;
+        bar.value = percent;
+        label.textContent = "Uploading " + (name ? name + " · " : "") + percent + " % · " +
+          formatBytes(sent) + " of " + formatBytes(totalBytes);
+      }
 
-      var xhr = new XMLHttpRequest();
-      xhr.upload.addEventListener("progress", function (e) {
-        if (!e.lengthComputable) return;
-        bar.value = Math.round((e.loaded / e.total) * 100);
-        label.textContent = "Uploading " + bar.value + " % · " + formatBytes(e.loaded) + " of " + formatBytes(e.total);
+      var job = newJob();
+      var sessions = []; // ids of this form's chunked uploads
+      cancel.addEventListener("click", function () {
+        job.cancel();
+        // Nothing stays behind on the server: the sessions are removed.
+        sessions.forEach(function (id) {
+          var xhr = new XMLHttpRequest();
+          xhr.open("DELETE", "/uploads/" + encodeURIComponent(id));
+          xhr.setRequestHeader("X-TeamCraft-Script", "1");
+          xhr.send();
+        });
+        large.forEach(function (file) { remember(sessionKey(revision, file), null); });
       });
-      xhr.upload.addEventListener("load", function () {
-        // everything is sent: the server stores the files in one transaction,
-        // which cannot be cancelled half-way any more
-        bar.removeAttribute("value");
-        label.textContent = "Storing the files …";
-        cancel.remove();
+
+      // 1. the large files, one after the other
+      var sentBefore = 0;
+      var chain = Promise.resolve();
+      large.forEach(function (file) {
+        chain = chain.then(function () {
+          return sendChunked(job, revision, file, function (n) { show(sentBefore + n, file.name); }, function (id) {
+            if (sessions.indexOf(id) < 0) sessions.push(id);
+          }).then(function () { sentBefore += file.size; });
+        });
       });
-      xhr.addEventListener("load", function () {
-        var target = null;
-        try { target = JSON.parse(xhr.responseText).location; } catch (e) { /* not JSON */ }
+
+      // 2. the form itself with the small files and the upload ids
+      chain.then(function () {
+        if (sessions.length > 0) data.append("uploads", JSON.stringify(sessions));
+        return job.send("POST", form.action, data, null, function (loaded, total) {
+          show(largeBytes + (total > 0 ? (loaded / total) * smallBytes : 0));
+          if (total > 0 && loaded >= total) {
+            // everything is sent: the server stores the files in one
+            // transaction, which cannot be cancelled half-way any more
+            bar.removeAttribute("value");
+            label.textContent = "Storing the files …";
+            cancel.remove();
+          }
+        });
+      }).then(function (xhr) {
+        var target = (jsonOf(xhr) || {}).location;
         if (xhr.status === 200 && target) {
-          window.location.assign(target);
-        } else if (xhr.status === 413) {
-          done("The upload exceeds the size limit of this server.", true);
+          navigate(target);
         } else {
-          done("The upload failed (" + xhr.status + "). Please try again.", true);
+          done("The upload failed: " + reasonOf(xhr) + " Please try again.", true);
+        }
+      }, function (e) {
+        if (e.cancelled) {
+          done("Upload cancelled – nothing was changed.", false);
+        } else if (large.length > 0 && e.status !== 401) {
+          done("The upload stopped (" + e.message + ") – nothing was changed yet. Submit the form again " +
+            "with the same files to continue where it stopped.", true);
+        } else if (e.network) {
+          done("The upload failed – check the connection and try again.", true);
+        } else {
+          done("The upload failed: " + e.message, true);
         }
       });
-      xhr.addEventListener("error", function () { done("The upload failed – check the connection and try again.", true); });
-      xhr.addEventListener("abort", function () { done("Upload cancelled – nothing was changed.", false); });
-      cancel.addEventListener("click", function () { xhr.abort(); });
-
-      xhr.open("POST", form.action);
-      xhr.setRequestHeader("X-TeamCraft-Script", "1");
-      xhr.send(new FormData(form));
     });
   });
 

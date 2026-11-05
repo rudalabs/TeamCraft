@@ -30,8 +30,8 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 
 - [ ] Browser check (no console errors, no overflow at 390 px) of `/requests`, `/requests/new` and `/requests/{id}`,
   and the desktop request tab
-- [ ] Chunked resumable uploads from the web UI – `static/app.js` still sends one multipart request; the API and the
-  desktop app use `/api/v1/uploads` (feature 9; in progress: branch `feature/web-chunked-uploads`)
+- [ ] Chunked uploads from the *New item* form of the web UI – it still sends its files in one request (the revision
+  exists only afterwards); the attach and check-in forms use `/uploads` (feature 9)
 - [ ] Custom attributes per item type and file type, classification (standard/purchased parts), attribute search;
   then the BOM import can map further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to attributes
   (feature 5; in progress: branch `feature/custom-attributes`)
@@ -174,6 +174,11 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
   and web UI (feature 6) – alternates (two-way or one-way) and supersession per item, *Replace in assemblies* from the
   where-used page with a preview (in-work parents changed, released ones listed for a new revision), migration 0030
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
+- [x] Chunked uploads from the web UI: `static/app.js` sends files above 32 MiB of the attach and check-in forms
+  (revision page, vault explorer) in chunks to `/uploads` (the same sessions, signed in with the session cookie and
+  covered by the same-origin check, `src/web/uploads.rs`), retries a dropped chunk, resumes after a reload when the
+  same file is chosen again, and *Cancel upload* removes the sessions (tested in `tests/uploads.rs` and in Chromium,
+  2026-11-05)
 - [x] Engineering change requests before the change order (web, API, desktop, attachments, triage, *Create change
   order*); MCP tools `create_change_request`, `comment_change_request` and the `triage_requests` prompt
 - [x] Simulation management v1 (item type `simulation`, basis links, out-of-date detection, result values, import,
@@ -263,8 +268,9 @@ Documented in the UI, keep in mind:
 8. **Bulk import of a folder tree:** done in the desktop app (*Import CAD Folder…*).
 9. **Chunked resumable uploads:** a tus-like protocol of our own without new dependencies (`POST /api/v1/uploads`,
    `PATCH` with `Upload-Offset`, 409 on a wrong offset, `HEAD` to resume, `finish` or the `uploads` field of a
-   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; used by the desktop app, not yet
-   by the web UI. **Backup/restore** with `pg_dump`/`pg_restore`: `tests/backup_restore.rs` (backup, restore into a
+   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; used by the desktop app and the attach
+   and check-in forms of the web UI (`/uploads` with the session cookie) for files above 32 MiB; only the *New
+   item* form still sends one multipart request. **Backup/restore** with `pg_dump`/`pg_restore`: `tests/backup_restore.rs` (backup, restore into a
    fresh database and vault, identical row counts, file download and API token on the restored instance, `--force`,
    atomic failure) runs in CI, and the CLI smoke test runs `teamcraft backup`/`restore`. Found and fixed on the way: a
    percent-encoded password in `TEAMCRAFT_DATABASE_URL` reached `pg_dump` undecoded; a failed `restore --force` left a
