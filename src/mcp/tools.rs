@@ -25,7 +25,7 @@ use crate::{
     models::{BomLine, Change, ChangeRequest, FileRecord, Revision},
     services::{
         audit, bom, changes, files, impacts, insights, items, notifications, projects, references,
-        requests, reviewers, revisions, simulations, Page,
+        requests, reviewers, revisions, similar, simulations, Page,
     },
     AppState,
 };
@@ -178,6 +178,20 @@ const TOOLS: &[Tool] = &[
             than one item – copies that drift apart. Optionally only the contents of one revision.",
         effect: READ,
         schema: schema_duplicates,
+    },
+    Tool {
+        name: "find_similar_parts",
+        title: "Find similar parts",
+        description: "Parts whose 3D model has a similar shape and size – \"do we already have a part like \
+            this?\". Use it before creating a new item or a create_change_draft for a new part, to reuse an \
+            existing one instead of a near-duplicate; find_duplicate_files finds only identical contents. \
+            Compares the revision's STEP or mesh file (or `file`) with the latest revisions of all other \
+            items by oriented bounding box extents and a D2 shape distribution; each hit has a score (0–100), \
+            its shape and size parts and a one-line explanation. ignore_scale=true compares proportions \
+            only (scaled variants). Status `no_shape_file`: the revision has no STEP or mesh file; \
+            `pending`: the signature is still being computed, call again shortly.",
+        effect: READ,
+        schema: schema_similar,
     },
     Tool {
         name: "compare_revisions",
@@ -433,6 +447,19 @@ fn schema_duplicates() -> Value {
             "limit": p_limit(100, 1000),
         }),
         &[],
+    )
+}
+
+fn schema_similar() -> Value {
+    object(
+        json!({
+            "item": { "type": "string", "description": "Item number, e.g. PRT-000012 (or PRT-000012/B)" },
+            "revision": p_revision(),
+            "file": { "type": "string", "description": "File name of the 3D model to compare by (default: the STEP file, else the first mesh)" },
+            "ignore_scale": { "type": "boolean", "description": "Compare proportions and shape only (default false)" },
+            "limit": p_limit(10, 50),
+        }),
+        &["item"],
     )
 }
 
@@ -766,6 +793,7 @@ pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value 
         "my_worklist" => my_worklist(st, me).await,
         "bom_health" => bom_health(st, &a).await,
         "find_duplicate_files" => find_duplicate_files(st, &a).await,
+        "find_similar_parts" => find_similar_parts(st, me, &a).await,
         "compare_revisions" => compare_revisions(st, &a).await,
         "create_change_draft" => create_change_draft(st, me, &a).await,
         "add_to_change" => add_to_change(st, me, &a).await,
@@ -1352,6 +1380,51 @@ async fn find_duplicate_files(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
         "scope": revision.as_ref().map(revisions::label),
         "groups": group_duplicates(&rows),
         "truncated": rows.len() as i64 >= limit,
+    }))
+}
+
+async fn find_similar_parts(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let (number, code) = parse_item_ref(&a.req_str("item")?);
+    let code = match a.opt_str("revision")? {
+        Some(c) => Some(c),
+        None => code,
+    };
+    let rev = revision_at(st, &number, code.as_deref()).await?;
+    let options = similar::Options {
+        limit: a.limit("limit", 10, similar::MAX_LIMIT)?,
+        ignore_scale: a.flag("ignore_scale", false)?,
+    };
+    let file = a.opt_str("file")?;
+    let report = similar::for_revision(
+        st,
+        me,
+        &rev,
+        file.as_deref(),
+        options,
+        std::time::Duration::from_secs(60),
+    )
+    .await?;
+    Ok(json!({
+        "source": revisions::label(&rev),
+        "status": report.status,
+        "message": report.message,
+        "file": report.source.as_ref().map(|s| &s.filename),
+        "signature": report.signature,
+        "ignore_scale": report.ignore_scale,
+        "similar": report.candidates.iter().map(|c| json!({
+            "item": c.item_number,
+            "revision": c.revision_code,
+            "name": c.name,
+            "type": c.item_type,
+            "state": c.state,
+            "project": c.project_code,
+            "file": c.filename,
+            "score": c.score,
+            "shape": c.shape,
+            "size": c.size,
+            "identical": c.identical,
+            "explanation": c.explanation,
+        })).collect::<Vec<_>>(),
     }))
 }
 
@@ -2330,8 +2403,11 @@ pub fn prompt(name: &str, args: &Value) -> Result<Value, String> {
                  1. Call get_revision for {item}/{revision}.\n\
                  2. Call bom_health with item={item}, revision={revision}, rule=released.\n\
                  3. Call find_duplicate_files with item={item}, revision={revision}.\n\
+                 4. If it is a new part (revision A), call find_similar_parts with item={item}, revision={revision} for \
+                 existing parts of nearly the same shape (score 90 or more).\n\
                  Produce a checklist: Blocking (must be fixed or released together: unreleased or unresolved BOM lines and \
-                 references, check-outs) and Warnings (missing mass or files, obsolete parts, duplicate files, open \
+                 references, check-outs) and Warnings (missing mass or files, obsolete parts, duplicate files, near-duplicate \
+                 existing parts, open \
                  checks). End with the items a change order would need. Offer to draft it with create_change_draft, but \
                  only create it if I say so."
             )
@@ -2598,6 +2674,14 @@ mod tests {
             assert!(!exists(name));
         }
         let def = |name: &str| defs.iter().find(|d| d["name"] == name).unwrap().clone();
+        // the shape sibling of find_duplicate_files: read-only, by item
+        let similar = def("find_similar_parts");
+        assert_eq!(similar["annotations"]["readOnlyHint"], true);
+        assert_eq!(similar["inputSchema"]["required"], json!(["item"]));
+        assert!(similar["description"]
+            .as_str()
+            .unwrap()
+            .contains("create_change_draft"));
         // reviewers are suggested, never assigned
         let suggest = def("suggest_reviewers");
         assert_eq!(suggest["annotations"]["readOnlyHint"], true);

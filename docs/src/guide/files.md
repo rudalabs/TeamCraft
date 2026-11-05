@@ -37,7 +37,8 @@ background so the first viewer does not wait. Everything is pure Rust: STEP
 is read and tessellated with the [truck](https://github.com/ricosjp/truck)
 B-rep kernel (or from the tessellated geometry of AP242 files), the mesh
 readers are part of TeamCraft. *Download STL* saves the shown triangles, e.g.
-for 3D printing.
+for 3D printing. The same conversion computes the shape signature of the
+[similar part search](similar-parts.md).
 
 When a STEP preview shows only part of the model, the line below the viewer
 says **partial preview: N of M faces** – the missing faces use geometry the
