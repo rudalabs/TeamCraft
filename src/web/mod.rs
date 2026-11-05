@@ -313,6 +313,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/projects/{id}/visibility", post(admin::update_visibility))
         .route("/projects/{id}/members", post(admin::add_member))
         .route(
+            "/projects/{id}/result-templates",
+            post(admin::add_result_template),
+        )
+        .route(
+            "/result-templates/{id}/delete",
+            post(admin::delete_result_template),
+        )
+        .route(
             "/projects/{id}/members/{user_id}/remove",
             post(admin::remove_member),
         )

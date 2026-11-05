@@ -28,6 +28,7 @@ pub mod projects;
 pub mod readiness;
 pub mod references;
 pub mod requests;
+pub mod result_templates;
 pub mod reviewers;
 pub mod revisions;
 pub mod save_as;

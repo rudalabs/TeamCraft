@@ -132,6 +132,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/items/{number}/simulations",
             get(simulations::item_simulations),
         )
+        .route(
+            "/projects/{code}/result-templates",
+            get(simulations::list_templates).post(simulations::create_template),
+        )
+        .route(
+            "/result-templates/{id}",
+            put(simulations::put_template).delete(simulations::delete_template),
+        )
         .route("/impacts", get(list_impacts))
         .route("/notifications", get(list_notifications))
         .route("/notifications/read", post(read_notifications))
@@ -443,6 +451,10 @@ async fn index() -> Json<Value> {
             "DELETE /api/v1/simulation-results/{id}",
             "GET    /api/v1/items/{number}/revisions/{code}/simulation/compare?with=A   result values of two revisions",
             "GET    /api/v1/items/{number}/simulations                simulations based on the item (out of date?)",
+            "GET    /api/v1/projects/{code}/result-templates         extraction templates of the group (see the simulation guide)",
+            "POST   /api/v1/projects/{code}/result-templates         {name, file_pattern, method: regex|csv, pattern | csv_column [csv_key_column, csv_key_value], pick?: first|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?} – managers and admins",
+            "PUT    /api/v1/result-templates/{id}                    the same fields; replaces the template",
+            "DELETE /api/v1/result-templates/{id}",
             "GET    /api/v1/impacts                                   open impacts on items of my project groups",
             "GET    /api/v1/notifications?unread=true&limit=          my notifications and the unread count",
             "POST   /api/v1/notifications/read                        {ids?} – mark as read (all without a body)",
