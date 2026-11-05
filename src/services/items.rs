@@ -57,32 +57,36 @@ pub async fn search(
         CROSS JOIN LATERAL (
             SELECT r.id, r.code, r.state, r.name, r.description, r.material, r.search_vector
             FROM revisions r WHERE r.item_id = i.id ORDER BY r.seq DESC LIMIT 1
-        ) lr
-        LEFT JOIN LATERAL (
-            SELECT f.filename FROM files f
-            JOIN file_versions fv ON fv.file_id = f.id AND fv.version = f.current_version
-            WHERE $1::text IS NOT NULL AND f.revision_id = lr.id
-              AND (f.filename ILIKE $1
-                   OR ($5::text IS NOT NULL AND fv.content_vector @@ to_tsquery('simple', $5))
-                   OR f.format = ANY($6::text[]))
-            ORDER BY f.filename LIMIT 1
-        ) fm ON TRUE";
-    const WHERE: &str = "
-          ($1::text IS NULL
+        ) lr";
+    // A file of the latest revision whose name, content or format matches.
+    // In the condition it is checked last (only for items that match
+    // nothing else); the file name is only looked up for the rows of the
+    // page (PostgreSQL computes such sub-selects after ORDER BY / LIMIT).
+    const FILE_MATCH: &str = "
+        FROM files f
+        JOIN file_versions fv ON fv.file_id = f.id AND fv.version = f.current_version
+        WHERE $1::text IS NOT NULL AND f.revision_id = lr.id
+          AND (f.filename ILIKE $1
+               OR ($5::text IS NOT NULL AND fv.content_vector @@ to_tsquery('simple', $5))
+               OR f.format = ANY($6::text[]))";
+    let where_ = format!(
+        "($1::text IS NULL
                OR i.number ILIKE $1 OR lr.name ILIKE $1 OR lr.description ILIKE $1 OR lr.material ILIKE $1
                OR ($5::text IS NOT NULL AND lr.search_vector @@ to_tsquery('simple', $5))
-               OR fm.filename IS NOT NULL)
+               OR EXISTS (SELECT 1 {FILE_MATCH}))
           AND ($2::text IS NULL OR i.item_type = $2)
           AND ($3::uuid IS NULL OR i.project_id = $3)
           AND ($4::text IS NULL OR lr.state = $4)
           AND ($7::text[] IS NULL OR EXISTS (
-                SELECT 1 FROM files sf WHERE sf.revision_id = lr.id AND sf.format = ANY($7::text[])))";
-    const COLUMNS: &str =
+                SELECT 1 FROM files sf WHERE sf.revision_id = lr.id AND sf.format = ANY($7::text[])))"
+    );
+    let columns = format!(
         "i.id, i.number, i.item_type, i.unit, p.code AS project_code, i.created_at,
          lr.id AS latest_revision_id, lr.code AS latest_code, lr.state AS latest_state, lr.name,
          (SELECT rr.code FROM revisions rr WHERE rr.item_id = i.id AND rr.state = 'released'
           ORDER BY rr.seq DESC LIMIT 1) AS released_code,
-         fm.filename AS matched_file";
+         (SELECT f.filename {FILE_MATCH} ORDER BY f.filename LIMIT 1) AS matched_file"
+    );
     const ORDER: &str = "ORDER BY CASE WHEN $5::text IS NULL THEN 0
                        ELSE ts_rank(lr.search_vector, to_tsquery('simple', $5)) END DESC,
                   i.number";
@@ -155,16 +159,16 @@ pub async fn search(
                  WHERE ($2::text IS NULL OR i.item_type = $2) AND ($3::uuid IS NULL OR i.project_id = $3)
                  ORDER BY i.number LIMIT $8 OFFSET $9
              )
-             SELECT {COLUMNS}, 0::bigint AS total
+             SELECT {columns}, 0::bigint AS total
              FROM page JOIN items i ON i.id = page.id {JOINS}
-             WHERE {WHERE}
+             WHERE {where_}
              {ORDER}"
         )
     } else {
         format!(
-            "SELECT {COLUMNS}, COUNT(*) OVER () AS total
+            "SELECT {columns}, COUNT(*) OVER () AS total
              FROM items i {JOINS}
-             WHERE {WHERE} {candidates}
+             WHERE {where_} {candidates}
              {ORDER}
              LIMIT $8 OFFSET $9"
         )
@@ -198,7 +202,7 @@ pub async fn search(
         None if page.offset == 0 => 0,
         None => {
             sqlx::query_scalar::<_, i64>(&format!(
-                "SELECT COUNT(*) FROM items i {JOINS} WHERE {WHERE} {candidates}"
+                "SELECT COUNT(*) FROM items i {JOINS} WHERE {where_} {candidates}"
             ))
                 .bind(&pattern)
                 .bind(item_type)

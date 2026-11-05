@@ -25,8 +25,15 @@ const STARTUP_WAIT: Duration = Duration::from_secs(20);
 ///   vault the planner's cost estimates cross `jit_above_cost` and the JIT
 ///   compilation (100–400 ms in the scale check) costs far more than it
 ///   saves. Analytical work on the same server keeps its own setting.
+/// * `plan_cache_mode = force_custom_plan` – sqlx keeps prepared
+///   statements per connection; after five runs PostgreSQL may switch a
+///   statement to a generic plan that ignores the actual parameters. For
+///   `= ANY($1)` over a BOM level or the parents of a standard part, the
+///   array holds one id or thousands, and a generic plan chosen for one is
+///   wrong for the other (the scale check saw 70 ms become 400 ms). Planning
+///   each run costs far less than such a plan.
 pub fn session_options(options: PgConnectOptions) -> PgConnectOptions {
-    options.options([("jit", "off")])
+    options.options([("jit", "off"), ("plan_cache_mode", "force_custom_plan")])
 }
 
 pub async fn connect(config: &Config) -> Result<PgPool> {

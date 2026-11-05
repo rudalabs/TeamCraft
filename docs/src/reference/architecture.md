@@ -84,8 +84,17 @@ PostgreSQL.
   used); larger structures are refused with a message instead of exhausting
   the server. The working set has no expansion limit, but at most 5000
   revisions.
-* **Where-used**: single level is one query; `levels=N` is one recursive
-  query (`WITH RECURSIVE`, depth-limited, each item on its lowest level).
+* **Where-used**: single level is one query; `levels=N` walks up one query
+  per level (the parents not seen before form the next level, so each item
+  is reported on its lowest level), and both stop at 2000 rows. The impact
+  analysis of a change walks up the same way for all its revisions at once.
+* **Item search** narrows the items set-based first (text, state or CAD
+  program, trigram indexes for substring matches when `pg_trgm` is
+  available) and looks up the latest revision only for those candidates;
+  the total comes from the same query (`COUNT(*) OVER ()`).
+* **Scale check**: `tests/scale.rs` (ignored) seeds ~100k items and ~1M BOM
+  lines and times these paths with their query plans – see
+  [Operations → Scale check](../admin/operations.md#scale-check).
 * **Pages** run their independent queries concurrently (`tokio::try_join!`)
   and load per-row data with `= ANY($1)` instead of one query per row
   (vault explorer, BOM health, Pack and Go file lists).

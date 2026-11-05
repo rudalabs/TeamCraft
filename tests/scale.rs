@@ -956,7 +956,9 @@ async fn scale_check() {
         "SELECT current_setting('server_version') || ' (shared_buffers '
                 || current_setting('shared_buffers') || ', work_mem '
                 || current_setting('work_mem') || ', effective_cache_size '
-                || current_setting('effective_cache_size') || ')'",
+                || current_setting('effective_cache_size') || ', random_page_cost '
+                || current_setting('random_page_cost') || '), database size '
+                || pg_size_pretty(pg_database_size(current_database()))",
     )
     .fetch_one(&pool)
     .await
