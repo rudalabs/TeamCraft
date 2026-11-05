@@ -83,7 +83,7 @@
   <div><dt>Type</dt><dd>{{ rev.item_type|label }}</dd></div>
   <div><dt>Revision</dt><dd>{{ m.revbox(rev.code) }}{% if not is_latest %} <a class="small" href="/revisions/{{ latest_id }}">latest</a>{% endif %}</dd></div>
   <div><dt>State</dt><dd>{{ m.badge(rev.state) }}</dd></div>
-  <div><dt>Lock</dt><dd>{% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name, rev.checked_out_by == me.id) }} <span class="dim" title="Checked out {{ rev.checked_out_at|dt }}">{{ rev.checked_out_at|age }}</span>{% else %}<span class="dim">Not checked out</span>{% endif %}</dd></div>
+  <div><dt>Lock</dt><dd>{% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name, rev.checked_out_by == me.id) }} <span class="dim" title="Checked out {{ rev.checked_out_at|dt }}">for {{ rev.checked_out_at|age }}</span>{% else %}<span class="dim">Not checked out</span>{% endif %}</dd></div>
   <div><dt>Project</dt><dd>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% else %}<span class="dim">—</span>{% endif %}</dd></div>
   <div><dt>Modified</dt><dd>{{ m.time(rev.updated_at) }}</dd></div>
   <div><dt>Released</dt><dd>{{ m.time(rev.released_at) }}</dd></div>
