@@ -35,6 +35,7 @@ pub mod nxpart;
 pub mod oidc;
 pub mod pagecontext;
 pub mod preview;
+pub mod resultscan;
 pub mod services;
 pub mod shape;
 pub mod simmesh;

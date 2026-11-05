@@ -482,7 +482,7 @@
         <td class="num">{% if r.upper_limit is not none %}{{ r.upper_limit }}{% else %}<span class="muted">—</span>{% endif %}</td>
         {% endif %}
         <td>{% if r.status != "none" %}{{ m.badge(r.status) }}{% else %}<span class="muted small">no limit</span>{% endif %}</td>
-        <td class="small nowrap">{{ r.solver }}{% if r.solver_version %} {{ r.solver_version }}{% endif %}</td>
+        <td class="small nowrap">{{ r.solver }}{% if r.solver_version %} {{ r.solver_version }}{% endif %}{% if r.source %}<br><span class="small muted" title="Read automatically from this file and line">from {{ r.source }}</span>{% endif %}</td>
         {% if can.edit %}
         <td class="right nowrap">
           <button form="result-{{ r.id }}" class="small" type="submit">Save</button>

@@ -112,6 +112,8 @@ struct Hidden {
     impact_id: Uuid,
     /// A result value of a simulation in the group.
     result_id: Uuid,
+    /// An extraction template of the group.
+    template_id: Uuid,
     /// A member's notification about the hidden item.
     notification_id: Uuid,
     /// A member's staged BOM import.
@@ -152,6 +154,7 @@ fn fill(path: &str, h: &Hidden) -> Option<String> {
             ("{id}", "references") => h.reference_id.to_string(),
             ("{id}", "impacts") => h.impact_id.to_string(),
             ("{id}", "simulation-results") => h.result_id.to_string(),
+            ("{id}", "result-templates") => h.template_id.to_string(),
             ("{id}", "notifications") => h.notification_id.to_string(),
             ("{id}", "import") => h.import_id.to_string(),
             ("{revision_id}", _) => h.revision_id.to_string(),
@@ -194,6 +197,7 @@ fn every_route_has_a_placeholder_rule() {
         attachment_id: Uuid::nil(),
         impact_id: Uuid::nil(),
         result_id: Uuid::nil(),
+        template_id: Uuid::nil(),
         notification_id: Uuid::nil(),
         import_id: Uuid::nil(),
         caller: Uuid::nil(),
@@ -634,6 +638,17 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         &sim,
     )
     .await;
+    let template_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO result_templates (id, project_id, name, file_pattern, method, pattern)
+         SELECT $1, id, $2, '*.log', 'regex', 'dp: ([0-9.]+)' FROM projects WHERE code = $3",
+    )
+    .bind(template_id)
+    .bind(format!("template {m}"))
+    .bind(&code)
+    .execute(&app.pool)
+    .await
+    .unwrap();
     let impact_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO impacts (id, item_id, revision_id, source_item_id, source_revision_id,
@@ -694,6 +709,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
                 "SELECT concat_ws(' | ',
                     (SELECT row_to_json(x)::text FROM impacts x WHERE x.id = $1),
                     (SELECT row_to_json(x)::text FROM simulation_results x WHERE x.id = $2),
+                    (SELECT row_to_json(x)::text FROM result_templates x WHERE x.id = $5),
                     (SELECT row_to_json(x)::text FROM notifications x WHERE x.id = $3),
                     (SELECT x.id::text FROM staged_imports x WHERE x.id = $4))",
             )
@@ -701,6 +717,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
             .bind(result_id)
             .bind(notification_id)
             .bind(import_id)
+            .bind(template_id)
             .fetch_one(&pool)
             .await
             .unwrap()
@@ -739,6 +756,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         attachment_id,
         impact_id,
         result_id,
+        template_id,
         notification_id,
         import_id,
         caller: Uuid::nil(),
@@ -758,6 +776,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         attachment_id.to_string(),
         impact_id.to_string(),
         result_id.to_string(),
+        template_id.to_string(),
         notification_id.to_string(),
         import_id.to_string(),
         sim.clone(),
@@ -1130,6 +1149,7 @@ fn clone_hidden(h: &Hidden) -> Hidden {
         attachment_id: h.attachment_id,
         impact_id: h.impact_id,
         result_id: h.result_id,
+        template_id: h.template_id,
         notification_id: h.notification_id,
         import_id: h.import_id,
         caller: h.caller,
@@ -1152,6 +1172,7 @@ fn targets_hidden(uri: &str, h: &Hidden) -> bool {
         h.attachment_id,
         h.impact_id,
         h.result_id,
+        h.template_id,
         h.notification_id,
         // (not the staged import: an import that cannot be opened sends the
         // user back to the upload form with a message, like a gone one)
