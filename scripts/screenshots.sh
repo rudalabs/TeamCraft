@@ -20,6 +20,8 @@
 #   DESKTOP_APP       TeamCraft Desktop binary: also capture the desktop app
 #                     (Linux; needs Xvfb, xdotool and ImageMagick)  (unset)
 #   DESKTOP_DISPLAY   X display for the desktop app's Xvfb          (:99)
+#   README            compared with the result: warns about images it
+#                     expects in media/screenshots/ that were not made (README.md)
 #
 # The passwords and API tokens are generated per run, kept in a private
 # temporary directory and never printed (on GitHub Actions they are also
@@ -32,6 +34,7 @@ OUT_DIR=${OUT_DIR:-media/screenshots}
 FIXTURES=${FIXTURES:-tests/fixtures/cad/nist}
 DESKTOP_APP=${DESKTOP_APP:-}
 DESKTOP_DISPLAY=${DESKTOP_DISPLAY:-:99}
+README=${README:-README.md}
 WD_PORT=${WD_PORT:-9515}
 SCALE=${SCREENSHOT_SCALE:-1}
 WD="http://127.0.0.1:${WD_PORT}"
@@ -310,6 +313,8 @@ seed() {
     item nut part "Hex nut 90591A141" '{"material":"Zinc-plated steel","mass_kg":0.002,"unit_cost":0.05}'
     item bracket part "Mounting bracket" '{"material":"Aluminium 7075-T6","mass_kg":0.38,"unit_cost":64.0,"description":"Machined bracket that holds the enclosure on the mast tube (NIST CTC-01)."}'
     item clamp part "Cable clamp" '{"material":"Stainless steel 1.4301","mass_kg":0.05,"unit_cost":3.4,"description":"Clamp for the sensor cable harness (NIST FTC-11)."}'
+    # the same geometry in a second item: a hit of the similar part search
+    item bracket_copy part "Mast bracket (supplier copy)" '{"material":"Aluminium 7075-T6","description":"Bracket model received from the supplier."}'
 
     log "uploading CAD files"
     attach mast "$mtc/nx/NIST mtc crada assembly.prt" >/dev/null
@@ -336,6 +341,7 @@ seed() {
     attach clamp "$FIXTURES/ftc-11/step/nist_ftc_11_asme1_rb.stp" cable_clamp.stp >/dev/null
     attach clamp "$FIXTURES/ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt" >/dev/null
     attach clamp "$FIXTURES/ftc-11/solidworks-2018/nist_ftc_11_asme1_rb_sw1802.SLDPRT" >/dev/null
+    attach bracket_copy "$FIXTURES/ctc-01/step/nist_ctc_01_asme1_rd.stp" supplier_bracket.stp >/dev/null
 
     log "building the multi-level BOM"
     bom_line mast enclosure 1 10
@@ -352,7 +358,7 @@ seed() {
 
     log "checking everything in"
     local key
-    for key in mast enclosure box cover plate window shcs_s shcs_l fhcs nut bracket clamp; do
+    for key in mast enclosure box cover plate window shcs_s shcs_l fhcs nut bracket clamp bracket_copy; do
         checkin "$key"
     done
 
@@ -580,6 +586,8 @@ capture() {
         die "the 3D viewer reported: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
     fi
     snap viewer-3d
+    # not in the README: the similar part search (signature from the conversion above)
+    shot revision-similar "/revisions/$BRACKET_REV" '#similar'
     shot bom "/revisions/$TOP_REV/bom"
     shot change-review "/changes/$CHANGE_ID"
     shot notifications /notifications
@@ -735,6 +743,39 @@ capture_simulation() {
     shot simulation-results "/revisions/${REV[sim]}" '#simulation-results'
 }
 
+# compare_with_readme – warns (never fails) about screenshots the README
+# shows that this run did not make, and lists the ones the README does not
+# show. Without DESKTOP_APP the desktop-*.png images are expected to be
+# missing.
+compare_with_readme() {
+    if [[ ! -f $README ]]; then
+        log "WARNING: '$README' not found, not compared with the screenshots"
+        return 0
+    fi
+    local expected made name missing=0
+    # "|| true": a README without screenshots must not end the run (grep
+    # exits 1, pipefail + set -e); basename instead of GNU find -printf
+    expected=$({ grep -oE 'media/screenshots/[A-Za-z0-9._-]+\.png' "$README" || true; } | sed 's#.*/##' | sort -u)
+    made=$(find "$OUT_DIR" -maxdepth 1 -name '*.png' -exec basename {} \; | sort -u)
+    for name in $expected; do
+        if ! grep -qxF "$name" <<<"$made"; then
+            missing=$((missing + 1))
+            log "WARNING: $README shows media/screenshots/$name, but this run did not make it"
+            if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+                echo "::warning title=README screenshot not made::$README shows media/screenshots/$name, but this run did not make it"
+            fi
+        fi
+    done
+    for name in $made; do
+        if ! grep -qxF "$name" <<<"$expected"; then
+            log "note: $name is not shown in $README"
+        fi
+    done
+    if [[ $missing -eq 0 ]]; then
+        log "all $(wc -w <<<"$expected") screenshots that $README shows were made"
+    fi
+}
+
 main() {
     wait_for_server
     seed
@@ -744,6 +785,7 @@ main() {
     fi
     capture_simulation
     log "done: $(find "$OUT_DIR" -maxdepth 1 -name '*.png' | wc -l) screenshots in $OUT_DIR"
+    compare_with_readme
 }
 
 main "$@"

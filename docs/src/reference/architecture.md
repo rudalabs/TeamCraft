@@ -35,12 +35,15 @@
   `TCMESH01` buffer; `simmesh.rs` turns VTK/VTU/VTP and CalculiX `.frd`
   results into their outer surface with scalar fields (an optional, flagged
   section of the same format) that the viewer colours with a colour map.
+  The same child process writes the shape signature of the
+  [similar part search](../guide/similar-parts.md) (`shape.rs`), stored once
+  per content hash in `shape_signatures`.
 
 ## Source layout
 
 | Path                                 | Contents                                                                                             |
 |--------------------------------------|------------------------------------------------------------------------------------------------------|
-| `src/main.rs`                        | CLI: serve, migrate, user, vault check, rescan-references, healthcheck, mcp (stdio bridge)           |
+| `src/main.rs`                        | CLI: serve, migrate, user, vault check/signatures, rescan-references, healthcheck, mcp (stdio bridge) |
 | `src/lib.rs`                         | `AppState`, router, health endpoints, security headers                                               |
 | `src/domain.rs`                      | roles, lifecycle, revision letters, skins, validation                                                |
 | `src/services/`                      | items, revisions, files, chunked uploads, BOM, changes, references, impacts, simulations, projects, users, … |
@@ -51,6 +54,7 @@
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs`: VTK/VTU/VTP/FRD simulation results with fields  |
+| `src/shape.rs`                       | shape signatures (extents, area, volume, D2 distribution) for the similar part search               |
 | `src/webhooks.rs`                    | event webhooks: outbox worker, HMAC-SHA256 signature, backoff, target (SSRF) guard                   |
 | `migrations/`                        | PostgreSQL schema                                                                                    |
 | `tests/`                             | end-to-end tests, each against its own temporary database                                            |

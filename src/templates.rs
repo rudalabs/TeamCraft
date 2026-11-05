@@ -278,6 +278,21 @@ mod tests {
                     "resolved_by_name": resolution.map(|_| "Erika"),
                     "note": if resolution.is_some() { "fit unchanged <ok>" } else { "" } })
         };
+        // services::impacts::DependentGroup: two sources on one dependent
+        let impact_group = || {
+            let mut obsolete = impact(None);
+            obsolete["id"] = json!(OTHER);
+            obsolete["source_number"] = json!("PRT-000002");
+            obsolete["event"] = json!("obsolete");
+            obsolete["relation"] = json!("file");
+            obsolete["detail"] = json!("Stage.SLDASM references Nut.SLDPRT");
+            obsolete["change_id"] = json!(null);
+            obsolete["change_number"] = json!(null);
+            json!({ "item_id": ME, "item_number": "ASM-000001", "item_name": "Stage <1>", "project_id": ROCKET,
+                    "project_code": "ROCKET", "revision_id": OTHER, "revision_code": "A",
+                    "revision_state": "released", "latest_at": TS, "impact_ids": format!("{ME},{OTHER}"),
+                    "impacts": [impact(None), obsolete] })
+        };
         let references = json!({
             "outgoing": [{ "id": ME, "from_revision_id": ME, "to_item_id": OTHER, "to_number": "PRT-000009",
                            "to_type": "part", "kind": "drawing", "note": "sheet 2", "to_latest_revision_id": OTHER,
@@ -311,7 +326,7 @@ mod tests {
                 "stats": { "items": 3, "revisions_in_work": 1, "revisions_in_review": 0, "revisions_released": 2,
                            "open_changes": 1, "files": 4, "stored_bytes": 2048 },
                 "checkouts": [revision("in_work", true)], "reviews": [change("in_review")],
-                "my_changes": [change("draft")], "activity": [audit_entry()], "impacts": [impact(None)],
+                "my_changes": [change("draft")], "activity": [audit_entry()], "impact_groups": [impact_group()],
                 "assigned_requests": [request("in_triage")], "my_requests": [request("new")],
             })),
         );
@@ -326,6 +341,24 @@ mod tests {
                 && html.contains("uses it in its BOM")
                 && html.contains("Stage &lt;1&gt;"),
             "open impacts on the dashboard"
+        );
+        for expected in [
+            "2 changes to check",
+            "Acknowledge all…",
+            "/revisions/22222222-2222-4222-8222-222222222222/impacts/acknowledge",
+            "BOM line",
+            "CAD file reference",
+            "via <a class=\"mono\" href=\"/changes/",
+            "badge-obsolete",
+            "resolves all 2 as well",
+            "/revise",
+        ] {
+            assert!(html.contains(expected), "grouped impacts show {expected}");
+        }
+        assert_eq!(
+            html.matches("resolves all 2 as well").count(),
+            1,
+            "the revise hint once per group"
         );
 
         let entry = json!({ "item_id": ME, "number": "PRT-000001", "item_type": "part", "project_id": ROCKET,
@@ -496,6 +529,22 @@ mod tests {
         );
 
         for (state, checked_out) in [("in_work", true), ("in_work", false), ("released", false)] {
+            let source = json!({ "file_id": OTHER, "filename": "nozzle.step", "sha256": "cd".repeat(32), "format": "step" });
+            let similar = if checked_out {
+                json!({ "status": "pending", "message": "computing", "source": source,
+                        "signature": null, "ignore_scale": false, "candidates": [] })
+            } else {
+                json!({ "status": "ready", "message": null, "source": source, "ignore_scale": false,
+                        "signature": { "extents": [120.0, 40.0, 8.0], "area": 1.0, "volume": null, "closed": false, "triangles": 12 },
+                        "candidates": [{
+                            "item_id": ME, "item_number": "PRT-000007", "item_type": "part", "project_code": "ROCKET",
+                            "revision_id": OTHER, "revision_code": "B", "state": "released", "name": "Nozzle <i>",
+                            "file_id": OTHER, "filename": "old-nozzle.stl", "identical": false,
+                            "score": 91, "shape": 94, "size": 97, "extents": [118.0, 40.0, 8.0],
+                            "explanation": "extents 118 × 40 × 8 vs 120 × 40 × 8, shape distribution 94 % similar",
+                            "thumbnail_file_id": if state == "released" { json!(ME) } else { json!(null) },
+                        }] })
+            };
             let html = render(
                 &env,
                 "revisions/show.html",
@@ -507,9 +556,9 @@ mod tests {
                                      "parent_state": "released", "find_number": 10, "quantity": 2.0 }],
                     "changes": [change("draft")], "open_change": change("draft"), "drafts": [change("draft")],
                     "history": [audit_entry()], "projects": [project()], "units": units(),
-                    "references": references.clone(), "open_impacts": [impact(None)],
+                    "references": references.clone(), "impact_groups": [impact_group()],
                     "resolved_impacts": [impact(Some("acknowledged"))],
-                    "open_requests": [request("in_triage")],
+                    "open_requests": [request("in_triage")], "similar": similar,
                     "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
                     "lifecycle": {
                         "states": crate::domain::LifecycleState::ALL,
@@ -523,6 +572,20 @@ mod tests {
                 "current lifecycle state is marked"
             );
             assert!(html.contains("four-eyes principle"), "rules are listed");
+            if checked_out {
+                assert!(
+                    html.contains("Comparing the shape of nozzle.step"),
+                    "similar parts pending"
+                );
+            } else {
+                assert!(
+                    html.contains("PRT-000007/B")
+                        && html.contains("Nozzle &lt;i&gt;")
+                        && html.contains("shape distribution 94 % similar")
+                        && html.contains("value=\"91\""),
+                    "similar parts listed"
+                );
+            }
             assert!(html.contains("Bracket &lt;b&gt;"), "names are escaped");
             assert!(
                 html.contains("/files/") && html.contains("/restore"),
@@ -614,7 +677,7 @@ mod tests {
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
                     "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
                     "history": [], "projects": [], "units": units(), "references": references.clone(),
-                    "open_impacts": [], "resolved_impacts": [],
+                    "impact_groups": [], "resolved_impacts": [],
                     "simulation": {
                         "bases": [basis(Some("PRT-000001/B was released (simulated: A)")), basis(None)],
                         "results": [sim_result("Max. stress <vM>", "pass", Some(250.0)),
@@ -668,7 +731,7 @@ mod tests {
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
                 "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
                 "history": [], "projects": [], "units": units(), "references": references.clone(),
-                "open_impacts": [], "resolved_impacts": [], "simulation": null,
+                "impact_groups": [], "resolved_impacts": [], "simulation": null,
                 "based_simulations": [{
                     "simulation_item_id": OTHER, "simulation_number": "SIM-000001", "simulation_code": "A",
                     "simulation_state": "in_work", "simulation_name": "Bracket – static <LC1>",
@@ -819,6 +882,9 @@ mod tests {
                     "reviews": [{ "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
                                   "decision": "approved", "comment": "ok", "decided_at": TS }],
                     "candidates": [user()], "history": [audit_entry()], "priorities": ["low", "normal"],
+                    "suggested": [{ "user_id": OTHER, "username": "max", "display_name": "Max <M>", "role": "editor",
+                                    "score": 7, "reasons": ["edited PRT-000001 3 times in the last 90 days",
+                                                            "manager of ROVER"] }],
                     "impact": [{ "root_item_id": ME, "level": 1, "item_id": OTHER, "item_number": "ASM-000001",
                                  "item_name": "Stage", "revision_id": OTHER, "revision_code": "A",
                                  "revision_state": "released", "relation": "bom", "via_number": "PRT-000001",
@@ -834,6 +900,15 @@ mod tests {
             assert!(
                 html.contains("Implements") && html.contains("ECR-000001"),
                 "the change page names the request it implements"
+            );
+            assert!(
+                html.contains("Suggested reviewers")
+                    && html.contains("Add Max &lt;M&gt;")
+                    && html.contains("name=\"username\" value=\"max\"")
+                    && html.contains(
+                        "edited PRT-000001 3 times in the last 90 days; manager of ROVER"
+                    ),
+                "suggested reviewers with their reasons"
             );
         }
 
@@ -1227,7 +1302,7 @@ mod tests {
             let mut data = with_common(json!({
                 "stats": { "items": 0, "revisions_in_work": 0, "revisions_in_review": 0, "revisions_released": 0,
                            "open_changes": 0, "files": 0, "stored_bytes": 0 },
-                "checkouts": [], "reviews": [], "my_changes": [], "activity": [], "impacts": [],
+                "checkouts": [], "reviews": [], "my_changes": [], "activity": [], "impact_groups": [],
             }));
             data["assistant_enabled"] = json!(enabled);
             render(&env, "dashboard.html", data)

@@ -128,6 +128,10 @@ promised.
   check-in for the 3D view (see `docs/src/research/cad-previews.md`).
 - **Search.** Ranked full-text search over numbers, names, materials, file
   names and the text inside STEP, IGES and text files; filter by CAD program.
+- **Similar parts.** "Do we already have a part like this?" – parts of
+  similar 3D shape and size, ranked by a cheap, explainable shape signature
+  (box extents and a D2 shape distribution, no AI) with the reason for each
+  hit; on the revision page, in the REST API and as MCP tool.
 - **Teams.** Viewer, CAD editor and admin roles; self-service project groups
   managed by their creators; single sign-on with any OpenID Connect
   provider and group synchronisation.
@@ -148,8 +152,9 @@ promised.
 - **AI assistants (MCP).** A built-in Model Context Protocol server
   (`/api/v1/mcp`, plus a stdio bridge `teamcraft mcp`) lets Claude Code and
   other MCP clients search items and explain BOMs and where-used, compare
-  revisions, check a BOM before a release, draft change orders, summarise,
-  raise and comment on change requests, and check simulations (out of date,
+  revisions, check a BOM before a release, find similar existing parts, draft
+  change orders, summarise, raise and comment on change requests, and check
+  simulations (out of date,
   pass/fail, results between revisions). It uses your rights and never
   submits, approves, releases or decides a change request.
 - **Ask TeamCraft (optional).** With an Anthropic API key configured, the

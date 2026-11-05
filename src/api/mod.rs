@@ -31,7 +31,8 @@ use crate::{
     models::Revision,
     services::{
         audit, bom, changes, checkouts, desktop, files, impacts, imports, items, notifications,
-        package, projects, references, requests, revisions, stats, uploads, users, workset, Page,
+        package, projects, references, requests, reviewers, revisions, similar, stats, uploads,
+        users, workset, Page,
     },
     web, AppState,
 };
@@ -145,6 +146,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(watch_change).delete(watch_change),
         )
         .route("/impacts/{id}/acknowledge", post(acknowledge_impact))
+        .route(
+            "/items/{number}/revisions/{code}/impacts/acknowledge",
+            post(acknowledge_impacts),
+        )
         .route("/changes/{number}/impact", get(change_impact))
         .route(
             "/items/{number}/revisions/{code}",
@@ -166,6 +171,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/items/{number}/revisions/{code}/revise", post(revise))
         .route("/items/{number}/revisions/{code}/package", get(get_package))
         .route("/items/{number}/revisions/{code}/workset", get(get_workset))
+        .route("/items/{number}/revisions/{code}/similar", get(get_similar))
         .route(
             "/bom-imports",
             post(import_bom).layer(DefaultBodyLimit::max(import_limit)),
@@ -217,6 +223,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{number}/items", post(add_change_item))
         .route("/changes/{number}/reviewers", post(add_change_reviewer))
         .route("/changes/{number}/readiness", get(change_readiness))
+        .route(
+            "/changes/{number}/suggested-reviewers",
+            get(change_suggested_reviewers),
+        )
         .route(
             "/changes/{number}/dependencies",
             post(add_change_dependencies),
@@ -336,7 +346,7 @@ async fn index() -> Json<Value> {
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
             "GET    /api/v1/me",
-            "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts), statistics",
+            "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts, and grouped by dependent revision as impact_groups), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
             "GET    /api/v1/projects",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?}",
@@ -411,6 +421,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/bom/compare.xlsx?with=A   the same comparison as an Excel workbook",
             "POST   /api/v1/changes/{number}/watch                    watch a change (DELETE: stop)",
             "POST   /api/v1/impacts/{id}/acknowledge                  {note} – the dependent needs no change",
+            "POST   /api/v1/items/{number}/revisions/{code}/impacts/acknowledge  {note, impacts?: [id]} – acknowledge all open impacts on the dependent revision (or the listed ones) at once",
             "GET    /api/v1/items/{number}/revisions/{code}/files",
             "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases', 'folder' (in the project group) or 'folders' = {\"name\": \"folder\"}",
             "GET    /api/v1/files/{id}",
@@ -427,6 +438,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/changes/{number}/impact                   impact analysis: items that depend on its revisions",
             "POST   /api/v1/changes/{number}/items                    {item, revision?}",
             "POST   /api/v1/changes/{number}/reviewers                {username}",
+            "GET    /api/v1/changes/{number}/suggested-reviewers?limit=  ranked reviewer suggestions with reasons (never assigns)",
             "GET    /api/v1/changes/{number}/readiness                release readiness: unreleased (blocking) and obsolete or file-scan (warning) dependencies",
             "POST   /api/v1/changes/{number}/dependencies             add the in-work revisions of all unreleased dependencies, level by level",
             "POST   /api/v1/changes/{number}/submit",
@@ -540,10 +552,12 @@ async fn desktop_token(
 
 /// The personal start page of the desktop app (and the web dashboard).
 async fn worklist(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
+    let open = impacts::open_for(&st.db, &me).await?;
     Ok(Json(json!({
         "checkouts": revisions::checked_out_by(&st.db, me.id).await?,
         "reviews": changes::pending_reviews(&st.db, me.id).await?,
-        "impacts": impacts::open_for(&st.db, &me).await?,
+        "impacts": open,
+        "impact_groups": impacts::group_by_dependent(open.clone()),
         "notifications_unread": notifications::unread_count(&st.db, me.id).await?,
         "my_changes": changes::open_by(&st.db, me.id).await?,
         "requests_assigned": requests::assigned_to(&st.db, me.id).await?,
@@ -1136,6 +1150,37 @@ async fn get_workset(
 }
 
 #[derive(Deserialize)]
+struct SimilarQuery {
+    limit: Option<i64>,
+    /// Compare proportions and shape only.
+    ignore_scale: Option<bool>,
+    /// The 3D file to compare by (default: the STEP model, else the first mesh).
+    file: Option<String>,
+    /// Seconds to wait for a shape signature that is still being computed.
+    wait: Option<u64>,
+}
+
+/// Similar parts by shape (see `services::similar`).
+async fn get_similar(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<SimilarQuery>,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &number, &code).await?;
+    let options = similar::Options {
+        limit: q.limit.unwrap_or(10).clamp(1, similar::MAX_LIMIT),
+        ignore_scale: q.ignore_scale.unwrap_or(false),
+    };
+    let wait = std::time::Duration::from_secs(q.wait.unwrap_or(30).min(200));
+    let report = similar::for_revision(&st, &me, &rev, q.file.as_deref(), options, wait).await?;
+    let mut out = json!(report);
+    out["item"] = json!(rev.item_number);
+    out["revision"] = json!(rev.code);
+    Ok(Json(out))
+}
+
+#[derive(Deserialize)]
 struct AddBomLine {
     child: String,
     quantity: f64,
@@ -1296,6 +1341,27 @@ async fn acknowledge_impact(
 ) -> AppResult<Json<Value>> {
     Ok(Json(json!(
         impacts::acknowledge(&st.db, &me, id, &body.note).await?
+    )))
+}
+
+#[derive(Deserialize)]
+struct AcknowledgeAll {
+    note: String,
+    /// Only these impacts (the ones the user saw); all open ones without.
+    #[serde(default)]
+    impacts: Option<Vec<Uuid>>,
+}
+
+/// Acknowledges the open impacts on a dependent revision at once.
+async fn acknowledge_impacts(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    ApiJson(body): ApiJson<AcknowledgeAll>,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &number, &code).await?;
+    Ok(Json(json!(
+        impacts::acknowledge_all(&st.db, &me, rev.id, body.impacts.as_deref(), &body.note).await?
     )))
 }
 
@@ -1729,6 +1795,29 @@ async fn change_readiness(
     let readiness = changes::readiness(&st.db, change.id).await?;
     Ok(Json(
         json!({ "ready": readiness.is_ready(), "blockers": readiness.blockers, "warnings": readiness.warnings }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct SuggestQuery {
+    limit: Option<i64>,
+}
+
+/// Who should review the change: ranked users with the reasons.
+async fn change_suggested_reviewers(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path(number): Path<String>,
+    Query(q): Query<SuggestQuery>,
+) -> AppResult<Json<Value>> {
+    let change = changes::get_by_number(&st.db, &number).await?;
+    let limit = q
+        .limit
+        .unwrap_or(reviewers::DEFAULT_LIMIT as i64)
+        .clamp(1, reviewers::MAX_LIMIT as i64) as usize;
+    let suggestions = reviewers::suggest(&st.db, change.id, limit).await?;
+    Ok(Json(
+        json!({ "change": change.number, "suggestions": suggestions }),
     ))
 }
 

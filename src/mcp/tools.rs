@@ -25,7 +25,7 @@ use crate::{
     models::{BomLine, Change, ChangeRequest, FileRecord, Revision},
     services::{
         audit, bom, changes, files, impacts, insights, items, notifications, projects, references,
-        requests, revisions, simulations, Page,
+        requests, reviewers, revisions, similar, simulations, Page,
     },
     AppState,
 };
@@ -143,6 +143,17 @@ const TOOLS: &[Tool] = &[
         schema: schema_change,
     },
     Tool {
+        name: "suggest_reviewers",
+        title: "Suggest reviewers",
+        description: "Use when preparing or reviewing a change order to propose who should review it: \
+            ranked CAD editors and admins with plain reasons (recent edits of the affected items, reviews of \
+            earlier changes on the same items, owners of dependents, project group managers, requesters of \
+            linked change requests). Excludes the author, deactivated users and assigned reviewers. Never \
+            assigns anybody – the author adds reviewers in TeamCraft.",
+        effect: READ,
+        schema: schema_suggest_reviewers,
+    },
+    Tool {
         name: "my_worklist",
         title: "My worklist",
         description: "What is waiting for the signed-in user: own check-outs, reviews waiting for a \
@@ -169,6 +180,20 @@ const TOOLS: &[Tool] = &[
         schema: schema_duplicates,
     },
     Tool {
+        name: "find_similar_parts",
+        title: "Find similar parts",
+        description: "Parts whose 3D model has a similar shape and size – \"do we already have a part like \
+            this?\". Use it before creating a new item or a create_change_draft for a new part, to reuse an \
+            existing one instead of a near-duplicate; find_duplicate_files finds only identical contents. \
+            Compares the revision's STEP or mesh file (or `file`) with the latest revisions of all other \
+            items by oriented bounding box extents and a D2 shape distribution; each hit has a score (0–100), \
+            its shape and size parts and a one-line explanation. ignore_scale=true compares proportions \
+            only (scaled variants). Status `no_shape_file`: the revision has no STEP or mesh file; \
+            `pending`: the signature is still being computed, call again shortly.",
+        effect: READ,
+        schema: schema_similar,
+    },
+    Tool {
         name: "compare_revisions",
         title: "Compare two revisions",
         description: "What changed between two revisions of an item: attributes, files added, removed or \
@@ -190,8 +215,10 @@ const TOOLS: &[Tool] = &[
         name: "get_change_request",
         title: "Change request details",
         description: "A change request with its description, affected items (with the revision the problem \
-            was found in and the latest state), the discussion, attachments (names only), the change orders \
-            implementing it, its history and what the signed-in user may do with it.",
+            was found in and the latest state), the discussion (newest 100 comments, oldest first), \
+            attachments (names and sizes, no contents), the change orders implementing it, its history \
+            (newest 50 entries, newest first) and what the signed-in user may do with it (`you_may` – for \
+            the user in TeamCraft; the tools cannot triage or decide).",
         effect: READ,
         schema: schema_request,
     },
@@ -200,9 +227,10 @@ const TOOLS: &[Tool] = &[
         title: "List simulations",
         description: "Simulations (FEA, CFD, … items of type simulation) with an `out_of_date` reason per \
             basis. With `item`: the simulations whose latest revision is based on that part or assembly, \
-            with result and failure counts and whether a check is open. Without: simulation items (filter by \
-            text and project group) with their latest revision's bases and pass/fail summary. \
-            out_of_date_only=true keeps only those that no longer match their bases.",
+            with result and failure counts, whether a check is open and only their bases on that item \
+            (get_simulation shows all). Without: simulation items (filter by text and project group, at most \
+            50 checked) with their latest revision's bases and pass/fail summary. out_of_date_only=true keeps \
+            only those that no longer match their bases (with `item`: their bases on that item).",
         effect: READ,
         schema: schema_list_simulations,
     },
@@ -401,6 +429,16 @@ fn schema_change() -> Value {
     )
 }
 
+fn schema_suggest_reviewers() -> Value {
+    object(
+        json!({
+            "change": { "type": "string", "description": "Change number, e.g. ECO-000004" },
+            "limit": p_limit(reviewers::DEFAULT_LIMIT as i64, reviewers::MAX_LIMIT as i64),
+        }),
+        &["change"],
+    )
+}
+
 fn schema_duplicates() -> Value {
     object(
         json!({
@@ -409,6 +447,19 @@ fn schema_duplicates() -> Value {
             "limit": p_limit(100, 1000),
         }),
         &[],
+    )
+}
+
+fn schema_similar() -> Value {
+    object(
+        json!({
+            "item": { "type": "string", "description": "Item number, e.g. PRT-000012 (or PRT-000012/B)" },
+            "revision": p_revision(),
+            "file": { "type": "string", "description": "File name of the 3D model to compare by (default: the STEP file, else the first mesh)" },
+            "ignore_scale": { "type": "boolean", "description": "Compare proportions and shape only (default false)" },
+            "limit": p_limit(10, 50),
+        }),
+        &["item"],
     )
 }
 
@@ -738,9 +789,11 @@ pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value 
         "item_history" => item_history(st, &a).await,
         "list_changes" => list_changes(st, &a).await,
         "get_change" => get_change(st, &a).await,
+        "suggest_reviewers" => suggest_reviewers(st, &a).await,
         "my_worklist" => my_worklist(st, me).await,
         "bom_health" => bom_health(st, &a).await,
         "find_duplicate_files" => find_duplicate_files(st, &a).await,
+        "find_similar_parts" => find_similar_parts(st, me, &a).await,
         "compare_revisions" => compare_revisions(st, &a).await,
         "create_change_draft" => create_change_draft(st, me, &a).await,
         "add_to_change" => add_to_change(st, me, &a).await,
@@ -1224,6 +1277,28 @@ async fn get_change(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     change_overview(st, &change, true).await
 }
 
+async fn suggest_reviewers(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
+    let change = changes::get_by_number(&st.db, &a.req_str("change")?).await?;
+    let limit = a.limit(
+        "limit",
+        reviewers::DEFAULT_LIMIT as i64,
+        reviewers::MAX_LIMIT as i64,
+    )?;
+    let suggestions = reviewers::suggest(&st.db, change.id, limit as usize).await?;
+    Ok(json!({
+        "change": change.number,
+        "status": change.status,
+        "suggestions": suggestions.iter().map(|s| json!({
+            "username": s.username,
+            "name": s.display_name,
+            "role": s.role,
+            "score": s.score,
+            "reasons": s.reasons,
+        })).collect::<Vec<_>>(),
+        "note": "Suggestions only; reviewers are added by the author of the change in TeamCraft.",
+    }))
+}
+
 async fn my_worklist(st: &AppState, me: &Actor) -> AppResult<Value> {
     let checkouts = revisions::checked_out_by(&st.db, me.id).await?;
     let reviews = changes::pending_reviews(&st.db, me.id).await?;
@@ -1305,6 +1380,51 @@ async fn find_duplicate_files(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
         "scope": revision.as_ref().map(revisions::label),
         "groups": group_duplicates(&rows),
         "truncated": rows.len() as i64 >= limit,
+    }))
+}
+
+async fn find_similar_parts(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let (number, code) = parse_item_ref(&a.req_str("item")?);
+    let code = match a.opt_str("revision")? {
+        Some(c) => Some(c),
+        None => code,
+    };
+    let rev = revision_at(st, &number, code.as_deref()).await?;
+    let options = similar::Options {
+        limit: a.limit("limit", 10, similar::MAX_LIMIT)?,
+        ignore_scale: a.flag("ignore_scale", false)?,
+    };
+    let file = a.opt_str("file")?;
+    let report = similar::for_revision(
+        st,
+        me,
+        &rev,
+        file.as_deref(),
+        options,
+        std::time::Duration::from_secs(60),
+    )
+    .await?;
+    Ok(json!({
+        "source": revisions::label(&rev),
+        "status": report.status,
+        "message": report.message,
+        "file": report.source.as_ref().map(|s| &s.filename),
+        "signature": report.signature,
+        "ignore_scale": report.ignore_scale,
+        "similar": report.candidates.iter().map(|c| json!({
+            "item": c.item_number,
+            "revision": c.revision_code,
+            "name": c.name,
+            "type": c.item_type,
+            "state": c.state,
+            "project": c.project_code,
+            "file": c.filename,
+            "score": c.score,
+            "shape": c.shape,
+            "size": c.size,
+            "identical": c.identical,
+            "explanation": c.explanation,
+        })).collect::<Vec<_>>(),
     }))
 }
 
@@ -1629,10 +1749,12 @@ async fn request_overview(st: &AppState, me: &Actor, request: &ChangeRequest) ->
         requests::comments(&st.db, id),
         requests::attachments(&st.db, id),
         requests::linked_changes(&st.db, id),
-        audit::for_entities(&st.db, &ids, REQUEST_HISTORY),
+        // one more than shown tells whether older entries exist
+        audit::for_entities(&st.db, &ids, REQUEST_HISTORY + 1),
         requests::abilities_of(&st.db, me, request),
     )?;
     let (comments, comments_cut) = newest(comments, MAX_COMMENTS);
+    let (history, history_cut) = capped(history, REQUEST_HISTORY as usize);
     let mut brief = request_brief(request);
     brief["description"] = json!(request.description);
     if request.decided_at.is_some() {
@@ -1675,6 +1797,7 @@ async fn request_overview(st: &AppState, me: &Actor, request: &ChangeRequest) ->
             "action": e.action,
             "summary": e.summary,
         })).collect::<Vec<_>>(),
+        "history_truncated": history_cut,
         "you_may": can,
         "url": web_url(st, &format!("/requests/{}", request.id)),
     }))
@@ -2265,9 +2388,11 @@ pub fn prompt(name: &str, args: &Value) -> Result<Value, String> {
                  1. Call get_change with change={change}.\n\
                  2. For each revision in it, call compare_revisions (item, to=its revision) to see what it changes; \
                  for assemblies also call bom_health with rule=released.\n\
+                 3. Call suggest_reviewers with change={change} to see who else knows the affected items.\n\
                  Produce a concise review for an engineer: Scope (what is released, in one line each); Risks (readiness \
                  blockers and warnings, dependents from the impact analysis that are not in the change, check-outs, \
-                 missing files or mass); Questions for the author; a suggestion whether it looks ready. The decision \
+                 missing files or mass); Questions for the author; people who should also look at it (only from \
+                 suggest_reviewers, with its reason; it never assigns them); a suggestion whether it looks ready. The decision \
                  (approve or reject) is mine – you cannot and should not make it."
             )
         }
@@ -2278,8 +2403,11 @@ pub fn prompt(name: &str, args: &Value) -> Result<Value, String> {
                  1. Call get_revision for {item}/{revision}.\n\
                  2. Call bom_health with item={item}, revision={revision}, rule=released.\n\
                  3. Call find_duplicate_files with item={item}, revision={revision}.\n\
+                 4. If it is a new part (revision A), call find_similar_parts with item={item}, revision={revision} for \
+                 existing parts of nearly the same shape (score 90 or more).\n\
                  Produce a checklist: Blocking (must be fixed or released together: unreleased or unresolved BOM lines and \
-                 references, check-outs) and Warnings (missing mass or files, obsolete parts, duplicate files, open \
+                 references, check-outs) and Warnings (missing mass or files, obsolete parts, duplicate files, near-duplicate \
+                 existing parts, open \
                  checks). End with the items a change order would need. Offer to draft it with create_change_draft, but \
                  only create it if I say so."
             )
@@ -2546,6 +2674,22 @@ mod tests {
             assert!(!exists(name));
         }
         let def = |name: &str| defs.iter().find(|d| d["name"] == name).unwrap().clone();
+        // the shape sibling of find_duplicate_files: read-only, by item
+        let similar = def("find_similar_parts");
+        assert_eq!(similar["annotations"]["readOnlyHint"], true);
+        assert_eq!(similar["inputSchema"]["required"], json!(["item"]));
+        assert!(similar["description"]
+            .as_str()
+            .unwrap()
+            .contains("create_change_draft"));
+        // reviewers are suggested, never assigned
+        let suggest = def("suggest_reviewers");
+        assert_eq!(suggest["annotations"]["readOnlyHint"], true);
+        assert!(suggest["description"]
+            .as_str()
+            .unwrap()
+            .contains("Never assigns"));
+        assert!(!exists("add_reviewer") && !exists("assign_reviewers"));
         let create = def("create_change_request");
         assert_eq!(create["annotations"]["idempotentHint"], false);
         assert_eq!(
@@ -2735,6 +2879,7 @@ mod tests {
         let p = prompt("review_change", &json!({ "change": "ECO-000004" })).unwrap();
         let text = p["messages"][0]["content"]["text"].as_str().unwrap();
         assert!(text.contains("get_change with change=ECO-000004"));
+        assert!(text.contains("suggest_reviewers with change=ECO-000004"));
         let p = prompt("release_notes", &json!({ "item": "ASM-1" })).unwrap();
         let text = p["messages"][0]["content"]["text"].as_str().unwrap();
         assert!(text.contains("to=latest"));

@@ -34,6 +34,7 @@ pub mod nxpart;
 pub mod oidc;
 pub mod preview;
 pub mod services;
+pub mod shape;
 pub mod simmesh;
 pub mod stepbom;
 pub mod swpart;

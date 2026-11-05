@@ -88,25 +88,7 @@
 {% elif rev.state == "in_work" and can.checkout %}
 <div class="notice">Check out this revision to change attributes, files or the BOM.</div>
 {% endif %}
-{% for i in open_impacts %}
-<div class="impact" role="status">
-  <p><strong>Check needed:</strong>
-    <a class="mono" href="/revisions/{{ i.source_revision_id }}">{{ i.source_number }}/{{ i.source_code }}</a> {{ i.source_name }}
-    {% if i.event == "released" %}was released{% else %}is obsolete and has to be replaced{% endif %}{% if i.change_number %}
-    (<a href="/changes/{{ i.change_id }}">{{ i.change_number }}</a>){% endif %} –
-    {{ rev.item_number }} {{ m.relation(i.relation) }}{% if i.detail %} ({{ i.detail }}){% endif %}.
-    <span class="small muted">{{ m.time(i.created_at) }}</span></p>
-  {% if can.acknowledge %}
-  <form class="inline" method="post" action="/impacts/{{ i.id }}/acknowledge">
-    <input type="hidden" name="back" value="{{ back }}">
-    <input type="text" name="note" maxlength="2000" required aria-label="Why no change is needed"
-           placeholder="Why no change is needed, e.g. form, fit and function unchanged">
-    <button class="small" type="submit">Acknowledge</button>
-  </form>
-  <p class="hint">Or revise {{ rev.item_number }} and release a new revision – that resolves the check automatically.</p>
-  {% endif %}
-</div>
-{% endfor %}
+{% for g in impact_groups %}{{ m.impact_group(g, back, can.acknowledge, true) }}{% endfor %}
 
 {% if can.checkin %}
 <section class="card hidden" id="checkin-form">
@@ -327,6 +309,36 @@
   <p class="hint">No 3D preview for native CAD files – the preview image stored in Inventor, Solid Edge and SolidWorks files is shown next to them. For the model in 3D, attach a STEP export (<em>Save as → STEP AP242</em>); the desktop app can create it with your own Inventor or Solid Edge.</p>
   {% endif %}
 </section>
+
+{% if similar and similar.status != "no_shape_file" %}
+<section class="card" id="similar">
+  <div class="card-head">
+    <h2>{% if revisions|length == 1 and rev.state == "in_work" %}Similar existing parts{% else %}Similar parts{% endif %}</h2>
+    {% if similar.source %}<span class="hint">by the shape of {{ similar.source.filename }}</span>{% endif %}
+  </div>
+  {% if similar.status == "ready" %}
+    {% if similar.candidates %}
+    {% if revisions|length == 1 and rev.state == "in_work" %}<p class="hint">Before you model {{ rev.item_number }} further: if one of these fits, reuse it instead of a new item.</p>{% endif %}
+    <ul class="similar-list">
+    {% for c in similar.candidates %}
+      <li{% if c.thumbnail_file_id %} class="with-thumb"{% endif %}>
+        {% if c.thumbnail_file_id %}<img class="similar-thumb" src="/files/{{ c.thumbnail_file_id }}/thumbnail" alt="" loading="lazy" data-hide-broken>{% endif %}
+        <div class="similar-main">
+          <a class="mono" href="/revisions/{{ c.revision_id }}">{{ c.item_number }}/{{ c.revision_code }}</a> {{ c.name }} {{ m.badge(c.state) }}
+          <span class="similar-why">{{ c.explanation }} · <a href="/files/{{ c.file_id }}/preview" title="3D preview of {{ c.filename }}">{{ c.filename }}</a></span>
+        </div>
+        <span class="similar-score" title="shape {{ c.shape }} % × size {{ c.size }} %"><meter min="0" max="100" low="70" high="90" optimum="100" value="{{ c.score }}">{{ c.score }} %</meter> {{ c.score }} %</span>
+      </li>
+    {% endfor %}
+    </ul>
+    {% else %}<p class="empty">No other part has a similar shape and size.</p>{% endif %}
+  {% elif similar.status == "pending" %}
+    <p class="empty">Comparing the shape of {{ similar.source.filename }} – reload the page in a moment.</p>
+  {% else %}
+    <p class="empty">No shape comparison for {{ similar.source.filename }}: {{ similar.message }}</p>
+  {% endif %}
+</section>
+{% endif %}
 
 {% if simulation %}
 <section class="card" id="simulation-basis">
