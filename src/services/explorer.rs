@@ -41,14 +41,22 @@ pub struct Folder {
     pub locked: i64,
 }
 
-/// The folders (active project groups) with counts, in one query.
+/// The folders (active project groups) with counts, in one query. The
+/// check-outs are counted once for all groups (not per group: that read
+/// every checked-out revision once per group).
 pub async fn folders(pool: &PgPool) -> AppResult<Vec<Folder>> {
     Ok(sqlx::query_as::<_, Folder>(
-        "SELECT p.id, p.code, p.name,
+        "WITH locked AS (
+             SELECT i.project_id, COUNT(*) AS locked
+             FROM revisions r JOIN items i ON i.id = r.item_id
+             WHERE r.checked_out_by IS NOT NULL
+             GROUP BY i.project_id
+         )
+         SELECT p.id, p.code, p.name,
                 (SELECT COUNT(*) FROM items i WHERE i.project_id = p.id) AS items,
-                (SELECT COUNT(*) FROM revisions r JOIN items i ON i.id = r.item_id
-                 WHERE i.project_id = p.id AND r.checked_out_by IS NOT NULL) AS locked
-         FROM projects p WHERE p.active ORDER BY p.code",
+                COALESCE(l.locked, 0) AS locked
+         FROM projects p LEFT JOIN locked l ON l.project_id = p.id
+         WHERE p.active ORDER BY p.code",
     )
     .fetch_all(pool)
     .await?)

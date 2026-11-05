@@ -178,14 +178,15 @@ impl Plan {
 /// `rows × loops` of an `(actual time=… rows=N loops=M)` node line.
 fn actual_rows(line: &str) -> Option<u64> {
     let actual = &line[line.find("(actual")?..];
-    let rows: u64 = actual
+    // PostgreSQL 18 prints average rows per loop with decimals (rows=0.50)
+    let rows: f64 = actual
         .split("rows=")
         .nth(1)?
         .split_whitespace()
         .next()?
         .parse()
         .ok()?;
-    let loops: u64 = actual
+    let loops: f64 = actual
         .split("loops=")
         .nth(1)?
         .trim_end_matches(')')
@@ -193,7 +194,7 @@ fn actual_rows(line: &str) -> Option<u64> {
         .next()?
         .parse()
         .ok()?;
-    Some(rows * loops)
+    Some((rows * loops).round() as u64)
 }
 
 // ------------------------------------------------------------ setup
@@ -263,7 +264,7 @@ async fn prepare(admin: &PgConnectOptions, db_name: &str) -> (PgPool, Seeded) {
 
     let pool = PgPoolOptions::new()
         .max_connections(10)
-        .connect_with(admin.clone().database(db_name))
+        .connect_with(db::session_options(admin.clone().database(db_name)))
         .await
         .expect("connect to the scale database");
     let started = Instant::now();
@@ -985,7 +986,7 @@ async fn scale_check() {
                 Ok(())
             })
         })
-        .connect_with(admin.clone().database(&db_name))
+        .connect_with(db::session_options(admin.clone().database(&db_name)))
         .await;
     let (plan_router, plans_disabled) = match plan_pool {
         Ok(p) => (

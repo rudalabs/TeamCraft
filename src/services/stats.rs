@@ -25,8 +25,10 @@ pub async fn load(pool: &PgPool) -> AppResult<Stats> {
             (SELECT COUNT(*) FROM revisions WHERE state = 'released') AS revisions_released,
             (SELECT COUNT(*) FROM changes WHERE status IN ('draft', 'in_review', 'rejected')) AS open_changes,
             (SELECT COUNT(*) FROM files) AS files,
+            -- byte-wise comparison: the hex digests sort several times
+            -- faster than with the database's linguistic collation
             (SELECT COALESCE(SUM(size_bytes), 0)::bigint FROM
-                (SELECT DISTINCT sha256, size_bytes FROM files) blobs) AS stored_bytes",
+                (SELECT DISTINCT sha256 COLLATE \"C\", size_bytes FROM files) blobs) AS stored_bytes",
     )
     .fetch_one(pool)
     .await?)

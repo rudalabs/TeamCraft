@@ -161,6 +161,10 @@ pub async fn create(
     ))
 }
 
+/// Dependents listed in the impact analysis of the change page (sorted by
+/// level, so the direct ones come first).
+const IMPACT_SHOWN: usize = 500;
+
 pub async fn show(
     State(st): State<AppState>,
     ctx: WebCtx,
@@ -172,7 +176,11 @@ pub async fn show(
     let history = audit::for_entities(&st.db, &[id], 100).await?;
     // Impact analysis: the items that depend on the revisions of this change.
     let revision_ids: Vec<Uuid> = affected.iter().map(|i| i.revision_id).collect();
-    let impact = impacts::analysis(&st.db, &revision_ids).await?;
+    let mut impact = impacts::analysis(&st.db, &revision_ids).await?;
+    // A change of many widely used parts has tens of thousands of
+    // dependents; the page lists the nearest ones (the API has all).
+    let impact_total = impact.len();
+    impact.truncate(IMPACT_SHOWN);
     let watching = notifications::is_watching(&st.db, ctx.me.id, "change", id).await?;
     let implements = requests::for_change(&st.db, id).await?;
     let status = changes::status_of(&change);
@@ -219,6 +227,7 @@ pub async fn show(
             "change": change,
             "status_label": status.label(),
             "impact": impact,
+            "impact_total": impact_total,
             "readiness_rows": readiness.as_ref().map(|r| r.blockers.iter().chain(&r.warnings).cloned().collect::<Vec<_>>()).unwrap_or_default(),
             "readiness": readiness,
             "watching": watching,

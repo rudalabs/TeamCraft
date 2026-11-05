@@ -517,15 +517,26 @@ async fn desktop_token(
 
 /// The personal start page of the desktop app (and the web dashboard).
 async fn worklist(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
+    // independent queries run concurrently (like the dashboard)
+    let (checkouts, reviews, impacts, unread, my_changes, assigned, my_requests, stats) = tokio::try_join!(
+        revisions::checked_out_by(&st.db, me.id),
+        changes::pending_reviews(&st.db, me.id),
+        impacts::open_for(&st.db, &me),
+        notifications::unread_count(&st.db, me.id),
+        changes::open_by(&st.db, me.id),
+        requests::assigned_to(&st.db, me.id),
+        requests::open_by(&st.db, me.id),
+        stats::load(&st.db),
+    )?;
     Ok(Json(json!({
-        "checkouts": revisions::checked_out_by(&st.db, me.id).await?,
-        "reviews": changes::pending_reviews(&st.db, me.id).await?,
-        "impacts": impacts::open_for(&st.db, &me).await?,
-        "notifications_unread": notifications::unread_count(&st.db, me.id).await?,
-        "my_changes": changes::open_by(&st.db, me.id).await?,
-        "requests_assigned": requests::assigned_to(&st.db, me.id).await?,
-        "my_requests": requests::open_by(&st.db, me.id).await?,
-        "stats": stats::load(&st.db).await?,
+        "checkouts": checkouts,
+        "reviews": reviews,
+        "impacts": impacts,
+        "notifications_unread": unread,
+        "my_changes": my_changes,
+        "requests_assigned": assigned,
+        "my_requests": my_requests,
+        "stats": stats,
     })))
 }
 
@@ -786,7 +797,7 @@ async fn where_used(
 ) -> AppResult<Json<Value>> {
     let item = items::get_by_number(&st.db, &number).await?;
     Ok(Json(match q.levels {
-        None => json!(items::where_used(&st.db, item.id).await?),
+        None => json!(items::where_used(&st.db, item.id, items::MAX_WHERE_USED_ROWS).await?),
         Some(levels) => json!(items::where_used_levels(&st.db, item.id, levels).await?),
     }))
 }

@@ -34,6 +34,14 @@ pub struct ItemFilter {
 }
 
 /// Searches items; every row carries its latest revision.
+///
+/// The latest revision of an item is looked up per item, so the query never
+/// does that for the whole vault: a search text, a state or a CAD program
+/// first narrows the items to candidates found set-based (any revision
+/// matches – a superset, the exact conditions on the latest revision are
+/// checked afterwards), and the total comes from the same query
+/// (`COUNT(*) OVER ()`). Without such a filter only the requested page of
+/// items (by number) is looked up, and the total is a plain count.
 pub async fn search(
     pool: &PgPool,
     filter: &ItemFilter,
@@ -44,8 +52,7 @@ pub async fn search(
     // A match is any of: item number, name/description/material (substring or
     // full-text), a file name, the extracted text of the current version of a
     // file of the latest revision, or a file of a format the query names.
-    const FROM: &str = "
-        FROM items i
+    const JOINS: &str = "
         LEFT JOIN projects p ON p.id = i.project_id
         CROSS JOIN LATERAL (
             SELECT r.id, r.code, r.state, r.name, r.description, r.material, r.search_vector
@@ -59,8 +66,9 @@ pub async fn search(
                    OR ($5::text IS NOT NULL AND fv.content_vector @@ to_tsquery('simple', $5))
                    OR f.format = ANY($6::text[]))
             ORDER BY f.filename LIMIT 1
-        ) fm ON TRUE
-        WHERE ($1::text IS NULL
+        ) fm ON TRUE";
+    const WHERE: &str = "
+          ($1::text IS NULL
                OR i.number ILIKE $1 OR lr.name ILIKE $1 OR lr.description ILIKE $1 OR lr.material ILIKE $1
                OR ($5::text IS NOT NULL AND lr.search_vector @@ to_tsquery('simple', $5))
                OR fm.filename IS NOT NULL)
@@ -69,6 +77,35 @@ pub async fn search(
           AND ($4::text IS NULL OR lr.state = $4)
           AND ($7::text[] IS NULL OR EXISTS (
                 SELECT 1 FROM files sf WHERE sf.revision_id = lr.id AND sf.format = ANY($7::text[])))";
+    const COLUMNS: &str =
+        "i.id, i.number, i.item_type, i.unit, p.code AS project_code, i.created_at,
+         lr.id AS latest_revision_id, lr.code AS latest_code, lr.state AS latest_state, lr.name,
+         (SELECT rr.code FROM revisions rr WHERE rr.item_id = i.id AND rr.state = 'released'
+          ORDER BY rr.seq DESC LIMIT 1) AS released_code,
+         fm.filename AS matched_file";
+    const ORDER: &str = "ORDER BY CASE WHEN $5::text IS NULL THEN 0
+                       ELSE ts_rank(lr.search_vector, to_tsquery('simple', $5)) END DESC,
+                  i.number";
+    // Items with a revision or file that matches the text (in any revision).
+    const TEXT_CANDIDATES: &str = "
+        SELECT ci.id FROM items ci WHERE ci.number ILIKE $1
+        UNION
+        SELECT cr.item_id FROM revisions cr
+        WHERE cr.name ILIKE $1 OR cr.description ILIKE $1 OR cr.material ILIKE $1
+           OR ($5::text IS NOT NULL AND cr.search_vector @@ to_tsquery('simple', $5))
+        UNION
+        SELECT cr.item_id FROM files cf JOIN revisions cr ON cr.id = cf.revision_id
+        WHERE cf.filename ILIKE $1 OR cf.format = ANY($6::text[])
+        UNION
+        SELECT cr.item_id FROM file_versions cv
+        JOIN files cf ON cf.id = cv.file_id AND cv.version = cf.current_version
+        JOIN revisions cr ON cr.id = cf.revision_id
+        WHERE $5::text IS NOT NULL AND cv.content_vector @@ to_tsquery('simple', $5)";
+    const STATE_CANDIDATES: &str = "SELECT cr.item_id FROM revisions cr WHERE cr.state = $4";
+    const SYSTEM_CANDIDATES: &str = "
+        SELECT cr.item_id FROM files cf JOIN revisions cr ON cr.id = cf.revision_id
+        WHERE cf.format = ANY($7::text[])";
+
     let query = filter
         .query
         .as_deref()
@@ -87,30 +124,52 @@ pub async fn search(
         .filter(|s| !s.is_empty())
         .map(crate::cadformat::ids_of_system);
 
-    let rows = sqlx::query_as::<_, ItemSummary>(&format!(
-        "SELECT i.id, i.number, i.item_type, i.unit, p.code AS project_code, i.created_at,
-                lr.id AS latest_revision_id, lr.code AS latest_code, lr.state AS latest_state, lr.name,
-                (SELECT rr.code FROM revisions rr WHERE rr.item_id = i.id AND rr.state = 'released'
-                 ORDER BY rr.seq DESC LIMIT 1) AS released_code,
-                fm.filename AS matched_file
-         {FROM}
-         ORDER BY CASE WHEN $5::text IS NULL THEN 0
-                       ELSE ts_rank(lr.search_vector, to_tsquery('simple', $5)) END DESC,
-                  i.number
-         LIMIT $8 OFFSET $9"
-    ))
-    .bind(&pattern)
-    .bind(item_type)
-    .bind(filter.project_id)
-    .bind(state)
-    .bind(&tsquery)
-    .bind(&named_formats)
-    .bind(&system_formats)
-    .bind(page.limit)
-    .bind(page.offset)
-    .fetch_all(pool)
-    .await?;
-    let total = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) {FROM}"))
+    let mut narrow = Vec::new();
+    if pattern.is_some() {
+        narrow.push(TEXT_CANDIDATES);
+    }
+    if state.is_some() {
+        narrow.push(STATE_CANDIDATES);
+    }
+    if system_formats.is_some() {
+        narrow.push(SYSTEM_CANDIDATES);
+    }
+    let candidates: String = narrow
+        .iter()
+        .map(|c| format!(" AND i.id IN ({c})"))
+        .collect();
+
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        #[sqlx(flatten)]
+        item: ItemSummary,
+        total: i64,
+    }
+    let rows_sql = if narrow.is_empty() {
+        // Only the page of items is looked up; every item has at least one
+        // revision (created together, revisions are never deleted alone),
+        // so the latest-revision conditions cannot drop any item here.
+        format!(
+            "WITH page AS (
+                 SELECT i.id FROM items i
+                 WHERE ($2::text IS NULL OR i.item_type = $2) AND ($3::uuid IS NULL OR i.project_id = $3)
+                 ORDER BY i.number LIMIT $8 OFFSET $9
+             )
+             SELECT {COLUMNS}, 0::bigint AS total
+             FROM page JOIN items i ON i.id = page.id {JOINS}
+             WHERE {WHERE}
+             {ORDER}"
+        )
+    } else {
+        format!(
+            "SELECT {COLUMNS}, COUNT(*) OVER () AS total
+             FROM items i {JOINS}
+             WHERE {WHERE} {candidates}
+             {ORDER}
+             LIMIT $8 OFFSET $9"
+        )
+    };
+    let rows = sqlx::query_as::<_, Row>(&rows_sql)
         .bind(&pattern)
         .bind(item_type)
         .bind(filter.project_id)
@@ -118,9 +177,41 @@ pub async fn search(
         .bind(&tsquery)
         .bind(&named_formats)
         .bind(&system_formats)
-        .fetch_one(pool)
+        .bind(page.limit)
+        .bind(page.offset)
+        .fetch_all(pool)
         .await?;
-    Ok((rows, total))
+    // The window total is there whenever the page has rows; a page behind
+    // the last one (and the unfiltered listing) needs the count query.
+    let total = match rows.first() {
+        _ if narrow.is_empty() => {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM items i
+                 WHERE ($1::text IS NULL OR i.item_type = $1) AND ($2::uuid IS NULL OR i.project_id = $2)",
+            )
+            .bind(item_type)
+            .bind(filter.project_id)
+            .fetch_one(pool)
+            .await?
+        }
+        Some(row) => row.total,
+        None if page.offset == 0 => 0,
+        None => {
+            sqlx::query_scalar::<_, i64>(&format!(
+                "SELECT COUNT(*) FROM items i {JOINS} WHERE {WHERE} {candidates}"
+            ))
+                .bind(&pattern)
+                .bind(item_type)
+                .bind(filter.project_id)
+                .bind(state)
+                .bind(&tsquery)
+                .bind(&named_formats)
+                .bind(&system_formats)
+                .fetch_one(pool)
+                .await?
+        }
+    };
+    Ok((rows.into_iter().map(|r| r.item).collect(), total))
 }
 
 pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Item> {
@@ -519,8 +610,9 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
     Ok(item.number)
 }
 
-/// Parent revisions whose BOM contains the item.
-pub async fn where_used(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<WhereUsed>> {
+/// Parent revisions whose BOM contains the item, at most `limit` (a
+/// standard part can be used in tens of thousands of BOMs).
+pub async fn where_used(pool: &PgPool, item_id: Uuid, limit: i64) -> AppResult<Vec<WhereUsed>> {
     Ok(sqlx::query_as::<_, WhereUsed>(
         "SELECT bl.id AS line_id, r.id AS parent_revision_id, i.id AS parent_item_id,
                 i.number AS parent_number, r.code AS parent_code, r.name AS parent_name,
@@ -530,9 +622,11 @@ pub async fn where_used(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<WhereUsed
          JOIN items i ON i.id = r.item_id
          LEFT JOIN revisions rc ON rc.id = bl.released_child_revision_id
          WHERE bl.child_item_id = $1
-         ORDER BY i.number, r.seq DESC",
+         ORDER BY i.number, r.seq DESC
+         LIMIT $2",
     )
     .bind(item_id)
+    .bind(limit.max(1))
     .fetch_all(pool)
     .await?)
 }
@@ -543,43 +637,53 @@ pub const MAX_WHERE_USED_LEVELS: i32 = 25;
 pub const MAX_WHERE_USED_ROWS: i64 = 2000;
 
 /// Multi-level where-used: every BOM line that uses the item or (up to
-/// `levels` levels up) one of its parents, in one recursive query. Like the
-/// single-level report it looks at the BOMs of all revisions. Each item is
-/// reported on the lowest level it is reached on; BOMs are acyclic (cycles
-/// are refused on input), so the walk ends even without the level limit.
+/// `levels` levels up) one of its parents. Like the single-level report it
+/// looks at the BOMs of all revisions. Each item is reported on the lowest
+/// level it is reached on: the walk goes up one level per query (the parents
+/// not seen before form the next level), so a part used in thousands of
+/// assemblies costs one query per level instead of a recursive expansion
+/// of every path. The report stops at [`MAX_WHERE_USED_ROWS`] rows.
 pub async fn where_used_levels(
     pool: &PgPool,
     item_id: Uuid,
     levels: i32,
 ) -> AppResult<Vec<WhereUsedLevel>> {
     let levels = levels.clamp(1, MAX_WHERE_USED_LEVELS);
-    Ok(sqlx::query_as::<_, WhereUsedLevel>(
-        "WITH RECURSIVE up(item_id, level) AS (
-             SELECT $1::uuid, 0
-             UNION
-             SELECT r.item_id, up.level + 1
-             FROM up
-             JOIN bom_lines bl ON bl.child_item_id = up.item_id
+    let mut out: Vec<WhereUsedLevel> = Vec::new();
+    let mut seen = std::collections::HashSet::from([item_id]);
+    let mut frontier = vec![item_id];
+    for level in 1..=levels {
+        let remaining = MAX_WHERE_USED_ROWS - out.len() as i64;
+        if frontier.is_empty() || remaining <= 0 {
+            break;
+        }
+        let rows = sqlx::query_as::<_, WhereUsedLevel>(
+            "SELECT $2::int AS level, ci.number AS child_number,
+                    bl.id AS line_id, r.id AS parent_revision_id, i.id AS parent_item_id,
+                    i.number AS parent_number, r.code AS parent_code, r.name AS parent_name,
+                    r.state AS parent_state, bl.find_number, bl.quantity, rc.code AS released_child_code
+             FROM bom_lines bl
+             JOIN items ci ON ci.id = bl.child_item_id
              JOIN revisions r ON r.id = bl.parent_revision_id
-             WHERE up.level + 1 < $2
-         ),
-         reach AS (SELECT item_id, MIN(level) AS level FROM up GROUP BY item_id)
-         SELECT reach.level + 1 AS level, ci.number AS child_number,
-                bl.id AS line_id, r.id AS parent_revision_id, i.id AS parent_item_id,
-                i.number AS parent_number, r.code AS parent_code, r.name AS parent_name,
-                r.state AS parent_state, bl.find_number, bl.quantity, rc.code AS released_child_code
-         FROM reach
-         JOIN items ci ON ci.id = reach.item_id
-         JOIN bom_lines bl ON bl.child_item_id = reach.item_id
-         JOIN revisions r ON r.id = bl.parent_revision_id
-         JOIN items i ON i.id = r.item_id
-         LEFT JOIN revisions rc ON rc.id = bl.released_child_revision_id
-         ORDER BY 1, i.number, r.seq DESC, ci.number
-         LIMIT $3",
-    )
-    .bind(item_id)
-    .bind(levels)
-    .bind(MAX_WHERE_USED_ROWS)
-    .fetch_all(pool)
-    .await?)
+             JOIN items i ON i.id = r.item_id
+             LEFT JOIN revisions rc ON rc.id = bl.released_child_revision_id
+             WHERE bl.child_item_id = ANY($1)
+             ORDER BY i.number, r.seq DESC, ci.number
+             LIMIT $3",
+        )
+        .bind(&frontier)
+        .bind(level)
+        .bind(remaining)
+        .fetch_all(pool)
+        .await?;
+        // A truncated level ends the report, so the next frontier is only
+        // needed when every row of this level was read.
+        frontier = rows
+            .iter()
+            .map(|r| r.usage.parent_item_id)
+            .filter(|id| seen.insert(*id))
+            .collect();
+        out.extend(rows);
+    }
+    Ok(out)
 }

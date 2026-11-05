@@ -3,7 +3,11 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use sqlx::{migrate::Migrator, postgres::PgPoolOptions, Connection, PgConnection, PgPool};
+use sqlx::{
+    migrate::Migrator,
+    postgres::{PgConnectOptions, PgPoolOptions},
+    Connection, PgConnection, PgPool,
+};
 
 use crate::config::Config;
 
@@ -14,12 +18,23 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 /// which takes a few seconds) before it gives up with the reason.
 const STARTUP_WAIT: Duration = Duration::from_secs(20);
 
+/// Session settings of every TeamCraft connection, sent with the startup
+/// message (no extra round trip):
+///
+/// * `jit = off` – TeamCraft runs short interactive queries; on a large
+///   vault the planner's cost estimates cross `jit_above_cost` and the JIT
+///   compilation (100–400 ms in the scale check) costs far more than it
+///   saves. Analytical work on the same server keeps its own setting.
+pub fn session_options(options: PgConnectOptions) -> PgConnectOptions {
+    options.options([("jit", "off")])
+}
+
 pub async fn connect(config: &Config) -> Result<PgPool> {
     wait_for_database(config).await?;
     PgPoolOptions::new()
         .max_connections(config.db_max_connections)
         .acquire_timeout(Duration::from_secs(10))
-        .connect_with(config.database.clone())
+        .connect_with(session_options(config.database.clone()))
         .await
         .with_context(|| {
             format!(
