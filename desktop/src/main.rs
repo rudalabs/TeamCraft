@@ -59,6 +59,16 @@ pub fn device_name() -> String {
     }
 }
 
+/// The window theme for a skin: the System skin follows the OS, TeamCraft
+/// Light is light, TeamCraft Dark and every distro skin are dark.
+fn window_theme(skin: Option<&str>) -> Option<tauri::Theme> {
+    match skin {
+        None | Some("") | Some("teamcraft") => None,
+        Some("teamcraft-day") => Some(tauri::Theme::Light),
+        Some(_) => Some(tauri::Theme::Dark),
+    }
+}
+
 fn build_menu(app: &tauri::App) -> tauri::Result<()> {
     let item = |id: &str, text: &str, accel: Option<&str>| {
         let mut b = MenuItemBuilder::with_id(id, text);
@@ -137,6 +147,7 @@ fn main() {
             let config_dir = app.path().app_config_dir()?;
             let settings = settings::Settings::load(&config_dir);
             let zoom = settings.zoom.map(commands::clamp_zoom);
+            let theme = window_theme(settings.skin.as_deref());
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 client: api::client(),
@@ -148,8 +159,13 @@ fn main() {
                 get_cancel: Arc::new(AtomicBool::new(false)),
             });
             build_menu(app)?;
-            if let (Some(zoom), Some(window)) = (zoom, app.get_webview_window("main")) {
-                let _ = window.set_zoom(zoom);
+            if let Some(window) = app.get_webview_window("main") {
+                if let Some(zoom) = zoom {
+                    let _ = window.set_zoom(zoom);
+                }
+                // the native chrome (the GTK menu bar) in the skin's scheme
+                // from the first frame; app.js keeps it in step on changes
+                let _ = window.set_theme(theme);
             }
             Ok(())
         })

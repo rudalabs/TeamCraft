@@ -19,7 +19,7 @@ Use two browsers (or a private window) for the two-person steps.
    change the name to *Wheel hub*,
    project group `ROVER`. The item is created with both files; revision A is
    in work and checked out to erika (lock badge).
-2. Open **3D** for each file. The STEP model is
+2. Open **3D view** for each file. The STEP model is
    tessellated on the server – try *Export STL*.
 3. *Vault → My check-outs*: the item is listed; select it, **Check in** a
    changed `hub.step` with a comment. The upload shows a progress bar; try **Cancel upload** on a large file – nothing

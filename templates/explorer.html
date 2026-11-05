@@ -43,7 +43,7 @@
       <tbody>
       {% for e in entries %}
         <tr class="{% if selected and selected.rev.id == e.revision_id %}selected{% endif %}">
-          <td class="nowrap"><a class="mono" href="{{ '/vault?folder=' ~ folder ~ ('&q=' ~ q if q else '') ~ '&rev=' ~ e.revision_id }}">{{ e.number }}</a></td>
+          <td class="nowrap"><a class="mono" href="{{ '/vault?folder=' ~ folder ~ ('&q=' ~ q if q else '') ~ '&rev=' ~ e.revision_id }}"{% if selected and selected.rev.id == e.revision_id %} aria-current="true"{% endif %}>{{ e.number }}</a></td>
           <td>{{ m.revbox(e.code) }}</td>
           <td class="ellipsis" title="{{ e.name }}">{{ e.name }}{% if folder in ["mine", "locked", "search"] and e.project_code %} <span class="muted small">{{ e.project_code }}</span>{% endif %}</td>
           <td class="nowrap">{{ m.badge(e.state) }}</td>
@@ -96,7 +96,7 @@
       <li>
         <a href="/files/{{ f.id }}/download" title="Download v{{ f.version }}">{{ f.filename }}</a>
         <span class="muted small">v{{ f.version }} · {{ f.size_bytes|filesize }}{% if f.format_info %} · {{ f.format_info.label }}{% endif %}</span>
-        {% if f.preview %}<a class="button xs" href="/files/{{ f.id }}/preview">3D</a>{% endif %}
+        {% if f.preview %}<a class="view-3d" href="/files/{{ f.id }}/preview">3D view</a>{% endif %}
       </li>
       {% endfor %}
     </ul>

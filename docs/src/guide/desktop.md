@@ -98,7 +98,7 @@ back, and *Check in…* is highlighted.
   / *Force unlock* while checked out) · **Work** (*Edit*, *Get…*, *Open
   folder*) · **Lifecycle** (*Release…*, *Revise*) · **Collaborate**
   (*Request change…*, *Watch*, *Ask…*, *Agent*);
-* change tab: **Review** (*Approve* highlighted, *Reject* – the comment field
+* change tab: **Review** (*Approve change* highlighted, *Reject* – the comment field
   of *Your review* goes with it, required for a rejection) while your review
   is pending · **Lifecycle** (*Submit for review*, highlighted on your draft,
   *Withdraw*) · **Collaborate**;
