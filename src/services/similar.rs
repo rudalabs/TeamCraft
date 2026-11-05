@@ -7,8 +7,9 @@
 //!
 //! [`find`] ranks the latest revisions of other items by
 //! [`shape::compare`]: a SQL prefilter on indexed columns (the largest
-//! extents within a factor of [`SIZE_WINDOW`], or the proportions within
-//! ±[`RATIO_WINDOW`] when scale is ignored) keeps at most [`PREFILTER`]
+//! extents within a factor of [`SIZE_WINDOW`], or the proportions within a
+//! factor of [`RATIO_WINDOW`] when scale is ignored – wide enough never to
+//! drop a part that could reach [`MIN_SCORE`]) keeps at most [`PREFILTER`]
 //! files, which are then scored in Rust – the work stays bounded however
 //! large the vault is. One hit per item (its best file), scores below
 //! [`MIN_SCORE`] are dropped.
@@ -39,10 +40,16 @@ pub const MIN_SCORE: f64 = 0.5;
 pub const MAX_LIMIT: i64 = 50;
 /// Files scored in Rust after the SQL prefilter.
 pub const PREFILTER: i64 = 2000;
-/// Largest and middle extent within this factor (with scale).
+/// Largest and middle extent within this factor (with scale). A hit needs
+/// `size ≥ MIN_SCORE`, i.e. Σ|ln ratio| over three extents ≤ 1.5·ln 2, so
+/// no single extent of a hit is off by more than 2^1.5 ≈ 2.83.
 pub const SIZE_WINDOW: f64 = 3.0;
-/// Proportions within this distance (ignoring scale).
-pub const RATIO_WINDOW: f64 = 0.2;
+/// Both proportions within this factor (ignoring scale): the two |ln ratio|
+/// of a hit sum to at most ln 2.
+pub const RATIO_WINDOW: f64 = 2.0;
+/// Lengths below this share of the largest count as this share (as in
+/// `shape::compare`).
+const THIN: f64 = 1e-3;
 
 /// How to search.
 #[derive(Clone, Copy, Debug)]
@@ -313,8 +320,25 @@ struct CandidateRow {
 /// Lengths below this share of the largest count as this share (as in
 /// `shape::compare`), so flat parts have a usable window.
 fn floor_extents(e: [f64; 3]) -> [f64; 3] {
-    let min = (e[0] * 1e-3).max(1e-12);
+    let min = (e[0] * THIN).max(1e-12);
     e.map(|x| x.max(min))
+}
+
+/// The SQL prefilter of a search: `[lo₁, hi₁, lo₂, hi₂]` of the window and
+/// the three targets of its order (see [`find`]). With scale: the largest
+/// and the (floored) middle extent; ignoring scale: the two (floored)
+/// proportions, a lower bound below [`THIN`] reaching down to 0.
+fn prefilter(source: &Signature, ignore_scale: bool) -> ([f64; 4], [f64; 3]) {
+    if ignore_scale {
+        let [r2, r3] = source.proportions().map(|r| r.max(THIN));
+        let w = RATIO_WINDOW;
+        let lo = |r: f64| if r / w <= THIN { -1.0 } else { r / w };
+        ([lo(r2), r2 * w, lo(r3), r3 * w], [r2, r3, 0.0])
+    } else {
+        let e = floor_extents(source.extents);
+        let w = SIZE_WINDOW;
+        ([e[0] / w, e[0] * w, e[1] / w, e[1] * w], e)
+    }
 }
 
 /// Ranks the latest revisions of all other items by their similarity to
@@ -330,28 +354,23 @@ pub async fn find(
     // the item search's visibility: every signed-in user reads everything
     actor.require(Role::Viewer)?;
     let limit = options.limit.clamp(1, MAX_LIMIT) as usize;
-    let e = floor_extents(source.extents);
-    let [r2, r3] = source.proportions();
-    // $1 version, $2 source item, $3…$6 window, $7…$9 targets, $10 limit
+    // $1 version, $2 source item, $3…$6 window, $7…$9 targets, $10 limit;
+    // the order is the size distance of `shape::compare` (floored lengths)
     let (window, order) = if options.ignore_scale {
         (
             "s.ratio_2 BETWEEN $3 AND $4 AND s.ratio_3 BETWEEN $5 AND $6",
-            "abs(s.ratio_2 - $7) + abs(s.ratio_3 - $8) + 0 * $9",
+            "abs(ln(GREATEST(s.ratio_2::float8, 1e-3) / $7)) \
+             + abs(ln(GREATEST(s.ratio_3::float8, 1e-3) / $8)) + 0 * $9",
         )
     } else {
         (
-            "s.extent_1 BETWEEN $3 AND $4 AND s.extent_2 BETWEEN $5 AND $6",
+            "s.extent_1 BETWEEN $3 AND $4 \
+             AND GREATEST(s.extent_2, s.extent_1 * 1e-3) BETWEEN $5 AND $6",
             "abs(ln(s.extent_1 / $7)) + abs(ln(GREATEST(s.extent_2, s.extent_1 * 1e-3) / $8)) \
              + abs(ln(GREATEST(s.extent_3, s.extent_1 * 1e-3) / $9))",
         )
     };
-    let (lo1, hi1, lo2, hi2, t1, t2, t3) = if options.ignore_scale {
-        let w = RATIO_WINDOW;
-        (r2 - w, r2 + w, r3 - w, r3 + w, r2, r3, 0.0)
-    } else {
-        let w = SIZE_WINDOW;
-        (e[0] / w, e[0] * w, e[1] / w, e[1] * w, e[0], e[1], e[2])
-    };
+    let ([lo1, hi1, lo2, hi2], [t1, t2, t3]) = prefilter(source, options.ignore_scale);
     let rows = sqlx::query_as::<_, CandidateRow>(&format!(
         "SELECT s.sha256, {SIGNATURE_COLUMNS},
                 f.id AS file_id, f.filename, r.id AS revision_id, r.code AS revision_code, r.state, r.name,
@@ -575,4 +594,80 @@ pub async fn missing(pool: &PgPool, after: &str, limit: i64) -> AppResult<Vec<(S
     .bind(after)
     .fetch_all(pool)
     .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn signature(extents: [f64; 3]) -> Signature {
+        Signature {
+            version: shape::VERSION,
+            extents,
+            area: 1.0,
+            volume: 0.0,
+            closed: false,
+            triangles: 12,
+            d2: vec![1.0 / shape::D2_BINS as f32; shape::D2_BINS],
+        }
+    }
+
+    /// The SQL window of [`find`], evaluated in Rust on stored values.
+    fn passes(window: [f64; 4], c: &Signature, ignore_scale: bool) -> bool {
+        let inside = |v: f64, lo: f64, hi: f64| lo <= v && v <= hi;
+        if ignore_scale {
+            let [r2, r3] = c.proportions().map(|r| r as f32 as f64);
+            inside(r2, window[0], window[1]) && inside(r3, window[2], window[3])
+        } else {
+            let e = c.extents;
+            inside(e[0], window[0], window[1])
+                && inside(e[1].max(e[0] * 1e-3), window[2], window[3])
+        }
+    }
+
+    /// The prefilter never drops a part that `shape::compare` would show:
+    /// every candidate whose size agreement reaches MIN_SCORE (the score
+    /// can be no higher) lies inside the window – flat parts included.
+    #[test]
+    fn prefilter_keeps_every_possible_hit() {
+        let lengths = [0.4, 1.0, 2.6, 2.9, 7.0, 25.0];
+        let shares = [
+            0.0, 0.0004, 0.001, 0.0015, 0.003, 0.1, 0.3, 0.45, 0.5, 0.7, 0.95, 1.0,
+        ];
+        let mut all = Vec::new();
+        for &l in &lengths {
+            for &f in &shares {
+                for &g in &shares {
+                    all.push(signature([l, l * f, l * f * g]));
+                }
+            }
+        }
+        let mut checked = 0;
+        for source in all.iter().step_by(7) {
+            for ignore_scale in [false, true] {
+                let (window, _) = prefilter(source, ignore_scale);
+                for c in &all {
+                    let sim = shape::compare(source, c, ignore_scale);
+                    if sim.size >= MIN_SCORE + 1e-9 {
+                        checked += 1;
+                        assert!(
+                            passes(window, c, ignore_scale),
+                            "ignore_scale={ignore_scale}: {:?} vs {:?} (size {}) outside {window:?}",
+                            source.extents,
+                            c.extents,
+                            sim.size
+                        );
+                    }
+                }
+            }
+        }
+        assert!(checked > 1000, "{checked}");
+        // and the window does filter: much larger, or other proportions
+        let plate = signature([120.0, 40.0, 8.0]);
+        let (window, _) = prefilter(&plate, false);
+        assert!(!passes(window, &signature([400.0, 40.0, 8.0]), false));
+        let (window, _) = prefilter(&plate, true);
+        assert!(passes(window, &signature([240.0, 80.0, 16.0]), true));
+        assert!(!passes(window, &signature([50.0, 50.0, 50.0]), true));
+    }
 }

@@ -932,6 +932,46 @@ mod tests {
     }
 
     #[test]
+    fn more_hostile_meshes() {
+        // indices at u32::MAX, and one good triangle among many broken ones
+        // (the D2 sampling must find it, not walk or index out of range)
+        let mut m = Mesh {
+            positions: vec![0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 3.0, 0.0],
+            indices: vec![u32::MAX, 0, 1],
+            ..Mesh::default()
+        };
+        m.indices.extend([0, 1, 2]);
+        for _ in 0..10_000 {
+            m.indices.extend([0, u32::MAX, 2]);
+        }
+        let s = compute(&m).unwrap();
+        assert!(s.is_valid() && !s.closed, "{s:?}");
+        assert!(close(s.d2.iter().map(|&v| v as f64).sum(), 1.0, 1e-4));
+        // coordinates just below the cut-off stay finite
+        let far = transform(cuboid(1.0, 2.0, 3.0), |p| p.map(|v| v * 1e14 + 5e14));
+        let s = compute(&far).unwrap();
+        assert!(s.is_valid(), "{s:?}");
+        assert!(close(s.extents[0], 3e14, 1e-3), "{:?}", s.extents);
+        // tiny coordinates (a part in kilometres)
+        let tiny = transform(cuboid(1.0, 2.0, 3.0), |p| p.map(|v| v * 1e-30));
+        let s = compute(&tiny).unwrap();
+        assert!(s.is_valid(), "{s:?}");
+        // degenerate (zero-area) triangles around a real one: same signature
+        let mut slivers = cuboid(2.0, 3.0, 4.0);
+        for _ in 0..1000 {
+            slivers.indices.extend([0, 0, 0]);
+        }
+        let s = compute(&slivers).unwrap();
+        assert!(s.closed, "collapsed slivers are skipped");
+        assert!(close(s.volume, 24.0, 1e-9));
+        // a comparison with a stored signature of all-zero D2 stays in range
+        let mut empty_d2 = compute(&cuboid(1.0, 1.0, 1.0)).unwrap();
+        empty_d2.d2 = vec![0.0; D2_BINS];
+        let sim = compare(&s, &empty_d2, false);
+        assert!((0.0..=1.0).contains(&sim.score), "{sim:?}");
+    }
+
+    #[test]
     fn welded_duplicates_still_count_as_closed() {
         // every triangle with its own three vertices, as STL files have them
         let cube = cuboid(5.0, 6.0, 7.0);

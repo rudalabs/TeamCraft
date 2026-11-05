@@ -27,7 +27,7 @@ their STEP export – attach one. Point clouds are not compared.
 
 ## How it works
 
-When a 3D file is uploaded (or first viewed), the preview process computes a
+When a 3D file is uploaded (or first shown), the preview process computes a
 small **shape signature** of its mesh, once per file content:
 
 | Part of the signature  | What it is                                                                                     |
@@ -69,7 +69,8 @@ The search is fast for large vaults: an indexed prefilter on the extents
 (within a factor of three) or proportions keeps at most 2000 files, which are
 scored in memory.
 
-Files stored before this feature get their signature when they are first
-viewed in 3D, or all at once with `teamcraft vault signatures` (see
+Files stored before this feature get their signature in the background when
+their revision page or 3D view is first opened (the page then says
+*reload in a moment*), or all at once with `teamcraft vault signatures` (see
 [Operations](../admin/operations.md); `--convert` also converts files that
 were never previewed).

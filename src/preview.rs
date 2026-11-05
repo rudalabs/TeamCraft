@@ -155,9 +155,13 @@ pub fn run_job(
         std::fs::write(output, mesh.encode())?;
     }
     if let Some(path) = signature {
-        let outcome = match shape::compute(&mesh) {
-            Ok(s) => shape::Outcome::Signature(s),
-            Err(e) => shape::Outcome::Error(e.to_string()),
+        // a bug in the signature must never cost the preview itself
+        let computed =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| shape::compute(&mesh)));
+        let outcome = match computed {
+            Ok(Ok(s)) => shape::Outcome::Signature(s),
+            Ok(Err(e)) => shape::Outcome::Error(e.to_string()),
+            Err(_) => shape::Outcome::Error("The shape signature could not be computed.".into()),
         };
         std::fs::write(path, serde_json::to_vec(&outcome)?)?;
     }
@@ -211,6 +215,17 @@ impl Previews {
     pub async fn has_mesh(&self, sha256: &str) -> bool {
         match self.paths(sha256) {
             Ok((mesh, _)) => tokio::fs::metadata(mesh).await.is_ok(),
+            Err(_) => false,
+        }
+    }
+
+    /// Whether the conversion of a blob is behind us: its preview mesh or
+    /// the reason why there is none is cached.
+    pub async fn is_converted(&self, sha256: &str) -> bool {
+        match self.paths(sha256) {
+            Ok((mesh, err)) => {
+                tokio::fs::metadata(mesh).await.is_ok() || tokio::fs::metadata(err).await.is_ok()
+            }
             Err(_) => false,
         }
     }
@@ -595,6 +610,10 @@ mod tests {
         // Previews from before signatures: computed from the cached mesh.
         std::fs::remove_file(&sig_path).unwrap();
         assert!(previews.has_mesh(&ok.sha256).await);
+        // converted: a mesh or a cached failure, not yet: neither
+        assert!(previews.is_converted(&ok.sha256).await);
+        assert!(previews.is_converted(&bad.sha256).await);
+        assert!(!previews.is_converted(&"0".repeat(64)).await);
         let again = previews
             .signature(&vault, &ok.sha256, PreviewFormat::Stl)
             .await

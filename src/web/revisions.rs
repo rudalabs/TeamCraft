@@ -77,7 +77,16 @@ pub async fn show(
     )?;
     let favorite = crate::services::personal::is_favorite(&st.db, ctx.me.id, item.id).await?;
     // Similar parts by the shape of its 3D model: one indexed query; a
-    // missing signature is computed in the background (waited for briefly).
+    // missing signature is computed in the background – waited for briefly
+    // only when the conversion is done (a quick job from the cached mesh,
+    // or its cached failure), never for a conversion, so the page is not
+    // held up.
+    let wait = match similar::pick_file(&file_list, None) {
+        Ok(Some((f, _))) if st.previews.is_converted(&f.sha256).await => {
+            std::time::Duration::from_millis(1500)
+        }
+        _ => std::time::Duration::ZERO,
+    };
     let similar_parts = match similar::for_files(
         &st,
         &ctx.me,
@@ -88,7 +97,7 @@ pub async fn show(
             limit: 6,
             ignore_scale: false,
         },
-        std::time::Duration::from_millis(1500),
+        wait,
     )
     .await
     {

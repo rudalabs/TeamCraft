@@ -150,8 +150,9 @@ enum VaultCommand {
         /// Also convert 3D files that have no cached preview yet (slower).
         #[arg(long)]
         convert: bool,
-        /// Signatures computed at the same time (1–8).
-        #[arg(long, default_value_t = 2)]
+        /// Signatures computed at the same time (1–2, the limit of the
+        /// preview processes).
+        #[arg(long, default_value_t = teamcraft::preview::MAX_PARALLEL)]
         jobs: usize,
     },
 }
@@ -542,7 +543,8 @@ async fn shape_signatures(convert: bool, jobs: usize) -> Result<ExitCode> {
     let config = load_config()?;
     let pool = db::connect(&config).await?;
     let state = AppState::new(config, pool).await?;
-    let jobs = jobs.clamp(1, 8);
+    // more would only queue for the preview slots
+    let jobs = jobs.clamp(1, teamcraft::preview::MAX_PARALLEL);
     let (mut stored, mut skipped, mut failed) = (0usize, 0usize, 0usize);
     let mut after = String::new();
     loop {
