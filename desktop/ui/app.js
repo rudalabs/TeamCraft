@@ -523,6 +523,7 @@
       $("shell").classList.remove("hidden");
       $("status-server").textContent = state.session.server_url;
       $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
+      initAssistant();
       selectView(state.view);
       renderTabs();
       renderActive();
@@ -815,6 +816,7 @@
 
   function selectView(view) {
     state.view = view;
+    assistantContextChanged();
     document.querySelectorAll(".rail button[data-view]").forEach(function (b) {
       b.classList.toggle("active", b.getAttribute("data-view") === view);
     });
@@ -1051,6 +1053,8 @@
     }
     return api("GET", "/items?q=" + enc(q) + "&limit=200").then(function (r) {
       clear(nav);
+      state.searchShown = r.items.slice(0, 25).map(function (it) { return it.number; });
+      assistantContextChanged();
       nav.appendChild(navHead("Search"));
       nav.appendChild(h("p.small.muted", { text: r.total + " result" + (r.total === 1 ? "" : "s") + " for “" + q + "”" }));
       nav.appendChild(r.items.length ? h("ul.tree", null, r.items.map(function (it) { return itemNode(it); })) : h("p.empty", { text: "Nothing found." }));
@@ -1117,6 +1121,7 @@
 
   function renderActive() {
     disposeViewer();
+    assistantContextChanged();
     var body = $("tab-body");
     var toolbar = $("toolbar");
     clear(body);
@@ -1351,73 +1356,140 @@
     return root;
   }
 
-  /** "Ask TeamCraft" for a revision or change: quick actions, a free question, the answer. */
-  function assistantDialog(context, subject, actions) {
-    var labels = {};
-    actions.forEach(function (a) { labels[a[0]] = a[1]; });
-    var question = h("textarea", { maxlength: "4000", rows: "3", placeholder: "Ask about items, structures, changes, reviews …" });
-    var drafts = canEdit() ? h("input", { type: "checkbox" }) : null;
-    var status = h("p.hint", { role: "status" });
-    var answer = h("div.assistant-answer.hidden", { "aria-live": "polite" });
-    var quick = actions.map(function (a) {
-      return h("button.chip", { type: "button", on: { click: function () { send(a[0]); } } }, a[1]);
+  // ----------------------------------------------------------------------
+  // The Ask TeamCraft sidebar: the shared drawer (shared/js/assistant.js, the
+  // same module as the web UI) beside the tabs. Where the user is comes from
+  // the active tab; the conversation lives on the server (one per user).
+  // ----------------------------------------------------------------------
+
+  var assistantDrawer = null, assistantPending = null;
+
+  /** Where the user is: the active tab, else the navigator view. Identifiers
+   * only – the server checks every one with the user's rights. */
+  function assistantContext() {
+    var tab = activeTab();
+    if (tab && tab.kind === "revision") {
+      var sub = tab.sub || "overview";
+      var ctx = {
+        kind: sub === "structure" ? "bom" : sub === "whereused" ? "where_used" : "revision",
+        item: tab.number, revision: tab.code, view: sub === "whereused" ? "where-used" : sub
+      };
+      if (sub === "structure") ctx.rule = tab.bomRule || "latest";
+      var project = tab.data && tab.data.item && tab.data.item.project_code;
+      if (project) ctx.project = project;
+      return ctx;
+    }
+    if (tab && tab.kind === "change") return { kind: "change", change: tab.number };
+    if (tab && tab.kind === "request") return { kind: "request", request: tab.number };
+    switch (state.view) {
+      case "search": return { kind: "search", query: state.query || undefined, shown: state.searchShown || [] };
+      case "changes": return { kind: "changes", filters: { status: state.changesFilter } };
+      case "notifications": return { kind: "notifications" };
+      default: return { kind: "dashboard" };
+    }
+  }
+
+  /** Errors reach the shared module as Error objects with a message. */
+  function assistantError(err) {
+    if (err && err.name === "AbortError") return err;
+    return new Error(errorText(err));
+  }
+
+  /** A question in the conversation; Cancel drops the request on the Rust side. */
+  function assistantSend(body, signal) {
+    var cancelled = false;
+    if (signal) {
+      signal.addEventListener("abort", function () {
+        cancelled = true;
+        call("assistant_cancel").catch(function () {});
+      });
+    }
+    return call("assistant_send", { body: Object.assign({ thread: true }, body) }).catch(function (err) {
+      if (cancelled) {
+        var abort = new Error("Cancelled.");
+        abort.name = "AbortError";
+        throw abort;
+      }
+      throw assistantError(err);
     });
-    var body = h("div.stack", null, [
-      h("p.hint", { text: "The assistant reads the PDM data of " + subject + " with your rights. Read-only unless you allow drafts – it never submits, approves or releases. The question and the data the tools return are sent to the AI provider configured on the server (your administrator can tell you which)." }),
-      h("div.assistant-quick", null, quick),
-      field("Your question", question, "optional with a quick action"),
-      drafts ? h("label.check", null, [drafts, "Allow drafting change orders, change requests and comments"]) : null,
-      status,
-      answer
-    ]);
-    var busy = false;
-    var dlg = dialog("Ask TeamCraft", body, [
-      { label: "Close", onClick: function (d) { d.close(); } },
-      { label: "Ask", primary: true, submit: true, onClick: function () { send("ask"); } }
-    ], { wide: true });
-    var controls = quick.concat([question, drafts, dlg.form.querySelector("button[type=submit]")]).filter(Boolean);
-    var errorEl = dlg.form.querySelector(".error-text");
+  }
 
-    function setBusy(on) {
-      busy = on;
-      controls.forEach(function (el) { el.disabled = on; });
-      status.textContent = on ? "Looking it up in TeamCraft … this can take a minute." : "";
+  function ensureAssistant() {
+    if (assistantDrawer) return Promise.resolve(assistantDrawer);
+    if (!assistantPending) {
+      assistantPending = Promise.all([
+        import("/static/shared/js/assistant.js"),
+        api("GET", "/assistant").catch(function () { return null; })
+      ]).then(function (r) {
+        var info = r[1] || {};
+        var where = info.provider ? " (" + info.provider + (info.host ? ", " + info.host : "") + ")" : "";
+        assistantDrawer = r[0].mount($("assistant-drawer"), {
+          opener: $("rail-assistant"),
+          canEdit: canEdit(),
+          privacy: "the AI provider configured by your administrator" + where,
+          getContext: assistantContext,
+          link: itemLink,
+          api: {
+            thread: function () { return api("GET", "/assistant/thread").catch(function (e) { throw assistantError(e); }); },
+            send: assistantSend,
+            reset: function () { return api("DELETE", "/assistant/thread").catch(function (e) { throw assistantError(e); }); }
+          },
+          onToggle: function (open) {
+            var button = $("rail-assistant");
+            button.classList.toggle("active", open);
+            button.setAttribute("aria-expanded", String(open));
+          },
+          onDraftsMayHaveChanged: refreshWorklistCount
+        });
+        return assistantDrawer;
+      }, function (err) { assistantPending = null; throw err; });
     }
+    return assistantPending;
+  }
 
-    function send(action) {
-      if (busy) return;
-      var text = question.value.trim();
-      if (action === "ask" && !text) { dlg.fail("Type a question first."); question.focus(); return; }
-      if (errorEl) errorEl.classList.add("hidden");
-      setBusy(true);
-      api("POST", "/assistant", {
-        action: action, question: text || null, context: context, allow_drafts: !!(drafts && drafts.checked)
-      }).then(function (run) {
-        setBusy(false);
-        showAnswer(action, text, run);
-      }, function (err) {
-        setBusy(false);
-        dlg.fail(err);
-      });
-    }
+  /** Opens (or toggles) the sidebar; `onlyOpen` never closes it. */
+  function openAssistant(onlyOpen) {
+    if (!assistantEnabled()) return;
+    ensureAssistant().then(function (d) { if (onlyOpen) d.open(); else d.toggle(); },
+      function (err) { toast(errorText(err), "error"); });
+  }
 
-    function showAnswer(action, text, run) {
-      clear(answer);
-      answer.classList.remove("hidden");
-      var tools = (run.tools || []).map(function (t) {
-        return h("span.badge" + (t.ok ? "" : ".badge-rejected"), { title: t.ok ? "tool call" : "tool call failed", text: t.name });
-      });
-      append(answer, [
-        h("h3", { text: labels[action] || (text.length > 80 ? text.slice(0, 80) + "…" : text) }),
-        markdownLite(run.answer && run.answer.text),
-        run.answer && run.answer.truncated ? h("p.notice", { text: "The answer was cut off at the length limit – ask a narrower question for the rest." }) : null,
-        h("p.hint", null, [tools.length ? "Looked up: " : "No tools used. "].concat(tools, [
-          " · " + run.steps + (run.steps === 1 ? " step" : " steps") + " · " + run.model + (run.allow_drafts ? " · drafts allowed" : " · read-only")
-        ])),
-        h("p.hint", { text: "Generated by an AI model from the PDM data – check numbers and states before you rely on them." })
-      ]);
-      if (run.allow_drafts) refreshWorklistCount();
+  /** The rail icon exists for servers with the assistant; the sidebar stays open across tabs. */
+  function initAssistant() {
+    var button = $("rail-assistant");
+    button.classList.toggle("hidden", !assistantEnabled());
+    if (!assistantEnabled()) {
+      if (assistantDrawer) assistantDrawer.close(false);
+      return;
     }
+    if (!button.dataset.ready) {
+      button.dataset.ready = "1";
+      button.addEventListener("click", function () { openAssistant(false); });
+    }
+    var wasOpen = false;
+    try { wasOpen = window.localStorage.getItem("tc.assistant.open") === "1"; } catch (e) { /* blocked storage */ }
+    if (wasOpen) ensureAssistant().then(function (d) { d.open(false); }, function () {});
+  }
+
+  /** Signing out: the next user starts with a fresh drawer (no conversation of the last one). */
+  function resetAssistant() {
+    var host = $("assistant-drawer");
+    var fresh = document.createElement("aside");
+    fresh.id = "assistant-drawer";
+    fresh.hidden = true;
+    host.replaceWith(fresh);
+    assistantDrawer = null;
+    assistantPending = null;
+    document.documentElement.classList.remove("tc-assistant-open");
+    var button = $("rail-assistant");
+    button.classList.add("hidden");
+    button.classList.remove("active");
+    button.setAttribute("aria-expanded", "false");
+  }
+
+  /** The tab or view changed: the drawer re-reads where the user is. */
+  function assistantContextChanged() {
+    if (assistantDrawer) assistantDrawer.contextChanged();
   }
 
   // ======================================================================
@@ -2106,11 +2178,8 @@
           { title: "Report a problem or propose a change to " + rev.item_number + "/" + rev.code + " (change request)" }),
         watchTool(tab, "items", rev.item_number, d.watching),
         assistantEnabled() ? tool("Ask…", "ask", function () {
-          assistantDialog({ item: rev.item_number, revision: rev.code }, rev.item_number + "/" + rev.code, [
-            ["release_notes", "Draft release notes"], ["release_check", "Check before release"],
-            ["impact", "What breaks if I change this?"], ["simulation_status", "Are the simulations still valid?"]
-          ]);
-        }, { title: "Ask TeamCraft: release notes, release check or any question about this revision" }) : null,
+          openAssistant(true);
+        }, { title: "Ask TeamCraft (Ctrl+5): release notes, release check or any question about this revision" }) : null,
         agentButton(tab)
       ]),
       moreMenu([
@@ -3427,8 +3496,8 @@
       toolGroup("Collaborate", [
         watchTool(tab, "changes", c.number, !!tab.data.watching),
         assistantEnabled() ? tool("Ask…", "ask", function () {
-          assistantDialog({ change: c.number }, c.number, [["review_brief", "Brief me for this review"]]);
-        }, { title: "Ask TeamCraft: a briefing for the review – what changes, impact, risks, open questions" }) : null,
+          openAssistant(true);
+        }, { title: "Ask TeamCraft (Ctrl+5): a briefing for the review – what changes, impact, risks, open questions" }) : null,
         agentButton(tab)
       ]),
       moreMenu([
@@ -4565,6 +4634,7 @@
       state.tabs = [];
       state.active = null;
       state.me = null;
+      resetAssistant();
       endAgentPermissions();
       agent.running = null; // signing out stops the agent (src/commands.rs)
       agent.busy = false;
@@ -4652,6 +4722,7 @@
       case "go-worklist": selectView("worklist"); break;
       case "go-changes": selectView("changes"); break;
       case "go-agent": openAgent(); break;
+      case "go-assistant": openAssistant(false); break;
       case "open-workspace": openWorkspaceFolder(activeTab() && activeTab().kind === "revision" ? activeTab() : null); break;
       case "open-web": {
         var t = activeTab();
