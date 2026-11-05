@@ -596,8 +596,8 @@
         </tbody>
       </table>
       </div>
-      {% elif not hidden.incoming and not hidden.file_referrers %}<p class="empty">No other item refers to {{ rev.item_number }}.</p>{% endif %}
-      {{ m.hidden_count(hidden.incoming + hidden.file_referrers, "referrers") }}
+      {% elif not hidden.incoming %}<p class="empty">No other item refers to {{ rev.item_number }}.</p>{% endif %}
+      {{ m.hidden_count(hidden.incoming, "referrers") }}
     </div>
   </div>
   {% if references.files %}

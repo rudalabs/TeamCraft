@@ -13,7 +13,7 @@ use super::{finish, redirect, render, WebCtx};
 use crate::{domain::NotificationKind, error::AppResult, services::notifications, util, AppState};
 
 pub async fn page(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
-    let list = notifications::list(&st.db, ctx.me.id, false, 100).await?;
+    let list = notifications::list(&st.db, &ctx.me, false, 100).await?;
     let watched = notifications::watched(&st.db, &ctx.me).await?;
     render(
         &st,

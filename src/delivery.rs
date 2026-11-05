@@ -173,6 +173,23 @@ impl Delivery {
             .execute(pool)
             .await?;
         }
+        // A group restricted (or a membership lost) since the notification was
+        // queued: the recipient may no longer read it, so it is not sent.
+        sqlx::query(&format!(
+            "UPDATE notifications n
+             SET email_state = CASE WHEN n.email_state = 'pending' THEN 'skipped' ELSE n.email_state END,
+                 chat_state = CASE WHEN n.chat_state = 'pending' THEN 'skipped' ELSE n.chat_state END
+             FROM users u
+             WHERE u.id = n.user_id AND (n.email_state = 'pending' OR n.chat_state = 'pending')
+               AND NOT {}",
+            crate::services::notifications::notification_visible(
+                "n",
+                "u.id",
+                &crate::services::access::hidden_of_user("u")
+            )
+        ))
+        .execute(pool)
+        .await?;
         #[derive(sqlx::FromRow)]
         struct Row {
             id: Uuid,

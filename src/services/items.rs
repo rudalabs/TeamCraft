@@ -325,7 +325,8 @@ pub(crate) async fn create_tx(
     .bind(project_id)
     .fetch_optional(&mut *tx)
     .await?
-    .ok_or_else(|| AppError::BadRequest("Unknown project.".into()))?;
+    .ok_or_else(access::unknown_project)?;
+    access::ensure_visible(actor, Some(project_id), access::unknown_project())?;
     if !active {
         return Err(AppError::BadRequest(format!(
             "The project group {code} is archived."
@@ -467,8 +468,9 @@ pub async fn update_master(
             .fetch_one(&mut *tx)
             .await?;
     if !exists {
-        return Err(AppError::BadRequest("Unknown project.".into()));
+        return Err(access::unknown_project());
     }
+    access::ensure_visible(actor, Some(pid), access::unknown_project())?;
     if !actor.can_edit_project(Some(pid)) {
         return Err(AppError::Forbidden(
             "You can only move items into project groups you are a member of.".into(),

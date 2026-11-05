@@ -190,7 +190,7 @@ pub async fn suggest(
              UNION ALL
              SELECT rq.requested_by, 'request'::text, rq.number, ''::text, ''::text, 1::bigint
              FROM change_request_changes crc JOIN change_requests rq ON rq.id = crc.request_id
-             WHERE crc.change_id = $1
+             WHERE crc.change_id = $1 AND {vis_rq}
          ),
          -- points as in weigh(); only the strongest rows per user and source
          -- can count (cap()), and a cut by $8 drops the weakest rows, not
@@ -225,6 +225,7 @@ pub async fn suggest(
         vis_i = access::item_visible("i", 10),
         vis_di = access::item_visible("di", 10),
         vis_c = access::change_visible("c", 11, 10),
+        vis_rq = access::request_visible("rq", 11, 10),
         sees = access::user_sees_project("u", "si.project_id"),
     );
     let signals = sqlx::query_as::<_, Signal>(&sql)

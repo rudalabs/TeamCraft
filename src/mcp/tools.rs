@@ -1298,7 +1298,7 @@ async fn my_worklist(st: &AppState, me: &Actor) -> AppResult<Value> {
     let reviews = changes::pending_reviews(&st.db, me).await?;
     let (open_impacts, impacts_cut) = capped(impacts::open_for(&st.db, me).await?, MAX_LIST);
     let mine = changes::open_by(&st.db, me).await?;
-    let unread = notifications::unread_count(&st.db, me.id).await?;
+    let unread = notifications::unread_count(&st.db, me).await?;
     let (assigned, assigned_cut) = capped(requests::assigned_to(&st.db, me).await?, MAX_LIST);
     let (raised, raised_cut) = capped(requests::open_by(&st.db, me).await?, MAX_LIST);
     Ok(json!({

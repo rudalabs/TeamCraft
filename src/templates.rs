@@ -534,7 +534,7 @@ mod tests {
                 "revisions/show.html",
                 with_common(json!({
                     "rev": revision(state, checked_out), "item": item(), "revisions": [revision(state, checked_out)],
-                    "hidden": { "parents": 2, "incoming": 1, "file_referrers": 0, "changes": 1, "simulations": 0 },
+                    "hidden": { "parents": 2, "incoming": 1, "changes": 1, "simulations": 0 },
                     "is_latest": false, "latest_id": OTHER, "files": [file.clone(), native.clone(), unknown.clone()], "native_without_preview": state == "released", "lines": [bom_line.clone()],
                     "where_used": [{ "line_id": ME, "parent_revision_id": OTHER, "parent_item_id": ME,
                                      "parent_number": "ASM-000001", "parent_code": "A", "parent_name": "Assembly",
@@ -645,7 +645,7 @@ mod tests {
                 "revisions/show.html",
                 with_common(json!({
                     "rev": rev.clone(), "item": sim_item, "revisions": [rev.clone(), revision("released", false)],
-                    "hidden": { "parents": 0, "incoming": 0, "file_referrers": 0, "changes": 0, "simulations": 0 },
+                    "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0 },
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
                     "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
                     "history": [], "projects": [], "units": units(), "references": references.clone(),
@@ -697,7 +697,7 @@ mod tests {
             "revisions/show.html",
             with_common(json!({
                 "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
-                "hidden": { "parents": 0, "incoming": 0, "file_referrers": 0, "changes": 0, "simulations": 1 },
+                "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 1 },
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
                 "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
                 "history": [], "projects": [], "units": units(), "references": references.clone(),

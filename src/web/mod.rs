@@ -424,7 +424,7 @@ impl FromRequestParts<AppState> for WebCtx {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let WebUser(me) = WebUser::from_request_parts(parts, state).await?;
-        let unread = crate::services::notifications::unread_count(&state.db, me.id).await?;
+        let unread = crate::services::notifications::unread_count(&state.db, &me).await?;
         Ok(WebCtx {
             me,
             flash: read_flash(&parts.headers),

@@ -32,7 +32,7 @@ use crate::{
     domain::{self, NotificationKind},
     error::{AppError, AppResult},
     models::Revision,
-    services::{access, audit},
+    services::{access, audit, audit::Mentions},
 };
 
 /// What a notification is about. Recipients who may not read the subject
@@ -62,9 +62,10 @@ pub struct Notice {
     pub subject_ref: String,
     /// What it is about – decides who may receive it.
     pub subject: Subject,
-    /// A second item the text names (the source of an impact) and the text
-    /// for recipients who may not see that item.
-    pub redacted: Option<(Uuid, String, String)>,
+    /// Other items and change orders the text names (the source of an
+    /// impact, the revisions of a change, the change that released an item)
+    /// and the text for recipients who may not see all of them.
+    pub redacted: Option<(Mentions, String, String)>,
 }
 
 impl Notice {
@@ -141,10 +142,61 @@ impl Notice {
 
     /// For recipients who may not see `item_id` (e.g. the source of an
     /// impact), use this title and body instead.
-    pub fn redacted_for(mut self, item_id: Uuid, title: String, body: String) -> Notice {
-        self.redacted = Some((item_id, title, body));
+    pub fn redacted_for(self, item_id: Uuid, title: String, body: String) -> Notice {
+        self.naming(Mentions::items([item_id]), title, body)
+    }
+
+    /// The text names `mentions`; recipients who may not see all of them get
+    /// this title and body instead. Empty mentions change nothing.
+    pub fn naming(mut self, mentions: Mentions, title: String, body: String) -> Notice {
+        if !mentions.is_empty() {
+            self.redacted = Some((mentions, title, body));
+        }
         self
     }
+}
+
+fn subject_kind(subject: Subject) -> Option<&'static str> {
+    match subject {
+        Subject::Item(_) => Some("item"),
+        Subject::Change(_) => Some("change"),
+        Subject::Request(_) => Some("request"),
+        Subject::Personal => None,
+    }
+}
+
+/// SQL guard: the notification aliased `n` may still be read by the user
+/// `actor` (an SQL expression) whose hidden groups are `hidden`: its subject
+/// and everything its text names are visible. Rows of deleted subjects and
+/// rows written before the subject was stored stay readable.
+pub(crate) fn notification_visible(n: &str, actor: &str, hidden: &str) -> String {
+    format!(
+        "(({n}.subject_kind IS DISTINCT FROM 'item' OR NOT EXISTS (
+             SELECT 1 FROM items ni WHERE ni.id = {n}.subject_id AND NOT {item_subject}))
+          AND ({n}.subject_kind IS DISTINCT FROM 'change' OR NOT EXISTS (
+             SELECT 1 FROM changes nc WHERE nc.id = {n}.subject_id AND NOT {change_subject}))
+          AND ({n}.subject_kind IS DISTINCT FROM 'request' OR NOT EXISTS (
+             SELECT 1 FROM change_requests nq WHERE nq.id = {n}.subject_id AND NOT {request}))
+          AND NOT EXISTS (SELECT 1 FROM items nmi WHERE nmi.id = ANY({n}.mentioned_items)
+                          AND NOT {item_mention})
+          AND NOT EXISTS (SELECT 1 FROM changes nmc WHERE nmc.id = ANY({n}.mentioned_changes)
+                          AND NOT {change_mention}))",
+        item_subject = access::project_visible_in("ni.project_id", hidden),
+        change_subject = access::change_visible_for("nc", actor, hidden),
+        request = access::request_visible_for("nq", actor, hidden),
+        item_mention = access::project_visible_in("nmi.project_id", hidden),
+        change_mention = access::change_visible_for("nmc", actor, hidden),
+    )
+}
+
+/// [`notification_visible`] for the actor (`$actor_n` = id, `$hidden_n` =
+/// hidden groups).
+fn visible_to(actor_n: usize, hidden_n: usize) -> String {
+    notification_visible(
+        "notifications",
+        &format!("${actor_n}"),
+        &format!("${hidden_n}"),
+    )
 }
 
 /// The recipient-side SQL condition for a subject: the user aliased `u`
@@ -193,12 +245,16 @@ async fn is_confidential(conn: &mut PgConnection, notice: &Notice) -> AppResult<
         .bind(subject_id(notice.subject))
         .fetch_one(&mut *conn)
         .await?;
-    if let Some((item, _, _)) = &notice.redacted {
+    if let Some((mentions, _, _)) = &notice.redacted {
         confidential |= sqlx::query_scalar::<_, bool>(&format!(
             "SELECT EXISTS(SELECT 1 FROM items i JOIN projects p ON p.id = i.project_id
-                           WHERE i.id = $1 AND {restricted})"
+                           WHERE i.id = ANY($1) AND {restricted})
+                 OR EXISTS(SELECT 1 FROM change_items ci JOIN revisions r ON r.id = ci.revision_id
+                           JOIN items i ON i.id = r.item_id JOIN projects p ON p.id = i.project_id
+                           WHERE ci.change_id = ANY($2) AND {restricted})"
         ))
-        .bind(item)
+        .bind(&mentions.items)
+        .bind(&mentions.changes)
         .fetch_one(&mut *conn)
         .await?;
     }
@@ -228,35 +284,46 @@ pub(crate) async fn notify(
     }
     let confidential = is_confidential(conn, notice).await?;
     let sees = recipient_sees(notice.subject);
-    // Recipients who may not see the second item get the redacted text.
-    let variants: Vec<(String, &str, &str)> = match &notice.redacted {
-        None => vec![("TRUE".into(), &notice.title, &notice.body)],
+    // Recipients who may not see everything the text names get the redacted
+    // text. The full text stores what it names, so the list re-checks it.
+    let none = Mentions::default();
+    let mentions = notice.redacted.as_ref().map(|(m, _, _)| m).unwrap_or(&none);
+    let variants: Vec<(String, &str, &str, &Mentions)> = match &notice.redacted {
+        None => vec![("TRUE".into(), &notice.title, &notice.body, &none)],
         Some((_, title, body)) => {
-            let sees_second = access::user_sees_project(
-                "u",
-                "(SELECT ri.project_id FROM items ri WHERE ri.id = $12)",
+            let sees_all = format!(
+                "(NOT EXISTS (SELECT 1 FROM items ri WHERE ri.id = ANY($12) AND NOT {item})
+                  AND NOT EXISTS (SELECT 1 FROM changes rc WHERE rc.id = ANY($13) AND NOT {change}))",
+                item = access::user_sees_project("u", "ri.project_id"),
+                change = access::change_visible_for("rc", "u.id", &access::hidden_of_user("u")),
             );
             vec![
-                (sees_second.clone(), &notice.title, &notice.body),
-                (format!("NOT {sees_second}"), title.as_str(), body.as_str()),
+                (sees_all.clone(), &notice.title, &notice.body, mentions),
+                (
+                    format!("NOT {sees_all}"),
+                    title.as_str(),
+                    body.as_str(),
+                    &none,
+                ),
             ]
         }
     };
-    let second = notice.redacted.as_ref().map(|(id, _, _)| *id);
     let mut created = 0;
-    for (condition, title, body) in variants {
+    for (condition, title, body, stored) in variants {
         created += sqlx::query(&format!(
             "INSERT INTO notifications (id, user_id, kind, title, body, link, subject_type, subject_ref,
-                                        actor_name, email_state, chat_state, confidential)
+                                        actor_name, email_state, chat_state, confidential,
+                                        subject_kind, subject_id, mentioned_items, mentioned_changes)
              SELECT gen_random_uuid(), u.id, $2, $3, $4, $5, $6, $7, $8,
                     CASE WHEN u.notify_email AND COALESCE(u.email, '') <> '' THEN 'pending' ELSE 'none' END,
                     CASE WHEN u.notify_mattermost THEN 'pending' ELSE 'none' END,
-                    $11
+                    $11, $16, $10, $14, $15
              FROM users u
              WHERE u.id = ANY($1) AND u.active AND u.id <> $9
                AND ($2 = 'test' OR NOT ($2 = ANY(u.notify_muted)))
                AND {sees}
-               AND ($12::uuid IS NULL OR $12::uuid IS NOT NULL) AND {condition}"
+               AND cardinality($12::uuid[]) >= 0 AND cardinality($13::uuid[]) >= 0
+               AND {condition}"
         ))
         .bind(recipients)
         .bind(notice.kind.as_str())
@@ -269,7 +336,11 @@ pub(crate) async fn notify(
         .bind(actor.map(|a| a.id).unwrap_or(Uuid::nil()))
         .bind(subject_id(notice.subject))
         .bind(confidential)
-        .bind(second)
+        .bind(&mentions.items)
+        .bind(&mentions.changes)
+        .bind(&stored.items)
+        .bind(&stored.changes)
+        .bind(subject_kind(notice.subject))
         .execute(&mut *conn)
         .await?
         .rows_affected();
@@ -354,27 +425,33 @@ const NOTIFICATION_COLUMNS: &str =
 /// The newest notifications of a user.
 pub async fn list(
     pool: &PgPool,
-    user_id: Uuid,
+    actor: &Actor,
     unread_only: bool,
     limit: i64,
 ) -> AppResult<Vec<Notification>> {
     Ok(sqlx::query_as::<_, Notification>(&format!(
         "SELECT {NOTIFICATION_COLUMNS} FROM notifications
-         WHERE user_id = $1 AND (NOT $2 OR read_at IS NULL)
-         ORDER BY created_at DESC LIMIT $3"
+         WHERE user_id = $1 AND (NOT $2 OR read_at IS NULL) AND {}
+         ORDER BY created_at DESC LIMIT $3",
+        visible_to(1, 4)
     ))
-    .bind(user_id)
+    .bind(actor.id)
     .bind(unread_only)
     .bind(limit.clamp(1, 500))
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?)
 }
 
-pub async fn unread_count(pool: &PgPool, user_id: Uuid) -> AppResult<i64> {
-    Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL",
-    )
-    .bind(user_id)
+/// Unread notifications the actor may still read (a group restricted
+/// since, or a lost membership, hides the older ones).
+pub async fn unread_count(pool: &PgPool, actor: &Actor) -> AppResult<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL AND {}",
+        visible_to(1, 2)
+    ))
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_one(pool)
     .await?)
 }
@@ -390,17 +467,19 @@ pub async fn mark_read(pool: &PgPool, actor: &Actor, ids: Option<&[Uuid]>) -> Ap
     .bind(ids)
     .execute(pool)
     .await?;
-    unread_count(pool, actor.id).await
+    unread_count(pool, actor).await
 }
 
 /// Marks one notification of the actor as read and returns it (for its link).
 pub async fn open(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Notification> {
     sqlx::query_as::<_, Notification>(&format!(
         "UPDATE notifications SET read_at = COALESCE(read_at, now())
-         WHERE id = $1 AND user_id = $2 RETURNING {NOTIFICATION_COLUMNS}"
+         WHERE id = $1 AND user_id = $2 AND {} RETURNING {NOTIFICATION_COLUMNS}",
+        visible_to(2, 3)
     ))
     .bind(id)
     .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::not_found("Notification not found."))

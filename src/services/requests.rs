@@ -554,6 +554,30 @@ async fn tell_people(
     tell(conn, actor, request, &people, title, body).await
 }
 
+/// [`tell_people`] with a text that names a change order (or items):
+/// people who may see the request but not all of `named` get the
+/// `redacted` title and body.
+async fn tell_people_naming(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    request: &ChangeRequest,
+    (title, body): (String, String),
+    named: audit::Mentions,
+    (redacted_title, redacted_body): (String, String),
+) -> AppResult<()> {
+    let people = people(conn, request.id).await?;
+    let notice = Notice::request(
+        NotificationKind::ChangeRequest,
+        request.id,
+        &request.number,
+        title,
+        body,
+    )
+    .naming(named, redacted_title, redacted_body);
+    notifications::notify(conn, Some(actor), &people, &notice).await?;
+    Ok(())
+}
+
 async fn touch(conn: &mut PgConnection, request_id: Uuid) -> AppResult<()> {
     sqlx::query("UPDATE change_requests SET updated_at = now() WHERE id = $1")
         .bind(request_id)
@@ -690,18 +714,24 @@ pub async fn create(
     .execute(&mut *tx)
     .await?;
     let mut labels = Vec::new();
+    let mut named = Vec::new();
     for item in &affected {
         if let Some(label) = insert_item(&mut tx, actor, id, item).await? {
             labels.push(label);
+            named.push(item.item_id);
         }
     }
     notifications::add_watch(&mut tx, actor.id, "change_request", id).await?;
-    audit::record(
+    // The details name the items: readers who later see the request (an
+    // item was removed, or as requester or assignee) but not all of them get
+    // a redacted entry.
+    audit::record_mentioning(
         &mut tx,
         Some(actor),
         "change_request.create",
         "change_request",
         Some(id),
+        &audit::Mentions::items(named),
         format!("Raised change request {number} – {}", text.title),
         json!({ "reason": input.reason.as_str(), "priority": input.priority.as_str(), "items": labels }),
     )
@@ -801,27 +831,44 @@ pub async fn add_item(
             not_now(&request)
         });
     }
+    // A hidden item answers like a missing one, whatever the status.
+    let project =
+        sqlx::query_scalar::<_, Option<Uuid>>("SELECT project_id FROM items WHERE id = $1")
+            .bind(item.item_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(access::not_found_item)?;
+    access::ensure_visible(actor, project, access::not_found_item())?;
+    // The assignee must be able to see every affected item (as in `assign`).
+    if let Some(assignee) = request.assignee {
+        let blind = sqlx::query_scalar::<_, String>(&format!(
+            "SELECT u.display_name FROM users u WHERE u.id = $1 AND NOT {}",
+            access::user_sees_project("u", "$2::uuid")
+        ))
+        .bind(assignee)
+        .bind(project)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(name) = blind {
+            return Err(AppError::Conflict(format!(
+                "The assignee {name} cannot see this item (not a member of its restricted project group); assign somebody else first."
+            )));
+        }
+    }
     // After the decision only members of the item's project group (or admins)
     // add items: otherwise a CAD editor could accept a request while no item
     // is named (any CAD editor may triage then) and attach items of foreign
     // groups to the accepted request afterwards.
-    if !matches!(
+    let decided = !matches!(
         status_of(&request),
         RequestStatus::New | RequestStatus::InTriage
-    ) {
-        let project =
-            sqlx::query_scalar::<_, Option<Uuid>>("SELECT project_id FROM items WHERE id = $1")
-                .bind(item.item_id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or_else(|| AppError::not_found("Item not found."))?;
-        if !actor.can_edit_project(project) {
-            return Err(AppError::Forbidden(format!(
-                "{} is {}: only members of the item's project group or an administrator can add it now.",
-                request.number,
-                status_of(&request).label()
-            )));
-        }
+    );
+    if decided && !actor.can_edit_project(project) {
+        return Err(AppError::Forbidden(format!(
+            "{} is {}: only members of the item's project group or an administrator can add it now.",
+            request.number,
+            status_of(&request).label()
+        )));
     }
     let label = insert_item(&mut tx, actor, id, &item)
         .await?
@@ -1327,8 +1374,8 @@ pub async fn create_change(
     )
     .await?;
     link(&mut tx, actor, id, change_id).await?;
-    let affected = sqlx::query_as::<_, (Uuid, String, Option<Uuid>)>(
-        "SELECT i.id, i.number,
+    let affected = sqlx::query_as::<_, (Uuid, String, Option<Uuid>, Option<Uuid>)>(
+        "SELECT i.id, i.number, i.project_id,
                 (SELECT r.id FROM revisions r WHERE r.item_id = i.id AND r.state = 'in_work')
          FROM change_request_items cri JOIN items i ON i.id = cri.item_id
          WHERE cri.request_id = $1 ORDER BY i.number",
@@ -1337,8 +1384,18 @@ pub async fn create_change(
     .fetch_all(&mut *tx)
     .await?;
     let mut added = Vec::new();
+    let mut added_items = Vec::new();
     let mut skipped = Vec::new();
-    for (_, number, in_work) in affected {
+    for (item_id, number, project_id, in_work) in affected {
+        // An assignee (or triager) may see the request without seeing every
+        // item: a hidden item is skipped without being named.
+        if !actor.can_see_project(project_id) {
+            skipped.push(format!(
+                "{}: not visible to you – ask a member of its group",
+                access::RESTRICTED_LABEL
+            ));
+            continue;
+        }
         let Some(rev_id) = in_work else {
             skipped.push(format!(
                 "{number}: no revision in work – revise it, then add it to the change"
@@ -1347,7 +1404,10 @@ pub async fn create_change(
         };
         // User errors are raised before anything is written; skip and go on.
         match changes::add_item_in(&mut tx, actor, change_id, rev_id).await {
-            Ok(label) => added.push(label),
+            Ok(label) => {
+                added.push(label);
+                added_items.push(item_id);
+            }
             Err(
                 e @ (AppError::Conflict(_)
                 | AppError::Forbidden(_)
@@ -1362,24 +1422,37 @@ pub async fn create_change(
         .fetch_one(&mut *tx)
         .await?;
     touch(&mut tx, id).await?;
-    audit::record(
+    // Names the new change and its items: redacted for readers of the
+    // request who may not see them.
+    audit::record_mentioning(
         &mut tx,
         Some(actor),
         "change_request.create_change",
         "change_request",
         Some(id),
+        &audit::Mentions::items(added_items).with_change(change_id),
         format!("Created change {change_number} for {}", request.number),
         json!({ "change_id": change_id, "added": added, "skipped": skipped }),
     )
     .await?;
-    tell_people(
+    tell_people_naming(
         &mut tx,
         actor,
         &request,
-        format!("{change_number} implements {}", request.number),
-        format!(
-            "{} created the change order {change_number} for {}.",
-            actor.display_name, request.title
+        (
+            format!("{change_number} implements {}", request.number),
+            format!(
+                "{} created the change order {change_number} for {}.",
+                actor.display_name, request.title
+            ),
+        ),
+        audit::Mentions::change(change_id),
+        (
+            format!("{} has a change order", request.number),
+            format!(
+                "{} created a change order for {}.",
+                actor.display_name, request.title
+            ),
         ),
     )
     .await?;
@@ -1408,6 +1481,11 @@ pub async fn link_change(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found("Change not found."))?;
+    // A change the actor may not see answers like a missing one, before
+    // anything about it is said or written.
+    if !changes::is_visible(&mut tx, actor, change_id).await? {
+        return Err(AppError::not_found("Change not found."));
+    }
     let request = lock(&mut tx, actor, id).await?;
     ensure_implementable(&mut tx, actor, &request).await?;
     let open = domain::ChangeStatus::parse(&change_status).is_some_and(|s| s.is_open());
@@ -1423,24 +1501,35 @@ pub async fn link_change(
         )));
     }
     touch(&mut tx, id).await?;
-    audit::record(
+    audit::record_mentioning(
         &mut tx,
         Some(actor),
         "change_request.link_change",
         "change_request",
         Some(id),
+        &audit::Mentions::change(change_id),
         format!("Linked {change_number} to {}", request.number),
         json!({ "change_id": change_id }),
     )
     .await?;
-    tell_people(
+    tell_people_naming(
         &mut tx,
         actor,
         &request,
-        format!("{change_number} implements {}", request.number),
-        format!(
-            "{} linked the change order {change_number} to {}.",
-            actor.display_name, request.title
+        (
+            format!("{change_number} implements {}", request.number),
+            format!(
+                "{} linked the change order {change_number} to {}.",
+                actor.display_name, request.title
+            ),
+        ),
+        audit::Mentions::change(change_id),
+        (
+            format!("{} has a change order", request.number),
+            format!(
+                "{} linked a change order to {}.",
+                actor.display_name, request.title
+            ),
         ),
     )
     .await?;
@@ -1467,12 +1556,15 @@ pub(crate) async fn on_change_released(
     for id in ids {
         let request = lock_unchecked(conn, id).await?;
         set_status(conn, &request, RequestStatus::Implemented).await?;
-        audit::record(
+        // Readers of the request who may not see the change learn only that
+        // the request is implemented.
+        audit::record_mentioning(
             conn,
             Some(actor),
             "change_request.implemented",
             "change_request",
             Some(id),
+            &audit::Mentions::change(change.id),
             format!(
                 "{} is implemented – {} was released",
                 request.number, change.number
@@ -1480,14 +1572,21 @@ pub(crate) async fn on_change_released(
             json!({ "change_id": change.id }),
         )
         .await?;
-        tell_people(
+        tell_people_naming(
             conn,
             actor,
             &request,
-            format!("{} is implemented", request.number),
-            format!(
-                "{} – released with {} ({}).",
-                request.title, change.number, change.title
+            (
+                format!("{} is implemented", request.number),
+                format!(
+                    "{} – released with {} ({}).",
+                    request.title, change.number, change.title
+                ),
+            ),
+            audit::Mentions::change(change.id),
+            (
+                format!("{} is implemented", request.number),
+                format!("{} – the change order was released.", request.title),
             ),
         )
         .await?;

@@ -132,6 +132,12 @@ pub fn not_found_project() -> AppError {
     AppError::not_found("Project not found.")
 }
 
+/// The error of a form field naming an unknown project group (also for a
+/// hidden one: its code and state are never told).
+pub fn unknown_project() -> AppError {
+    AppError::BadRequest("Unknown project.".into())
+}
+
 /// Text of a placeholder row that stands for a hidden item.
 pub const RESTRICTED_LABEL: &str = "restricted item";
 

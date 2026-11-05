@@ -51,7 +51,7 @@ pub async fn show(
         outgoing,
         incoming,
         file_refs,
-        (file_referrers, hidden_file_referrers),
+        file_referrers,
         item_impacts,
         watching,
         (rev_changes, hidden_changes),
@@ -217,7 +217,6 @@ pub async fn show(
             "hidden": {
                 "parents": hidden_parents,
                 "incoming": hidden_incoming,
-                "file_referrers": hidden_file_referrers,
                 "changes": hidden_changes,
                 "simulations": hidden_simulations,
             },

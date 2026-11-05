@@ -500,6 +500,8 @@ impl RequestItem {
         self.latest_revision_id = Uuid::nil();
         self.latest_code = String::new();
         self.latest_state = String::new();
+        // the note describes the hidden item (written by a member of its group)
+        self.note = String::new();
         self.restricted = true;
     }
 }
@@ -541,4 +543,8 @@ pub struct AuditEntry {
     #[sqlx(default)]
     #[serde(skip)]
     pub related_hidden: bool,
+    /// The text names an item or change order the reader may not see.
+    #[sqlx(default)]
+    #[serde(skip)]
+    pub mentions_hidden: bool,
 }

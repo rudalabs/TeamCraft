@@ -563,7 +563,7 @@ async fn worklist(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult
         "reviews": changes::pending_reviews(&st.db, &me).await?,
         "impacts": open,
         "impact_groups": impacts::group_by_dependent(open.clone()),
-        "notifications_unread": notifications::unread_count(&st.db, me.id).await?,
+        "notifications_unread": notifications::unread_count(&st.db, &me).await?,
         "my_changes": changes::open_by(&st.db, &me).await?,
         "requests_assigned": requests::assigned_to(&st.db, &me).await?,
         "my_requests": requests::open_by(&st.db, &me).await?,
@@ -683,7 +683,7 @@ async fn project_numbering(
     Query(q): Query<NumberingQuery>,
 ) -> AppResult<Json<Value>> {
     let project = projects::get_by_code(&st.db, &me, &code).await?;
-    let preview = projects::numbering_preview(&st.db, &project, q.scheme.as_deref()).await?;
+    let preview = projects::numbering_preview(&st.db, &me, &project, q.scheme.as_deref()).await?;
     Ok(Json(json!(preview)))
 }
 
@@ -707,7 +707,7 @@ async fn set_project_numbering(
         body.scheme.as_deref().unwrap_or(""),
     )
     .await?;
-    let preview = projects::numbering_preview(&st.db, &project, None).await?;
+    let preview = projects::numbering_preview(&st.db, &me, &project, None).await?;
     Ok(Json(json!({ "project": project, "numbering": preview })))
 }
 
@@ -1266,14 +1266,11 @@ async fn get_references(
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
     let rev = revision_at(&st, &me, &number, &code).await?;
-    let (file_referrers, hidden_file_referrers) =
-        references::file_referrers(&st.db, &me, rev.id).await?;
     Ok(Json(json!({
         "outgoing": references::outgoing(&st.db, &me, rev.id).await?,
         "incoming": references::incoming(&st.db, &me, rev.item_id).await?,
         "files": references::files_of_revision(&st.db, &me, rev.id).await?,
-        "file_referrers": file_referrers,
-        "hidden_file_referrers": hidden_file_referrers,
+        "file_referrers": references::file_referrers(&st.db, &me, rev.id).await?,
         "hidden_incoming": references::incoming_hidden(&st.db, &me, rev.item_id).await?,
         "impacts": impacts::for_item(&st.db, &me, rev.item_id).await?,
     })))
@@ -1627,12 +1624,12 @@ async fn list_notifications(
 ) -> AppResult<Json<Value>> {
     let list = notifications::list(
         &st.db,
-        me.id,
+        &me,
         q.unread.unwrap_or(false),
         q.limit.unwrap_or(50),
     )
     .await?;
-    let unread = notifications::unread_count(&st.db, me.id).await?;
+    let unread = notifications::unread_count(&st.db, &me).await?;
     Ok(Json(json!({ "unread": unread, "notifications": list })))
 }
 

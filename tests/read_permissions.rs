@@ -765,9 +765,11 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
                 continue;
             }
             let uri = fill(path, &h).expect("rule (see every_route_has_a_placeholder_rule)");
-            let r = call(&app, method, &uri, token, &cookie).await;
+            let r = call(&app, method, &uri, token, &cookie, &h).await;
             let what = format!("{method} {path}");
-            assert_clean(who, &what, &r, &markers, &sent_of(&uri));
+            let mut sent = sent_of(&uri);
+            sent.extend(probe_sent(&h));
+            assert_clean(who, &what, &r, &markers, &sent);
             if method == "GET" && targets_hidden(&uri, &h) {
                 assert!(
                     !(r.status.is_success() || r.status.is_redirection()),
@@ -780,17 +782,23 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
     }
     assert_eq!(before, counts(&app).await, "outsiders changed nothing");
     // routes without a path parameter: lists, searches, forms, creation
-    for (who, token) in [
-        ("outsider_editor", &out_editor),
-        ("outsider_viewer", &out_viewer),
+    // (no count check here: tokens, saved searches and the like are created)
+    for (who, token, actor) in [
+        ("outsider_editor", &out_editor, &out_editor_actor),
+        ("outsider_viewer", &out_viewer, &out_viewer_actor),
     ] {
         let cookie = app.login(who).await;
+        let h = Hidden {
+            caller: actor.id,
+            ..clone_hidden(&hidden_base)
+        };
+        let sent = probe_sent(&h);
         for (method, path) in &routes {
             if skipped(method, path) || path.contains('{') {
                 continue;
             }
-            let r = call(&app, method, path, token, &cookie).await;
-            assert_clean(who, &format!("{method} {path}"), &r, &markers, &[]);
+            let r = call(&app, method, path, token, &cookie, &h).await;
+            assert_clean(who, &format!("{method} {path}"), &r, &markers, &sent);
         }
         // (a fresh session: a route above may have ended the old one)
         let cookie = app.login(who).await;
@@ -960,23 +968,65 @@ fn targets_hidden(uri: &str, h: &Hidden) -> bool {
         .any(|n| segments.contains(&n.as_str()))
 }
 
+/// Body fields that name the hidden objects (BOM child, reference target,
+/// simulation basis, compare partner, change to link, target group, …):
+/// numbers for the REST API, ids for the web forms.
+fn probe_fields(h: &Hidden) -> (Value, Vec<(&'static str, String)>) {
+    let api = json!({
+        "item": h.item_number, "child": h.item_number, "with": h.item_number,
+        "basis": h.item_number, "target": h.item_number, "change": h.change_number,
+        "request": h.request_number, "project": h.group_code,
+        "item_id": h.item_id, "revision_id": h.revision_id, "change_id": h.change_id,
+        "project_id": h.group_id, "file_id": h.file_id,
+    });
+    let form = vec![
+        ("item_number", h.item_number.clone()),
+        ("child", h.item_number.clone()),
+        ("with", h.revision_id.to_string()),
+        ("change", h.change_id.to_string()),
+        ("item_id", h.item_id.to_string()),
+        ("revision_id", h.revision_id.to_string()),
+        ("change_id", h.change_id.to_string()),
+        ("project_id", h.group_id.to_string()),
+        ("file_id", h.file_id.to_string()),
+    ];
+    (api, form)
+}
+
+/// Identifiers the probe bodies send (a route may echo them).
+fn probe_sent(h: &Hidden) -> Vec<String> {
+    let (api, form) = probe_fields(h);
+    let mut sent: Vec<String> = api
+        .as_object()
+        .unwrap()
+        .values()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect();
+    sent.extend(form.into_iter().map(|(_, v)| v));
+    sent
+}
+
 /// One call: the REST API with the token, the web UI with the session.
+/// Writes carry the probe fields, so hidden ids in bodies are exercised too.
 async fn call(
     app: &common::TestApp,
     method: &str,
     uri: &str,
     token: &str,
     cookie: &str,
+    h: &Hidden,
 ) -> common::Response {
     let method = Method::from_bytes(method.as_bytes()).unwrap();
+    let (api, form) = probe_fields(h);
     if uri.starts_with("/api/") {
-        let body = (method != Method::GET).then(|| json!({}));
+        let body = (method != Method::GET).then_some(api);
         return app.api(method, uri, token, body).await;
     }
     if method == Method::GET {
         app.get_page(uri, Some(cookie)).await
     } else {
-        app.post_form(uri, Some(cookie), Some("http://localhost:8080"), &[])
+        let fields: Vec<(&str, &str)> = form.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        app.post_form(uri, Some(cookie), Some("http://localhost:8080"), &fields)
             .await
     }
 }
@@ -1156,5 +1206,475 @@ async fn visibility_is_managed_and_audited() {
         )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    app.teardown().await;
+}
+
+async fn new_item(app: &common::TestApp, token: &str, item_type: &str, project: &str) -> String {
+    post_ok(
+        app,
+        "/api/v1/items",
+        token,
+        json!({ "item_type": item_type, "name": "Item", "project": project }),
+    )
+    .await["item_number"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+fn rev_of(number: &str) -> String {
+    format!("/api/v1/items/{number}/revisions/A")
+}
+
+fn number_of(v: &Value, key: &str) -> String {
+    v[key]["number"]
+        .as_str()
+        .or_else(|| v["number"].as_str())
+        .unwrap()
+        .to_string()
+}
+
+/// Texts that name other objects – audit entries, notifications, readiness,
+/// conflict messages, request notes, numbering previews and lookups by id –
+/// tell outsiders nothing about a restricted group (review findings).
+#[tokio::test]
+async fn texts_naming_restricted_objects_are_redacted() {
+    let app = app_or_skip!();
+    let m = format!("zr{}", &Uuid::new_v4().simple().to_string()[..12]);
+    let mu = m.to_ascii_uppercase();
+    let (_, mona) = app.user_in("mona", Role::Editor, &["ROVER"]).await;
+    let (rex_actor, _) = app.user("rex", Role::Editor).await;
+    let (otto_actor, otto) = app.user_in("otto", Role::Editor, &["ROVER"]).await;
+    let code = format!("S{mu}");
+    post_ok(
+        &app,
+        "/api/v1/projects",
+        &mona,
+        json!({ "code": code, "name": "Secret group" }),
+    )
+    .await;
+    post_ok(
+        &app,
+        &format!("/api/v1/projects/{code}/members"),
+        &mona,
+        json!({ "username": "rex" }),
+    )
+    .await;
+    let r = app
+        .api(
+            Method::PUT,
+            &format!("/api/v1/projects/{code}/numbering"),
+            &mona,
+            Some(json!({ "scheme": "{PROJECT}-{TYPE}-{SEQ:4}" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    // an internal part of otto (he watches it as its creator)
+    let prt = new_item(&app, &otto, "part", "ROVER").await;
+    app.api(
+        Method::POST,
+        &format!("{}/checkin", rev_of(&prt)),
+        &otto,
+        None,
+    )
+    .await;
+    // two assemblies of the group use it (their numbers carry the code)
+    let h1 = new_item(&app, &mona, "assembly", &code).await;
+    let h2 = new_item(&app, &mona, "assembly", &code).await;
+    for h in [&h1, &h2] {
+        post_ok(
+            &app,
+            &format!("{}/bom", rev_of(h)),
+            &mona,
+            json!({ "child": prt, "quantity": 1.0 }),
+        )
+        .await;
+    }
+    // otto watches h1 while the group is internal and is told of its check-in
+    post_ok(&app, &format!("/api/v1/items/{h1}/watch"), &otto, json!({})).await;
+    let r = app
+        .api_upload(
+            &format!("{}/checkin", rev_of(&h1)),
+            &mona,
+            &format!("{m}.txt"),
+            b"content",
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.text());
+    app.api(
+        Method::POST,
+        &format!("{}/checkin", rev_of(&h2)),
+        &mona,
+        None,
+    )
+    .await;
+    let r = app
+        .api(Method::GET, "/api/v1/notifications", &otto, None)
+        .await;
+    assert!(r.text().contains(&h1), "told while internal: {}", r.text());
+    // a request of otto on his part; mona adds h1 with a note
+    let ecr = number_of(
+        &post_ok(
+            &app,
+            "/api/v1/change-requests",
+            &otto,
+            json!({ "title": "Part problem", "items": [{ "item": prt }] }),
+        )
+        .await,
+        "change_request",
+    );
+    post_ok(
+        &app,
+        &format!("/api/v1/change-requests/{ecr}/items"),
+        &mona,
+        json!({ "item": h1, "note": format!("cracks {m}") }),
+    )
+    .await;
+
+    let r = app
+        .api(
+            Method::PUT,
+            &format!("/api/v1/projects/{code}/visibility"),
+            &mona,
+            Some(json!({ "visibility": "restricted" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let markers = vec![m.clone()];
+
+    // older notifications about the group are hidden now, also from the count
+    let r = app
+        .api(Method::GET, "/api/v1/notifications", &otto, None)
+        .await;
+    assert_clean("otto", "old notifications", &r, &markers, &[]);
+    assert_eq!(r.json()["unread"], 0, "{}", r.text());
+    // the note on the hidden item is not shown to the requester
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/change-requests/{ecr}"),
+            &otto,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_clean("otto", "request with a restricted item", &r, &markers, &[]);
+
+    // a change with the internal part and h1, released by rex
+    let chg = number_of(
+        &post_ok(
+            &app,
+            "/api/v1/changes",
+            &mona,
+            json!({ "title": format!("Change {m}") }),
+        )
+        .await,
+        "change",
+    );
+    for n in [&prt, &h1] {
+        post_ok(
+            &app,
+            &format!("/api/v1/changes/{chg}/items"),
+            &mona,
+            json!({ "item": n }),
+        )
+        .await;
+    }
+    post_ok(
+        &app,
+        &format!("/api/v1/changes/{chg}/reviewers"),
+        &mona,
+        json!({ "username": "rex" }),
+    )
+    .await;
+    post_ok(
+        &app,
+        &format!("/api/v1/changes/{chg}/submit"),
+        &mona,
+        json!({}),
+    )
+    .await;
+    let change_id = id_of(&app, "SELECT id FROM changes WHERE number = $1", &chg).await;
+    // (loaded again: the membership was added after the user was created)
+    let rex_actor = app.actor(&rex_actor.username).await;
+    teamcraft::services::changes::review(
+        &app.pool,
+        &rex_actor,
+        change_id,
+        teamcraft::domain::Decision::Approved,
+        "",
+    )
+    .await
+    .expect("release");
+    // the release flagged h2: the history of the part names it only for members
+    for (who, token, sees) in [("mona", &mona, true), ("otto", &otto, false)] {
+        let r = app
+            .api(
+                Method::GET,
+                &format!("/api/v1/items/{prt}/history"),
+                token,
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{who}: {}", r.text());
+        let flagged =
+            r.json().as_array().unwrap().iter().any(|e| {
+                e["action"] == "impact.flag" && e["summary"].as_str().unwrap().contains(&h2)
+            });
+        assert_eq!(flagged, sees, "{who}: {}", r.text());
+        if !sees {
+            assert_clean(who, "part history", &r, &markers, &[]);
+        }
+    }
+    // the release notice of the watched part names neither change nor title
+    let r = app
+        .api(Method::GET, "/api/v1/notifications", &otto, None)
+        .await;
+    assert!(
+        r.text().contains(&format!("{prt}/A was released")),
+        "{}",
+        r.text()
+    );
+    assert_clean("otto", "release notice", &r, &markers, &[]);
+    assert!(!r.text().contains(&chg), "{}", r.text());
+    let cookie = app.login("otto").await;
+    let r = app.get_page("/", Some(&cookie)).await;
+    assert_clean("otto", "dashboard activity", &r, &markers, &[]);
+
+    // an open change hidden from otto holds his second part
+    let prt2 = new_item(&app, &otto, "part", "ROVER").await;
+    app.api(
+        Method::POST,
+        &format!("{}/checkin", rev_of(&prt2)),
+        &otto,
+        None,
+    )
+    .await;
+    let h3 = new_item(&app, &mona, "part", &code).await;
+    let chg2 = number_of(
+        &post_ok(
+            &app,
+            "/api/v1/changes",
+            &mona,
+            json!({ "title": format!("Second {m}") }),
+        )
+        .await,
+        "change",
+    );
+    for n in [&prt2, &h3] {
+        post_ok(
+            &app,
+            &format!("/api/v1/changes/{chg2}/items"),
+            &mona,
+            json!({ "item": n }),
+        )
+        .await;
+    }
+    let chg2_id = id_of(&app, "SELECT id FROM changes WHERE number = $1", &chg2).await;
+    let chg3 = number_of(
+        &post_ok(&app, "/api/v1/changes", &otto, json!({ "title": "Mine" })).await,
+        "change",
+    );
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/changes/{chg3}/items"),
+            &otto,
+            Some(json!({ "item": prt2 })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+    assert!(!r.text().contains(&chg2), "{}", r.text());
+    assert!(r.text().contains("another open change"), "{}", r.text());
+    // the readiness of otto's assembly using that part does not name it either
+    let asm = new_item(&app, &otto, "assembly", "ROVER").await;
+    post_ok(
+        &app,
+        &format!("{}/bom", rev_of(&asm)),
+        &otto,
+        json!({ "child": prt2, "quantity": 1.0 }),
+    )
+    .await;
+    post_ok(
+        &app,
+        &format!("/api/v1/changes/{chg3}/items"),
+        &otto,
+        json!({ "item": asm }),
+    )
+    .await;
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/changes/{chg3}/readiness"),
+            &otto,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(!r.text().contains(&chg2), "{}", r.text());
+    assert!(
+        r.text().contains("another open change order"),
+        "{}",
+        r.text()
+    );
+
+    // linking the hidden change by its id answers "not found" and links nothing
+    let ecr2 = number_of(
+        &post_ok(
+            &app,
+            "/api/v1/change-requests",
+            &otto,
+            json!({ "title": "Without items" }),
+        )
+        .await,
+        "change_request",
+    );
+    post_ok(
+        &app,
+        &format!("/api/v1/change-requests/{ecr2}/triage"),
+        &otto,
+        json!({}),
+    )
+    .await;
+    post_ok(
+        &app,
+        &format!("/api/v1/change-requests/{ecr2}/decide"),
+        &otto,
+        json!({ "decision": "accept" }),
+    )
+    .await;
+    let ecr2_id = id_of(
+        &app,
+        "SELECT id FROM change_requests WHERE number = $1",
+        &ecr2,
+    )
+    .await;
+    let r = app
+        .post_form(
+            &format!("/requests/{ecr2_id}/link-change"),
+            Some(&cookie),
+            Some("http://localhost:8080"),
+            &[("change", &chg2_id.to_string())],
+        )
+        .await;
+    assert_clean(
+        "otto",
+        "link a hidden change",
+        &r,
+        &[m.clone(), chg2.clone()],
+        &[],
+    );
+    let linked: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM change_request_changes WHERE request_id = $1")
+            .bind(ecr2_id)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(linked, 0, "nothing is linked");
+
+    // ids of hidden objects answer like unknown ones (the actor is loaded
+    // again: its hidden groups are read at sign-in)
+    let otto_actor = app.actor(&otto_actor.username).await;
+    let h1_id = id_of(&app, "SELECT id FROM items WHERE number = $1", &h1).await;
+    let group_id = app.project_id(&code).await;
+    let add = |item_id| {
+        teamcraft::services::requests::add_item(
+            &app.pool,
+            &otto_actor,
+            ecr2_id,
+            teamcraft::services::requests::AffectedItem {
+                item_id,
+                revision_id: None,
+                note: String::new(),
+            },
+        )
+    };
+    assert_eq!(
+        add(h1_id).await.unwrap_err().to_string(),
+        add(Uuid::new_v4()).await.unwrap_err().to_string(),
+        "request item by id"
+    );
+    let create = |project_id| {
+        teamcraft::services::items::create(
+            &app.pool,
+            &otto_actor,
+            teamcraft::services::items::NewItem {
+                number: None,
+                item_type: teamcraft::domain::ItemType::Part,
+                unit: "each".into(),
+                project_id: Some(project_id),
+                name: "Probe".into(),
+                description: String::new(),
+                material: String::new(),
+                mass_kg: None,
+                unit_cost: None,
+            },
+        )
+    };
+    let hidden = create(group_id).await.unwrap_err().to_string();
+    assert_eq!(
+        hidden,
+        create(Uuid::new_v4()).await.unwrap_err().to_string()
+    );
+    assert!(!hidden.contains(&code), "{hidden}");
+    let numbering =
+        |id| teamcraft::services::projects::set_number_scheme(&app.pool, &otto_actor, id, "");
+    assert_eq!(
+        numbering(group_id).await.unwrap_err().to_string(),
+        numbering(Uuid::new_v4()).await.unwrap_err().to_string(),
+        "numbering of a hidden group"
+    );
+
+    // the assignee must see an item that is added later
+    let ecr3 = number_of(
+        &post_ok(
+            &app,
+            "/api/v1/change-requests",
+            &mona,
+            json!({ "title": "Assigned", "items": [{ "item": prt }] }),
+        )
+        .await,
+        "change_request",
+    );
+    post_ok(
+        &app,
+        &format!("/api/v1/change-requests/{ecr3}/assign"),
+        &mona,
+        json!({ "username": "otto" }),
+    )
+    .await;
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/change-requests/{ecr3}/items"),
+            &mona,
+            Some(json!({ "item": h1 })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+
+    // a typed-in preview scheme never reads the group's private counter
+    let scheme = format!("{code}-%7BTYPE%7D-%7BSEQ:4%7D");
+    for (who, token, next) in [("otto", &otto, "0001"), ("mona", &mona, "0003")] {
+        let r = app
+            .api(
+                Method::GET,
+                &format!("/api/v1/projects/ROVER/numbering?scheme={scheme}"),
+                token,
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{who}: {}", r.text());
+        let number = r.json()["next"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["item_type"] == "assembly")
+            .expect("assembly")["number"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(number, format!("{code}-ASM-{next}"), "{who}");
+    }
     app.teardown().await;
 }

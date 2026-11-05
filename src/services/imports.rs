@@ -40,7 +40,7 @@ use crate::{
     domain::{self, ItemType, Role},
     error::{AppError, AppResult},
     services::{
-        audit, bom,
+        access, audit, bom,
         files::{self, Upload},
         items, revisions,
     },
@@ -329,7 +329,8 @@ pub async fn plan(
             .bind(project_id)
             .fetch_optional(&mut *conn)
             .await?
-            .ok_or_else(|| AppError::BadRequest("Unknown project.".into()))?;
+            .ok_or_else(access::unknown_project)?;
+    access::ensure_visible(actor, Some(project_id), access::unknown_project())?;
     if !active {
         return Err(AppError::BadRequest(format!(
             "The project group {project_code} is archived."

@@ -360,11 +360,14 @@ pub struct FileReferrer {
 
 /// CAD files of the latest revisions of other items that reference one of
 /// the files of this revision (assemblies using the part file, drawings of it).
+/// Matches in groups the actor may not see are left out **without a count**:
+/// a file-name match is a heuristic and never crosses a restricted group's
+/// boundary (unlike explicit links, which are counted).
 pub async fn file_referrers(
     pool: &PgPool,
     actor: &Actor,
     revision_id: Uuid,
-) -> AppResult<(Vec<FileReferrer>, i64)> {
+) -> AppResult<Vec<FileReferrer>> {
     let all = file_referrers_unchecked(pool, revision_id).await?;
     let ids: Vec<Uuid> = all.iter().map(|f| f.item_id).collect();
     let visible: std::collections::HashSet<Uuid> = sqlx::query_scalar::<_, Uuid>(&format!(
@@ -377,16 +380,13 @@ pub async fn file_referrers(
     .await?
     .into_iter()
     .collect();
-    let hidden = all.iter().filter(|f| !visible.contains(&f.item_id)).count() as i64;
-    Ok((
-        all.into_iter()
-            .filter(|f| visible.contains(&f.item_id))
-            .collect(),
-        hidden,
-    ))
+    Ok(all
+        .into_iter()
+        .filter(|f| visible.contains(&f.item_id))
+        .collect())
 }
 
-/// [`file_referrers`] without the read check (impact analysis as the system).
+/// [`file_referrers`] without the read check.
 pub(crate) async fn file_referrers_unchecked(
     pool: &PgPool,
     revision_id: Uuid,

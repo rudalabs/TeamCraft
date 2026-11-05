@@ -34,8 +34,9 @@ Every answer contains only what the token's user may read (see
 * Lists that leave entries out say how many: `where-used`,
   `/items/{number}/simulations` and `/changes/{number}/impact` return the
   usual array plus the header `x-hidden-count`; the revision answer has
-  `hidden_changes`, references have `hidden_incoming` and
-  `hidden_file_referrers`, a change request has `hidden_changes`.
+  `hidden_changes`, references have `hidden_incoming`, a change request
+  has `hidden_changes`. CAD file-name matches (`file_referrers`) in groups
+  the user cannot see are left out without a count.
 * `GET /api/v1/me` lists the user's own memberships in `projects` and,
   in `restricted_projects`, those of them that are restricted. It never
   names groups the user is not a member of.

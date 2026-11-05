@@ -391,6 +391,29 @@ async fn tell(
     Ok(())
 }
 
+/// [`tell`] with a body that names the change's items (`named`): recipients
+/// who may see the change but not all of them get `redacted_body`.
+#[allow(clippy::too_many_arguments)]
+async fn tell_naming(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    change: &Change,
+    kind: NotificationKind,
+    recipients: &[Uuid],
+    title: String,
+    body: String,
+    named: &audit::Mentions,
+    redacted_body: String,
+) -> AppResult<()> {
+    let notice = Notice::change(kind, change.id, &change.number, title.clone(), body).naming(
+        named.clone(),
+        title,
+        redacted_body,
+    );
+    notifications::notify(conn, Some(actor), recipients, &notice).await?;
+    Ok(())
+}
+
 /// Tells the watchers of the released items (who are not already told about
 /// the change itself) that their item was released.
 async fn tell_item_watchers(
@@ -404,14 +427,22 @@ async fn tell_item_watchers(
         let rev = revisions::lock(conn, *id).await?;
         let mut watchers = notifications::watchers(conn, "item", &[rev.item_id]).await?;
         watchers.retain(|w| !already.contains(w));
+        let title = format!("{} was released", revisions::label(&rev));
+        // Watchers who may not see the change (it holds restricted items)
+        // learn only that the item was released.
         let notice = Notice::revision(
             NotificationKind::ItemUpdate,
             &rev,
-            format!("{} was released", revisions::label(&rev)),
+            title.clone(),
             format!(
                 "{} – released with {} ({}).",
                 rev.name, change.number, change.title
             ),
+        )
+        .naming(
+            audit::Mentions::change(change.id),
+            title,
+            format!("{} – released.", rev.name),
         );
         notifications::notify(conn, Some(actor), &watchers, &notice).await?;
     }
@@ -551,20 +582,32 @@ async fn add_item_tx(
             revisions::state_of(&rev).label()
         )));
     }
-    let other = sqlx::query_scalar::<_, String>(
-        "SELECT c.number FROM change_items ci JOIN changes c ON c.id = ci.change_id
+    // The other change is named only if the actor may see it (it can hold
+    // restricted items of other groups).
+    let other = sqlx::query_as::<_, (String, bool)>(&format!(
+        "SELECT c.number, {} FROM change_items ci JOIN changes c ON c.id = ci.change_id
          WHERE ci.revision_id = $1 AND c.id <> $2 AND c.status IN ('draft', 'in_review', 'rejected')
          LIMIT 1",
-    )
+        access::change_visible("c", 3, 4)
+    ))
     .bind(revision_id)
     .bind(change_id)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_optional(&mut *conn)
     .await?;
-    if let Some(other) = other {
-        return Err(AppError::Conflict(format!(
-            "{} is already part of the open change {other}.",
-            revisions::label(&rev)
-        )));
+    if let Some((other, visible)) = other {
+        return Err(AppError::Conflict(if visible {
+            format!(
+                "{} is already part of the open change {other}.",
+                revisions::label(&rev)
+            )
+        } else {
+            format!(
+                "{} is already part of another open change.",
+                revisions::label(&rev)
+            )
+        }));
     }
     // Every reviewer must be able to see the new item (the caller sees it).
     let blind = sqlx::query_scalar::<_, String>(&format!(
@@ -892,12 +935,17 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     .bind(change_id)
     .execute(&mut *tx)
     .await?;
-    audit::record(
+    // The labels name every item of the change: readers who see the change
+    // (author, reviewer, or later after items were removed) but not all of
+    // its items get a redacted entry.
+    let named = audit::Mentions::items(audit::change_item_ids(&mut tx, change_id).await?);
+    audit::record_mentioning(
         &mut tx,
         Some(actor),
         "change.submit",
         "change",
         Some(change_id),
+        &named,
         format!(
             "Submitted {} for review ({})",
             change.number,
@@ -907,7 +955,7 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     )
     .await?;
     let reviewers = reviewer_ids(&mut tx, change_id).await?;
-    tell(
+    tell_naming(
         &mut tx,
         actor,
         &change,
@@ -919,11 +967,13 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
             actor.display_name,
             labels.join(", ")
         ),
+        &named,
+        format!("{} asks you to review this change.", actor.display_name),
     )
     .await?;
     let mut watchers = notifications::watchers(&mut tx, "change", &[change_id]).await?;
     watchers.retain(|w| !reviewers.contains(w));
-    tell(
+    tell_naming(
         &mut tx,
         actor,
         &change,
@@ -931,6 +981,8 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
         &watchers,
         format!("{} was submitted for review", change.number),
         format!("{} – {}", change.title, labels.join(", ")),
+        &named,
+        change.title.clone(),
     )
     .await?;
     if webhooks::wanted(&mut tx, &[WebhookEvent::ChangeSubmitted]).await? {
@@ -1065,12 +1117,14 @@ pub async fn review(
                 .bind(change_id)
                 .execute(&mut *tx)
                 .await?;
-            audit::record(
+            let named = audit::Mentions::items(audit::change_item_ids(&mut tx, change_id).await?);
+            audit::record_mentioning(
                 &mut tx,
                 Some(actor),
                 "change.rejected",
                 "change",
                 Some(change_id),
+                &named,
                 format!(
                     "{} was rejected; {} returned to In Work",
                     change.number,
@@ -1079,7 +1133,7 @@ pub async fn review(
                 json!({ "revisions": labels }),
             )
             .await?;
-            tell(
+            tell_naming(
                 &mut tx,
                 actor,
                 &change,
@@ -1087,6 +1141,8 @@ pub async fn review(
                 &people,
                 format!("{} was rejected by {}", change.number, actor.display_name),
                 format!("{comment}\n{} returned to In Work.", labels.join(", ")),
+                &named,
+                format!("{comment}\nIts revisions returned to In Work."),
             )
             .await?;
         }
@@ -1106,12 +1162,14 @@ pub async fn review(
             .bind(change_id)
             .execute(&mut *tx)
             .await?;
-            audit::record(
+            let named = audit::Mentions::items(audit::change_item_ids(&mut tx, change_id).await?);
+            audit::record_mentioning(
                 &mut tx,
                 Some(actor),
                 "change.released",
                 "change",
                 Some(change_id),
+                &named,
                 format!(
                     "{} was approved; released {}",
                     change.number,
@@ -1120,7 +1178,7 @@ pub async fn review(
                 json!({ "revisions": labels }),
             )
             .await?;
-            tell(
+            tell_naming(
                 &mut tx,
                 actor,
                 &change,
@@ -1132,6 +1190,11 @@ pub async fn review(
                     change.title,
                     labels.join(", "),
                     actor.display_name
+                ),
+                &named,
+                format!(
+                    "{} – released (last approval by {}).",
+                    change.title, actor.display_name
                 ),
             )
             .await?;
@@ -1223,12 +1286,14 @@ pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResul
     .bind(change_id)
     .execute(&mut *tx)
     .await?;
-    audit::record(
+    let named = audit::Mentions::items(audit::change_item_ids(&mut tx, change_id).await?);
+    audit::record_mentioning(
         &mut tx,
         Some(actor),
         "change.withdraw",
         "change",
         Some(change_id),
+        &named,
         format!("Withdrew {} from review", change.number),
         json!({ "revisions": labels }),
     )

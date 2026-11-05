@@ -62,9 +62,54 @@ pub struct Dependency {
     pub project_id: Option<Uuid>,
     #[serde(skip)]
     pub revision_project_id: Option<Uuid>,
+    /// Who may see the other open change (for the read check; never sent).
+    #[serde(skip)]
+    pub other_change_access: Option<ChangeAccess>,
 }
 
+/// What decides whether a reader sees a change order (see
+/// `access::change_visible`), loaded for the other open changes named in
+/// the result.
+#[derive(Clone, Debug, Default)]
+pub struct ChangeAccess {
+    pub created_by: Uuid,
+    pub reviewers: Vec<Uuid>,
+    /// The groups of its items (`None` = items without a group).
+    pub projects: Vec<Option<Uuid>>,
+}
+
+impl ChangeAccess {
+    fn visible_to(&self, actor: &crate::auth::Actor) -> bool {
+        actor.is_admin()
+            || self.created_by == actor.id
+            || self.reviewers.contains(&actor.id)
+            || (!self.projects.is_empty()
+                && self.projects.iter().all(|p| actor.can_see_project(*p)))
+    }
+}
+
+/// Text that stands for an open change order the reader may not see.
+pub const OTHER_CHANGE: &str = "another open change order";
+
 impl Dependency {
+    /// The depending revision of the change order is hidden from the reader.
+    fn mask_revision(&mut self) {
+        self.revision_id = Uuid::nil();
+        self.revision_label = crate::services::access::RESTRICTED_LABEL.into();
+    }
+
+    /// The other open change is named only to readers who may see it.
+    fn mask_other_change(&mut self, actor: &crate::auth::Actor) {
+        if self.other_change.is_some()
+            && !self
+                .other_change_access
+                .as_ref()
+                .is_some_and(|a| a.visible_to(actor))
+        {
+            self.other_change = Some(OTHER_CHANGE.into());
+        }
+    }
+
     fn mask(&mut self) {
         self.item_id = Uuid::nil();
         self.item_number = crate::services::access::RESTRICTED_LABEL.into();
@@ -92,16 +137,19 @@ impl Readiness {
 
     /// Removes what the actor may not see: blockers on hidden items become
     /// placeholders that still block; warnings on hidden items (heuristic
-    /// file-name matches, obsolete items) are dropped.
+    /// file-name matches, obsolete items) are dropped. Hidden depending
+    /// revisions lose their label, and another open change the actor may not
+    /// see is not named.
     pub fn redact(mut self, actor: &crate::auth::Actor) -> Self {
         self.warnings
             .retain(|d| actor.can_see_project(d.project_id));
-        for d in &mut self.blockers {
+        for d in self.warnings.iter_mut().chain(self.blockers.iter_mut()) {
             if !actor.can_see_project(d.revision_project_id) {
-                d.revision_id = Uuid::nil();
-                d.revision_label = crate::services::access::RESTRICTED_LABEL.into();
+                d.mask_revision();
             }
-            if !actor.can_see_project(d.project_id) {
+            if actor.can_see_project(d.project_id) {
+                d.mask_other_change(actor);
+            } else {
                 d.mask();
             }
         }
@@ -200,8 +248,43 @@ struct Row {
     latest_state: String,
     has_released: bool,
     other_change: Option<String>,
+    other_change_id: Option<Uuid>,
     project_id: Option<Uuid>,
     revision_project_id: Option<Uuid>,
+}
+
+/// Author, reviewers and item groups of the given changes.
+async fn change_access(
+    conn: &mut PgConnection,
+    ids: &[Uuid],
+) -> AppResult<std::collections::HashMap<Uuid, ChangeAccess>> {
+    if ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let rows = sqlx::query_as::<_, (Uuid, Uuid, Vec<Uuid>, Vec<Option<Uuid>>)>(
+        "SELECT c.id, c.created_by,
+                ARRAY(SELECT cr.reviewer_id FROM change_reviews cr WHERE cr.change_id = c.id),
+                ARRAY(SELECT DISTINCT i.project_id FROM change_items ci
+                      JOIN revisions r ON r.id = ci.revision_id JOIN items i ON i.id = r.item_id
+                      WHERE ci.change_id = c.id)
+         FROM changes c WHERE c.id = ANY($1)",
+    )
+    .bind(ids)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, created_by, reviewers, projects)| {
+            (
+                id,
+                ChangeAccess {
+                    created_by,
+                    reviewers,
+                    projects,
+                },
+            )
+        })
+        .collect())
 }
 
 /// Checks the dependencies of all revisions of a change order. One query,
@@ -247,7 +330,13 @@ pub async fn check(conn: &mut PgConnection, change_id: Uuid) -> AppResult<Readin
                    JOIN revisions x ON x.id = ci.revision_id
                  WHERE x.item_id = i.id AND c.id <> $1
                    AND c.status IN ('draft', 'in_review', 'rejected')
-                 ORDER BY c.number LIMIT 1) AS other_change
+                 ORDER BY c.number LIMIT 1) AS other_change,
+                (SELECT c.id FROM change_items ci
+                   JOIN changes c ON c.id = ci.change_id
+                   JOIN revisions x ON x.id = ci.revision_id
+                 WHERE x.item_id = i.id AND c.id <> $1
+                   AND c.status IN ('draft', 'in_review', 'rejected')
+                 ORDER BY c.number LIMIT 1) AS other_change_id
          FROM one d
          JOIN revisions pr ON pr.id = d.revision_id
          JOIN items pi ON pi.id = pr.item_id
@@ -262,6 +351,10 @@ pub async fn check(conn: &mut PgConnection, change_id: Uuid) -> AppResult<Readin
     .bind(change_id)
     .fetch_all(&mut *conn)
     .await?;
+    let mut others: Vec<Uuid> = rows.iter().filter_map(|r| r.other_change_id).collect();
+    others.sort();
+    others.dedup();
+    let access = change_access(conn, &others).await?;
 
     let mut result = Readiness::default();
     for row in rows {
@@ -290,6 +383,7 @@ pub async fn check(conn: &mut PgConnection, change_id: Uuid) -> AppResult<Readin
             restricted: false,
             project_id: row.project_id,
             revision_project_id: row.revision_project_id,
+            other_change_access: row.other_change_id.and_then(|id| access.get(&id).cloned()),
         };
         if blocking {
             result.blockers.push(dep);
@@ -360,7 +454,42 @@ mod tests {
             restricted: false,
             project_id: None,
             revision_project_id: None,
+            other_change_access: None,
         }
+    }
+
+    #[test]
+    fn redact_masks_hidden_revisions_and_other_changes() {
+        use crate::{auth::Actor, domain::Role};
+        let secret = Uuid::new_v4();
+        let reader = Actor::test(Role::Editor, vec![], vec![secret]);
+        let mut warning = dep("PRT-000002", "file", false, Uuid::new_v4());
+        warning.blocking = false;
+        warning.revision_label = "SEC-000001/A".into();
+        warning.revision_project_id = Some(secret);
+        let mut blocker = dep("PRT-000003", "bom", false, Uuid::new_v4());
+        blocker.other_change = Some("CHG-000061".into());
+        blocker.other_change_access = Some(ChangeAccess {
+            created_by: Uuid::new_v4(),
+            reviewers: vec![],
+            projects: vec![None, Some(secret)],
+        });
+        let mut own = dep("PRT-000004", "bom", false, Uuid::new_v4());
+        own.other_change = Some("CHG-000062".into());
+        own.other_change_access = Some(ChangeAccess {
+            created_by: reader.id,
+            reviewers: vec![],
+            projects: vec![Some(secret)],
+        });
+        let r = Readiness {
+            blockers: vec![blocker, own],
+            warnings: vec![warning],
+        }
+        .redact(&reader);
+        assert_eq!(r.warnings[0].revision_label, "restricted item");
+        assert_eq!(r.warnings[0].revision_id, Uuid::nil());
+        assert_eq!(r.blockers[0].other_change.as_deref(), Some(OTHER_CHANGE));
+        assert_eq!(r.blockers[1].other_change.as_deref(), Some("CHG-000062"));
     }
 
     #[test]

@@ -200,6 +200,8 @@ async fn require_manager(
     actor: &Actor,
     project_id: Uuid,
 ) -> AppResult<()> {
+    // A hidden group answers like a missing one, never "only managers".
+    access::ensure_visible(actor, Some(project_id), access::not_found_project())?;
     if can_manage(conn, actor, project_id).await? {
         Ok(())
     } else {
@@ -403,24 +405,50 @@ pub struct NextNumber {
 /// scheme when `None`), without using up any. Manually entered numbers that
 /// are already taken are skipped when an item is created, so the real number
 /// can be higher.
+///
+/// A scheme typed in for the preview is free text, so its counter key could
+/// be the private counter of a restricted group: such a preview reads only
+/// counters that a scheme of a group the actor sees uses, and starts at 1
+/// otherwise.
 pub async fn numbering_preview(
     pool: &PgPool,
+    actor: &Actor,
     project: &Project,
     scheme: Option<&str>,
 ) -> AppResult<NumberingPreview> {
+    let own = domain::NumberScheme::of_project(project.number_scheme.as_deref())?;
     let scheme = match scheme.map(str::trim).filter(|s| !s.is_empty()) {
         Some(s) => domain::NumberScheme::parse(s)?,
-        None => domain::NumberScheme::of_project(project.number_scheme.as_deref())?,
+        None => own.clone(),
     };
     let now = Utc::now();
+    let readable: Option<std::collections::HashSet<String>> = if scheme == own {
+        None
+    } else {
+        let mut keys = std::collections::HashSet::new();
+        for p in list(pool, actor, false).await? {
+            let Ok(s) = domain::NumberScheme::of_project(p.number_scheme.as_deref()) else {
+                continue;
+            };
+            for item_type in ItemType::ALL {
+                keys.insert(s.counter_key(&domain::number_context(&p.code, item_type, now)));
+            }
+        }
+        Some(keys)
+    };
     let mut next = Vec::new();
     for item_type in ItemType::ALL {
         let ctx = domain::number_context(&project.code, item_type, now);
-        let used = sqlx::query_scalar::<_, i64>("SELECT value FROM counters WHERE name = $1")
-            .bind(scheme.counter_key(&ctx))
-            .fetch_optional(pool)
-            .await?
-            .unwrap_or(0);
+        let key = scheme.counter_key(&ctx);
+        let used = if readable.as_ref().is_none_or(|keys| keys.contains(&key)) {
+            sqlx::query_scalar::<_, i64>("SELECT value FROM counters WHERE name = $1")
+                .bind(&key)
+                .fetch_optional(pool)
+                .await?
+                .unwrap_or(0)
+        } else {
+            0
+        };
         next.push(NextNumber {
             item_type,
             label: item_type.label(),

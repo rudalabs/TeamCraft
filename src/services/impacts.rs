@@ -493,26 +493,43 @@ async fn record_flags(
     if flagged.is_empty() {
         return Ok(());
     }
-    let numbers = sqlx::query_scalar::<_, String>(
-        "SELECT number FROM items WHERE id = ANY($1) ORDER BY number",
+    // One entry per project group of the dependents, each naming only its own
+    // items: a reader who may not see a restricted group's dependents still
+    // reads the entries about the others.
+    let rows = sqlx::query_as::<_, (Option<Uuid>, Uuid, String)>(
+        "SELECT project_id, id, number FROM items WHERE id = ANY($1)
+         ORDER BY project_id NULLS FIRST, number",
     )
     .bind(flagged)
     .fetch_all(&mut *conn)
     .await?;
-    audit::record(
-        conn,
-        Some(actor),
-        "impact.flag",
-        "revision",
-        Some(source.id),
-        format!(
-            "{} {event}: check {}",
-            revisions::label(source),
-            numbers.join(", ")
-        ),
-        json!({ "item_id": source.item_id, "dependents": flagged }),
-    )
-    .await?;
+    let mut groups: Vec<(Option<Uuid>, Vec<Uuid>, Vec<String>)> = Vec::new();
+    for (project, id, number) in rows {
+        match groups.last_mut() {
+            Some((p, ids, numbers)) if *p == project => {
+                ids.push(id);
+                numbers.push(number);
+            }
+            _ => groups.push((project, vec![id], vec![number])),
+        }
+    }
+    for (_, ids, numbers) in groups {
+        audit::record_mentioning(
+            conn,
+            Some(actor),
+            "impact.flag",
+            "revision",
+            Some(source.id),
+            &audit::Mentions::items(ids.iter().copied()),
+            format!(
+                "{} {event}: check {}",
+                revisions::label(source),
+                numbers.join(", ")
+            ),
+            json!({ "item_id": source.item_id, "dependents": ids }),
+        )
+        .await?;
+    }
     notify_flagged(conn, actor, source, flagged).await
 }
 
@@ -783,7 +800,7 @@ pub async fn analysis(
     .fetch_all(pool)
     .await?;
     // Hidden dependents are dropped (the walk stopped at them) and counted.
-    let mut hidden_items: std::collections::HashSet<Uuid> = out
+    let hidden_items: std::collections::HashSet<Uuid> = out
         .iter()
         .filter(|d| !d.visible)
         .map(|d| d.item_id)
@@ -795,12 +812,8 @@ pub async fn analysis(
         if !actor.can_see_project(rev.project_id) {
             continue;
         }
-        let (referrers, _) = references::file_referrers(pool, actor, *id).await?;
-        for f in references::file_referrers_unchecked(pool, *id).await? {
-            if !referrers.iter().any(|v| v.item_id == f.item_id) {
-                hidden_items.insert(f.item_id);
-            }
-        }
+        // hidden file-name matches are left out without a count
+        let referrers = references::file_referrers(pool, actor, *id).await?;
         for f in referrers {
             if out
                 .iter()

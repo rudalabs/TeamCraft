@@ -55,7 +55,9 @@ A visible item can point to a restricted one, and the other way round:
 | Release readiness of a change | a restricted unreleased dependency still **blocks** the release and shows as "restricted dependency not released – ask a member of its group or an admin" |
 | Pack and Go, desktop Get | restricted items contribute no files; the manifest and the report only count them |
 | Change propagation (impacts) | a check on a visible item caused by a restricted release says "a restricted item this depends on was released" |
-| Audit history | an entry that names a restricted item reads "… changed a link to a restricted item" |
+| Audit history | an entry about a link to a restricted item reads "… changed a link to a restricted item"; an entry whose text names restricted items or a change order the reader cannot see (the revisions of a submitted, rejected or released change, flagged dependents, a request's items, a linked change) reads "… (the details name restricted items)" without details. Flagged dependents are listed per group, so the entries about visible dependents stay readable |
+| Readiness of a change | the depending revision of a hidden item shows as "restricted item"; another open change the reader cannot see shows as "another open change order" (also in the error when an item is already part of one) |
+| Change request items | a restricted affected item is a placeholder row without its note |
 
 ## Change orders and change requests
 
@@ -68,16 +70,24 @@ without items: everybody). Inside a visible change or request, rows of
 items the reader cannot see are placeholders.
 
 Reviewers and assignees must be able to see every affected item;
-TeamCraft refuses others. Submitting, reviewing and reopening a change
+TeamCraft refuses others – also when an item is added later to a change
+with reviewers or to a request with an assignee. Submitting, reviewing and reopening a change
 needs the same – an author or reviewer who lost membership can still
 withdraw or cancel, but not approve blind.
 
 ## Notifications, e-mail, chat, webhooks, assistant
 
 * Notifications are created only for recipients who may read their
-  subject, evaluated per recipient. Existing notifications are not
-  filtered afterwards, and pending e-mails to a recipient who has since
-  lost access are still sent.
+  subject, evaluated per recipient. A text that also names other items or
+  a change order (the revisions of a change, the change that released an
+  item or implemented a request) is replaced by a shorter text without
+  them for recipients who may not see all of them.
+* Notifications are checked again when they are read: after a group was
+  restricted or a membership removed, the older notifications about it
+  disappear from the list and the unread count, and pending e-mails and
+  chat posts about it are not sent (marked `skipped`). They come back with
+  the access. Notifications written before migration 0025 are shown as
+  stored.
 * With `TEAMCRAFT_MATTERMOST_DIRECT=false` (posts in a shared channel),
   notifications about restricted groups show only "new TeamCraft
   notification" and the link. E-mail and Mattermost direct messages go to
@@ -115,12 +125,19 @@ These are inherent to a shared instance and documented on purpose:
   BOM import says "not available").
 * The shared default number counter shows how many items other groups
   create. Give restricted groups their own scheme, e.g.
-  `{PROJECT}-{TYPE}-{SEQ:4}`.
+  `{PROJECT}-{TYPE}-{SEQ:4}`. The numbering preview of a scheme typed in
+  (not saved) counts on only for counters that a scheme of a group the
+  user sees uses; otherwise it starts at 1.
+* A BOM line that would close a cycle is refused even if the cycle runs
+  through restricted assemblies ("would create a circular BOM structure"):
+  the structure must stay a tree for everybody.
 * Change and request numbers are one sequence for all groups.
 * Where-used and referenced-by counts show that restricted items use an
   item – its owner needs to know before making it obsolete or deleting it.
 * Audit entries written before this feature (migration 0024) are shown as
-  stored; their numbers were visible to everyone at the time.
+  stored; their numbers were visible to everyone at the time. Migration
+  0025 marks the older impact, change and request entries with the items
+  and changes they name, so these are redacted like new ones.
 * Response times of hidden and missing objects are not equalised.
 * Backups, the command line and `/admin/audit` contain everything
   (operators and administrators).
