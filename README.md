@@ -178,6 +178,14 @@ the web UI with headless Chrome, TeamCraft Desktop on a virtual X display.
     <td width="50%"><a href="media/screenshots/bom-dark.png"><img src="media/screenshots/bom-dark.png" alt="The multi-level bill of materials of the sensor mast assembly in the dark scheme with states, quantities and the mass and cost totals" /></a><br /><sub><b>Multi-level BOM, dark</b> – every page in both schemes</sub></td>
   </tr>
   <tr>
+    <td width="50%"><a href="media/screenshots/assistant.png"><img src="media/screenshots/assistant.png" alt="Ask TeamCraft: quick actions such as draft release notes, check before release and what needs my attention, a free question box and the note that the assistant is read-only unless drafts are allowed" /></a><br /><sub><b>Ask TeamCraft</b> – the AI assistant with your rights, read-only by default</sub></td>
+    <td width="50%"><a href="media/screenshots/revision-similar.png"><img src="media/screenshots/revision-similar.png" alt="Similar parts of the mounting bracket: existing parts of similar 3D shape and size, ranked, each with the reason for the hit" /></a><br /><sub><b>Similar parts</b> – "do we already have a part like this?"</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/simulation-result-3d.png"><img src="media/screenshots/simulation-result-3d.png" alt="A static analysis result of the mast arm in the 3D viewer, coloured by von Mises stress with a colour legend and field selector" /></a><br /><sub><b>FEA results in 3D</b> – VTK and CalculiX results coloured by field</sub></td>
+    <td width="50%"><a href="media/screenshots/simulation-results.png"><img src="media/screenshots/simulation-results.png" alt="The simulation item of the mast arm with its basis revisions, key result values with limits and pass or fail" /></a><br /><sub><b>Simulation management</b> – result values with limits, out-of-date checks</sub></td>
+  </tr>
+  <tr>
     <td width="50%"><a href="media/screenshots/desktop-home.png"><img src="media/screenshots/desktop-home.png" alt="TeamCraft Desktop start screen: the project group ROVER expanded in the navigator with its items and their states, item statistics and the dependents to check" /></a><br /><sub><b>Desktop app</b> – navigator, statistics and what needs attention</sub></td>
     <td width="50%"><a href="media/screenshots/desktop-revision.png"><img src="media/screenshots/desktop-revision.png" alt="TeamCraft Desktop: the checked-out mounting bracket revision in a tab with check-in, edit and release actions, its properties, lifecycle and the sub-tabs for files, structure, where used and 3D viewer" /></a><br /><sub><b>Desktop revision tab</b> – check-out to a local workspace, check-in</sub></td>
   </tr>
