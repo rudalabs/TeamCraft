@@ -40,7 +40,7 @@ B-rep kernel, the mesh readers are part of TeamCraft. *Download STL* saves
 the shown triangles, e.g. for 3D printing.
 
 Simulation results show the outer surface of the mesh with a colour scale
-(viridis), the range of the field below the canvas and, when the file has
+(viridis), the range of the field above the canvas and, when the file has
 several fields, a selector – see [Simulations](simulation.md#results-in-3d).
 
 ## Previews of native CAD files

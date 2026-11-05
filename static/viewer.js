@@ -4,7 +4,7 @@
 // one compact binary mesh ("TCMESH01", see src/mesh.rs); this viewer only
 // draws it – nothing is parsed or tessellated in the browser. Simulation
 // results carry scalar fields; the viewer colours them with a colour map and
-// shows a legend (with a field selector) right below the canvas.
+// shows a legend (with a field selector) right above the canvas.
 //
 // Web pages mount the viewer through data attributes on #viewer-canvas; the
 // desktop app calls TeamCraftViewer.mount(canvas, options) with its own loader.
@@ -113,7 +113,7 @@
       return Number(v.toPrecision(4)).toLocaleString();
     }
 
-    // Legend below the canvas: field (selector when there are several), min, bar, max.
+    // Legend above the canvas: field (selector when there are several), min, bar, max.
     function legend(mesh, onSelect) {
       var el = document.createElement("div");
       el.className = "viewer-legend";
@@ -436,7 +436,7 @@
         if (mesh.fields.length) {
           legendView = legend(mesh, selectField);
           legendView.show(mesh.fields[0]);
-          canvas.insertAdjacentElement("afterend", legendView.el);
+          canvas.insertAdjacentElement("beforebegin", legendView.el);
         }
         canvas.setAttribute("data-ready", "true");
         if (options.onReady) options.onReady();

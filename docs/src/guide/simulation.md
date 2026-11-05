@@ -97,7 +97,7 @@ Solver scripts write their results through the REST API
 Result files in open formats open in the browser's 3D viewer like CAD
 previews – no ParaView needed. *View result in 3D* on the Results card (or
 *3D* next to the file) shows the outer surface of the mesh coloured by a
-result field, with the field's minimum and maximum below the canvas.
+result field, with the field's minimum and maximum above the canvas.
 
 | Format                          | Read                                                                                     |
 |---------------------------------|------------------------------------------------------------------------------------------|
