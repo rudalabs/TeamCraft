@@ -222,14 +222,12 @@
   <h2>Revisions</h2>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Rev</th><th>Name</th><th>State</th><th>Created</th><th>Released</th></tr></thead>
+    <thead><tr><th>Rev</th><th>State</th><th>Released</th></tr></thead>
     <tbody>
     {% for r in revisions %}
       <tr class="{% if r.id == rev.id %}current{% endif %}">
-        <td class="mono"><a href="/revisions/{{ r.id }}">{{ r.code }}</a></td>
-        <td>{{ r.name }}</td>
+        <td title="{{ r.name }} · created {{ r.created_at|dt }} by {{ r.created_by_name }}"><a class="revbox" href="/revisions/{{ r.id }}">{{ r.code }}</a></td>
         <td>{{ m.badge(r.state) }}{% if r.checked_out_by_name %} {{ m.lock(r.checked_out_by_name) }}{% endif %}</td>
-        <td class="small nowrap">{{ m.time(r.created_at) }} · {{ r.created_by_name }}</td>
         <td class="small nowrap">{{ m.time(r.released_at) }}</td>
       </tr>
     {% endfor %}
@@ -252,12 +250,12 @@
     <tbody>
     {% for f in files %}
       <tr>
-        <td class="file-cell">
+        <td><div class="file-cell">
           {% if f.format_info and f.format_info.thumbnail %}<a class="thumb-link" href="/files/{{ f.id }}/thumbnail" title="Preview image stored in the file"><img class="file-thumb" src="/files/{{ f.id }}/thumbnail?v={{ f.sha256 }}" alt="" loading="lazy" data-hide-broken></a>{% endif %}
           <a href="/files/{{ f.id }}/download">{{ f.filename }}</a>
           {% if f.format_info %}<span class="fmt fmt-{{ f.format_info.kind }}" title="{{ f.format_info.system_name }} · {{ f.format_info.kind_label }} · {{ f.content_type }}">{{ f.format_info.label }}</span>{% else %}<span class="muted small">{{ f.content_type }}</span>{% endif %}
           {% if f.preview %}<a class="button xs" href="/files/{{ f.id }}/preview" title="3D preview in the browser">3D</a>{% endif %}
-        </td>
+        </div></td>
         <td>
           {% if f.folder %}<span class="mono" title="{{ rev.project_code or '' }}/{{ f.folder }}/{{ f.filename }} in the desktop working folder">{{ f.folder }}/</span>
           {% else %}<span class="dim" title="At the top of the project group in the desktop working folder">—</span>{% endif %}

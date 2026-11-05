@@ -70,7 +70,7 @@
 <section class="card" id="impacts">
   <div class="card-head">
     <h2>Dependents to check <span class="count">{{ impact_groups|length }}</span></h2>
-    <span class="hint" title="Something these items use or reference was released in a new revision or made obsolete. Acknowledge what needs no change, or revise the item.">ⓘ A part they use was released or made obsolete</span>
+    <span class="hint info" title="Something these items use or reference was released in a new revision or made obsolete. Acknowledge what needs no change, or revise the item."><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M8 7.25v3.5M8 5.2v.1"/></svg>A part they use was released or made obsolete</span>
   </div>
   {% for g in impact_groups %}{{ m.impact_group(g, "/#impacts", me.can_edit) }}{% endfor %}
 </section>
