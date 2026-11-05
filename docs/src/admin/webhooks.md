@@ -29,7 +29,8 @@ full URL or the secret).
 
 A webhook can be limited to one project group: it then receives only events
 about items of that group (for a change: any of its revisions; for a change
-request: any affected item).
+request: any affected item). The `revisions` list of a change event then
+holds only that group's revisions.
 
 ## Payload
 
@@ -91,8 +92,15 @@ Shell (e.g. a CI step that received the body in `$BODY`):
 
 ```sh
 expected="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$TEAMCRAFT_WEBHOOK_SECRET" | sed 's/^.*= //')"
-[ "$expected" = "$SIGNATURE_HEADER" ] || { echo "bad signature" >&2; exit 1; }
+# `[ a = b ]` stops at the first differing byte; comparing hashes of both
+# values leaks nothing usable about the expected signature.
+[ "$(printf '%s' "$expected" | sha256sum)" = "$(printf '%s' "$SIGNATURE_HEADER" | sha256sum)" ] \
+  || { echo "bad signature" >&2; exit 1; }
 ```
+
+A shell variable cannot hold every body byte for byte (command
+substitution drops trailing newlines, NUL bytes are lost); for anything
+beyond a quick check, verify the raw body in a real program.
 
 Python:
 
@@ -101,7 +109,8 @@ import hashlib, hmac
 
 def verified(secret: str, body: bytes, header: str) -> bool:
     expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, header)
+    # bytes, not str: compare_digest raises TypeError for non-ASCII text
+    return hmac.compare_digest(expected.encode(), header.strip().encode())
 ```
 
 Rust (crates `hmac`, `sha2` and `hex`):
@@ -136,8 +145,9 @@ committed one is never lost, even if the server restarts before sending.
 With several TeamCraft servers on one database each delivery is claimed by
 exactly one of them (`FOR UPDATE SKIP LOCKED` with a lease of two minutes;
 a sender that crashes mid-request is retried after the lease). Deliveries
-can arrive out of order and, after a crash or a lost response, more than
-once – use `occurred_at` and the delivery id.
+can arrive out of order and, after a crash, a lost response or a *Retry*
+while an attempt is still running, more than once – use `occurred_at` and
+the delivery id.
 
 Switching a webhook off gives up its waiting deliveries; deleting it removes
 its history. Sent and failed deliveries are removed after
@@ -154,7 +164,8 @@ every address it connects to, at connection time and after DNS resolution:
 * **Default:** public addresses only. Loopback (`127.0.0.0/8`, `::1`),
   private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), shared
   (`100.64/10`), link-local (`169.254/16` including cloud metadata
-  endpoints, `fe80::/10`) and similar ranges are refused.
+  endpoints, `fe80::/10`) and similar ranges are refused, also when they
+  are written as IPv4-mapped, NAT64 or 6to4 IPv6 addresses.
 * **`TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS`** (recommended for on-premises
   installations): only the listed hosts can be targeted, and they may
   resolve to internal addresses – e.g. `erp.corp.example,*.ci.corp.example`.
