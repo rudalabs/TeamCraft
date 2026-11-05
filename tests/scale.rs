@@ -58,7 +58,6 @@ use uuid::Uuid;
 
 const SEED: &str = include_str!("scale/seed.sql");
 const BUSY_USER: &str = "scale.busy";
-const PASSWORD: &str = "scale-check-password";
 /// The page/API budget the scale check aims for (p50 on the CI runner).
 const TARGET_MS: f64 = 200.0;
 
@@ -304,7 +303,8 @@ async fn prepare(admin: &PgConnectOptions, db_name: &str) -> (PgPool, Seeded) {
                 display_name: "Busy Engineer".into(),
                 email: Some("busy@example.invalid".into()),
                 role: Role::Editor,
-                password: PASSWORD.into(),
+                // replaced by a fresh one on every run (see `login`)
+                password: Uuid::new_v4().to_string(),
             },
         )
         .await
@@ -452,8 +452,18 @@ fn failure(step: &Step, outcome: &Outcome) -> Option<String> {
     None
 }
 
-async fn login(router: &Router) -> String {
-    let body = format!("username={BUSY_USER}&password={PASSWORD}&next=%2F");
+/// Signs the busy user in through the login form, with a password set
+/// fresh for this run (the seeded database is kept between runs).
+async fn login(router: &Router, pool: &PgPool) -> String {
+    let user = users::find_by_username(pool, BUSY_USER)
+        .await
+        .expect("look up the busy user")
+        .expect("busy user");
+    let password = Uuid::new_v4().to_string();
+    users::set_password(pool, None, user.id, &password)
+        .await
+        .expect("set the busy user's password");
+    let body = format!("username={BUSY_USER}&password={password}&next=%2F");
     let response = router
         .clone()
         .oneshot(
@@ -966,7 +976,7 @@ async fn scale_check() {
     let counts = table_counts(&pool).await;
 
     let router = teamcraft::router(AppState::new(app_config(), pool.clone()).await.unwrap());
-    let cookie = login(&router).await;
+    let cookie = login(&router, &pool).await;
     let actor = {
         let user = users::find_by_username(&pool, BUSY_USER)
             .await
