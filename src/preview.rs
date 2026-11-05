@@ -27,7 +27,7 @@ use crate::{
 };
 
 /// Bump to invalidate every cached preview (reader fixes, new format).
-pub const CACHE_VERSION: u32 = 1;
+pub const CACHE_VERSION: u32 = 2;
 
 /// Conversions that run at the same time.
 pub const MAX_PARALLEL: usize = 2;
@@ -120,8 +120,13 @@ impl PreviewFormat {
 
 /// Converts the file at `input` (CLI `teamcraft preview-mesh` and tests).
 pub fn convert_file(format: PreviewFormat, input: &Path) -> anyhow::Result<Vec<u8>> {
+    Ok(convert(format, input)?.encode())
+}
+
+/// Reads the file at `input` as a preview mesh.
+pub fn convert(format: PreviewFormat, input: &Path) -> anyhow::Result<crate::mesh::Mesh> {
     let data = std::fs::read(input)?;
-    Ok(crate::mesh::read(format.as_str(), &data)?.encode())
+    crate::mesh::read(format.as_str(), &data)
 }
 
 /// Cached, isolated conversions (one per server, part of `AppState`).
