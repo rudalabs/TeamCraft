@@ -82,8 +82,12 @@ the known gaps with details. Last update: 2026-11-05.
 - [x] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools (2026-11-04,
   PostgreSQL 17 on Windows; now an automated test, `tests/backup_restore.rs`, run in CI against PostgreSQL 16 and 18)
 - [x] Chunked resumable uploads (feature 9): `/api/v1/uploads` (offset-checked chunks, resume, SHA-256 check, same
-  check-in code path, base version and folder per session), used by the desktop app for files above 32 MiB; open:
-  chunked uploads from the web UI (`static/app.js`)
+  check-in code path, base version and folder per session), used by the desktop app for files above 32 MiB
+- [x] Chunked uploads from the web UI: `static/app.js` sends files above 32 MiB of the attach and check-in forms
+  (revision page, vault explorer) in chunks to `/uploads` (the same sessions, signed in with the session cookie and
+  covered by the same-origin check, `src/web/uploads.rs`), retries a dropped chunk, resumes after a reload when the
+  same file is chosen again, and *Cancel upload* removes the sessions (tested in `tests/uploads.rs` and in Chromium,
+  2026-11-05); open: the *New item* form still sends its files in one request (the revision exists only afterwards)
 - [x] README screenshots of the web pages: captured in CI by `scripts/screenshots.sh` (run 41919547600), committed in
   `media/screenshots/`
 - [ ] Desktop app screenshots and short GIFs for the README
@@ -271,8 +275,9 @@ The history up to the open-source release is squashed into the first commit
 8. **Bulk import of a folder tree** (NAS/Drive) as items with files (candidate: `walkdir`, MIT/Unlicense).
 9. **Chunked resumable uploads**: done without new dependencies – a tus-like protocol of our own (`POST /api/v1/uploads`,
    `PATCH` with `Upload-Offset`, 409 on a wrong offset, `HEAD` to resume, `finish` or the `uploads` field of a
-   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; the desktop app uses it for large
-   files, the web UI still sends one multipart request. **Backup/restore** of the database and vault is done
+   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; the desktop app and the attach and
+   check-in forms of the web UI (`/uploads` with the session cookie) use it for files above 32 MiB, only the *New item*
+   form still sends one multipart request. **Backup/restore** of the database and vault is done
    (`teamcraft backup`/`teamcraft restore` with `pg_dump`/`pg_restore`, unit tests for the manifest, argument building,
    hashes and path safety). End to end with the real client tools: `tests/backup_restore.rs` (backup, restore into a
    fresh database and vault, identical row counts, file download and API token on the restored instance, `--force`,

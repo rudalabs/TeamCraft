@@ -114,7 +114,7 @@
   <h2>Check in {{ rev.item_number }}/{{ rev.code }}</h2>
   <p class="hint">Files with the same name as an existing file become its next version. The files are stored and
     your check-out is released in one step – if anything fails, nothing changes.</p>
-  <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin" enctype="multipart/form-data">
+  <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin" enctype="multipart/form-data" data-chunked="{{ rev.id }}">
     <input type="hidden" name="bases" value="{{ file_bases }}">
     <label>New files / versions <span class="hint">optional, max. {{ max_upload_mb }} MiB per file</span>
       <input type="file" name="file" multiple>
@@ -329,7 +329,7 @@
     TeamCraft desktop app: it keeps one working folder per project group with the folder structure shown here
     (<span class="mono">TeamCraft/{% if rev.project_code %}{{ rev.project_code }}{% else %}&lt;group&gt;{% endif %}/&lt;folder&gt;/&lt;file&gt;</span>), gets whole assemblies and keeps files you have not checked out read-only.</p>
   {% if can.edit %}
-  <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data">
+  <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data" data-chunked="{{ rev.id }}">
     <input type="hidden" name="bases" value="{{ file_bases }}">
     <input type="file" name="file" multiple required>
     <input type="text" name="comment" maxlength="2000" placeholder="Comment (optional)" aria-label="Comment">
