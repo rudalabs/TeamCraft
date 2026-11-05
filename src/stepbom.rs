@@ -29,6 +29,10 @@ use crate::bomtable::{field_label, BomRow, BomTable, Column, MAX_ROWS};
 /// Deeper structures are cut (protects the recursion).
 const MAX_DEPTH: usize = 64;
 
+/// Deeper nested parameter lists are skipped without recursion, so a hostile
+/// file cannot overflow the stack (real files nest a few levels at most).
+const MAX_NESTING: usize = 32;
+
 /// Whether the file name is a STEP file (`.step`, `.stp`, `.p21`).
 pub fn is_step(filename: &str) -> bool {
     filename
@@ -353,6 +357,7 @@ fn params(body: &str) -> Vec<Param> {
         text: body,
         bytes: body.as_bytes(),
         i: 0,
+        depth: 0,
     };
     parser.list()
 }
@@ -361,6 +366,8 @@ struct Parser<'a> {
     text: &'a str,
     bytes: &'a [u8],
     i: usize,
+    /// Nesting of the list being read.
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -407,9 +414,17 @@ impl Parser<'_> {
                         Err(_) => Param::Other,
                     });
                 }
+                Some(b'(') if self.depth >= MAX_NESTING => {
+                    // `other` skips the balanced list iteratively.
+                    self.other();
+                    out.push(Param::Other);
+                }
                 Some(b'(') => {
                     self.i += 1;
-                    out.push(Param::List(self.list()));
+                    self.depth += 1;
+                    let list = self.list();
+                    self.depth -= 1;
+                    out.push(Param::List(list));
                 }
                 Some(_) => {
                     self.other();
@@ -705,5 +720,31 @@ mod tests {
                 Param::Str("x(y".into()),
             ]
         );
+    }
+
+    #[test]
+    fn deeply_nested_parameters_do_not_overflow_the_stack() {
+        let n = 200_000;
+        let body = format!("'a',{}{},#7", "(".repeat(n), ")".repeat(n));
+        let p = params(&body);
+        assert_eq!(p.len(), 3);
+        assert_eq!(p[0], Param::Str("a".into()));
+        assert_eq!(p[2], Param::Ref(7));
+        // The outer levels are kept, the rest is skipped as one parameter.
+        let mut level = &p[1];
+        let mut depth = 0;
+        while let Param::List(inner) = level {
+            depth += 1;
+            level = &inner[0];
+        }
+        assert_eq!((depth, level), (MAX_NESTING, &Param::Other));
+
+        let file = format!(
+            "{}#1=PRODUCT({}{});\n",
+            product(1, "A", "A"),
+            "(".repeat(n),
+            ")".repeat(n)
+        );
+        assert!(read(&step(&file)).is_err());
     }
 }

@@ -352,6 +352,7 @@ pub(crate) async fn create_tx(
             let (counter, seed) = projects::number_counter(project_id, &visibility, &scheme, &ctx);
             let own_scheme = scheme != domain::NumberScheme::default_scheme();
             let mut attempts = 0;
+            let mut jumped = false;
             loop {
                 let next = projects::next_number(tx, &counter, seed.as_deref()).await?;
                 let generated = scheme.format(&ctx, next);
@@ -383,6 +384,43 @@ pub(crate) async fn create_tx(
                     return Err(AppError::Conflict(format!(
                         "The numbering scheme of the project group {code} gives the item number '{candidate}', which is already in use; change the scheme or enter a number."
                     )));
+                }
+                if !jumped {
+                    // Numbers of this pattern exist already (entered by hand,
+                    // imported, or a scheme that continues an old
+                    // convention): continue after the highest one at once.
+                    // Only items the actor can see count, so the jump tells
+                    // nothing about hidden groups (their numbers are met
+                    // one by one as above).
+                    jumped = true;
+                    let (prefix, _) = scheme.around_seq(&ctx);
+                    let pattern = format!(
+                        "{}%",
+                        prefix
+                            .replace('\\', "\\\\")
+                            .replace('%', "\\%")
+                            .replace('_', "\\_")
+                    );
+                    let highest = sqlx::query_as::<_, (String, Option<Uuid>)>(
+                        "SELECT number, project_id FROM items WHERE number LIKE $1 ESCAPE '\\'",
+                    )
+                    .bind(&pattern)
+                    .fetch_all(&mut *tx)
+                    .await?
+                    .iter()
+                    .filter(|(_, project)| actor.can_see_project(*project))
+                    .filter_map(|(n, _)| scheme.seq_of(&ctx, n))
+                    .max();
+                    if let Some(highest) = highest {
+                        sqlx::query(
+                            "UPDATE counters SET value = GREATEST(value, $2) WHERE name = $1",
+                        )
+                        .bind(&counter)
+                        .bind(highest)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    continue;
                 }
                 attempts += 1;
                 if attempts > 1000 {
