@@ -152,6 +152,29 @@ Files already copied to a desktop working folder stay on that computer;
 the desktop app marks such revisions as "No longer accessible" and never
 syncs them again.
 
+## Upgrading
+
+Migrations 0024 to 0028 run on start and need no action: 0024 adds the
+visibility (every existing group stays **internal**, so nothing changes
+until a group is restricted), 0025 to 0028 add and back-fill what audit
+entries and notifications name. Take a backup first, as before every
+upgrade. Behaviour that changes for everybody, also without a restricted
+group:
+
+* Placeholder rows ("Restricted item") exist only once a group is
+  restricted; for internal groups BOMs, references and notes look as
+  before.
+* An item of a restricted group that is listed on a change request cannot
+  be deleted until it is removed from the request. Deleting an item of an
+  internal group removes it from its requests and records that in their
+  history.
+* A webhook for all groups stops receiving events of a group once it is
+  restricted – scope a webhook to the group before restricting it if a
+  receiver needs them.
+* Before restricting a group that shares the default numbering scheme,
+  give it its own scheme (see below), or the shared counter keeps telling
+  how many items it creates.
+
 ## What stays visible
 
 These are inherent to a shared instance and documented on purpose:
