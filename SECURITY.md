@@ -49,7 +49,10 @@ In scope:
 * uploads and the parsers for CAD, mesh, point-cloud and BOM table files.
   This includes files that crash or hang the server, or that get around the
   time limit of the preview process;
-* path traversal in the vault or in the desktop workspace.
+* path traversal in the vault or in the desktop workspace;
+* event webhooks that reach a target the
+  [target guard](https://rudalabs.github.io/TeamCraft/admin/webhooks.html#where-webhooks-may-send-to)
+  should refuse, or signatures that can be forged without the secret.
 
 Out of scope:
 

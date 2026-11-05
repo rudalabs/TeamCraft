@@ -20,6 +20,12 @@ use std::io::{Cursor, Read};
 
 use anyhow::{anyhow, bail, Context, Result};
 
+mod p21;
+mod step;
+mod tessellated;
+
+pub use step::MAX_STEP_BYTES;
+
 /// Largest triangle count that is previewed.
 pub const MAX_TRIANGLES: usize = 8_000_000;
 /// Point clouds with more points are thinned out evenly.
@@ -42,6 +48,9 @@ pub struct Mesh {
     pub parts: u32,
     /// Scalar result fields, one value per vertex (simulation results).
     pub fields: Vec<Field>,
+    /// A partial preview: (faces shown, faces in the file) – STEP files
+    /// whose B-rep the kernel could tessellate only in part.
+    pub faces: Option<(u32, u32)>,
 }
 
 /// Fields a mesh carries at most (the viewer offers them in a selector).
@@ -211,17 +220,20 @@ impl Mesh {
     /// ```text
     /// 0   "TCMESH01"
     /// 8   u32 vertices   12  u32 indices   16  u32 parts
-    /// 20  u32 flags (1 = colours, 2 = fields)
+    /// 20  u32 flags (1 = colours, 2 = fields, 4 = partial preview)
     /// 24  f32 × 6 bounding box
     /// 48  f32 × 3·vertices, u32 × indices, u8 × 3·vertices (colours, padded to 4 bytes)
     ///     only with flag 2, after that:
     ///     u32 field count, then per field
     ///     u32 n, n bytes name (UTF-8), u32 m, m bytes unit, padding to 4 bytes,
     ///     f32 min, f32 max, f32 × vertices (NaN = no value)
+    /// with flag 4, the last 8 bytes of the file: u32 faces shown, u32 faces in the file
     /// ```
     ///
-    /// Viewers that do not know flag 2 ignore the trailing section; meshes
-    /// with fields also carry the first field as colours for them.
+    /// Viewers that do not know flag 2 ignore the field section; meshes
+    /// with fields also carry the first field as colours for them. The face
+    /// count sits at the very end, so viewers that do not know flag 4 – and
+    /// the field section in between – are not affected.
     pub fn encode(&self) -> Vec<u8> {
         let field_bytes: usize = self
             .fields
@@ -229,14 +241,16 @@ impl Mesh {
             .map(|f| 20 + f.name.len() + f.unit.len() + f.values.len() * 4)
             .sum();
         let mut out = Vec::with_capacity(
-            52 + self.positions.len() * 4
+            56 + self.positions.len() * 4
                 + self.indices.len() * 4
                 + self.colors.len()
                 + field_bytes
                 + 4,
         );
         out.extend_from_slice(MAGIC);
-        let flags = u32::from(!self.colors.is_empty()) | (u32::from(!self.fields.is_empty()) << 1);
+        let flags = u32::from(!self.colors.is_empty())
+            | (u32::from(!self.fields.is_empty()) << 1)
+            | (u32::from(self.faces.is_some()) << 2);
         for v in [
             self.vertex_count() as u32,
             self.indices.len() as u32,
@@ -275,6 +289,11 @@ impl Mesh {
                     out.extend_from_slice(&v.to_le_bytes());
                 }
             }
+        }
+        // last, so that viewers that do not know flag 4 are not affected
+        if let Some((shown, total)) = self.faces {
+            out.extend_from_slice(&shown.to_le_bytes());
+            out.extend_from_slice(&total.to_le_bytes());
         }
         out
     }
@@ -329,9 +348,11 @@ impl Mesh {
             .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
             .collect();
         let at = at + indices * 4;
+        // end of the body: after the colours (padded) and the field section
+        let mut end = (at + colors).div_ceil(4) * 4;
         let mut fields = Vec::new();
         if flags & 2 == 2 {
-            let mut at = (at + colors).div_ceil(4) * 4;
+            let mut at = end;
             let count = u(at)?;
             at += 4;
             if count > MAX_FIELDS {
@@ -346,26 +367,38 @@ impl Mesh {
                 };
                 let (name, unit) = (text()?, text()?);
                 at = at.div_ceil(4) * 4 + 8;
-                let end = vertices
+                let values_end = vertices
                     .checked_mul(4)
                     .and_then(|n| n.checked_add(at))
                     .context("truncated mesh")?;
                 let values = data
-                    .get(at..end)
+                    .get(at..values_end)
                     .context("truncated mesh")?
                     .chunks_exact(4)
                     .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                     .collect();
-                at = end;
+                at = values_end;
                 fields.push(Field { name, unit, values });
             }
+            end = at;
         }
+        // flag 4: the face count in the last 8 bytes, after everything else
+        let faces = if flags & 4 == 4 {
+            if data.len() < end + 8 {
+                bail!("truncated mesh");
+            }
+            let tail = data.len() - 8;
+            Some((u(tail)? as u32, u(tail + 4)? as u32))
+        } else {
+            None
+        };
         Ok(Mesh {
             positions,
             indices: index_values,
             colors: data[at..at + colors].to_vec(),
             parts: parts as u32,
             fields,
+            faces,
         })
     }
 }
@@ -383,7 +416,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "3ds" => three_ds(data)?,
         "pts" | "xyz" => text_points(data)?,
         "las" => las(data)?,
-        "step" => step(data)?,
+        "step" => step::read(data)?,
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
         "calculix-frd" => crate::simmesh::frd(data)?,
@@ -1494,94 +1527,6 @@ fn las(data: &[u8]) -> Result<Mesh> {
     Ok(mesh)
 }
 
-// ---------------------------------------------------------------------------
-// STEP (B-rep) with truck
-// ---------------------------------------------------------------------------
-
-fn step(data: &[u8]) -> Result<Mesh> {
-    use truck_meshalgo::prelude::*;
-    use truck_stepio::r#in::*;
-
-    let text = std::str::from_utf8(data)
-        .map_err(|_| anyhow!("The STEP file is not valid text (ISO 10303-21)."))?;
-    if !text.trim_start().starts_with("ISO-10303-21") {
-        bail!("Not a STEP file (ISO-10303-21 header missing).");
-    }
-    // The kernel may panic on geometry it does not support; that must not
-    // take the process down when the preview runs in-process.
-    let result = std::panic::catch_unwind(|| -> Result<Mesh> {
-        let table = Table::from_step(text)
-            .context("The STEP file could not be parsed by the B-rep reader.")?;
-        let mut out = Mesh::default();
-        let mut failed = 0usize;
-        let mut shells: Vec<_> = table.shell.iter().collect();
-        shells.sort_by_key(|(id, _)| **id);
-        for (_, holder) in shells {
-            let Ok(shell) = table.to_compressed_shell(holder) else {
-                failed += 1;
-                continue;
-            };
-            // tolerance: 0.2 % of the size of the shell
-            let mut min = [f64::MAX; 3];
-            let mut max = [f64::MIN; 3];
-            for v in &shell.vertices {
-                for a in 0..3 {
-                    min[a] = min[a].min(v[a]);
-                    max[a] = max[a].max(v[a]);
-                }
-            }
-            let diameter = if shell.vertices.is_empty() {
-                1.0
-            } else {
-                ((max[0] - min[0]).powi(2) + (max[1] - min[1]).powi(2) + (max[2] - min[2]).powi(2))
-                    .sqrt()
-            };
-            let tolerance = (diameter * 0.002).max(TOLERANCE * 10.0);
-            let mut polygon = shell.robust_triangulation(tolerance).to_polygon();
-            polygon
-                .put_together_same_attrs(TOLERANCE * 50.0)
-                .remove_degenerate_faces()
-                .remove_unused_attrs();
-            let mut part = Mesh {
-                parts: 1,
-                ..Mesh::default()
-            };
-            for p in polygon.positions() {
-                part.vertex([p[0], p[1], p[2]]);
-            }
-            let n = part.vertex_count();
-            let mut corners = Vec::new();
-            for face in polygon.face_iter() {
-                corners.clear();
-                for v in face {
-                    if v.pos >= n {
-                        bail!("Internal error: tessellation index out of range.");
-                    }
-                    corners.push(v.pos as u32);
-                }
-                fan(&mut part, &corners);
-            }
-            if part.indices.is_empty() {
-                failed += 1;
-                continue;
-            }
-            out.append(part);
-            check_triangles(out.triangle_count())?;
-        }
-        if out.positions.is_empty() {
-            if failed > 0 {
-                bail!("The B-rep reader could not tessellate the {failed} shell(s) of this STEP file (unsupported surface types?).");
-            }
-            bail!("The STEP file contains no solids or surfaces the preview can show.");
-        }
-        Ok(out)
-    });
-    match result {
-        Ok(mesh) => mesh,
-        Err(_) => bail!("The B-rep reader failed on this STEP file (unsupported geometry)."),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1880,5 +1825,100 @@ property uchar red\nproperty uchar green\nproperty uchar blue\nelement face 1\np
         .is_err());
         assert!(Mesh::default().check().is_err());
         assert!(read("dwg", b"").is_err());
+    }
+
+    #[test]
+    fn partial_previews_carry_their_face_count() {
+        let mut mesh = read("stl", cube_stl_ascii().as_bytes()).unwrap();
+        mesh.faces = Some((5, 6));
+        let bytes = mesh.encode();
+        assert_eq!(bytes.len() % 4, 0);
+        assert_eq!(u32::from_le_bytes(bytes[20..24].try_into().unwrap()), 4);
+        assert_eq!(Mesh::decode(&bytes).unwrap(), mesh);
+        // a complete preview has no face count
+        mesh.faces = None;
+        let complete = mesh.encode();
+        assert_eq!(complete.len() + 8, bytes.len());
+        assert_eq!(Mesh::decode(&complete).unwrap().faces, None);
+        // a damaged face count is an error, not a panic
+        assert!(Mesh::decode(&bytes[..bytes.len() - 4]).is_err());
+    }
+
+    fn flags(bytes: &[u8]) -> u32 {
+        u32::from_le_bytes(bytes[20..24].try_into().unwrap())
+    }
+
+    #[test]
+    fn fields_and_face_counts_combine() {
+        let mut mesh = read("stl", cube_stl_ascii().as_bytes()).unwrap();
+        let n = mesh.vertex_count();
+        mesh.fields = vec![
+            Field {
+                name: "Displacement".into(),
+                unit: "mm".into(),
+                values: (0..n).map(|i| i as f32 * 0.5).collect(),
+            },
+            Field {
+                name: "S".into(),
+                unit: String::new(),
+                values: (0..n)
+                    .map(|i| if i == 0 { f32::NAN } else { i as f32 })
+                    .collect(),
+            },
+        ];
+        mesh.bake_colors();
+
+        // plain mesh: no extension flags
+        let plain = Mesh {
+            fields: Vec::new(),
+            colors: Vec::new(),
+            ..mesh.clone()
+        };
+        let plain_bytes = plain.encode();
+        assert_eq!(flags(&plain_bytes), 0);
+        assert_eq!(Mesh::decode(&plain_bytes).unwrap(), plain);
+
+        // fields only (flag 2, with the baked colours: flag 1)
+        let fields_only = mesh.encode();
+        assert_eq!(flags(&fields_only), 1 | 2);
+        let decoded = Mesh::decode(&fields_only).unwrap();
+        assert_eq!(decoded.faces, None);
+        assert_eq!(decoded.fields.len(), 2);
+        assert_eq!(decoded.fields[0], mesh.fields[0]);
+        assert!(decoded.fields[1].values[0].is_nan());
+        assert_eq!(decoded.fields[1].values[1..], mesh.fields[1].values[1..]);
+
+        // face counts only (flag 4)
+        let faces_only = Mesh {
+            fields: Vec::new(),
+            faces: Some((3, 7)),
+            ..mesh.clone()
+        };
+        let faces_bytes = faces_only.encode();
+        assert_eq!(flags(&faces_bytes), 1 | 4);
+        assert_eq!(Mesh::decode(&faces_bytes).unwrap(), faces_only);
+
+        // both: the field section first, the face count in the last 8 bytes
+        mesh.faces = Some((5, 6));
+        let both = mesh.encode();
+        assert_eq!(both.len() % 4, 0);
+        assert_eq!(flags(&both), 1 | 2 | 4);
+        assert_eq!(both.len(), fields_only.len() + 8);
+        // apart from the flags word, the body is the fields-only encoding
+        assert_eq!(both[..20], fields_only[..20]);
+        assert_eq!(both[24..fields_only.len()], fields_only[24..]);
+        assert_eq!(both[both.len() - 8..both.len() - 4], 5u32.to_le_bytes());
+        assert_eq!(both[both.len() - 4..], 6u32.to_le_bytes());
+        let decoded = Mesh::decode(&both).unwrap();
+        assert_eq!(decoded.faces, Some((5, 6)));
+        assert_eq!(decoded.fields.len(), 2);
+        assert_eq!(decoded.fields[0], mesh.fields[0]);
+        assert_eq!(decoded.colors, mesh.colors);
+        // the face count must not overlap the field section
+        assert!(Mesh::decode(&both[..both.len() - 4]).is_err());
+        let mut short = fields_only.clone();
+        short[20] |= 4;
+        short.extend_from_slice(&[0; 4]);
+        assert!(Mesh::decode(&short).is_err());
     }
 }

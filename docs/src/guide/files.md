@@ -36,8 +36,13 @@ The server converts a file **once**, in a separate process with a time limit,
 and caches the result next to the vault; uploads start the conversion in the
 background so the first viewer does not wait. Everything is pure Rust: STEP
 is read and tessellated with the [truck](https://github.com/ricosjp/truck)
-B-rep kernel, the mesh readers are part of TeamCraft. *Download STL* saves
-the shown triangles, e.g. for 3D printing.
+B-rep kernel (or from the tessellated geometry of AP242 files), the mesh
+readers are part of TeamCraft. *Download STL* saves the shown triangles, e.g.
+for 3D printing.
+
+When a STEP preview shows only part of the model, the line below the viewer
+says **partial preview: N of M faces** – the missing faces use geometry the
+kernel cannot tessellate. Details: [STEP in the 3D preview](../reference/formats.md#step-in-the-3d-preview).
 
 Simulation results show the outer surface of the mesh with a colour scale
 (viridis), the range of the field above the canvas and, when the file has

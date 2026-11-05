@@ -143,6 +143,37 @@ Extensions that other programs use too are decided by the file content:
 
 Result files are never treated as CAD files referenced by assemblies.
 
+## STEP in the 3D preview
+
+STEP files (AP203, AP214, AP242; `.step`, `.stp`, `.p21`) are previewed from
+one of two sources:
+
+* **B-rep** – `CLOSED_SHELL` / `OPEN_SHELL` of `ADVANCED_FACE`s with planes,
+  cylinders, cones, spheres, tori, B-spline and Bézier surfaces (also
+  rational), extrusions and revolutions, tessellated with the
+  [truck](https://github.com/ricosjp/truck) kernel. TeamCraft's own Part 21
+  reader hands the kernel only the geometry and topology it understands, in
+  a normalised form: PMI, presentation, product and unit data – where AP242
+  exporters write empty lists, escaped quotes or binary values that the
+  kernel's parser rejects – never reach it.
+* **Tessellated geometry** of AP242 (`TRIANGULATED_FACE`,
+  `COMPLEX_TRIANGULATED_FACE`, `TRIANGULATED_SURFACE_SET`,
+  `COMPLEX_TRIANGULATED_SURFACE_SET` with their `COORDINATES_LIST`) when
+  there is no B-rep or it is incomplete – no kernel needed. Tessellated PMI
+  (dimensions and notes drawn as triangles, used by an
+  `…ANNOTATION…OCCURRENCE`) is not shown.
+
+Each shell is tessellated on its own; when the kernel fails on a face – an
+unsupported surface type, broken trimming, or a panic inside the kernel – the
+faces are tessellated one by one and only the bad ones are missing. The
+viewer then says **partial preview: N of M faces**.
+
+Not applied: length units (the viewer shows model units as in the file) and
+assembly placements (`MAPPED_ITEM`, `CONTEXT_DEPENDENT_SHAPE_REPRESENTATION`
+– every shell appears in its own coordinates). STEP files above 256 MB are
+not previewed; the conversion has a time limit of 180 s and the usual
+triangle limit.
+
 ## Why not every format is previewed
 
 Most native formats are proprietary and undocumented; reading their geometry

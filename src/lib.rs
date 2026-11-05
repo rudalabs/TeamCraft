@@ -43,6 +43,7 @@ pub mod thumbnail;
 pub mod util;
 pub mod vault;
 pub mod web;
+pub mod webhooks;
 
 use std::{any::Any, sync::Arc};
 
@@ -77,6 +78,9 @@ pub struct AppState {
     pub previews: Arc<Previews>,
     /// The built-in assistant; `None` without `TEAMCRAFT_ANTHROPIC_API_KEY`.
     pub assistant: Option<Arc<assistant::Assistant>>,
+    /// Sends outgoing event webhooks ("Send test", "Retry"; the background
+    /// task has its own).
+    pub webhooks: webhooks::Dispatcher,
 }
 
 impl AppState {
@@ -100,6 +104,8 @@ impl AppState {
             )),
             None => None,
         };
+        let webhooks = webhooks::Dispatcher::from_config(&config)
+            .context("setting up the webhook delivery failed")?;
         Ok(AppState {
             db,
             config: Arc::new(config),
@@ -108,6 +114,7 @@ impl AppState {
             oidc,
             previews,
             assistant,
+            webhooks,
         })
     }
 }

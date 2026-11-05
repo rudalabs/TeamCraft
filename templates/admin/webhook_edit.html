@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Webhook {{ webhook.name }}{% endblock %}
+{% block nav_webhooks %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>{{ webhook.name }} {% if webhook.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">inactive</span>{% endif %}</h1>
+    <p class="subtitle">
+      Sends to <span class="mono">{{ host }}</span>
+      · {{ webhook.project_code or "all project groups" }}
+      · created {{ m.time(webhook.created_at) }}{% if webhook.created_by_name %} by {{ webhook.created_by_name }}{% endif %}
+    </p>
+  </div>
+  <div class="actions">
+    <form class="inline" method="post" action="/admin/webhooks/{{ webhook.id }}/test">
+      <button type="submit" title="Sends a ping event now and shows the answer" {% if not webhook.active %}disabled{% endif %}>Send test</button>
+    </form>
+    <a class="button" href="/admin/webhooks">All webhooks</a>
+  </div>
+</div>
+
+{% if secret %}
+<section class="card">
+  <h2>Secret of “{{ webhook.name }}”</h2>
+  <p>Copy the secret now and store it with the receiver – it is shown only once. The receiver computes
+     HMAC-SHA256 of the request body with this secret and compares it with the <span class="mono">X-TeamCraft-Signature</span> header.</p>
+  <div class="token-box" id="webhook-secret">{{ secret }}</div>
+  <div class="actions"><button type="button" data-copy="webhook-secret">Copy</button></div>
+  <h3>Check a delivery</h3>
+  <pre class="token-box">printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$TEAMCRAFT_WEBHOOK_SECRET"</pre>
+</section>
+{% endif %}
+
+<div class="grid grid-2">
+  <section class="card">
+    <h2>Settings</h2>
+    <form class="stack" method="post" action="/admin/webhooks/{{ webhook.id }}">
+      <label>Name <input type="text" name="name" value="{{ webhook.name }}" maxlength="100" required></label>
+      <label>URL <input type="url" name="url" value="{{ webhook.url }}" maxlength="2000" required spellcheck="false"></label>
+      <fieldset class="event-choices">
+        <legend>Send these events</legend>
+        {% for e in events %}
+        <label class="check"><input type="checkbox" name="event" value="{{ e.value }}" {% if e.on %}checked{% endif %}> {{ e.label }} <span class="mono">{{ e.value }}</span></label>
+        {% endfor %}
+      </fieldset>
+      <label>Project group
+        <select name="project">
+          <option value="">All project groups</option>
+          {% for p in projects %}<option value="{{ p.id }}" {% if p.id == webhook.project_id %}selected{% endif %}>{{ p.code }} – {{ p.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" name="active" {% if webhook.active %}checked{% endif %}> Active (switching it off gives up the deliveries that are still waiting)</label>
+      <div class="actions"><button class="primary" type="submit">Save</button></div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Secret</h2>
+    <p>Current secret <span class="mono">{{ webhook.secret_hint }}</span>, set {{ m.time(webhook.secret_rotated_at) }}.</p>
+    <p class="hint">A new secret takes effect at once, also for deliveries that are still waiting. Update the receiver right after.</p>
+    <form class="stack" method="post" action="/admin/webhooks/{{ webhook.id }}/rotate-secret"
+          data-confirm="Create a new secret for {{ webhook.name }}? The receiver rejects deliveries until it has the new one.">
+      <div class="actions"><button type="submit">Create new secret</button></div>
+    </form>
+    <h2>Delete</h2>
+    <p class="hint">Removes the webhook and its delivery history.</p>
+    <form class="stack" method="post" action="/admin/webhooks/{{ webhook.id }}/delete"
+          data-confirm="Delete the webhook {{ webhook.name }} and its delivery history?">
+      <div class="actions"><button class="danger" type="submit">Delete webhook</button></div>
+    </form>
+  </section>
+</div>
+
+<section class="card">
+  <h2>Latest deliveries</h2>
+  {% if deliveries %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Created</th><th>Event</th><th>Status</th><th class="right">Attempts</th><th>Answer</th><th></th></tr></thead>
+    <tbody>
+    {% for d in deliveries %}
+      <tr>
+        <td class="small nowrap">{{ m.time(d.created_at) }}</td>
+        <td><span class="mono small">{{ d.event }}</span>
+          <details class="payload"><summary>Payload</summary><pre>{{ d.payload_text }}</pre></details>
+        </td>
+        <td class="nowrap">
+          {% if d.status == "pending" and d.attempts > 0 %}<span class="badge badge-retrying">retrying</span>
+          {% else %}<span class="badge badge-{{ d.status }}">{{ d.status }}</span>{% endif %}
+          {% if d.status == "pending" %}<br><span class="small muted">next {{ m.time(d.next_attempt_at) }}</span>
+          {% elif d.delivered_at %}<br><span class="small muted">{{ m.time(d.delivered_at) }}</span>{% endif %}
+        </td>
+        <td class="right">{{ d.attempts }} / {{ max_attempts }}</td>
+        <td class="small">{% if d.last_status_code %}HTTP {{ d.last_status_code }}{% endif %}{% if d.last_error and d.last_error != ("HTTP " ~ d.last_status_code) %}{% if d.last_status_code %} – {% endif %}{{ d.last_error }}{% endif %}</td>
+        <td class="right">
+          {% if d.status != "sent" and webhook.active %}
+          <form class="inline" method="post" action="/admin/webhooks/{{ webhook.id }}/deliveries/{{ d.id }}/retry">
+            <button class="small" type="submit" title="Send it again now, with a fresh set of {{ max_attempts }} attempts">Retry</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">Delivery <span class="mono">X-TeamCraft-Delivery</span> ids stay the same over retries, so receivers can skip duplicates. Finished deliveries are kept for {{ retention_days }} days.</p>
+  {% else %}
+  <p class="empty">Nothing sent yet. Use “Send test” to check that the receiver answers with a 2xx status.</p>
+  {% endif %}
+</section>
+{% endblock %}

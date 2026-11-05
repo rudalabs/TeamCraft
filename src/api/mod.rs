@@ -9,6 +9,7 @@ mod change_requests;
 mod personal;
 mod simulations;
 mod uploads_api;
+mod webhooks;
 
 use axum::{
     extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State},
@@ -279,6 +280,21 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/change-request-attachments/{id}/content",
             get(change_requests::attachment_content),
         )
+        // outgoing event webhooks (administrators)
+        .route("/webhooks", get(webhooks::list).post(webhooks::create))
+        .route(
+            "/webhooks/{id}",
+            get(webhooks::get)
+                .patch(webhooks::update)
+                .delete(webhooks::delete),
+        )
+        .route(
+            "/webhooks/{id}/rotate-secret",
+            post(webhooks::rotate_secret),
+        )
+        .route("/webhooks/{id}/test", post(webhooks::test))
+        .route("/webhooks/{id}/deliveries", get(webhooks::deliveries))
+        .route("/webhook-deliveries/{id}/retry", post(webhooks::retry))
         .fallback(not_found)
 }
 
@@ -431,7 +447,14 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/change-requests/{number}/link-change      {change} – link an open change order",
             "POST   /api/v1/change-requests/{number}/attachments      multipart 'file': PNG, JPEG, GIF, WebP or PDF, up to 10 MiB",
             "GET    /api/v1/change-request-attachments/{id}/content",
-            "POST   /api/v1/change-requests/{number}/watch            watch a change request (DELETE: stop)"
+            "POST   /api/v1/change-requests/{number}/watch            watch a change request (DELETE: stop)",
+            "GET    /api/v1/webhooks                                  outgoing event webhooks and the event names – admins",
+            "POST   /api/v1/webhooks                                  {name, url, events, project?, active?} – returns the secret once",
+            "GET    /api/v1/webhooks/{id}                             PATCH {name?, url?, events?, project?, active?}, DELETE",
+            "POST   /api/v1/webhooks/{id}/rotate-secret               a new secret (shown once)",
+            "POST   /api/v1/webhooks/{id}/test                        sends a ping now; returns the delivery",
+            "GET    /api/v1/webhooks/{id}/deliveries?limit=           latest deliveries with status, attempts, last error",
+            "POST   /api/v1/webhook-deliveries/{id}/retry             send a failed delivery again"
         ]
     }))
 }
