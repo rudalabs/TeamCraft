@@ -442,6 +442,15 @@
       {% if simulation.results %}<a class="button small" href="/revisions/{{ rev.id }}/simulation/results.csv">CSV</a>{% endif %}
     </div>
   </div>
+  {% if simulation.images %}
+  <ul class="sim-gallery" aria-label="Pictures of the results">
+    {% for f in simulation.images %}
+    <li><a href="/files/{{ f.id }}/download" title="{{ f.filename }} v{{ f.version }} – open the picture"><img src="/files/{{ f.id }}/download?v={{ f.sha256 }}" alt="{{ f.filename }}" loading="lazy" data-hide-broken><span class="small muted">{{ f.filename }}</span></a></li>
+    {% endfor %}
+  </ul>
+  {% elif can.edit %}
+  <p class="hint">Attach rendered pictures (PNG, JPEG, WebP) of the results as files – they appear here. Large result files are stored but never parsed; the key numbers go into the table below.</p>
+  {% endif %}
   {% if simulation.results %}
   <p class="result-summary">
     {% if simulation.summary.fail %}<span class="badge badge-fail">{{ simulation.summary.fail }} failed</span>{% endif %}

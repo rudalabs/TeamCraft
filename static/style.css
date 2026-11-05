@@ -1391,3 +1391,9 @@ td.row-actions details.menu { display: inline-block; text-align: left; }
   /* wide screens: wrappers do not clip the row menus */
   .table-wrap:not(.rail .table-wrap) { overflow: visible; }
 }
+
+/* rendered pictures of a simulation's results */
+.sim-gallery { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
+.sim-gallery a { display: block; color: inherit; text-decoration: none; }
+.sim-gallery img { display: block; width: 100%; height: 8rem; object-fit: contain; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface); }
+.sim-gallery span { display: block; margin-top: 0.25rem; overflow-wrap: anywhere; }

@@ -80,3 +80,6 @@ tower = { version = "0.5", features = ["util"] }
 lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
+
+[target."cfg(unix)".dependencies]
+rlimit = "0.10"

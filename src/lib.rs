@@ -110,7 +110,7 @@ impl AppState {
             Some(o) => Some(Arc::new(OidcClient::new(o.clone(), &config.public_url)?)),
             None => None,
         };
-        let previews = Arc::new(Previews::new(&vault));
+        let previews = Arc::new(Previews::new(&vault, config.preview));
         let assistant = match &config.assistant {
             Some(a) => Some(Arc::new({
                 if let Some(warning) = a.insecure_key_warning() {

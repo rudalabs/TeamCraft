@@ -800,6 +800,7 @@ mod tests {
                         "summary": { "total": 3, "pass": 1, "fail": 1, "without_limits": 1 },
                         "out_of_date": 1, "roles": basis_roles.clone(),
                         "views": [{ "id": ME, "filename": "beam <load>.vtu", "version": 2 }],
+                        "images": [{ "id": ME, "filename": "pressure <p>.png", "version": 1, "sha256": "ab" }],
                     },
                     "based_simulations": [],
                     "can": if editable { can_all.clone() } else { json!({}) }, "max_upload_mb": 512,
@@ -826,6 +827,8 @@ mod tests {
                 "/simulation/results.csv",
                 "View result in 3D",
                 "beam &lt;load&gt;.vtu v2",
+                "class=\"sim-gallery\"",
+                "pressure &lt;p&gt;.png",
             ] {
                 assert!(html.contains(expected), "simulation page shows {expected}");
             }

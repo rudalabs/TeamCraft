@@ -55,6 +55,28 @@ reverse proxy in front must allow request bodies of one chunk
 multipart upload. Make sure the vault's disk has room for the unfinished
 uploads too: each user may hold 16 of them for 24 hours.
 
+### 3D preview limits
+
+The 3D preview converts a file in a separate `teamcraft preview-mesh` process
+with a time limit (at most two at a time). A file above the size cap of its
+kind is **never opened**: no conversion starts, the page says it is too large
+for a 3D preview, and the refusal is cached (raising the cap takes effect at
+once). The process also runs with a memory limit; a file that needs more
+fails with a message instead of taking the host down. Large simulation
+results are stored as they are, never parsed fully – see
+[Simulations](../guide/simulation.md#results-in-3d).
+
+| Variable                          | Default | Meaning                                                                 |
+|-----------------------------------|---------|-------------------------------------------------------------------------|
+| `TEAMCRAFT_PREVIEW_MAX_RESULT_MB` | `64`    | largest simulation result file (VTK, VTU, VTP, FRD) that is previewed   |
+| `TEAMCRAFT_PREVIEW_MAX_MESH_MB`   | `256`   | largest mesh or point cloud (STL, OBJ, PLY, 3MF, glTF, LAS, …)          |
+| `TEAMCRAFT_PREVIEW_MAX_STEP_MB`   | `256`   | largest STEP file (tessellation needs a multiple of the file size)      |
+| `TEAMCRAFT_PREVIEW_MAX_MEMORY_MB` | `1024`  | address space of the preview process, `0` = unlimited                   |
+
+The memory limit (`RLIMIT_AS`) is enforced on Linux; on macOS the system may
+ignore it, and on Windows it is **not enforced** (the size caps and the time
+limit still are). Every variable also exists as `NAME_FILE`.
+
 ## Sign-in
 
 | Variable                                           | Default                           | Meaning                                                                        |
