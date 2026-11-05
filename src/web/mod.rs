@@ -358,12 +358,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(desktop::authorize_page).post(desktop::authorize_submit),
         )
         // static assets
-        .route("/static/skins.css", get(static_asset))
         .route("/static/style.css", get(static_asset))
         .route("/static/app.js", get(static_asset))
-        .route("/static/viewer.js", get(static_asset))
         .route("/static/media/{*path}", get(static_asset))
-        .route("/static/fonts/{name}", get(static_asset))
+        .route("/static/shared/{*path}", get(static_asset))
         .route("/static/favicon.svg", get(favicon))
         .route("/favicon.ico", get(favicon))
         .fallback(not_found)
@@ -786,16 +784,16 @@ pub(crate) fn same_origin(headers: &HeaderMap, public_url: &str) -> bool {
 
 /// Embedded stylesheets, scripts, logos and fonts (see `assets`).
 async fn static_asset(uri: Uri, headers: HeaderMap) -> Response {
-    match assets::find(uri.path()) {
-        Some(asset) => assets::respond(asset, uri.query(), &headers),
+    match assets::resolve(uri.path(), uri.query()) {
+        Some((asset, current)) => assets::respond(asset, current, &headers),
         None => not_found().await.into_response(),
     }
 }
 
 /// The TeamCraft icon is the favicon.
 async fn favicon(uri: Uri, headers: HeaderMap) -> Response {
-    match assets::find(assets::FAVICON) {
-        Some(asset) => assets::respond(asset, uri.query(), &headers),
+    match assets::resolve(assets::FAVICON, uri.query()) {
+        Some((asset, current)) => assets::respond(asset, current, &headers),
         None => not_found().await.into_response(),
     }
 }

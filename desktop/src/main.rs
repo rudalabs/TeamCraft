@@ -224,3 +224,70 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running TeamCraft Desktop");
 }
+
+#[cfg(test)]
+mod shared_ui_tests {
+    use std::{
+        collections::BTreeMap,
+        fs,
+        path::{Path, PathBuf},
+    };
+
+    /// Every file below `dir` with its content, keyed by its `/`-separated
+    /// path relative to `root`.
+    fn files(root: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) {
+        for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                files(root, &path, out);
+            } else {
+                let rel = path.strip_prefix(root).unwrap().to_str().unwrap();
+                out.insert(rel.replace('\\', "/"), fs::read(&path).unwrap());
+            }
+        }
+    }
+
+    /// `ui/static/shared/` (copied by build.rs) mirrors the servable files
+    /// of the repository's `shared/` byte for byte – the same files the
+    /// server embeds at `/static/shared/…` (tests in src/assets.rs).
+    #[test]
+    fn shared_ui_files_are_mirrored() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let source = manifest.join("../shared");
+        let copy = manifest.join("ui/static/shared");
+        let mut expected = BTreeMap::new();
+        files(&source, &source, &mut expected);
+        expected.retain(|rel, _| {
+            let name = rel.rsplit('/').next().unwrap_or(rel);
+            !(rel.starts_with("test-vectors/")
+                || name == "README.md"
+                || name.ends_with(".test.js")
+                || name.starts_with('.'))
+        });
+        assert!(expected.contains_key("css/skins.css"));
+        let mut copied = BTreeMap::new();
+        files(&copy, &copy, &mut copied);
+        assert_eq!(
+            copied.keys().collect::<Vec<_>>(),
+            expected.keys().collect::<Vec<_>>(),
+            "ui/static/shared and shared/ list different files"
+        );
+        for (rel, body) in &expected {
+            assert!(copied[rel] == *body, "ui/static/shared/{rel} differs");
+        }
+    }
+
+    /// The page links the shared files at the paths the copy has.
+    #[test]
+    fn index_links_shared_files() {
+        let html = include_str!("../ui/index.html");
+        for url in [
+            "/static/shared/css/skins.css",
+            "/static/shared/js/viewer.js",
+        ] {
+            assert!(html.contains(url), "{url}");
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("ui{url}"));
+            assert!(path.is_file(), "{}", path.display());
+        }
+    }
+}
