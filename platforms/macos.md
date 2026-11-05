@@ -57,3 +57,4 @@ cd desktop && cargo run                     # connect to localhost:8080
 | `role "teamcraft" does not exist` | run the `createuser` / `createdb` lines above |
 | `xcrun: error: invalid active developer path` | `xcode-select --install` |
 | port 8080 in use (AirPlay receiver uses 5000/7000, not 8080) | `TEAMCRAFT_BIND_ADDR=127.0.0.1:8081 cargo run` |
+| a virtual machine (Parallels, UTM) or another computer cannot reach the server | start it with `TEAMCRAFT_BIND_ADDR=0.0.0.0:8080` and allow port 8080 in the macOS firewall; in Parallels' *Shared Network* the Mac is usually `10.211.55.2` (see [Windows, §5](windows.md#5-server-on-another-computer)) |
