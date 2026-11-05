@@ -74,8 +74,13 @@ cargo test                     # settings, API paths, PKCE + loopback sign-in, w
 cargo clippy --all-targets -- -D warnings
 ```
 
+Windows: WebView2 is part of Windows 10/11. On **Windows ARM64** the build needs
+the ARM64 MSVC component and LLVM (`clang`, for the `ring` crate) – setup, a
+build in a Parallels VM (about 3 minutes) and a server on another computer are
+in [platforms/windows.md](../platforms/windows.md).
+
 On the first start enter the server address (`localhost:8080` for a local
-server) and click **Sign in with the browser**: the browser asks you to
+server, `host:port` otherwise) and click **Sign in with the browser**: the browser asks you to
 confirm the sign-in for this computer, the app receives a personal access
 token (valid 90 days, revocable on your account page in the web UI).
 

@@ -24,6 +24,14 @@ the known gaps with details. Last update: 2026-11-04.
   to do: a real SOLIDWORKS drawing for the document-manager fallback)
 - [ ] Reference scan: false references in real files – NX parts fixed (stream container, `src/nxpart.rs`); open: noise in JT
   files (gap test in `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is ignored
+- [ ] Desktop: a project group created in the web UI only appears in the navigator after restarting the app – `/me` and
+  `/projects` are loaded once in `enterShell()` (`desktop/ui/app.js`), *Refresh* only redraws the cached
+  `state.projects`; reload both lists when the home view is built and in the *Get project groups* and *Import CAD
+  folder* dialogs; test: a group added on the server shows after *Refresh* (found on Windows 11 ARM64, 2026-11-05)
+- [ ] Desktop folder import: the same folder cannot be imported into a second project group – the log of imported items
+  (`importLog` / `saveImportLog`) is keyed by server and folder only, so every item counts as "already imported"; add
+  the project group to the key and recompute the plan when the project select changes (found on Windows 11 ARM64,
+  2026-11-05; workaround: import a copy of the folder)
 
 **General**
 
@@ -40,6 +48,8 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Desktop: new members download everything of one or more project groups at once
 - [x] Desktop working folder that mirrors the original folder structure (`files.folder`), read-only files until check-out,
   *Get* of a structure (BOM + referenced CAD files, revision rule, progress, cancel), migration of the old layout
+- [ ] Decide and document what happens when the same CAD files are imported into two project groups: two independent
+  items per file with different numbers, while CAD references are matched by file name (import tutorial, user guide)
 - [ ] Desktop Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Desktop: *Import BOM…* (CSV/Excel) on a checked-out assembly
 - [ ] Desktop: cancel long operations (check-in upload, Pack and Go) half-way
@@ -122,7 +132,8 @@ the known gaps with details. Last update: 2026-11-04.
 - [ ] Folder import: read the paths of an included `.ipj`; recognise Content Center and library folders
 - [ ] Test the reference scan with real `.iam` files, also with derived parts, iParts/iAssemblies and Frame Generator
 - [ ] Test the STEP export (built) with real files on Windows – the preview images are verified with the NIST Inventor
-  2021 files
+  2021 files. Inventor 2027 is registered for COM in the Windows 11 ARM64 test VM (`Inventor.Application`,
+  `Inventor.exe /Automation`, found by the app's registry check); the export itself was not tried there yet
 - [ ] Test the BOM import with real exports of the BOM editor (structured and parts only)
 - [ ] Extend the Inventor part of the tutorial: Pack and Go, `.ipj`, Design Assistant for broken references
 
@@ -277,8 +288,9 @@ in the README licence table, follow the definition of done in `CLAUDE.md`.
   and GIFs, and the screenshots in the book.
 - **CI:** `ci.yml`, `docs.yml` and `desktop.yml` pass (`099737e`), the docs
   are live at <https://rudalabs.github.io/TeamCraft/>. The tests run on Linux
-  only; macOS and Windows are build checks – server and desktop app were not
-  run there yet.
+  only; macOS and Windows are build checks. On Windows 11 ARM64 (Parallels VM, 2026-11-05, `97423bd`) server and
+  desktop app were built, started and used by hand – setup in [platforms/windows.md](../platforms/windows.md); not run
+  on macOS yet.
 - **3D preview:** STEP is read with truck (planes, B-splines, cylinders, …);
   real exports of the CAD programs were not tested, and assembly placements (`mapped_item`) may be ignored – parts of an
   assembly can then overlap.
