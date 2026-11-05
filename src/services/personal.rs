@@ -32,10 +32,15 @@ pub async fn is_favorite(pool: &PgPool, user_id: Uuid, item_id: Uuid) -> AppResu
 
 /// Adds the item to the actor's favorites (`on`) or removes it.
 pub async fn set_favorite(pool: &PgPool, actor: &Actor, item_id: Uuid, on: bool) -> AppResult<()> {
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM items WHERE id = $1)")
-        .bind(item_id)
-        .fetch_one(pool)
-        .await?;
+    // Hidden items give the same "not found" as missing ones.
+    let exists: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS (SELECT 1 FROM items i WHERE i.id = $1 AND {})",
+        crate::services::access::item_visible("i", 2)
+    ))
+    .bind(item_id)
+    .bind(&actor.hidden_projects)
+    .fetch_one(pool)
+    .await?;
     if !exists {
         return Err(AppError::not_found("Item not found."));
     }

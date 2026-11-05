@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use super::{finish, pagination, render, WebCtx, PER_PAGE};
 use crate::{
-    domain::{self, Role},
+    domain::{self, ProjectVisibility, Role},
     error::{AppError, AppResult},
     services::{audit, projects, users, Page},
     util, AppState,
@@ -26,7 +26,7 @@ fn roles() -> Value {
 }
 
 pub async fn projects(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
-    let list = projects::list(&st.db, false).await?;
+    let list = projects::list(&st.db, &ctx.me, false).await?;
     render(
         &st,
         &ctx,
@@ -48,7 +48,7 @@ pub async fn project_show(
     Query(q): Query<ProjectQuery>,
 ) -> AppResult<Response> {
     let (project, members, can_manage) = tokio::try_join!(
-        projects::get(&st.db, id),
+        projects::get(&st.db, &ctx.me, id),
         projects::members(&st.db, id),
         projects::is_manager(&st.db, &ctx.me, id),
     )?;
@@ -56,10 +56,10 @@ pub async fn project_show(
     // next to the field together with the current scheme's numbers.
     let candidate = q.scheme.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let (numbering, scheme_error) =
-        match projects::numbering_preview(&st.db, &project, candidate).await {
+        match projects::numbering_preview(&st.db, &ctx.me, &project, candidate).await {
             Ok(p) => (p, None),
             Err(AppError::BadRequest(msg)) => (
-                projects::numbering_preview(&st.db, &project, None).await?,
+                projects::numbering_preview(&st.db, &ctx.me, &project, None).await?,
                 Some(msg),
             ),
             Err(e) => return Err(e),
@@ -132,6 +132,8 @@ pub struct NewProjectForm {
     description: String,
     #[serde(default)]
     oidc_group: String,
+    /// Checkbox: start as a restricted group.
+    restricted: Option<String>,
 }
 
 pub async fn create_project(
@@ -146,6 +148,11 @@ pub async fn create_project(
         &form.name,
         &form.description,
         ctx.me.is_admin().then_some(form.oidc_group.as_str()),
+        if form.restricted.is_some() {
+            ProjectVisibility::Restricted
+        } else {
+            ProjectVisibility::Internal
+        },
     )
     .await;
     finish(&st, result, "/projects", |p| {
@@ -223,13 +230,57 @@ pub async fn remove_member(
     let back = format!("/projects/{id}");
     let leaving = user_id == ctx.me.id;
     let result = projects::remove_member(&st.db, &ctx.me, id, user_id).await;
-    finish(&st, result, &back, |_| {
-        let message = if leaving {
-            "You left the project group"
+    finish(&st, result, &back, |held| {
+        let mut message = if leaving {
+            "You left the project group".to_string()
         } else {
-            "Removed the member"
+            "Removed the member".to_string()
         };
-        (back.clone(), message.to_string())
+        if held > 0 {
+            message.push_str(&format!(
+                " – {held} check-outs in this group are still held; a manager can cancel them"
+            ));
+        }
+        // A former member of a restricted group cannot see its page any more.
+        let target = if leaving {
+            "/projects".into()
+        } else {
+            back.clone()
+        };
+        (target, message)
+    })
+}
+
+#[derive(Deserialize)]
+pub struct VisibilityForm {
+    #[serde(default)]
+    visibility: String,
+}
+
+/// Restricts a group to its members or opens it again (managers, admins).
+pub async fn update_visibility(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<VisibilityForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = match ProjectVisibility::parse(&form.visibility) {
+        Some(v) => projects::set_visibility(&st.db, &ctx.me, id, v).await,
+        None => Err(AppError::BadRequest(
+            "Choose internal or restricted.".into(),
+        )),
+    };
+    finish(&st, result, &back, |p| {
+        let message = if p.is_restricted() {
+            format!(
+                "{} is restricted: only its members and administrators see it",
+                p.code
+            )
+        } else {
+            format!("{} is open to all users again", p.code)
+        };
+        (back.clone(), message)
     })
 }
 

@@ -277,6 +277,9 @@ pub struct Downloaded {
     pub unresolved: Vec<String>,
     /// File names referenced in CAD files that are not in the vault.
     pub missing_references: Vec<String>,
+    /// BOM lines to items of restricted project groups the user is not a
+    /// member of: skipped (not downloaded, no identity).
+    pub restricted_lines: u64,
     pub revisions: usize,
 }
 
@@ -516,6 +519,7 @@ pub async fn get_structure(
     };
     report.unresolved = strings(&set["unresolved"]);
     report.missing_references = strings(&set["missing_references"]);
+    report.restricted_lines = set["restricted_lines"].as_u64().unwrap_or(0);
     Ok(report)
 }
 
@@ -552,6 +556,10 @@ pub struct Status {
     pub locked_by_me: bool,
     pub locked_by_name: Option<String>,
     pub files: Vec<LocalFile>,
+    /// The server answers "not found" for the revision (no longer
+    /// accessible, e.g. a restricted project group): the local copies stay,
+    /// Get, status and check-in skip it.
+    pub inaccessible: bool,
 }
 
 /// A local file of a revision: where it is and what the state says.
@@ -616,6 +624,45 @@ async fn new_local_files(
     Ok(out)
 }
 
+/// The server answers "not found" for a revision: it is not (or no longer)
+/// accessible to this user.
+pub fn is_inaccessible(e: &ApiError) -> bool {
+    e.status == 404
+}
+
+/// The status of a tracked revision the server no longer shows: its local
+/// copies (from `state.json`) are listed as `inaccessible`. Files are not
+/// made read-only or removed automatically.
+pub fn inaccessible_status(root: &Path, project: Option<&str>, item: &str, code: &str) -> Status {
+    let state = State::load(root);
+    let mut files: Vec<LocalFile> = state
+        .of_revision(item, code)
+        .map(|e| {
+            let path = layout::join_rel(root, &e.path);
+            LocalFile {
+                name: e.filename.clone(),
+                local_name: None,
+                path: e.path.clone(),
+                state: "inaccessible".into(),
+                size: std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
+                server_version: None,
+                base_version: Some(e.version),
+                read_only: is_read_only(&path),
+                clash_with: None,
+            }
+        })
+        .collect();
+    files.sort_by_key(|f| f.path.to_lowercase());
+    Status {
+        dir: main_dir(root, project, &[]),
+        exists: !files.is_empty(),
+        locked_by_me: false,
+        locked_by_name: None,
+        inaccessible: true,
+        files,
+    }
+}
+
 /// Compares the files of a revision in the working folder with the server
 /// (the server's file status decides up to date / modified / outdated /
 /// conflict), and puts the read-only rule in force for unchanged files.
@@ -626,7 +673,16 @@ pub async fn status(
     item: &str,
     code: &str,
 ) -> Result<Status, ApiError> {
-    let rev = revision_files(api, project, item, code).await?;
+    let rev = match revision_files(api, project, item, code).await {
+        Ok(rev) => rev,
+        // A revision this working folder tracks answers "not found": the
+        // user lost access (a restricted project group) or it was deleted.
+        // The local copies stay; nothing is fetched or checked in.
+        Err(e) if is_inaccessible(&e) => {
+            return Ok(inaccessible_status(root, project, item, code));
+        }
+        Err(e) => return Err(e),
+    };
     let mut state = State::load(root);
     let before = state.clone();
     let mut found = Vec::new();
@@ -757,6 +813,7 @@ pub async fn status(
         dir,
         locked_by_me: rev.locked_by_me,
         locked_by_name: rev.locked_by_name,
+        inaccessible: false,
         files: out,
     })
 }
@@ -1328,6 +1385,48 @@ fn append_log(path: &Path, lines: &[String]) -> Result<(), ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn not_found_revisions_are_inaccessible() {
+        let not_found = ApiError {
+            status: 404,
+            message: "Item 'PRT-000001' not found.".into(),
+        };
+        assert!(is_inaccessible(&not_found));
+        assert!(!is_inaccessible(&ApiError::local("offline")));
+        assert!(!is_inaccessible(&ApiError {
+            status: 403,
+            message: "no".into()
+        }));
+        // the tracked copies are listed, nothing is touched
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("ROVER").join("bracket.prt");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"v1").unwrap();
+        State::store(
+            dir.path(),
+            [Entry {
+                path: "ROVER/bracket.prt".into(),
+                project: Some("ROVER".into()),
+                item: "PRT-000001".into(),
+                revision: "A".into(),
+                file_id: "f".into(),
+                filename: "bracket.prt".into(),
+                version: 2,
+                sha256: "x".into(),
+                checked_out: false,
+                size: 2,
+                modified_ms: 0,
+            }],
+        )
+        .unwrap();
+        let status = inaccessible_status(dir.path(), Some("ROVER"), "PRT-000001", "A");
+        assert!(status.inaccessible && status.exists);
+        assert_eq!(status.files.len(), 1);
+        assert_eq!(status.files[0].state, "inaccessible");
+        assert_eq!(status.files[0].base_version, Some(2));
+        assert!(file.exists(), "local copies stay");
+    }
 
     #[test]
     fn read_only_files() {

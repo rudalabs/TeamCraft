@@ -391,7 +391,7 @@
     {% for b in simulation.bases %}
       <tr>
         <td class="small nowrap">{% for r in simulation.roles %}{% if r.value == b.role %}{{ r.label }}{% endif %}{% endfor %}</td>
-        <td class="mono nowrap"><a href="/revisions/{{ b.basis_revision_id }}">{{ b.basis_number }}/{{ b.basis_code }}</a></td>
+        <td class="mono nowrap">{% if b.restricted %}{{ m.restricted() }}{% else %}<a href="/revisions/{{ b.basis_revision_id }}">{{ b.basis_number }}/{{ b.basis_code }}</a>{% endif %}</td>
         <td>{{ b.basis_name }}{% if b.note %} <span class="small muted">· {{ b.note }}</span>{% endif %}</td>
         <td class="small">{{ m.badge(b.basis_state) }}{% if b.file_name %} · {% if b.file_id %}<a href="/files/{{ b.file_id }}/download">{{ b.file_name }}</a>{% else %}{{ b.file_name }}{% endif %} <span class="mono">v{{ b.file_version }}</span>{% endif %}</td>
         <td class="small">{% if b.out_of_date %}<span class="badge badge-out_of_date" title="{{ b.out_of_date }}">Out of date</span> {{ b.out_of_date }}{% if b.released_revision_id and b.released_code != b.basis_code %} · <a href="/revisions/{{ b.released_revision_id }}">open {{ b.released_code }}</a>{% endif %}{% else %}<span class="badge badge-up_to_date">Up to date</span>{% endif %}</td>
@@ -537,7 +537,7 @@
         {% else %}
         <td class="num">{{ l.find_number }}</td>
         {% endif %}
-        <td class="mono nowrap"><a href="/revisions/{{ l.child_latest_revision_id }}">{{ l.child_number }}</a></td>
+        <td class="mono nowrap">{% if l.restricted %}{{ m.restricted() }}{% else %}<a href="/revisions/{{ l.child_latest_revision_id }}">{{ l.child_number }}</a>{% endif %}</td>
         <td>{{ l.child_name }}</td>
         <td class="nowrap"><span class="mono">{{ l.child_latest_code }}</span> {{ m.badge(l.child_latest_state) }}
           {% if l.released_child_code %}<span class="small muted" title="This revision was released with {{ l.child_number }}/{{ l.released_child_code }}">· released with <span class="mono">{{ l.released_child_code }}</span></span>{% endif %}</td>
@@ -586,7 +586,7 @@
         {% for r in references.outgoing %}
           <tr>
             <td class="small nowrap">{% for k in references.kinds %}{% if k.value == r.kind %}{{ k.label }}{% endif %}{% endfor %}</td>
-            <td class="mono nowrap"><a href="/revisions/{{ r.to_latest_revision_id }}">{{ r.to_number }}</a></td>
+            <td class="mono nowrap">{% if r.restricted %}{{ m.restricted() }}{% else %}<a href="/revisions/{{ r.to_latest_revision_id }}">{{ r.to_number }}</a>{% endif %}</td>
             <td>{{ r.to_name }}{% if r.note %} <span class="small muted">· {{ r.note }}</span>{% endif %}</td>
             <td class="nowrap"><span class="mono">{{ r.to_latest_code }}</span> {{ m.badge(r.to_latest_state) }}
               {% if r.released_to_code %}<span class="small muted">· released with <span class="mono">{{ r.released_to_code }}</span></span>{% endif %}</td>
@@ -663,7 +663,8 @@
         </tbody>
       </table>
       </div>
-      {% else %}<p class="empty">No other item refers to {{ rev.item_number }}.</p>{% endif %}
+      {% elif not hidden.incoming %}<p class="empty">No other item refers to {{ rev.item_number }}.</p>{% endif %}
+      {{ m.hidden_count(hidden.incoming, "referrers") }}
     </div>
   </div>
   {% if references.files %}
@@ -684,7 +685,7 @@
   <h3>Earlier checks</h3>
   <ul class="plain-list">
     {% for i in resolved_impacts %}
-    <li class="small"><span class="mono">{{ i.source_number }}/{{ i.source_code }}</span> {{ i.event }} ·
+    <li class="small">{% if i.source_restricted %}{{ m.restricted() }}{% else %}<span class="mono">{{ i.source_number }}/{{ i.source_code }}</span>{% endif %} {{ i.event }} ·
       {% if i.resolution == "acknowledged" %}acknowledged by {{ i.resolved_by_name }}{% elif i.resolution == "superseded" %}superseded{% else %}closed{% endif %}
       {{ m.time(i.resolved_at) }}{% if i.note %} – {{ i.note }}{% endif %}</li>
     {% endfor %}
@@ -713,7 +714,8 @@
     </tbody>
   </table>
   </div>
-  {% else %}<p class="empty">No simulation is based on {{ rev.item_number }} yet.</p>{% endif %}
+  {% elif not hidden.simulations %}<p class="empty">No simulation is based on {{ rev.item_number }} yet.</p>{% endif %}
+  {{ m.hidden_count(hidden.simulations, "simulations") }}
   {% if me.role != "viewer" %}<p class="hint">Create an item of type <a href="/items/new?type=simulation">Simulation</a> and add {{ rev.item_number }}/{{ rev.code }} as its basis.</p>{% endif %}
 </section>
 {% endif %}
@@ -735,7 +737,8 @@
       {% endfor %}
       </tbody>
     </table>
-    {% else %}<p class="empty">Not used in any BOM.</p>{% endif %}
+    {% elif not hidden.parents %}<p class="empty">Not used in any BOM.</p>{% endif %}
+    {{ m.hidden_count(hidden.parents, "assemblies") }}
   </section>
 
   <section class="card">
@@ -752,7 +755,8 @@
       {% endfor %}
       </tbody>
     </table>
-    {% else %}<p class="empty">Not part of any change.</p>{% endif %}
+    {% elif not hidden.changes %}<p class="empty">Not part of any change.</p>{% endif %}
+    {{ m.hidden_count(hidden.changes, "change orders") }}
     {% if can.add_to_change and drafts %}
     <h3>Add to an existing draft change</h3>
     <form class="inline" method="post" action="/revisions/{{ rev.id }}/add-to-change">

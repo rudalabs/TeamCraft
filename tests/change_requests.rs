@@ -378,7 +378,9 @@ async fn withdraw_link_and_attachments() {
             Some(json!({ "change": chg })),
         )
         .await;
-    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+    // An empty draft is visible only to its author, its reviewers and
+    // admins: for the viewer it does not exist.
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text());
     let r = app
         .api(
             Method::POST,

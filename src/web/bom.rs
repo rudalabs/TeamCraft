@@ -37,9 +37,10 @@ pub async fn show(
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, id).await?;
+    let me = &ctx.me;
+    let rev = revisions::get(&st.db, me, id).await?;
     let rule = rule_of(&q);
-    let tree = bom::tree(&st.db, id, rule).await?;
+    let tree = bom::tree(&st.db, me, id, rule).await?;
     let rows = bom::flatten(&tree.children);
     render(
         &st,
@@ -55,6 +56,8 @@ pub async fn show(
                 "cost_complete": tree.cost_complete,
                 "line_count": tree.line_count,
                 "unresolved_count": tree.unresolved_count,
+                "restricted_lines": tree.restricted_lines,
+                "rollup_incomplete": tree.rollup_incomplete,
             },
             "rows": rows,
         }),
@@ -63,13 +66,13 @@ pub async fn show(
 
 pub async fn csv(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, id).await?;
+    let rev = revisions::get(&st.db, &me, id).await?;
     let rule = rule_of(&q);
-    let tree = bom::tree(&st.db, id, rule).await?;
+    let tree = bom::tree(&st.db, &me, id, rule).await?;
     let filename = format!("{}_{}_bom_{}.csv", rev.item_number, rev.code, rule.as_str());
     Ok((
         [
@@ -87,13 +90,13 @@ pub async fn csv(
 /// `GET /revisions/{id}/bom.xlsx` – the expanded BOM as Excel workbook.
 pub async fn xlsx(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, id).await?;
+    let rev = revisions::get(&st.db, &me, id).await?;
     let rule = rule_of(&q);
-    let tree = bom::tree(&st.db, id, rule).await?;
+    let tree = bom::tree(&st.db, &me, id, rule).await?;
     let filename = format!(
         "{}_{}_bom_{}.xlsx",
         rev.item_number,
@@ -251,11 +254,11 @@ pub(crate) fn package_response(p: package::Package) -> AppResult<Response> {
 /// "Pack and Go": the revision with its whole structure as a ZIP file.
 pub async fn package(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, id).await?;
+    let rev = revisions::get(&st.db, &me, id).await?;
     let rule = package_rule(q.rule.as_deref(), &rev.state);
-    package_response(package::build(&st.db, &st.vault, id, rule).await?)
+    package_response(package::build(&st.db, &st.vault, &me, id, rule).await?)
 }

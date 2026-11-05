@@ -17,10 +17,17 @@ use crate::{
 };
 
 /// Columns (of `users u`) needed to build an [`Actor`], including the
-/// project groups the user belongs to.
+/// project groups the user belongs to and the restricted groups the user
+/// may not read (none for admins; archived groups count too).
 const ACTOR_COLUMNS: &str = "u.id, u.username, u.display_name, u.role, u.skin,
     COALESCE((SELECT array_agg(pm.project_id) FROM project_members pm WHERE pm.user_id = u.id),
-             '{}'::uuid[]) AS projects";
+             '{}'::uuid[]) AS projects,
+    CASE WHEN u.role = 'admin' THEN '{}'::uuid[] ELSE
+      COALESCE((SELECT array_agg(p.id) FROM projects p
+                WHERE p.visibility = 'restricted'
+                  AND NOT EXISTS (SELECT 1 FROM project_members pm
+                                  WHERE pm.project_id = p.id AND pm.user_id = u.id)),
+               '{}'::uuid[]) END AS hidden_projects";
 
 #[derive(sqlx::FromRow)]
 struct ActorRow {
@@ -30,6 +37,7 @@ struct ActorRow {
     role: String,
     skin: String,
     projects: Vec<Uuid>,
+    hidden_projects: Vec<Uuid>,
 }
 
 impl From<ActorRow> for Actor {
@@ -41,6 +49,7 @@ impl From<ActorRow> for Actor {
             role: Role::parse(&row.role).unwrap_or(Role::Viewer),
             skin: domain::skin_or_default(&row.skin).to_string(),
             projects: row.projects,
+            hidden_projects: row.hidden_projects,
         }
     }
 }

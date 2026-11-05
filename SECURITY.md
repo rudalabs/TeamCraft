@@ -45,6 +45,12 @@ In scope:
 
 * authentication: passwords, sessions, API tokens, OpenID Connect;
 * permission checks: roles, project groups, check-out locks, released data;
+* read visibility of [restricted project groups](https://rudalabs.github.io/TeamCraft/admin/permissions.html):
+  any way for a non-member to read an item, file, preview, BOM line,
+  change, request, notification, webhook payload or assistant answer of a
+  restricted group, or to tell a hidden object from a missing one beyond the
+  residual oracles listed there (unique numbers and codes, the shared number
+  counter, where-used counts, response times);
 * CSRF, XSS and the Content Security Policy;
 * uploads and the parsers for CAD, mesh, point-cloud and BOM table files.
   This includes files that crash or hang the server, or that get around the
@@ -60,4 +66,9 @@ Out of scope:
   system or database;
 * deployments that ignore the documentation, for example ones that expose the
   server without TLS;
-* denial of service by plain request flooding.
+* denial of service by plain request flooding;
+* restricted data that a member already read: files copied to a desktop
+  working folder stay there after access ends, audit entries from before
+  migration 0024 are shown as written, backups and the command line contain
+  everything, and the assistant sends what a member reads to the configured
+  model provider.
