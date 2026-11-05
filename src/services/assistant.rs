@@ -8,8 +8,9 @@ use serde_json::{json, Value};
 use crate::{
     assistant::{self, Answer, AssistantError, McpTools, Question, ToolUse, Trace},
     auth::Actor,
-    error::AppResult,
-    services::audit,
+    error::{AppError, AppResult},
+    pagecontext::PageContext,
+    services::{assistant_threads as threads, audit},
     AppState,
 };
 
@@ -25,6 +26,18 @@ pub struct Run {
     pub allow_drafts: bool,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Where the question was asked, as resolved with the user's rights
+    /// (conversation requests only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextNote>,
+}
+
+/// The resolved page context of a question: what the chip and the thread
+/// show.
+#[derive(Debug, Clone, Serialize)]
+pub struct ContextNote {
+    pub kind: String,
+    pub label: String,
 }
 
 /// Whether the assistant is configured on this server.
@@ -51,6 +64,20 @@ fn audit_details(
             "revision": question.revision,
             "change": question.change,
         },
+        // the page the question was asked on, as resolved with the user's
+        // rights: identifiers and counts, never the typed query text
+        "page": {
+            "kind": question.page.kind,
+            "request": question.page.request,
+            "project": question.page.project,
+            "view": question.page.view,
+            "rule": question.page.rule,
+            "has_query": question.page.query.is_some(),
+            "filters": question.page.filters.len(),
+            "rows_shown": question.page.shown.len(),
+        },
+        "thread": question.thread,
+        "history_messages": question.history.len(),
         "allow_drafts": allow_drafts,
         "model": model,
         "tools": trace.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
@@ -125,6 +152,18 @@ impl Drop for CancelGuard {
 /// tools are only offered when `question.allow_drafts` is set and `me` may
 /// edit.
 pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run> {
+    Ok(run_once(st, me, question, false).await?.0)
+}
+
+/// One run; also says whether it ended tainted (see `assistant::McpTools`).
+/// `prior_taint`: an earlier answer of the conversation that the question
+/// quotes came from a tainted run, so this one starts tainted too.
+async fn run_once(
+    st: &AppState,
+    me: &Actor,
+    question: Question,
+    prior_taint: bool,
+) -> AppResult<(Run, bool)> {
     let Some(client) = st.assistant.as_deref() else {
         return Err(AssistantError::Disabled.into_app_error());
     };
@@ -135,7 +174,13 @@ pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run
     let system = assistant::system_prompt(me, allow_drafts);
     let instruction = question.instruction();
     let tools = McpTools::new(st, me);
+    if prior_taint {
+        tools
+            .tainted
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     tools.note_context(&question).await;
+    tools.note_page(&question.page).await;
     let mut guard = CancelGuard {
         st: st.clone(),
         me: me.clone(),
@@ -185,16 +230,241 @@ pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run
     record_run(st, me, guard.question.action, details).await?;
 
     let answer = result.map_err(AssistantError::into_app_error)?;
+    let tainted = tools.tainted.load(std::sync::atomic::Ordering::SeqCst);
     let trace = std::mem::take(&mut guard.trace);
-    Ok(Run {
-        action: guard.question.action,
-        answer,
-        tools: trace.tools,
-        steps: trace.steps,
-        provider: client.provider_name,
-        model: client.model.clone(),
+    Ok((
+        Run {
+            action: guard.question.action,
+            answer,
+            tools: trace.tools,
+            steps: trace.steps,
+            provider: client.provider_name,
+            model: client.model.clone(),
+            allow_drafts,
+            input_tokens: trace.input_tokens,
+            output_tokens: trace.output_tokens,
+            context: None,
+        },
+        tainted,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// The page the user is on
+// ---------------------------------------------------------------------------
+
+/// Resolves a page context that a client sent. **The client's identifiers
+/// are hints**: every one of them goes through the read guards of
+/// `services::access` with the rights of `me`, and only what `me` may read
+/// stays. An identifier of a restricted group that `me` cannot see is
+/// dropped exactly like one that does not exist: the same queries run, the
+/// result looks the same and carries no trace of it. Texts typed on the page
+/// (query, filter values) are the user's own and pass through.
+pub async fn resolve_context(
+    db: &sqlx::PgPool,
+    me: &Actor,
+    page: &PageContext,
+) -> AppResult<PageContext> {
+    use crate::services::access;
+    let mut out = PageContext {
+        kind: page.kind.clone(),
+        view: page.view.clone(),
+        rule: page.rule.clone(),
+        query: page.query.clone(),
+        filters: page.filters.clone(),
+        ..PageContext::default()
+    };
+    // items: the item itself, the selected row and the rows shown, one query
+    let mut numbers: Vec<String> = Vec::new();
+    for n in page
+        .item
+        .iter()
+        .chain(page.selected.iter())
+        .chain(page.shown.iter())
+    {
+        if !numbers.contains(n) {
+            numbers.push(n.clone());
+        }
+    }
+    if !numbers.is_empty() {
+        let rows: Vec<(String, bool)> = sqlx::query_as(&format!(
+            "SELECT i.number,
+                    EXISTS (SELECT 1 FROM revisions r WHERE r.item_id = i.id AND r.code = $2)
+             FROM items i
+             WHERE i.number = ANY($1) AND {}",
+            access::item_visible("i", 3)
+        ))
+        .bind(&numbers)
+        .bind(page.revision.clone().unwrap_or_default())
+        .bind(&me.hidden_projects)
+        .fetch_all(db)
+        .await?;
+        let visible = |n: &String| rows.iter().any(|(number, _)| number == n);
+        if let Some(item) = page.item.as_ref().filter(|n| visible(n)) {
+            out.item = Some(item.clone());
+            let has_revision = rows.iter().any(|(number, ok)| number == item && *ok);
+            out.revision = page.revision.clone().filter(|_| has_revision);
+        }
+        out.selected = page.selected.clone().filter(visible);
+        out.shown = page.shown.iter().filter(|n| visible(n)).cloned().collect();
+    }
+    if let Some(number) = &page.change {
+        let found: Option<String> = sqlx::query_scalar(&format!(
+            "SELECT c.number FROM changes c WHERE c.number = $1 AND {}",
+            access::change_visible("c", 2, 3)
+        ))
+        .bind(number)
+        .bind(me.id)
+        .bind(&me.hidden_projects)
+        .fetch_optional(db)
+        .await?;
+        out.change = found;
+    }
+    if let Some(number) = &page.request {
+        let found: Option<String> = sqlx::query_scalar(&format!(
+            "SELECT r.number FROM change_requests r WHERE r.number = $1 AND {}",
+            access::request_visible("r", 2, 3)
+        ))
+        .bind(number)
+        .bind(me.id)
+        .bind(&me.hidden_projects)
+        .fetch_optional(db)
+        .await?;
+        out.request = found;
+    }
+    if let Some(code) = &page.project {
+        let found: Option<String> = sqlx::query_scalar(&format!(
+            "SELECT p.code FROM projects p WHERE p.code = $1 AND {}",
+            access::project_visible("p.id", 2)
+        ))
+        .bind(code)
+        .bind(&me.hidden_projects)
+        .fetch_optional(db)
+        .await?;
+        out.project = found;
+    }
+    Ok(out)
+}
+
+/// A request of the web sidebar or the REST API: validates the raw fields
+/// and the page context the client sent (`context`, see
+/// [`crate::pagecontext`]), then asks.
+pub async fn chat(
+    st: &AppState,
+    me: &Actor,
+    action: Option<&str>,
+    text: Option<&str>,
+    context: &Value,
+    allow_drafts: bool,
+    thread: bool,
+) -> AppResult<Run> {
+    if !enabled(st) {
+        return Err(AssistantError::Disabled.into_app_error());
+    }
+    // the three identifiers older clients send are validated strictly
+    for field in ["item", "revision", "change"] {
+        if let Some(v) = context.get(field).and_then(Value::as_str) {
+            if !v.trim().is_empty() && !crate::pagecontext::is_reference(v.trim()) {
+                return Err(AppError::BadRequest(format!(
+                    "{field}: not a valid reference."
+                )));
+            }
+        }
+    }
+    let page = PageContext::parse(context);
+    let question = Question::new(
+        action,
+        text,
+        page.item.as_deref(),
+        page.revision.as_deref(),
+        page.change.as_deref(),
         allow_drafts,
-        input_tokens: trace.input_tokens,
-        output_tokens: trace.output_tokens,
-    })
+    )
+    .map_err(AppError::BadRequest)?;
+    ask_with_page(st, me, question, &page, thread).await
+}
+
+/// A question in the user's conversation (or, with `thread` false, a single
+/// question that sees the page but is not stored): resolves the page with
+/// the user's rights, quotes the earlier messages of the conversation, runs
+/// the assistant with the user's *current* rights and stores the new
+/// question and answer. `page` is what the client sent, unresolved.
+pub async fn ask_with_page(
+    st: &AppState,
+    me: &Actor,
+    mut question: Question,
+    page: &PageContext,
+    thread: bool,
+) -> AppResult<Run> {
+    let Some(client) = st.assistant.as_deref() else {
+        return Err(AssistantError::Disabled.into_app_error());
+    };
+    let resolved = resolve_context(&st.db, me, page).await?;
+    // quick actions and the first message use what the user may read, so a
+    // hidden item behaves exactly like one that does not exist
+    question.item = resolved.item.clone();
+    question.revision = resolved.revision.clone();
+    question.change = resolved.change.clone();
+    question.page = resolved.clone();
+    question.thread = thread;
+    match question.action.needs() {
+        "revision" if question.item.is_none() => {
+            return Err(AppError::BadRequest(format!(
+                "“{}” needs an item.",
+                question.action.label()
+            )))
+        }
+        "change" if question.change.is_none() => {
+            return Err(AppError::BadRequest(format!(
+                "“{}” needs a change order.",
+                question.action.label()
+            )))
+        }
+        _ => {}
+    }
+    let mut prior_taint = false;
+    if thread {
+        let stored = threads::load(&st.db, me, client.retention_days).await?;
+        question.history = threads::history_of(&stored);
+        prior_taint = threads::was_tainted(&stored);
+    }
+    let action = question.action;
+    let text = question.text.clone();
+    let (mut run, tainted) = run_once(st, me, question, prior_taint).await?;
+    let note = ContextNote {
+        kind: resolved.kind.clone(),
+        label: resolved.label(),
+    };
+    if thread {
+        let shown = match (action, text.is_empty()) {
+            (assistant::Action::Ask, _) => text,
+            (_, true) => action.label().to_string(),
+            (_, false) => format!("{} – {text}", action.label()),
+        };
+        let stored = async {
+            let mut tx = st.db.begin().await?;
+            threads::append(
+                &mut tx,
+                me,
+                &threads::Exchange {
+                    action: action.as_str(),
+                    question: &shown,
+                    context_kind: &note.kind,
+                    context_label: &note.label,
+                    answer: &run.answer.text,
+                    tainted,
+                },
+            )
+            .await?;
+            tx.commit().await?;
+            AppResult::Ok(())
+        }
+        .await;
+        if let Err(e) = stored {
+            // the answer is not lost; the thread misses this exchange
+            tracing::warn!(error = %e, "storing an assistant exchange failed");
+        }
+    }
+    run.context = Some(note);
+    Ok(run)
 }

@@ -100,7 +100,9 @@ src/llm/           provider-neutral LLM layer (no TeamCraft types): Turn/ToolCal
                    anthropic.rs = Messages API, openai.rs = Chat Completions (OpenAI, Azure, Mistral, Ollama, vLLM …)
 src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm with the MCP tools,
                    Tools trait (fake in tests), markdown-lite → safe HTML;
-                   services/assistant.rs runs it for a user and writes the audit record (no content)
+                   services/assistant.rs runs it for a user and writes the audit record (no content); resolves the page
+                   context with the user's rights; services/assistant_threads.rs = the per-user conversation (text only)
+src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows shown): parsing and caps only – ids are hints
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck) → TCMESH01
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit

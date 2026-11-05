@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Where used: {{ item.number }}{% endblock %}
 {% block nav_items %}active{% endblock %}
+{% block tc_context %}data-tc-kind="where_used" data-tc-item="{{ item.number }}" data-tc-view="where-used"{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">
@@ -29,7 +30,7 @@
     <thead><tr><th class="num">Level</th><th>Uses</th><th>Parent</th><th>Name</th><th>State</th><th class="num">Find no.</th><th class="num">Qty</th></tr></thead>
     <tbody>
     {% for w in rows %}
-      <tr>
+      <tr data-tc-row="{{ w.parent_number }}">
         <td class="num">{{ w.level }}</td>
         <td class="mono nowrap">{{ w.child_number }}</td>
         <td class="mono nowrap"><a href="/revisions/{{ w.parent_revision_id }}">{{ w.parent_number }}/{{ w.parent_code }}</a></td>

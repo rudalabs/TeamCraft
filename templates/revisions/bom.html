@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}BOM {{ rev.item_number }}/{{ rev.code }}{% endblock %}
 {% block nav_items %}active{% endblock %}
+{% block tc_context %}data-tc-kind="bom" data-tc-item="{{ rev.item_number }}" data-tc-revision="{{ rev.code }}" data-tc-view="bom" data-tc-rule="{{ rule }}"{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">
@@ -53,7 +54,7 @@
     <tbody>
     {% for row in rows %}
       {% set n = row.node %}
-      <tr class="{% if not n.revision and not n.restricted %}unresolved{% endif %}">
+      <tr {% if not n.restricted %}data-tc-row="{{ n.item_number }}" {% endif %}class="{% if not n.revision and not n.restricted %}unresolved{% endif %}">
         <td class="lvl-col"><span class="lvl">{{ row.level }}</span></td>
         <td class="num dim">{{ n.find_number }}</td>
         <td class="nowrap bom-item{% if row.level > 6 %} lvl-deep{% elif row.level > 1 %} lvl-{{ row.level }}{% endif %}">
