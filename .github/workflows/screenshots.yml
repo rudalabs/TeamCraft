@@ -69,7 +69,9 @@ jobs:
       - name: Start TeamCraft
         run: |
           mkdir -p "$RUNNER_TEMP/vault"
-          TEAMCRAFT_VAULT_DIR="$RUNNER_TEMP/vault" \
+          # A placeholder key shows the assistant (Ask TeamCraft) in the UI; the
+          # capture never asks a question, so no request leaves the runner.
+          TEAMCRAFT_ANTHROPIC_API_KEY=placeholder-for-screenshots TEAMCRAFT_VAULT_DIR="$RUNNER_TEMP/vault" \
             nohup ./target/release/teamcraft serve >"$RUNNER_TEMP/teamcraft.log" 2>&1 &
           for _ in $(seq 1 60); do
             if curl -fsS --max-time 5 http://127.0.0.1:8080/readyz >/dev/null; then
