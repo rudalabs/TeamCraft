@@ -16,28 +16,47 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::{self, ItemType, Role},
+    domain::{self, ItemType, ProjectVisibility, Role},
     error::{AppError, AppResult},
     models::{Project, ProjectMember},
-    services::{audit, users},
+    services::{access, audit, users},
 };
 
+// There is no project delete. `items.project_id` is `ON DELETE SET NULL`, so
+// deleting a group would declassify all its items (items without a group are
+// readable by everyone): any future delete must refuse restricted groups that
+// still have items.
 const COLUMNS: &str = "id, code, name, description, active, created_at, oidc_group, created_by,
-    number_scheme,
+    number_scheme, visibility,
     (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = projects.id) AS member_count";
 
-pub async fn list(pool: &PgPool, only_active: bool) -> AppResult<Vec<Project>> {
+/// The project groups the actor may see: restricted groups only for their
+/// members and administrators.
+pub async fn list(pool: &PgPool, actor: &Actor, only_active: bool) -> AppResult<Vec<Project>> {
     Ok(sqlx::query_as::<_, Project>(&format!(
-        "SELECT {COLUMNS} FROM projects WHERE active OR NOT $1 ORDER BY active DESC, name"
+        "SELECT {COLUMNS} FROM projects WHERE (active OR NOT $1) AND {}
+         ORDER BY active DESC, name",
+        access::project_visible("projects.id", 2)
     ))
     .bind(only_active)
+    .bind(&actor.hidden_projects)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// The actor's own memberships whose group is restricted.
+pub async fn restricted_memberships(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Uuid>> {
+    Ok(sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM projects WHERE visibility = 'restricted' AND id = ANY($1) ORDER BY code",
+    )
+    .bind(&actor.projects)
     .fetch_all(pool)
     .await?)
 }
 
 /// Active projects in which the actor may create and modify items.
 pub async fn editable_by(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Project>> {
-    Ok(list(pool, true)
+    Ok(list(pool, actor, true)
         .await?
         .into_iter()
         .filter(|p| actor.can_edit_project(Some(p.id)))
@@ -56,21 +75,88 @@ pub async fn memberships_of(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Proje
     .await?)
 }
 
-pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Project> {
+pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<Project> {
     sqlx::query_as::<_, Project>(&format!("SELECT {COLUMNS} FROM projects WHERE id = $1"))
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| AppError::not_found("Project not found."))
+        .ok_or_else(access::not_found_project)
 }
 
-pub async fn get_by_code(pool: &PgPool, code: &str) -> AppResult<Project> {
+/// A project group the actor may see (restricted groups answer "not found"
+/// to non-members).
+pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Project> {
+    let project = get_unchecked(pool, id).await?;
+    access::ensure_visible(actor, Some(project.id), access::not_found_project())?;
+    Ok(project)
+}
+
+pub(crate) async fn get_by_code_unchecked(pool: &PgPool, code: &str) -> AppResult<Project> {
     let code = domain::normalize_project_code(code)?;
     sqlx::query_as::<_, Project>(&format!("SELECT {COLUMNS} FROM projects WHERE code = $1"))
         .bind(&code)
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| AppError::not_found(format!("Project '{code}' not found.")))
+}
+
+/// A project group by code, if the actor may see it; a hidden group gives
+/// the message of an unknown code.
+pub async fn get_by_code(pool: &PgPool, actor: &Actor, code: &str) -> AppResult<Project> {
+    let project = get_by_code_unchecked(pool, code).await?;
+    access::ensure_visible(
+        actor,
+        Some(project.id),
+        AppError::not_found(format!("Project '{}' not found.", project.code)),
+    )?;
+    Ok(project)
+}
+
+/// Restricts a group to its members or opens it to all users again
+/// (managers of the group and administrators).
+pub async fn set_visibility(
+    pool: &PgPool,
+    actor: &Actor,
+    id: Uuid,
+    visibility: ProjectVisibility,
+) -> AppResult<Project> {
+    let mut tx = pool.begin().await?;
+    let current = sqlx::query_as::<_, Project>(&format!(
+        "SELECT {COLUMNS} FROM projects WHERE id = $1 FOR UPDATE"
+    ))
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(access::not_found_project)?;
+    access::ensure_visible(actor, Some(id), access::not_found_project())?;
+    require_manager(&mut tx, actor, id).await?;
+    if current.visibility == visibility.as_str() {
+        tx.rollback().await?;
+        return Ok(current);
+    }
+    let project = sqlx::query_as::<_, Project>(&format!(
+        "UPDATE projects SET visibility = $2 WHERE id = $1 RETURNING {COLUMNS}"
+    ))
+    .bind(id)
+    .bind(visibility.as_str())
+    .fetch_one(&mut *tx)
+    .await?;
+    let summary = match visibility {
+        ProjectVisibility::Restricted => format!("Restricted group {}", project.code),
+        ProjectVisibility::Internal => format!("Opened group {} to all users", project.code),
+    };
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "project.visibility",
+        "project",
+        Some(id),
+        summary,
+        json!({ "visibility": visibility.as_str() }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(project)
 }
 
 fn clean_group(group: Option<&str>) -> AppResult<Option<String>> {
@@ -114,6 +200,8 @@ async fn require_manager(
     actor: &Actor,
     project_id: Uuid,
 ) -> AppResult<()> {
+    // A hidden group answers like a missing one, never "only managers".
+    access::ensure_visible(actor, Some(project_id), access::not_found_project())?;
     if can_manage(conn, actor, project_id).await? {
         Ok(())
     } else {
@@ -132,6 +220,7 @@ pub async fn create(
     name: &str,
     description: &str,
     oidc_group: Option<&str>,
+    visibility: ProjectVisibility,
 ) -> AppResult<Project> {
     actor.require(Role::Editor)?;
     let code = domain::normalize_project_code(code)?;
@@ -146,8 +235,8 @@ pub async fn create(
     let mut tx = pool.begin().await?;
     let id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO projects (id, code, name, description, oidc_group, created_by)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO projects (id, code, name, description, oidc_group, created_by, visibility)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(id)
     .bind(&code)
@@ -155,6 +244,7 @@ pub async fn create(
     .bind(&description)
     .bind(&oidc_group)
     .bind(actor.id)
+    .bind(visibility.as_str())
     .execute(&mut *tx)
     .await
     .map_err(|e| {
@@ -179,7 +269,7 @@ pub async fn create(
         "project",
         Some(id),
         format!("Created project {code} – {name}"),
-        json!({ "oidc_group": oidc_group }),
+        json!({ "oidc_group": oidc_group, "visibility": visibility.as_str() }),
     )
     .await?;
     let project =
@@ -315,24 +405,50 @@ pub struct NextNumber {
 /// scheme when `None`), without using up any. Manually entered numbers that
 /// are already taken are skipped when an item is created, so the real number
 /// can be higher.
+///
+/// A scheme typed in for the preview is free text, so its counter key could
+/// be the private counter of a restricted group: such a preview reads only
+/// counters that a scheme of a group the actor sees uses, and starts at 1
+/// otherwise.
 pub async fn numbering_preview(
     pool: &PgPool,
+    actor: &Actor,
     project: &Project,
     scheme: Option<&str>,
 ) -> AppResult<NumberingPreview> {
+    let own = domain::NumberScheme::of_project(project.number_scheme.as_deref())?;
     let scheme = match scheme.map(str::trim).filter(|s| !s.is_empty()) {
         Some(s) => domain::NumberScheme::parse(s)?,
-        None => domain::NumberScheme::of_project(project.number_scheme.as_deref())?,
+        None => own.clone(),
     };
     let now = Utc::now();
+    let readable: Option<std::collections::HashSet<String>> = if scheme == own {
+        None
+    } else {
+        let mut keys = std::collections::HashSet::new();
+        for p in list(pool, actor, false).await? {
+            let Ok(s) = domain::NumberScheme::of_project(p.number_scheme.as_deref()) else {
+                continue;
+            };
+            for item_type in ItemType::ALL {
+                keys.insert(s.counter_key(&domain::number_context(&p.code, item_type, now)));
+            }
+        }
+        Some(keys)
+    };
     let mut next = Vec::new();
     for item_type in ItemType::ALL {
         let ctx = domain::number_context(&project.code, item_type, now);
-        let used = sqlx::query_scalar::<_, i64>("SELECT value FROM counters WHERE name = $1")
-            .bind(scheme.counter_key(&ctx))
-            .fetch_optional(pool)
-            .await?
-            .unwrap_or(0);
+        let key = scheme.counter_key(&ctx);
+        let used = if readable.as_ref().is_none_or(|keys| keys.contains(&key)) {
+            sqlx::query_scalar::<_, i64>("SELECT value FROM counters WHERE name = $1")
+                .bind(&key)
+                .fetch_optional(pool)
+                .await?
+                .unwrap_or(0)
+        } else {
+            0
+        };
         next.push(NextNumber {
             item_type,
             label: item_type.label(),
@@ -367,7 +483,7 @@ pub async fn add_member(
     username: &str,
     manager: bool,
 ) -> AppResult<ProjectMember> {
-    let project = get(pool, project_id).await?;
+    let project = get(pool, actor, project_id).await?;
     let user = users::find_by_username(pool, username)
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("Unknown user '{}'.", username.trim())))?;
@@ -411,13 +527,14 @@ pub async fn add_member(
 
 /// Removes a member (managers and admins; everybody may leave a group).
 /// The last manager of a group cannot leave it – an admin can still remove them.
+/// Returns how many check-outs the user still holds in the group.
 pub async fn remove_member(
     pool: &PgPool,
     actor: &Actor,
     project_id: Uuid,
     user_id: Uuid,
-) -> AppResult<()> {
-    let project = get(pool, project_id).await?;
+) -> AppResult<i64> {
+    let project = get(pool, actor, project_id).await?;
     let mut tx = pool.begin().await?;
     // serialise membership changes of this group
     sqlx::query("SELECT id FROM projects WHERE id = $1 FOR UPDATE")
@@ -448,16 +565,42 @@ pub async fn remove_member(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found("This user is not a member of the project group."))?;
+    // Locks are not released automatically; say so, so a manager can cancel them.
+    let held = held_checkouts(&mut tx, project_id, user_id).await?;
+    let still = if held > 0 {
+        format!(
+            " ({username} still holds {held} check-outs in {})",
+            project.code
+        )
+    } else {
+        String::new()
+    };
     audit::record(
         &mut tx,
         Some(actor),
         "project.remove_member",
         "project",
         Some(project_id),
-        format!("Removed {username} from {}", project.code),
-        json!({ "user_id": user_id }),
+        format!("Removed {username} from {}{still}", project.code),
+        json!({ "user_id": user_id, "checkouts": held }),
     )
     .await?;
     tx.commit().await?;
-    Ok(())
+    Ok(held)
+}
+
+/// Revisions of the group checked out by a user.
+pub(crate) async fn held_checkouts(
+    conn: &mut PgConnection,
+    project_id: Uuid,
+    user_id: Uuid,
+) -> AppResult<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM revisions r JOIN items i ON i.id = r.item_id
+         WHERE i.project_id = $1 AND r.checked_out_by = $2",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_one(&mut *conn)
+    .await?)
 }

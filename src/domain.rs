@@ -17,12 +17,14 @@ use crate::error::AppError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
-    /// Read-only access to all product data.
+    /// Read-only access to internal project groups and to restricted groups
+    /// the user is a member of.
     Viewer,
-    /// "CAD editor": create and modify product data of their project groups,
-    /// author changes, review changes.
+    /// "CAD editor": edits the groups they are a member of (create and modify
+    /// product data, author changes, review changes); reads like a viewer.
     Editor,
-    /// Everything, plus user/project administration and lock overrides.
+    /// Everything, including restricted groups, plus user/project
+    /// administration and lock overrides.
     Admin,
 }
 
@@ -57,6 +59,45 @@ impl Role {
             "viewer" => Some(Role::Viewer),
             "editor" | "cad-editor" | "engineer" => Some(Role::Editor),
             "admin" => Some(Role::Admin),
+            _ => None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Project group visibility
+// ---------------------------------------------------------------------------
+
+/// Who may read the data of a project group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectVisibility {
+    /// Every signed-in user reads; members edit (the default).
+    Internal,
+    /// Only members (of any role) and administrators read anything in it;
+    /// everybody else gets "not found".
+    Restricted,
+}
+
+impl ProjectVisibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProjectVisibility::Internal => "internal",
+            ProjectVisibility::Restricted => "restricted",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ProjectVisibility::Internal => "Internal",
+            ProjectVisibility::Restricted => "Restricted",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ProjectVisibility> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "internal" => Some(ProjectVisibility::Internal),
+            "restricted" => Some(ProjectVisibility::Restricted),
             _ => None,
         }
     }
@@ -1799,6 +1840,18 @@ pub fn format_age(seconds: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn project_visibility_parse() {
+        for v in [ProjectVisibility::Internal, ProjectVisibility::Restricted] {
+            assert_eq!(ProjectVisibility::parse(v.as_str()), Some(v));
+        }
+        assert_eq!(
+            ProjectVisibility::parse(" Restricted "),
+            Some(ProjectVisibility::Restricted)
+        );
+        assert_eq!(ProjectVisibility::parse("secret"), None);
+    }
 
     #[test]
     fn base_versions() {

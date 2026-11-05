@@ -227,7 +227,8 @@ async fn three_d_preview_pages_and_meshes() {
         .get_page(&format!("/file-versions/{v2}/mesh"), Some(&cookie))
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
-    assert!(r.header("cache-control").unwrap().contains("immutable"));
+    // not cached for good: access can be withdrawn (restricted project groups)
+    assert!(r.header("cache-control").unwrap().contains("no-cache"));
     let mesh = teamcraft::mesh::Mesh::decode(&r.body).expect("TCMESH01");
     assert_eq!(mesh.triangle_count(), 1);
     assert_eq!(mesh.bounds()[3], 10.0, "the binary v2 (10 units wide)");

@@ -688,9 +688,13 @@ async fn obsolete_and_delete_rules() {
     assert_eq!(r.status, StatusCode::CONFLICT);
 
     // Deleting is limited to the creator (or admins) via the service layer
-    let item = teamcraft::services::items::get_by_number(&app.pool, &number)
-        .await
-        .unwrap();
+    let item = teamcraft::services::items::get_by_number(
+        &app.pool,
+        &teamcraft::auth::Actor::system(),
+        &number,
+    )
+    .await
+    .unwrap();
     let other_actor = app.actor("other").await;
     let err = teamcraft::services::items::delete(&app.pool, &other_actor, item.id)
         .await

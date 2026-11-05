@@ -14,8 +14,9 @@
 //! large the vault is. One hit per item (its best file), scores below
 //! [`MIN_SCORE`] are dropped.
 //!
-//! Visibility is the one of the item search: every signed-in user may read
-//! all product data, so candidates are all items except the source itself.
+//! Visibility is the one of the item search: candidates are all items the
+//! actor may read (no items of restricted groups it is not a member of –
+//! their signatures are neither matched nor counted) except the source.
 
 use std::{collections::HashMap, time::Duration};
 
@@ -29,7 +30,7 @@ use crate::{
     error::{AppError, AppResult},
     models::{FileRecord, Revision},
     preview::PreviewFormat,
-    services::files,
+    services::{access, files},
     shape::{self, Signature},
     AppState,
 };
@@ -351,11 +352,12 @@ pub async fn find(
     source: &Signature,
     options: Options,
 ) -> AppResult<Vec<Candidate>> {
-    // the item search's visibility: every signed-in user reads everything
+    // the item search's visibility: signed-in users, no hidden groups
     actor.require(Role::Viewer)?;
     let limit = options.limit.clamp(1, MAX_LIMIT) as usize;
-    // $1 version, $2 source item, $3…$6 window, $7…$9 targets, $10 limit;
-    // the order is the size distance of `shape::compare` (floored lengths)
+    // $1 version, $2 source item, $3…$6 window, $7…$9 targets, $10 limit,
+    // $11 the actor's hidden groups; the order is the size distance of
+    // `shape::compare` (floored lengths)
     let (window, order) = if options.ignore_scale {
         (
             "s.ratio_2 BETWEEN $3 AND $4 AND s.ratio_3 BETWEEN $5 AND $6",
@@ -380,10 +382,11 @@ pub async fn find(
          JOIN revisions r ON r.id = f.revision_id
          JOIN items i ON i.id = r.item_id
          LEFT JOIN projects p ON p.id = i.project_id
-         WHERE s.version = $1 AND i.id <> $2 AND {window}
+         WHERE s.version = $1 AND i.id <> $2 AND {window} AND {visible}
            AND r.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = r.item_id)
          ORDER BY {order}, i.number, f.filename
-         LIMIT $10"
+         LIMIT $10",
+        visible = access::item_visible("i", 11),
     ))
     .bind(shape::VERSION)
     .bind(source_item_id)
@@ -395,6 +398,7 @@ pub async fn find(
     .bind(t2)
     .bind(t3)
     .bind(PREFILTER)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?;
 
@@ -497,7 +501,7 @@ pub async fn for_revision(
     options: Options,
     wait: Duration,
 ) -> AppResult<Report> {
-    let files = files::list(&st.db, rev.id).await?;
+    let files = files::list(&st.db, actor, rev.id).await?;
     for_files(st, actor, rev, &files, filename, options, wait).await
 }
 

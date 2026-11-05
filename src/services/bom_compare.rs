@@ -11,6 +11,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    auth::Actor,
     domain::RevisionRule,
     error::{AppError, AppResult},
     models::BomLine,
@@ -267,6 +268,7 @@ pub fn diff_trees(before: &[BomNode], after: &[BomNode]) -> Vec<LineDiff> {
 /// each child resolved by `rule`.
 pub async fn compare(
     pool: &PgPool,
+    actor: &Actor,
     before: Uuid,
     after: Uuid,
     depth: Depth,
@@ -274,12 +276,17 @@ pub async fn compare(
 ) -> AppResult<Vec<LineDiff>> {
     match depth {
         Depth::Single => {
-            let (a, b) = tokio::try_join!(bom::lines(pool, before), bom::lines(pool, after))?;
+            let (a, b) = tokio::try_join!(
+                bom::lines(pool, actor, before),
+                bom::lines(pool, actor, after)
+            )?;
             Ok(diff(&a, &b))
         }
         Depth::All => {
-            let (a, b) =
-                tokio::try_join!(bom::tree(pool, before, rule), bom::tree(pool, after, rule))?;
+            let (a, b) = tokio::try_join!(
+                bom::tree(pool, actor, before, rule),
+                bom::tree(pool, actor, after, rule)
+            )?;
             Ok(diff_trees(&a.children, &b.children))
         }
     }
@@ -385,6 +392,8 @@ mod tests {
             child_name: number.into(),
             released_child_revision_id: None,
             released_child_code: None,
+            child_project_id: None,
+            restricted: false,
         }
     }
 
@@ -453,6 +462,7 @@ mod tests {
             mass_complete: false,
             cost_complete: false,
             cycle: false,
+            restricted: false,
             children,
         }
     }

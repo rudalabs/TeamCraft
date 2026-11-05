@@ -113,6 +113,12 @@
     </tbody>
   </table>
   </div>
+  {{ m.hidden_count(hidden_changes, "change orders") }}
+</section>
+{% elif hidden_changes %}
+<section class="card">
+  <h2>Change orders</h2>
+  {{ m.hidden_count(hidden_changes, "change orders") }}
 </section>
 {% endif %}
 
@@ -171,16 +177,16 @@
       <tbody>
       {% for i in items %}
         <tr>
-          <td class="mono nowrap"><a href="/revisions/{{ i.revision_id or i.latest_revision_id }}">{{ i.item_number }}{% if i.revision_code %}/{{ i.revision_code }}{% endif %}</a>
+          <td class="mono nowrap">{% if i.restricted %}{{ m.restricted() }}{% else %}<a href="/revisions/{{ i.revision_id or i.latest_revision_id }}">{{ i.item_number }}{% if i.revision_code %}/{{ i.revision_code }}{% endif %}</a>{% endif %}
             {% if i.project_code %}<span class="small muted">{{ i.project_code }}</span>{% endif %}</td>
           <td>{{ i.name }}</td>
-          <td class="nowrap"><a class="mono" href="/revisions/{{ i.latest_revision_id }}">{{ i.latest_code }}</a> {{ m.badge(i.latest_state) }}</td>
+          <td class="nowrap">{% if not i.restricted %}<a class="mono" href="/revisions/{{ i.latest_revision_id }}">{{ i.latest_code }}</a> {{ m.badge(i.latest_state) }}{% endif %}</td>
           <td class="small">{{ i.note }}</td>
           {% if can.edit %}
           <td class="right">
-            <form class="inline" method="post" action="/requests/{{ request.id }}/items/{{ i.item_id }}/remove">
+            {% if not i.restricted %}<form class="inline" method="post" action="/requests/{{ request.id }}/items/{{ i.item_id }}/remove">
               <button class="small danger" type="submit">Remove</button>
-            </form>
+            </form>{% endif %}
           </td>
           {% endif %}
         </tr>

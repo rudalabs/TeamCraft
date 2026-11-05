@@ -53,16 +53,16 @@
     <tbody>
     {% for row in rows %}
       {% set n = row.node %}
-      <tr class="{% if not n.revision %}unresolved{% endif %}">
+      <tr class="{% if not n.revision and not n.restricted %}unresolved{% endif %}">
         <td class="lvl-col"><span class="lvl">{{ row.level }}</span></td>
         <td class="num dim">{{ n.find_number }}</td>
         <td class="nowrap bom-item{% if row.level > 6 %} lvl-deep{% elif row.level > 1 %} lvl-{{ row.level }}{% endif %}">
           {% if row.level > 1 %}<span class="tree-guide" aria-hidden="true">└</span>{% endif %}
-          {% if n.revision %}<a class="mono" href="/revisions/{{ n.revision.id }}">{{ n.item_number }}</a>{% else %}<span class="mono">{{ n.item_number }}</span>{% endif %}
+          {% if n.restricted %}{{ m.restricted() }}{% elif n.revision %}<a class="mono" href="/revisions/{{ n.revision.id }}">{{ n.item_number }}</a>{% else %}<span class="mono">{{ n.item_number }}</span>{% endif %}
           {% if n.cycle %}<span class="badge badge-rejected">cycle</span>{% endif %}
         </td>
         <td>{% if n.revision %}{{ m.revbox(n.revision.code) }}{% endif %}</td>
-        <td class="nowrap">{% if n.revision %}{{ m.badge(n.revision.state) }}{% else %}<span class="badge badge-in_review"><span class="glyph" aria-hidden="true">○</span>no {{ rule|replace("_", " ") }} revision</span>{% endif %}</td>
+        <td class="nowrap">{% if n.restricted %}{% elif n.revision %}{{ m.badge(n.revision.state) }}{% else %}<span class="badge badge-in_review"><span class="glyph" aria-hidden="true">○</span>no {{ rule|replace("_", " ") }} revision</span>{% endif %}</td>
         <td class="ellipsis" title="{% if n.revision %}{{ n.revision.name }}{% endif %}">{% if n.revision %}{{ n.revision.name }}{% endif %}</td>
         <td class="num">{{ n.quantity|num(6) }}{% if n.unit and n.unit != "each" %} <span class="dim">{{ n.unit }}</span>{% endif %}</td>
         <td class="num">{{ n.unit_mass_kg|fixed(3) }}{% if not n.mass_complete %} <span class="marker-impact" title="A mass is missing in this sub-tree">△</span>{% endif %}</td>
@@ -82,6 +82,7 @@
     </tfoot>
   </table>
   </div>
+  {% if tree.restricted_lines %}<p class="hint">Mass and cost exclude {{ tree.restricted_lines }} restricted line{% if tree.restricted_lines != 1 %}s{% endif %} (items of project groups you are not a member of).</p>{% endif %}
   {% else %}
   <p class="empty">This revision has no BOM lines.</p>
   {% endif %}

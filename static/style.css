@@ -1192,6 +1192,7 @@ ul.file-refs { margin-bottom: var(--space-3); }
 
 /* simulations: pass/fail of result values */
 .badge-none { color: var(--text-dim); }
+.badge-restricted { color: var(--text-dim); border-style: dashed; }
 tr.result-fail td.num.value { color: var(--st-danger-fg); font-weight: 600; }
 input.value { width: 8em; text-align: right; }
 input.limit { width: 6.5em; text-align: right; }

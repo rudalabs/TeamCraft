@@ -9,10 +9,12 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    auth::Actor,
     domain::RevisionRule,
     error::AppResult,
     models::Revision,
     services::{
+        access,
         bom::{self, BomNode},
         revisions,
     },
@@ -38,6 +40,8 @@ pub enum Issue {
     CheckNeeded,
     /// The structure loops back to an ancestor.
     Cycle,
+    /// The child is in a project group the reader may not see.
+    Restricted,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -81,10 +85,11 @@ fn walk<'a>(
 /// Checks every line of the expanded BOM below a revision.
 pub async fn bom_health(
     pool: &PgPool,
+    actor: &Actor,
     root_revision_id: Uuid,
     rule: RevisionRule,
 ) -> AppResult<BomHealth> {
-    let tree = bom::tree(pool, root_revision_id, rule).await?;
+    let tree = bom::tree(pool, actor, root_revision_id, rule).await?;
     let mut lines = Vec::new();
     walk(&tree.children, &mut Vec::new(), &mut lines);
 
@@ -147,6 +152,13 @@ pub async fn bom_health(
                 Issue::Cycle,
                 "the structure loops back to an ancestor".into(),
             );
+        }
+        if n.restricted {
+            add(
+                Issue::Restricted,
+                "restricted item – cannot be checked".into(),
+            );
+            continue;
         }
         match &n.revision {
             None => add(
@@ -232,10 +244,11 @@ pub struct DuplicateFile {
 /// `revision_id`, only the contents of that revision's files.
 pub async fn duplicate_files(
     pool: &PgPool,
+    actor: &Actor,
     revision_id: Option<Uuid>,
     limit: i64,
 ) -> AppResult<Vec<DuplicateFile>> {
-    Ok(sqlx::query_as::<_, DuplicateFile>(
+    Ok(sqlx::query_as::<_, DuplicateFile>(&format!(
         "WITH latest AS (
              SELECT f.sha256, f.filename, f.size_bytes, i.number AS item_number, r.item_id,
                     r.code AS revision_code, r.state AS revision_state
@@ -243,6 +256,7 @@ pub async fn duplicate_files(
              JOIN revisions r ON r.id = f.revision_id
              JOIN items i ON i.id = r.item_id
              WHERE r.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = r.item_id)
+               AND {}
          ),
          shared AS (
              SELECT sha256 FROM latest GROUP BY sha256 HAVING COUNT(DISTINCT item_id) > 1
@@ -252,9 +266,11 @@ pub async fn duplicate_files(
          WHERE $1::uuid IS NULL OR l.sha256 IN (SELECT sha256 FROM files WHERE revision_id = $1)
          ORDER BY l.size_bytes DESC, l.sha256, l.item_number
          LIMIT $2",
-    )
+        access::item_visible("i", 3)
+    ))
     .bind(revision_id)
     .bind(limit.clamp(1, 1000))
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?)
 }

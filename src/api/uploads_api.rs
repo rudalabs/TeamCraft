@@ -92,7 +92,7 @@ pub(super) async fn create(
     ApiUser(me): ApiUser,
     ApiJson(body): ApiJson<CreateBody>,
 ) -> AppResult<Response> {
-    let rev = revision_at(&st, &body.item, &body.revision).await?;
+    let rev = revision_at(&st, &me, &body.item, &body.revision).await?;
     let base = match body.base.as_ref().filter(|v| !v.is_null()) {
         Some(v) => Some(BaseVersion::from_json(v)?),
         None => None,

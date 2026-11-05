@@ -563,6 +563,11 @@ pub fn payload(event: WebhookEvent, id: Uuid, actor: Option<&Actor>, objects: Va
 /// top-level `revisions` list that belong to its group (a change can hold
 /// revisions of several groups; the other groups' items are none of that
 /// receiver's business).
+///
+/// Read access: each webhook is a reader that sees its own project group
+/// and the internal groups (a global webhook: the internal groups only), so
+/// an event that touches a restricted group reaches only webhooks scoped to
+/// that group.
 pub async fn emit(
     conn: &mut PgConnection,
     actor: Option<&Actor>,
@@ -587,7 +592,11 @@ pub async fn emit(
          FROM webhooks w
          LEFT JOIN projects p ON p.id = w.project_id
          WHERE w.active AND $2 = ANY(w.events)
-           AND (w.project_id IS NULL OR w.project_id = ANY($4))",
+           AND (w.project_id IS NULL OR w.project_id = ANY($4))
+           -- the webhook as a reader: its own group and the internal groups
+           AND NOT EXISTS (SELECT 1 FROM projects rp
+                           WHERE rp.id = ANY($4) AND rp.visibility = 'restricted'
+                             AND rp.id IS DISTINCT FROM w.project_id)",
     )
     .bind(event_id)
     .bind(event.as_str())
@@ -624,7 +633,10 @@ pub(crate) async fn emit_each(
          SELECT gen_random_uuid(), w.id, e.event_id, $1, e.payload
          FROM unnest($2::uuid[], $3::uuid[], $4::jsonb[]) AS e (event_id, project_id, payload)
          JOIN webhooks w ON w.active AND $1 = ANY(w.events)
-                        AND (w.project_id IS NULL OR w.project_id = e.project_id)",
+                        AND (w.project_id IS NULL OR w.project_id = e.project_id)
+         WHERE NOT EXISTS (SELECT 1 FROM projects rp
+                           WHERE rp.id = e.project_id AND rp.visibility = 'restricted'
+                             AND rp.id IS DISTINCT FROM w.project_id)",
     )
     .bind(event.as_str())
     .bind(&ids)
@@ -761,6 +773,7 @@ mod tests {
             role: Role::Editor,
             skin: String::new(),
             projects: Vec::new(),
+            hidden_projects: Vec::new(),
         }
     }
 

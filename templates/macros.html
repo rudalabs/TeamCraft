@@ -32,6 +32,17 @@
 <span class="revbox" title="Revision {{ code }}">{{ code }}</span>
 {%- endmacro %}
 
+{#- Placeholder for an item of a restricted project group the reader is not
+    a member of: no number, no name, no link. -#}
+{% macro restricted(text="Restricted item") -%}
+<span class="badge badge-restricted" title="In a restricted project group you are not a member of">{{ text }}</span>
+{%- endmacro %}
+
+{#- "+N … in groups you cannot see" below a list that left them out. -#}
+{% macro hidden_count(n, what) -%}
+{% if n %}<p class="hint hidden-count">+{{ n }} {{ what }} in groups you cannot see</p>{% endif %}
+{%- endmacro %}
+
 {#- How a dependent depends on the item that changed (impacts, impact analysis). -#}
 {% macro relation(r, target="it") -%}
 {% if r == "bom" %}uses {{ target }} in its BOM{% elif r == "drawing" %}is a drawing of {{ target }}{% elif r == "specification" %}is a specification for {{ target }}{% elif r == "reference" %}references {{ target }}{% elif r == "simulation" %}is a simulation based on {{ target }}{% elif r == "file" %}has a CAD file that references {% if target == "it" %}its files{% else %}files of {{ target }}{% endif %}{% else %}depends on {{ target }}{% endif %}
@@ -81,8 +92,9 @@
   <ul class="impact-rows">
     {% for i in g.impacts %}
     <li title="{{ g.item_number }} {{ relation(i.relation) }}{% if i.detail %} ({{ i.detail }}){% endif %}">
-      <span class="impact-source"><a class="mono" href="/revisions/{{ i.source_revision_id }}">{{ i.source_number }}/{{ i.source_code }}</a>
-        <span class="impact-source-name">{{ i.source_name }}</span></span>
+      <span class="impact-source">{% if i.source_restricted %}{{ restricted() }} <span class="impact-source-name">a restricted item this depends on</span>
+        {%- else %}<a class="mono" href="/revisions/{{ i.source_revision_id }}">{{ i.source_number }}/{{ i.source_code }}</a>
+        <span class="impact-source-name">{{ i.source_name }}</span>{% endif %}</span>
       <span class="impact-event">{% if i.event == "released" %}released{% else %}<span class="badge badge-obsolete">obsolete</span>{% endif %}
         {%- if i.change_number %} via <a class="mono" href="/changes/{{ i.change_id }}">{{ i.change_number }}</a>{% endif %}</span>
       <span class="impact-relation">{{ relation_short(i.relation) }}{% if i.detail %} <span class="impact-detail">· {{ i.detail }}</span>{% endif %}</span>
