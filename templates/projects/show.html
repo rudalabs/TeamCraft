@@ -5,7 +5,7 @@
 {% import "macros.html" as m %}
 <div class="page-head">
   <div>
-    <p class="kicker">Project group{% if project.description %} · {{ project.description }}{% endif %}</p>
+    <p class="crumbs"><a href="/projects">Projects</a><span>{{ project.code }}</span></p>
     <h1><span class="mono">{{ project.code }}</span> · {{ project.name }}</h1>
     <p class="subtitle">
       {% if project.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">archived</span>{% endif %}

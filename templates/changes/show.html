@@ -5,15 +5,17 @@
 {% import "macros.html" as m %}
 <div class="page-head">
   <div>
-    <h1><span class="mono">{{ change.number }}</span> · {{ change.title }}</h1>
-    <p class="subtitle">{{ m.badge(change.status) }} {{ m.badge(change.priority) }} · created by {{ change.created_by_name }} {{ m.time(change.created_at) }}</p>
+    <p class="crumbs"><a href="/changes">Changes</a><span>{{ change.number }}</span></p>
+    <div class="title-row">
+      <h1><span class="id">{{ change.number }}</span> {{ change.title }}</h1>
+      <form method="post" action="/changes/{{ change.id }}/watch">
+        <input type="hidden" name="watch" value="{% if watching %}0{% else %}1{% endif %}">
+        <input type="hidden" name="back" value="/changes/{{ change.id }}">
+        <button class="ghost small" type="submit" aria-pressed="{% if watching %}true{% else %}false{% endif %}" title="{% if watching %}Stop the notifications about {{ change.number }}{% else %}Get notified when {{ change.number }} is submitted, decided or released{% endif %}">{{ m.eye() }}{% if watching %}Unwatch{% else %}Watch{% endif %}</button>
+      </form>
+    </div>
   </div>
   <div class="actions">
-    <form method="post" action="/changes/{{ change.id }}/watch">
-      <input type="hidden" name="watch" value="{% if watching %}0{% else %}1{% endif %}">
-      <input type="hidden" name="back" value="/changes/{{ change.id }}">
-      <button type="submit" title="{% if watching %}Stop the notifications about {{ change.number }}{% else %}Get notified when {{ change.number }} is submitted, decided or released{% endif %}">{% if watching %}Unwatch{% else %}Watch{% endif %}</button>
-    </form>
     {% if can.submit %}
     <form method="post" action="/changes/{{ change.id }}/submit"
           data-confirm="Submit {{ change.number }} for review? Its revisions will be frozen.">
@@ -35,10 +37,19 @@
     </form>
     {% endif %}
     {% if assistant_enabled %}
-    <button type="button" data-toggle="assistant-panel" title="A briefing for the review: what changes, impact, risks, open questions">Ask TeamCraft…</button>
+    <button class="ghost" type="button" data-toggle="assistant-panel" title="A briefing for the review: what changes, impact, risks, open questions">Ask TeamCraft…</button>
     {% endif %}
   </div>
 </div>
+{% set approved = reviews|selectattr("decision", "eq", "approved")|list|length %}
+<dl class="titleblock">
+  <div><dt>Status</dt><dd>{{ m.badge(change.status) }}</dd></div>
+  <div><dt>Priority</dt><dd>{{ m.badge(change.priority) }}</dd></div>
+  <div><dt>Author</dt><dd>{{ change.created_by_name }}</dd></div>
+  <div><dt>Created</dt><dd>{{ m.time(change.created_at) }}</dd></div>
+  <div><dt>Submitted</dt><dd>{{ m.time(change.submitted_at) }}</dd></div>
+  <div><dt>Reviewers</dt><dd>{% if reviews %}{{ approved }}/{{ reviews|length }} approved{% else %}<span class="dim">none yet</span>{% endif %}</dd></div>
+</dl>
 {% if assistant_enabled %}
 {{ m.assistant_panel([["review_brief", "Brief me for this review"]], "", "", change.number, "/changes/" ~ change.id) }}
 {% endif %}
@@ -57,14 +68,15 @@
 {% endif %}
 
 {% if can.review %}
-<section class="card">
+<section class="card" id="decision">
   <h2>Your review</h2>
   <form class="stack" method="post" action="/changes/{{ change.id }}/review">
-    <label>Comment <span class="hint">required when rejecting</span>
-      <textarea name="comment" maxlength="4000"></textarea>
+    <label>Comment
+      <textarea name="comment" maxlength="4000" aria-describedby="decision-hint"></textarea>
+      <span class="hint" id="decision-hint">A rejection needs a comment: what has to change.</span>
     </label>
     <div class="actions">
-      <button class="primary" type="submit" name="decision" value="approve">Approve</button>
+      <button class="primary" type="submit" name="decision" value="approve">Approve change</button>
       <button class="danger" type="submit" name="decision" value="reject">Reject</button>
     </div>
   </form>

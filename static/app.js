@@ -213,6 +213,86 @@
     img.addEventListener("error", hide);
   });
 
+  // Navigation: the active entry is the current page for screen readers.
+  document.querySelectorAll(".nav a.active, .nav-admin a.active").forEach(function (a) {
+    a.setAttribute("aria-current", "page");
+  });
+
+  // Forms that return to this page (the Appearance choice in the user menu).
+  document.querySelectorAll("input[data-here]").forEach(function (input) {
+    input.value = location.pathname + location.search;
+  });
+
+  // "/" focuses the search field (the page's own filter first), unless the
+  // user is typing somewhere.
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+    var t = event.target;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    var field = document.querySelector("[data-filter]") || document.querySelector(".quicksearch input");
+    if (field) { event.preventDefault(); field.focus(); field.select(); }
+  });
+
+  // Menus (<details class="menu">): one open at a time, Esc closes and
+  // returns focus to the trigger, a click outside closes, ↑/↓ move.
+  var menus = document.querySelectorAll("details.menu");
+  function closeMenus(except) {
+    menus.forEach(function (d) { if (d !== except) d.removeAttribute("open"); });
+  }
+  menus.forEach(function (menu) {
+    menu.addEventListener("toggle", function () { if (menu.open) closeMenus(menu); });
+    menu.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && menu.open) {
+        menu.removeAttribute("open");
+        menu.querySelector("summary").focus();
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      var items = Array.prototype.slice.call(menu.querySelectorAll(".menu-pop a, .menu-pop button"));
+      if (!items.length) return;
+      if (!menu.open) menu.setAttribute("open", "");
+      event.preventDefault();
+      var i = items.indexOf(document.activeElement);
+      i = event.key === "ArrowDown" ? (i + 1) % items.length : (i <= 0 ? items.length - 1 : i - 1);
+      items[i].focus();
+    });
+  });
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest || !event.target.closest("details.menu")) closeMenus(null);
+  });
+
+  // Selects that apply at once (<select data-autosubmit>); the Apply button
+  // stays for pages without JavaScript (<noscript>).
+  document.querySelectorAll("select[data-autosubmit]").forEach(function (select) {
+    select.addEventListener("change", function () {
+      if (select.form && select.form.requestSubmit) select.form.requestSubmit();
+      else if (select.form) select.form.submit();
+    });
+  });
+
+  // Flash messages can be dismissed.
+  document.querySelectorAll("main > .flash").forEach(function (flash) {
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "dismiss";
+    close.setAttribute("aria-label", "Dismiss");
+    close.textContent = "×";
+    close.addEventListener("click", function () { flash.remove(); });
+    flash.appendChild(close);
+  });
+
+  // Tabs (<nav class="tabs">): ←/→ move between them.
+  document.querySelectorAll(".tabs").forEach(function (tabs) {
+    tabs.addEventListener("keydown", function (event) {
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      var links = Array.prototype.slice.call(tabs.querySelectorAll("a"));
+      var i = links.indexOf(document.activeElement);
+      if (i < 0) return;
+      event.preventDefault();
+      links[(i + (event.key === "ArrowRight" ? 1 : links.length - 1)) % links.length].focus();
+    });
+  });
+
   // Copy buttons: <button data-copy="id">.
   document.querySelectorAll("[data-copy]").forEach(function (btn) {
     btn.addEventListener("click", function () {

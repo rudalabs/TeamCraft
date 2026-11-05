@@ -5,19 +5,22 @@
 {% import "macros.html" as m %}
 <div class="page-head">
   <div>
-    <p class="kicker">3D preview · {{ format|upper }}</p>
-    <h1>{{ file.filename }} <span class="badge">v{{ shown.version }}</span>{% if is_current %} <span class="badge badge-released">current</span>{% endif %}</h1>
-    <p class="subtitle">
-      <a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }} · {{ m.badge(rev.state) }}
-      · {{ shown.size_bytes|filesize }} · uploaded {{ m.time(shown.uploaded_at) }} by {{ shown.uploaded_by_name }}
-    </p>
-    {% if shown.comment %}<p class="small">{{ shown.comment }}</p>{% endif %}
+    <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ rev.id }}#files">{{ rev.item_number }}/{{ rev.code }}</a><span>3D preview</span></p>
+    <h1>{{ file.filename }}</h1>
+    {% if shown.comment %}<p class="meta">{{ shown.comment }}</p>{% endif %}
   </div>
   <div class="actions">
-    <a class="button" href="/revisions/{{ rev.id }}#files">← Revision</a>
     <a class="button primary" href="/file-versions/{{ shown.id }}/download">Download</a>
   </div>
 </div>
+<dl class="titleblock">
+  <div><dt>Revision</dt><dd><a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> {{ rev.name }}</dd></div>
+  <div><dt>State</dt><dd>{{ m.badge(rev.state) }}</dd></div>
+  <div><dt>Format</dt><dd>{{ format|upper }}</dd></div>
+  <div><dt>Version</dt><dd>v{{ shown.version }}{% if is_current %} <span class="dim">current</span>{% endif %}</dd></div>
+  <div><dt>Size</dt><dd>{{ shown.size_bytes|filesize }}</dd></div>
+  <div><dt>Uploaded</dt><dd>{{ m.time(shown.uploaded_at) }} · {{ shown.uploaded_by_name }}</dd></div>
+</dl>
 
 {% if not is_current %}
 <div class="notice">This is an older version of the file. <a href="/files/{{ file.id }}/preview">Show the current version (v{{ file.version }}).</a></div>

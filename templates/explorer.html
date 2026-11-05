@@ -5,26 +5,20 @@
 {% import "macros.html" as m %}
 <div class="page-head">
   <div>
-    <p class="kicker">Vault explorer</p>
-    <h1>{% if folder == "mine" %}My check-outs{% elif folder == "favorites" %}Favorites{% elif folder == "locked" %}All check-outs{% elif folder == "none" %}Items without project group{% elif folder == "search" %}Search{% else %}{% for f in folders %}{% if f.id == folder %}<span class="mono">{{ f.code }}</span> · {{ f.name }}{% endif %}{% endfor %}{% endif %}</h1>
-    <p class="subtitle">Pick a folder, select an item, check it out, work on the files, check them back in. Every row shows who holds the lock.</p>
+    <p class="crumbs"><a href="/vault">Vault</a>{% for f in folders %}{% if f.id == folder %}<span>{{ f.code }}</span>{% endif %}{% endfor %}</p>
+    <h1>{% if folder == "mine" %}My check-outs{% elif folder == "favorites" %}Favorites{% elif folder == "locked" %}All check-outs{% elif folder == "none" %}Items without project group{% elif folder == "search" %}Search{% else %}{% for f in folders %}{% if f.id == folder %}{{ f.name }}{% endif %}{% endfor %}{% endif %}</h1>
   </div>
-  <form class="inline" method="get" action="/vault" role="search">
-    {% if folder != "search" %}<input type="hidden" name="folder" value="{{ folder }}">{% endif %}
-    <input type="search" name="q" value="{{ q }}" placeholder="Number or name…" aria-label="Filter">
-    <button type="submit">Filter</button>
-  </form>
 </div>
 
 <div class="explorer">
   <nav class="card explorer-tree" aria-label="Folders">
-    <a class="{% if folder == 'mine' %}active{% endif %}" href="/vault?folder=mine">🔒 My check-outs</a>
-    <a class="{% if folder == 'favorites' %}active{% endif %}" href="/vault?folder=favorites">★ Favorites</a>
+    <a class="{% if folder == 'mine' %}active{% endif %}" href="/vault?folder=mine"><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>My check-outs</a>
+    <a class="{% if folder == 'favorites' %}active{% endif %}" href="/vault?folder=favorites">{{ m.star() }}Favorites</a>
     <a class="{% if folder == 'locked' %}active{% endif %}" href="/vault?folder=locked">All check-outs</a>
     <p class="tree-head">Project groups</p>
     {% for f in folders %}
-    <a class="{% if f.id == folder %}active{% endif %}" href="/vault?folder={{ f.id }}" title="{{ f.name }}">
-      <span class="mono">{{ f.code }}</span> <span class="muted small">{{ f.items }}{% if f.locked %} · {{ f.locked }} 🔒{% endif %}</span>
+    <a class="{% if f.id == folder %}active{% endif %}" href="/vault?folder={{ f.id }}" title="{{ f.name }}{% if f.locked %} · {{ f.locked }} checked out{% endif %}">
+      <span class="id">{{ f.code }}</span> <span class="count">{{ f.items }}</span>
     </a>
     {% else %}
     <p class="empty small">No project groups yet – <a href="/projects#new-project">create one</a>.</p>
@@ -33,6 +27,14 @@
   </nav>
 
   <section class="card explorer-list" aria-label="Items">
+    <div class="card-head">
+      <h2>Items <span class="count">{{ entries|length }}</span></h2>
+      <form class="inline" method="get" action="/vault" role="search">
+        {% if folder != "search" %}<input type="hidden" name="folder" value="{{ folder }}">{% endif %}
+        <input type="search" name="q" value="{{ q }}" placeholder="Filter by number or name" aria-label="Filter" aria-keyshortcuts="/" data-filter>
+        <button class="small" type="submit">Filter</button>
+      </form>
+    </div>
     {% if entries %}
     <div class="table-wrap">
     <table>
@@ -40,11 +42,11 @@
       <tbody>
       {% for e in entries %}
         <tr class="{% if selected and selected.rev.id == e.revision_id %}selected{% endif %}">
-          <td class="mono nowrap"><a href="{{ '/vault?folder=' ~ folder ~ ('&q=' ~ q if q else '') ~ '&rev=' ~ e.revision_id }}">{{ e.number }}</a></td>
-          <td class="mono">{{ e.code }}</td>
-          <td>{{ e.name }}{% if folder in ["mine", "locked", "search"] and e.project_code %} <span class="muted small">{{ e.project_code }}</span>{% endif %}</td>
-          <td>{{ m.badge(e.state) }}</td>
-          <td class="nowrap">{% if e.checked_out_by_name %}{{ m.lock(e.checked_out_by_name) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="nowrap"><a class="mono" href="{{ '/vault?folder=' ~ folder ~ ('&q=' ~ q if q else '') ~ '&rev=' ~ e.revision_id }}">{{ e.number }}</a></td>
+          <td>{{ m.revbox(e.code) }}</td>
+          <td class="ellipsis" title="{{ e.name }}">{{ e.name }}{% if folder in ["mine", "locked", "search"] and e.project_code %} <span class="muted small">{{ e.project_code }}</span>{% endif %}</td>
+          <td class="nowrap">{{ m.badge(e.state) }}</td>
+          <td class="nowrap">{% if e.checked_out_by_name %}{{ m.lock(e.checked_out_by_name, e.checked_out_by == me.id) }}{% endif %}</td>
           <td class="num">{{ e.file_count }}</td>
         </tr>
       {% endfor %}
@@ -53,7 +55,8 @@
     </div>
     {% if entries|length >= limit %}<p class="hint">Showing the first {{ limit }} items – use the filter to narrow down.</p>{% endif %}
     {% else %}
-    <p class="empty">{% if folder == "mine" %}You have nothing checked out.{% elif folder == "favorites" %}No favorites yet – use ☆ Favorite on an item.{% elif q %}No items match “{{ q }}”.{% else %}This folder is empty.{% endif %}</p>
+    <p class="empty">{% if folder == "mine" %}You have nothing checked out.{% elif folder == "favorites" %}No favorites yet – use the star on an item.{% elif q %}No items match “{{ q }}”.{% else %}This folder is empty.{% endif %}
+      Pick a folder, select an item, check it out, work on the files and check them back in.</p>
     {% endif %}
   </section>
 
@@ -61,31 +64,38 @@
     {% if selected %}
     {% set rev = selected.rev %}
     {% set can = selected.can %}
-    <p class="kicker">{{ rev.item_type|label }}{% if rev.project_code %} · {{ rev.project_code }}{% endif %}</p>
     <h2><a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a></h2>
     <p>{{ rev.name }}</p>
-    <p>{{ m.badge(rev.state) }} {% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name) }} <span class="small muted">since {{ m.time(rev.checked_out_at) }}</span>{% endif %}</p>
+    <dl class="titleblock">
+      <div><dt>Type</dt><dd>{{ rev.item_type|label }}</dd></div>
+      <div><dt>Project</dt><dd>{{ rev.project_code or "—" }}</dd></div>
+      <div><dt>State</dt><dd>{{ m.badge(rev.state) }}</dd></div>
+      <div><dt>Lock</dt><dd>{% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name, rev.checked_out_by == me.id) }}{% else %}<span class="dim">—</span>{% endif %}</dd></div>
+    </dl>
+    {% if rev.checked_out_by_name %}<p class="small muted">Checked out since {{ m.time(rev.checked_out_at) }}</p>{% endif %}
     <div class="actions">
       {% if can.checkout %}
       <form method="post" action="/revisions/{{ rev.id }}/checkout?back={{ back }}"><button class="primary" type="submit">Check out</button></form>
+      <a class="button" href="/revisions/{{ rev.id }}">Open</a>
+      {% else %}
+      <a class="button{% if not can.checkin %} primary{% endif %}" href="/revisions/{{ rev.id }}">Open</a>
       {% endif %}
       {% if can.cancel_checkout %}
       <form method="post" action="/revisions/{{ rev.id }}/cancel-checkout?back={{ back }}"
             {% if rev.checked_out_by != me.id %}data-confirm="Release the check-out held by {{ rev.checked_out_by_name }}?"{% endif %}>
-        <button type="submit">{% if rev.checked_out_by != me.id %}Force unlock{% else %}Cancel check-out{% endif %}</button>
+        <button class="ghost" type="submit">{% if rev.checked_out_by != me.id %}Force unlock{% else %}Cancel check-out{% endif %}</button>
       </form>
       {% endif %}
-      <a class="button" href="/revisions/{{ rev.id }}">Open</a>
     </div>
 
-    <h3>Files</h3>
+    <h3>Files <span class="count">{{ selected.files|length }}</span></h3>
     {% if selected.files %}
     <ul class="file-list">
       {% for f in selected.files %}
       <li>
         <a href="/files/{{ f.id }}/download" title="Download v{{ f.version }}">{{ f.filename }}</a>
         <span class="muted small">v{{ f.version }} · {{ f.size_bytes|filesize }}{% if f.format_info %} · {{ f.format_info.label }}{% endif %}</span>
-        {% if f.preview %}<a class="button small" href="/files/{{ f.id }}/preview">3D</a>{% endif %}
+        {% if f.preview %}<a class="button xs" href="/files/{{ f.id }}/preview">3D</a>{% endif %}
       </li>
       {% endfor %}
     </ul>

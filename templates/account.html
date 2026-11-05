@@ -12,24 +12,38 @@
   </div>
 </div>
 
-<section class="card" id="skins">
+<section class="card" id="appearance">
   <div class="card-head">
-    <h2>Skin</h2>
-    <span class="hint">Colours, glow and texture of the interface – only for you.</span>
+    <h2>Appearance</h2>
+    <span class="hint">Only for you; the desktop app has its own choice.</span>
   </div>
-  <div class="skins">
-    {% for s in skins %}
+  <p class="muted">TeamCraft now follows your system appearance. Choose Dark to keep the dark look.</p>
+  <div class="scheme-cards" role="group" aria-label="Colour scheme">
+    {% for s in skins %}{% if s.id in ["teamcraft", "teamcraft-day", "teamcraft-night"] %}
     <form method="post" action="/account/skin">
       <input type="hidden" name="skin" value="{{ s.id }}">
       <button class="skin-card{% if s.id == me.skin %} selected{% endif %}" type="submit" data-skin="{{ s.id }}"
-              {% if s.id == me.skin %}aria-pressed="true"{% endif %}>
-        <img src="/static/media/{{ s.logo }}?v={{ assets }}" alt="">
+              aria-pressed="{% if s.id == me.skin %}true{% else %}false{% endif %}">
+        <span class="skin-preview" aria-hidden="true"></span>
+        <strong>{% if s.id == "teamcraft" %}System{% elif s.id == "teamcraft-day" %}Light{% else %}Dark{% endif %}</strong>
+        <span class="small">{{ s.description }}</span>
+      </button>
+    </form>
+    {% endif %}{% endfor %}
+  </div>
+  <h3>Distribution skins <span class="hint">These skins are dark.</span></h3>
+  <div class="skins">
+    {% for s in skins %}{% if s.id not in ["teamcraft", "teamcraft-day", "teamcraft-night"] %}
+    <form method="post" action="/account/skin">
+      <input type="hidden" name="skin" value="{{ s.id }}">
+      <button class="skin-card{% if s.id == me.skin %} selected{% endif %}" type="submit" data-skin="{{ s.id }}"
+              aria-pressed="{% if s.id == me.skin %}true{% else %}false{% endif %}">
+        <span class="skin-preview" aria-hidden="true"></span>
         <strong>{{ s.name }}</strong>
-        <span class="small muted">{{ s.description }}</span>
         <span class="skin-swatch" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
       </button>
     </form>
-    {% endfor %}
+    {% endif %}{% endfor %}
   </div>
 </section>
 
