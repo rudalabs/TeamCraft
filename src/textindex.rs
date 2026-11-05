@@ -88,12 +88,12 @@ pub async fn extract_file(path: &Path, filename: &str) -> String {
     if kind_of(filename) == Kind::None {
         return String::new();
     }
-    if kind_of(filename) == Kind::Pdf {
-        return crate::pdftext::extract_file(path).await;
-    }
     let Ok(file) = tokio::fs::File::open(path).await else {
         return String::new();
     };
+    if kind_of(filename) == Kind::Pdf {
+        return crate::pdftext::extract_file(file).await;
+    }
     let mut content = Vec::new();
     if file.take(MAX_READ).read_to_end(&mut content).await.is_err() {
         return String::new();

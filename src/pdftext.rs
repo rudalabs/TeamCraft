@@ -134,13 +134,10 @@ pub fn run_job(
 }
 
 /// The text of a stored PDF; empty if it has none or cannot be read (a
-/// scanned or damaged file never fails an upload). The file is handed to the
+/// scanned or damaged file never fails an upload). The opened file is handed to the
 /// child on its standard input and the text comes back on its standard
 /// output, so no path travels anywhere.
-pub async fn extract_file(path: &Path) -> String {
-    let Ok(file) = tokio::fs::File::open(path).await else {
-        return String::new();
-    };
+pub async fn extract_file(file: tokio::fs::File) -> String {
     // size before reading: a big PDF is a scan, not a report
     match file.metadata().await {
         Ok(meta) if meta.len() <= MAX_PDF_BYTES => {}
@@ -311,9 +308,14 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("report.pdf");
         std::fs::write(&path, sample_pdf(&["Mass flow 2.25 kg/s"])).unwrap();
-        assert!(extract_file(&path).await.contains("2.25"));
+        assert!(extract_file(tokio::fs::File::open(&path).await.unwrap())
+            .await
+            .contains("2.25"));
         std::fs::write(&path, b"junk").unwrap();
-        assert_eq!(extract_file(&path).await, "");
+        assert_eq!(
+            extract_file(tokio::fs::File::open(&path).await.unwrap()).await,
+            ""
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }
