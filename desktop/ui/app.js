@@ -583,7 +583,8 @@
   function refreshWorklistCount() {
     return api("GET", "/worklist").then(function (w) {
       state.worklist = w;
-      var n = w.checkouts.length + w.reviews.length + (w.impacts || []).length + (w.requests_assigned || []).length;
+      // dependents count once, however many changes they have to be checked against
+      var n = w.checkouts.length + w.reviews.length + impactGroups(w).length + (w.requests_assigned || []).length;
       var el = $("worklist-count");
       el.textContent = String(n);
       el.classList.toggle("hidden", n === 0);
@@ -708,18 +709,9 @@
       })) : h("p.empty", { text: "Nothing checked out." }));
       nav.appendChild(h("p.section-title", { text: "Waiting for my review (" + w.reviews.length + ")" }));
       nav.appendChild(w.reviews.length ? h("ul.tree", null, w.reviews.map(changeNode)) : h("p.empty", { text: "Nothing to review." }));
-      var impacts = w.impacts || [];
-      nav.appendChild(h("p.section-title", { text: "Dependents to check (" + impacts.length + ")" }));
-      nav.appendChild(impacts.length ? h("ul.tree", null, impacts.map(function (i) {
-        return h("li", null, h("div.node", {
-          title: i.item_number + " " + relationText(i.relation, i.source_number) + " – " + i.source_number + "/" + i.source_code + " " + i.event,
-          on: { click: function () { openRevision(i.item_number, i.revision_code, "references"); } }
-        }, [
-          h("span.twisty"), h("span.ico", { text: "⚠" }),
-          h("span.label", null, [h("span.mono", { text: i.item_number + "/" + i.revision_code }), " ", i.item_name]),
-          h("span.meta.mono", { text: i.source_number + "/" + i.source_code })
-        ]));
-      })) : h("p.empty", { text: "Nothing to check." }));
+      var groups = impactGroups(w);
+      nav.appendChild(h("p.section-title", { text: "Dependents to check (" + groups.length + ")" }));
+      nav.appendChild(groups.length ? h("ul.tree", null, groups.map(dependentNode)) : h("p.empty", { text: "Nothing to check." }));
       nav.appendChild(h("p.section-title", { text: "My open changes (" + w.my_changes.length + ")" }));
       nav.appendChild(w.my_changes.length ? h("ul.tree", null, w.my_changes.map(changeNode)) : h("p.empty", { text: "No open changes." }));
       // change requests (older servers: none)
@@ -729,6 +721,46 @@
       nav.appendChild(h("p.section-title", { text: "My open requests (" + mine.length + ")" }));
       nav.appendChild(mine.length ? h("ul.tree", null, mine.map(requestNode)) : h("p.empty", { text: "Found a problem? Use “Request change…” on a revision or a workspace file." }));
     });
+  }
+
+  /** Worklist: one line per dependent with the number of changes to check;
+   *  the twisty lists them (a click on a source opens it). */
+  function dependentNode(g) {
+    var key = "dep:" + g.revision_id;
+    var open = !!state.expanded[key];
+    var n = g.impacts.length;
+    var children = h("ul.tree" + (open ? "" : ".hidden"), null, g.impacts.map(function (i) {
+      return h("li", null, h("div.node", {
+        title: g.item_number + " " + relationText(i.relation, i.source_number) + (i.detail ? " (" + i.detail + ")" : "") +
+          " – " + i.source_number + "/" + i.source_code + " " + (i.event === "released" ? "was released" : "is obsolete"),
+        on: { click: function () { openRevision(i.source_number, i.source_code); } }
+      }, [
+        h("span.twisty"), h("span.ico.dim", { text: "↳" }),
+        h("span.label", null, [h("span.mono", { text: i.source_number + "/" + i.source_code }), " ", h("span.dim", { text: relationShort(i.relation) })]),
+        h("span.meta.small.dim", { text: i.event === "released" ? "released" : "obsolete" })
+      ]));
+    }));
+    var twisty = h("button.twisty-btn", {
+      type: "button", "aria-expanded": String(open), "aria-label": (open ? "Hide" : "Show") + " the " + n + " changes",
+      on: {
+        click: function (ev) {
+          ev.stopPropagation();
+          state.expanded[key] = !state.expanded[key];
+          twisty.textContent = state.expanded[key] ? "▾" : "▸";
+          twisty.setAttribute("aria-expanded", String(!!state.expanded[key]));
+          children.classList.toggle("hidden", !state.expanded[key]);
+        }
+      }
+    }, open ? "▾" : "▸");
+    var node = h("div.node.dependent", {
+      title: g.item_number + "/" + g.revision_code + " " + g.item_name + " – " + n + " change" + (n === 1 ? "" : "s") + " to check",
+      on: { click: function () { openRevision(g.item_number, g.revision_code, "references"); } }
+    }, [
+      twisty, h("span.ico.warn", { text: "⚠" }),
+      h("span.label", null, [h("span.mono", { text: g.item_number + "/" + g.revision_code }), " ", g.item_name]),
+      h("span.meta", null, h("span.count-badge", { text: String(n) }))
+    ]);
+    return h("li", null, [node, children]);
   }
 
   function requestNode(r) {
@@ -914,10 +946,11 @@
         stat(s.items, "Items"), stat(s.revisions_in_work, "Revisions in work"), stat(s.revisions_in_review, "In review"),
         stat(s.revisions_released, "Released revisions"), stat(s.open_changes, "Open changes"), stat(fmtSize(s.stored_bytes), s.files + " files in the vault")
       ]));
-      if ((wl.impacts || []).length) {
+      var groups = impactGroups(wl);
+      if (groups.length) {
         append(welcome, h("section.panel", null, [h("h2", { text: "Dependents to check" }),
-          h("p.hint", { text: "These items use or reference something that was released in a new revision or made obsolete: acknowledge (no change needed) or revise them." })
-        ].concat(wl.impacts.map(function (i) { return impactBanner(i, false); }))));
+          h("p.hint", { text: "Something these items use or reference was released in a new revision or made obsolete. Acknowledge what needs no change, or revise the item." })
+        ].concat(groups.map(function (g) { return impactGroup(g, false); }))));
       }
       if (wl.checkouts.length || wl.reviews.length) {
         append(welcome, h("div.grid-2", null, [
@@ -1774,8 +1807,8 @@
     if (rev.checked_out_by && rev.checked_out_by !== state.me.id) {
       body.appendChild(h("p.notice", { text: "Checked out by " + rev.checked_out_by_name + " since " + fmtDate(rev.checked_out_at) + " – only they can change it right now." }));
     }
-    d.refs.impacts.filter(function (i) { return !i.resolved_at; }).forEach(function (i) {
-      body.appendChild(impactBanner(i, true));
+    groupImpacts(d.refs.impacts.filter(function (i) { return !i.resolved_at; })).forEach(function (g) {
+      body.appendChild(impactGroup(g, true));
     });
     if (d.requests.length) {
       body.appendChild(h("p.notice", null, [d.requests.length + " open change request" + (d.requests.length === 1 ? "" : "s") + " on " + rev.item_number + ": "]
@@ -2076,20 +2109,108 @@
     }
   }
 
-  /** An open impact: the dependent has to be checked. */
-  function impactBanner(i, inRevision) {
-    var can = canEditProject(i.project_id);
-    return h("div.impact", { role: "status" }, [
-      h("p", null, [h("strong", { text: "Check needed: " }),
-        h("button.link.mono", { type: "button", on: { click: function () { openRevision(i.source_number, i.source_code); } } }, i.source_number + "/" + i.source_code),
-        " " + i.source_name + (i.event === "released" ? " was released" : " is obsolete and has to be replaced") +
-        (i.change_number ? " (" + i.change_number + ")" : "") + " – " + i.item_number + " " + relationText(i.relation) +
-        (i.detail ? " (" + i.detail + ")" : "") + "."]),
-      h("div.row", null, [
-        can ? h("button.small", { type: "button", on: { click: function () { acknowledgeDialog(i); } } }, "Acknowledge…") : null,
-        inRevision ? null : h("button.small", { type: "button", on: { click: function () { openRevision(i.item_number, i.revision_code, "references"); } } }, "Open " + i.item_number),
-        h("span.hint", { text: "Revising and releasing " + i.item_number + " resolves it as well." })
-      ])
+  /** What links the dependent to the item that changed, short ("BOM line"). */
+  function relationShort(r) {
+    switch (r) {
+      case "bom": return "BOM line";
+      case "drawing": return "Drawing";
+      case "specification": return "Specification";
+      case "reference": return "Reference";
+      case "simulation": return "Simulation basis";
+      case "file": return "CAD file reference";
+      default: return "Dependency";
+    }
+  }
+
+  /** Open impacts grouped by the dependent revision, in first-seen order,
+   *  sources by number (the server's impacts::group_by_dependent). */
+  function groupImpacts(list) {
+    var groups = [], byRevision = {};
+    list.forEach(function (i) {
+      var g = byRevision[i.revision_id];
+      if (!g) {
+        g = byRevision[i.revision_id] = {
+          item_id: i.item_id, item_number: i.item_number, item_name: i.item_name, project_id: i.project_id,
+          project_code: i.project_code, revision_id: i.revision_id, revision_code: i.revision_code,
+          revision_state: i.revision_state, latest_at: i.created_at, impacts: []
+        };
+        groups.push(g);
+      }
+      g.impacts.push(i);
+    });
+    var key = function (i) { return i.source_number + "/" + i.source_code; };
+    groups.forEach(function (g) {
+      g.impacts.sort(function (a, b) { return key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0; });
+    });
+    return groups;
+  }
+
+  /** The worklist's dependents (older servers send only the flat list). */
+  function impactGroups(w) {
+    return w.impact_groups || groupImpacts(w.impacts || []);
+  }
+
+  /** The open impacts on one dependent revision: a compact header with the
+   *  actions for the whole group, one dense row per source, the hint once. */
+  function impactGroup(g, inRevision) {
+    var can = canEditProject(g.project_id);
+    var n = g.impacts.length;
+    var openIt = function () { openRevision(g.item_number, g.revision_code, "references"); };
+    return h("article.impact-group", null, [
+      h("header.impact-group-head", null, [
+        h("h3", null, inRevision
+          ? ["Check needed: ", h("span.mono", { text: g.item_number + "/" + g.revision_code })]
+          : [h("button.link.mono", { type: "button", on: { click: openIt } }, g.item_number + "/" + g.revision_code), " ",
+             h("span.impact-group-name", { text: g.item_name })]),
+        h("span.impact-count", { text: n + " change" + (n === 1 ? "" : "s") + " to check" }),
+        h("div.actions", null, [
+          inRevision ? null : h("button.small", { type: "button", on: { click: openIt } }, "Open"),
+          !inRevision && can && g.revision_state === "released"
+            ? h("button.small", { type: "button", on: { click: function () { reviseRevision(g.item_number, g.revision_code); } } }, "Revise") : null,
+          can && n > 1 ? h("button.small", { type: "button", on: { click: function () { acknowledgeAllDialog(g); } } }, "Acknowledge all…") : null
+        ])
+      ]),
+      h("ul.impact-rows", null, g.impacts.map(function (i) {
+        return h("li", { title: g.item_number + " " + relationText(i.relation) + (i.detail ? " (" + i.detail + ")" : "") }, [
+          h("span.impact-source", null, [
+            h("button.link.mono", { type: "button", on: { click: function () { openRevision(i.source_number, i.source_code); } } }, i.source_number + "/" + i.source_code),
+            " ", h("span.impact-source-name", { text: i.source_name })]),
+          h("span.impact-event", null, [i.event === "released" ? "released" : badge("obsolete"),
+            i.change_number ? " via " : null,
+            i.change_number ? h("button.link.mono", { type: "button", on: { click: function () { openChange(i.change_number); } } }, i.change_number) : null]),
+          h("span.impact-relation", null, [relationShort(i.relation), i.detail ? h("span.impact-detail", { text: " · " + i.detail }) : null]),
+          can ? h("button.small", { type: "button", on: { click: function () { acknowledgeDialog(i); } } }, "Acknowledge…") : null
+        ]);
+      })),
+      h("p.hint", { text: "Revising and releasing " + g.item_number + " resolves " + (n === 1 ? "it" : "all " + n) + " as well." })
+    ]);
+  }
+
+  function acknowledgeAllDialog(g) {
+    var note = h("textarea", { maxlength: "2000", required: true, placeholder: "e.g. form, fit and function unchanged" });
+    var n = g.impacts.length;
+    dialog("Acknowledge all for " + g.item_number + "/" + g.revision_code, h("div.stack", null, [
+      h("p", { text: "One note for all " + n + " changes – " + g.item_number + " needs no change for any of them:" }),
+      h("ul.plain", null, g.impacts.map(function (i) {
+        return h("li", null, [h("span.mono", { text: i.source_number + "/" + i.source_code }), " " + i.source_name + " – " +
+          (i.event === "released" ? "released" : "obsolete") + " · " + relationShort(i.relation)]);
+      })),
+      field("Note", note)
+    ]), [
+      { label: "Cancel", onClick: function (d) { d.close(); } },
+      {
+        label: "Acknowledge " + n, primary: true, submit: true, onClick: function (d) {
+          api("POST", "/items/" + enc(g.item_number) + "/revisions/" + enc(g.revision_code) + "/impacts/acknowledge",
+            { note: note.value, impacts: g.impacts.map(function (i) { return i.id; }) }).then(function (r) {
+            d.close();
+            toast(g.item_number + "/" + g.revision_code + " checked: " + r.acknowledged.length + " acknowledged" +
+              (r.skipped ? " (" + r.skipped + " resolved in the meantime)" : ""));
+            refreshWorklistCount().catch(function () {});
+            if (state.view === "worklist") selectView("worklist");
+            reloadActive();
+          }, function (err) { d.fail(err); });
+        }
+      }
     ]);
   }
 
@@ -2747,11 +2868,14 @@
   }
 
   function doRevise(tab) {
-    var rev = tab.data.rev;
-    confirmDialog("Revise", "Create a new revision of " + rev.item_number + " based on " + rev.code + "? It is checked out to you.", "Revise").then(function (ok) {
+    reviseRevision(tab.data.rev.item_number, tab.data.rev.code);
+  }
+
+  function reviseRevision(number, code) {
+    confirmDialog("Revise", "Create a new revision of " + number + " based on " + code + "? It is checked out to you.", "Revise").then(function (ok) {
       if (!ok) return;
       run("Creating the next revision", function () {
-        return api("POST", "/items/" + enc(rev.item_number) + "/revisions/" + enc(rev.code) + "/revise");
+        return api("POST", "/items/" + enc(number) + "/revisions/" + enc(code) + "/revise");
       }).then(function (nr) {
         toast("Created " + nr.item_number + "/" + nr.code + " (in work, checked out to you)");
         openRevision(nr.item_number, nr.code, "workspace");

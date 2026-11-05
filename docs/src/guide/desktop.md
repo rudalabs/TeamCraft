@@ -34,6 +34,12 @@ check-outs and reviews, and a **local working folder**:
   (see [Large files](vault.md#large-files-chunked-resumable-uploads));
 * *Check in all* in the worklist checks in every check-out without local
   changes and lists those that still have changes;
+* *Dependents to check* (worklist and home) shows one line per dependent
+  revision with the number of changes it has to be checked against; the
+  arrow lists them (a click opens the item that changed). On the home page
+  every dependent has **Open**, **Revise** and **Acknowledge all…** (one note
+  for all of them, see [Change propagation](structure.md#change-propagation))
+  and an **Acknowledge…** per change;
 * *Request change…* on a revision tab and *Request…* on a file (Files and
   Workspace tabs) raise a [change request](changes.md) with the item,
   revision and file name filled in and an optional screenshot or PDF; the
