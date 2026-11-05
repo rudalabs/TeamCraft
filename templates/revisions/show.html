@@ -339,8 +339,8 @@
     {% if revisions|length == 1 and rev.state == "in_work" %}<p class="hint">Before you model {{ rev.item_number }} further: if one of these fits, reuse it instead of a new item.</p>{% endif %}
     <ul class="similar-list">
     {% for c in similar.candidates %}
-      <li>
-        {% if c.thumbnail_file_id %}<img class="similar-thumb" src="/files/{{ c.thumbnail_file_id }}/thumbnail" alt="" loading="lazy" data-hide-broken>{% else %}<span class="similar-thumb" aria-hidden="true"></span>{% endif %}
+      <li{% if c.thumbnail_file_id %} class="with-thumb"{% endif %}>
+        {% if c.thumbnail_file_id %}<img class="similar-thumb" src="/files/{{ c.thumbnail_file_id }}/thumbnail" alt="" loading="lazy" data-hide-broken>{% endif %}
         <div class="similar-main">
           <a class="mono" href="/revisions/{{ c.revision_id }}">{{ c.item_number }}/{{ c.revision_code }}</a> {{ c.name }} {{ m.badge(c.state) }}
           <span class="similar-why">{{ c.explanation }} · <a href="/files/{{ c.file_id }}/preview" title="3D preview of {{ c.filename }}">{{ c.filename }}</a></span>
