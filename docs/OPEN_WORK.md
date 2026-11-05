@@ -5,6 +5,38 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 
 ## To-do
 
+**Tests** (priority: more unit tests)
+
+The feature list is covered broadly since #65 (and #67); the weak spots are the processes that must never leave
+half a state behind. Prefer tests that fail on a real regression over tests that restate the code.
+
+- [ ] **Migrations** – today only `db::supported_postgres_versions` is unit-tested. Add: every migration applies in
+  order on an empty database and the schema matches a fresh `migrate` (no drift between numbered files); a database
+  with data from the previous release (seeded fixture, e.g. v0.1.0) upgrades without loss (row counts, foreign keys,
+  CHECK constraints of the enum columns); applying twice is a no-op; a changed checksum of an applied migration is
+  refused unless the version is in `db::EDITED_BEFORE_RELEASE`; numbering of `migrations/` has no duplicates and the
+  gaps are known (0015)
+- [ ] **Backup / restore** – beyond `tests/backup_restore.rs` and the argument/manifest tests in `src/backup.rs`:
+  restore of a backup from an older schema version (then migrate), a vault object missing or corrupt during
+  backup (refused, nothing written), interrupted backup leaves no directory that `verify` accepts, restore into a
+  non-empty target without `--force` is refused, `--force` failure leaves database *and* vault untouched (vault side
+  not covered yet), percent-encoded and `_FILE` credentials, large-object and preview-cache handling
+- [ ] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): the dry-run plan equals what the
+  import writes (property test over generated tables), an error in row *n* rolls back rows 1…*n*-1, re-import of the
+  same table is idempotent (no duplicate items or BOM lines), cycles and self-references refused, quantity/unit
+  parsing edge cases (decimal comma, `1.1.2` positions with gaps, empty levels), malformed STEP (truncated, unknown
+  entities, `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`) never panics (fuzz-style corpus); desktop folder import resumes
+  after an interrupted run without duplicates
+- [ ] **Atomic processes** – each multi-row mutation is all-or-nothing under an injected failure (a failing
+  statement or a closed connection between steps): check-in (file versions + lock release), change order release
+  (all revisions or none, impact flags, notifications and webhooks in the same transaction), *Replace in assemblies*,
+  Save As with files and BOM, chunked upload `finish`, folder import per item, restricted-group visibility switch;
+  concurrent runs of the same mutation (two check-ins, two releases, two numbering requests) give one winner and a
+  clean 409, never a duplicate or a lost update
+- [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
+  make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
+  with two failing integration tests; merge only with green checks
+
 **Fixes**
 
 - [ ] Reference scan: false references in real files – NX parts fixed (stream container, `src/nxpart.rs`); open: noise
@@ -19,12 +51,6 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
   items per file with different numbers, while CAD references are matched by file name (import tutorial, user guide)
 - [ ] Check the desktop *Import BOM…* in the real app (native file dialog; so far checked in Chromium with a stubbed
   Tauri against a real server)
-- [ ] Cancel long operations (check-in upload, Pack and Go) half-way – today the browser sign-in, Get and the chunked
-  upload of large files can be cancelled (in progress: branch `feature/desktop-cancel-operations`)
-- [ ] *Import BOM…* (CSV/Excel) on a checked-out assembly revision and for a new assembly – plan: a Rust command opens
-  the file dialog and sends the file to `POST /api/v1/items/{number}/revisions/{code}/bom/import` (or
-  `POST /api/v1/bom-imports`) with `dry_run=true`, the UI shows counts, notes and the first rows, a second call
-  imports; desktop tests and the row in `desktop/README.md` (in progress: branch `feature/desktop-bom-import`)
 - [ ] Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI)
 - [ ] Screenshots and short GIFs of the desktop app for the README, and screenshots in the book (the web pages are
@@ -143,11 +169,24 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [ ] Test e-mail (SMTP) and Mattermost notifications against real servers (so far only against fakes)
 - [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
   `SECURITY.md` points to
-- [ ] Run server and desktop app once on macOS – CI runs the tests on Linux only, macOS and Windows are build checks;
-  Windows 11 ARM64 was run by hand (Parallels VM, 2026-11-05, setup in [platforms/windows.md](../platforms/windows.md))
+- [ ] Run the desktop app once on macOS – CI runs the tests on Linux only, macOS and Windows are build checks (the
+  server is no longer shipped for macOS); Windows 11 ARM64 was run by hand (Parallels VM, 2026-11-05, setup in
+  [platforms/windows.md](../platforms/windows.md))
+- [ ] Install and start the release Flatpak bundles (x86_64, aarch64) and the portable Windows zips (x64, arm64) once –
+  built and checked as files only (#66); GNOME runtime 49 may be end of life on Flathub, move to the current one
+- [ ] Release v0.1.0 again from the current `main` (re-tag), when asked – the published v0.1.0 is from `6f68f9a` and
+  has no Flatpak, Windows ARM64 or portable builds
 
 ## Done
 
+- [x] Tests across the feature list: functional and semantic unit and integration tests per feature (#65, two audit
+  test expectations fixed in #67)
+- [x] Release pipeline: Flatpak bundles (x86_64, aarch64), desktop installers for Windows ARM64, portable Windows
+  zips (x64, arm64), no macOS server binary (#66); first pre-release v0.1.0 with explicit file modes (#49)
+- [x] README *What works* as a concise feature list (#64)
+- [x] Light and dark web and desktop design (#51, review fixes #53)
+- [x] Read access control: restricted project groups on every read path (#52, review fixes #55)
+- [x] Event webhooks: signed JSON with outbox, retries and SSRF guard (#46)
 - [x] Folder import: items no longer stay in "My check-outs" – every item is checked in right after its files,
   assemblies are checked out once more for their BOM lines and always checked in again, and a run releases the
   check-outs an earlier, interrupted run of the same folder left behind
@@ -225,6 +264,12 @@ The history up to the open-source release is squashed into the first commit
 | –  | Read access control: restricted project groups                                                                                                                        | `97423bd`, `11127fd` |
 | 9  | Backup/restore end to end with the real PostgreSQL client tools                                                                                                       | `995c597`            |
 | –  | Desktop: project groups load again; import log per project group                                                                                                      | `8a4b4ca`            |
+| 6  | Supersede, replace and alternate parts; multi-level where-used in the web UI                                                                                          | `1274148`            |
+| –  | Desktop: cancel the check-in upload and Pack and Go half-way                                                                                                          | `9ba6e52`            |
+| 9  | Web UI: chunked, resumable uploads of large files                                                                                                                     | `671f277`            |
+| 3b | Desktop: *Import BOM…* from CSV/Excel or a STEP assembly                                                                                                              | `c7a2592`            |
+| –  | README feature list; release: Flatpak, Windows ARM64, portable Windows, no macOS server                                                                              | `bb649bf`, `a873920` |
+| –  | Tests: functional and semantic coverage across the feature list                                                                                                       | `f8f5322`            |
 
 ## Details on the open features
 
