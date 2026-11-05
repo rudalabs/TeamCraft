@@ -18,7 +18,7 @@ use serde_json::{json, Map, Value};
 use crate::{
     auth::Actor,
     domain::{
-        ChangeStatus, ItemType, LifecycleState, Priority, RequestReason, RequestStatus,
+        self, ChangeStatus, ItemType, LifecycleState, Priority, RequestReason, RequestStatus,
         RevisionRule, Role,
     },
     error::{AppError, AppResult},
@@ -376,11 +376,14 @@ fn schema_none() -> Value {
 fn schema_search_items() -> Value {
     object(
         json!({
-            "q": { "type": "string", "description": "Search text (number, name, material, file name or content)" },
+            "q": { "type": "string", "description": "Search text (number, name, material, attribute values, file name or content)" },
             "type": { "type": "string", "enum": ["part", "assembly", "document", "software", "simulation"] },
             "project": { "type": "string", "description": "Project group code, e.g. ROVER" },
             "state": { "type": "string", "enum": ["in_work", "in_review", "released", "obsolete"], "description": "State of the latest revision" },
             "system": { "type": "string", "description": "CAD program with files in the latest revision, e.g. solidworks, nx, creo, inventor, freecad" },
+            "class": { "type": "string", "enum": ["make", "purchased", "standard"], "description": "Classification: in-house, purchased or standard part" },
+            "attr": { "type": "string", "description": "Custom attribute key (see the attributes of a revision), together with value" },
+            "value": { "type": "string", "description": "Attribute value: text contains, yes/no, a number, >=10, <=20 or 10..20; empty = has any value" },
             "limit": p_limit(20, 100),
         }),
         &[],
@@ -862,6 +865,8 @@ fn rev_full(r: &Revision) -> Value {
         "material": r.material,
         "mass_kg": r.mass_kg,
         "unit_cost": r.unit_cost,
+        "classification": r.classification,
+        "attributes": r.attributes,
         "checked_out_by": r.checked_out_by_name,
         "checked_out_at": r.checked_out_at,
         "created_by": r.created_by_name,
@@ -1016,6 +1021,9 @@ async fn search_items(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Valu
         project_id,
         state,
         system,
+        classification: domain::Classification::parse_field(a.opt_str("class")?.as_deref())?,
+        attribute: a.opt_str("attr")?,
+        attribute_value: a.opt_str("value")?,
     };
     let (rows, total) = items::search(&st.db, me, &filter, Page::new(Some(limit), None)).await?;
     let list: Vec<Value> = rows
@@ -2082,6 +2090,7 @@ async fn list_simulations(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<
         project_id,
         state: None,
         system: None,
+        ..Default::default()
     };
     let (rows, total) =
         items::search(&st.db, me, &filter, Page::new(Some(scan as i64), None)).await?;

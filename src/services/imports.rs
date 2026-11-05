@@ -799,6 +799,8 @@ async fn run_tx(
                     material: String::new(),
                     mass_kg: None,
                     unit_cost: None,
+                    classification: Default::default(),
+                    attributes: Vec::new(),
                 },
             )
             .await?;
@@ -899,6 +901,8 @@ async fn create_item(
             material: it.material.clone(),
             mass_kg: it.mass_kg,
             unit_cost: None,
+            classification: Default::default(),
+            attributes: Vec::new(),
         },
     )
     .await?;

@@ -148,9 +148,7 @@ real files and belong to section 3 once such files are at hand.
   and the desktop request tab
 - [ ] Chunked uploads from the *New item* form of the web UI – it still sends its files in one request (the revision
   exists only afterwards); the attach and check-in forms use `/uploads` (feature 9)
-- [ ] Custom attributes per item type and file type, classification (standard/purchased parts), attribute search;
-  then the BOM import can map further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to attributes
-  (feature 5; in progress: branch `feature/custom-attributes`)
+- [ ] Custom attributes per file type (feature 5, items are done)
 - [ ] Feature 6 leftovers: local substitutes per BOM line, a warning when a superseded item is added to a BOM in the
   desktop app
 - [ ] Numbering schemes: a separate scheme per item type within a group, an instance-wide default other than
@@ -166,6 +164,8 @@ real files and belong to section 3 once such files are at hand.
   not split into the new items, a STEP file imported *into* a checked-out revision is not attached to it (see *3c*)
 - [ ] CSV/Excel BOM import: test the column recognition with real exports (per CAD program below, also Fusion and
   Creo); CATIA V5 *Bill of Material* text exports are not understood (see *3b*)
+- [ ] BOM import: map further columns (Inventor *BOM Structure = Purchased*, vendor …) to the classification and to
+  custom attributes (feature 5, second part; `bomtable` has to keep unmapped columns first)
 
 **3D preview**
 
@@ -279,6 +279,8 @@ real files and belong to section 3 once such files are at hand.
 - [x] 3D preview of real-world STEP files: own Part 21 pre-reader, face-by-face fallback, AP242 tessellated geometry,
   "partial preview: N of M faces"
 - [x] Configurable numbering schemes per project group with preview (feature 4)
+- [x] Custom attributes per item type (text, number, yes/no, choice list; versioned per revision), classification
+  in-house/purchased/standard part, attribute search in the item list, REST API, saved searches and MCP (feature 5)
 - [x] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts and multi-level where-used in API, MCP
   and web UI (feature 6) – alternates (two-way or one-way) and supersession per item, *Replace in assemblies* from the
   where-used page with a preview (in-work parents changed, released ones listed for a new revision), migration 0030
@@ -370,7 +372,13 @@ Documented in the UI, keep in mind:
 4. **Numbering schemes:** one scheme per project group (`projects.number_scheme`, `domain::NumberScheme`) with
    `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{YY}`, `{MM}` and `{SEQ:n}`, preview of the next numbers on the group page and
    via `GET /api/v1/projects/{code}/numbering`; counters are named after the expansion without the sequence.
-5. **Custom attributes:** open (see *To-do*).
+5. **Custom attributes:** done for items – definitions under *Admin → Attributes* (`attribute_defs`: key, label,
+   text/number/yes-no/choice list, unit, item types, order, active), values per revision in `revisions.attributes`
+   (JSONB; versioned, copied by revise and *Save as*, part of the full-text search), the classification
+   in-house/purchased/standard part as item master data (`items.classification`), filters `class`, `attr` + `value`
+   (text contains, yes/no, `12`, `>=10`, `10..20`) in the item list, the REST API, saved searches and the MCP search.
+   Open: attributes per file type; the BOM import mapping further columns (e.g. Inventor *BOM Structure =
+   Purchased*, vendor) to the classification and attributes – `bomtable` drops unknown columns today.
 6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate parts, multi-level where-used: done.
    Alternates (`item_alternates`, two-way by default) and supersession (`item_supersessions`, one successor, no
    circles) are item-level relations (`services::interchange`); *Replace in assemblies* on `/items/{id}/where-used`

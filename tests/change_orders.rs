@@ -307,6 +307,17 @@ async fn submission_preconditions() {
             json!({ "item_type": "part", "name": "Valve", "project": "ROCKET" }),
         )
         .await;
+    // A new item is checked out to its author: release it so that the
+    // colleague can take the lock.
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/items/{part}/revisions/A/cancel-checkout"),
+            &author,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     let r = app
         .api(
             Method::POST,

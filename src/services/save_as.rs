@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::ItemType,
+    domain::{self, ItemType},
     error::{AppError, AppResult},
     models::Revision,
     services::{audit, items, revisions},
@@ -62,10 +62,19 @@ pub async fn save_as(
             material: src.material.clone(),
             mass_kg: src.mass_kg,
             unit_cost: src.unit_cost,
+            classification: domain::Classification::parse(&src.classification).unwrap_or_default(),
+            attributes: Vec::new(),
         },
     )
     .await?;
     let new_rev = created.revision_id;
+    // The custom attribute values are copied as they are (like revise does),
+    // including those of attributes that were deactivated meanwhile.
+    sqlx::query("UPDATE revisions SET attributes = $2 WHERE id = $1")
+        .bind(new_rev)
+        .bind(&src.attributes)
+        .execute(&mut *tx)
+        .await?;
     let label = format!("{}/{}", src.item_number, src.code);
     // A copy out of a restricted group is declassified, the source's
     // identity is not: the file versions do not name it (the audit entry

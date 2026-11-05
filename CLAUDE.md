@@ -86,7 +86,8 @@ src/services/      business logic – the only code that writes to the database
                     references.rs: item and CAD file references; impacts.rs: change propagation to dependents;
                     notifications.rs: in-app notifications, watch lists, settings – created in the event's transaction;
                     imports.rs: BOM import – one plan for preview and import, one transaction; staged_imports for the web flow;
-                    insights.rs: read-only BOM health check and duplicate files)
+                    insights.rs: read-only BOM health check and duplicate files;
+                    attributes.rs: custom attribute definitions (admins), values per revision in revisions.attributes)
 src/web/           HTML handlers (cookie sessions, flash messages, CSRF origin check, error pages,
                    explorer.rs = /vault, auth_pages.rs incl. first-start /setup, imports.rs = BOM import)
 src/api/           JSON REST API (bearer tokens only, never cookies)

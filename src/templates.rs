@@ -39,6 +39,8 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "admin/users.html",
     "admin/user_edit.html",
     "admin/audit.html",
+    "admin/attributes.html",
+    "admin/attribute_edit.html",
     "admin/webhooks.html",
     "admin/webhook_edit.html",
     "desktop/authorize.html",
@@ -495,18 +497,33 @@ mod tests {
             with_common(json!({
                 "items": [{ "id": ME, "number": "PRT-000001", "item_type": "part", "unit": "each", "project_code": null,
                             "created_at": TS, "latest_revision_id": OTHER, "latest_code": "A", "latest_state": "in_work",
-                            "name": "Bracket", "matched_file": "bracket.step" }],
+                            "name": "Bracket", "matched_file": "bracket.step", "classification": "purchased",
+                            "attributes": { "vendor": "Bosch" } }],
                 "pagination": page(), "base_query": "q=a%20b",
-                "filter": { "q": "a b", "type": "part", "project": "", "state": "", "system": "creo" },
+                "filter": { "q": "a b", "type": "part", "project": "", "state": "", "system": "creo",
+                            "class": "purchased", "attr": "vendor", "value": "Bo" },
+                "filter_error": "Length: 'abc' is not a number.",
                 "projects": [project()], "types": [{ "value": "part", "label": "Part" }],
                 "states": [{ "value": "in_work", "label": "In Work" }],
                 "systems": crate::cadformat::SYSTEMS,
+                "classifications": [{ "value": "make", "label": "In-house" }, { "value": "purchased", "label": "Purchased" }],
+                "attribute_defs": [{ "key": "vendor", "label": "Vendor", "unit": "", "active": true }],
             })),
         );
         assert!(
             html.contains("<option value=\"creo\" selected>PTC Creo"),
             "CAD program filter"
         );
+        assert!(
+            html.contains("<option value=\"vendor\" selected>Vendor"),
+            "attribute filter"
+        );
+        assert!(html.contains("badge-member\" title=\"Classification\">purchased"));
+        assert!(
+            html.contains("name=\"class\" value=\"purchased\""),
+            "saved searches keep the class"
+        );
+        assert!(html.contains("is not a number"), "filter errors are shown");
 
         let html = render(
             &env,
@@ -632,11 +649,23 @@ mod tests {
                         "next": crate::domain::rules_from(crate::domain::LifecycleState::parse(state).unwrap()),
                         "rules": crate::domain::LIFECYCLE_RULES,
                     },
+                    "attribute_rows": [{ "key": "length", "label": "Length", "unit": "mm", "value": "12.5", "active": true },
+                                       { "key": "old", "label": "Old <code>", "unit": "", "value": "x", "active": false }],
+                    "classifications": [{ "value": "make", "label": "In-house" }, { "value": "purchased", "label": "Purchased" }],
                 })),
             );
             assert!(
                 html.contains("aria-current=\"step\""),
                 "current lifecycle state is marked"
+            );
+            assert!(html.contains("<dd>12.5 mm</dd>") && html.contains("Old &lt;code&gt;"));
+            assert!(
+                html.contains("no longer in use"),
+                "inactive attributes are marked"
+            );
+            assert!(
+                html.contains("name=\"classification\""),
+                "classification in the master data"
             );
             for expected in [
                 "is superseded by",
@@ -903,6 +932,25 @@ mod tests {
             "revisions/edit.html",
             with_common(json!({ "rev": revision("in_work", false), "error": null })),
         );
+        let html = render(
+            &env,
+            "revisions/edit.html",
+            with_common(json!({
+                "rev": revision("in_work", false), "error": null,
+                "attribute_fields": [
+                    { "key": "vendor", "label": "Vendor", "unit": "", "data_type": "choice",
+                      "choices": ["Bosch", "SKF"], "value": "Old <Ltd>" },
+                    { "key": "rohs", "label": "RoHS", "unit": "", "data_type": "boolean", "choices": [], "value": "yes" },
+                    { "key": "length", "label": "Length", "unit": "mm", "data_type": "number", "choices": [], "value": "12.5" },
+                ],
+            })),
+        );
+        assert!(html.contains("name=\"attr.vendor\"") && html.contains("Length [mm]"));
+        assert!(
+            html.contains("Old &lt;Ltd&gt; (no longer a choice)"),
+            "removed choices stay selectable"
+        );
+        assert!(html.contains("<option value=\"yes\" selected>"));
         render(
             &env,
             "revisions/edit.html",
@@ -1150,6 +1198,32 @@ mod tests {
                 "base_query": "entity_type=item", "pagination": page(), "per_page": 50,
             })),
         );
+        let attr_def = json!({
+            "id": ME, "key": "vendor", "label": "Vendor <Lieferant>", "data_type": "choice",
+            "unit": "", "choices": ["Bosch", "SKF"], "item_types": ["part"], "position": 10,
+            "active": true, "created_at": TS,
+        });
+        let html = render(
+            &env,
+            "admin/attributes.html",
+            with_common(json!({
+                "rows": [{ "def": attr_def, "type_label": "Choice list" }],
+                "data_types": [{ "value": "text", "label": "Text" }],
+                "item_types": [{ "value": "part", "label": "Part", "checked": false }],
+                "next_position": 20,
+            })),
+        );
+        assert!(html.contains("Vendor &lt;Lieferant&gt;") && html.contains("2 choices"));
+        let html = render(
+            &env,
+            "admin/attribute_edit.html",
+            with_common(json!({
+                "def": attr_def, "type_label": "Choice list", "choices_text": "Bosch\nSKF",
+                "item_types": [{ "value": "part", "label": "Part", "checked": true }], "in_use": 3,
+            })),
+        );
+        assert!(html.contains("3 revisions") && html.contains("Bosch\nSKF"));
+        assert!(html.contains("value=\"part\" checked"));
         let webhook = json!({
             "id": ME, "name": "ERP <export>", "url": "https://erp.example.org/in?token=x",
             "secret_hint": "tc_whsec_…a1b2", "events": ["revision.released", "change.released"],
