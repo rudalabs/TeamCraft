@@ -340,16 +340,16 @@ html.skin-light .skin-logo-dark { display: none; }
    Lifecycle, Collaborate …) are divided by a hairline; the one next step is
    the only primary button; rare actions live in "More" at the far end. */
 .toolbar {
-  display: flex; align-items: center; gap: var(--space-2) var(--space-3); flex-wrap: wrap;
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
   min-height: 46px;
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
   background: var(--bg-raised);
 }
 .toolbar .sep { width: 1px; height: 22px; background: var(--border-strong); margin: 0 0.25rem; }
-.tool-group { display: flex; align-items: center; gap: var(--space-1); }
-.tool-group + .tool-group, .tool-group + .more { padding-left: var(--space-3); border-left: 1px solid var(--border); }
-.toolbar .tool { padding: 0.28rem 0.62rem; background: transparent; border-color: var(--border); }
+.tool-group { display: flex; align-items: center; gap: 0.2rem; }
+.tool-group + .tool-group { padding-left: var(--space-2); border-left: 1px solid var(--border); }
+.toolbar .tool { padding: 0.28rem 0.5rem; gap: 0.35rem; background: transparent; border-color: var(--border); }
 .toolbar .tool.primary { background: linear-gradient(135deg, var(--primary-from), var(--primary-to)); border-color: color-mix(in srgb, var(--c4) 30%, transparent); font-weight: 600; }
 .toolbar .tool.danger { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
 .toolbar .tool:disabled { background: transparent; border-color: transparent; }
@@ -361,7 +361,6 @@ html.skin-light .skin-logo-dark { display: none; }
 .tool svg { width: 16px; height: 16px; }
 
 .more { position: relative; margin-left: auto; }
-.tool-group + .more { border-left: none; }
 .more-trigger[aria-expanded="true"] { background: var(--surface-hover); border-color: var(--c3); }
 .more-trigger svg { width: 14px; height: 14px; }
 .menu {

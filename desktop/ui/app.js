@@ -119,6 +119,7 @@
     "package": "M3 7.5l9-4.5 9 4.5v9l-9 4.5-9-4.5z|M3 7.5l9 4.5 9-4.5|M12 12v9",
     cube: "M12 3l8 4.5v9L12 21l-8-4.5v-9z|M4 7.5l8 4.5 8-4.5|M12 12v9",
     chevron: "M6 9l6 6 6-6",
+    approve: "M5 12.5l4.5 4.5L19 7.5",
     web: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18|M3 12h18|M12 3c3 3.5 3 14.5 0 18|M12 3c-3 3.5-3 14.5 0 18",
     refresh: "M20 11a8 8 0 1 0-2.3 5.7|M20 4v7h-7",
     plus: "M12 5v14|M5 12h14",
@@ -2073,9 +2074,9 @@
       fact(d.bom.length, d.bom.length === 1 ? "BOM line" : "BOM lines", "structure", "Open the structure"),
       whereUsed,
       fact(refCount, refCount === 1 ? "Reference" : "References", "references"),
-      fact(d.changes.length, d.changes.length === 1 ? "Change order" : "Change orders", "changes",
-        openChanges ? openChanges + " of them open" : "Change orders with this revision"),
-      fact(d.requests.length, d.requests.length === 1 ? "Open request" : "Open requests", null, "Open change requests on this item – listed above the sub-tabs")
+      fact(d.changes.length, "Changes", "changes",
+        "Change orders with this revision" + (openChanges ? " – " + openChanges + " open" : "")),
+      fact(d.requests.length, "Requests", null, "Open change requests on this item – listed above the sub-tabs")
     ];
     if (!d.whereUsed) {
       api("GET", "/items/" + enc(d.rev.item_number) + "/where-used").then(function (list) {
@@ -3179,7 +3180,7 @@
     }
     append(toolbar, [
       canReview ? toolGroup("Review", [
-        tool("Approve", "release", function () { decide("approve"); }, { primary: true, title: "Approve " + c.number + " (with the comment below, if any)" }),
+        tool("Approve", "approve", function () { decide("approve"); }, { primary: true, title: "Approve " + c.number + " (with the comment below, if any)" }),
         tool("Reject", "cancel", function () { decide("reject"); }, { danger: true, title: "Reject " + c.number + " – the comment below says why; the revisions go back to WIP" })
       ]) : null,
       toolGroup("Lifecycle", [
