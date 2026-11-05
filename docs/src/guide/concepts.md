@@ -93,6 +93,16 @@ choices match a part of the value, yes/no attributes `yes` or `no`, numbers
 `12`, `>=10`, `<=20` or `10..20`; an empty value finds every item that has
 the attribute. The search box also finds attribute values.
 
+The **BOM import** fills both for the items it creates: a *BOM structure* or
+procurement column sets the classification (*Normal*, *Phantom* → in-house;
+*Purchased*, *Kaufteil* → purchased; *Content Center*, *Normteil* → standard
+part), and a column whose header is the label or key of an active attribute
+(*Vendor*, `length_mm`) fills that attribute. A value that does not fit – text
+in a number column, a choice that does not exist, an attribute that does not
+apply to the item type – is left out with a warning. The preview lists which
+columns become attributes and which are not imported; existing items are not
+changed.
+
 ## Audit log
 
 Every modification is recorded with user, time and details – shown on every

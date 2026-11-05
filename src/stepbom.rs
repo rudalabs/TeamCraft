@@ -204,6 +204,7 @@ pub fn read(bytes: &[u8]) -> Result<BomTable, String> {
         root,
         rows: walk.rows,
         columns,
+        extra_columns: Vec::new(),
         warnings: walk.warnings,
     })
 }
@@ -242,6 +243,8 @@ impl Walk<'_> {
             unit: String::new(),
             material: String::new(),
             mass_kg: None,
+            structure: String::new(),
+            extra: Vec::new(),
         }
     }
 
