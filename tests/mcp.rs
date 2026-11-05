@@ -135,6 +135,7 @@ async fn mcp_protocol_and_tools() {
     for name in [
         "search_items",
         "get_change",
+        "suggest_reviewers",
         "create_change_draft",
         "compare_revisions",
         "find_duplicate_files",

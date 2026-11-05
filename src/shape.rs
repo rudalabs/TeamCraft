@@ -31,8 +31,11 @@ use serde::{Deserialize, Serialize};
 use crate::mesh::Mesh;
 
 /// Bump when the computation changes: stored signatures of another version
-/// are ignored and computed again.
-pub const VERSION: i16 = 1;
+/// are ignored and computed again – also when the preview meshes change
+/// (`preview::CACHE_VERSION`), since the signature is computed from them.
+/// 2: the STEP readers of preview cache version 2 (tessellated AP242,
+/// partial previews without a signature).
+pub const VERSION: i16 = 2;
 /// Bins of the D2 histogram.
 pub const D2_BINS: usize = 32;
 /// Point pairs drawn for the D2 histogram.
@@ -688,6 +691,7 @@ mod tests {
             indices,
             colors: Vec::new(),
             parts: 1,
+            faces: None,
         }
     }
 
@@ -710,6 +714,7 @@ mod tests {
             indices,
             colors: Vec::new(),
             parts: 1,
+            faces: None,
         }
     }
 

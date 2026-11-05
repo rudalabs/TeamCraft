@@ -21,6 +21,7 @@
 - [Install with Docker](admin/docker.md)
 - [Configuration](admin/configuration.md)
 - [Users, roles and single sign-on](admin/users.md)
+- [Event webhooks](admin/webhooks.md)
 - [Operations](admin/operations.md)
 
 # Reference

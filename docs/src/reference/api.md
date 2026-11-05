@@ -155,7 +155,7 @@ lowest level it is reached on; the report stops at 2000 rows.
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
 | Change requests  | `GET/POST /change-requests`, `GET/PATCH /change-requests/{number}`, `comments`, `items`, `triage`, `assign`, `decide`, `reopen`, `withdraw`, `create-change`, `link-change`, `attachments`, `watch` |
 | Simulations      | `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
-| Changes          | `GET/POST /changes`, items, reviewers, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact`      |
+| Changes          | `GET/POST /changes`, items, reviewers, `suggested-reviewers`, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact` |
 | Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                 |
 | Notifications    | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                   |
 | Personal         | `GET /favorites`, `POST/DELETE /items/{number}/favorite`, `GET/POST /searches`, `DELETE /searches/{id}`                               |
@@ -206,6 +206,19 @@ with the latest revisions of all other items – see
 `status` is `ready`, `pending` (call again shortly), `no_shape_file` (no STEP
 or mesh file) or `failed` (`message` says why, e.g. the model could not be
 read). `volume` is `null` when the mesh is not watertight.
+
+### Suggested reviewers
+
+`GET /changes/{number}/suggested-reviewers?limit=5` (1–20) answers *who
+should review this?* from the history of the affected items:
+`{"change": "ECO-000004", "suggestions": [{"user_id", "username",
+"display_name", "role", "score", "reasons": ["edited PRT-000005 3 times in
+the last 90 days", "manager of ROVER"]}]}`, highest score first, ties by
+name. Only active CAD editors and admins are suggested; the author and the
+assigned reviewers never are. It only reads – add a suggestion with
+`POST /changes/{number}/reviewers`. See
+[Suggested reviewers](../guide/changes.md#suggested-reviewers) for the
+sources and points.
 
 ## Change requests (ECR)
 
@@ -266,6 +279,29 @@ curl -s -X PUT -H "$H" -H 'Content-Type: application/json' \
                        "upper_limit": 250, "load_case": "LC1", "solver": "CalculiX", "solver_version": "2.21"}]}' \
      $API/items/SIM-000003/revisions/B/simulation/results
 curl -s -X POST -H "$H" -F file=@job.frd $API/items/SIM-000003/revisions/B/checkin
+```
+
+## Webhooks (administrators)
+
+Outgoing event webhooks – payloads, signature and retries are described in
+[Event webhooks](../admin/webhooks.md). Every endpoint needs an
+administrator's token; secrets are returned only by `POST /webhooks` and
+`rotate-secret`.
+
+| Endpoint                                   | Body / result                                                                                         |
+|--------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| `GET /webhooks`                            | `{webhooks, events}` – every webhook with `secret_hint`, `pending`, `failed_recently`, `last_status`   |
+| `POST /webhooks`                           | `{name, url, events: [...], project?, active?}` → `201 {webhook, secret}`                              |
+| `GET/PATCH/DELETE /webhooks/{id}`          | `PATCH` changes the given fields; `"project": null` = all project groups                               |
+| `POST /webhooks/{id}/rotate-secret`        | `{webhook, secret}` – the new secret applies at once                                                   |
+| `POST /webhooks/{id}/test`                 | sends a `ping` now and returns the delivery (`status`, `last_status_code`, `last_error`)               |
+| `GET /webhooks/{id}/deliveries?limit=`     | latest deliveries (default 50, at most 200) with `payload`, `status`, `attempts`, `next_attempt_at`    |
+| `POST /webhook-deliveries/{id}/retry`      | schedules a failed delivery again with fresh attempts and tries it at once                            |
+
+```sh
+curl -s -X POST -H "$H" -H "Content-Type: application/json" $API/webhooks -d '{
+  "name": "ERP BOM export", "url": "https://erp.example.org/teamcraft/events",
+  "events": ["revision.released", "change.released"], "project": "ROVER"}'
 ```
 
 Errors are JSON: `{"error": {"code": "conflict", "message": "…"}}` with the

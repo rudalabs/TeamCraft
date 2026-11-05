@@ -74,6 +74,21 @@ uploads too: each user may hold 16 of them for 24 hours.
 | `TEAMCRAFT_MATTERMOST_DIRECT`  | `true`: direct messages, `false` (default): mention in the webhook's channel                                          |
 | `MATTERMOST_ERROR_WEBHOOK`     | incoming webhook that receives internal server errors (rate limited)                                                  |
 
+## Event webhooks
+
+Administrators register outgoing webhooks on the web page *Webhooks* or
+through the API ([Event webhooks](webhooks.md)). These variables limit where
+they may send to:
+
+| Variable                           | Default | Meaning                                                                                                                                  |
+|------------------------------------|---------|------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS`  | –       | comma separated host names, IP addresses or `*.domain`; when set, webhooks can only target these hosts, and these may be internal       |
+| `TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE`  | `false` | `true`: every host may resolve to private, loopback or link-local addresses (single-network installations, development)                 |
+| `TEAMCRAFT_WEBHOOK_RETENTION_DAYS` | `30`    | sent and failed deliveries are removed after this many days (1–3650)                                                                    |
+
+By default webhooks reach public addresses only. An on-premises ERP or CI
+server is internal, so list it: `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS=erp.corp.example,ci.corp.example`.
+
 ## Assistant (optional)
 
 The built-in assistant ([Ask TeamCraft](../guide/assistant.md)) is off

@@ -92,6 +92,29 @@ released there first. Dependencies of a project group you are not a member
 of are skipped by *Add all*; a member has to add or release them. The desktop app does the same with *Include
 unreleased dependencies* in the *Release…* dialog (on by default).
 
+### Suggested reviewers
+
+Next to the reviewer picker of a draft change, TeamCraft suggests up to
+five people who know the affected items, each with a one-click *Add* and
+the reasons in plain text. The suggestions come from the history TeamCraft
+already keeps – no AI, the same data always gives the same order:
+
+| Source | Example reason | Points |
+|---|---|---|
+| edits of an affected item in the last 90 days (check-ins, uploads, BOM and attribute edits) | edited PRT-000005 3 times in the last 90 days | 3 + one per edit (at most 10 per item) |
+| a decision on an earlier change with the same items | reviewed ECO-000012 (same items) | 4 (still pending: 2) |
+| owner of a dependent: creator or author of the latest revision of an item that uses, documents or references an affected item | owns ASM-000003, which uses PRT-000005 | 2 |
+| manager of the project group of an affected item | manager of ROVER | 3 |
+| requester of a change request this change implements | raised ECR-000007, implemented by this change | 1 |
+
+Each source counts at most a few times per person, so one busy source
+cannot outweigh the others. Only active CAD editors and admins – the users
+who may review – are suggested, never the author and never someone already
+assigned. The desktop app shows the same suggestions on the tab of a draft
+change, the REST API has `GET /api/v1/changes/{number}/suggested-reviewers`
+and AI assistants the MCP tool `suggest_reviewers`. Suggestions never
+assign anybody.
+
 ## Notifications
 
 The bell lists review requests, decisions, releases, checks needed, change
@@ -101,3 +124,7 @@ Optionally TeamCraft sends them by e-mail (SMTP) and to Mattermost (mention
 or direct message). Every user chooses channels and mutes kinds on the
 account page; delivery runs from an outbox, so a slow mail server never
 delays a request.
+
+Other systems – CI, ERP, CAM, a team channel – can react to releases,
+reviews and change requests through [event webhooks](../admin/webhooks.md),
+which administrators set up.

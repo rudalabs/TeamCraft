@@ -27,7 +27,9 @@
 * **Vault**: uploads are streamed into `tmp/`, hashed on the fly and moved to
   their content address; identical content is stored once.
 * **3D preview**: `mesh.rs` reads STL/OBJ/PLY/OFF/3MF/AMF/glTF/3DS/point
-  clouds and tessellates STEP with the truck kernel; `preview.rs` caches the
+  clouds and tessellates STEP with the truck kernel (`mesh/step.rs`; an own
+  Part 21 reader in `mesh/p21.rs` filters what the kernel gets, AP242
+  tessellated geometry is read by `mesh/tessellated.rs`); `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child
   process with a time limit. The browser only draws the compact
   `TCMESH01` buffer. The same child process writes the shape signature of
@@ -50,6 +52,7 @@
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache                                                                     |
 | `src/shape.rs`                       | shape signatures (extents, area, volume, D2 distribution) for the similar part search               |
+| `src/webhooks.rs`                    | event webhooks: outbox worker, HMAC-SHA256 signature, backoff, target (SSRF) guard                   |
 | `migrations/`                        | PostgreSQL schema                                                                                    |
 | `tests/`                             | end-to-end tests, each against its own temporary database                                            |
 | `desktop/`                           | the Tauri desktop client (separate Cargo project)                                                    |

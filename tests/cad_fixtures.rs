@@ -1,8 +1,8 @@
 //! Real CAD files from NIST (`tests/fixtures/cad`, see its README): the
 //! copies are unchanged, TeamCraft recognises their formats, finds the
 //! preview images in Inventor, NX and SOLIDWORKS files and the parts of
-//! the NX and SOLIDWORKS assemblies, and turns the small STEP files into a
-//! 3D preview. No database needed.
+//! the NX and SOLIDWORKS assemblies, and turns every STEP file (AP203 and
+//! AP242) into a complete 3D preview. No database needed.
 //!
 //! Gaps found with these files are kept as ignored tests – run them with
 //! `cargo test --test cad_fixtures -- --ignored`; see *Fixes* in
@@ -11,7 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
-use teamcraft::{cadformat, cadrefs, preview, thumbnail};
+use teamcraft::{cadformat, cadrefs, mesh, preview, thumbnail};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cad")
@@ -126,24 +126,110 @@ async fn the_nx_assembly_references_its_parts() {
     }
 }
 
+/// Every STEP fixture – AP203 geometry only and AP242 with PMI – gets a
+/// complete 3D preview. The AP242 file used to fail: its tessellated PMI
+/// (empty lists `()`) made the B-rep reader's parser reject the whole file.
 #[test]
-fn small_step_files_get_a_3d_preview() {
-    for rel in [
-        "ftc-11/step/nist_ftc_11_asme1_rb.stp",
-        "ctc-01/step/nist_ctc_01_asme1_rd.stp",
+fn step_files_get_a_complete_3d_preview() {
+    for (rel, min_triangles) in [
+        ("ftc-11/step/nist_ftc_11_asme1_rb.stp", 500),
+        ("ctc-01/step/nist_ctc_01_asme1_rd.stp", 500),
+        ("ctc-01/step/nist_ctc_01_asme1_ap242-e1.stp", 500),
     ] {
-        let mesh = preview::convert_file(preview::PreviewFormat::Step, &fixture(rel))
+        let mesh = preview::convert(preview::PreviewFormat::Step, &fixture(rel))
             .unwrap_or_else(|e| panic!("{rel}: {e}"));
-        assert!(mesh.len() > 1_000, "{rel}: {} bytes", mesh.len());
-        // the shape signature of the similar part search
-        let mesh = teamcraft::mesh::Mesh::decode(&mesh).unwrap();
+        assert!(
+            mesh.triangle_count() >= min_triangles,
+            "{rel}: {} triangles",
+            mesh.triangle_count()
+        );
+        assert_eq!(mesh.faces, None, "{rel}: every face is shown");
+        mesh.check().unwrap();
+        let bytes = mesh.encode();
+        assert_eq!(mesh::Mesh::decode(&bytes).unwrap(), mesh);
+        // the shape signature of the similar part search, from the same mesh
         let s = teamcraft::shape::compute(&mesh).unwrap_or_else(|e| panic!("{rel}: {e}"));
         assert!(s.is_valid(), "{rel}: {s:?}");
         assert!(s.extents[0] >= s.extents[1] && s.extents[1] >= s.extents[2]);
         assert!(s.area > 0.0 && s.triangles > 0, "{rel}: {s:?}");
+        assert_eq!(s.triangles as usize, mesh.triangle_count(), "{rel}");
         let same = teamcraft::shape::compare(&s, &s, false);
         assert!(same.score > 0.999, "{rel}: {same:?}");
     }
+}
+
+/// The AP242 file carries its PMI (dimensions, notes) as tessellated
+/// triangles; they are not the part. Without the B-rep there is nothing
+/// to show, rather than a preview of floating text.
+#[test]
+fn step_pmi_is_not_shown_as_geometry() {
+    let rel = "ctc-01/step/nist_ctc_01_asme1_ap242-e1.stp";
+    let text = std::fs::read_to_string(fixture(rel)).unwrap();
+    assert!(text.contains("COMPLEX_TRIANGULATED_SURFACE_SET"));
+    let without_brep = text.replace("CLOSED_SHELL(", "UNUSED_SHELL(");
+    let err = mesh::read("step", without_brep.as_bytes()).unwrap_err();
+    assert!(err.to_string().contains("no solids"), "{err}");
+}
+
+/// A face the kernel cannot handle costs that face: the preview is marked
+/// partial and still shows the rest of the part.
+#[test]
+fn a_bad_face_in_a_real_step_file_gives_a_partial_preview() {
+    let rel = "ctc-01/step/nist_ctc_01_asme1_ap242-e1.stp";
+    let text = std::fs::read_to_string(fixture(rel)).unwrap();
+    let broken = text.replacen("=CYLINDRICAL_SURFACE(", "=UNKNOWN_SURFACE(", 1);
+    let mesh = mesh::read("step", broken.as_bytes()).unwrap();
+    let (shown, total) = mesh.faces.expect("partial");
+    assert!(shown < total && shown + 3 >= total, "{shown} of {total}");
+    assert!(mesh.triangle_count() > 500);
+}
+
+/// AP242 tessellated geometry (no B-rep at all): the B-rep preview of a
+/// real part written as `TRIANGULATED_FACE`s and triangle fans is read back
+/// triangle for triangle.
+#[test]
+fn step_tessellated_geometry_round_trip() {
+    let rel = "ctc-01/step/nist_ctc_01_asme1_rd.stp";
+    let brep = preview::convert(preview::PreviewFormat::Step, &fixture(rel)).unwrap();
+    let mut text =
+        String::from("ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\nENDSEC;\nDATA;\n");
+    let points: Vec<String> = brep
+        .positions
+        .chunks(3)
+        .map(|p| format!("({:?},{:?},{:?})", p[0] as f64, p[1] as f64, p[2] as f64))
+        .collect();
+    text += &format!(
+        "#1=COORDINATES_LIST('',{},({}));\n",
+        points.len(),
+        points.join(",")
+    );
+    let mut faces = Vec::new();
+    for (k, chunk) in brep.indices.chunks(3 * 50).enumerate() {
+        let id = 10 + k;
+        let tris: Vec<String> = chunk
+            .chunks(3)
+            .map(|t| format!("({},{},{})", t[0] + 1, t[1] + 1, t[2] + 1))
+            .collect();
+        if k % 2 == 0 {
+            text += &format!(
+                "#{id}=TRIANGULATED_FACE('',#1,0,(),$,(),({}));\n",
+                tris.join(",")
+            );
+        } else {
+            // the same triangles as one-triangle fans
+            text += &format!(
+                "#{id}=COMPLEX_TRIANGULATED_FACE('',#1,0,(),$,(),(),({}));\n",
+                tris.join(",")
+            );
+        }
+        faces.push(format!("#{id}"));
+    }
+    text += &format!("#2=TESSELLATED_SOLID('',({}),$);\n", faces.join(","));
+    text += "ENDSEC;\nEND-ISO-10303-21;\n";
+    let mesh = mesh::read("step", text.as_bytes()).unwrap();
+    assert_eq!(mesh.triangle_count(), brep.triangle_count());
+    assert_eq!(mesh.bounds(), brep.bounds());
+    assert_eq!(mesh.faces, None);
 }
 
 /// The name in the STEP header (`FILE_NAME`) is what the exporting program

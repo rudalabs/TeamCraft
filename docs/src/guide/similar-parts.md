@@ -65,6 +65,11 @@ images score as the same shape. Very different tessellations of the same
 part (a coarse STL vs a fine STEP) agree on extents and differ a little in
 the shape distribution.
 
+A STEP file with a **partial preview** (some faces use geometry the kernel
+cannot tessellate, see [Files](files.md)) gets no signature: area, volume
+and shape distribution of a model with holes would compare it wrongly. It is
+neither searched from nor found as a hit; the similar-parts panel says why.
+
 The search is fast for large vaults: an indexed prefilter on the extents
 (within a factor of three) or proportions keeps at most 2000 files, which are
 scored in memory.

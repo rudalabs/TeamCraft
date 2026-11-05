@@ -28,7 +28,9 @@ use crate::{
 };
 
 /// Bump to invalidate every cached preview (reader fixes, new format).
-pub const CACHE_VERSION: u32 = 1;
+/// Bump `shape::VERSION` with it: the shape signatures stored in the
+/// database are computed from these meshes.
+pub const CACHE_VERSION: u32 = 2;
 
 /// Conversions that run at the same time.
 pub const MAX_PARALLEL: usize = 2;
@@ -121,8 +123,23 @@ impl PreviewFormat {
 
 /// Converts the file at `input` (tests and tools).
 pub fn convert_file(format: PreviewFormat, input: &Path) -> anyhow::Result<Vec<u8>> {
+    Ok(convert(format, input)?.encode())
+}
+
+/// Reads the file at `input` as a preview mesh.
+pub fn convert(format: PreviewFormat, input: &Path) -> anyhow::Result<crate::mesh::Mesh> {
+    // a STEP file above the limit is not read into memory just to be refused
+    let size = std::fs::metadata(input)?.len();
+    let limit = crate::mesh::MAX_STEP_BYTES as u64;
+    if format == PreviewFormat::Step && size > limit {
+        anyhow::bail!(
+            "The STEP file is too large to preview ({} MB, at most {} MB) – download it instead.",
+            size / (1024 * 1024),
+            limit / (1024 * 1024)
+        );
+    }
     let data = std::fs::read(input)?;
-    Ok(crate::mesh::read(format.as_str(), &data)?.encode())
+    crate::mesh::read(format.as_str(), &data)
 }
 
 /// `--format` of `teamcraft preview-mesh` for an already converted preview
@@ -134,38 +151,53 @@ pub const CACHED_MESH: &str = "tcm";
 /// signature (a [`shape::Outcome`] as JSON) to `signature`. With
 /// [`CACHED_MESH`] as format, `input` is a cached preview mesh. A failed
 /// signature does not fail the conversion – the outcome records why.
+/// Returns the mesh (the CLI prints its size).
 pub fn run_job(
     format: &str,
     input: &Path,
     output: Option<&Path>,
     signature: Option<&Path>,
-) -> anyhow::Result<()> {
-    let data = std::fs::read(input)?;
+) -> anyhow::Result<crate::mesh::Mesh> {
     let mesh = if format == CACHED_MESH {
-        let mesh = crate::mesh::Mesh::decode(&data)?;
+        let mesh = crate::mesh::Mesh::decode(&std::fs::read(input)?)?;
         mesh.check()?;
         mesh
     } else {
         let format = PreviewFormat::of_format(format)
             .ok_or_else(|| anyhow::anyhow!("no 3D preview for the format '{format}'"))?;
-        crate::mesh::read(format.as_str(), &data)?
+        convert(format, input)?
     };
-    drop(data);
     if let Some(output) = output {
         std::fs::write(output, mesh.encode())?;
     }
     if let Some(path) = signature {
-        // a bug in the signature must never cost the preview itself
-        let computed =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| shape::compute(&mesh)));
-        let outcome = match computed {
-            Ok(Ok(s)) => shape::Outcome::Signature(s),
-            Ok(Err(e)) => shape::Outcome::Error(e.to_string()),
-            Err(_) => shape::Outcome::Error("The shape signature could not be computed.".into()),
-        };
-        std::fs::write(path, serde_json::to_vec(&outcome)?)?;
+        std::fs::write(path, serde_json::to_vec(&signature_outcome(&mesh))?)?;
     }
-    Ok(())
+    Ok(mesh)
+}
+
+/// The shape signature of a preview mesh, or why there is none.
+fn signature_outcome(mesh: &crate::mesh::Mesh) -> shape::Outcome {
+    // A partial STEP preview (faces the kernel could not tessellate are
+    // missing) gets no signature: area, volume and the D2 distribution of
+    // a model with holes would compare it wrongly – a part with half its
+    // faces missing would look like a different, open part. The preview
+    // itself is still shown; the part is left out of the similar part
+    // search (also as a candidate) with this reason instead of a misleading
+    // score. When a later kernel shows every face, `CACHE_VERSION` and
+    // `shape::VERSION` are bumped and the signature is computed then.
+    if let Some((shown, total)) = mesh.faces {
+        return shape::Outcome::Error(format!(
+            "The 3D preview shows only {shown} of {total} faces, so the shape cannot be compared."
+        ));
+    }
+    // a bug in the signature must never cost the preview itself
+    let computed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| shape::compute(mesh)));
+    match computed {
+        Ok(Ok(s)) => shape::Outcome::Signature(s),
+        Ok(Err(e)) => shape::Outcome::Error(e.to_string()),
+        Err(_) => shape::Outcome::Error("The shape signature could not be computed.".into()),
+    }
 }
 
 /// Cached, isolated conversions (one per server, part of `AppState`).
@@ -514,7 +546,9 @@ async fn run_in_process(job: &Job) -> Result<(), String> {
         job.signature.clone(),
     );
     let task = tokio::task::spawn_blocking(move || -> Result<(), String> {
-        run_job(format, &input, output.as_deref(), signature.as_deref()).map_err(|e| e.to_string())
+        run_job(format, &input, output.as_deref(), signature.as_deref())
+            .map(drop)
+            .map_err(|e| e.to_string())
     });
     match tokio::time::timeout(job.time_limit, task).await {
         Err(_) => Err(format!(
@@ -529,6 +563,24 @@ async fn run_in_process(job: &Job) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn partial_previews_get_no_shape_signature() {
+        let mut mesh = crate::mesh::Mesh {
+            positions: vec![0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 3.0, 0.0],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        };
+        assert!(matches!(
+            signature_outcome(&mesh),
+            shape::Outcome::Signature(_)
+        ));
+        mesh.faces = Some((5, 6));
+        match signature_outcome(&mesh) {
+            shape::Outcome::Error(message) => assert!(message.contains("5 of 6 faces")),
+            other => panic!("{other:?}"),
+        }
+    }
 
     #[test]
     fn formats_by_extension() {

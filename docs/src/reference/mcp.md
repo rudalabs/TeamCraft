@@ -95,6 +95,7 @@ at 2000 rows, other lists at 500 entries, and the whole result at 1 MiB.
 | `item_history`         | Audit log of the item and its revisions                                                                               |
 | `list_changes`         | Change orders, optionally by status                                                                                   |
 | `get_change`           | Revisions, reviews, release readiness (blockers, warnings) and impact analysis                                        |
+| `suggest_reviewers`    | Who should review a change (`change`, `limit` 1–20, default 5): ranked CAD editors and admins with plain reasons (recent edits, earlier reviews of the same items, owners of dependents, project group managers, requesters of linked change requests); read-only, never assigns |
 | `my_worklist`          | My check-outs, reviews waiting for me, open impacts, my open change orders, change requests assigned to or raised by me, unread notifications |
 | `bom_health`           | Checks every BOM line: unresolved, obsolete, unreleased, missing mass, no files, checked out, open check, cycle       |
 | `find_duplicate_files` | Identical contents stored in more than one item, optionally for one revision                                          |
@@ -130,7 +131,7 @@ will ask before `create_change_draft`, `add_to_change`,
 | Prompt            | Arguments              | Produces                                                         |
 |-------------------|------------------------|------------------------------------------------------------------|
 | `release_notes`   | `item`, `revision`?    | Release notes from the comparison with the previous revision     |
-| `review_change`   | `change`               | Review notes: scope, risks, questions for the author            |
+| `review_change`   | `change`               | Review notes: scope, risks, questions for the author, who else should look at it (`suggest_reviewers`) |
 | `release_check`   | `item`, `revision`?    | Checklist of what blocks or warns before a release (for a new part also near-duplicate existing parts) |
 | `worklist_triage` | –                      | Short ordered to-do list from my worklist                       |
 | `triage_requests` | –                      | One block per open change request assigned to me (and new unassigned ones): problem, affected items, open points, a suggested next step – the decision stays mine |

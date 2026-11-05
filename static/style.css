@@ -339,9 +339,9 @@ dl.props dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 }
 .badge img { width: 0.8rem; height: 0.8rem; }
 .badge-in_work, .badge-draft { color: var(--link); border-color: color-mix(in srgb, var(--link) 40%, transparent); }
-.badge-in_review, .badge-pending { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
-.badge-released, .badge-approved { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
-.badge-rejected { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-soft); }
+.badge-in_review, .badge-pending, .badge-retrying { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.badge-released, .badge-approved, .badge-sent { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
+.badge-rejected, .badge-failed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-soft); }
 .badge-obsolete, .badge-cancelled { color: var(--text-dim); }
 .badge-obsolete img, .badge-cancelled img { opacity: 0.55; filter: grayscale(1); }
 .badge-low { color: var(--text-dim); }
@@ -391,6 +391,28 @@ ol.thread { list-style: none; margin: 0 0 0.9rem; padding: 0; display: grid; gap
 td > .fmt:first-child { margin-left: 0; }
 ul.plain-list { margin: 0; padding-left: 1.1rem; }
 ul.plain-list li { margin: 0.35rem 0; }
+
+/* Suggested reviewers (services/reviewers.rs): an Add button with its reason. */
+.suggestions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+}
+.suggestion {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  padding: var(--space-2) 0.65rem;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.suggestion form { margin: 0; }
+.suggestion p { margin: 0; line-height: 1.35; }
 
 .tag-row { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0; margin: 0; list-style: none; }
 
@@ -542,6 +564,23 @@ button.small, .button.small { padding: 0.25rem 0.65rem; font-size: 0.8rem; borde
   padding: var(--space-3);
   overflow-wrap: anywhere;
   user-select: all;
+}
+
+/* Webhooks: event choices in columns, payloads of deliveries */
+.event-choices { columns: 2 17rem; column-gap: var(--space-5); }
+.event-choices label.check { break-inside: avoid; padding: 0.2rem 0; }
+.event-choices .mono { color: var(--text-dim); font-size: 0.8rem; font-weight: 400; }
+details.payload summary { cursor: pointer; color: var(--link); font-size: 0.85rem; }
+details.payload pre {
+  max-height: 22rem;
+  overflow: auto;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }
 
 /* ===========================================================================

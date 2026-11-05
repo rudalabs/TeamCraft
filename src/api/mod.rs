@@ -9,6 +9,7 @@ mod change_requests;
 mod personal;
 mod simulations;
 mod uploads_api;
+mod webhooks;
 
 use axum::{
     extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State},
@@ -30,8 +31,8 @@ use crate::{
     models::Revision,
     services::{
         audit, bom, changes, checkouts, desktop, files, impacts, imports, items, notifications,
-        package, projects, references, requests, revisions, similar, stats, uploads, users,
-        workset, Page,
+        package, projects, references, requests, reviewers, revisions, similar, stats, uploads,
+        users, workset, Page,
     },
     web, AppState,
 };
@@ -219,6 +220,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{number}/reviewers", post(add_change_reviewer))
         .route("/changes/{number}/readiness", get(change_readiness))
         .route(
+            "/changes/{number}/suggested-reviewers",
+            get(change_suggested_reviewers),
+        )
+        .route(
             "/changes/{number}/dependencies",
             post(add_change_dependencies),
         )
@@ -281,6 +286,21 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/change-request-attachments/{id}/content",
             get(change_requests::attachment_content),
         )
+        // outgoing event webhooks (administrators)
+        .route("/webhooks", get(webhooks::list).post(webhooks::create))
+        .route(
+            "/webhooks/{id}",
+            get(webhooks::get)
+                .patch(webhooks::update)
+                .delete(webhooks::delete),
+        )
+        .route(
+            "/webhooks/{id}/rotate-secret",
+            post(webhooks::rotate_secret),
+        )
+        .route("/webhooks/{id}/test", post(webhooks::test))
+        .route("/webhooks/{id}/deliveries", get(webhooks::deliveries))
+        .route("/webhook-deliveries/{id}/retry", post(webhooks::retry))
         .fallback(not_found)
 }
 
@@ -413,6 +433,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/changes/{number}/impact                   impact analysis: items that depend on its revisions",
             "POST   /api/v1/changes/{number}/items                    {item, revision?}",
             "POST   /api/v1/changes/{number}/reviewers                {username}",
+            "GET    /api/v1/changes/{number}/suggested-reviewers?limit=  ranked reviewer suggestions with reasons (never assigns)",
             "GET    /api/v1/changes/{number}/readiness                release readiness: unreleased (blocking) and obsolete or file-scan (warning) dependencies",
             "POST   /api/v1/changes/{number}/dependencies             add the in-work revisions of all unreleased dependencies, level by level",
             "POST   /api/v1/changes/{number}/submit",
@@ -433,7 +454,14 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/change-requests/{number}/link-change      {change} – link an open change order",
             "POST   /api/v1/change-requests/{number}/attachments      multipart 'file': PNG, JPEG, GIF, WebP or PDF, up to 10 MiB",
             "GET    /api/v1/change-request-attachments/{id}/content",
-            "POST   /api/v1/change-requests/{number}/watch            watch a change request (DELETE: stop)"
+            "POST   /api/v1/change-requests/{number}/watch            watch a change request (DELETE: stop)",
+            "GET    /api/v1/webhooks                                  outgoing event webhooks and the event names – admins",
+            "POST   /api/v1/webhooks                                  {name, url, events, project?, active?} – returns the secret once",
+            "GET    /api/v1/webhooks/{id}                             PATCH {name?, url?, events?, project?, active?}, DELETE",
+            "POST   /api/v1/webhooks/{id}/rotate-secret               a new secret (shown once)",
+            "POST   /api/v1/webhooks/{id}/test                        sends a ping now; returns the delivery",
+            "GET    /api/v1/webhooks/{id}/deliveries?limit=           latest deliveries with status, attempts, last error",
+            "POST   /api/v1/webhook-deliveries/{id}/retry             send a failed delivery again"
         ]
     }))
 }
@@ -1739,6 +1767,29 @@ async fn change_readiness(
     let readiness = changes::readiness(&st.db, change.id).await?;
     Ok(Json(
         json!({ "ready": readiness.is_ready(), "blockers": readiness.blockers, "warnings": readiness.warnings }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct SuggestQuery {
+    limit: Option<i64>,
+}
+
+/// Who should review the change: ranked users with the reasons.
+async fn change_suggested_reviewers(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path(number): Path<String>,
+    Query(q): Query<SuggestQuery>,
+) -> AppResult<Json<Value>> {
+    let change = changes::get_by_number(&st.db, &number).await?;
+    let limit = q
+        .limit
+        .unwrap_or(reviewers::DEFAULT_LIMIT as i64)
+        .clamp(1, reviewers::MAX_LIMIT as i64) as usize;
+    let suggestions = reviewers::suggest(&st.db, change.id, limit).await?;
+    Ok(Json(
+        json!({ "change": change.number, "suggestions": suggestions }),
     ))
 }
 

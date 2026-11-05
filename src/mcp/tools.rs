@@ -25,7 +25,7 @@ use crate::{
     models::{BomLine, Change, ChangeRequest, FileRecord, Revision},
     services::{
         audit, bom, changes, files, impacts, insights, items, notifications, projects, references,
-        requests, revisions, similar, simulations, Page,
+        requests, reviewers, revisions, similar, simulations, Page,
     },
     AppState,
 };
@@ -141,6 +141,17 @@ const TOOLS: &[Tool] = &[
             dependencies and warnings) and impact analysis (items that depend on its revisions).",
         effect: READ,
         schema: schema_change,
+    },
+    Tool {
+        name: "suggest_reviewers",
+        title: "Suggest reviewers",
+        description: "Use when preparing or reviewing a change order to propose who should review it: \
+            ranked CAD editors and admins with plain reasons (recent edits of the affected items, reviews of \
+            earlier changes on the same items, owners of dependents, project group managers, requesters of \
+            linked change requests). Excludes the author, deactivated users and assigned reviewers. Never \
+            assigns anybody – the author adds reviewers in TeamCraft.",
+        effect: READ,
+        schema: schema_suggest_reviewers,
     },
     Tool {
         name: "my_worklist",
@@ -411,6 +422,16 @@ fn schema_list_changes() -> Value {
 fn schema_change() -> Value {
     object(
         json!({ "change": { "type": "string", "description": "Change number, e.g. ECO-000004" } }),
+        &["change"],
+    )
+}
+
+fn schema_suggest_reviewers() -> Value {
+    object(
+        json!({
+            "change": { "type": "string", "description": "Change number, e.g. ECO-000004" },
+            "limit": p_limit(reviewers::DEFAULT_LIMIT as i64, reviewers::MAX_LIMIT as i64),
+        }),
         &["change"],
     )
 }
@@ -765,6 +786,7 @@ pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value 
         "item_history" => item_history(st, &a).await,
         "list_changes" => list_changes(st, &a).await,
         "get_change" => get_change(st, &a).await,
+        "suggest_reviewers" => suggest_reviewers(st, &a).await,
         "my_worklist" => my_worklist(st, me).await,
         "bom_health" => bom_health(st, &a).await,
         "find_duplicate_files" => find_duplicate_files(st, &a).await,
@@ -1250,6 +1272,28 @@ async fn change_overview(st: &AppState, change: &Change, with_impact: bool) -> A
 async fn get_change(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     let change = changes::get_by_number(&st.db, &a.req_str("change")?).await?;
     change_overview(st, &change, true).await
+}
+
+async fn suggest_reviewers(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
+    let change = changes::get_by_number(&st.db, &a.req_str("change")?).await?;
+    let limit = a.limit(
+        "limit",
+        reviewers::DEFAULT_LIMIT as i64,
+        reviewers::MAX_LIMIT as i64,
+    )?;
+    let suggestions = reviewers::suggest(&st.db, change.id, limit as usize).await?;
+    Ok(json!({
+        "change": change.number,
+        "status": change.status,
+        "suggestions": suggestions.iter().map(|s| json!({
+            "username": s.username,
+            "name": s.display_name,
+            "role": s.role,
+            "score": s.score,
+            "reasons": s.reasons,
+        })).collect::<Vec<_>>(),
+        "note": "Suggestions only; reviewers are added by the author of the change in TeamCraft.",
+    }))
 }
 
 async fn my_worklist(st: &AppState, me: &Actor) -> AppResult<Value> {
@@ -2338,9 +2382,11 @@ pub fn prompt(name: &str, args: &Value) -> Result<Value, String> {
                  1. Call get_change with change={change}.\n\
                  2. For each revision in it, call compare_revisions (item, to=its revision) to see what it changes; \
                  for assemblies also call bom_health with rule=released.\n\
+                 3. Call suggest_reviewers with change={change} to see who else knows the affected items.\n\
                  Produce a concise review for an engineer: Scope (what is released, in one line each); Risks (readiness \
                  blockers and warnings, dependents from the impact analysis that are not in the change, check-outs, \
-                 missing files or mass); Questions for the author; a suggestion whether it looks ready. The decision \
+                 missing files or mass); Questions for the author; people who should also look at it (only from \
+                 suggest_reviewers, with its reason; it never assigns them); a suggestion whether it looks ready. The decision \
                  (approve or reject) is mine – you cannot and should not make it."
             )
         }
@@ -2630,6 +2676,14 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("create_change_draft"));
+        // reviewers are suggested, never assigned
+        let suggest = def("suggest_reviewers");
+        assert_eq!(suggest["annotations"]["readOnlyHint"], true);
+        assert!(suggest["description"]
+            .as_str()
+            .unwrap()
+            .contains("Never assigns"));
+        assert!(!exists("add_reviewer") && !exists("assign_reviewers"));
         let create = def("create_change_request");
         assert_eq!(create["annotations"]["idempotentHint"], false);
         assert_eq!(
@@ -2819,6 +2873,7 @@ mod tests {
         let p = prompt("review_change", &json!({ "change": "ECO-000004" })).unwrap();
         let text = p["messages"][0]["content"]["text"].as_str().unwrap();
         assert!(text.contains("get_change with change=ECO-000004"));
+        assert!(text.contains("suggest_reviewers with change=ECO-000004"));
         let p = prompt("release_notes", &json!({ "item": "ASM-1" })).unwrap();
         let text = p["messages"][0]["content"]["text"].as_str().unwrap();
         assert!(text.contains("to=latest"));

@@ -38,6 +38,8 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "admin/users.html",
     "admin/user_edit.html",
     "admin/audit.html",
+    "admin/webhooks.html",
+    "admin/webhook_edit.html",
     "desktop/authorize.html",
     "formats.html",
     "imports/upload.html",
@@ -837,6 +839,9 @@ mod tests {
                     "reviews": [{ "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
                                   "decision": "approved", "comment": "ok", "decided_at": TS }],
                     "candidates": [user()], "history": [audit_entry()], "priorities": ["low", "normal"],
+                    "suggested": [{ "user_id": OTHER, "username": "max", "display_name": "Max <M>", "role": "editor",
+                                    "score": 7, "reasons": ["edited PRT-000001 3 times in the last 90 days",
+                                                            "manager of ROVER"] }],
                     "impact": [{ "root_item_id": ME, "level": 1, "item_id": OTHER, "item_number": "ASM-000001",
                                  "item_name": "Stage", "revision_id": OTHER, "revision_code": "A",
                                  "revision_state": "released", "relation": "bom", "via_number": "PRT-000001",
@@ -852,6 +857,15 @@ mod tests {
             assert!(
                 html.contains("Implements") && html.contains("ECR-000001"),
                 "the change page names the request it implements"
+            );
+            assert!(
+                html.contains("Suggested reviewers")
+                    && html.contains("Add Max &lt;M&gt;")
+                    && html.contains("name=\"username\" value=\"max\"")
+                    && html.contains(
+                        "edited PRT-000001 3 times in the last 90 days; manager of ROVER"
+                    ),
+                "suggested reviewers with their reasons"
             );
         }
 
@@ -1003,6 +1017,79 @@ mod tests {
                 "entries": [audit_entry()], "filter": { "entity_type": "item", "username": null, "action": null },
                 "base_query": "entity_type=item", "pagination": page(), "per_page": 50,
             })),
+        );
+        let webhook = json!({
+            "id": ME, "name": "ERP <export>", "url": "https://erp.example.org/in?token=x",
+            "secret_hint": "tc_whsec_…a1b2", "events": ["revision.released", "change.released"],
+            "project_id": OTHER, "project_code": "ROVER", "active": true, "created_by": ME,
+            "created_by_name": "Max", "created_at": TS, "updated_at": TS, "secret_rotated_at": TS,
+            "pending": 2, "failed_recently": 1, "last_status": "failed", "last_delivery_at": TS,
+            "host": "erp.example.org",
+        });
+        let events = json!(crate::domain::WebhookEvent::ALL
+            .iter()
+            .map(|e| json!({ "value": e.as_str(), "label": e.label(),
+                             "on": *e == crate::domain::WebhookEvent::ChangeReleased }))
+            .collect::<Vec<_>>());
+        let projects = json!([{ "id": OTHER, "code": "ROVER", "name": "Planetary rover" }]);
+        let html = render(
+            &env,
+            "admin/webhooks.html",
+            with_common(json!({
+                "webhooks": [webhook.clone()], "events": events.clone(), "projects": projects.clone(),
+                "targets": { "allowed_hosts": [], "allow_private": false },
+            })),
+        );
+        for expected in [
+            "ERP &lt;export&gt;",
+            "badge badge-failed",
+            "1 failed in 7 days",
+            "value=\"simulation.result_added\"",
+            "TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS",
+        ] {
+            assert!(html.contains(expected), "webhook list shows {expected}");
+        }
+        assert!(!html.contains("token=x"), "the list shows the host only");
+        let delivery = |status: &str, attempts: i32, code: Option<i32>, error: &str| {
+            json!({
+                "id": OTHER, "webhook_id": ME, "event_id": ME, "event": "change.released",
+                "payload": {}, "payload_text": "{\n  \"event\": \"change.released\" <x>\n}",
+                "status": status, "attempts": attempts, "next_attempt_at": TS,
+                "last_status_code": code, "last_error": error, "created_at": TS, "updated_at": TS,
+                "delivered_at": if status == "sent" { json!(TS) } else { json!(null) },
+            })
+        };
+        let html = render(
+            &env,
+            "admin/webhook_edit.html",
+            with_common(json!({
+                "webhook": webhook, "host": "erp.example.org", "secret": "tc_whsec_0123",
+                "events": events, "projects": projects, "max_attempts": 8, "retention_days": 30,
+                "targets": { "allowed_hosts": ["erp.example.org"], "allow_private": false },
+                "deliveries": [
+                    delivery("sent", 1, Some(200), ""),
+                    delivery("pending", 2, Some(503), "HTTP 503"),
+                    delivery("failed", 8, None, "connection failed: refused"),
+                ],
+            })),
+        );
+        for expected in [
+            "tc_whsec_0123",
+            "data-copy=\"webhook-secret\"",
+            "tc_whsec_…a1b2",
+            "badge badge-retrying",
+            "badge badge-failed",
+            "connection failed: refused",
+            "&lt;x&gt;",
+            "/deliveries/",
+            "value=\"change.released\" checked",
+            "selected>ROVER",
+        ] {
+            assert!(html.contains(expected), "webhook page shows {expected}");
+        }
+        assert!(
+            !html.contains("HTTP 503 – HTTP 503"),
+            "the status code once"
         );
         let html = render(
             &env,
