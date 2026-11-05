@@ -1700,9 +1700,25 @@ async fn texts_naming_restricted_objects_are_redacted() {
         .await;
     assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
 
-    // a typed-in preview scheme never reads the group's private counter
+    // a typed-in preview scheme never reads the group's private counter:
+    // it shows the two assemblies made while the group was internal, not
+    // the one made since
+    new_item(&app, &mona, "assembly", &code).await;
     let scheme = format!("{code}-%7BTYPE%7D-%7BSEQ:4%7D");
-    for (who, token, next) in [("otto", &otto, "0001"), ("mona", &mona, "0003")] {
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/projects/{code}/numbering"),
+            &mona,
+            None,
+        )
+        .await;
+    assert!(
+        r.text().contains(&format!("{code}-ASM-0004")),
+        "{}",
+        r.text()
+    );
+    for (who, token, next) in [("otto", &otto, "0003"), ("mona", &mona, "0003")] {
         let r = app
             .api(
                 Method::GET,
