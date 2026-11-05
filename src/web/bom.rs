@@ -15,7 +15,7 @@ use crate::{
     auth::WebUser,
     domain::{self, RevisionRule},
     error::AppResult,
-    services::{bom, package, revisions},
+    services::{bom, interchange, package, revisions},
     util, AppState,
 };
 
@@ -146,14 +146,26 @@ pub async fn add_line(
             find_number: parse_find_number(&form.find_number)?,
             notes: form.notes.clone(),
         };
-        bom::add(&st.db, &ctx.me, id, input).await
+        let line = bom::add(&st.db, &ctx.me, id, input).await?;
+        // a superseded child may be added on purpose – with a hint
+        let superseded = interchange::superseded_among(&st.db, &ctx.me, &[line.child_item_id])
+            .await?
+            .remove(&line.child_item_id);
+        Ok::<_, crate::error::AppError>((line, superseded))
     }
     .await;
-    finish(&st, result, &back, |line| {
+    finish(&st, result, &back, |(line, superseded)| {
+        let hint = match superseded {
+            Some(Some(successor)) => {
+                format!(" – note: it is superseded by {successor}, use that for new designs")
+            }
+            Some(None) => " – note: it is superseded, do not use it for new designs".to_string(),
+            None => String::new(),
+        };
         (
             back.clone(),
             format!(
-                "Added {} (find no. {})",
+                "Added {} (find no. {}){hint}",
                 line.child_number, line.find_number
             ),
         )

@@ -20,6 +20,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "explorer.html",
     "items/list.html",
     "items/new.html",
+    "items/where_used.html",
     "revisions/show.html",
     "revisions/edit.html",
     "revisions/bom.html",
@@ -538,6 +539,53 @@ mod tests {
             })),
         );
 
+        // alternates, supersession and replace in assemblies
+        let linked = |number: &str, restricted: bool| {
+            json!({ "item_id": OTHER, "number": number, "item_type": "part", "name": "Bolt <M6>",
+                    "latest_revision_id": OTHER, "latest_code": "B", "latest_state": "released",
+                    "note": "second <source>", "created_by_name": "Erika", "created_at": TS,
+                    "two_way": true, "restricted": restricted })
+        };
+        let usage = |level: i32, state: &str| {
+            json!({ "level": level, "child_number": "PRT-000001", "line_id": ME, "parent_revision_id": OTHER,
+                    "parent_item_id": ME, "parent_number": "ASM-000001", "parent_code": "A",
+                    "parent_name": "Stage <1>", "parent_state": state, "find_number": 10, "quantity": 2.0,
+                    "released_child_code": null })
+        };
+        let plan_row = |action: &str, label: &str| {
+            json!({ "line_id": ME, "find_number": 10, "quantity": 4.0, "parent_item_id": ME,
+                    "parent_number": "ASM-000003", "parent_revision_id": OTHER, "parent_code": "B",
+                    "parent_name": "Frame <2>", "parent_state": "in_work", "checked_out_by_name": "Max",
+                    "action": action, "action_label": label })
+        };
+        for (with_plan, restricted) in [(true, false), (false, true)] {
+            let html = render(
+                &env,
+                "items/where_used.html",
+                with_common(json!({
+                    "item": item(), "latest": revision("released", false), "levels": 25,
+                    "level_options": [{ "value": 1, "label": "1 level" }, { "value": 25, "label": "All levels" }],
+                    "rows": [usage(1, "released"), usage(2, "in_work")], "truncated": with_plan, "hidden": 2,
+                    "successor": linked("PRT-000002", restricted), "alternates": [linked("PRT-000003", false)],
+                    "with": "PRT-000002",
+                    "plan": if with_plan { json!({
+                        "old_item_id": ME, "old_number": "PRT-000001", "new_item_id": OTHER,
+                        "new_number": "PRT-000002", "replaced": 1, "hidden": 1,
+                        "rows": [plan_row("replace", "will be replaced"),
+                                 plan_row("checked_out", "checked out by somebody else")],
+                    }) } else { Value::Null },
+                    "plan_error": if with_plan { Value::Null } else { json!("Item 'X' not <found>.") },
+                    "can_replace": true,
+                })),
+            );
+            assert!(html.contains("Stage &lt;1&gt;"), "names are escaped");
+            assert!(html.contains("+2 assemblies"), "hidden count");
+            assert_eq!(html.contains("Replace in 1 BOM line"), with_plan);
+            assert_eq!(html.contains("(Max)"), with_plan, "who has it checked out");
+            assert_eq!(html.contains("not &lt;found&gt;"), !with_plan);
+            assert_eq!(html.contains("Restricted item"), restricted);
+        }
+
         for (state, checked_out) in [("in_work", true), ("in_work", false), ("released", false)] {
             let source = json!({ "file_id": OTHER, "filename": "nozzle.step", "sha256": "cd".repeat(32), "format": "step" });
             let similar = if checked_out {
@@ -571,6 +619,14 @@ mod tests {
                     "resolved_impacts": [impact(Some("acknowledged"))],
                     "open_requests": [request("in_triage")], "similar": similar,
                     "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
+                    "interchange": {
+                        "alternates": [linked("PRT-000003", false)],
+                        "alternate_for": [linked("PRT-000004", false)],
+                        "successor": linked("PRT-000002", false),
+                        "predecessors": [linked("PRT-000006", false)],
+                        "superseded": { "88888888-8888-4888-8888-888888888888": "PRT-000005" },
+                        "can_edit": checked_out,
+                    },
                     "lifecycle": {
                         "states": crate::domain::LifecycleState::ALL,
                         "next": crate::domain::rules_from(crate::domain::LifecycleState::parse(state).unwrap()),
@@ -581,6 +637,23 @@ mod tests {
             assert!(
                 html.contains("aria-current=\"step\""),
                 "current lifecycle state is marked"
+            );
+            for expected in [
+                "is superseded by",
+                "Superseded by PRT-000005",
+                "id=\"interchange\"",
+                "PRT-000003",
+                "may be replaced by",
+                "supersedes",
+                "second &lt;source&gt;",
+                "/where-used",
+            ] {
+                assert!(html.contains(expected), "revision page shows {expected}");
+            }
+            assert_eq!(
+                html.contains("Add alternate"),
+                checked_out,
+                "forms only for editors of the group"
             );
             assert!(html.contains("four-eyes principle"), "rules are listed");
             if checked_out {

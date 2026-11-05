@@ -18,6 +18,7 @@ mod desktop;
 mod explorer;
 mod formats;
 mod imports;
+mod interchange;
 mod items;
 mod notifications;
 mod personal;
@@ -94,6 +95,19 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/items/{id}", get(items::show))
         .route("/items/{id}/master", post(items::update_master))
         .route("/items/{id}/delete", post(items::delete))
+        // alternates, supersession, multi-level where-used, replace in assemblies
+        .route("/items/{id}/where-used", get(interchange::where_used))
+        .route("/items/{id}/replace", post(interchange::replace))
+        .route("/items/{id}/alternates", post(interchange::add_alternate))
+        .route(
+            "/items/{id}/alternates/{alternate}/delete",
+            post(interchange::delete_alternate),
+        )
+        .route("/items/{id}/supersede", post(interchange::supersede))
+        .route(
+            "/items/{id}/supersede/delete",
+            post(interchange::clear_supersession),
+        )
         .route("/i/{number}", get(items::by_number))
         .route("/formats", get(formats::show))
         // revisions & files
