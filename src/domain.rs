@@ -1338,19 +1338,23 @@ pub enum NotificationKind {
     /// A change request you raised, are assigned to, watch or have to triage
     /// was raised, commented, assigned, decided or implemented.
     ChangeRequest,
+    /// The periodic e-mail of the change requests that wait for triage in a
+    /// project group you edit (`services::request_digests`).
+    RequestDigest,
     /// Test message from the account page.
     Test,
 }
 
 impl NotificationKind {
     /// The kinds a user can switch off.
-    pub const MUTABLE: [NotificationKind; 6] = [
+    pub const MUTABLE: [NotificationKind; 7] = [
         NotificationKind::ReviewRequested,
         NotificationKind::ChangeUpdate,
         NotificationKind::Impact,
         NotificationKind::ItemUpdate,
         NotificationKind::Unlock,
         NotificationKind::ChangeRequest,
+        NotificationKind::RequestDigest,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -1361,6 +1365,7 @@ impl NotificationKind {
             NotificationKind::ItemUpdate => "item_update",
             NotificationKind::Unlock => "unlock",
             NotificationKind::ChangeRequest => "change_request",
+            NotificationKind::RequestDigest => "request_digest",
             NotificationKind::Test => "test",
         }
     }
@@ -1375,6 +1380,9 @@ impl NotificationKind {
             NotificationKind::ChangeRequest => {
                 "Change requests I raised, triage, am assigned to or watch"
             }
+            NotificationKind::RequestDigest => {
+                "E-mail digest of new change requests waiting for triage in my project groups"
+            }
             NotificationKind::Test => "Test messages",
         }
     }
@@ -1387,6 +1395,7 @@ impl NotificationKind {
             NotificationKind::ItemUpdate,
             NotificationKind::Unlock,
             NotificationKind::ChangeRequest,
+            NotificationKind::RequestDigest,
             NotificationKind::Test,
         ]
         .into_iter()

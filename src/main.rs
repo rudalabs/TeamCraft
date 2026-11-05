@@ -242,6 +242,10 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
         mattermost = delivery.chat_enabled(),
         "notification delivery"
     );
+    // The digest of the change requests waiting for triage goes by e-mail only.
+    if delivery.email_enabled() {
+        services::request_digests::spawn(pool.clone(), config.request_digest_hours);
+    }
     teamcraft::delivery::spawn(pool.clone(), delivery);
     let webhook_retention_days = config.webhooks.retention_days;
     let state = AppState::new(config, pool.clone()).await?;

@@ -75,8 +75,11 @@ the known gaps with details. Last update: 2026-11-05.
 - [ ] MCP tools for change requests (`create_change_request`, a triage prompt) once the MCP server is merged
 - [ ] Browser check (no console errors, no overflow at 390 px) of `/requests`, `/requests/new` and `/requests/{id}`,
   and the desktop request tab
-- [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI), e-mail digest of
-  new requests per project group
+- [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI)
+- [x] Change requests: e-mail digest of the new requests waiting for triage per project group – to its CAD editors
+  every `TEAMCRAFT_REQUEST_DIGEST_HOURS` (default 24), muted per user like every kind (`request_digest`), only when
+  something new came in, no second digest of a period after a restart (`request_digests`, migration 0031), checked
+  again at sending time (restricted groups); tested in `tests/request_digests.rs` with a recording mailer
 - [x] Backup/restore of the database and vault as CLI commands (`teamcraft backup`, `teamcraft restore`) – see
   [Operations](src/admin/operations.md)
 - [x] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools (2026-11-04,

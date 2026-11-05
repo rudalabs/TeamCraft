@@ -24,6 +24,7 @@ pub mod personal;
 pub mod projects;
 pub mod readiness;
 pub mod references;
+pub mod request_digests;
 pub mod requests;
 pub mod reviewers;
 pub mod revisions;

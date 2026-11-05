@@ -70,9 +70,19 @@ uploads too: each user may hold 16 of them for 24 hours.
 |--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
 | `TEAMCRAFT_SMTP_URL`           | SMTP server in lettre syntax: `smtps://user:password@host:465`, `smtp://host:587?tls=required`, `smtp://localhost:25` |
 | `TEAMCRAFT_MAIL_FROM`          | sender, `Name <address>` (required with SMTP)                                                                         |
+| `TEAMCRAFT_REQUEST_DIGEST_HOURS` | hours between two e-mail digests of the change requests waiting for triage, per CAD editor and project group (default `24`, `0` = off, at most `720`); only with SMTP |
 | `TEAMCRAFT_MATTERMOST_WEBHOOK` | incoming webhook for notifications                                                                                    |
 | `TEAMCRAFT_MATTERMOST_DIRECT`  | `true`: direct messages, `false` (default): mention in the webhook's channel – notifications about [restricted project groups](permissions.md) then show only a generic text and the link |
 | `MATTERMOST_ERROR_WEBHOOK`     | incoming webhook that receives internal server errors (rate limited)                                                  |
+
+The **change request digest** is an e-mail per project group to its CAD
+editors and admins with the requests raised since the previous digest that
+are still *New*, and how many older ones still wait for triage. Nothing is
+sent when no new request came in. Every user can mute it on the account page
+(*E-mail digest of new change requests …*). The server remembers per user
+and group up to when the digests reached (table `request_digests`), so a
+restart or a second server never sends a period twice; the e-mail goes
+through the same outbox, retries and access checks as every notification.
 
 ## Event webhooks
 
