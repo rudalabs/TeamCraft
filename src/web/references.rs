@@ -103,3 +103,41 @@ pub async fn acknowledge(
         )
     })
 }
+
+#[derive(Deserialize)]
+pub struct AcknowledgeAllForm {
+    #[serde(default)]
+    note: String,
+    /// Comma-separated ids of the impacts shown (empty: all open ones).
+    #[serde(default)]
+    impacts: String,
+    back: Option<String>,
+}
+
+/// "Acknowledge all": every open impact shown for a dependent revision.
+pub async fn acknowledge_all(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<AcknowledgeAllForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = async {
+        let only = impacts::parse_ids(&form.impacts)?;
+        impacts::acknowledge_all(&st.db, &ctx.me, id, only.as_deref(), &form.note).await
+    }
+    .await;
+    finish(&st, result, &back, |a| {
+        let n = a.acknowledged.len();
+        let mut message = format!(
+            "{}/{} checked: {n} impact{} acknowledged",
+            a.item_number,
+            a.revision_code,
+            if n == 1 { "" } else { "s" }
+        );
+        if a.skipped > 0 {
+            message.push_str(&format!(" ({} resolved in the meantime)", a.skipped));
+        }
+        (back.clone(), message)
+    })
+}

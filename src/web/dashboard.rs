@@ -29,7 +29,7 @@ pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response
             "reviews": reviews,
             "my_changes": my_changes,
             "activity": activity,
-            "impacts": impacts,
+            "impact_groups": impacts::group_by_dependent(impacts),
             "assigned_requests": assigned,
             "my_requests": my_requests,
         }),

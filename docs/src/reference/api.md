@@ -133,6 +133,28 @@ in all of my check-outs – or the listed ones – **without new files**, one
 transaction and one audit record per revision. The answer lists every
 revision with `ok` and `error`, plus `checked_in`, `failed` and a `summary`.
 
+### Dependents to check (impacts)
+
+`GET /worklist` lists the open impacts flat (`impacts`) and grouped by the
+dependent revision (`impact_groups`): each group has the dependent
+(`item_number`, `item_name`, `revision_id`, `revision_code`,
+`revision_state`, `project_id`, `project_code`), `latest_at` and its
+`impacts`, ordered by source item number. Groups are ordered by their newest
+impact.
+
+`POST /impacts/{id}/acknowledge` (`{"note": "…"}`) resolves one impact;
+`POST /items/{number}/revisions/{code}/impacts/acknowledge`
+(`{"note": "…", "impacts": [id, …]}`) resolves all open impacts on that
+dependent revision – or only the listed ones, the ones the user saw – with
+one note, in one transaction, with an audit record per impact. Both need a
+CAD editor of the dependent's project group (or an admin) and a note.
+The list must not be empty and may only name impacts on that revision
+(`400` otherwise). Listed impacts that were resolved in the meantime are
+skipped; the answer
+has `acknowledged` (the resolved impacts) and `skipped`. If nothing is left
+to acknowledge the answer is `409 Conflict`. Acknowledging stays a human
+decision: the MCP server only reads impacts.
+
 ### Where-used over several levels
 
 `GET /items/{number}/where-used` lists the parent revisions whose BOM uses
@@ -147,12 +169,12 @@ lowest level it is reached on; the report stops at 2000 rows.
 |------------------|---------------------------------------------------------------------------------------------------------------------------------------|
 | Items            | `GET/POST /items`, `GET /items/{number}`, `where-used` (`levels=1…25` for parents of parents), history, impacts, watch               |
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
-| Worklist         | `GET /worklist` (check-outs, reviews, impacts, statistics), `POST /worklist/checkin-all`                                              |
+| Worklist         | `GET /worklist` (check-outs, reviews, impacts and `impact_groups`, statistics), `POST /worklist/checkin-all`                          |
 | Files            | `POST …/files` (multipart, `folder`/`folders`), `GET/PATCH /files/{id}` (metadata, folder), `/content`, `/versions`, `/restore`, `/mesh`, `/thumbnail`, `…/workset` |
 | Uploads          | `POST /uploads`, `PATCH/HEAD/GET/DELETE /uploads/{id}`, `POST /uploads/{id}/finish` – chunked, resumable uploads of large files        |
 | BOM              | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP) |
 | BOM import       | `POST /bom-imports` (new assembly), `POST …/bom/import` (into a checked-out revision); multipart `file` = CSV/Excel table or STEP assembly, `dry_run=true` returns the plan |
-| References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
+| References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`, `POST /impacts/{id}/acknowledge`, `POST …/impacts/acknowledge`    |
 | Change requests  | `GET/POST /change-requests`, `GET/PATCH /change-requests/{number}`, `comments`, `items`, `triage`, `assign`, `decide`, `reopen`, `withdraw`, `create-change`, `link-change`, `attachments`, `watch` |
 | Simulations      | `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
 | Changes          | `GET/POST /changes`, items, reviewers, `suggested-reviewers`, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact` |

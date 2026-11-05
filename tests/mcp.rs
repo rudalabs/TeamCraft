@@ -484,6 +484,7 @@ async fn mcp_change_requests() {
     );
     assert_eq!(detail["comments_truncated"], false);
     assert!(!detail["history"].as_array().unwrap().is_empty());
+    assert_eq!(detail["history_truncated"], false);
     assert_eq!(detail["you_may"]["decide"], true, "a CAD editor of ROCKET");
     assert!(detail["url"].as_str().unwrap().contains("/requests/"));
 

@@ -37,6 +37,7 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [Jira connector for change requests and change orders](research/jira-connector.md)
     - [Previews of native CAD files](research/cad-previews.md)
     - [Importing existing CAD folder trees](research/cad-folder-import.md)
     - [Popular features of Teamcenter](research/teamcenter.md)

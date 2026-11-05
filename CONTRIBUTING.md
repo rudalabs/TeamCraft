@@ -92,7 +92,7 @@ database.
 | If you changed …  | also run                                                            |
 |-------------------|---------------------------------------------------------------------|
 | the desktop app   | `cargo fmt/clippy/test --manifest-path desktop/Cargo.toml`          |
-| the documentation | `mdbook build docs` (mdBook 0.5)                                    |
+| the documentation | `mdbook build docs` (mdBook 0.5) and `scripts/check-doc-links.sh`   |
 | the web UI        | check the changed pages in a browser (no CSP errors in the console) |
 
 ## Updating the README screenshots
@@ -129,6 +129,19 @@ coordinates in `capture_desktop`.
    example with `gh run download <run-id> -n screenshots -D media/screenshots`.
 3. Look at every image, then commit the PNGs in `media/screenshots/`. The
    workflow never commits anything itself.
+4. Commit the images **in the same pull request** as the README lines that
+   show them. The **Docs** workflow (`.github/workflows/docs.yml`) runs
+   [`scripts/check-doc-links.sh`](scripts/check-doc-links.sh) for every pull
+   request that touches Markdown or `media/`: it fails and lists every local
+   image or link target in `README.md`, the other top-level Markdown files,
+   `platforms/`, `desktop/README.md` and `docs/src/` that does not exist. Run it
+   locally with `scripts/check-doc-links.sh` before you push.
+
+At the end of a run, `scripts/screenshots.sh` compares its PNGs with the
+`media/screenshots/*.png` names in the README and prints a warning (a
+workflow annotation on GitHub) for every image the README shows that the run
+did not make – the run itself does not fail. Without `DESKTOP_APP` the
+`desktop-*.png` images are among them.
 
 To run it locally against a throw-away database and vault (Chrome and a
 matching chromedriver installed):

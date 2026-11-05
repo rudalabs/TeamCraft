@@ -88,25 +88,7 @@
 {% elif rev.state == "in_work" and can.checkout %}
 <div class="notice">Check out this revision to change attributes, files or the BOM.</div>
 {% endif %}
-{% for i in open_impacts %}
-<div class="impact" role="status">
-  <p><strong>Check needed:</strong>
-    <a class="mono" href="/revisions/{{ i.source_revision_id }}">{{ i.source_number }}/{{ i.source_code }}</a> {{ i.source_name }}
-    {% if i.event == "released" %}was released{% else %}is obsolete and has to be replaced{% endif %}{% if i.change_number %}
-    (<a href="/changes/{{ i.change_id }}">{{ i.change_number }}</a>){% endif %} –
-    {{ rev.item_number }} {{ m.relation(i.relation) }}{% if i.detail %} ({{ i.detail }}){% endif %}.
-    <span class="small muted">{{ m.time(i.created_at) }}</span></p>
-  {% if can.acknowledge %}
-  <form class="inline" method="post" action="/impacts/{{ i.id }}/acknowledge">
-    <input type="hidden" name="back" value="{{ back }}">
-    <input type="text" name="note" maxlength="2000" required aria-label="Why no change is needed"
-           placeholder="Why no change is needed, e.g. form, fit and function unchanged">
-    <button class="small" type="submit">Acknowledge</button>
-  </form>
-  <p class="hint">Or revise {{ rev.item_number }} and release a new revision – that resolves the check automatically.</p>
-  {% endif %}
-</div>
-{% endfor %}
+{% for g in impact_groups %}{{ m.impact_group(g, back, can.acknowledge, true) }}{% endfor %}
 
 {% if can.checkin %}
 <section class="card hidden" id="checkin-form">
