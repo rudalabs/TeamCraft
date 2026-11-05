@@ -1,0 +1,86 @@
+# TeamCraft scale check: seeds a large synthetic vault (~100k items, ~1M BOM
+# lines, 2M audit rows) into PostgreSQL 18 and times the hot paths of the web
+# UI, the REST API and the MCP server (tests/scale.rs). The report (timing
+# table, EXPLAIN ANALYZE plans, results.json) is uploaded as an artifact and
+# shown as the job summary.
+#
+# Manual (Actions → Scale check → Run workflow, or
+# `gh workflow run scale.yml --ref <branch>`) and weekly – never on pull
+# requests: a run takes about half an hour. Nothing is packaged or published.
+name: Scale check
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Timed calls per step
+        default: "5"
+  schedule:
+    - cron: "23 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scale-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  scale:
+    name: scale check (PostgreSQL 18)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: teamcraft
+          POSTGRES_DB: teamcraft
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U teamcraft -d teamcraft"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      TEAMCRAFT_TEST_DATABASE_URL: postgres://teamcraft@localhost:5432/teamcraft
+      TEAMCRAFT_SCALE_REPORT_DIR: ${{ github.workspace }}/scale-report
+      TEAMCRAFT_SCALE_RUNS: ${{ inputs.runs || '5' }}
+      # Optimised code without the slow link-time optimisation of releases.
+      CARGO_PROFILE_RELEASE_LTO: "false"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: scale
+      - name: Size PostgreSQL like a small server (docs/src/admin/operations.md)
+        env:
+          PG: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$PG" psql -U teamcraft -d teamcraft -c "ALTER SYSTEM SET shared_buffers = '1GB'" -c "ALTER SYSTEM SET random_page_cost = 1.1" \
+            -c "ALTER SYSTEM SET effective_cache_size = '4GB'" -c "ALTER SYSTEM SET maintenance_work_mem = '256MB'"
+          docker restart "$PG"
+          for _ in $(seq 1 30); do
+            docker exec "$PG" pg_isready -U teamcraft -d teamcraft && break
+            sleep 2
+          done
+      - name: Build
+        run: cargo test --release --locked --test scale --no-run
+      - name: Seed and measure
+        run: cargo test --release --locked --test scale -- --ignored --nocapture
+      - name: Job summary
+        if: always()
+        run: |
+          if [ -f scale-report/report.md ]; then cat scale-report/report.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scale-report
+          path: scale-report/
+          if-no-files-found: warn
+          retention-days: 30

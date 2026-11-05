@@ -107,6 +107,10 @@ fn preview_of(file: &FileRecord) -> Option<PreviewFormat> {
     PreviewFormat::of_format(&file.format).or_else(|| PreviewFormat::of(&file.filename))
 }
 
+/// Uses listed in the "Where used" card; a standard part can have tens of
+/// thousands (the REST API and MCP have the full reports).
+const WHERE_USED_SHOWN: usize = 200;
+
 pub async fn show(
     State(st): State<AppState>,
     ctx: WebCtx,
@@ -136,7 +140,7 @@ pub async fn show(
         files::versions_of_revision(&st.db, id),
         files::list(&st.db, me, id),
         bom::lines(&st.db, me, id),
-        items::where_used(&st.db, me, item.id),
+        items::where_used(&st.db, me, item.id, WHERE_USED_SHOWN as i64 + 1),
         // reference tracking and change propagation
         references::outgoing(&st.db, me, id),
         references::incoming(&st.db, me, item.id),
@@ -253,6 +257,9 @@ pub async fn show(
     let mut entity_ids: Vec<Uuid> = all_revisions.iter().map(|r| r.id).collect();
     entity_ids.push(item.id);
     let history = audit::for_entities(&st.db, me, &entity_ids, 50).await?;
+    let mut where_used = where_used;
+    let where_used_more = where_used.len() > WHERE_USED_SHOWN;
+    where_used.truncate(WHERE_USED_SHOWN);
 
     let state = revisions::state_of(&rev);
     // editable = checked out by me; can_work = could check out / add to a change
@@ -381,6 +388,7 @@ pub async fn show(
             "history": history,
             "projects": projects,
             "units": COMMON_UNITS,
+            "where_used_more": where_used_more,
             "attribute_rows": attribute_rows(&attributes::list(&st.db, false).await?, &rev_attributes),
             "classifications": domain::Classification::ALL
                 .iter()

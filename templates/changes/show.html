@@ -272,6 +272,7 @@
     </tbody>
   </table>
   </div>
+  {% if impact_total is defined and impact_total > impact|length %}<p class="hint">Showing the {{ impact|length }} nearest of {{ impact_total }} dependents. The impact analysis of the REST API lists all of them.</p>{% endif %}
   {% elif not hidden_dependents %}<p class="empty">No other item uses or references the revisions of this change.</p>{% endif %}
   {{ m.hidden_count(hidden_dependents, "dependents") }}
 </section>
