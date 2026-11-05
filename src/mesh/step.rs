@@ -140,7 +140,12 @@ pub fn read(data: &[u8]) -> Result<Mesh> {
     }
     let faces = tessellated::shape_faces(data, &insts, &by_id)?;
     if !faces.is_empty() {
-        let (mesh, shown) = tessellated::read(data, &insts, &by_id, &faces)?;
+        let (mesh, shown) = match tessellated::read(data, &insts, &by_id, &faces) {
+            Ok(read) => read,
+            // too many triangles: the partial B-rep is still worth showing
+            Err(_) if partial.is_some() => (Mesh::default(), 0),
+            Err(e) => return Err(e),
+        };
         let found = Found {
             mesh,
             shown,
