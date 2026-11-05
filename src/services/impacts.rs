@@ -325,7 +325,7 @@ pub async fn acknowledge_all(
     .await?;
     // Unredacted for the audit entries; the answer is redacted below.
     let acknowledged = sqlx::query_as::<_, Impact>(&format!(
-        "{IMPACT_SELECT} WHERE im.id = ANY($1) ORDER BY im.created_at, im.id"
+        "{IMPACT_SELECT} WHERE im.id = ANY($1) ORDER BY si.number, im.id"
     ))
     .bind(&ids)
     .fetch_all(&mut *tx)
@@ -346,7 +346,9 @@ pub async fn acknowledge_all(
         )
         .await?;
     }
-    let acknowledged = redact_all(&mut tx, actor, acknowledged).await?;
+    let mut acknowledged = redact_all(&mut tx, actor, acknowledged).await?;
+    // by source number; hidden sources last (their place would bound it)
+    acknowledged.sort_by_key(|i| i.source_restricted);
     tx.commit().await?;
     Ok(Acknowledged {
         item_number: rev.item_number,
@@ -410,8 +412,13 @@ pub fn group_by_dependent(impacts: Vec<Impact>) -> Vec<DependentGroup> {
         });
     }
     for g in &mut groups {
+        // hidden sources last (their place among the numbers would bound them)
         g.impacts.sort_by(|a, b| {
-            (&a.source_number, &a.source_code).cmp(&(&b.source_number, &b.source_code))
+            (a.source_restricted, &a.source_number, &a.source_code).cmp(&(
+                b.source_restricted,
+                &b.source_number,
+                &b.source_code,
+            ))
         });
         g.impact_ids = g
             .impacts
