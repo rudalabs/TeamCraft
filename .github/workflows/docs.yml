@@ -18,7 +18,8 @@ on:
       - "platforms/**"
       - "desktop/README.md"
       - "media/**"
-      - "scripts/check-doc-links.sh"
+      - "LICENSE"
+      - "scripts/**" # link targets in the README, and the check itself
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
@@ -27,7 +28,8 @@ on:
       - "platforms/**"
       - "desktop/README.md"
       - "media/**"
-      - "scripts/check-doc-links.sh"
+      - "LICENSE"
+      - "scripts/**" # link targets in the README, and the check itself
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
