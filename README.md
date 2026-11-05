@@ -351,6 +351,7 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | reqwest, rustls, lettre              | HTTP client, TLS, e-mail                 | MIT / Apache-2.0                         |
 | argon2, sha2                         | password hashing, content hashes         | MIT / Apache-2.0                         |
 | Tauri 2                              | desktop app                              | MIT / Apache-2.0                         |
+| futures-core                         | desktop app: cancellable streamed uploads | MIT / Apache-2.0                        |
 | Montserrat, Oswald                   | fonts                                    | SIL OFL 1.1                              |
 
 SolidWorks, NX, Creo, CATIA, Inventor, Fusion,
