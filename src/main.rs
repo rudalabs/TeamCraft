@@ -226,7 +226,10 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
         "notification delivery"
     );
     teamcraft::delivery::spawn(pool.clone(), delivery);
+    let webhook_retention_days = config.webhooks.retention_days;
     let state = AppState::new(config, pool.clone()).await?;
+    // Outgoing event webhooks (the outbox `webhook_deliveries`).
+    teamcraft::webhooks::spawn(pool.clone(), state.webhooks.clone());
 
     // Files from before the format registry (or reset to NULL) get their CAD
     // format, then the CAD files among them are scanned for references.
@@ -269,6 +272,11 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed expired uploads"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "upload cleanup failed"),
+            }
+            match teamcraft::webhooks::purge_finished(&pool, webhook_retention_days).await {
+                Ok(n) if n > 0 => tracing::info!(removed = n, "removed old webhook deliveries"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "webhook delivery cleanup failed"),
             }
         }
     });

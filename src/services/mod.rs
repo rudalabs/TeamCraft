@@ -30,6 +30,7 @@ pub mod simulations;
 pub mod stats;
 pub mod uploads;
 pub mod users;
+pub mod webhooks;
 pub mod workset;
 
 use sqlx::PgConnection;
