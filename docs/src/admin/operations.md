@@ -7,6 +7,7 @@
 | `teamcraft healthcheck [--addr host:port]` | exit code of `/healthz`, for container health checks                   |
 | `teamcraft vault check [--verify-hashes]`  | every stored file present (and unchanged)                              |
 | `teamcraft migrate`                        | apply migrations without starting the server                           |
+| `teamcraft assistant check`                | test the [assistant](../admin/configuration.md#assistant-optional) setup: reachable, key, model, tool calls (no database needed, never prints the key) |
 | `teamcraft rescan-references [--format id]` | read the CAD file references of the stored files again (default: SOLIDWORKS assemblies and drawings), e.g. after an update that reads a format better |
 | `teamcraft vault signatures [--convert] [--jobs N]` | compute the missing shape signatures of the [similar part search](../guide/similar-parts.md) from the cached 3D previews (`--convert`: also files without a preview yet), N (1–2, default 2) at a time in the isolated preview process |
 | `teamcraft backup <dir>`                   | write database and vault backup (`pg_dump`)                            |

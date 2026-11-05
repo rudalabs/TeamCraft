@@ -77,7 +77,7 @@ committed and pushed right away – before the implementation starts.
 ## Architecture
 
 ```text
-src/main.rs        CLI (clap): serve (default), migrate, user, vault check, rescan-references, healthcheck, mcp (stdio bridge), preview-mesh (hidden)
+src/main.rs        CLI (clap): serve (default), migrate, user, vault check, assistant check, rescan-references, healthcheck, mcp (stdio bridge), preview-mesh (hidden)
 src/lib.rs         AppState, router (healthz/readyz, /api/v1, web UI), security headers, tracing
 src/config.rs      env configuration; every variable also as NAME_FILE; all optional for local use
 src/domain.rs      pure rules: Role, ItemType, LifecycleState, ChangeStatus, revision letters, numbering schemes, skins, validation
@@ -97,7 +97,7 @@ src/auth.rs        Argon2 passwords, tokens, cookies, WebUser/ApiUser extractors
 src/oidc.rs        OIDC authorization code + PKCE (any provider), group → role mapping
 src/llm/           provider-neutral LLM layer (no TeamCraft types): Turn/ToolCall/Reply/Usage/LlmError, pure Provider trait
                    (encode/decode/error table), Transport trait; http.rs = the one reqwest client (no redirects),
-                   anthropic.rs = Messages API
+                   anthropic.rs = Messages API, openai.rs = Chat Completions (OpenAI, Azure, Mistral, Ollama, vLLM …)
 src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm with the MCP tools,
                    Tools trait (fake in tests), markdown-lite → safe HTML;
                    services/assistant.rs runs it for a user and writes the audit record (no content)

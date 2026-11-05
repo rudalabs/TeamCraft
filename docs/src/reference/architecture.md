@@ -43,7 +43,7 @@
 
 | Path                                 | Contents                                                                                             |
 |--------------------------------------|------------------------------------------------------------------------------------------------------|
-| `src/main.rs`                        | CLI: serve, migrate, user, vault check/signatures, rescan-references, healthcheck, mcp (stdio bridge) |
+| `src/main.rs`                        | CLI: serve, migrate, user, vault check/signatures, assistant check, rescan-references, healthcheck, mcp (stdio bridge) |
 | `src/lib.rs`                         | `AppState`, router, health endpoints, security headers                                               |
 | `src/domain.rs`                      | roles, lifecycle, revision letters, skins, validation                                                |
 | `src/services/`                      | items, revisions, files, chunked uploads, BOM, changes, references, impacts, simulations, projects, users, … |
@@ -51,7 +51,7 @@
 | `shared/`                            | UI files of both the web UI and the desktop app: skins and tokens, fonts, 3D viewer (`shared/README.md`) |
 | `src/api/`                           | REST API                                                                                             |
 | `src/mcp/`                           | MCP server for AI assistants (`POST /api/v1/mcp`): JSON-RPC, tools and prompts over the services     |
-| `src/llm/`                           | provider-neutral LLM layer: conversation types, `Provider` (wire format, pure), `Transport`; `anthropic.rs` = Messages API |
+| `src/llm/`                           | provider-neutral LLM layer: conversation types, `Provider` (wire format, pure), `Transport`; `anthropic.rs` = Messages API, `openai.rs` = Chat Completions |
 | `src/assistant.rs`                   | built-in assistant: tool loop over `src/llm` with the MCP tools, markdown rendering |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |

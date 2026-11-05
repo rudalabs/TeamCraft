@@ -1,0 +1,20 @@
+{
+  "id": "cmpl-e5cc70bb28c444948073e77776eb30ef",
+  "object": "chat.completion",
+  "model": "mistral-large-latest",
+  "usage": { "prompt_tokens": 90, "total_tokens": 117, "completion_tokens": 27 },
+  "created": 1767225603,
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "tool_calls",
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          { "id": "D681PevKs", "type": "function", "function": { "name": "get_item", "arguments": "{\"item\": \"PRT-000001\"}" }, "index": 0 }
+        ]
+      }
+    }
+  ]
+}

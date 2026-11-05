@@ -61,6 +61,11 @@ enum Command {
         #[command(subcommand)]
         command: VaultCommand,
     },
+    /// The built-in assistant ("Ask TeamCraft").
+    Assistant {
+        #[command(subcommand)]
+        command: AssistantCommand,
+    },
     /// Read the referenced CAD files of the stored files again (current
     /// versions) and replace the stored references – after an update that
     /// reads a format better, e.g. SOLIDWORKS 2015+ assemblies.
@@ -137,6 +142,14 @@ enum UserCommand {
 }
 
 #[derive(Subcommand)]
+enum AssistantCommand {
+    /// Send one small request with one tool to the configured AI service and
+    /// report reachability, the API key, the model, tool support and token
+    /// counts. Never prints the key.
+    Check,
+}
+
+#[derive(Subcommand)]
 enum VaultCommand {
     /// Check that every file referenced in the database exists in the vault.
     Check {
@@ -189,6 +202,7 @@ async fn main() -> ExitCode {
         Command::Restore { dir, force } => restore_command(dir, force).await,
         Command::User { command } => user_command(command).await,
         Command::Vault { command } => vault_command(command).await,
+        Command::Assistant { command } => assistant_command(command).await,
         Command::RescanReferences { formats } => rescan_references(formats).await,
     };
     match result {
@@ -521,6 +535,47 @@ async fn rescan_references(mut formats: Vec<String>) -> Result<ExitCode> {
     let n = services::files::rescan_references(&pool, &vault, &formats).await?;
     println!("rescanned {n} file version(s) ({})", formats.join(", "));
     Ok(ExitCode::SUCCESS)
+}
+
+/// `teamcraft assistant check`: needs no database.
+async fn assistant_command(command: AssistantCommand) -> Result<ExitCode> {
+    let AssistantCommand::Check = command;
+    let config = load_config()?;
+    let Some(cfg) = &config.assistant else {
+        println!(
+            "The assistant is not configured: set TEAMCRAFT_ASSISTANT_API_KEY (or, for a local \
+             server, TEAMCRAFT_ASSISTANT_PROVIDER=openai-compatible and TEAMCRAFT_ASSISTANT_BASE_URL)."
+        );
+        return Ok(ExitCode::FAILURE);
+    };
+    println!("assistant: {}", cfg.label());
+    if let Some(warning) = cfg.insecure_key_warning() {
+        println!("warning: {warning}");
+    }
+    let client = teamcraft::assistant::Assistant::new(cfg)?;
+    let lines = teamcraft::assistant::check(
+        client.provider.as_ref(),
+        &client.transport,
+        &client.model,
+        cfg.max_tokens,
+        cfg.api_key.is_some(),
+    )
+    .await;
+    let mut failed = false;
+    for l in &lines {
+        println!(
+            "{:<12} {:<4} {}",
+            l.what,
+            if l.ok { "ok" } else { "FAIL" },
+            l.detail
+        );
+        failed |= !l.ok;
+    }
+    Ok(if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 async fn vault_command(command: VaultCommand) -> Result<ExitCode> {

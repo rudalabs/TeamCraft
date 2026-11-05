@@ -1,0 +1,19 @@
+{
+  "id": "chatcmpl-482",
+  "object": "chat.completion",
+  "model": "qwen3:14b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          { "id": "call_x1", "type": "function", "function": { "name": "get_item", "arguments": { "item": "PRT-000002" } } }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": { "prompt_tokens": 150, "completion_tokens": 18, "total_tokens": 168 }
+}

@@ -28,7 +28,12 @@ pub struct AskForm {
 fn quick_actions(item: &str, change: &str) -> Value {
     let mut list: Vec<Action> = Vec::new();
     if !item.is_empty() {
-        list.extend([Action::ReleaseNotes, Action::ReleaseCheck]);
+        list.extend([
+            Action::ReleaseNotes,
+            Action::ReleaseCheck,
+            Action::Impact,
+            Action::SimulationStatus,
+        ]);
     }
     if !change.is_empty() {
         list.push(Action::ReviewBrief);

@@ -526,6 +526,9 @@ async fn assistant_info(State(st): State<AppState>, ApiUser(_me): ApiUser) -> Js
     Json(json!({
         "enabled": crate::services::assistant::enabled(&st),
         "model": st.assistant.as_ref().map(|a| a.model.clone()),
+        "provider": st.assistant.as_ref().map(|a| a.provider_name),
+        // where the questions go (host only, never the key or a path)
+        "host": st.assistant.as_ref().map(|a| a.host.clone()),
         "max_question_chars": crate::assistant::MAX_QUESTION_CHARS,
         "actions": actions,
     }))

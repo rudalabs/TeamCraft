@@ -89,7 +89,7 @@
   <div><dt>Released</dt><dd>{{ m.time(rev.released_at) }}</dd></div>
 </dl>
 {% if assistant_enabled %}
-{{ m.assistant_panel([["release_notes", "Draft release notes"], ["release_check", "Check before release"]], rev.item_number, rev.code, "", back) }}
+{{ m.assistant_panel([["release_notes", "Draft release notes"], ["release_check", "Check before release"], ["impact", "What breaks if I change this?"], ["simulation_status", "Are the simulations still valid?"]], rev.item_number, rev.code, "", back) }}
 {% endif %}
 
 {% if not is_latest %}
