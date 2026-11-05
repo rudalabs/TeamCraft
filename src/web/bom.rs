@@ -31,6 +31,11 @@ fn rule_of(q: &RuleQuery) -> RevisionRule {
         .unwrap_or_default()
 }
 
+/// Lines the BOM page and the BOM comparison list at most: a large product
+/// expands to tens of thousands (megabytes of HTML), the CSV and Excel
+/// downloads have them all.
+pub(crate) const ROWS_SHOWN: usize = 2000;
+
 pub async fn show(
     State(st): State<AppState>,
     ctx: WebCtx,
@@ -40,7 +45,11 @@ pub async fn show(
     let rev = revisions::get(&st.db, id).await?;
     let rule = rule_of(&q);
     let tree = bom::tree(&st.db, id, rule).await?;
-    let rows = bom::flatten(&tree.children);
+    let mut rows = bom::flatten(&tree.children);
+    // The roll-ups cover the whole structure; the page lists its first
+    // lines (depth first), the exports have all of them.
+    let rows_total = rows.len();
+    rows.truncate(ROWS_SHOWN);
     render(
         &st,
         &ctx,
@@ -57,6 +66,7 @@ pub async fn show(
                 "unresolved_count": tree.unresolved_count,
             },
             "rows": rows,
+            "rows_total": rows_total,
         }),
     )
 }

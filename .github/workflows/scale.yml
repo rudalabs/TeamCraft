@@ -66,7 +66,7 @@ jobs:
         env:
           PG: ${{ job.services.postgres.id }}
         run: |
-          docker exec "$PG" psql -U teamcraft -d teamcraft -c "ALTER SYSTEM SET shared_buffers = '1GB'" \
+          docker exec "$PG" psql -U teamcraft -d teamcraft -c "ALTER SYSTEM SET shared_buffers = '1GB'" -c "ALTER SYSTEM SET random_page_cost = 1.1" \
             -c "ALTER SYSTEM SET effective_cache_size = '4GB'" -c "ALTER SYSTEM SET maintenance_work_mem = '256MB'"
           docker restart "$PG"
           for _ in $(seq 1 30); do

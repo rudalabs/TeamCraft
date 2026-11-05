@@ -269,8 +269,11 @@ pub async fn bom_compare(
     Path(id): Path<Uuid>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let cmp = comparison(&st, id, &q).await?;
+    let mut cmp = comparison(&st, id, &q).await?;
     let summary = bom_compare::summary(&cmp.diffs);
+    // like the BOM page: the first lines here, all in the Excel download
+    let diffs_total = cmp.diffs.len();
+    cmp.diffs.truncate(super::bom::ROWS_SHOWN);
     render(
         &st,
         &ctx,
@@ -283,6 +286,7 @@ pub async fn bom_compare(
             "depth": cmp.depth.as_str(),
             "rule": cmp.rule.as_str(),
             "diffs": cmp.diffs,
+            "diffs_total": diffs_total,
             "summary": summary,
         }),
     )

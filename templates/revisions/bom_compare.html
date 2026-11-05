@@ -65,6 +65,7 @@
     </tbody>
   </table>
   </div>
+  {% if diffs_total is defined and diffs_total > diffs|length %}<p class="hint">Showing the first {{ diffs|length }} of {{ diffs_total }} lines; the counts above cover all of them. Download Excel for the complete comparison.</p>{% endif %}
   {% if depth == "all" %}
   <p class="hint">Comparison over all levels, child revisions resolved with the rule “{{ rule|replace("_", " ") }}”. Lines are matched by child item (and find number) below each matched line; added and removed lines bring their whole sub-tree. A new child revision counts as a change.</p>
   {% else %}

@@ -21,3 +21,21 @@ CREATE INDEX audit_log_entity_at_idx ON audit_log (entity_id, at DESC);
 -- also serves every lookup by project group, so it replaces items_project_idx.
 CREATE INDEX items_project_number_idx ON items (project_id, number);
 DROP INDEX items_project_idx;
+
+-- Substring search (ILIKE '%text%') on item numbers, names, descriptions,
+-- materials and file names: trigram indexes of the pg_trgm extension, which
+-- ships with PostgreSQL (contrib) and is "trusted", so the owner of the
+-- database may create it. Where it is not available (or not allowed), the
+-- search stays correct and reads the tables instead – a few hundred
+-- milliseconds per search at 100k items (docs/src/admin/operations.md).
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    CREATE INDEX items_number_trgm_idx ON items USING gin (number gin_trgm_ops);
+    CREATE INDEX revisions_name_trgm_idx ON revisions USING gin (name gin_trgm_ops);
+    CREATE INDEX revisions_description_trgm_idx ON revisions USING gin (description gin_trgm_ops);
+    CREATE INDEX revisions_material_trgm_idx ON revisions USING gin (material gin_trgm_ops);
+    CREATE INDEX files_filename_trgm_idx ON files USING gin (filename gin_trgm_ops);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pg_trgm not available (%): item search without trigram indexes', SQLERRM;
+END $$;
