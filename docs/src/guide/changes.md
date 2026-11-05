@@ -124,3 +124,7 @@ Optionally TeamCraft sends them by e-mail (SMTP) and to Mattermost (mention
 or direct message). Every user chooses channels and mutes kinds on the
 account page; delivery runs from an outbox, so a slow mail server never
 delays a request.
+
+Other systems – CI, ERP, CAM, a team channel – can react to releases,
+reviews and change requests through [event webhooks](../admin/webhooks.md),
+which administrators set up.

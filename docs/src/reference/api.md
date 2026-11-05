@@ -245,5 +245,28 @@ curl -s -X PUT -H "$H" -H 'Content-Type: application/json' \
 curl -s -X POST -H "$H" -F file=@job.frd $API/items/SIM-000003/revisions/B/checkin
 ```
 
+## Webhooks (administrators)
+
+Outgoing event webhooks – payloads, signature and retries are described in
+[Event webhooks](../admin/webhooks.md). Every endpoint needs an
+administrator's token; secrets are returned only by `POST /webhooks` and
+`rotate-secret`.
+
+| Endpoint                                   | Body / result                                                                                         |
+|--------------------------------------------|-------------------------------------------------------------------------------------------------------|
+| `GET /webhooks`                            | `{webhooks, events}` – every webhook with `secret_hint`, `pending`, `failed_recently`, `last_status`   |
+| `POST /webhooks`                           | `{name, url, events: [...], project?, active?}` → `201 {webhook, secret}`                              |
+| `GET/PATCH/DELETE /webhooks/{id}`          | `PATCH` changes the given fields; `"project": null` = all project groups                               |
+| `POST /webhooks/{id}/rotate-secret`        | `{webhook, secret}` – the new secret applies at once                                                   |
+| `POST /webhooks/{id}/test`                 | sends a `ping` now and returns the delivery (`status`, `last_status_code`, `last_error`)               |
+| `GET /webhooks/{id}/deliveries?limit=`     | latest deliveries (default 50, at most 200) with `payload`, `status`, `attempts`, `next_attempt_at`    |
+| `POST /webhook-deliveries/{id}/retry`      | schedules a failed delivery again with fresh attempts and tries it at once                            |
+
+```sh
+curl -s -X POST -H "$H" -H "Content-Type: application/json" $API/webhooks -d '{
+  "name": "ERP BOM export", "url": "https://erp.example.org/teamcraft/events",
+  "events": ["revision.released", "change.released"], "project": "ROVER"}'
+```
+
 Errors are JSON: `{"error": {"code": "conflict", "message": "…"}}` with the
 matching HTTP status (400, 401, 403, 404, 409, 413, 500).

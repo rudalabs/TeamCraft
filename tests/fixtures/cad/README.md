@@ -52,7 +52,7 @@ Fusion, FreeCAD or KiCad projects.
 * every file is unchanged (size and SHA-256) and recognised as its format;
 * the Inventor files carry a preview image (PNG);
 * the NX assembly references all eight part files;
-* the small STEP files get a 3D preview.
+* every STEP file (AP203 and AP242) gets a complete 3D preview; the PMI of the AP242 file is not shown as geometry.
 
 Gaps found with these files are ignored tests in the same file – run them
 with `cargo test --test cad_fixtures -- --ignored` – and are listed under
