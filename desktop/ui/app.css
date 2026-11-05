@@ -638,6 +638,7 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .facts { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fill, minmax(7.25rem, 1fr)); }
 .fact {
   display: grid; gap: 0.1rem; justify-items: start; align-content: start;
+  height: auto; /* a button.fact must not keep the control height: the label goes below the value */
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--surface-sunken);
