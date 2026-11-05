@@ -260,11 +260,11 @@ result_vtu() {
 
 # result_cfd_vtu FILE – writes a small self-made CFD result (ASCII VTU): an
 # O-grid of 96 × 28 × 2 hexahedra around a cylindrical mast fairing (radius
-# 50 mm, outer boundary 300 mm, 30 mm thick) with the analytic potential flow
+# 50 mm, outer boundary 150 mm, 30 mm thick) with the analytic potential flow
 # of a 5 m/s wind from the left: point data velocity (vector) and pressure
 # (Bernoulli, gauge). Made-up numbers for the screenshot, not a solver result.
 result_cfd_vtu() {
-    awk -v nr=28 -v nt=96 -v nz=2 -v R=50 -v Ro=300 -v T=30 -v U=5 -v rho=1.2 '
+    awk -v nr=28 -v nt=96 -v nz=2 -v R=50 -v Ro=150 -v T=30 -v U=5 -v rho=1.2 '
     function id(s, t, k) { return (t % nt) + nt * (s + (nr + 1) * k) }
     function rad(s) { return R * exp(log(Ro / R) * s / nr) }
     # velocity (u, v) and pressure at the point (s, t) of the grid
