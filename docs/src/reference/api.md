@@ -86,7 +86,9 @@ revision with `ok` and `error`, plus `checked_in`, `failed` and a `summary`.
 The BOM comparison is also available as an Excel workbook of the same lines
 (same `with` query): `GET …/revisions/{code}/bom/compare.xlsx?with={code}`.
 Both compare the direct lines; `depth=all` compares every level, with the
-children resolved by `rule=latest|released|as_released` (each line then has
+children resolved by `rule=latest|released|as_released` (default
+`as_released` when one of the revisions is released, else `latest`; each
+line then has
 its `level` and the resolved `revision` on both sides). The expanded BOM
 itself downloads as Excel workbook: `GET …/revisions/{code}/bom.xlsx?rule=`.
 

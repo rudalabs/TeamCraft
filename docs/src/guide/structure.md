@@ -29,10 +29,15 @@ chosen, and the API also compares by code (`GET …/revisions/B/bom/compare?with
 with the chosen revision rule, the children of two matched lines are
 compared the same way, and an added or removed sub-assembly brings its
 whole sub-tree. A child that now resolves to another revision counts as
-changed – with *As released*, comparing two released revisions shows
-exactly which parts went into the new one. In the API: `depth=all` and
-`rule=latest|released|as_released`. The Excel download contains the level
-and the revisions too.
+changed. When one of the two revisions is released, the default rule is
+*As released*: a released parent uses the child revisions it was released
+with, an in-work one the newest released children, so comparing two
+revisions shows exactly which parts went into the new one; otherwise the
+default is *Latest*. *Latest* and *Latest released* resolve a child by its
+item alone – both sides then get the same child revision and sub-tree, and
+only the direct lines can differ. In the API: `depth=all` and
+`rule=latest|released|as_released` (same default). The Excel
+download contains the level and the revisions too.
 
 ## References
 

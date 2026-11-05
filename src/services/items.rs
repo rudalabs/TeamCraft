@@ -285,6 +285,7 @@ pub(crate) async fn create_tx(
             let ctx = domain::number_context(&code, input.item_type, Utc::now());
             let counter = scheme.counter_key(&ctx);
             let mut attempts = 0;
+            let mut jumped = false;
             loop {
                 let generated = scheme.format(&ctx, next_counter(tx, &counter).await?);
                 let candidate = domain::normalize_item_number(&generated).map_err(|_| {
@@ -300,6 +301,39 @@ pub(crate) async fn create_tx(
                 .await?;
                 if !taken {
                     break candidate;
+                }
+                if !jumped {
+                    // Numbers of this pattern exist already (entered by hand,
+                    // imported, or a scheme that continues an old
+                    // convention): continue after the highest one at once.
+                    jumped = true;
+                    let (prefix, _) = scheme.around_seq(&ctx);
+                    let pattern = format!(
+                        "{}%",
+                        prefix
+                            .replace('\\', "\\\\")
+                            .replace('%', "\\%")
+                            .replace('_', "\\_")
+                    );
+                    let highest = sqlx::query_scalar::<_, String>(
+                        "SELECT number FROM items WHERE number LIKE $1 ESCAPE '\\'",
+                    )
+                    .bind(&pattern)
+                    .fetch_all(&mut *tx)
+                    .await?
+                    .iter()
+                    .filter_map(|n| scheme.seq_of(&ctx, n))
+                    .max();
+                    if let Some(highest) = highest {
+                        sqlx::query(
+                            "UPDATE counters SET value = GREATEST(value, $2) WHERE name = $1",
+                        )
+                        .bind(&counter)
+                        .bind(highest)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    continue;
                 }
                 attempts += 1;
                 if attempts > 1000 {

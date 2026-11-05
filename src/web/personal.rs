@@ -175,7 +175,8 @@ pub struct CompareQuery {
     with: Option<String>,
     /// `1` (default) or `all` levels.
     depth: Option<String>,
-    /// Revision rule of a comparison over all levels.
+    /// Revision rule of a comparison over all levels (default `as_released`
+    /// when one of the revisions is released, else `latest`).
     rule: Option<String>,
 }
 
@@ -184,11 +185,12 @@ impl CompareQuery {
         Depth::parse(self.depth.as_deref())
     }
 
-    fn rule(&self) -> RevisionRule {
+    /// The chosen rule; the default depends on the states of both revisions.
+    fn rule(&self, before: &Revision, after: &Revision) -> RevisionRule {
         self.rule
             .as_deref()
             .and_then(RevisionRule::parse)
-            .unwrap_or_default()
+            .unwrap_or_else(|| bom_compare::default_rule(&before.state, &after.state))
     }
 }
 
@@ -224,7 +226,7 @@ impl Comparison {
 /// Loads both revisions (older first) and compares their BOMs. `with` is a
 /// revision id; the default is the previous revision of the item.
 async fn comparison(st: &AppState, id: Uuid, q: &CompareQuery) -> AppResult<Comparison> {
-    let (depth, rule) = (q.depth()?, q.rule());
+    let depth = q.depth()?;
     let rev = revisions::get(&st.db, id).await?;
     let all = items::revisions(&st.db, rev.item_id).await?;
     let other_id = match parse_opt_uuid("Revision", q.with.as_deref())? {
@@ -251,6 +253,7 @@ async fn comparison(st: &AppState, id: Uuid, q: &CompareQuery) -> AppResult<Comp
     } else {
         (rev.clone(), other)
     };
+    let rule = q.rule(&before, &after);
     let diffs = bom_compare::compare(&st.db, before.id, after.id, depth, rule).await?;
     Ok(Comparison {
         rev,

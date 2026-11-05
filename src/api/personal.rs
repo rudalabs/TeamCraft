@@ -151,7 +151,8 @@ pub(super) struct CompareQuery {
     with: String,
     /// `1` (default) or `all` levels.
     depth: Option<String>,
-    /// Revision rule of a comparison over all levels (default `latest`).
+    /// Revision rule of a comparison over all levels (default `as_released`
+    /// when one of the revisions is released, else `latest`).
     rule: Option<String>,
 }
 
@@ -164,16 +165,17 @@ async fn compare_at(
 ) -> AppResult<(Revision, Revision, Vec<bom_compare::LineDiff>)> {
     let depth = Depth::parse(q.depth.as_deref())?;
     let rule = match q.rule.as_deref() {
-        Some(r) => RevisionRule::parse(r).ok_or_else(|| {
+        Some(r) => Some(RevisionRule::parse(r).ok_or_else(|| {
             AppError::BadRequest("rule must be latest, released or as_released.".into())
-        })?,
-        None => RevisionRule::default(),
+        })?),
+        None => None,
     };
     let (a, b) = tokio::try_join!(
         revision_at(st, number, &q.with),
         revision_at(st, number, code)
     )?;
     let (before, after) = if a.seq <= b.seq { (a, b) } else { (b, a) };
+    let rule = rule.unwrap_or_else(|| bom_compare::default_rule(&before.state, &after.state));
     let diffs = bom_compare::compare(&st.db, before.id, after.id, depth, rule).await?;
     Ok((before, after, diffs))
 }

@@ -18,7 +18,9 @@
 //! * `numbers` [`file`]: new items get the part number of the file when it is
 //!   a valid, unused item number, otherwise a generated one (the CAD number
 //!   is then kept in the description); `generate` always generates numbers,
-//! * a sub-assembly takes its children from its first occurrence,
+//! * a sub-assembly takes its children from its first occurrence; when the
+//!   rows below it are skipped there (e.g. below an existing item) or come
+//!   later, they are read at the occurrence that creates the sub-assembly,
 //! * components already in the BOM of the target revision are not added
 //!   again, so importing the same table twice does not duplicate lines.
 //!
@@ -27,7 +29,7 @@
 //! until the user confirms the preview – tables in the row, STEP files in the
 //! vault.
 
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -437,7 +439,19 @@ pub async fn plan(
     let mut stack: Vec<(usize, Option<usize>)> = vec![(0, None)];
     let mut skip_below: Option<usize> = None;
     let rows = &table.rows;
+    // The rows below the first occurrence of each sub-assembly (index of its
+    // row): tables that list a BOM only once (STEP files) need them again
+    // when that occurrence is skipped, e.g. below an existing item.
+    let mut bom_rows: HashMap<String, usize> = HashMap::new();
     for (i, row) in rows.iter().enumerate() {
+        if rows.get(i + 1).is_some_and(|n| n.level > row.level) {
+            bom_rows.entry(item_key(row)).or_insert(i);
+        }
+    }
+    let mut queue: VecDeque<BomRow> = rows.iter().cloned().collect();
+    let mut copied = 0;
+    while let Some(row) = queue.pop_front() {
+        let row = &row;
         if let Some(l) = skip_below {
             if row.level > l {
                 continue;
@@ -448,7 +462,7 @@ pub async fn plan(
             stack.pop();
         }
         let parent = stack.last().and_then(|(_, p)| *p);
-        let has_children = rows.get(i + 1).is_some_and(|n| n.level > row.level);
+        let mut has_children = queue.front().is_some_and(|n| n.level > row.level);
         let skip = |reason: String, warnings: &mut Vec<String>, skip_below: &mut Option<usize>| {
             warnings.push(format!("Row {}: {reason}", row.line));
             if has_children {
@@ -549,6 +563,31 @@ pub async fn plan(
                     find_number: 0,
                 });
                 requested.push(row.find_number);
+            }
+        }
+        // A new sub-assembly whose BOM rows were skipped (or come later) at
+        // another occurrence: read them here.
+        if !has_children && items[child].existing.is_none() && !expanded.contains(&child) {
+            if let Some(&j) = bom_rows.get(&item_key(row)) {
+                let below: Vec<BomRow> = rows[j + 1..]
+                    .iter()
+                    .take_while(|r| r.level > rows[j].level)
+                    .map(|r| BomRow {
+                        level: r.level - rows[j].level + row.level,
+                        ..r.clone()
+                    })
+                    .collect();
+                copied += below.len();
+                if copied > bomtable::MAX_ROWS {
+                    return Err(AppError::BadRequest(format!(
+                        "The BOM has more than {} rows.",
+                        bomtable::MAX_ROWS
+                    )));
+                }
+                for r in below.into_iter().rev() {
+                    queue.push_front(r);
+                }
+                has_children = true;
             }
         }
         if has_children {
