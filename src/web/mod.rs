@@ -283,6 +283,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(admin::project_show).post(admin::update_project),
         )
         .route("/projects/{id}/numbering", post(admin::update_numbering))
+        .route("/projects/{id}/visibility", post(admin::update_visibility))
         .route("/projects/{id}/members", post(admin::add_member))
         .route(
             "/projects/{id}/members/{user_id}/remove",

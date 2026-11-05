@@ -35,7 +35,7 @@ use crate::{
     domain::{self, BasisRole, ItemType, ResultStatus, WebhookEvent},
     error::{AppError, AppResult},
     models::Revision,
-    services::{audit, bom_compare::Change, items, revisions, webhooks},
+    services::{access, audit, bom_compare::Change, items, revisions, webhooks},
 };
 
 /// At most this many result values per simulation revision.
@@ -78,6 +78,51 @@ pub struct SimulationBasis {
     /// Why the simulation no longer matches this basis (`None` = up to date).
     #[sqlx(default)]
     pub out_of_date: Option<String>,
+    /// Project group of the basis item (for the read check; never sent).
+    #[serde(skip)]
+    pub basis_project_id: Option<Uuid>,
+    /// Placeholder for a basis the reader may not see: role, note and
+    /// whether it is out of date stay, the identity is removed.
+    #[sqlx(default)]
+    pub restricted: bool,
+}
+
+impl SimulationBasis {
+    fn mask(&mut self) {
+        let label = access::RESTRICTED_LABEL;
+        self.basis_item_id = Uuid::nil();
+        self.basis_number = label.into();
+        self.basis_type = String::new();
+        self.basis_revision_id = Uuid::nil();
+        self.basis_code = String::new();
+        self.basis_state = String::new();
+        self.basis_name = String::new();
+        self.file_version_id = None;
+        self.file_id = None;
+        self.file_name = String::new();
+        self.file_version = None;
+        self.file_current_version = None;
+        self.released_revision_id = None;
+        self.released_code = None;
+        if self.out_of_date.is_some() {
+            self.out_of_date = Some("the restricted basis changed".into());
+        }
+        self.basis_project_id = None;
+        self.restricted = true;
+    }
+
+    /// Masks the basis when the actor may not see it.
+    fn redact(mut self, actor: &Actor) -> Self {
+        if !actor.can_see_project(self.basis_project_id) {
+            self.mask();
+        }
+        self
+    }
+}
+
+/// Fails with "not found" unless the actor may read the revision.
+async fn ensure_revision_visible(pool: &PgPool, actor: &Actor, revision_id: Uuid) -> AppResult<()> {
+    revisions::get(pool, actor, revision_id).await.map(|_| ())
 }
 
 const BASIS_SELECT: &str = "
@@ -88,7 +133,7 @@ const BASIS_SELECT: &str = "
            sb.file_version_id, f.id AS file_id, sb.file_name, sb.file_version,
            f.current_version AS file_current_version,
            lr.id AS released_revision_id, lr.code AS released_code, lr.seq AS released_seq,
-           sb.created_at
+           sb.created_at, bi.project_id AS basis_project_id
     FROM simulation_bases sb
     JOIN revisions br ON br.id = sb.basis_revision_id
     JOIN items bi ON bi.id = br.item_id
@@ -132,8 +177,14 @@ fn with_status(mut b: SimulationBasis) -> SimulationBasis {
     b
 }
 
-/// The basis links of a simulation revision.
-pub async fn bases(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<SimulationBasis>> {
+/// The basis links of a simulation revision the actor may read; bases the
+/// actor may not see are placeholders.
+pub async fn bases(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_id: Uuid,
+) -> AppResult<Vec<SimulationBasis>> {
+    ensure_revision_visible(pool, actor, revision_id).await?;
     Ok(sqlx::query_as::<_, SimulationBasis>(&format!(
         "{BASIS_SELECT} WHERE sb.revision_id = $1 ORDER BY sb.role, bi.number, sb.file_name"
     ))
@@ -141,17 +192,21 @@ pub async fn bases(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<Simulation
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(with_status)
+    .map(|b| with_status(b).redact(actor))
     .collect())
 }
 
-pub async fn get_basis(pool: &PgPool, id: Uuid) -> AppResult<SimulationBasis> {
-    sqlx::query_as::<_, SimulationBasis>(&format!("{BASIS_SELECT} WHERE sb.id = $1"))
+pub async fn get_basis(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<SimulationBasis> {
+    let b = sqlx::query_as::<_, SimulationBasis>(&format!("{BASIS_SELECT} WHERE sb.id = $1"))
         .bind(id)
         .fetch_optional(pool)
         .await?
         .map(with_status)
-        .ok_or_else(|| AppError::not_found("Basis link not found."))
+        .ok_or_else(|| AppError::not_found("Basis link not found."))?;
+    ensure_revision_visible(pool, actor, b.revision_id)
+        .await
+        .map_err(|_| AppError::not_found("Basis link not found."))?;
+    Ok(b.redact(actor))
 }
 
 /// A simulation based on a revision of an item (the other side of a basis
@@ -174,7 +229,39 @@ pub struct BasedSimulation {
 }
 
 /// Simulations whose latest revision is based on a revision of the item.
-pub async fn based_on_item(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<BasedSimulation>> {
+/// Only simulations the actor may see; the second value counts the others.
+pub async fn based_on_item(
+    pool: &PgPool,
+    actor: &Actor,
+    item_id: Uuid,
+) -> AppResult<(Vec<BasedSimulation>, i64)> {
+    let all = based_on_item_unchecked(pool, item_id).await?;
+    let ids: Vec<Uuid> = all.iter().map(|s| s.simulation_item_id).collect();
+    let visible: std::collections::HashSet<Uuid> = sqlx::query_scalar::<_, Uuid>(&format!(
+        "SELECT i.id FROM items i WHERE i.id = ANY($1) AND {}",
+        access::item_visible("i", 2)
+    ))
+    .bind(&ids)
+    .bind(&actor.hidden_projects)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .collect();
+    let hidden = all
+        .iter()
+        .filter(|s| !visible.contains(&s.simulation_item_id))
+        .map(|s| s.simulation_item_id)
+        .collect::<std::collections::HashSet<_>>()
+        .len() as i64;
+    Ok((
+        all.into_iter()
+            .filter(|s| visible.contains(&s.simulation_item_id))
+            .collect(),
+        hidden,
+    ))
+}
+
+async fn based_on_item_unchecked(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<BasedSimulation>> {
     let rows = sqlx::query_as::<_, BasedSimulation>(&format!(
         "SELECT s.*, si.id AS simulation_item_id, si.number AS simulation_number,
                 sr.code AS simulation_code, sr.state AS simulation_state, sr.name AS simulation_name,
@@ -236,12 +323,12 @@ pub async fn add_basis(
     input: NewBasis,
 ) -> AppResult<SimulationBasis> {
     let note = domain::limit_text("Note", &input.note, 500)?;
-    let item = items::get_by_number(pool, &input.item_number).await?;
+    let item = items::get_by_number(pool, actor, &input.item_number).await?;
     let code = input.revision_code.trim();
     let basis = if code.is_empty() || code.eq_ignore_ascii_case("latest") {
-        items::latest_revision(pool, item.id).await?
+        items::latest_revision(pool, actor, item.id).await?
     } else {
-        revisions::get_by_code(pool, item.id, code).await?
+        revisions::get_by_code(pool, actor, item.id, code).await?
     };
     let mut tx = pool.begin().await?;
     let rev = revisions::lock(&mut tx, revision_id).await?;
@@ -342,12 +429,13 @@ pub async fn add_basis(
         .as_ref()
         .map(|p| format!(", {} v{}", p.filename, p.version))
         .unwrap_or_default();
-    audit::record(
+    audit::record_related(
         &mut tx,
         Some(actor),
         "simulation.basis.add",
         "revision",
         Some(rev.id),
+        Some(basis.item_id),
         format!(
             "{} based on {}{file} ({})",
             revisions::label(&rev),
@@ -359,12 +447,12 @@ pub async fn add_basis(
     )
     .await?;
     tx.commit().await?;
-    get_basis(pool, id).await
+    get_basis(pool, actor, id).await
 }
 
 /// Removes a basis link from a simulation revision checked out by the actor.
 pub async fn remove_basis(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<SimulationBasis> {
-    let existing = get_basis(pool, id).await?;
+    let existing = get_basis(pool, actor, id).await?;
     let mut tx = pool.begin().await?;
     let rev = revisions::lock(&mut tx, existing.revision_id).await?;
     revisions::ensure_editable(&rev, actor)?;
@@ -376,12 +464,13 @@ pub async fn remove_basis(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<S
     if removed == 0 {
         return Err(AppError::not_found("Basis link not found."));
     }
-    audit::record(
+    audit::record_related(
         &mut tx,
         Some(actor),
         "simulation.basis.remove",
         "revision",
         Some(rev.id),
+        Some(existing.basis_item_id),
         format!(
             "{} no longer based on {}/{}",
             revisions::label(&rev),
@@ -487,8 +576,20 @@ const RESULT_SELECT: &str = "
            solver, solver_version, note, updated_at
     FROM simulation_results";
 
-/// The result values of a revision in their order.
-pub async fn results(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<SimulationResult>> {
+/// The result values of a revision the actor may read, in their order.
+pub async fn results(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_id: Uuid,
+) -> AppResult<Vec<SimulationResult>> {
+    ensure_revision_visible(pool, actor, revision_id).await?;
+    results_unchecked(pool, revision_id).await
+}
+
+pub(crate) async fn results_unchecked(
+    pool: &PgPool,
+    revision_id: Uuid,
+) -> AppResult<Vec<SimulationResult>> {
     Ok(sqlx::query_as::<_, SimulationResult>(&format!(
         "{RESULT_SELECT} WHERE revision_id = $1 ORDER BY position, lower(load_case), lower(name)"
     ))
@@ -500,13 +601,17 @@ pub async fn results(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<Simulati
     .collect())
 }
 
-pub async fn get_result(pool: &PgPool, id: Uuid) -> AppResult<SimulationResult> {
-    sqlx::query_as::<_, SimulationResult>(&format!("{RESULT_SELECT} WHERE id = $1"))
+pub async fn get_result(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<SimulationResult> {
+    let r = sqlx::query_as::<_, SimulationResult>(&format!("{RESULT_SELECT} WHERE id = $1"))
         .bind(id)
         .fetch_optional(pool)
         .await?
         .map(SimulationResult::with_status)
-        .ok_or_else(|| AppError::not_found("Result value not found."))
+        .ok_or_else(|| AppError::not_found("Result value not found."))?;
+    ensure_revision_visible(pool, actor, r.revision_id)
+        .await
+        .map_err(|_| AppError::not_found("Result value not found."))?;
+    Ok(r)
 }
 
 /// How many values passed and failed.
@@ -687,7 +792,7 @@ pub async fn add_result(
     )
     .await?;
     tx.commit().await?;
-    get_result(pool, id).await
+    get_result(pool, actor, id).await
 }
 
 /// Changes a result value of a simulation revision checked out by the actor.
@@ -698,7 +803,7 @@ pub async fn update_result(
     input: ResultInput,
 ) -> AppResult<SimulationResult> {
     let input = input.validated()?;
-    let existing = get_result(pool, id).await?;
+    let existing = get_result(pool, actor, id).await?;
     let mut tx = pool.begin().await?;
     let rev = lock_editable(&mut tx, actor, existing.revision_id).await?;
     let updated = sqlx::query(
@@ -752,12 +857,12 @@ pub async fn update_result(
     )
     .await?;
     tx.commit().await?;
-    get_result(pool, id).await
+    get_result(pool, actor, id).await
 }
 
 /// Removes a result value from a simulation revision checked out by the actor.
 pub async fn remove_result(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<SimulationResult> {
-    let existing = get_result(pool, id).await?;
+    let existing = get_result(pool, actor, id).await?;
     let mut tx = pool.begin().await?;
     let rev = lock_editable(&mut tx, actor, existing.revision_id).await?;
     let removed = sqlx::query("DELETE FROM simulation_results WHERE id = $1")
@@ -1197,7 +1302,10 @@ pub async fn compare(
             "Only revisions of the same simulation can be compared.".into(),
         ));
     }
-    let (b, a) = tokio::try_join!(results(pool, before.id), results(pool, after.id))?;
+    let (b, a) = tokio::try_join!(
+        results_unchecked(pool, before.id),
+        results_unchecked(pool, after.id)
+    )?;
     Ok(compare_results(&b, &a))
 }
 
@@ -1386,6 +1494,8 @@ mod tests {
             released_seq: Some(1),
             created_at: chrono::Utc::now(),
             out_of_date: None,
+            basis_project_id: None,
+            restricted: false,
         }
     }
 

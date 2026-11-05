@@ -185,10 +185,12 @@ impl Delivery {
             email: Option<String>,
             display_name: String,
             chat_user: String,
+            confidential: bool,
         }
         let rows = sqlx::query_as::<_, Row>(
             "SELECT n.id, n.title, n.body, n.link, n.email_state, n.chat_state, n.delivery_attempts,
-                    u.email, u.display_name, COALESCE(u.mattermost_username, u.username) AS chat_user
+                    u.email, u.display_name, COALESCE(u.mattermost_username, u.username) AS chat_user,
+                    n.confidential
              FROM notifications n JOIN users u ON u.id = n.user_id
              WHERE n.email_state = 'pending' OR n.chat_state = 'pending'
              ORDER BY n.created_at LIMIT 100",
@@ -221,7 +223,13 @@ impl Delivery {
             let mut chat_state = row.chat_state.clone();
             if chat_state == "pending" {
                 match self
-                    .post_chat(&row.title, &row.body, &url, &row.chat_user)
+                    .post_chat(
+                        &row.title,
+                        &row.body,
+                        &url,
+                        &row.chat_user,
+                        row.confidential,
+                    )
                     .await
                 {
                     Ok(()) => {
@@ -299,21 +307,40 @@ impl Delivery {
         body: &str,
         url: &str,
         user: &str,
+        confidential: bool,
     ) -> anyhow::Result<()> {
         let (sender, direct) = self
             .chat
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Mattermost is not configured"))?;
+        let (title, body) = chat_text(&self.instance_name, title, body, confidential, *direct);
         sender
             .post(chat_payload(
                 &self.instance_name,
-                title,
-                body,
+                &title,
+                &body,
                 url,
                 user,
                 *direct,
             ))
             .await
+    }
+}
+
+/// What a chat message may show. A notification about a restricted project
+/// group posted into a shared channel (not a direct message) shows only a
+/// generic text and the link; everybody in the channel could read it.
+pub fn chat_text(
+    instance: &str,
+    title: &str,
+    body: &str,
+    confidential: bool,
+    direct: bool,
+) -> (String, String) {
+    if confidential && !direct {
+        (format!("new {instance} notification"), String::new())
+    } else {
+        (title.to_string(), body.to_string())
     }
 }
 
@@ -405,6 +432,17 @@ mod tests {
         assert_eq!(p["channel"], "@erika");
         assert!(!p["text"].as_str().unwrap().contains("@erika"));
         assert_eq!(p["username"], "TeamCraft");
+    }
+
+    #[test]
+    fn confidential_notifications_are_generic_in_channels() {
+        let (t, b) = chat_text("TeamCraft", "Secret PRT", "body", true, false);
+        assert_eq!(t, "new TeamCraft notification");
+        assert!(b.is_empty());
+        let (t, b) = chat_text("TeamCraft", "Secret PRT", "body", true, true);
+        assert_eq!((t.as_str(), b.as_str()), ("Secret PRT", "body"));
+        let (t, _) = chat_text("TeamCraft", "Open PRT", "body", false, false);
+        assert_eq!(t, "Open PRT");
     }
 
     #[test]

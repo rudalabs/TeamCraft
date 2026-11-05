@@ -32,7 +32,7 @@ pub async fn save_as(
     source_revision_id: Uuid,
     input: SaveAs,
 ) -> AppResult<Revision> {
-    let src = revisions::get(pool, source_revision_id).await?;
+    let src = revisions::get(pool, actor, source_revision_id).await?;
     let item_type = ItemType::parse(&src.item_type)
         .ok_or_else(|| AppError::Other(anyhow::anyhow!("unknown item type {}", src.item_type)))?;
     let name = match input.name.trim() {
@@ -40,6 +40,14 @@ pub async fn save_as(
         name => name.to_string(),
     };
     let mut tx = pool.begin().await?;
+    // Copying out of a restricted group declassifies its content: managers
+    // of the source group (and admins) only.
+    let target = input.project_id.or(src.project_id);
+    if let Some(source) = src.project_id {
+        if target != Some(source) {
+            items::ensure_may_take_out(&mut tx, actor, source, "Copying").await?;
+        }
+    }
     // creation checks the role and the membership in the target project group
     let created = items::create_tx(
         &mut tx,
@@ -133,5 +141,5 @@ pub async fn save_as(
     )
     .await?;
     tx.commit().await?;
-    revisions::get(pool, new_rev).await
+    revisions::get(pool, actor, new_rev).await
 }

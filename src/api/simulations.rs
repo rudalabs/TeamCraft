@@ -28,13 +28,13 @@ use crate::{
 /// their out-of-date reason), result values (with pass/fail) and a summary.
 pub(super) async fn get_simulation(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let (bases, results) = tokio::try_join!(
-        simulations::bases(&st.db, rev.id),
-        simulations::results(&st.db, rev.id)
+        simulations::bases(&st.db, &me, rev.id),
+        simulations::results(&st.db, &me, rev.id)
     )?;
     let out_of_date = bases.iter().any(|b| b.out_of_date.is_some());
     Ok(Json(json!({
@@ -51,22 +51,21 @@ pub(super) async fn get_simulation(
 /// based on a revision of the item.
 pub(super) async fn item_simulations(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(number): Path<String>,
-) -> AppResult<Json<Value>> {
-    let item = items::get_by_number(&st.db, &number).await?;
-    Ok(Json(json!(
-        simulations::based_on_item(&st.db, item.id).await?
-    )))
+) -> AppResult<axum::response::Response> {
+    let item = items::get_by_number(&st.db, &me, &number).await?;
+    let (rows, hidden) = simulations::based_on_item(&st.db, &me, item.id).await?;
+    Ok(super::with_hidden_count(Json(json!(rows)), hidden))
 }
 
 pub(super) async fn list_bases(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
-    Ok(Json(json!(simulations::bases(&st.db, rev.id).await?)))
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    Ok(Json(json!(simulations::bases(&st.db, &me, rev.id).await?)))
 }
 
 #[derive(Deserialize)]
@@ -101,7 +100,7 @@ pub(super) async fn add_basis(
     let role = BasisRole::parse(&body.role).ok_or_else(|| {
         AppError::BadRequest("role must be geometry, mesh, material, load_case or other.".into())
     })?;
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let basis = simulations::add_basis(
         &st.db,
         &me,
@@ -130,11 +129,11 @@ pub(super) async fn delete_basis(
 
 pub(super) async fn list_results(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
-    let results = simulations::results(&st.db, rev.id).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    let results = simulations::results(&st.db, &me, rev.id).await?;
     Ok(Json(json!({
         "summary": simulations::summarize(&results),
         "results": results,
@@ -147,7 +146,7 @@ pub(super) async fn add_result(
     Path((number, code)): Path<(String, String)>,
     ApiJson(body): ApiJson<ResultInput>,
 ) -> AppResult<Response> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let result = simulations::add_result(&st.db, &me, rev.id, body).await?;
     Ok((StatusCode::CREATED, Json(json!(result))).into_response())
 }
@@ -172,10 +171,10 @@ pub(super) async fn put_results(
     Path((number, code)): Path<(String, String)>,
     ApiJson(body): ApiJson<ResultSet>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let summary =
         simulations::import_results(&st.db, &me, rev.id, body.results, body.replace).await?;
-    let results = simulations::results(&st.db, rev.id).await?;
+    let results = simulations::results(&st.db, &me, rev.id).await?;
     Ok(Json(json!({
         "import": summary,
         "summary": simulations::summarize(&results),
@@ -191,7 +190,7 @@ pub(super) async fn import_results(
     Path((number, code)): Path<(String, String)>,
     mut multipart: Multipart,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let (file, fields) = web::receive_import(&mut multipart).await?;
     let (filename, bytes) = file.ok_or_else(|| {
         AppError::BadRequest(
@@ -227,7 +226,7 @@ pub(super) async fn patch_result(
     Path(id): Path<Uuid>,
     ApiJson(body): ApiJson<PatchResult>,
 ) -> AppResult<Json<Value>> {
-    let current = simulations::get_result(&st.db, id).await?;
+    let current = simulations::get_result(&st.db, &me, id).await?;
     let result = simulations::update_result(
         &st.db,
         &me,
@@ -267,14 +266,14 @@ pub(super) struct CompareQuery {
 /// the same simulation, matched by name and load case.
 pub(super) async fn compare(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let other = match q.with.as_deref().map(str::trim).filter(|w| !w.is_empty()) {
-        Some(with) => revision_at(&st, &number, with).await?,
-        None => items::revisions(&st.db, rev.item_id)
+        Some(with) => revision_at(&st, &me, &number, with).await?,
+        None => items::revisions(&st.db, &me, rev.item_id)
             .await?
             .into_iter()
             .filter(|r| r.seq < rev.seq)

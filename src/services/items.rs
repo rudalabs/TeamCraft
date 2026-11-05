@@ -10,7 +10,7 @@ use crate::{
     domain::{self, ItemType, LifecycleState, Role},
     error::{AppError, AppResult},
     models::{Item, ItemSummary, Revision, WhereUsed, WhereUsedLevel},
-    services::{audit, files, next_counter, notifications, revisions, Page},
+    services::{access, audit, files, next_counter, notifications, revisions, Page},
 };
 
 const ITEM_SELECT: &str = "
@@ -36,6 +36,7 @@ pub struct ItemFilter {
 /// Searches items; every row carries its latest revision.
 pub async fn search(
     pool: &PgPool,
+    actor: &Actor,
     filter: &ItemFilter,
     page: Page,
 ) -> AppResult<(Vec<ItemSummary>, i64)> {
@@ -44,7 +45,8 @@ pub async fn search(
     // A match is any of: item number, name/description/material (substring or
     // full-text), a file name, the extracted text of the current version of a
     // file of the latest revision, or a file of a format the query names.
-    const FROM: &str = "
+    let from = format!(
+        "
         FROM items i
         LEFT JOIN projects p ON p.id = i.project_id
         CROSS JOIN LATERAL (
@@ -68,7 +70,10 @@ pub async fn search(
           AND ($3::uuid IS NULL OR i.project_id = $3)
           AND ($4::text IS NULL OR lr.state = $4)
           AND ($7::text[] IS NULL OR EXISTS (
-                SELECT 1 FROM files sf WHERE sf.revision_id = lr.id AND sf.format = ANY($7::text[])))";
+                SELECT 1 FROM files sf WHERE sf.revision_id = lr.id AND sf.format = ANY($7::text[])))
+          AND {}",
+        access::item_visible("i", 8)
+    );
     let query = filter
         .query
         .as_deref()
@@ -93,11 +98,11 @@ pub async fn search(
                 (SELECT rr.code FROM revisions rr WHERE rr.item_id = i.id AND rr.state = 'released'
                  ORDER BY rr.seq DESC LIMIT 1) AS released_code,
                 fm.filename AS matched_file
-         {FROM}
+         {from}
          ORDER BY CASE WHEN $5::text IS NULL THEN 0
                        ELSE ts_rank(lr.search_vector, to_tsquery('simple', $5)) END DESC,
                   i.number
-         LIMIT $8 OFFSET $9"
+         LIMIT $9 OFFSET $10"
     ))
     .bind(&pattern)
     .bind(item_type)
@@ -106,11 +111,12 @@ pub async fn search(
     .bind(&tsquery)
     .bind(&named_formats)
     .bind(&system_formats)
+    .bind(&actor.hidden_projects)
     .bind(page.limit)
     .bind(page.offset)
     .fetch_all(pool)
     .await?;
-    let total = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) {FROM}"))
+    let total = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) {from}"))
         .bind(&pattern)
         .bind(item_type)
         .bind(filter.project_id)
@@ -118,12 +124,13 @@ pub async fn search(
         .bind(&tsquery)
         .bind(&named_formats)
         .bind(&system_formats)
+        .bind(&actor.hidden_projects)
         .fetch_one(pool)
         .await?;
     Ok((rows, total))
 }
 
-pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Item> {
+pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<Item> {
     sqlx::query_as::<_, Item>(&format!("{ITEM_SELECT} WHERE i.id = $1"))
         .bind(id)
         .fetch_optional(pool)
@@ -131,7 +138,7 @@ pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Item> {
         .ok_or_else(|| AppError::not_found("Item not found."))
 }
 
-pub async fn get_by_number(pool: &PgPool, number: &str) -> AppResult<Item> {
+pub(crate) async fn get_by_number_unchecked(pool: &PgPool, number: &str) -> AppResult<Item> {
     let number = number.trim().to_ascii_uppercase();
     sqlx::query_as::<_, Item>(&format!("{ITEM_SELECT} WHERE i.number = $1"))
         .bind(&number)
@@ -141,7 +148,7 @@ pub async fn get_by_number(pool: &PgPool, number: &str) -> AppResult<Item> {
 }
 
 /// All revisions of an item, newest first.
-pub async fn revisions(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<Revision>> {
+pub(crate) async fn revisions_unchecked(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<Revision>> {
     Ok(sqlx::query_as::<_, Revision>(&format!(
         "{} WHERE r.item_id = $1 ORDER BY r.seq DESC",
         revisions::REVISION_SELECT
@@ -151,7 +158,7 @@ pub async fn revisions(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<Revision>>
     .await?)
 }
 
-pub async fn latest_revision(pool: &PgPool, item_id: Uuid) -> AppResult<Revision> {
+pub(crate) async fn latest_revision_unchecked(pool: &PgPool, item_id: Uuid) -> AppResult<Revision> {
     sqlx::query_as::<_, Revision>(&format!(
         "{} WHERE r.item_id = $1 ORDER BY r.seq DESC LIMIT 1",
         revisions::REVISION_SELECT
@@ -163,7 +170,10 @@ pub async fn latest_revision(pool: &PgPool, item_id: Uuid) -> AppResult<Revision
 }
 
 /// The in-work or in-review revision of an item, if any.
-pub async fn open_revision(pool: &PgPool, item_id: Uuid) -> AppResult<Option<Revision>> {
+pub(crate) async fn open_revision_unchecked(
+    pool: &PgPool,
+    item_id: Uuid,
+) -> AppResult<Option<Revision>> {
     Ok(sqlx::query_as::<_, Revision>(&format!(
         "{} WHERE r.item_id = $1 AND r.state IN ('in_work', 'in_review')",
         revisions::REVISION_SELECT
@@ -171,6 +181,57 @@ pub async fn open_revision(pool: &PgPool, item_id: Uuid) -> AppResult<Option<Rev
     .bind(item_id)
     .fetch_optional(pool)
     .await?)
+}
+
+/// An item the actor may read; hidden items answer like missing ones.
+pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Item> {
+    let item = get_unchecked(pool, id).await?;
+    access::ensure_visible(actor, item.project_id, access::not_found_item())?;
+    Ok(item)
+}
+
+/// An item by number, if the actor may read it. A hidden item gives exactly
+/// the message of an unknown number.
+pub async fn get_by_number(pool: &PgPool, actor: &Actor, number: &str) -> AppResult<Item> {
+    let item = get_by_number_unchecked(pool, number).await?;
+    access::ensure_visible(
+        actor,
+        item.project_id,
+        AppError::not_found(format!(
+            "Item '{}' not found.",
+            number.trim().to_ascii_uppercase()
+        )),
+    )?;
+    Ok(item)
+}
+
+/// All revisions of an item the actor may read, newest first.
+pub async fn revisions(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<Vec<Revision>> {
+    let revs = revisions_unchecked(pool, item_id).await?;
+    if let Some(first) = revs.first() {
+        access::ensure_visible(actor, first.project_id, access::not_found_item())?;
+    }
+    Ok(revs)
+}
+
+/// The latest revision of an item the actor may read.
+pub async fn latest_revision(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<Revision> {
+    let rev = latest_revision_unchecked(pool, item_id).await?;
+    access::ensure_visible(actor, rev.project_id, access::not_found_item())?;
+    Ok(rev)
+}
+
+/// The in-work or in-review revision of an item the actor may read.
+pub async fn open_revision(
+    pool: &PgPool,
+    actor: &Actor,
+    item_id: Uuid,
+) -> AppResult<Option<Revision>> {
+    let rev = open_revision_unchecked(pool, item_id).await?;
+    if let Some(rev) = &rev {
+        access::ensure_visible(actor, rev.project_id, access::not_found_item())?;
+    }
+    Ok(rev)
 }
 
 #[derive(Clone, Debug)]
@@ -201,7 +262,7 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<R
     let mut tx = pool.begin().await?;
     let created = create_tx(&mut tx, actor, input).await?;
     tx.commit().await?;
-    revisions::get(pool, created.revision_id).await
+    revisions::get(pool, actor, created.revision_id).await
 }
 
 /// Creates an item and stores its first files in the new revision – one
@@ -220,7 +281,7 @@ pub async fn create_with_files(
         files::store_uploads(&mut tx, actor, &rev, uploads, "").await?;
     }
     tx.commit().await?;
-    revisions::get(pool, created.revision_id).await
+    revisions::get(pool, actor, created.revision_id).await
 }
 
 /// What [`create_tx`] created.
@@ -388,6 +449,7 @@ pub async fn update_master(
             .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(|| AppError::not_found("Item not found."))?;
+    access::ensure_visible(actor, current.project_id, access::not_found_item())?;
     // Moving an item requires membership in the old and the new project group.
     if !actor.can_edit_project(current.project_id) {
         return Err(AppError::Forbidden(format!(
@@ -411,6 +473,13 @@ pub async fn update_master(
         return Err(AppError::Forbidden(
             "You can only move items into project groups you are a member of.".into(),
         ));
+    }
+    // Moving out of a restricted group declassifies the item: only a manager
+    // of that group (or an admin) may do it.
+    if current.project_id != Some(pid) {
+        if let Some(source) = current.project_id {
+            ensure_may_take_out(&mut tx, actor, source, "Moving").await?;
+        }
     }
     if unit != current.unit {
         let released = sqlx::query_scalar::<_, bool>(
@@ -442,7 +511,31 @@ pub async fn update_master(
     )
     .await?;
     tx.commit().await?;
-    get(pool, item_id).await
+    get(pool, actor, item_id).await
+}
+
+/// Fails unless the actor may move or copy data out of the project group
+/// `source`: always allowed for internal groups; for restricted groups only
+/// for administrators and managers of the group. `what` = "Moving" or
+/// "Copying".
+pub(crate) async fn ensure_may_take_out(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    source: Uuid,
+    what: &str,
+) -> AppResult<()> {
+    let restricted = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1 AND visibility = 'restricted')",
+    )
+    .bind(source)
+    .fetch_one(&mut *conn)
+    .await?;
+    if restricted && !crate::services::projects::can_manage(conn, actor, source).await? {
+        return Err(AppError::Forbidden(format!(
+            "{what} out of a restricted group requires a manager of that group."
+        )));
+    }
+    Ok(())
 }
 
 /// Deletes an item created by mistake. Only allowed while it has a single
@@ -455,6 +548,7 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| AppError::not_found("Item not found."))?;
+    access::ensure_visible(actor, item.project_id, access::not_found_item())?;
     if (item.created_by != actor.id || !actor.can_edit_project(item.project_id))
         && !actor.is_admin()
     {
@@ -519,9 +613,10 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
     Ok(item.number)
 }
 
-/// Parent revisions whose BOM contains the item.
-pub async fn where_used(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<WhereUsed>> {
-    Ok(sqlx::query_as::<_, WhereUsed>(
+/// Parent revisions whose BOM contains the item – only parents the actor
+/// may read (see [`hidden_parents`] for the rest).
+pub async fn where_used(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<Vec<WhereUsed>> {
+    Ok(sqlx::query_as::<_, WhereUsed>(&format!(
         "SELECT bl.id AS line_id, r.id AS parent_revision_id, i.id AS parent_item_id,
                 i.number AS parent_number, r.code AS parent_code, r.name AS parent_name,
                 r.state AS parent_state, bl.find_number, bl.quantity, rc.code AS released_child_code
@@ -529,11 +624,33 @@ pub async fn where_used(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<WhereUsed
          JOIN revisions r ON r.id = bl.parent_revision_id
          JOIN items i ON i.id = r.item_id
          LEFT JOIN revisions rc ON rc.id = bl.released_child_revision_id
-         WHERE bl.child_item_id = $1
+         WHERE bl.child_item_id = $1 AND {}
          ORDER BY i.number, r.seq DESC",
-    )
+        access::item_visible("i", 2)
+    ))
     .bind(item_id)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
+    .await?)
+}
+
+/// Number of distinct parent items that use the item but that the actor may
+/// not read ("+N assemblies in groups you cannot see").
+pub async fn hidden_parents(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<i64> {
+    if actor.hidden_projects.is_empty() {
+        return Ok(0);
+    }
+    Ok(sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(DISTINCT i.id)
+         FROM bom_lines bl
+         JOIN revisions r ON r.id = bl.parent_revision_id
+         JOIN items i ON i.id = r.item_id
+         WHERE bl.child_item_id = $1 AND NOT {}",
+        access::item_visible("i", 2)
+    ))
+    .bind(item_id)
+    .bind(&actor.hidden_projects)
+    .fetch_one(pool)
     .await?)
 }
 
@@ -549,11 +666,12 @@ pub const MAX_WHERE_USED_ROWS: i64 = 2000;
 /// are refused on input), so the walk ends even without the level limit.
 pub async fn where_used_levels(
     pool: &PgPool,
+    actor: &Actor,
     item_id: Uuid,
     levels: i32,
 ) -> AppResult<Vec<WhereUsedLevel>> {
     let levels = levels.clamp(1, MAX_WHERE_USED_LEVELS);
-    Ok(sqlx::query_as::<_, WhereUsedLevel>(
+    Ok(sqlx::query_as::<_, WhereUsedLevel>(&format!(
         "WITH RECURSIVE up(item_id, level) AS (
              SELECT $1::uuid, 0
              UNION
@@ -561,7 +679,8 @@ pub async fn where_used_levels(
              FROM up
              JOIN bom_lines bl ON bl.child_item_id = up.item_id
              JOIN revisions r ON r.id = bl.parent_revision_id
-             WHERE up.level + 1 < $2
+             JOIN items wi ON wi.id = r.item_id
+             WHERE up.level + 1 < $2 AND {walk}
          ),
          reach AS (SELECT item_id, MIN(level) AS level FROM up GROUP BY item_id)
          SELECT reach.level + 1 AS level, ci.number AS child_number,
@@ -574,12 +693,16 @@ pub async fn where_used_levels(
          JOIN revisions r ON r.id = bl.parent_revision_id
          JOIN items i ON i.id = r.item_id
          LEFT JOIN revisions rc ON rc.id = bl.released_child_revision_id
+         WHERE {shown}
          ORDER BY 1, i.number, r.seq DESC, ci.number
          LIMIT $3",
-    )
+        walk = access::item_visible("wi", 4),
+        shown = access::item_visible("i", 4)
+    ))
     .bind(item_id)
     .bind(levels)
     .bind(MAX_WHERE_USED_ROWS)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?)
 }

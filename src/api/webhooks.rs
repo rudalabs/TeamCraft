@@ -50,9 +50,13 @@ fn yes() -> bool {
     true
 }
 
-async fn project_id(st: &AppState, code: Option<&str>) -> AppResult<Option<Uuid>> {
+async fn project_id(
+    st: &AppState,
+    me: &crate::auth::Actor,
+    code: Option<&str>,
+) -> AppResult<Option<Uuid>> {
     match code.map(str::trim).filter(|c| !c.is_empty()) {
-        Some(code) => Ok(Some(projects::get_by_code(&st.db, code).await?.id)),
+        Some(code) => Ok(Some(projects::get_by_code(&st.db, me, code).await?.id)),
         None => Ok(None),
     }
 }
@@ -64,7 +68,7 @@ pub(super) async fn create(
     ApiJson(body): ApiJson<CreateBody>,
 ) -> AppResult<Response> {
     me.require(Role::Admin)?;
-    let project_id = project_id(&st, body.project.as_deref()).await?;
+    let project_id = project_id(&st, &me, body.project.as_deref()).await?;
     let (webhook, secret) = webhooks::create(
         &st.db,
         &me,
@@ -113,7 +117,7 @@ pub(super) async fn update(
 ) -> AppResult<Json<Value>> {
     let current = webhooks::get(&st.db, &me, id).await?;
     let project_id = match &body.project {
-        Some(code) => project_id(&st, code.as_deref()).await?,
+        Some(code) => project_id(&st, &me, code.as_deref()).await?,
         None => current.project_id,
     };
     let webhook = webhooks::update(

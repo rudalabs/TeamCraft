@@ -751,28 +751,28 @@ pub fn parse_item_ref(s: &str) -> (String, Option<String>) {
 pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value {
     let a = Args::new(args);
     let result = match name {
-        "search_items" => search_items(st, &a).await,
-        "get_item" => get_item(st, &a).await,
-        "get_revision" => get_revision(st, &a).await,
-        "get_bom" => get_bom(st, &a).await,
-        "where_used" => where_used(st, &a).await,
-        "item_history" => item_history(st, &a).await,
-        "list_changes" => list_changes(st, &a).await,
-        "get_change" => get_change(st, &a).await,
-        "suggest_reviewers" => suggest_reviewers(st, &a).await,
+        "search_items" => search_items(st, me, &a).await,
+        "get_item" => get_item(st, me, &a).await,
+        "get_revision" => get_revision(st, me, &a).await,
+        "get_bom" => get_bom(st, me, &a).await,
+        "where_used" => where_used(st, me, &a).await,
+        "item_history" => item_history(st, me, &a).await,
+        "list_changes" => list_changes(st, me, &a).await,
+        "get_change" => get_change(st, me, &a).await,
+        "suggest_reviewers" => suggest_reviewers(st, me, &a).await,
         "my_worklist" => my_worklist(st, me).await,
-        "bom_health" => bom_health(st, &a).await,
-        "find_duplicate_files" => find_duplicate_files(st, &a).await,
-        "compare_revisions" => compare_revisions(st, &a).await,
+        "bom_health" => bom_health(st, me, &a).await,
+        "find_duplicate_files" => find_duplicate_files(st, me, &a).await,
+        "compare_revisions" => compare_revisions(st, me, &a).await,
         "create_change_draft" => create_change_draft(st, me, &a).await,
         "add_to_change" => add_to_change(st, me, &a).await,
         "list_change_requests" => list_change_requests(st, me, &a).await,
         "get_change_request" => get_change_request(st, me, &a).await,
         "create_change_request" => create_change_request(st, me, &a).await,
         "comment_change_request" => comment_change_request(st, me, &a).await,
-        "list_simulations" => list_simulations(st, &a).await,
-        "get_simulation" => get_simulation(st, &a).await,
-        "compare_simulation_results" => compare_simulation_results(st, &a).await,
+        "list_simulations" => list_simulations(st, me, &a).await,
+        "get_simulation" => get_simulation(st, me, &a).await,
+        "compare_simulation_results" => compare_simulation_results(st, me, &a).await,
         _ => Err(bad(format!("Unknown tool `{name}`."))),
     };
     match result {
@@ -860,6 +860,7 @@ fn bom_line_brief(l: &BomLine) -> Value {
         "latest_state": l.child_latest_state,
         "released_with": l.released_child_code,
         "notes": l.notes,
+        "restricted": l.restricted,
     })
 }
 
@@ -872,36 +873,43 @@ fn web_url(st: &AppState, path: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// A revision by item number and code; `None` or `latest` = the newest.
-async fn revision_at(st: &AppState, number: &str, code: Option<&str>) -> AppResult<Revision> {
-    let item = items::get_by_number(&st.db, number).await?;
+async fn revision_at(
+    st: &AppState,
+    me: &Actor,
+    number: &str,
+    code: Option<&str>,
+) -> AppResult<Revision> {
+    let item = items::get_by_number(&st.db, me, number).await?;
     match code {
-        None => items::latest_revision(&st.db, item.id).await,
+        None => items::latest_revision(&st.db, me, item.id).await,
         Some(c) if c.eq_ignore_ascii_case("latest") => {
-            items::latest_revision(&st.db, item.id).await
+            items::latest_revision(&st.db, me, item.id).await
         }
-        Some(c) => revisions::get_by_code(&st.db, item.id, c).await,
+        Some(c) => revisions::get_by_code(&st.db, me, item.id, c).await,
     }
 }
 
-async fn revision_arg(st: &AppState, a: &Args<'_>) -> AppResult<Revision> {
+async fn revision_arg(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Revision> {
     let number = a.req_str("item")?;
-    revision_at(st, &number, a.opt_str("revision")?.as_deref()).await
+    revision_at(st, me, &number, a.opt_str("revision")?.as_deref()).await
 }
 
 /// The revision a change order should carry: the given code, or the item's
 /// in-work revision.
-async fn change_revision(st: &AppState, reference: &str) -> AppResult<Revision> {
+async fn change_revision(st: &AppState, me: &Actor, reference: &str) -> AppResult<Revision> {
     let (number, code) = parse_item_ref(reference);
     match code {
-        Some(code) => revision_at(st, &number, Some(&code)).await,
+        Some(code) => revision_at(st, me, &number, Some(&code)).await,
         None => {
-            let item = items::get_by_number(&st.db, &number).await?;
-            items::open_revision(&st.db, item.id).await?.ok_or_else(|| {
-                AppError::Conflict(format!(
-                    "{} has no in-work revision; revise it first.",
-                    item.number
-                ))
-            })
+            let item = items::get_by_number(&st.db, me, &number).await?;
+            items::open_revision(&st.db, me, item.id)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Conflict(format!(
+                        "{} has no in-work revision; revise it first.",
+                        item.number
+                    ))
+                })
         }
     }
 }
@@ -919,9 +927,9 @@ fn default_rule(rev: &Revision) -> RevisionRule {
 // Read tools
 // ---------------------------------------------------------------------------
 
-async fn search_items(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
+async fn search_items(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
     let project_id = match a.opt_str("project")? {
-        Some(code) => Some(projects::get_by_code(&st.db, &code).await?.id),
+        Some(code) => Some(projects::get_by_code(&st.db, me, &code).await?.id),
         None => None,
     };
     let item_type = a
@@ -957,7 +965,7 @@ async fn search_items(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
         state,
         system,
     };
-    let (rows, total) = items::search(&st.db, &filter, Page::new(Some(limit), None)).await?;
+    let (rows, total) = items::search(&st.db, me, &filter, Page::new(Some(limit), None)).await?;
     let list: Vec<Value> = rows
         .iter()
         .map(|r| {
@@ -980,14 +988,14 @@ async fn search_items(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn get_item(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let item = items::get_by_number(&st.db, &a.req_str("item")?).await?;
-    let revs = items::revisions(&st.db, item.id).await?;
-    let (open_requests, requests_cut) = open_requests_of(st, item.id).await?;
+async fn get_item(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let item = items::get_by_number(&st.db, me, &a.req_str("item")?).await?;
+    let revs = items::revisions(&st.db, me, item.id).await?;
+    let (open_requests, requests_cut) = open_requests_of(st, me, item.id).await?;
     let (based, based_cut) = if item.item_type == ItemType::Simulation.as_str() {
         (Vec::new(), false)
     } else {
-        simulations_of(st, item.id).await?
+        simulations_of(st, me, item.id).await?
     };
     Ok(json!({
         "item": {
@@ -1013,25 +1021,31 @@ async fn get_item(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn get_revision(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let rev = revision_arg(st, a).await?;
-    let (file_list, files_cut) = capped(files::list(&st.db, rev.id).await?, MAX_LIST);
-    let (lines, bom_cut) = capped(bom::lines(&st.db, rev.id).await?, MAX_BOM_ROWS);
-    let outgoing = references::outgoing(&st.db, rev.id).await?;
-    let (incoming, incoming_cut) =
-        capped(references::incoming(&st.db, rev.item_id).await?, MAX_LIST);
-    let (cad, cad_cut) = capped(
-        references::files_of_revision(&st.db, rev.id).await?,
+async fn get_revision(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let rev = revision_arg(st, me, a).await?;
+    let (file_list, files_cut) = capped(files::list(&st.db, me, rev.id).await?, MAX_LIST);
+    let (lines, bom_cut) = capped(bom::lines(&st.db, me, rev.id).await?, MAX_BOM_ROWS);
+    let outgoing = references::outgoing(&st.db, me, rev.id).await?;
+    let (incoming, incoming_cut) = capped(
+        references::incoming(&st.db, me, rev.item_id).await?,
         MAX_LIST,
     );
-    let rev_changes = changes::for_revision(&st.db, rev.id).await?;
-    let (open_requests, requests_cut) = open_requests_of(st, rev.item_id).await?;
+    let (cad, cad_cut) = capped(
+        references::files_of_revision(&st.db, me, rev.id).await?,
+        MAX_LIST,
+    );
+    let (rev_changes, _) = changes::for_revision(&st.db, me, rev.id).await?;
+    let (open_requests, requests_cut) = open_requests_of(st, me, rev.item_id).await?;
     // A simulation shows what it is based on; anything else the
     // simulations based on it.
     let (simulation, based, based_cut) = if rev.item_type == ItemType::Simulation.as_str() {
-        (Some(simulation_state(st, &rev).await?), Vec::new(), false)
+        (
+            Some(simulation_state(st, me, &rev).await?),
+            Vec::new(),
+            false,
+        )
     } else {
-        let (based, cut) = simulations_of(st, rev.item_id).await?;
+        let (based, cut) = simulations_of(st, me, rev.item_id).await?;
         (None, based, cut)
     };
     Ok(json!({
@@ -1076,10 +1090,10 @@ async fn get_revision(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn get_bom(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let rev = revision_arg(st, a).await?;
+async fn get_bom(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let rev = revision_arg(st, me, a).await?;
     let rule = a.rule()?.unwrap_or_else(|| default_rule(&rev));
-    let tree = bom::tree(&st.db, rev.id, rule).await?;
+    let tree = bom::tree(&st.db, me, rev.id, rule).await?;
     let (rows, truncated) = capped(bom::flatten(&tree.children), MAX_BOM_ROWS);
     let rows: Vec<Value> = rows
         .iter()
@@ -1092,7 +1106,8 @@ async fn get_bom(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
                 "name": n.revision.as_ref().map(|r| r.name.clone()),
                 "type": n.item_type,
                 "revision": n.revision.as_ref().map(|r| r.code.clone()),
-                "state": n.revision.as_ref().map_or("unresolved", |r| r.state.as_str()),
+                "state": n.revision.as_ref().map_or(if n.restricted { "restricted" } else { "unresolved" }, |r| r.state.as_str()),
+                "restricted": n.restricted,
                 "quantity": n.quantity,
                 "unit": n.unit,
                 "unit_mass_kg": n.unit_mass_kg,
@@ -1110,6 +1125,8 @@ async fn get_bom(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
         "rule": rule.as_str(),
         "line_count": tree.line_count,
         "unresolved_count": tree.unresolved_count,
+        "restricted_lines": tree.restricted_lines,
+        "rollup_incomplete": tree.rollup_incomplete,
         "total_mass_kg": tree.total_mass_kg,
         "mass_complete": tree.mass_complete,
         "total_cost": tree.total_cost,
@@ -1119,14 +1136,16 @@ async fn get_bom(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn where_used(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let item = items::get_by_number(&st.db, &a.req_str("item")?).await?;
+async fn where_used(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let item = items::get_by_number(&st.db, me, &a.req_str("item")?).await?;
     let levels = a.limit("levels", 1, i64::from(items::MAX_WHERE_USED_LEVELS))?;
-    let rows = items::where_used_levels(&st.db, item.id, levels as i32).await?;
+    let rows = items::where_used_levels(&st.db, me, item.id, levels as i32).await?;
+    let hidden_parents = items::hidden_parents(&st.db, me, item.id).await?;
     let (rows, truncated) = capped(rows, MAX_LIST);
     Ok(json!({
         "item": item.number,
         "levels": levels,
+        "hidden_parents": hidden_parents,
         "used_in": rows.iter().map(|row| (row.level, &row.child_number, &row.usage)).map(|(level, via, p)| json!({
             "level": level,
             "via": via,
@@ -1142,16 +1161,16 @@ async fn where_used(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn item_history(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let item = items::get_by_number(&st.db, &a.req_str("item")?).await?;
+async fn item_history(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let item = items::get_by_number(&st.db, me, &a.req_str("item")?).await?;
     let limit = a.limit("limit", 50, 200)?;
-    let mut ids: Vec<uuid::Uuid> = items::revisions(&st.db, item.id)
+    let mut ids: Vec<uuid::Uuid> = items::revisions(&st.db, me, item.id)
         .await?
         .iter()
         .map(|r| r.id)
         .collect();
     ids.push(item.id);
-    let entries = audit::for_entities(&st.db, &ids, limit).await?;
+    let entries = audit::for_entities(&st.db, me, &ids, limit).await?;
     Ok(json!({
         "item": item.number,
         "entries": entries.iter().map(|e| json!({
@@ -1163,13 +1182,13 @@ async fn item_history(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn list_changes(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
+async fn list_changes(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
     let status = a
         .opt_str("status")?
         .map(|s| ChangeStatus::parse(&s).ok_or_else(|| bad(format!("Unknown status '{s}'."))))
         .transpose()?;
     let limit = a.limit("limit", 20, 100)?;
-    let (rows, total) = changes::list(&st.db, status, Page::new(Some(limit), None)).await?;
+    let (rows, total) = changes::list(&st.db, me, status, Page::new(Some(limit), None)).await?;
     Ok(json!({
         "total": total,
         "truncated": total > rows.len() as i64,
@@ -1193,10 +1212,15 @@ fn dependency_brief(d: &crate::services::readiness::Dependency) -> Value {
 
 /// A change order with its revisions, reviews and release readiness, and
 /// optionally the impact analysis.
-async fn change_overview(st: &AppState, change: &Change, with_impact: bool) -> AppResult<Value> {
-    let affected = changes::items(&st.db, change.id).await?;
+async fn change_overview(
+    st: &AppState,
+    me: &Actor,
+    change: &Change,
+    with_impact: bool,
+) -> AppResult<Value> {
+    let affected = changes::items(&st.db, me, change.id).await?;
     let reviews = changes::reviews(&st.db, change.id).await?;
-    let readiness = changes::readiness(&st.db, change.id).await?;
+    let readiness = changes::readiness(&st.db, me, change.id).await?;
     let mut value = json!({
         "change": change_brief(change),
         "description": change.description,
@@ -1222,8 +1246,8 @@ async fn change_overview(st: &AppState, change: &Change, with_impact: bool) -> A
         "url": web_url(st, &format!("/changes/{}", change.id)),
     });
     if with_impact {
-        let ids: Vec<uuid::Uuid> = affected.iter().map(|i| i.revision_id).collect();
-        let (deps, truncated) = capped(impacts::analysis(&st.db, &ids).await?, MAX_LIST);
+        let (deps, hidden) = changes::impact(&st.db, me, change.id).await?;
+        let (deps, truncated) = capped(deps, MAX_LIST);
         value["impact"] = json!({
             "dependents": deps.iter().map(|d| json!({
                 "level": d.level,
@@ -1236,24 +1260,25 @@ async fn change_overview(st: &AppState, change: &Change, with_impact: bool) -> A
                 "in_change": d.in_change,
             })).collect::<Vec<_>>(),
             "truncated": truncated,
+            "hidden_dependents": hidden,
         });
     }
     Ok(value)
 }
 
-async fn get_change(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let change = changes::get_by_number(&st.db, &a.req_str("change")?).await?;
-    change_overview(st, &change, true).await
+async fn get_change(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let change = changes::get_by_number(&st.db, me, &a.req_str("change")?).await?;
+    change_overview(st, me, &change, true).await
 }
 
-async fn suggest_reviewers(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let change = changes::get_by_number(&st.db, &a.req_str("change")?).await?;
+async fn suggest_reviewers(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let change = changes::get_by_number(&st.db, me, &a.req_str("change")?).await?;
     let limit = a.limit(
         "limit",
         reviewers::DEFAULT_LIMIT as i64,
         reviewers::MAX_LIMIT as i64,
     )?;
-    let suggestions = reviewers::suggest(&st.db, change.id, limit as usize).await?;
+    let suggestions = reviewers::suggest(&st.db, me, change.id, limit as usize).await?;
     Ok(json!({
         "change": change.number,
         "status": change.status,
@@ -1269,13 +1294,13 @@ async fn suggest_reviewers(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
 }
 
 async fn my_worklist(st: &AppState, me: &Actor) -> AppResult<Value> {
-    let checkouts = revisions::checked_out_by(&st.db, me.id).await?;
-    let reviews = changes::pending_reviews(&st.db, me.id).await?;
+    let checkouts = revisions::checked_out_by(&st.db, me).await?;
+    let reviews = changes::pending_reviews(&st.db, me).await?;
     let (open_impacts, impacts_cut) = capped(impacts::open_for(&st.db, me).await?, MAX_LIST);
-    let mine = changes::open_by(&st.db, me.id).await?;
+    let mine = changes::open_by(&st.db, me).await?;
     let unread = notifications::unread_count(&st.db, me.id).await?;
-    let (assigned, assigned_cut) = capped(requests::assigned_to(&st.db, me.id).await?, MAX_LIST);
-    let (raised, raised_cut) = capped(requests::open_by(&st.db, me.id).await?, MAX_LIST);
+    let (assigned, assigned_cut) = capped(requests::assigned_to(&st.db, me).await?, MAX_LIST);
+    let (raised, raised_cut) = capped(requests::open_by(&st.db, me).await?, MAX_LIST);
     Ok(json!({
         "user": { "username": me.username, "name": me.display_name, "role": me.role.as_str() },
         "checkouts": checkouts.iter().map(|r| {
@@ -1303,10 +1328,10 @@ async fn my_worklist(st: &AppState, me: &Actor) -> AppResult<Value> {
     }))
 }
 
-async fn bom_health(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let rev = revision_arg(st, a).await?;
+async fn bom_health(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let rev = revision_arg(st, me, a).await?;
     let rule = a.rule()?.unwrap_or_else(|| default_rule(&rev));
-    Ok(json!(insights::bom_health(&st.db, rev.id, rule).await?))
+    Ok(json!(insights::bom_health(&st.db, me, rev.id, rule).await?))
 }
 
 /// Duplicate contents grouped by SHA-256 (largest first, as returned).
@@ -1338,13 +1363,16 @@ pub fn group_duplicates(rows: &[insights::DuplicateFile]) -> Vec<Value> {
         .collect()
 }
 
-async fn find_duplicate_files(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
+async fn find_duplicate_files(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
     let limit = a.limit("limit", 100, 1000)?;
     let revision = match a.opt_str("item")? {
-        Some(number) => Some(revision_at(st, &number, a.opt_str("revision")?.as_deref()).await?),
+        Some(number) => {
+            Some(revision_at(st, me, &number, a.opt_str("revision")?.as_deref()).await?)
+        }
         None => None,
     };
-    let rows = insights::duplicate_files(&st.db, revision.as_ref().map(|r| r.id), limit).await?;
+    let rows =
+        insights::duplicate_files(&st.db, me, revision.as_ref().map(|r| r.id), limit).await?;
     Ok(json!({
         "scope": revision.as_ref().map(revisions::label),
         "groups": group_duplicates(&rows),
@@ -1534,18 +1562,18 @@ pub fn compare(old: &Snapshot, new: &Snapshot) -> Value {
     })
 }
 
-async fn snapshot(st: &AppState, rev: &Revision) -> AppResult<Snapshot> {
-    let file_list = files::list(&st.db, rev.id).await?;
-    let lines = bom::lines(&st.db, rev.id).await?;
+async fn snapshot(st: &AppState, me: &Actor, rev: &Revision) -> AppResult<Snapshot> {
+    let file_list = files::list(&st.db, me, rev.id).await?;
+    let lines = bom::lines(&st.db, me, rev.id).await?;
     Ok(Snapshot::of(rev, &file_list, &lines))
 }
 
 /// The two revisions of `item` a comparison is about: `to` (default the
 /// latest) and `from` (default the revision before `to`).
-async fn revision_pair(st: &AppState, a: &Args<'_>) -> AppResult<(Revision, Revision)> {
-    let item = items::get_by_number(&st.db, &a.req_str("item")?).await?;
+async fn revision_pair(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<(Revision, Revision)> {
+    let item = items::get_by_number(&st.db, me, &a.req_str("item")?).await?;
     // newest first
-    let revs = items::revisions(&st.db, item.id).await?;
+    let revs = items::revisions(&st.db, me, item.id).await?;
     let find = |code: &str| {
         revs.iter()
             .find(|r| r.code.eq_ignore_ascii_case(code))
@@ -1569,11 +1597,11 @@ async fn revision_pair(st: &AppState, a: &Args<'_>) -> AppResult<(Revision, Revi
     Ok((from.clone(), to.clone()))
 }
 
-async fn compare_revisions(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let (from, to) = revision_pair(st, a).await?;
+async fn compare_revisions(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let (from, to) = revision_pair(st, me, a).await?;
     let (from, to) = (&from, &to);
-    let old = snapshot(st, from).await?;
-    let new = snapshot(st, to).await?;
+    let old = snapshot(st, me, from).await?;
+    let new = snapshot(st, me, to).await?;
     let mut value = compare(&old, &new);
     value["from_state"] = json!(from.state);
     value["to_state"] = json!(to.state);
@@ -1645,7 +1673,7 @@ async fn list_change_requests(st: &AppState, me: &Actor, a: &Args<'_>) -> AppRes
     let (status, open_only) = request_status_filter(a.opt_str("status")?.as_deref())?;
     let (requested_by, assignee) = request_scope(a.opt_str("scope")?.as_deref(), me.id)?;
     let item_id = match a.opt_str("item")? {
-        Some(number) => Some(items::get_by_number(&st.db, &number).await?.id),
+        Some(number) => Some(items::get_by_number(&st.db, me, &number).await?.id),
         None => None,
     };
     let limit = a.limit("limit", 20, 100)?;
@@ -1656,7 +1684,7 @@ async fn list_change_requests(st: &AppState, me: &Actor, a: &Args<'_>) -> AppRes
         assignee,
         item_id,
     };
-    let (rows, total) = requests::list(&st.db, &filter, Page::new(Some(limit), None)).await?;
+    let (rows, total) = requests::list(&st.db, me, &filter, Page::new(Some(limit), None)).await?;
     Ok(json!({
         "total": total,
         "truncated": total > rows.len() as i64,
@@ -1669,11 +1697,11 @@ async fn request_overview(st: &AppState, me: &Actor, request: &ChangeRequest) ->
     let id = request.id;
     let ids = [id];
     let (affected, comments, attachments, linked, history, can) = tokio::try_join!(
-        requests::items(&st.db, id),
+        requests::items(&st.db, me, id),
         requests::comments(&st.db, id),
         requests::attachments(&st.db, id),
-        requests::linked_changes(&st.db, id),
-        audit::for_entities(&st.db, &ids, REQUEST_HISTORY),
+        requests::linked_changes(&st.db, me, id),
+        audit::for_entities(&st.db, me, &ids, REQUEST_HISTORY),
         requests::abilities_of(&st.db, me, request),
     )?;
     let (comments, comments_cut) = newest(comments, MAX_COMMENTS);
@@ -1712,7 +1740,8 @@ async fn request_overview(st: &AppState, me: &Actor, request: &ChangeRequest) ->
             "uploaded_by": f.uploaded_by_name,
             "uploaded_at": f.uploaded_at,
         })).collect::<Vec<_>>(),
-        "changes": linked.iter().map(change_brief).collect::<Vec<_>>(),
+        "changes": linked.0.iter().map(change_brief).collect::<Vec<_>>(),
+        "hidden_changes": linked.1,
         "history": history.iter().map(|e| json!({
             "at": e.at,
             "user": e.username,
@@ -1725,13 +1754,20 @@ async fn request_overview(st: &AppState, me: &Actor, request: &ChangeRequest) ->
 }
 
 async fn get_change_request(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
-    let request = requests::get_by_number(&st.db, &a.req_str("request")?).await?;
+    let request = requests::get_by_number(&st.db, me, &a.req_str("request")?).await?;
     request_overview(st, me, &request).await
 }
 
 /// Open change requests on an item, for `get_item` / `get_revision`.
-async fn open_requests_of(st: &AppState, item_id: uuid::Uuid) -> AppResult<(Vec<Value>, bool)> {
-    let (rows, cut) = capped(requests::open_for_item(&st.db, item_id).await?, MAX_RELATED);
+async fn open_requests_of(
+    st: &AppState,
+    me: &Actor,
+    item_id: uuid::Uuid,
+) -> AppResult<(Vec<Value>, bool)> {
+    let (rows, cut) = capped(
+        requests::open_for_item(&st.db, me, item_id).await?,
+        MAX_RELATED,
+    );
     Ok((rows.iter().map(request_brief).collect(), cut))
 }
 
@@ -1807,8 +1843,12 @@ pub fn group_based(rows: &[simulations::BasedSimulation]) -> Vec<Value> {
 }
 
 /// Simulations based on an item, for `get_item` / `get_revision`.
-async fn simulations_of(st: &AppState, item_id: uuid::Uuid) -> AppResult<(Vec<Value>, bool)> {
-    let rows = simulations::based_on_item(&st.db, item_id).await?;
+async fn simulations_of(
+    st: &AppState,
+    me: &Actor,
+    item_id: uuid::Uuid,
+) -> AppResult<(Vec<Value>, bool)> {
+    let (rows, _) = simulations::based_on_item(&st.db, me, item_id).await?;
     Ok(capped(group_based(&rows), MAX_RELATED))
 }
 
@@ -1826,10 +1866,10 @@ fn ensure_simulation(rev: &Revision) -> AppResult<()> {
 }
 
 /// Basis links and results of a simulation revision.
-async fn simulation_state(st: &AppState, rev: &Revision) -> AppResult<Value> {
+async fn simulation_state(st: &AppState, me: &Actor, rev: &Revision) -> AppResult<Value> {
     let (bases, results) = tokio::try_join!(
-        simulations::bases(&st.db, rev.id),
-        simulations::results(&st.db, rev.id),
+        simulations::bases(&st.db, me, rev.id),
+        simulations::results(&st.db, me, rev.id),
     )?;
     let reasons: Vec<&String> = bases
         .iter()
@@ -1846,12 +1886,12 @@ async fn simulation_state(st: &AppState, rev: &Revision) -> AppResult<Value> {
     }))
 }
 
-async fn list_simulations(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
+async fn list_simulations(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
     let out_of_date_only = a.flag("out_of_date_only", false)?;
     let limit = a.limit("limit", 20, MAX_SIMULATIONS as i64)? as usize;
     if let Some(number) = a.opt_str("item")? {
-        let item = items::get_by_number(&st.db, &number).await?;
-        let rows = simulations::based_on_item(&st.db, item.id).await?;
+        let item = items::get_by_number(&st.db, me, &number).await?;
+        let (rows, _) = simulations::based_on_item(&st.db, me, item.id).await?;
         let mut list = group_based(&rows);
         if out_of_date_only {
             list.retain(|s| s["out_of_date"] == true);
@@ -1871,7 +1911,7 @@ async fn list_simulations(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
         return Ok(value);
     }
     let project_id = match a.opt_str("project")? {
-        Some(code) => Some(projects::get_by_code(&st.db, &code).await?.id),
+        Some(code) => Some(projects::get_by_code(&st.db, me, &code).await?.id),
         None => None,
     };
     // With the filter every simulation up to the cap is checked.
@@ -1887,12 +1927,13 @@ async fn list_simulations(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
         state: None,
         system: None,
     };
-    let (rows, total) = items::search(&st.db, &filter, Page::new(Some(scan as i64), None)).await?;
+    let (rows, total) =
+        items::search(&st.db, me, &filter, Page::new(Some(scan as i64), None)).await?;
     let mut list = Vec::new();
     for sim in &rows {
         let (bases, results) = tokio::try_join!(
-            simulations::bases(&st.db, sim.latest_revision_id),
-            simulations::results(&st.db, sim.latest_revision_id),
+            simulations::bases(&st.db, me, sim.latest_revision_id),
+            simulations::results(&st.db, me, sim.latest_revision_id),
         )?;
         let reasons: Vec<String> = bases.iter().filter_map(|b| b.out_of_date.clone()).collect();
         if out_of_date_only && reasons.is_empty() {
@@ -1919,10 +1960,10 @@ async fn list_simulations(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn get_simulation(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let rev = revision_arg(st, a).await?;
+async fn get_simulation(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let rev = revision_arg(st, me, a).await?;
     ensure_simulation(&rev)?;
-    let mut value = simulation_state(st, &rev).await?;
+    let mut value = simulation_state(st, me, &rev).await?;
     value["simulation"] = rev_brief(&rev);
     value["url"] = json!(web_url(st, &format!("/items/{}", rev.item_id)));
     Ok(value)
@@ -1953,8 +1994,8 @@ pub fn diff_brief(d: &simulations::ResultDiff) -> Value {
     })
 }
 
-async fn compare_simulation_results(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let (from, to) = revision_pair(st, a).await?;
+async fn compare_simulation_results(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let (from, to) = revision_pair(st, me, a).await?;
     ensure_simulation(&to)?;
     let changes_only = a.flag("changes_only", false)?;
     let diffs = simulations::compare(&st.db, &from, &to).await?;
@@ -1991,11 +2032,11 @@ fn with_context(e: AppError, prefix: &str) -> AppError {
 }
 
 /// Resolves the item references of a call, each revision once.
-async fn change_revisions(st: &AppState, refs: &[String]) -> AppResult<Vec<Revision>> {
+async fn change_revisions(st: &AppState, me: &Actor, refs: &[String]) -> AppResult<Vec<Revision>> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for r in refs {
-        let rev = change_revision(st, r).await?;
+        let rev = change_revision(st, me, r).await?;
         if seen.insert(rev.id) {
             out.push(rev);
         }
@@ -2046,7 +2087,7 @@ async fn create_change_draft(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResu
     let with_dependencies = a.flag("include_dependencies", true)?;
     // Everything that can be checked up front is, so that a mistake does
     // not even create a draft.
-    let revs = change_revisions(st, &refs).await?;
+    let revs = change_revisions(st, me, &refs).await?;
     for rev in &revs {
         revisions::ensure_project_access(rev, me)?;
     }
@@ -2075,15 +2116,15 @@ async fn create_change_draft(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResu
             ));
         }
     };
-    let change = changes::get(&st.db, change.id).await?;
-    let mut value = change_overview(st, &change, false).await?;
+    let change = changes::get(&st.db, me, change.id).await?;
+    let mut value = change_overview(st, me, &change, false).await?;
     value["added_dependencies"] = json!(dependencies);
     value["next_steps"] = json!(NEXT_STEPS);
     Ok(value)
 }
 
 async fn add_to_change(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
-    let change = changes::get_by_number(&st.db, &a.req_str("change")?).await?;
+    let change = changes::get_by_number(&st.db, me, &a.req_str("change")?).await?;
     let refs = a.list("items", MAX_CHANGE_ITEMS)?;
     let with_dependencies = a.flag("include_dependencies", false)?;
     if refs.is_empty() && !with_dependencies {
@@ -2091,10 +2132,10 @@ async fn add_to_change(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Val
             "Give `items` to add, or include_dependencies=true to add the unreleased dependencies.",
         ));
     }
-    let revs = change_revisions(st, &refs).await?;
+    let revs = change_revisions(st, me, &refs).await?;
     let dependencies = fill_change(st, me, &change, &revs, with_dependencies).await?;
-    let change = changes::get(&st.db, change.id).await?;
-    let mut value = change_overview(st, &change, false).await?;
+    let change = changes::get(&st.db, me, change.id).await?;
+    let mut value = change_overview(st, me, &change, false).await?;
     value["added_dependencies"] = json!(dependencies);
     value["next_steps"] = json!(NEXT_STEPS);
     Ok(value)
@@ -2114,11 +2155,15 @@ pub fn request_reason(raw: Option<&str>) -> AppResult<RequestReason> {
 }
 
 /// An affected item of a new request: `PRT-000012` or `PRT-000012/B`.
-async fn affected_item(st: &AppState, reference: &str) -> AppResult<requests::AffectedItem> {
+async fn affected_item(
+    st: &AppState,
+    me: &Actor,
+    reference: &str,
+) -> AppResult<requests::AffectedItem> {
     let (number, code) = parse_item_ref(reference);
     Ok(match code {
         Some(code) => {
-            let rev = revision_at(st, &number, Some(&code)).await?;
+            let rev = revision_at(st, me, &number, Some(&code)).await?;
             requests::AffectedItem {
                 item_id: rev.item_id,
                 revision_id: Some(rev.id),
@@ -2126,7 +2171,7 @@ async fn affected_item(st: &AppState, reference: &str) -> AppResult<requests::Af
             }
         }
         None => requests::AffectedItem {
-            item_id: items::get_by_number(&st.db, &number).await?.id,
+            item_id: items::get_by_number(&st.db, me, &number).await?.id,
             revision_id: None,
             note: String::new(),
         },
@@ -2149,7 +2194,7 @@ async fn create_change_request(st: &AppState, me: &Actor, a: &Args<'_>) -> AppRe
     // Resolve every item before anything is written.
     let mut affected = Vec::with_capacity(refs.len());
     for r in &refs {
-        affected.push(affected_item(st, r).await?);
+        affected.push(affected_item(st, me, r).await?);
     }
     let request = requests::create(
         &st.db,
@@ -2170,7 +2215,7 @@ async fn create_change_request(st: &AppState, me: &Actor, a: &Args<'_>) -> AppRe
 }
 
 async fn comment_change_request(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
-    let request = requests::get_by_number(&st.db, &a.req_str("request")?).await?;
+    let request = requests::get_by_number(&st.db, me, &a.req_str("request")?).await?;
     let body = a.req_str("body")?;
     let comment = requests::comment(&st.db, me, request.id, &body).await?;
     Ok(json!({
@@ -2756,6 +2801,8 @@ mod tests {
                 released_seq: Some(1),
                 created_at: chrono::Utc::now(),
                 out_of_date: out_of_date.map(str::to_string),
+                basis_project_id: None,
+                restricted: false,
             },
         }
     }

@@ -10,7 +10,7 @@ use crate::{
     error::{AppError, AppResult},
     models::Revision,
     services::{
-        audit, impacts,
+        access, audit, impacts,
         notifications::{self, Notice},
         references, simulations, webhooks,
     },
@@ -39,7 +39,7 @@ pub fn label(rev: &Revision) -> String {
     format!("{}/{}", rev.item_number, rev.code)
 }
 
-pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Revision> {
+pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<Revision> {
     sqlx::query_as::<_, Revision>(&format!("{REVISION_SELECT} WHERE r.id = $1"))
         .bind(id)
         .fetch_optional(pool)
@@ -47,7 +47,11 @@ pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Revision> {
         .ok_or_else(|| AppError::not_found("Revision not found."))
 }
 
-pub async fn get_by_code(pool: &PgPool, item_id: Uuid, code: &str) -> AppResult<Revision> {
+pub(crate) async fn get_by_code_unchecked(
+    pool: &PgPool,
+    item_id: Uuid,
+    code: &str,
+) -> AppResult<Revision> {
     sqlx::query_as::<_, Revision>(&format!(
         "{REVISION_SELECT} WHERE r.item_id = $1 AND r.code = $2"
     ))
@@ -69,19 +73,49 @@ pub(crate) async fn lock(conn: &mut PgConnection, id: Uuid) -> AppResult<Revisio
     .ok_or_else(|| AppError::not_found("Revision not found."))
 }
 
-/// Revisions currently checked out by a user.
-pub async fn checked_out_by(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Revision>> {
+/// A revision the actor may read; hidden ones answer like missing ones.
+pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
+    let rev = get_unchecked(pool, id).await?;
+    access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
+    Ok(rev)
+}
+
+/// A revision of an item by its code (`A`, `B`, …), if the actor may read it.
+pub async fn get_by_code(
+    pool: &PgPool,
+    actor: &Actor,
+    item_id: Uuid,
+    code: &str,
+) -> AppResult<Revision> {
+    let rev = get_by_code_unchecked(pool, item_id, code).await?;
+    access::ensure_visible(
+        actor,
+        rev.project_id,
+        AppError::not_found(format!("Revision '{code}' not found.")),
+    )?;
+    Ok(rev)
+}
+
+/// Revisions currently checked out by the actor (only those it may still
+/// read: a user who left a restricted group asks an admin to cancel them).
+pub async fn checked_out_by(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Revision>> {
     Ok(sqlx::query_as::<_, Revision>(&format!(
-        "{REVISION_SELECT} WHERE r.checked_out_by = $1 ORDER BY r.checked_out_at DESC"
+        "{REVISION_SELECT} WHERE r.checked_out_by = $1 AND {}
+         ORDER BY r.checked_out_at DESC",
+        access::item_visible("i", 2)
     ))
-    .bind(user_id)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?)
 }
 
 /// Fails unless `actor` may change data of the revision's project:
-/// CAD editor (or admin) and member of the item's project group.
+/// CAD editor (or admin) and member of the item's project group. A revision
+/// the actor may not even read answers "not found", so the message below
+/// (which names the group) never reaches outsiders of restricted groups.
 pub fn ensure_project_access(rev: &Revision, actor: &Actor) -> AppResult<()> {
+    access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
     actor.require(Role::Editor)?;
     if actor.can_edit_project(rev.project_id) {
         Ok(())
@@ -193,7 +227,7 @@ pub async fn update(
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Takes the exclusive edit lock of an in-work revision.
@@ -221,7 +255,7 @@ pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Releases the edit lock without uploading anything ("cancel check-out").
@@ -284,7 +318,7 @@ pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResul
         notifications::notify(&mut tx, Some(actor), &[owner], &notice).await?;
     }
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Tells the watchers of an item about something that happened to a revision.
@@ -432,7 +466,7 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     )
     .await?;
     tx.commit().await?;
-    get(pool, new_id).await
+    get(pool, actor, new_id).await
 }
 
 /// Marks a released revision as obsolete.
@@ -471,7 +505,7 @@ pub async fn obsolete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Moves a (locked) revision to another lifecycle state after validating

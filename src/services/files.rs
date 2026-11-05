@@ -20,7 +20,7 @@ use crate::{
     domain::{self, BaseConflict, BaseVersion, ServerFile},
     error::{AppError, AppResult},
     models::{FileRecord, FileVersion, Revision},
-    services::{audit, references, revisions},
+    services::{access, audit, references, revisions},
     util,
     vault::{StoredBlob, Vault},
 };
@@ -269,7 +269,7 @@ fn with_format(mut file: FileRecord) -> FileRecord {
     file
 }
 
-pub async fn list(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<FileRecord>> {
+pub(crate) async fn list_unchecked(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<FileRecord>> {
     Ok(sqlx::query_as::<_, FileRecord>(&format!(
         "{FILE_SELECT} WHERE f.revision_id = $1 ORDER BY lower(f.filename), f.uploaded_at"
     ))
@@ -312,7 +312,7 @@ pub async fn list_many_by_revision(
     Ok(out)
 }
 
-pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<FileRecord> {
+pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<FileRecord> {
     sqlx::query_as::<_, FileRecord>(&format!("{FILE_SELECT} WHERE f.id = $1"))
         .bind(id)
         .fetch_optional(pool)
@@ -371,7 +371,10 @@ pub async fn classify_unclassified(pool: &PgPool, vault: &Vault) -> AppResult<u6
 }
 
 /// All versions of a file, newest first.
-pub async fn versions(pool: &PgPool, file_id: Uuid) -> AppResult<Vec<FileVersion>> {
+pub(crate) async fn versions_unchecked(
+    pool: &PgPool,
+    file_id: Uuid,
+) -> AppResult<Vec<FileVersion>> {
     Ok(sqlx::query_as::<_, FileVersion>(&format!(
         "{VERSION_SELECT} WHERE v.file_id = $1 ORDER BY v.version DESC"
     ))
@@ -391,7 +394,64 @@ pub async fn versions_of_revision(pool: &PgPool, revision_id: Uuid) -> AppResult
     .await?)
 }
 
-pub async fn get_version(pool: &PgPool, version_id: Uuid) -> AppResult<(FileVersion, String)> {
+/// Project group of a revision's item (`None` = no group or no revision).
+async fn project_of_revision(pool: &PgPool, revision_id: Uuid) -> AppResult<Option<Uuid>> {
+    Ok(sqlx::query_scalar::<_, Option<Uuid>>(
+        "SELECT i.project_id FROM revisions r JOIN items i ON i.id = r.item_id WHERE r.id = $1",
+    )
+    .bind(revision_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten())
+}
+
+/// The files of a revision the actor may read.
+pub async fn list(pool: &PgPool, actor: &Actor, revision_id: Uuid) -> AppResult<Vec<FileRecord>> {
+    access::ensure_visible(
+        actor,
+        project_of_revision(pool, revision_id).await?,
+        access::not_found_revision(),
+    )?;
+    list_unchecked(pool, revision_id).await
+}
+
+/// A file the actor may read; hidden files answer like missing ones.
+pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<FileRecord> {
+    let file = get_unchecked(pool, id).await?;
+    access::ensure_visible(
+        actor,
+        project_of_revision(pool, file.revision_id).await?,
+        access::not_found_file(),
+    )?;
+    Ok(file)
+}
+
+/// All versions of a file the actor may read, newest first.
+pub async fn versions(pool: &PgPool, actor: &Actor, file_id: Uuid) -> AppResult<Vec<FileVersion>> {
+    get(pool, actor, file_id).await?;
+    versions_unchecked(pool, file_id).await
+}
+
+/// A file version (with the file name) the actor may read.
+pub async fn get_version(
+    pool: &PgPool,
+    actor: &Actor,
+    version_id: Uuid,
+) -> AppResult<(FileVersion, String)> {
+    let (version, filename) = get_version_unchecked(pool, version_id).await?;
+    let file = get_unchecked(pool, version.file_id).await?;
+    access::ensure_visible(
+        actor,
+        project_of_revision(pool, file.revision_id).await?,
+        AppError::not_found("File version not found."),
+    )?;
+    Ok((version, filename))
+}
+
+pub(crate) async fn get_version_unchecked(
+    pool: &PgPool,
+    version_id: Uuid,
+) -> AppResult<(FileVersion, String)> {
     #[derive(sqlx::FromRow)]
     struct Row {
         #[sqlx(flatten)]
@@ -417,7 +477,7 @@ pub async fn ensure_can_attach(
     actor: &Actor,
     revision_id: Uuid,
 ) -> AppResult<Revision> {
-    let rev = revisions::get(pool, revision_id).await?;
+    let rev = revisions::get(pool, actor, revision_id).await?;
     revisions::ensure_editable(&rev, actor)?;
     Ok(rev)
 }
@@ -749,7 +809,7 @@ pub async fn set_folder(
     folder: &str,
 ) -> AppResult<FileRecord> {
     let folder = domain::normalize_folder(folder)?;
-    let file = get(pool, file_id).await?;
+    let file = get(pool, actor, file_id).await?;
     let mut tx = pool.begin().await?;
     let rev = revisions::lock(&mut tx, file.revision_id).await?;
     revisions::ensure_editable(&rev, actor)?;
@@ -775,7 +835,7 @@ pub async fn set_folder(
             .await?;
     }
     tx.commit().await?;
-    get(pool, file_id).await
+    get(pool, actor, file_id).await
 }
 
 /// Adds files / new versions to a revision that is checked out by the actor.
@@ -867,7 +927,7 @@ pub async fn check_in(
         .await?;
     }
     tx.commit().await?;
-    let rev = revisions::get(pool, revision_id).await?;
+    let rev = revisions::get(pool, actor, revision_id).await?;
     Ok((rev, stored))
 }
 
@@ -878,7 +938,7 @@ pub async fn restore_version(
     file_id: Uuid,
     version: i32,
 ) -> AppResult<FileRecord> {
-    let file = get(pool, file_id).await?;
+    let file = get(pool, actor, file_id).await?;
     let mut tx = pool.begin().await?;
     let rev = revisions::lock(&mut tx, file.revision_id).await?;
     revisions::ensure_editable(&rev, actor)?;
@@ -953,13 +1013,13 @@ pub async fn restore_version(
     )
     .await?;
     tx.commit().await?;
-    get(pool, file_id).await
+    get(pool, actor, file_id).await
 }
 
 /// Removes a file (with all its versions) from an in-work revision. The
 /// blobs stay in the vault because other revisions may still reference them.
 pub async fn delete(pool: &PgPool, actor: &Actor, file_id: Uuid) -> AppResult<FileRecord> {
-    let file = get(pool, file_id).await?;
+    let file = get(pool, actor, file_id).await?;
     let mut tx = pool.begin().await?;
     let rev = revisions::lock(&mut tx, file.revision_id).await?;
     revisions::ensure_editable(&rev, actor)?;

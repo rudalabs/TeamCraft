@@ -106,9 +106,9 @@ pub async fn file_status(
     revision_id: Uuid,
     client: &[ClientFile],
 ) -> AppResult<RevisionStatus> {
-    let rev = revisions::get(pool, revision_id).await?;
+    let rev = revisions::get(pool, actor, revision_id).await?;
     let (list, versions) = tokio::try_join!(
-        files::list(pool, revision_id),
+        files::list(pool, actor, revision_id),
         files::versions_of_revision(pool, revision_id)
     )?;
     let mut history: HashMap<Uuid, Vec<(i32, String)>> = HashMap::new();
@@ -255,7 +255,7 @@ pub async fn check_in_all(
     only: Option<&[Uuid]>,
 ) -> AppResult<Vec<CheckInOutcome>> {
     actor.require(domain::Role::Editor)?;
-    let mine = revisions::checked_out_by(pool, actor.id).await?;
+    let mine = revisions::checked_out_by(pool, actor).await?;
     let mut outcomes = Vec::new();
     if let Some(ids) = only {
         // Requested revisions that are not (or no longer) checked out by the actor.
@@ -263,7 +263,7 @@ pub async fn check_in_all(
             if mine.iter().any(|r| r.id == *id) {
                 continue;
             }
-            if let Ok(rev) = revisions::get(pool, *id).await {
+            if let Ok(rev) = revisions::get(pool, actor, *id).await {
                 outcomes.push(CheckInOutcome::of(
                     &rev,
                     Err(AppError::Conflict(format!(

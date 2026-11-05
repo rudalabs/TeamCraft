@@ -53,6 +53,29 @@ pub struct Dependency {
     pub blocking: bool,
     /// Its latest revision can be added to this change order.
     pub addable: bool,
+    /// Placeholder for a dependency the reader may not see: it still
+    /// blocks, but its identity is removed.
+    pub restricted: bool,
+    /// Project groups of the dependency and of the depending revision (for
+    /// the read check; never sent).
+    #[serde(skip)]
+    pub project_id: Option<Uuid>,
+    #[serde(skip)]
+    pub revision_project_id: Option<Uuid>,
+}
+
+impl Dependency {
+    fn mask(&mut self) {
+        self.item_id = Uuid::nil();
+        self.item_number = crate::services::access::RESTRICTED_LABEL.into();
+        self.item_name = String::new();
+        self.latest_revision_id = Uuid::nil();
+        self.latest_code = String::new();
+        self.latest_state = String::new();
+        self.other_change = None;
+        self.addable = false;
+        self.restricted = true;
+    }
 }
 
 /// Result of the readiness check.
@@ -65,6 +88,24 @@ pub struct Readiness {
 impl Readiness {
     pub fn is_ready(&self) -> bool {
         self.blockers.is_empty()
+    }
+
+    /// Removes what the actor may not see: blockers on hidden items become
+    /// placeholders that still block; warnings on hidden items (heuristic
+    /// file-name matches, obsolete items) are dropped.
+    pub fn redact(mut self, actor: &crate::auth::Actor) -> Self {
+        self.warnings
+            .retain(|d| actor.can_see_project(d.project_id));
+        for d in &mut self.blockers {
+            if !actor.can_see_project(d.revision_project_id) {
+                d.revision_id = Uuid::nil();
+                d.revision_label = crate::services::access::RESTRICTED_LABEL.into();
+            }
+            if !actor.can_see_project(d.project_id) {
+                d.mask();
+            }
+        }
+        self
     }
 
     /// Latest revisions of the blocking dependencies that can be added to
@@ -88,6 +129,13 @@ impl Readiness {
             .iter()
             .take(5)
             .map(|d| {
+                if d.restricted {
+                    return format!(
+                        "a restricted dependency ({} of {}) – ask a member of its group or an admin",
+                        relation_label(&d.relation),
+                        d.revision_label
+                    );
+                }
                 let place = match &d.other_change {
                     Some(c) => format!("in {c}"),
                     None => d.latest_state.replace('_', " "),
@@ -152,6 +200,8 @@ struct Row {
     latest_state: String,
     has_released: bool,
     other_change: Option<String>,
+    project_id: Option<Uuid>,
+    revision_project_id: Option<Uuid>,
 }
 
 /// Checks the dependencies of all revisions of a change order. One query,
@@ -188,6 +238,7 @@ pub async fn check(conn: &mut PgConnection, change_id: Uuid) -> AppResult<Readin
          )
          SELECT d.revision_id, pi.number AS revision_number, pr.code AS revision_code, d.relation,
                 i.id AS item_id, i.number AS item_number, lr.name AS item_name,
+                i.project_id, pi.project_id AS revision_project_id,
                 lr.id AS latest_revision_id, lr.code AS latest_code, lr.state AS latest_state,
                 EXISTS (SELECT 1 FROM revisions x WHERE x.item_id = i.id AND x.state = 'released')
                     AS has_released,
@@ -236,6 +287,9 @@ pub async fn check(conn: &mut PgConnection, change_id: Uuid) -> AppResult<Readin
             problem,
             blocking,
             addable,
+            restricted: false,
+            project_id: row.project_id,
+            revision_project_id: row.revision_project_id,
         };
         if blocking {
             result.blockers.push(dep);
@@ -303,6 +357,9 @@ mod tests {
             problem: Problem::Unreleased,
             blocking: true,
             addable,
+            restricted: false,
+            project_id: None,
+            revision_project_id: None,
         }
     }
 
