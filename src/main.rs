@@ -301,10 +301,24 @@ fn preview_mesh(format: &str, input: &std::path::Path, output: &std::path::Path)
     };
     // the kernel's panic messages are not meant for users
     std::panic::set_hook(Box::new(|_| {}));
-    match teamcraft::preview::convert_file(format, input)
-        .and_then(|bytes| std::fs::write(output, bytes).map_err(Into::into))
-    {
-        Ok(()) => ExitCode::SUCCESS,
+    match teamcraft::preview::convert(format, input).and_then(|mesh| {
+        std::fs::write(output, mesh.encode())?;
+        Ok(mesh)
+    }) {
+        Ok(mesh) => {
+            // for people running it by hand (the server ignores stdout)
+            let partial = mesh
+                .faces
+                .map(|(shown, total)| format!(", partial preview: {shown} of {total} faces"))
+                .unwrap_or_default();
+            println!(
+                "{} triangles, {} vertices, {} bodies{partial}",
+                mesh.triangle_count(),
+                mesh.vertex_count(),
+                mesh.parts.max(1)
+            );
+            ExitCode::SUCCESS
+        }
         Err(e) => {
             eprintln!("Error: {e}");
             ExitCode::FAILURE
