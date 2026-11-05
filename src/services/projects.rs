@@ -22,6 +22,10 @@ use crate::{
     services::{access, audit, users},
 };
 
+// There is no project delete. `items.project_id` is `ON DELETE SET NULL`, so
+// deleting a group would declassify all its items (items without a group are
+// readable by everyone): any future delete must refuse restricted groups that
+// still have items.
 const COLUMNS: &str = "id, code, name, description, active, created_at, oidc_group, created_by,
     number_scheme, visibility,
     (SELECT COUNT(*) FROM project_members pm WHERE pm.project_id = projects.id) AS member_count";
