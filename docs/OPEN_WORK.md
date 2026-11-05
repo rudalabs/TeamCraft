@@ -23,6 +23,91 @@ Rules for every change, features included:
 - Refactorings keep behaviour: no feature work and no behaviour change in the same PR as a move or split.
 - AI agents pick their next task from sections 1 and 2 unless the maintainer asks for something else.
 
+## Road to v1.0.0 (general availability)
+
+**What 1.0 promises.** Teams can run TeamCraft in production and upgrade it without fear: data is never lost or
+silently changed, upgrades between 1.x versions are automatic, the REST API, MCP tools, configuration and CLI are
+stable (breaking changes only in 2.0), and security issues get fixed releases. 1.0 is a quality milestone, not a
+feature milestone – the features in *What works* are enough; what is missing is proof, stability and operations.
+
+**Milestones** – each is a pre-release with release notes; nothing moves to the next one with an open blocker.
+
+| Version | Theme | Exit criteria |
+|---|---|---|
+| **0.2** | Proofing | Sections 1 and 2 of the to-do list mostly done: migration, backup, import and atomicity tests, fuzzing of every parser, `cargo deny`, coverage report, branch protection; the large modules split |
+| **0.3** | Real data | The CAD-program checks of section 3 with real files (Inventor, Solid Edge, SOLIDWORKS, NX, STEP exports); scale check (#47) with targets met; e-mail/Mattermost against real servers |
+| **0.5** | Beta – frozen interfaces | API, MCP tools, config variables and CLI reviewed and frozen (deprecations marked); upgrade path tested from 0.2 on; first outside test teams |
+| **0.9** | Release candidate | No known data-loss or security bug; docs complete; installers signed; one RC per fix round, two weeks without a blocker |
+| **1.0.0** | General availability | Work-in-progress notices removed (README, docs, web footer, desktop *About*); support policy published |
+
+**GA criteria** (all must be ticked before 1.0.0)
+
+*Data safety and upgrades*
+
+- [ ] Schema upgrades from every 0.x release since 0.2 and between all 1.x versions are automatic and tested in CI
+  with seeded databases (see *Migrations* in section 1); no edited migrations after 0.5 (`db::EDITED_BEFORE_RELEASE`
+  empty and frozen)
+- [ ] Backup/restore tested for every release in CI, including restore of an older version's backup; documented
+  restore drill; `teamcraft vault check` finds and reports every inconsistency between database and vault
+- [ ] All multi-row mutations proven all-or-nothing and safe under concurrency (section 1, *Atomic processes*)
+- [ ] Upgrade guide in the docs (`docs/src/admin/upgrade.md`): before/after steps, rollback by restore, breaking
+  changes per version
+
+*Stable interfaces*
+
+- [ ] REST API `/api/v1` reviewed: consistent names, error shape, pagination and filters on every list; an OpenAPI
+  description generated from the routes and checked in CI against the router; deprecation policy (an endpoint lives
+  at least one minor version with a `Deprecation` header)
+- [ ] MCP tools and prompts: names and argument schemas frozen and versioned, contract tests per tool
+- [ ] Configuration: every variable documented and validated at start (unknown `TEAMCRAFT_*` variables warned),
+  defaults reviewed; CLI commands and exit codes documented and frozen
+- [ ] Desktop app ↔ server compatibility: version handshake, the desktop tells the user when the server is too old
+  or too new; a supported-versions table
+
+*Security*
+
+- [ ] Threat model in `docs/src/dev/` (vault, sessions, PATs, OIDC, uploads, file parsers, webhooks, MCP/assistant);
+  every finding resolved or documented
+- [ ] External review or pentest of authentication, read permissions and file parsing; fuzzing of all parsers
+  running continuously (section 1)
+- [ ] `cargo deny`/`cargo audit` green in CI, SBOM (CycloneDX) attached to each release, release artifacts with
+  build provenance (GitHub attestations); private vulnerability reporting enabled (`SECURITY.md`)
+- [ ] Session, token and password policies reviewed (expiry, rotation, rate limiting of sign-in and API)
+
+*Operations*
+
+- [ ] Metrics endpoint (Prometheus) for requests, latency, outbox backlogs (notifications, webhooks), preview
+  queue, database pool; structured JSON logs; documented alerts
+- [ ] Performance targets met and checked by the scale harness (#47): e.g. 1 M files, 100 k items, BOMs of 10 k
+  lines, 50 concurrent users – page and API p95 times written down and guarded in a scheduled CI job
+- [ ] Production install paths tested end to end per release: Docker Compose (`deploy/`), Linux packages (systemd
+  unit), behind a reverse proxy with TLS; documented sizing and PostgreSQL versions (16–18)
+- [ ] Data retention and cleanup: old previews, staged uploads, expired sessions, audit log retention setting
+
+*Clients and packaging*
+
+- [ ] Windows installers and the macOS app code-signed (macOS notarised); Flatpak on Flathub with offline cargo
+  sources; AUR packages published; the desktop app's update notice (no silent auto-update)
+- [ ] Desktop app run and tested on Windows x64/ARM64, macOS and Linux for each RC (a short manual test script in
+  `docs/src/dev/release-checklist.md`)
+- [ ] Accessibility: keyboard use and screen-reader labels on the main web flows checked (WCAG 2.2 AA for contrast
+  is already tested)
+
+*Documentation and project*
+
+- [ ] `CHANGELOG.md` (Keep a Changelog) from 0.2 on, written per PR; release notes from it
+- [ ] User guide, admin guide and API/MCP reference complete and checked against the 1.0 behaviour; screenshots
+  current
+- [ ] Support and versioning policy: SemVer from 1.0, which versions get security fixes (e.g. the latest minor and
+  the previous one for 6 months), how to report bugs
+- [ ] Release checklist (`docs/src/dev/release-checklist.md`): green main, RC soak time, version bump in both
+  `Cargo.toml` files, tag, verify assets and checksums, image tags, announcement
+- [ ] Governance basics: maintainers, review rule (one approving review, green checks), code of conduct
+
+**Not required for 1.0** – CAD add-ins, more 3D readers, the Jira connector, OpenAI-compatible assistant
+providers, the shared UI folder beyond what is already merged, i18n of the UI (English only in 1.0; the
+structure should not prevent translations later). They may land in 1.x minor releases.
+
 ## To-do
 
 ### 1. Proofing
