@@ -32,10 +32,10 @@ use uuid::Uuid;
 use crate::{
     auth::Actor,
     bomtable,
-    domain::{self, BasisRole, ItemType, ResultStatus},
+    domain::{self, BasisRole, ItemType, ResultStatus, WebhookEvent},
     error::{AppError, AppResult},
     models::Revision,
-    services::{audit, bom_compare::Change, items, revisions},
+    services::{audit, bom_compare::Change, items, revisions, webhooks},
 };
 
 /// At most this many result values per simulation revision.
@@ -669,6 +669,23 @@ pub async fn add_result(
         json!({ "item_id": rev.item_id, "result_id": id }),
     )
     .await?;
+    let status = domain::result_status(input.value, input.lower_limit, input.upper_limit);
+    webhooks::emit(
+        &mut tx,
+        Some(actor),
+        WebhookEvent::SimulationResultAdded,
+        &[rev.project_id],
+        json!({
+            "revision": webhooks::revision_object(&rev, &rev.state),
+            "result": {
+                "id": id, "name": input.name, "value": input.value, "unit": input.unit,
+                "lower_limit": input.lower_limit, "upper_limit": input.upper_limit,
+                "load_case": input.load_case, "solver": input.solver,
+                "solver_version": input.solver_version, "status": status,
+            },
+        }),
+    )
+    .await?;
     tx.commit().await?;
     get_result(pool, id).await
 }
@@ -900,6 +917,20 @@ pub async fn import_results(
                 "removed": summary.removed, "replace": replace }),
     )
     .await?;
+    if summary.added + summary.updated > 0 {
+        webhooks::emit(
+            &mut tx,
+            Some(actor),
+            WebhookEvent::SimulationResultAdded,
+            &[rev.project_id],
+            json!({
+                "revision": webhooks::revision_object(&rev, &rev.state),
+                "import": { "added": summary.added, "updated": summary.updated,
+                            "removed": summary.removed, "replace": replace },
+            }),
+        )
+        .await?;
+    }
     tx.commit().await?;
     Ok(summary)
 }

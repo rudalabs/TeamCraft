@@ -226,7 +226,10 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
         "notification delivery"
     );
     teamcraft::delivery::spawn(pool.clone(), delivery);
+    let webhook_retention_days = config.webhooks.retention_days;
     let state = AppState::new(config, pool.clone()).await?;
+    // Outgoing event webhooks (the outbox `webhook_deliveries`).
+    teamcraft::webhooks::spawn(pool.clone(), state.webhooks.clone());
 
     // Files from before the format registry (or reset to NULL) get their CAD
     // format, then the CAD files among them are scanned for references.
@@ -270,6 +273,11 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "upload cleanup failed"),
             }
+            match teamcraft::webhooks::purge_finished(&pool, webhook_retention_days).await {
+                Ok(n) if n > 0 => tracing::info!(removed = n, "removed old webhook deliveries"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "webhook delivery cleanup failed"),
+            }
         }
     });
 
@@ -293,10 +301,24 @@ fn preview_mesh(format: &str, input: &std::path::Path, output: &std::path::Path)
     };
     // the kernel's panic messages are not meant for users
     std::panic::set_hook(Box::new(|_| {}));
-    match teamcraft::preview::convert_file(format, input)
-        .and_then(|bytes| std::fs::write(output, bytes).map_err(Into::into))
-    {
-        Ok(()) => ExitCode::SUCCESS,
+    match teamcraft::preview::convert(format, input).and_then(|mesh| {
+        std::fs::write(output, mesh.encode())?;
+        Ok(mesh)
+    }) {
+        Ok(mesh) => {
+            // for people running it by hand (the server ignores stdout)
+            let partial = mesh
+                .faces
+                .map(|(shown, total)| format!(", partial preview: {shown} of {total} faces"))
+                .unwrap_or_default();
+            println!(
+                "{} triangles, {} vertices, {} bodies{partial}",
+                mesh.triangle_count(),
+                mesh.vertex_count(),
+                mesh.parts.max(1)
+            );
+            ExitCode::SUCCESS
+        }
         Err(e) => {
             eprintln!("Error: {e}");
             ExitCode::FAILURE

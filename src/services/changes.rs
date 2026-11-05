@@ -22,14 +22,14 @@ use crate::{
     auth::Actor,
     domain::{
         self, ChangeStatus, Decision, LifecycleState, NotificationKind, Priority, ReviewOutcome,
-        Role,
+        Role, WebhookEvent,
     },
     error::{AppError, AppResult},
     models::{Change, ChangeItem, ChangeReview},
     services::{
         audit, impacts, next_counter,
         notifications::{self, Notice},
-        readiness, requests, revisions, users, Page,
+        readiness, requests, revisions, users, webhooks, Page,
     },
 };
 
@@ -738,6 +738,18 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
         format!("{} – {}", change.title, labels.join(", ")),
     )
     .await?;
+    if webhooks::wanted(&mut tx, &[WebhookEvent::ChangeSubmitted]).await? {
+        let (revs, projects) = webhooks::change_revisions(&mut tx, change_id).await?;
+        webhooks::emit(
+            &mut tx,
+            Some(actor),
+            WebhookEvent::ChangeSubmitted,
+            &projects,
+            json!({ "change": webhooks::change_object(&change, ChangeStatus::InReview.as_str()),
+                    "revisions": revs }),
+        )
+        .await?;
+    }
     tx.commit().await?;
     get(pool, change_id).await
 }
@@ -823,7 +835,8 @@ pub async fn review(
             .filter_map(|d| Decision::parse(d))
             .collect();
     let people = notifications::change_people(&mut tx, change_id).await?;
-    match domain::review_outcome(&decisions) {
+    let outcome = domain::review_outcome(&decisions);
+    match outcome {
         ReviewOutcome::Pending => {
             touch(&mut tx, change_id).await?;
             tell(
@@ -931,8 +944,73 @@ pub async fn review(
             requests::on_change_released(&mut tx, actor, &change).await?;
         }
     }
+    emit_review_events(&mut tx, actor, &change, decision, &comment, outcome).await?;
     tx.commit().await?;
     get(pool, change_id).await
+}
+
+/// Webhook events of a review decision: `change.approved` or
+/// `change.rejected`, and on the last approval `revision.released` for each
+/// revision and `change.released`.
+async fn emit_review_events(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    change: &Change,
+    decision: Decision,
+    comment: &str,
+    outcome: ReviewOutcome,
+) -> AppResult<()> {
+    let status = match outcome {
+        ReviewOutcome::Pending => ChangeStatus::InReview,
+        ReviewOutcome::Rejected => ChangeStatus::Rejected,
+        ReviewOutcome::Approved => ChangeStatus::Released,
+    }
+    .as_str();
+    let event = if decision == Decision::Approved {
+        WebhookEvent::ChangeApproved
+    } else {
+        WebhookEvent::ChangeRejected
+    };
+    let mut events = vec![event];
+    if outcome == ReviewOutcome::Approved {
+        events.extend([WebhookEvent::RevisionReleased, WebhookEvent::ChangeReleased]);
+    }
+    if !webhooks::wanted(conn, &events).await? {
+        return Ok(());
+    }
+    let change_json = webhooks::change_object(change, status);
+    let (revs, projects) = webhooks::change_revisions(conn, change.id).await?;
+    let review = json!({
+        "reviewer": actor.username,
+        "decision": decision.as_str(),
+        "comment": comment,
+        "change_status": status,
+    });
+    webhooks::emit(
+        conn,
+        Some(actor),
+        event,
+        &projects,
+        json!({ "change": change_json, "review": review, "revisions": revs }),
+    )
+    .await?;
+    if outcome == ReviewOutcome::Approved {
+        let each = revs
+            .iter()
+            .zip(&projects)
+            .map(|(rev, project)| (*project, json!({ "revision": rev, "change": change_json })))
+            .collect();
+        webhooks::emit_each(conn, Some(actor), WebhookEvent::RevisionReleased, each).await?;
+        webhooks::emit(
+            conn,
+            Some(actor),
+            WebhookEvent::ChangeReleased,
+            &projects,
+            json!({ "change": change_json, "revisions": revs }),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// Pulls a change back from review into draft.

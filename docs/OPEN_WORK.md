@@ -47,8 +47,11 @@ the known gaps with details. Last update: 2026-11-04.
   (2026-11-04)
 - [x] STEP assembly import → items + BOM (feature 3c)
 - [ ] Try the STEP assembly import with real exports of Inventor, SolidWorks, Solid Edge, Fusion, CATIA and NX
-- [ ] 3D preview: test real STEP exports of the CAD programs and assembly placements (`mapped_item`); readers for IGES,
-  BREP, Parasolid, JT, … (E57: `e57` crate)
+- [x] 3D preview of real-world STEP files: own Part 21 pre-reader (`src/mesh/p21.rs`) so AP242 PMI no longer makes the
+  kernel's parser reject the file (the NIST CTC-01 AP242 file), face-by-face fallback when the kernel panics, AP242
+  tessellated geometry without B-rep, "partial preview: N of M faces" in the viewer
+- [ ] 3D preview: test real STEP exports of the CAD programs and assembly placements (`mapped_item`), length units;
+  readers for IGES, BREP, Parasolid, JT, … (E57: `e57` crate)
 - [x] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview, per project group (feature 4)
 - [ ] Custom attributes per item and file type, classification (standard/purchased parts), attribute search (feature 5)
 - [x] Item copy ("Save as" with files and BOM) – done; multi-level where-used in the API and MCP (`levels`); open:
