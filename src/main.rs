@@ -287,6 +287,7 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     );
     teamcraft::delivery::spawn(pool.clone(), delivery);
     let webhook_retention_days = config.webhooks.retention_days;
+    let thread_retention_days = config.assistant.as_ref().map(|a| a.retention_days);
     let state = AppState::new(config, pool.clone()).await?;
     // Outgoing event webhooks (the outbox `webhook_deliveries`).
     teamcraft::webhooks::spawn(pool.clone(), state.webhooks.clone());
@@ -337,6 +338,17 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed old webhook deliveries"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "webhook delivery cleanup failed"),
+            }
+            // idle assistant conversations (also while the assistant is off:
+            // a thread must not outlive its retention because of a setting)
+            let days = thread_retention_days
+                .unwrap_or(teamcraft::config::DEFAULT_ASSISTANT_RETENTION_DAYS);
+            match services::assistant_threads::purge_expired(&pool, days).await {
+                Ok(n) if n > 0 => {
+                    tracing::info!(removed = n, "removed idle assistant conversations")
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "assistant conversation cleanup failed"),
             }
         }
     });

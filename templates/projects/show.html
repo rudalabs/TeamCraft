@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ project.code }} {{ project.name }}{% endblock %}
 {% block nav_projects %}active{% endblock %}
+{% block tc_context %}data-tc-kind="project" data-tc-project="{{ project.code }}"{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">

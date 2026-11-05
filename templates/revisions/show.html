@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ rev.item_number }}/{{ rev.code }} {{ rev.name }}{% endblock %}
 {% block nav_items %}active{% endblock %}
+{% block tc_context %}data-tc-kind="revision" data-tc-item="{{ rev.item_number }}" data-tc-revision="{{ rev.code }}"{% if item.project_code %} data-tc-project="{{ item.project_code }}"{% endif %} data-tc-view="overview"{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 {% set back = "/revisions/" ~ rev.id %}
@@ -24,9 +25,6 @@
     </div>
   </div>
   <div class="actions">
-    {% if assistant_enabled %}
-    <button class="ghost" type="button" data-toggle="assistant-panel" title="Release notes, release check or any question about this revision">Ask TeamCraft…</button>
-    {% endif %}
     {#- One primary action, chosen by the state of the revision. -#}
     {% if can.checkin %}
     <button class="primary" type="button" data-toggle="checkin-form" aria-controls="checkin-form" aria-expanded="false" title="Upload new file versions and release the lock">Check in…</button>
@@ -88,9 +86,6 @@
   <div><dt>Modified</dt><dd title="Created {{ rev.created_at|dt }} by {{ rev.created_by_name }}">{{ m.time(rev.updated_at) }}</dd></div>
   <div><dt>Released</dt><dd>{{ m.time(rev.released_at) }}</dd></div>
 </dl>
-{% if assistant_enabled %}
-{{ m.assistant_panel([["release_notes", "Draft release notes"], ["release_check", "Check before release"], ["impact", "What breaks if I change this?"], ["simulation_status", "Are the simulations still valid?"]], rev.item_number, rev.code, "", back) }}
-{% endif %}
 
 {% if not is_latest %}
 <div class="notice">You are looking at an older revision. <a href="/revisions/{{ latest_id }}">Go to the latest revision.</a></div>

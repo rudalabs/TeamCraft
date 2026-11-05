@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Changes{% endblock %}
 {% block nav_changes %}active{% endblock %}
+{% block tc_context %}data-tc-kind="changes"{% if status %} data-tc-filter-status="{{ status }}"{% endif %}{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">

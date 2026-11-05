@@ -132,6 +132,7 @@ buttons are hidden and `/assistant` and `POST /api/v1/assistant` answer
 | `TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT` | `180`                                      | seconds for one HTTP call, 5–3600 (a model on a CPU may need more)                                                                                       |
 | `TEAMCRAFT_ASSISTANT_RUN_TIMEOUT`     | `240` (at least the request timeout)       | seconds for a whole question, at least the request timeout                                                                                               |
 | `TEAMCRAFT_ASSISTANT_MAX_CONCURRENT`  | `4`                                        | questions running at the same time on the server, 1–64                                                                                                   |
+| `TEAMCRAFT_ASSISTANT_RETENTION_DAYS`  | `30`                                       | days an idle assistant conversation (one per user, text of questions and answers only) is kept before it is deleted, 1–365                                |
 
 With only `TEAMCRAFT_ANTHROPIC_API_KEY` (and optionally the model and the
 steps) everything works as it did before these variables existed. The
@@ -165,7 +166,8 @@ calls (the step and time limits still apply, and the audit record says
 
 Fixed limits per question: 800 000 tokens in total. Each question is
 recorded in the audit log (`assistant.run`: user, quick action, question
-length, provider, model, tools used, token counts, `usage_reported` and
+length, provider, model, tools used, token counts, `usage_reported`, the page
+kind and identifiers, whether it was asked in the conversation and
 the outcome – `cancelled` when the client closed the connection before the
 answer – never the question or the answer).
 

@@ -574,6 +574,21 @@ check_png() {
     log "  $file ($(($(wc -c <"$file") / 1024)) KiB)"
 }
 
+# sidebar_shot NAME PATH – opens PATH, unfolds the "Ask TeamCraft" sidebar
+# (no question is asked: the server has no model behind the placeholder key)
+# and saves the screenshot. The sidebar is folded again afterwards, because
+# the browser remembers whether it was open.
+sidebar_shot() {
+    local name=$1 path=$2
+    open_page "$path"
+    wait_js 'document.getElementById("assistant-toggle") !== null' 30 "the assistant icon"
+    js 'document.getElementById("assistant-toggle").click(); return true;' >/dev/null
+    wait_js '!document.getElementById("assistant-drawer").hidden && document.querySelector("#assistant-drawer .tc-a-chip") !== null' 30 \
+        "the assistant sidebar with its context chip"
+    snap "$name"
+    js 'document.getElementById("assistant-toggle").click(); return true;' >/dev/null
+}
+
 # capture_pages SUFFIX – the main pages at 1440x900 and the phone dashboard,
 # saved as NAME$SUFFIX.png in the scheme set before.
 capture_pages() {
@@ -582,6 +597,7 @@ capture_pages() {
     shot "dashboard$suffix" /
     shot "vault-explorer$suffix" "/vault?folder=$PROJECT_ID&rev=$ENCLOSURE_REV"
     shot "revision$suffix" "/revisions/$BRACKET_REV"
+    sidebar_shot "assistant-sidebar$suffix" "/revisions/$BRACKET_REV"
     shot "revision-files$suffix" "/revisions/$BRACKET_REV" '#files'
 
     log "waiting for the 3D preview of the STEP file"

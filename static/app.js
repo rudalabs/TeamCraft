@@ -591,4 +591,103 @@
       }
     });
   });
+
+  // Assistant sidebar ("Ask TeamCraft"): the shared module
+  // (shared/js/assistant.js) is loaded when the drawer is first opened. The
+  // page declares where the user is with data-tc-* attributes on <main>; the
+  // server resolves those identifiers with the user's rights, the markup is
+  // only a hint.
+  (function () {
+    var host = document.getElementById("assistant-drawer");
+    var toggle = document.getElementById("assistant-toggle");
+    var modulePath = host && host.getAttribute("data-module");
+    if (!host || !toggle || !modulePath) return;
+    var drawer = null, pending = null;
+
+    var FIELDS = { kind: "tcKind", item: "tcItem", revision: "tcRevision", change: "tcChange", request: "tcRequest",
+      project: "tcProject", view: "tcView", rule: "tcRule", query: "tcQuery", selected: "tcSelected" };
+
+    function pageContext() {
+      var main = document.getElementById("main");
+      var ctx = {};
+      if (!main) return ctx;
+      Object.keys(FIELDS).forEach(function (key) {
+        var value = main.dataset[FIELDS[key]];
+        if (value) ctx[key] = value;
+      });
+      var filters = {}, any = false;
+      Object.keys(main.dataset).forEach(function (name) {
+        var m = /^tcFilter(.+)$/.exec(name);
+        if (m && main.dataset[name]) { filters[m[1].toLowerCase()] = main.dataset[name]; any = true; }
+      });
+      if (any) ctx.filters = filters;
+      var shown = [];
+      main.querySelectorAll("[data-tc-row]").forEach(function (row) {
+        var id = row.getAttribute("data-tc-row");
+        if (id && shown.length < 25 && shown.indexOf(id) === -1) shown.push(id);
+      });
+      if (shown.length) ctx.shown = shown;
+      return ctx;
+    }
+
+    function request(method, path, body, signal) {
+      return fetch(path, {
+        method: method,
+        credentials: "same-origin",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: signal
+      }).then(function (response) {
+        return response.json().then(function (json) { return { ok: response.ok, json: json }; }, function () {
+          return { ok: false, json: { error: "The server did not answer as expected – reload the page (your session may have ended)." } };
+        });
+      }).then(function (r) {
+        if (!r.ok) {
+          var e = r.json && r.json.error;
+          throw new Error((e && (e.message || (typeof e === "string" ? e : ""))) || "The assistant could not answer.");
+        }
+        return r.json;
+      });
+    }
+
+    function ensure() {
+      if (drawer) return Promise.resolve(drawer);
+      if (!pending) {
+        pending = import(modulePath).then(function (mod) {
+          drawer = mod.mount(host, {
+            opener: toggle,
+            canEdit: host.getAttribute("data-can-edit") === "1",
+            privacy: host.getAttribute("data-privacy") || "the model provider",
+            getContext: pageContext,
+            link: function (number) {
+              var a = document.createElement("a");
+              a.href = "/i/" + encodeURIComponent(number);
+              a.textContent = number;
+              return a;
+            },
+            api: {
+              thread: function () { return request("GET", "/assistant/thread"); },
+              send: function (body, signal) { return request("POST", "/assistant/chat", body, signal); },
+              reset: function () { return request("POST", "/assistant/thread/reset", {}); }
+            },
+            onToggle: function (open) { toggle.setAttribute("aria-expanded", String(open)); }
+          });
+          return drawer;
+        }, function (error) { pending = null; throw error; });
+      }
+      return pending;
+    }
+
+    toggle.addEventListener("click", function () {
+      ensure().then(function (d) { d.toggle(); });
+    });
+    document.querySelectorAll("[data-assistant-open]").forEach(function (button) {
+      button.addEventListener("click", function () { ensure().then(function (d) { d.open(); }); });
+    });
+    var wasOpen = false;
+    try { wasOpen = window.localStorage.getItem("tc.assistant.open") === "1"; } catch (e) { /* storage blocked */ }
+    if (wasOpen && window.matchMedia("(min-width: 641px)").matches) {
+      ensure().then(function (d) { d.open(false); });
+    }
+  })();
 })();
