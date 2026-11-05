@@ -25,7 +25,9 @@ kind is not tolerated.
 * **Improve the documentation**, either the book in [`docs/`](docs) (mdBook)
   or the build guides in [`platforms/`](platforms).
 * **Write code.** Pick an entry from [docs/OPEN_WORK.md](docs/OPEN_WORK.md) or
-  an open issue. For anything bigger than a bug fix, open an issue first and
+  an open issue – preferably from its sections *Proofing* and *Structure*: tests,
+  fuzzing and refactoring come before new features for now (see *Direction*
+  there). For anything bigger than a bug fix, open an issue first and
   describe your plan. That way we can agree on the approach before you put
   time into it.
 
