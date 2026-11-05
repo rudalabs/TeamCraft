@@ -2788,6 +2788,30 @@
     });
   }
 
+  /**
+   * Suggested reviewers of a draft change (GET …/suggested-reviewers): one
+   * Add button per person with the reasons as text. Loads after the tab.
+   */
+  function suggestedReviewers(number) {
+    var box = h("div.suggestions");
+    api("GET", "/changes/" + enc(number) + "/suggested-reviewers").then(function (r) {
+      if (!r.suggestions.length) return;
+      box.appendChild(h("h3", { text: "Suggested reviewers" }));
+      r.suggestions.forEach(function (s, i) {
+        var whyId = "suggested-why-" + number + "-" + i;
+        var why = h("p.hint", { id: whyId, text: s.reasons.join("; ") });
+        var add = h("button.small", { type: "button", "aria-describedby": whyId, on: { click: function () {
+          add.disabled = true;
+          run("Adding " + s.display_name, function () {
+            return api("POST", "/changes/" + enc(number) + "/reviewers", { username: s.username });
+          }).then(function () { toast("Added reviewer " + s.display_name); reloadActive(); }, function () { add.disabled = false; });
+        } } }, "Add " + s.display_name);
+        box.appendChild(h("div.suggestion", null, [add, why]));
+      });
+    }, function () { /* suggestions are optional */ });
+    return box;
+  }
+
   function renderChange(tab, body, toolbar) {
     var c = tab.data.change, me = state.me;
     var owner = canEdit() && (c.created_by === me.id || me.role === "admin");
@@ -2851,7 +2875,8 @@
       h("section.panel", null, [h("h2", { text: "Reviewers" }),
         tab.data.reviews.length ? table(["Reviewer", "Decision", "Comment"], tab.data.reviews.map(function (r) {
           return { cells: [r.reviewer_name, badge(r.decision), h("span.pre", { text: r.comment || "" })] };
-        })) : h("p.empty", { text: "No reviewers assigned yet." })])
+        })) : h("p.empty", { text: "No reviewers assigned yet." }),
+        owner && c.status === "draft" ? suggestedReviewers(c.number) : null])
     ]));
     body.appendChild(h("section.panel", null, [h("h2", { text: "Affected revisions" }),
       tab.data.items.length ? table(["Revision", "Name", "State"], tab.data.items.map(function (i) {
