@@ -847,3 +847,135 @@ fn large_hex_grid() {
     );
     assert_eq!(mesh.triangle_count(), 6 * 2 * (n * n) as usize);
 }
+
+// ---------------------------------------------------------------------------
+// review findings
+// ---------------------------------------------------------------------------
+
+/// The last value of an ASCII file may end the file (no line end).
+#[test]
+fn legacy_ascii_without_final_line_end() {
+    let data = b"# vtk DataFile Version 3.0\nx\nASCII\nDATASET UNSTRUCTURED_GRID\nPOINTS 3 float\n0 0 0 1 0 0 0 1 0\nCELLS 1 4\n3 0 1 2\nCELL_TYPES 1\n5";
+    assert_eq!(vtk_legacy(data).unwrap().triangle_count(), 1);
+    let data = b"# vtk DataFile Version 3.0\nx\nASCII\nDATASET POLYDATA\nPOINTS 3 float\n0 0 0 1 0 0 0 1 0\nPOLYGONS 1 4\n3 0 1 2\nPOINT_DATA 3\nSCALARS t float 1\nLOOKUP_TABLE default\n1 2 3";
+    let mesh = vtk_legacy(data).unwrap();
+    assert_eq!(field(&mesh, "t").range(), (1.0, 3.0));
+}
+
+/// A hexahedron collapsed to a wedge (nodes 2 = 3, 6 = 7) next to a tetra:
+/// the shared triangle is inside and must not be drawn.
+#[test]
+fn collapsed_cells_pair_with_their_neighbours() {
+    let mut g = Grid {
+        points: vec![
+            0., 0., 0., 1., 0., 0., 0.5, 1., 0., // 0 1 2
+            0., 0., 1., 1., 0., 1., 0.5, 1., 1., // 3 4 5 (top)
+            0.5, 0.4, -1., // 6: apex below
+        ],
+        ..Grid::default()
+    };
+    for (ty, nodes) in [
+        (HEXAHEDRON, &[0u32, 1, 2, 2, 3, 4, 5, 5][..]),
+        (TETRA, &[0, 1, 2, 6][..]),
+    ] {
+        g.conn.extend_from_slice(nodes);
+        g.ends.push(g.conn.len());
+        g.types.push(ty);
+    }
+    let mesh = g.into_mesh().unwrap();
+    // wedge: 3 quads + top triangle = 7, tetra: 3 outer faces
+    assert_eq!(mesh.triangle_count(), 10);
+}
+
+/// An empty first piece (parallel writers emit those) keeps the fields of
+/// the pieces after it.
+#[test]
+fn empty_first_piece_keeps_the_fields() {
+    let vtu = br#"<VTKFile type="UnstructuredGrid">
+<UnstructuredGrid>
+<Piece NumberOfPoints="0" NumberOfCells="0"></Piece>
+<Piece NumberOfPoints="3" NumberOfCells="1">
+<PointData><DataArray type="Float32" Name="t" format="ascii">1 2 3</DataArray></PointData>
+<CellData><DataArray type="Float32" Name="m" format="ascii">7</DataArray></CellData>
+<Points><DataArray type="Float32" NumberOfComponents="3" format="ascii">0 0 0 1 0 0 0 1 0</DataArray></Points>
+<Cells>
+<DataArray type="Int32" Name="connectivity" format="ascii">0 1 2</DataArray>
+<DataArray type="Int32" Name="offsets" format="ascii">3</DataArray>
+<DataArray type="UInt8" Name="types" format="ascii">5</DataArray>
+</Cells>
+</Piece>
+</UnstructuredGrid>
+</VTKFile>"#;
+    let mesh = vtk_xml(vtu).unwrap();
+    assert_eq!(field(&mesh, "t").range(), (1.0, 3.0));
+    assert_eq!(field(&mesh, "m (cells)").range(), (7.0, 7.0));
+}
+
+/// Thousands of differently named FRD result blocks keep at most
+/// MAX_FIELDS value arrays, and STRESS still wins.
+#[test]
+fn frd_many_result_blocks_are_bounded() {
+    let mut f = String::new();
+    f.push_str("    2C                             3                                     1\n");
+    f.push_str(" -1         1 0.00000E+00 0.00000E+00 0.00000E+00\n");
+    f.push_str(" -1         2 1.00000E+00 0.00000E+00 0.00000E+00\n");
+    f.push_str(" -1         3 0.00000E+00 1.00000E+00 0.00000E+00\n");
+    f.push_str(" -3\n");
+    f.push_str("    3C                             1                                     1\n");
+    f.push_str(" -1         1    7    0    1\n");
+    f.push_str(" -2         1         2         3\n");
+    f.push_str(" -3\n");
+    let block = |name: &str| {
+        format!(" -4  {name:<8}    1    1\n -5  V           1    1    0    0\n -1         1 1.00000E+00\n -3\n")
+    };
+    for i in 0..2000 {
+        f.push_str(&block(&format!("R{i}")));
+    }
+    f.push_str(&block("STRESS"));
+    let mesh = frd(f.as_bytes()).unwrap();
+    assert_eq!(mesh.triangle_count(), 1);
+    assert!(mesh.fields.len() <= MAX_FIELDS);
+    assert_eq!(mesh.fields[0].name, "STRESS");
+    assert_eq!(mesh.fields[1].name, "R0", "the first blocks stay");
+}
+
+/// Many appended arrays: the end of each one is found by binary search.
+#[test]
+fn many_appended_arrays_are_fast() {
+    let pieces = 20_000;
+    let mut xml = String::from(r#"<VTKFile type="PolyData"><PolyData>"#);
+    let mut raw = Vec::new();
+    for _ in 0..pieces {
+        xml.push_str(&format!(
+            r#"<Piece NumberOfPoints="1"><Points><DataArray type="Float32" NumberOfComponents="3" format="appended" offset="{}"/></Points></Piece>"#,
+            raw.len()
+        ));
+        raw.extend_from_slice(&12u32.to_le_bytes());
+        raw.extend_from_slice(&[0u8; 12]);
+    }
+    xml.push_str(r#"</PolyData><AppendedData encoding="raw">_"#);
+    let mut data = xml.into_bytes();
+    data.extend_from_slice(&raw);
+    data.extend_from_slice(b"</AppendedData></VTKFile>");
+    let started = std::time::Instant::now();
+    let mesh = vtk_xml(&data).unwrap();
+    assert_eq!(mesh.vertex_count(), pieces);
+    assert!(started.elapsed() < std::time::Duration::from_secs(20));
+}
+
+/// A zlib header that promises a huge array (1.2 GB of connectivity for a
+/// tiny file) is an error without reserving that memory first.
+#[test]
+fn lying_zlib_header_is_an_error() {
+    // UInt32 header: 1 block of 1.2 GB, compressed size 8, then garbage
+    let mut bin = Vec::new();
+    for v in [1u32, 1_200_000_000, 0, 8] {
+        bin.extend_from_slice(&v.to_le_bytes());
+    }
+    bin.extend_from_slice(&[0x78, 0x9c, 0, 0, 0, 0, 0, 0]);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bin);
+    let vtu = format!(
+        r#"<VTKFile type="UnstructuredGrid" compressor="vtkZLibDataCompressor"><UnstructuredGrid><Piece NumberOfPoints="1" NumberOfCells="1"><Points><DataArray type="Float32" NumberOfComponents="3" format="ascii">0 0 0</DataArray></Points><Cells><DataArray type="Int64" Name="offsets" format="ascii">150000000</DataArray><DataArray type="Int64" Name="connectivity" format="binary">{b64}</DataArray><DataArray type="UInt8" Name="types" format="ascii">7</DataArray></Cells></Piece></UnstructuredGrid></VTKFile>"#
+    );
+    assert!(vtk_xml(vtu.as_bytes()).is_err());
+}

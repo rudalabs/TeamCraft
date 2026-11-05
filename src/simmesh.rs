@@ -268,12 +268,13 @@ struct Tuples {
 }
 
 impl Tuples {
-    fn new(tuples: usize, components: usize, budget_bytes: usize) -> Tuples {
+    /// `max_reserve` limits the up-front allocation (the count may lie).
+    fn new(tuples: usize, components: usize, max_reserve: usize) -> Tuples {
         Tuples {
             components: components.max(1),
             reduce: Reduce::of(components),
             buf: Vec::with_capacity(components.max(1)),
-            out: Vec::with_capacity(tuples.min(budget_bytes / 2)),
+            out: Vec::with_capacity(tuples.min(max_reserve)),
         }
     }
 
@@ -366,11 +367,31 @@ struct Boundary {
     seq: u64,
 }
 
+/// Faces that may be open at the same time: every open face becomes at
+/// least one triangle unless a later cell closes it, so a file whose open
+/// faces exceed this is refused before the map grows to gigabytes.
+const MAX_OPEN_FACES: usize = 2 * crate::mesh::MAX_TRIANGLES;
+
 impl Boundary {
     fn toggle(&mut self, nodes: &[u32]) {
+        // Collapsed cells (a hexahedron written as a wedge, …) repeat nodes:
+        // the face is matched by its distinct corners, so a quad with one
+        // repeated node pairs with the triangle of the neighbour.
         let mut face = [u32::MAX; 4];
-        let n = nodes.len().min(4);
-        face[..n].copy_from_slice(&nodes[..n]);
+        let mut n = 0;
+        for &p in &nodes[..nodes.len().min(4)] {
+            if n == 0 || face[n - 1] != p {
+                face[n] = p;
+                n += 1;
+            }
+        }
+        if n > 1 && face[n - 1] == face[0] {
+            n -= 1;
+            face[n] = u32::MAX;
+        }
+        if n < 3 {
+            return; // a collapsed face has no area
+        }
         let mut key = face;
         key[..n].sort_unstable();
         if self.faces.remove(&key).is_none() {
@@ -538,6 +559,12 @@ impl Grid {
                 _ => {}
             }
             check_triangles(tris.len() / 3)?;
+            if boundary.faces.len() > MAX_OPEN_FACES {
+                bail!(
+                    "The result has too many outer faces for the preview \
+                     (more than {MAX_OPEN_FACES})."
+                );
+            }
         }
         let mut outer: Vec<(u64, [u32; 4], u8)> = boundary.faces.into_values().collect();
         outer.sort_unstable_by_key(|f| f.0);
@@ -683,12 +710,14 @@ impl<'a> Legacy<'a> {
         }
     }
 
-    /// Bytes one value takes at least (allocation limit).
-    fn min_bytes(&self, ty: Num) -> usize {
+    /// Whether `count` values of `ty` can still follow (allocation limit):
+    /// a binary value takes its size, an ASCII value at least one digit and
+    /// one separator – except the last one, which may end the file.
+    fn fits(&self, count: usize, ty: Num) -> bool {
         if self.binary {
-            ty.size()
+            count <= self.remaining() / ty.size()
         } else {
-            2
+            count <= self.remaining() / 2 + 1
         }
     }
 
@@ -697,7 +726,7 @@ impl<'a> Legacy<'a> {
             bail!("unsupported number of components ({components})");
         }
         let total = tuples.checked_mul(components).context("data too large")?;
-        if total > self.remaining() / self.min_bytes(ty) {
+        if !self.fits(total, ty) {
             bail!("the VTK file is truncated (data shorter than declared)");
         }
         let mut t = Tuples::new(tuples, components, self.remaining());
@@ -706,7 +735,7 @@ impl<'a> Legacy<'a> {
     }
 
     fn skip(&mut self, total: usize, ty: Num) -> Result<()> {
-        if total > self.remaining() / self.min_bytes(ty) {
+        if !self.fits(total, ty) {
             bail!("the VTK file is truncated (data shorter than declared)");
         }
         self.values(total, ty, &mut |_| Ok(()))
@@ -721,7 +750,7 @@ impl<'a> Legacy<'a> {
             // file version 5: CELLS <offsets> <connectivity size>
             let t = self.line()?.context("truncated VTK file")?;
             let ty = Num::legacy(t.get(1).copied())?;
-            if a > self.remaining() / self.min_bytes(ty) {
+            if !self.fits(a, ty) {
                 bail!("the VTK file is truncated (offsets)");
             }
             let mut offsets: Vec<usize> = Vec::with_capacity(a);
@@ -736,7 +765,7 @@ impl<'a> Legacy<'a> {
                 bail!("CONNECTIVITY expected after OFFSETS");
             }
             let ty = Num::legacy(t.get(1).copied())?;
-            if b > self.remaining() / self.min_bytes(ty) {
+            if !self.fits(b, ty) {
                 bail!("the VTK file is truncated (connectivity)");
             }
             grid.conn.reserve(b);
@@ -756,7 +785,7 @@ impl<'a> Legacy<'a> {
         } else {
             // classic layout: n, id × n, n, id × n, …
             let ty = if self.binary { Num::I32 } else { Num::F64 };
-            if b > self.remaining() / self.min_bytes(ty) {
+            if !self.fits(b, ty) {
                 bail!("the VTK file is truncated (cells)");
             }
             grid.conn.reserve(b.saturating_sub(a));
@@ -858,7 +887,7 @@ pub fn vtk_legacy(data: &[u8]) -> Result<Mesh> {
                     bail!("the VTK file has two POINTS sections");
                 }
                 let total = n * 3;
-                if total > r.remaining() / r.min_bytes(ty) {
+                if !r.fits(total, ty) {
                     bail!("the VTK file is truncated (points)");
                 }
                 grid.points.reserve(total);
@@ -887,7 +916,7 @@ pub fn vtk_legacy(data: &[u8]) -> Result<Mesh> {
             "CELL_TYPES" if !poly => {
                 let n = count(t.get(1).copied(), "cell type count")?;
                 let ty = if r.binary { Num::I32 } else { Num::F64 };
-                if n > MAX_CELLS || n > r.remaining() / r.min_bytes(ty) {
+                if n > MAX_CELLS || !r.fits(n, ty) {
                     bail!("the VTK file is truncated (cell types)");
                 }
                 let types = &mut grid.types;
@@ -1145,7 +1174,9 @@ impl<'a> XmlFile<'a> {
             bail!("the compressed data header is truncated");
         }
         let want = need.min(total);
-        let mut out = Vec::with_capacity(want);
+        // the header may lie: reserve no more than zlib can expand the
+        // bytes at hand to (at most 1032 : 1), the rest grows when it comes
+        let mut out = Vec::with_capacity(want.min(bytes.len().saturating_mul(1032)));
         for i in 0..blocks {
             if out.len() >= want {
                 break;
@@ -1207,10 +1238,10 @@ impl<'a> XmlFile<'a> {
                     .checked_add(a.offset)
                     .filter(|&s| s <= self.appended_end)
                     .context("a DataArray offset points outside the appended data")?;
+                // offsets are sorted: binary search (files may have many arrays)
                 let end = self
                     .offsets
-                    .iter()
-                    .find(|&&o| o > a.offset)
+                    .get(self.offsets.partition_point(|&o| o <= a.offset))
                     .and_then(|&o| base.checked_add(o))
                     .unwrap_or(self.appended_end)
                     .min(self.appended_end);
@@ -1231,8 +1262,7 @@ impl<'a> XmlFile<'a> {
             bail!("unsupported number of components ({components})");
         }
         let total = tuples.checked_mul(components).context("data too large")?;
-        let mut t = Tuples::new(tuples, components, MAX_ARRAY_BYTES);
-        t.out = Vec::with_capacity(tuples.min(MAX_NODES));
+        let mut t = Tuples::new(tuples, components, MAX_NODES);
         self.values(a, total, &mut |v| t.push(v))?;
         Ok(Field {
             name: Reduce::of(components).label(&a.name),
@@ -1309,9 +1339,12 @@ impl<'a> XmlFile<'a> {
 }
 
 /// Merges the fields of one piece into the grid's fields (by name; values
-/// missing in a piece are NaN).
+/// missing in a piece are NaN). `first`: no values before this piece – the
+/// fields of empty pieces before it (parallel writers emit those) are
+/// replaced, so they do not hide the fields of the first real piece.
 fn merge_fields(into: &mut Vec<Field>, mut new: Vec<Field>, first: bool, count: usize) {
     if first {
+        into.clear();
         for f in new {
             Grid::add_field(into, f);
         }
@@ -1546,7 +1579,7 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
     file.offsets.dedup();
 
     let mut grid = Grid::default();
-    for (i, piece) in pieces.iter().enumerate() {
+    for piece in &pieces {
         let n = piece.points;
         if n.saturating_add(grid.point_count()) > MAX_NODES {
             bail!("The result has more than {MAX_NODES} points – too many for the preview.");
@@ -1601,8 +1634,8 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
                 cell_fields.push(file.tuples(a, cells)?);
             }
         }
-        merge_fields(&mut grid.point_fields, point_fields, i == 0, n);
-        merge_fields(&mut grid.cell_fields, cell_fields, i == 0, cells);
+        merge_fields(&mut grid.point_fields, point_fields, base == 0, n);
+        merge_fields(&mut grid.cell_fields, cell_fields, cells_before == 0, cells);
     }
     grid.into_mesh()
 }
@@ -1846,7 +1879,22 @@ pub fn frd(data: &[u8]) -> Result<Mesh> {
                 }
             }
             let n = grid.point_count();
-            let mut values = vec![f32::NAN; n];
+            // At most MAX_FIELDS blocks are kept (a later increment replaces
+            // its block, a higher-priority block replaces a lower one); the
+            // others are read and not stored, so a file with thousands of
+            // differently named blocks cannot allocate a value array each.
+            let slot = match fields.iter().position(|(k, _)| *k == name) {
+                Some(i) => Some(i),
+                None if fields.len() < MAX_FIELDS => Some(fields.len()),
+                None => fields
+                    .iter()
+                    .rposition(|(k, _)| frd_priority(k) > frd_priority(&name)),
+            };
+            let mut values = if slot.is_some() {
+                vec![f32::NAN; n]
+            } else {
+                Vec::new()
+            };
             let reduce = if stored == 6 && tensor {
                 Reduce::VonMises6
             } else if stored <= 1 {
@@ -1856,9 +1904,9 @@ pub fn frd(data: &[u8]) -> Result<Mesh> {
             };
             let mut node: Option<u32> = None;
             let flush = |node: Option<u32>, buf: &mut Vec<f64>, values: &mut Vec<f32>| {
-                if let Some(p) = node {
+                if let Some(v) = node.and_then(|p| values.get_mut(p as usize)) {
                     if buf.len() >= stored && stored > 0 {
-                        values[p as usize] = reduce.apply(&buf[..stored]);
+                        *v = reduce.apply(&buf[..stored]);
                     }
                 }
                 buf.clear();
@@ -1881,15 +1929,19 @@ pub fn frd(data: &[u8]) -> Result<Mesh> {
                 }
             }
             flush(node.take(), &mut buf, &mut values);
-            if stored > 0 && n > 0 {
+            if let (Some(i), true) = (slot, stored > 0 && n > 0) {
                 let field = Field {
                     name: reduce.label(&name),
                     unit: String::new(),
                     values,
                 };
-                match fields.iter_mut().find(|(k, _)| *k == name) {
-                    Some((_, f)) => *f = field,
-                    None => fields.push((name, field)),
+                if fields.get(i).is_some_and(|(k, _)| *k == name) {
+                    fields[i].1 = field;
+                } else {
+                    if i < fields.len() {
+                        fields.remove(i); // a lower-priority block makes room
+                    }
+                    fields.push((name, field));
                 }
             }
         } else if head.starts_with("9999") {

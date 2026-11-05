@@ -86,10 +86,12 @@ pub async fn show(
                 )
             })
         });
-    // Result files the browser can show in 3D (VTK, VTU, VTP, FRD).
+    // Result files the browser can show in 3D (VTK, VTU, VTP, FRD); a few
+    // on the Results card (time series have dozens), all in the file list.
     let result_views: Vec<serde_json::Value> = file_list
         .iter()
         .filter(|f| preview_of(f).is_some_and(PreviewFormat::is_result))
+        .take(3)
         .map(|f| json!({ "id": f.id, "filename": f.filename, "version": f.version }))
         .collect();
     // The versions this page shows: uploads from its forms are based on them,

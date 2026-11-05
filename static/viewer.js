@@ -117,6 +117,8 @@
     function legend(mesh, onSelect) {
       var el = document.createElement("div");
       el.className = "viewer-legend";
+      // a named group: a plain div's aria-label is not announced
+      el.setAttribute("role", "group");
       var label;
       if (mesh.fields.length > 1) {
         label = document.createElement("select");

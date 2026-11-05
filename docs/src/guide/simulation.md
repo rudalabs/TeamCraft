@@ -120,7 +120,9 @@ How the preview is made:
   Nodes without a value are grey. Units are shown when the file names them –
   VTK and FRD files usually do not.
 * **Limits.** Up to 20 million nodes and cells; surfaces with more than two
-  million triangles are thinned out evenly (gaps are visible). Structured
+  million triangles are thinned out evenly (gaps are visible), surfaces with
+  more than eight million are refused. Collapsed elements (a hexahedron
+  written as a wedge, …) are matched by their distinct corner nodes. Structured
   grids (`.vts`, `.vtr`, image data), time-step collections (`.pvd`,
   `.vtm`), binary `.frd`, Exodus II and CGNS are not previewed – export the
   step you want to show as `.vtu` (ParaView: *Save Data*, OpenFOAM:
