@@ -128,10 +128,17 @@ Builds of every tagged version are on the
 **[Releases page](https://github.com/rudalabs/TeamCraft/releases)** – 0.x
 versions are pre-releases (see the warning above):
 
-| | Linux x86_64 | Linux ARM64 | macOS (Apple silicon) | Windows x86_64 |
-|---|---|---|---|---|
-| **Server** (`teamcraft`) | `.tar.gz` | `.tar.gz` | `.tar.gz` | `.zip` |
-| **Desktop app** | `.AppImage`, `.deb`, `.rpm` | `.deb`, `.rpm` | `.dmg`, `.app.zip` | `.msi`, `-setup.exe` |
+| | Linux x86_64 | Linux ARM64 | macOS (Apple silicon) | Windows x64 | Windows ARM64 |
+|---|---|---|---|---|---|
+| **Server** (`teamcraft`) | `.tar.gz` | `.tar.gz` | – | `.zip` | – |
+| **Desktop app** | `.AppImage`, `.deb`, `.rpm`, `.flatpak` | `.deb`, `.rpm`, `.flatpak` | `.dmg`, `.app.zip` | `.msi`, `_x64-setup.exe`, `_x64_portable.zip` | `.msi`, `_arm64-setup.exe`, `_arm64_portable.zip` |
+
+The server runs on Linux in production (or as the
+[Docker image](docs/src/admin/docker.md) on any platform); on macOS build it
+from source ([platforms/macos.md](platforms/macos.md)). The Flatpak bundle
+installs with `flatpak install --user TeamCraft_*.flatpak` and takes the GNOME
+runtime from Flathub. The Windows `_portable.zip` holds `TeamCraft.exe` without
+an installer; it needs the WebView2 runtime, which Windows 10 and 11 include.
 
 Check a download against `SHA256SUMS.txt` (`sha256sum -c --ignore-missing
 SHA256SUMS.txt`). The installers are **not code-signed** yet: macOS asks to

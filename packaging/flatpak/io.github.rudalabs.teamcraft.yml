@@ -54,3 +54,9 @@ modules:
           - local
           - secrets
           - .venv
+          # flatpak-builder's own state, build and repository folders when it
+          # runs from the repository root (the release workflow does)
+          - .git
+          - .flatpak-builder
+          - flatpak_app
+          - repo
