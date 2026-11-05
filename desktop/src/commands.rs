@@ -257,6 +257,40 @@ pub async fn api(
         .await
 }
 
+/// A question in the assistant sidebar (`POST /assistant`, in the user's
+/// conversation). Unlike [`api`] it can be cancelled with
+/// [`assistant_cancel`]: the request is dropped, so the server stops the run
+/// and stores nothing.
+#[tauri::command]
+pub async fn assistant_send(state: State<'_, AppState>, body: Value) -> CmdResult<Value> {
+    let api = signed_in_api(&state)?;
+    let cancel = Arc::new(Notify::new());
+    *state.assistant_cancel.lock().expect("assistant lock") = Some(cancel.clone());
+    let result = tokio::select! {
+        answer = api.json(Method::POST, "/assistant", Some(&body)) => answer,
+        _ = cancel.notified() => Err(crate::abortable::cancelled("Cancelled.")),
+    };
+    state
+        .assistant_cancel
+        .lock()
+        .expect("assistant lock")
+        .take();
+    result
+}
+
+/// Stops the running assistant question, if any.
+#[tauri::command]
+pub fn assistant_cancel(state: State<'_, AppState>) {
+    if let Some(cancel) = state
+        .assistant_cancel
+        .lock()
+        .expect("assistant lock")
+        .take()
+    {
+        cancel.notify_one();
+    }
+}
+
 /// Content of a file (`kind` = `file` for the current version or `version`)
 /// as raw bytes – for the 3D viewer.
 #[tauri::command]

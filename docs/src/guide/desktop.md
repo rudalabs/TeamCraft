@@ -65,9 +65,13 @@ check-outs and reviews, and a **local working folder**:
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.
-* *Ask…* in a revision or change tab opens [Ask TeamCraft](assistant.md)
-  (release notes, release check, review briefing, free questions) when the
-  server has the assistant enabled.
+* *Ask* (rail, *View → Ask TeamCraft*, `Ctrl/Cmd+5`, or *Ask…* in a
+  revision or change tab) unfolds the [Ask TeamCraft](assistant.md#the-sidebar)
+  sidebar beside the tabs when the server has the assistant enabled. It
+  knows the tab you are on (revision and its section, BOM with revision
+  rule, change order, change request, or the search and list in the
+  navigator), offers quick actions that fit it, and keeps one conversation
+  on the server that survives tab changes and restarts.
 * *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`) works with a local AI agent
   that you set up under *Settings → Agents…*, for example Claude Code
   through its ACP adapter or Gemini CLI. None is set up by default. The app

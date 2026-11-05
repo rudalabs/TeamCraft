@@ -263,7 +263,7 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 
 .shell {
   display: grid;
-  grid-template-columns: var(--rail) var(--nav-width) 1px minmax(0, 1fr);
+  grid-template-columns: var(--rail) var(--nav-width) 1px minmax(0, 1fr) auto;
   grid-template-rows: 40px minmax(0, 1fr) 24px;
   height: 100vh;
 }
@@ -352,6 +352,12 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .workarea > .tabs { order: 1; }
 .workarea > .toolbar { order: 2; }
 .workarea > .tab-body { order: 3; }
+
+/* Ask TeamCraft: a drawer beside the tabs (shared/css/assistant.css, shared/js/assistant.js). */
+#assistant-drawer { grid-row: 2; grid-column: 5; }
+@media (max-width: 960px) {
+  #assistant-drawer { position: fixed; z-index: 30; top: 40px; bottom: 24px; right: 0; max-width: 92vw; box-shadow: var(--shadow-pop); }
+}
 
 .statusbar {
   grid-column: 1 / -1;

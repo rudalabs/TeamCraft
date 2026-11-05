@@ -133,9 +133,9 @@ async fn assistant_requests_are_validated() {
     // are shown on the page with the form
     let cookie = app.login("vera").await;
     let page = app.get_page("/", Some(&cookie)).await;
-    assert!(page.text().contains("What needs my attention"));
+    assert!(page.text().contains("id=\"assistant-drawer\""));
     assert!(
-        !page.text().contains("Allow drafting change orders"),
+        page.text().contains("data-can-edit=\"0\""),
         "viewers cannot allow drafts"
     );
     let page = app.get_page("/assistant", Some(&cookie)).await;
