@@ -164,6 +164,9 @@ async fn bom_lines_find_numbers_edit_and_remove() {
             .await,
         );
     }
+    // A new item is checked out to its author: release the lock first so
+    // that the BOM edit below is refused.
+    checkin(&app, &token, &parent).await;
     let r = app
         .api(
             Method::POST,
