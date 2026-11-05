@@ -585,7 +585,8 @@ button.small { padding: 0.15rem 0.55rem; font-size: 0.85em; border-radius: var(-
   gap: var(--space-1) var(--space-3);
   padding: var(--space-2) var(--space-3);
 }
-.impact-group-head h3 { margin: 0; font-size: 0.95rem; min-width: 0; }
+/* a name, not a section title: no capitals */
+.impact-group-head h3 { margin: 0; font-size: 0.95rem; min-width: 0; color: var(--text); text-transform: none; letter-spacing: normal; }
 .impact-group-name { font-weight: 600; }
 .impact-group-head .actions { display: flex; gap: var(--space-2); margin-left: auto; }
 .impact-count, .count-badge {
