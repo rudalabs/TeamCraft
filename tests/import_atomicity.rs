@@ -5,7 +5,6 @@
 mod common;
 
 use axum::http::{Method, StatusCode};
-use serde_json::json;
 use teamcraft::domain::Role;
 
 macro_rules! app_or_skip {
@@ -103,51 +102,55 @@ async fn a_refused_import_writes_nothing() {
     app.teardown().await;
 }
 
-/// Row 2 of the table cannot be created (its number belongs to an item of a
-/// group the importer cannot use for matching): the whole import fails and
-/// row 1 is not left behind.
+/// The database fails while the third part is written (an injected
+/// failure): the whole import is rolled back – no part, no top-level
+/// assembly, no BOM line, no counter step, no audit entry – and the same
+/// import succeeds once the failure is gone.
 #[tokio::test]
 async fn an_error_in_a_later_row_rolls_back_the_earlier_rows() {
     let app = app_or_skip!();
     let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
-    let (_, other) = app.user_in("other", Role::Editor, &["ROVER"]).await;
-    // AT-200 exists in another group
-    let r = app
-        .api(
-            Method::POST,
-            "/api/v1/items",
-            &other,
-            Some(json!({ "item_type": "part", "name": "Taken", "project": "ROVER", "number": "AT-200" })),
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
     let before = snapshot(&app.pool).await;
+    for sql in [
+        "CREATE FUNCTION fail_on_cap() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.number = 'AT-300' THEN RAISE EXCEPTION 'injected failure'; END IF;
+           RETURN NEW;
+         END $$",
+        "CREATE TRIGGER fail_on_cap BEFORE INSERT ON items
+         FOR EACH ROW EXECUTE FUNCTION fail_on_cap()",
+    ] {
+        sqlx::query(sql).execute(&app.pool).await.unwrap();
+    }
 
+    let files: &[(&str, &[u8])] = &[("a.csv", TABLE.as_bytes())];
+    let fields = [("project", "ROCKET"), ("numbers", "file")];
     let r = app
-        .api_multipart(
-            "/api/v1/bom-imports",
-            &eng,
-            &[("a.csv", TABLE.as_bytes())],
-            &[
-                ("project", "ROCKET"),
-                ("numbers", "file"),
-                ("match_existing", "false"),
-            ],
-        )
+        .api_multipart("/api/v1/bom-imports", &eng, files, &fields)
         .await;
     assert!(
-        r.status.is_client_error(),
-        "a number that is taken must stop the import: {} {}",
+        r.status.is_server_error(),
+        "the failure must surface: {} {}",
         r.status,
         r.text()
     );
     assert_eq!(snapshot(&app.pool).await, before, "all or nothing");
-    for number in ["AT-100", "AT-300"] {
+    for number in ["AT-100", "AT-200", "AT-300"] {
         let r = app
             .api(Method::GET, &format!("/api/v1/items/{number}"), &eng, None)
             .await;
         assert_eq!(r.status, StatusCode::NOT_FOUND, "{number} was left behind");
     }
+
+    sqlx::query("DROP TRIGGER fail_on_cap ON items")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let r = app
+        .api_multipart("/api/v1/bom-imports", &eng, files, &fields)
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(r.json()["created"].as_array().unwrap().len(), 3);
     app.teardown().await;
 }
 
