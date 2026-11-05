@@ -58,6 +58,13 @@ p { text-wrap: pretty; margin: 0 0 var(--space-3); }
 .pre, .assistant-text, .subtitle { max-width: 72ch; }
 
 a { color: var(--link); text-decoration: none; text-underline-offset: 3px; }
+/* Links inside running text are underlined, so colour is not their only cue
+   (WCAG 1.4.1); links in tables, navigation and menus stand on their own. */
+:where(p, dd, footer, ul.plain-list li, .hint, .empty, .notice, .flash, .assistant-text, .subtitle) a:not(.button, .revbox) {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
 
 code, .mono { font-family: var(--mono); font-size: 0.92em; }
 code { overflow-wrap: anywhere; }
@@ -70,6 +77,9 @@ a.mono, td.mono > a, .id {
 }
 
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* inside containers that clip (scrolling nav, ellipsis cells) the ring sits inside */
+.nav a:focus-visible, .nav-admin > summary:focus-visible, .titleblock dd a:focus-visible,
+.impact-source a:focus-visible, td.ellipsis a:focus-visible, .explorer-tree a:focus-visible { outline-offset: -2px; }
 ::selection { background: var(--selected); color: var(--text); }
 
 kbd {
@@ -145,12 +155,13 @@ kbd {
   white-space: nowrap;
   border-radius: var(--radius-sm);
 }
-.nav a.active, .nav-admin:has(a.active) > summary { color: var(--text); font-weight: 600; background: var(--surface-2); }
+/* Same weight as the other tabs, so the row never shifts between pages. */
+.nav a.active, .nav-admin:has(a.active) > summary { color: var(--text); background: var(--surface-2); }
 
 .quicksearch { position: relative; margin-left: auto; }
 .quicksearch input[type=search] { width: 280px; padding-right: 32px; }
 .quicksearch kbd { position: absolute; top: 7px; right: 8px; pointer-events: none; }
-.quicksearch:focus-within kbd { display: none; }
+.quicksearch:focus-within kbd, :root[data-slash="off"] .quicksearch kbd { display: none; }
 
 .bell {
   position: relative;
@@ -364,6 +375,8 @@ details.menu[open] > .menu-pop { animation: menu-in 140ms var(--ease-out); }
   vertical-align: 1px;
 }
 h1 .revbox { min-width: 24px; height: 24px; font-size: 13px; }
+/* in dense tables the letter stays quiet next to the item links and badges */
+td .revbox { font-weight: 500; color: var(--text-muted); border-color: var(--border); }
 
 .actions { display: flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
 .actions form { margin: 0; }
@@ -375,6 +388,8 @@ h1 .revbox { min-width: 24px; height: 24px; font-size: 13px; }
 .grid > .card { margin-bottom: 0; }
 .grid.nested { margin: 0; }
 .grid.nested > div { min-width: 0; }
+/* a heading that opens a column sits at the card's usual heading gap */
+.grid > div > h3:first-child, .card > h3:first-child, .card-head + h3, .card > h2 + h3 { margin-top: 0; }
 
 /* Two columns with a rail: content | 320–360 px side panel. */
 .with-rail { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--space-4); align-items: start; margin-bottom: var(--space-4); }
@@ -440,11 +455,12 @@ h2 .count, .count { color: var(--text-dim); font-weight: 500; }
 .stat-strip > li:first-child a { border-radius: var(--radius) 0 0 var(--radius); }
 .stat-strip > li:last-child a { border-radius: 0 var(--radius) var(--radius) 0; }
 @media (max-width: 760px) {
-  .stat-strip { grid-auto-flow: row; grid-template-columns: repeat(3, 1fr); }
+  .stat-strip { grid-auto-flow: row; grid-template-columns: repeat(2, 1fr); }
   .stat-strip > li { border-left: none !important; border-top: 1px solid var(--border); }
-  .stat-strip > li:nth-child(-n+3) { border-top: none; }
-  .stat-strip > li:not(:nth-child(3n+1)) { border-left: 1px solid var(--border) !important; }
+  .stat-strip > li:nth-child(-n+2) { border-top: none; }
+  .stat-strip > li:not(:nth-child(2n+1)) { border-left: 1px solid var(--border) !important; }
   .stat-strip a { padding: 10px 12px; border-radius: 0 !important; }
+  .stat-strip .value { font-size: 18px; white-space: nowrap; }
 }
 
 .muted { color: var(--text-muted); }
@@ -452,6 +468,7 @@ h2 .count, .count { color: var(--text-dim); font-weight: 500; }
 .small { font-size: 12px; line-height: 16px; }
 .right { text-align: right; }
 .nowrap { white-space: nowrap; }
+.block { display: block; }
 .pre { white-space: pre-wrap; }
 .hidden { display: none !important; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
@@ -489,7 +506,9 @@ tbody tr:last-child > td { border-bottom: none; }
 td.num, th.num { text-align: right; white-space: nowrap; }
 tbody tr.current > td, tbody tr.selected > td { background: var(--selected); }
 tbody tr.current > td:first-child, tbody tr.selected > td:first-child { box-shadow: inset 2px 0 0 var(--focus); }
-tbody tr.selected .muted, tbody tr.selected .dim, tbody tr.current .muted { color: var(--text-muted); }
+/* --text-dim is below 4.5:1 on --selected in some dark skins: lift it there */
+tbody tr:is(.current, .selected) :is(.muted, .dim, .count, .hint, .none, .lvl, .small, .empty-cell),
+.explorer-tree a.active .count { color: var(--text-muted); }
 tr.unresolved td { color: var(--st-review-fg); }
 td .empty-cell, .none { color: var(--text-dim); }
 td.clamp { max-width: 32rem; }
@@ -555,6 +574,24 @@ td.tree .guide { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1
   border-radius: var(--radius-xs);
 }
 .badge .glyph { font-size: 12px; line-height: 1; }
+/* In work: a half-filled ring, in review: a ring – drawn in CSS like the
+   desktop app, so they read the same in every font. */
+:is(.badge-in_work, .badge-draft, .badge-new, .badge-in_review, .badge-pending, .badge-in_triage, .badge-retrying, .badge-out_of_date) .glyph,
+.state-glyph:is(.st-in_work, .st-draft, .st-new, .st-in_review, .st-pending, .st-in_triage) {
+  font-size: 0;
+}
+:is(.badge-in_work, .badge-draft, .badge-new, .badge-in_review, .badge-pending, .badge-in_triage, .badge-retrying, .badge-out_of_date) .glyph::before,
+.state-glyph:is(.st-in_work, .st-draft, .st-new, .st-in_review, .st-pending, .st-in_triage)::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+  vertical-align: -1px;
+}
+:is(.badge-in_work, .badge-draft, .badge-new) .glyph::before,
+.state-glyph:is(.st-in_work, .st-draft, .st-new)::before { box-shadow: inset 3px 0 0 currentColor; }
 .badge img { width: 12px; height: 12px; }
 .badge-in_review, .badge-pending, .badge-retrying, .badge-in_triage, .badge-out_of_date, .badge-high {
   color: var(--st-review-fg); background: var(--st-review-bg); border-color: var(--st-review-bd);
@@ -665,8 +702,14 @@ input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="
 .field-error { color: var(--st-danger-fg); font-size: 12px; font-weight: 400; }
 select option { color: var(--text); background: var(--surface); }
 form.inline input, form.inline select { width: auto; }
-input.qty { width: 6.5em; text-align: right; }
-input.find { width: 5em; text-align: right; }
+input.qty, form.inline input.qty { width: 6.5em; text-align: right; }
+input.find, form.inline input.find { width: 5em; text-align: right; }
+form.inline input.item-no { width: 26ch; min-width: 18ch; max-width: 100%; }
+/* An inline form with short labels above its fields (Add component). */
+form.inline.fields { align-items: flex-end; gap: var(--space-2); }
+form.inline.fields > label { gap: 2px; font-size: 12px; line-height: 16px; }
+form.inline.fields > label.grow { flex: 1 1 12rem; }
+form.inline.fields > label.grow input { width: 100%; }
 
 input[type=file] { font-size: 13px; color: var(--text-muted); max-width: 100%; }
 input[type=file]::file-selector-button {
@@ -736,7 +779,6 @@ button.primary, .button.primary {
 button.primary:active, .button.primary:active { background: var(--primary-active); border-color: var(--primary-active); }
 button.primary:disabled { color: var(--text-dim); background: var(--surface-2); border-color: var(--border); }
 button.danger, .button.danger { color: var(--st-danger-fg); }
-button.danger-solid { font-weight: 600; color: var(--on-primary); background: var(--st-danger-fg); border-color: var(--st-danger-fg); }
 button.ghost, .button.ghost { color: var(--text-muted); background: none; border-color: transparent; }
 button.ghost[aria-pressed="true"], .button.ghost[aria-pressed="true"] { color: var(--text); }
 button.icon-btn, .button.icon-btn { width: var(--ctl-h); padding: 0; }
@@ -856,12 +898,15 @@ details.payload pre {
 .pagination { display: flex; gap: var(--space-2); align-items: center; justify-content: flex-end; flex-wrap: wrap; margin-top: var(--space-3); }
 .card > .table-wrap + .pagination { margin-top: calc(var(--space-4) + var(--space-3)); }
 
-/* Lifecycle stepper: done ✓, current bold, future outlined */
+/* Lifecycle stepper: done ✓, current bold, future outlined without a glyph.
+   No connectors, so a wrapped row never starts with a dangling dash. */
 .lifecycle-track { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; list-style: none; padding: 0; margin: 0 0 var(--space-3); }
-.lifecycle-track li { display: inline-flex; align-items: center; gap: 6px; }
-.lifecycle-track li + li::before { content: ""; width: 8px; height: 0; border-top: 1px solid var(--border-strong); }
+.lifecycle-track li { display: inline-flex; align-items: center; }
 .lifecycle-track li.current .badge { font-weight: 600; }
 .lifecycle-track li.future .badge { color: var(--text-muted); background: transparent; border: 1px solid var(--border-strong); text-decoration: none; }
+/* One size for the explanation; the permission note muted after a gap. */
+.lifecycle-text p { margin: 0 0 var(--space-1); font-size: 13px; line-height: 18px; }
+.lifecycle-text p.note { margin: var(--space-2) 0 0; color: var(--text-muted); }
 
 /* 3D preview: the canvas sits directly in the page and paints --viewer-bg */
 .viewer-canvas {
@@ -877,6 +922,17 @@ details.payload pre {
 }
 .viewer-canvas:active { cursor: grabbing; }
 .viewer-canvas:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.viewer-stage { position: relative; }
+.viewer-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
 .viewer-bar { display: flex; gap: var(--space-2); align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .viewer-bar > p { margin: 0; }
 .viewer-card { padding: 0; background: none; border: none; }
@@ -892,8 +948,9 @@ details.payload pre {
 .explorer-tree { display: flex; flex-direction: column; gap: 1px; padding: var(--space-2); background: var(--sidebar); position: sticky; top: calc(var(--topbar-h) + 16px); }
 .explorer-tree a { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: var(--radius-sm); color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .explorer-tree a .count { margin-left: auto; font-size: 12px; }
+.explorer-tree .lock-count { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; color: var(--text-muted); }
+.explorer-tree .lock-count .icon { width: 12px; height: 12px; color: var(--st-lock-other); }
 .explorer-tree a.active { background: var(--selected); font-weight: 600; box-shadow: inset 2px 0 0 var(--focus); }
-.explorer-tree a.active .count { color: var(--text-muted); }
 .explorer-tree .tree-head { margin: var(--space-3) 8px 4px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
 .explorer-tree .empty { padding: 0 8px; }
 .explorer-list .card-head { margin-bottom: var(--space-3); }
@@ -941,7 +998,9 @@ tr.bom-diff-removed td:not(:first-child) { text-decoration: line-through; color:
 /* Appearance: System / Light / Dark as radio cards, then the distro skins.
    Every card carries its own data-skin, so it previews that skin. */
 .scheme-cards { display: grid; gap: var(--space-3); grid-template-columns: repeat(3, minmax(0, 200px)); margin-bottom: var(--space-3); }
-.skins { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+/* distro skins: a compact row of small cards, so the dark tiles stay small */
+.skins { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fill, minmax(120px, 136px)); }
+.skins .skin-card { padding: 6px; gap: 6px; }
 .scheme-cards form, .skins form { margin: 0; }
 .skin-card {
   width: 100%;
@@ -960,15 +1019,31 @@ tr.bom-diff-removed td:not(:first-child) { text-decoration: line-through; color:
 }
 .skin-card strong { font-size: 13px; }
 .skin-card .small { color: var(--text-muted); }
+/* The preview is a tiny mock in the card's own tokens: a top bar, two rows
+   on a panel, a state badge and a primary chip. */
 .skin-preview {
-  display: block;
-  height: 56px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 64px;
+  padding: 0 0 6px;
+  overflow: hidden;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  box-shadow: inset 0 14px 0 var(--bar), inset 0 15px 0 var(--border);
 }
-.skins .skin-preview { height: 36px; }
+.skin-preview.split { flex-direction: row; gap: 0; padding: 0; }
+.skin-preview.split > .skin-preview { flex: 1; height: 100%; border: none; border-radius: 0; }
+.skins .skin-preview { height: 48px; }
+.sp-bar { flex: none; height: 12px; background: var(--bar); border-bottom: 1px solid var(--border); }
+.sp-row { display: flex; align-items: center; gap: 6px; margin: 0 6px; padding: 0 6px; height: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 3px; }
+.sp-text { flex: 1; max-width: 48px; height: 4px; background: var(--text-muted); border-radius: 2px; opacity: 0.5; }
+.sp-text.short { max-width: 28px; }
+.sp-badge { width: 16px; height: 8px; margin-left: auto; background: var(--st-ok-bg); border: 1px solid var(--st-ok-bd); border-radius: 2px; }
+.sp-chip { width: 18px; height: 8px; margin-left: auto; background: var(--primary); border-radius: 2px; }
+.skins .sp-row:last-child { display: none; }
+.skin-name { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; flex-wrap: wrap; }
+.skin-current { font-size: 12px; font-weight: 500; color: var(--text-muted); }
 .skin-card.selected { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
 @media (hover: hover) {
   .skin-card:where(:not(.selected)):hover { background: var(--surface); border-color: var(--text-muted); }
@@ -1091,10 +1166,12 @@ ul.notification-list > li { position: relative; padding: 8px 0 8px 20px; border-
 ul.notification-list > li:last-child { border-bottom: none; }
 ul.notification-list a { display: block; color: var(--text-muted); }
 .n-title { display: block; font-weight: 400; }
-.n-body { display: block; font-size: 13px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the body shows two lines, so the gist is always readable */
+.n-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 13px; color: var(--text-dim); }
 .n-meta { font-size: 12px; color: var(--text-dim); }
+/* unread: the dot carries the state; the title is in full ink, never bold */
 ul.notification-list li.unread a { color: var(--text); }
-ul.notification-list li.unread .n-title { font-weight: 600; }
+ul.notification-list li.unread .n-title { font-weight: 500; }
 ul.notification-list li.unread::before { content: ""; position: absolute; left: 4px; top: 15px; width: 8px; height: 8px; background: var(--primary); border-radius: 999px; }
 @media (hover: hover) {
   ul.notification-list a:hover { text-decoration: none; }
@@ -1134,7 +1211,8 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
   .quicksearch input[type=search] { width: 100%; }
   .quicksearch kbd { display: none; }
   .bell, .usermenu { order: 2; }
-  .nav { order: 3; flex: 1 0 calc(100% - 96px); padding-bottom: 4px; }
+  /* phones: the sections wrap onto a second row instead of scrolling out of sight */
+  .nav { order: 3; flex: 1 0 calc(100% - 96px); flex-wrap: wrap; overflow: visible; padding-bottom: 4px; }
   .nav-admin { order: 4; }
   .page-head { align-items: flex-start; }
   .page-head > .actions { width: 100%; }
@@ -1144,6 +1222,15 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
 }
 @media (pointer: coarse) {
   :root { --row-h: 40px; --row-h-dense: 40px; }
+}
+
+/* Forced colours (Windows High Contrast): box-shadow edges and backgrounds
+   are dropped, so selection and message kinds get real borders. */
+@media (forced-colors: active) {
+  tbody tr:is(.selected, .current) > td:first-child, .explorer-tree a.active { border-left: 3px solid Highlight; }
+  .skin-card.selected, .menu-scheme button[aria-pressed="true"] { outline: 2px solid Highlight; }
+  .flash, .notice, .readiness, .impact-group { border-left: 3px solid CanvasText; }
+  .nav a.active { outline: 1px solid CanvasText; }
 }
 
 /* ===========================================================================
@@ -1161,7 +1248,24 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
     --surface: transparent;
     --surface-2: transparent;
     --surface-sunken: transparent;
+    --surface-hover: transparent;
+    --bg-raised: transparent;
+    --sidebar: transparent;
+    --input-bg: transparent;
     --selected: #eee;
+    /* the light state colours, also when printing from a dark skin */
+    --st-wip-fg: #4a5464;
+    --st-review-fg: #8a5300;
+    --st-ok-fg: #166a3f;
+    --st-danger-fg: #b42318;
+    --st-impact-fg: #b54708;
+    --st-impact-edge: #d97a1e;
+    --st-lock-other: #8a5300;
+    --st-wip-bg: transparent;
+    --st-review-bg: transparent;
+    --st-ok-bg: transparent;
+    --st-danger-bg: transparent;
+    --st-impact-bg: transparent;
     color-scheme: light;
   }
   .topbar, footer, .actions, form, .app-glow, .flash, .viewer-canvas, .viewer-bar { display: none !important; }

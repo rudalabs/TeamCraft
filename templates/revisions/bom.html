@@ -10,8 +10,8 @@
       <h1><a class="id" href="/revisions/{{ rev.id }}">{{ rev.item_number }}</a>{{ m.revbox(rev.code) }} {{ rev.name }}</h1>
     </div>
     <p class="meta">
-      Total mass {{ tree.total_mass_kg|num(3) }} kg{% if not tree.mass_complete %} <span class="marker-impact" title="A mass is missing in the structure">△ incomplete</span>{% endif %}
-      · Total cost {{ tree.total_cost|num(2) }} €{% if not tree.cost_complete %} <span class="marker-impact" title="A cost is missing in the structure">△ incomplete</span>{% endif %}
+      Total mass {{ tree.total_mass_kg|fixed(3) }} kg{% if not tree.mass_complete %} <span class="marker-impact" title="A mass is missing in the structure">△ incomplete</span>{% endif %}
+      · Total cost {{ tree.total_cost|fixed(2) }} €{% if not tree.cost_complete %} <span class="marker-impact" title="A cost is missing in the structure">△ incomplete</span>{% endif %}
       · {{ tree.line_count }} line{% if tree.line_count != 1 %}s{% endif %}
       · <span class="{% if tree.unresolved_count %}warn-text{% endif %}">{{ tree.unresolved_count }} unresolved</span>
     </p>
@@ -64,9 +64,9 @@
         <td class="nowrap">{% if n.revision %}{{ m.badge(n.revision.state) }}{% else %}<span class="badge badge-in_review"><span class="glyph" aria-hidden="true">○</span>no {{ rule|replace("_", " ") }} revision</span>{% endif %}</td>
         <td class="ellipsis" title="{% if n.revision %}{{ n.revision.name }}{% endif %}">{% if n.revision %}{{ n.revision.name }}{% endif %}</td>
         <td class="num">{{ n.quantity|num(6) }}{% if n.unit and n.unit != "each" %} <span class="dim">{{ n.unit }}</span>{% endif %}</td>
-        <td class="num">{{ n.unit_mass_kg|num(4) }}{% if not n.mass_complete %} <span class="marker-impact" title="A mass is missing in this sub-tree">△</span>{% endif %}</td>
-        <td class="num">{{ n.total_mass_kg|num(4) }}</td>
-        <td class="num">{{ n.total_cost|num(2) }}{% if not n.cost_complete %} <span class="marker-impact" title="A cost is missing in this sub-tree">△</span>{% endif %}</td>
+        <td class="num">{{ n.unit_mass_kg|fixed(3) }}{% if not n.mass_complete %} <span class="marker-impact" title="A mass is missing in this sub-tree">△</span>{% endif %}</td>
+        <td class="num">{{ n.total_mass_kg|fixed(3) }}</td>
+        <td class="num">{{ n.total_cost|fixed(2) }}{% if not n.cost_complete %} <span class="marker-impact" title="A cost is missing in this sub-tree">△</span>{% endif %}</td>
         <td class="muted ellipsis" title="{{ n.notes }}">{{ n.notes }}</td>
       </tr>
     {% endfor %}
@@ -74,8 +74,8 @@
     <tfoot>
       <tr>
         <td colspan="7">Total</td>
-        <td class="num">{{ tree.total_mass_kg|num(4) }}</td>
-        <td class="num">{{ tree.total_cost|num(2) }}</td>
+        <td class="num">{{ tree.total_mass_kg|fixed(3) }}</td>
+        <td class="num">{{ tree.total_cost|fixed(2) }}</td>
         <td></td>
       </tr>
     </tfoot>

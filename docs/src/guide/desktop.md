@@ -12,9 +12,9 @@ check-outs and reviews, and a **local working folder**:
 * *Get…* on a revision copies the item **with everything it consists of** –
   its BOM resolved with a revision rule and the parts its CAD files
   reference – so the assembly opens in the CAD program (see below);
-* *Get…* (*Tools → Get Project Groups…*) copies the files of every item of
+* the download icon next to *Projects* in the navigator (*Tools → Get Project Groups…*) copies the files of every item of
   chosen project groups into the working folder – for new team members;
-* *Import…* (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
+* the folder icon next to it (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
   scan first (nothing is uploaded), then one item per part or assembly with
   its drawings and exports; every file keeps its folder, so the working
   folder later looks like the original tree. *Help → How to Import a CAD
@@ -69,10 +69,9 @@ appearance of the operating system and switches with it, *TeamCraft Light*
 and *TeamCraft Dark* stay fixed, the distribution skins are dark.
 
 The window is built for daily work: object tabs on top, under them the
-toolbar of the open object with its one main action filled (*Check out*,
-*Check in…* or *Revise*, depending on the state) and only the actions that
-are available now; *Refresh* is the arrow icon (`F5`). The navigator shows a
-state as its symbol (✓ released, ○ in review, ◐ in work, – obsolete, the
+toolbar of the open object with its one next step filled (see
+[The toolbar](#the-toolbar)) and the rare tools under *More*. The navigator shows a state as its symbol (a check:
+released, a ring: in review, a half-filled ring: in work, – obsolete, the
 name in the tooltip); the search field is `Ctrl+F` (`⌘F`).
 
 ## The toolbar

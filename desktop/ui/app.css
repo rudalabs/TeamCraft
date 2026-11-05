@@ -44,7 +44,8 @@ h1 { font-family: var(--display); font-weight: 600; font-size: 18px; line-height
 h2 { font-size: 14px; line-height: 20px; font-weight: 600; }
 h3 { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--text-muted); margin: 16px 0 6px; }
 p { margin: 0 0 8px; }
-a { color: var(--link); }
+/* Links keep their underline (colour is never the only cue, WCAG 1.4.1). */
+a { color: var(--link); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 code, .mono { font-family: var(--mono); font-size: 0.92em; }
 kbd {
   display: inline-flex; align-items: center; justify-content: center;
@@ -168,15 +169,24 @@ label.check input { width: auto; accent-color: var(--primary); }
 }
 .badge img { display: none; }
 .badge::before { font-size: 12px; line-height: 1; }
-.badge-in_work::before, .badge-draft::before, .badge-new::before { content: "◐"; }
+/* In work: a half-filled ring; in review: a ring; done: a check. Drawn in
+   CSS, so they read the same in every system font. */
+.badge-in_work::before, .badge-draft::before, .badge-new::before,
+.badge-in_review::before, .badge-pending::before, .badge-in_triage::before, .badge-modified::before, .badge-outdated::before, .badge-deferred::before {
+  content: ""; flex: none; box-sizing: border-box; width: 9px; height: 9px;
+  border: 1.5px solid currentColor; border-radius: 50%;
+}
+.badge-in_work::before, .badge-draft::before, .badge-new::before { box-shadow: inset 3px 0 0 currentColor; }
 .badge-in_review, .badge-pending, .badge-in_triage, .badge-modified, .badge-outdated, .badge-deferred {
   color: var(--st-review-fg); background: var(--st-review-bg); border-color: var(--st-review-bd);
 }
-.badge-in_review::before, .badge-pending::before, .badge-in_triage::before, .badge-modified::before, .badge-outdated::before, .badge-deferred::before { content: "○"; }
 .badge-released, .badge-approved, .badge-accepted, .badge-implemented, .badge-unchanged, .badge-up_to_date {
   color: var(--st-ok-fg); background: var(--st-ok-bg); border-color: var(--st-ok-bd);
 }
-.badge-released::before, .badge-approved::before, .badge-accepted::before, .badge-implemented::before, .badge-unchanged::before, .badge-up_to_date::before { content: "✓"; }
+.badge-released::before, .badge-approved::before, .badge-accepted::before, .badge-implemented::before, .badge-unchanged::before, .badge-up_to_date::before {
+  content: ""; flex: none; width: 4px; height: 8px; margin: 0 2px 2px;
+  border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
+}
 .badge-rejected, .badge-conflict, .badge-clash {
   color: var(--st-danger-fg); background: var(--st-danger-bg); border-color: var(--st-danger-bd);
 }
@@ -191,6 +201,13 @@ label.check input { width: auto; accent-color: var(--primary); }
 .badge-admin, .badge-editor, .badge-viewer, .badge-member { color: var(--st-wip-fg); background: var(--st-wip-bg); border-color: var(--st-wip-bd); }
 /* The lock: the holder in --text, the glyph in the lock colour. */
 .badge-lock { color: var(--text); background: var(--surface); border-color: var(--border-strong); }
+.badge-lock::before { display: none; }
+/* the line lock of the web UI: amber for someone else's lock, muted for yours */
+svg.lock-icon {
+  width: 13px; height: 13px; flex: none; vertical-align: -2px;
+  fill: none; stroke: var(--st-lock-other); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+svg.lock-icon.lock-mine { stroke: var(--text-muted); }
 
 ol.thread { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 8px; }
 .thread-entry { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow-wrap: anywhere; }
@@ -346,7 +363,10 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 
 .nav-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; margin: 0 4px 6px 8px; }
 .nav-head h2 { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.nav-head .row { gap: 4px; flex-wrap: nowrap; }
+.nav-head .row { gap: 4px; flex-wrap: nowrap; flex: none; }
+/* header buttons never truncate; the heading takes the ellipsis */
+.nav-head .row > button { flex: none; white-space: nowrap; }
+.nav-head .row > button.icon { width: var(--d-ctl-sm); height: var(--d-ctl-sm); }
 .nav-filter { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 4px 8px 8px; }
 .chip {
   height: 24px; font-size: 12px; padding: 0 8px; border-radius: var(--radius-sm);
@@ -389,8 +409,9 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
   font-size: 0; height: 16px; min-width: 16px; padding: 0; gap: 0;
   justify-content: center; background: none; border: none;
 }
-.node .meta .badge::before { font-size: 12px; font-weight: 600; }
-.node .meta .badge-in_work, .node .meta .badge-draft { color: var(--text-dim); }
+.node .meta .badge::before { font-size: 13px; font-weight: 600; }
+.node .meta :is(.badge-in_work, .badge-draft, .badge-new, .badge-in_review, .badge-pending, .badge-in_triage, .badge-modified, .badge-outdated, .badge-deferred)::before { width: 10px; height: 10px; }
+.node .meta :is(.badge-in_work, .badge-draft, .badge-new)::before { box-shadow: inset 3.5px 0 0 currentColor; }
 .section-title {
   margin: 14px 8px 4px;
   font-size: 12px; line-height: 16px; font-weight: 600;
@@ -441,16 +462,16 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .tool svg { width: 16px; height: 16px; }
 
 .more { position: relative; margin-left: auto; }
-.more-trigger[aria-expanded="true"] { background: var(--surface-hover); border-color: var(--c3); }
+.more-trigger[aria-expanded="true"] { background: var(--surface-2); border-color: transparent; }
 .more-trigger svg { width: 14px; height: 14px; }
 .menu {
-  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
-  min-width: 15rem;
-  padding: var(--space-1);
-  background: var(--bg-raised);
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--surface);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 18px 40px -16px rgb(0 0 0 / 70%);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
   transform-origin: top right;
   transition: opacity 120ms var(--ease-out), transform 120ms var(--ease-out);
 }
@@ -611,12 +632,17 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 
 /* Lifecycle stepper: done ✓, current in weight 600, future as an outline. */
 .lifecycle-track { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; list-style: none; padding: 0; margin: 0 0 8px; }
-.lifecycle-track li { display: flex; align-items: center; gap: 6px; }
-.lifecycle-track li + li::before { content: ''; width: 12px; height: 1px; background: var(--border-strong); }
+/* no connectors: a wrapped row never starts with a dangling dash */
+.lifecycle-track li { display: flex; align-items: center; }
 .lifecycle-track li.current .badge { font-weight: 600; }
 .lifecycle-track li:has(~ li.current) .badge { color: var(--st-ok-fg); background: var(--st-ok-bg); border: 1px solid var(--st-ok-bd); text-decoration: none; }
-.lifecycle-track li:has(~ li.current) .badge::before { content: "✓"; }
+.lifecycle-track li:has(~ li.current) .badge::before {
+  content: ""; width: 4px; height: 8px; margin: 0 2px 2px; border: solid currentColor; border-width: 0 1.5px 1.5px 0;
+  border-radius: 0; box-shadow: none; transform: rotate(45deg);
+}
+/* a state not reached yet carries no state glyph */
 .lifecycle-track li.current ~ li .badge { color: var(--text-muted); background: transparent; border: 1px solid var(--border-strong); text-decoration: none; }
+.lifecycle-track li.current ~ li .badge::before { display: none; }
 
 table.grid { width: 100%; border-collapse: collapse; }
 table.grid th, table.grid td { height: var(--d-row); padding: 4px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
@@ -625,10 +651,12 @@ table.grid th {
   font-size: 12px; line-height: 16px; font-weight: 500;
   color: var(--text-muted); background: var(--surface-2);
   /* collapsed borders scroll away under a sticky header; the shadow stays */
+  border-bottom: 0;
   box-shadow: inset 0 -1px 0 var(--border-strong);
   white-space: nowrap;
 }
 table.grid th.num, table.grid td.num { text-align: right; }
+table.grid td.nowrap { width: 1%; white-space: nowrap; }
 table.grid tbody tr:last-child > td { border-bottom: none; }
 @media (hover: hover) {
   table.grid tbody tr:hover { background: var(--surface-hover); }
@@ -652,8 +680,9 @@ table.grid td.actions button { height: var(--d-ctl-sm); padding: 0 8px; font-siz
   border-radius: var(--radius);
   background: var(--surface-2);
   color: var(--text);
-  max-width: 120ch;
 }
+/* the notice spans the content width like the panels; its text keeps a measure */
+.notice > * { max-width: 120ch; }
 .notice.error { box-shadow: inset 3px 0 0 var(--st-danger-fg); background: var(--surface); border: 1px solid var(--border); }
 .notice.ok { box-shadow: inset 3px 0 0 var(--st-ok-fg); background: var(--surface); border: 1px solid var(--border); }
 .notice.info { background: var(--surface-2); }
@@ -731,6 +760,8 @@ table.grid td.actions button { height: var(--d-ctl-sm); padding: 0 8px; font-siz
 .skin-card strong { font-size: 13px; }
 .skin-card .small { color: var(--text-muted); }
 .skin-card.selected { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
+/* not colour alone: the chosen card says so */
+.skin-card.selected::after { content: "✓ Current"; font-size: 12px; font-weight: 500; color: var(--text-muted); }
 .skin-swatch { display: flex; gap: 4px; padding: 3px 4px; border-radius: var(--radius-xs); }
 .skin-swatch span { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border); }
 .skin-swatch span:nth-child(1) { background: var(--swatch-1, var(--primary)); }
@@ -960,4 +991,12 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 @media (pointer: coarse) {
   .node { height: 40px; }
   table.grid th, table.grid td { height: 40px; }
+}
+
+/* Forced colours (Windows High Contrast): box-shadow edges and backgrounds
+   are dropped, so selection gets a real border. */
+@media (forced-colors: active) {
+  table.grid tbody tr.selected > td:first-child, .node.selected { border-left: 3px solid Highlight; }
+  .skin-card.selected { outline: 2px solid Highlight; }
+  .notice { border-left: 3px solid CanvasText; }
 }

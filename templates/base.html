@@ -72,8 +72,8 @@
           {% for s in [["teamcraft", "System"], ["teamcraft-day", "Light"], ["teamcraft-night", "Dark"]] %}
           <form method="post" action="/account/skin">
             <input type="hidden" name="skin" value="{{ s[0] }}">
-            <input type="hidden" name="back" value="" data-here>
-            <button type="submit"{% if skin == s[0] %} aria-pressed="true"{% endif %}>{{ s[1] }}</button>
+            <input type="hidden" name="back" value="{{ here }}" data-here>
+            <button type="submit" aria-pressed="{% if skin == s[0] %}true{% else %}false{% endif %}">{{ s[1] }}</button>
           </form>
           {% endfor %}
         </div>

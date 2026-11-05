@@ -15,7 +15,7 @@
  *   distro skins     the dark base with their own hue
  *
  * Rules: colour means state or the one primary action; every token that the
- * contrast test reads is an opaque #rrggbb (src/domain.rs, skins_meet_contrast);
+ * contrast test reads is an opaque #rrggbb or a var() of one (src/domain.rs, skins_meet_contrast);
  * the two DARK-TOKENS blocks are identical (dark_token_blocks_identical).
  * Gradients appear only in the distro skins' --glow / --pattern, which only
  * .app-glow paints.
@@ -50,8 +50,8 @@
   --primary-active: #054a86;
   --on-primary: #ffffff;
   --focus: #0761b0;
-  --count-bg: #ffea52;
-  --count-fg: #1a1d21;
+  --count-bg: var(--primary);
+  --count-fg: var(--on-primary);
   --viewer-bg: #eceff3;
   --viewer-model: #6f87a1;
   --axis-x: #c23b3b;
@@ -139,15 +139,15 @@
     --sidebar: #1e2228;
     --text: #e6e9ed;
     --text-muted: #a3acb8;
-    --text-dim: #8a94a1;
+    --text-dim: #98a2af;
     --link: #6cb2f5;
     --primary: #1f6fc5;
     --primary-hover: #1a64b4;
     --primary-active: #165799;
     --on-primary: #ffffff;
     --focus: #6cb2f5;
-    --count-bg: #ffea52;
-    --count-fg: #1a1d21;
+    --count-bg: var(--primary);
+    --count-fg: var(--on-primary);
     --viewer-bg: #0d1014;
     --viewer-model: #a7b6c6;
     --axis-x: #e5534b;
@@ -208,15 +208,15 @@
   --sidebar: #1e2228;
   --text: #e6e9ed;
   --text-muted: #a3acb8;
-  --text-dim: #8a94a1;
+  --text-dim: #98a2af;
   --link: #6cb2f5;
   --primary: #1f6fc5;
   --primary-hover: #1a64b4;
   --primary-active: #165799;
   --on-primary: #ffffff;
   --focus: #6cb2f5;
-  --count-bg: #ffea52;
-  --count-fg: #1a1d21;
+  --count-bg: var(--primary);
+  --count-fg: var(--on-primary);
   --viewer-bg: #0d1014;
   --viewer-model: #a7b6c6;
   --axis-x: #e5534b;
@@ -272,11 +272,7 @@
 [data-skin="teamcraft-night"] {
   color-scheme: dark;
 }
-/* The System card in the picker shows a light and a dark half. */
-.skin-card[data-skin="teamcraft"] .skin-preview {
-  background: #f5f6f8;
-  box-shadow: inset -50px 0 0 #101216;
-}
+/* The web System card shows a light and a dark mock side by side (account.html). */
 /* The desktop app's System card: the swatch row on a light and a dark half. */
 .skin-card[data-skin="teamcraft"] .skin-swatch {
   background: #f5f6f8;

@@ -224,13 +224,31 @@
   });
 
   // "/" focuses the search field (the page's own filter first), unless the
-  // user is typing somewhere.
+  // user is typing somewhere; Ctrl+K / ⌘K does the same. The single-key "/"
+  // can be switched off on the account page (WCAG 2.1.4), per browser.
+  function slashShortcutOn() {
+    try { return window.localStorage.getItem("tc-slash-shortcut") !== "off"; } catch (e) { return true; }
+  }
+  if (!slashShortcutOn()) document.documentElement.setAttribute("data-slash", "off");
   document.addEventListener("keydown", function (event) {
-    if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey) return;
+    var slash = event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey;
+    var ctrlK = (event.key === "k" || event.key === "K") && (event.ctrlKey || event.metaKey) && !event.altKey;
+    if (!slash && !ctrlK) return;
+    if (slash && !slashShortcutOn()) return;
     var t = event.target;
-    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    if (slash && t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
     var field = document.querySelector("[data-filter]") || document.querySelector(".quicksearch input");
     if (field) { event.preventDefault(); field.focus(); field.select(); }
+  });
+  document.querySelectorAll("input[data-slash-pref]").forEach(function (box) {
+    var wrap = box.closest(".hidden");
+    if (wrap) wrap.classList.remove("hidden");
+    box.checked = slashShortcutOn();
+    box.addEventListener("change", function () {
+      try { window.localStorage.setItem("tc-slash-shortcut", box.checked ? "on" : "off"); } catch (e) { /* storage blocked */ }
+      if (box.checked) document.documentElement.removeAttribute("data-slash");
+      else document.documentElement.setAttribute("data-slash", "off");
+    });
   });
 
   // Menus (<details class="menu">): one open at a time, Esc closes and
@@ -262,12 +280,24 @@
   });
 
   // Selects that apply at once (<select data-autosubmit>); the Apply button
-  // stays for pages without JavaScript (<noscript>).
+  // stays for pages without JavaScript (<noscript>). Only a choice made with
+  // the pointer submits at once: ↑/↓ on a closed select fire "change" on
+  // every step (WCAG 3.2.2), so the keyboard applies with Enter or on leaving.
   document.querySelectorAll("select[data-autosubmit]").forEach(function (select) {
-    select.addEventListener("change", function () {
-      if (select.form && select.form.requestSubmit) select.form.requestSubmit();
-      else if (select.form) select.form.submit();
+    var initial = select.value, pointer = false, sent = false;
+    function apply() {
+      if (sent || select.value === initial || !select.form) return;
+      sent = true;
+      if (select.form.requestSubmit) select.form.requestSubmit();
+      else select.form.submit();
+    }
+    select.addEventListener("pointerdown", function () { pointer = true; });
+    select.addEventListener("keydown", function (event) {
+      pointer = false;
+      if (event.key === "Enter") { event.preventDefault(); apply(); }
     });
+    select.addEventListener("change", function () { if (pointer) apply(); });
+    select.addEventListener("blur", apply);
   });
 
   // Flash messages can be dismissed.

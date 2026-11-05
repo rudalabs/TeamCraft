@@ -51,6 +51,9 @@ the dark look of earlier versions. The distribution skins (Arch, CachyOS,
 EndeavourOS, KDE, Kubuntu, openSUSE, Ubuntu) are dark. The choice is personal
 and also styles the login page in that browser.
 
+**Keyboard:** `/` or `Ctrl+K` (`⌘K`) jumps to the search field. The single-key
+`/` can be switched off under *Account → Appearance → Keyboard* (per browser).
+
 Keyboard: `/` jumps to the search field (on the vault explorer: to its
 filter); in menus, `Esc` closes and the arrow keys move.
 

@@ -2074,7 +2074,21 @@ mod tests {
         }
         let mut failures = Vec::new();
         for (name, t) in &skins {
-            let get = |k: &str| t.get(k).unwrap_or_else(|| panic!("{name}: {k}")).as_str();
+            // A token may name another one (`--count-bg: var(--primary)`);
+            // it resolves against the same skin, as in the browser.
+            let get = |k: &str| {
+                let mut key = k;
+                loop {
+                    let v = t
+                        .get(key)
+                        .unwrap_or_else(|| panic!("{name}: {key}"))
+                        .as_str();
+                    match v.strip_prefix("var(").and_then(|r| r.strip_suffix(')')) {
+                        Some(inner) => key = inner.trim(),
+                        None => break v,
+                    }
+                }
+            };
             let mut check = |fg: &str, bg: &str, min: f64| {
                 let ratio = contrast(get(fg), get(bg));
                 if ratio < min {
@@ -2088,6 +2102,7 @@ mod tests {
             }
             check("--text", "--selected", 4.5);
             check("--text-muted", "--selected", 4.5);
+            check("--text-dim", "--selected", 4.5);
             check("--link", "--surface", 4.5);
             check("--on-primary", "--primary", 4.5);
             check("--control-border", "--surface", 3.0);

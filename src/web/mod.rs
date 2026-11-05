@@ -413,6 +413,9 @@ pub struct WebCtx {
     pub me: Actor,
     pub flash: Option<Flash>,
     pub unread: i64,
+    /// Path and query of this request: the `back` target of the forms in the
+    /// header (appearance), so they return here without JavaScript too.
+    pub here: String,
 }
 
 impl FromRequestParts<AppState> for WebCtx {
@@ -428,6 +431,11 @@ impl FromRequestParts<AppState> for WebCtx {
             me,
             flash: read_flash(&parts.headers),
             unread,
+            here: parts
+                .uri
+                .path_and_query()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_else(|| "/".to_string()),
         })
     }
 }
@@ -484,6 +492,7 @@ pub(crate) fn render(
         map.insert("me".into(), me_json(&ctx.me));
         map.insert("skin".into(), json!(ctx.me.skin));
         map.insert("unread_notifications".into(), json!(ctx.unread));
+        map.insert("here".into(), json!(ctx.here));
         map.insert(
             "assistant_enabled".into(),
             json!(crate::services::assistant::enabled(st)),

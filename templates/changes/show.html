@@ -11,7 +11,7 @@
       <form method="post" action="/changes/{{ change.id }}/watch">
         <input type="hidden" name="watch" value="{% if watching %}0{% else %}1{% endif %}">
         <input type="hidden" name="back" value="/changes/{{ change.id }}">
-        <button class="ghost small" type="submit" aria-pressed="{% if watching %}true{% else %}false{% endif %}" title="{% if watching %}Stop the notifications about {{ change.number }}{% else %}Get notified when {{ change.number }} is submitted, decided or released{% endif %}">{{ m.eye() }}{% if watching %}Unwatch{% else %}Watch{% endif %}</button>
+        <button class="ghost small" type="submit" title="{% if watching %}Stop the notifications about {{ change.number }}{% else %}Get notified when {{ change.number }} is submitted, decided or released{% endif %}">{{ m.eye() }}{% if watching %}Unwatch{% else %}Watch{% endif %}</button>
       </form>
     </div>
   </div>
@@ -189,7 +189,7 @@
   {% else %}<p class="empty">No revisions yet.</p>{% endif %}
   {% if can.modify %}
   <form class="inline" method="post" action="/changes/{{ change.id }}/items">
-    <input type="text" name="item_number" placeholder="Item number, e.g. PRT-000012" required aria-label="Item number">
+    <input class="item-no" type="text" name="item_number" placeholder="Item number, e.g. PRT-000012" required aria-label="Item number">
     <button type="submit">Add its in-work revision</button>
   </form>
   {% endif %}
