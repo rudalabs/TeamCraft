@@ -52,7 +52,11 @@
       var index = indices ? new Uint32Array(buffer, at, indices) : null;
       at += indices * 4;
       var colors = flags & 1 ? new Uint8Array(buffer, at, vertices * 3) : null;
-      return { positions: positions, indices: index, colors: colors, parts: parts, bounds: bounds };
+      // flag 4: partial preview, face counts in the last 8 bytes
+      var faces = flags & 4 && buffer.byteLength >= 56
+        ? { shown: dv.getUint32(buffer.byteLength - 8, true), total: dv.getUint32(buffer.byteLength - 4, true) }
+        : null;
+      return { positions: positions, indices: index, colors: colors, parts: parts, bounds: bounds, faces: faces };
     }
 
     // ---------------------------------------------------------------- math
@@ -185,7 +189,10 @@
       var what = mesh.indices
         ? (mesh.indices.length / 3).toLocaleString() + " triangles · " + mesh.parts.toLocaleString() + (mesh.parts === 1 ? " body" : " bodies")
         : (mesh.positions.length / 3).toLocaleString() + " points";
-      setStatus(what + " · " + fmt(size[0]) + " × " + fmt(size[1]) + " × " + fmt(size[2]) + " (X × Y × Z, model units)");
+      var partial = mesh.faces
+        ? " · partial preview: " + mesh.faces.shown.toLocaleString() + " of " + mesh.faces.total.toLocaleString() + " faces"
+        : "";
+      setStatus(what + " · " + fmt(size[0]) + " × " + fmt(size[1]) + " × " + fmt(size[2]) + " (X × Y × Z, model units)" + partial);
     }
 
     function render() {

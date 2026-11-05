@@ -133,6 +133,9 @@ promised.
   numbers.
 - **Notifications.** In-app bell, e-mail and Mattermost; watch items,
   changes and change requests.
+- **Event webhooks.** Signed JSON for releases, changes, change requests and
+  simulation results to CI, ERP or chat – written with the event, retried
+  with backoff, internal targets only when allowed.
 - **Desktop app.** A Tauri client for Linux, macOS and Windows with a local
   working folder – one folder per project group that mirrors the original
   folder structure, read-only until you check out – for check-out and

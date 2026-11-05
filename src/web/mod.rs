@@ -25,6 +25,7 @@ mod references;
 mod requests;
 mod revisions;
 mod simulations;
+mod webhooks;
 
 pub(crate) use bom::{package_response, package_rule};
 pub(crate) use imports::{options_from as import_options, receive as receive_import};
@@ -290,6 +291,24 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/admin/audit", get(admin::audit))
+        .route(
+            "/admin/webhooks",
+            get(webhooks::list).post(webhooks::create),
+        )
+        .route(
+            "/admin/webhooks/{id}",
+            get(webhooks::show).post(webhooks::update),
+        )
+        .route("/admin/webhooks/{id}/delete", post(webhooks::delete))
+        .route(
+            "/admin/webhooks/{id}/rotate-secret",
+            post(webhooks::rotate_secret),
+        )
+        .route("/admin/webhooks/{id}/test", post(webhooks::test))
+        .route(
+            "/admin/webhooks/{id}/deliveries/{delivery_id}/retry",
+            post(webhooks::retry),
+        )
         // own account
         .route("/account", get(account::show))
         .route("/account/password", post(account::change_password))
