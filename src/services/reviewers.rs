@@ -42,6 +42,9 @@ const MAX_ITEMS: i64 = 200;
 const MAX_EARLIER_CHANGES: i64 = 50;
 const MAX_DEPENDENTS: i64 = 200;
 const MAX_ROWS: i64 = 5000;
+/// Rows per user and source that can still add points: the smallest
+/// weight of a source divides its cap at most this often (review: 12 / 2).
+const MAX_PER_SOURCE: i64 = 6;
 
 /// Audit actions on a revision that count as editing it.
 const EDIT_ACTIONS: &[&str] = &[
@@ -139,18 +142,23 @@ pub async fn suggest(pool: &PgPool, change_id: Uuid, limit: usize) -> AppResult<
              JOIN revisions pr ON pr.id = df.revision_id
              WHERE {LATEST}
          ),
-         deps AS (
+         deps_bounded AS (
              SELECT * FROM (
                  SELECT DISTINCT ON (e.item_id) e.item_id, di.number, e.via, e.relation,
-                        di.created_by, lr.created_by AS revision_by
+                        di.created_by
                  FROM dep_edges e
                  JOIN items di ON di.id = e.item_id
-                 CROSS JOIN LATERAL (SELECT x.created_by FROM revisions x WHERE x.item_id = e.item_id
-                                     ORDER BY x.seq DESC LIMIT 1) lr
                  WHERE NOT EXISTS (SELECT 1 FROM ci WHERE ci.item_id = e.item_id)
                  ORDER BY e.item_id, e.rank, e.via
              ) d
              ORDER BY d.number LIMIT $5
+         ),
+         -- the latest revision's author only for the bounded dependents
+         deps AS (
+             SELECT d.*, lr.created_by AS revision_by
+             FROM deps_bounded d
+             CROSS JOIN LATERAL (SELECT x.created_by FROM revisions x WHERE x.item_id = d.item_id
+                                 ORDER BY x.seq DESC LIMIT 1) lr
          ),
          signals AS (
              SELECT a.user_id, 'edit'::text AS kind, cr.number AS subject, ''::text AS via,
@@ -174,12 +182,32 @@ pub async fn suggest(pool: &PgPool, change_id: Uuid, limit: usize) -> AppResult<
              SELECT rq.requested_by, 'request'::text, rq.number, ''::text, ''::text, 1::bigint
              FROM change_request_changes crc JOIN change_requests rq ON rq.id = crc.request_id
              WHERE crc.change_id = $1
+         ),
+         -- points as in weigh(); only the strongest rows per user and source
+         -- can count (cap()), and a cut by $8 drops the weakest rows, not
+         -- the users late in the alphabet
+         eligible AS (
+             SELECT s.*, u.username, u.display_name, u.role,
+                    CASE s.kind WHEN 'edit' THEN 3 + LEAST(s.n, 7)
+                                WHEN 'review' THEN CASE WHEN s.detail IN ('approved', 'rejected')
+                                                        THEN 4 ELSE 2 END
+                                WHEN 'dependent' THEN 2
+                                WHEN 'manager' THEN 3
+                                ELSE 1 END AS points
+             FROM signals s JOIN users u ON u.id = s.user_id
+             WHERE u.active AND u.role IN ('editor', 'admin') AND u.id <> $2
+               AND NOT EXISTS (SELECT 1 FROM change_reviews x
+                               WHERE x.change_id = $1 AND x.reviewer_id = u.id)
+         ),
+         ranked AS (
+             SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e.user_id, e.kind
+                                            ORDER BY e.points DESC, e.subject, e.via) AS pos
+             FROM eligible e
          )
-         SELECT s.user_id, u.username, u.display_name, u.role, s.kind, s.subject, s.via, s.detail, s.n
-         FROM signals s JOIN users u ON u.id = s.user_id
-         WHERE u.active AND u.role IN ('editor', 'admin') AND u.id <> $2
-           AND NOT EXISTS (SELECT 1 FROM change_reviews x WHERE x.change_id = $1 AND x.reviewer_id = u.id)
-         ORDER BY u.username, s.kind, s.subject
+         SELECT user_id, username, display_name, role, kind, subject, via, detail, n
+         FROM ranked
+         WHERE pos <= $9
+         ORDER BY points DESC, username, kind, subject, via
          LIMIT $8"
     );
     let signals = sqlx::query_as::<_, Signal>(&sql)
@@ -191,6 +219,7 @@ pub async fn suggest(pool: &PgPool, change_id: Uuid, limit: usize) -> AppResult<
         .bind(EDIT_ACTIONS)
         .bind(EDIT_DAYS)
         .bind(MAX_ROWS)
+        .bind(MAX_PER_SOURCE)
         .fetch_all(pool)
         .await?;
     Ok(rank(signals, limit))
