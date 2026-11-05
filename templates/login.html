@@ -2,11 +2,11 @@
 {% block title %}Sign in{% endblock %}
 {% block content %}
 <div class="login">
-  <img class="login-logo login-logo-light" src="/static/media/logos/TeamCraft_Logo_White.svg?v={{ assets }}" alt="TeamCraft">
-  <img class="login-logo login-logo-dark" src="/static/media/logos/TeamCraft_Logo_Blue.svg?v={{ assets }}" alt="TeamCraft">
+  <img class="login-logo on-dark" src="/static/media/logos/TeamCraft_Logo_White.svg?v={{ assets }}" alt="TeamCraft">
+  <img class="login-logo on-light" src="/static/media/logos/TeamCraft_Logo_Blue.svg?v={{ assets }}" alt="TeamCraft">
   {% if setup %}
   <div class="card">
-    <p class="kicker">{{ instance_name }} · first start</p>
+    <p class="meta">{{ instance_name }} · first start</p>
     <h2>Create the administrator</h2>
     <p class="hint">This server has no accounts yet. The account you create here is the administrator; afterwards this form is gone.
       It is only offered while the server listens on this computer (localhost).</p>
@@ -23,7 +23,6 @@
   </div>
   {% else %}
   <div class="card">
-    <p class="kicker">{{ instance_name }}</p>
     <h2>Sign in</h2>
     {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
 

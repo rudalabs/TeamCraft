@@ -15,8 +15,9 @@
 
   // Keep in sync with SKINS in src/domain.rs (a server unit test checks it).
   var SKINS = [
-    { id: "teamcraft", name: "TeamCraft", logo: "logos/TeamCraft_Icon.svg", description: "House style, night" },
-    { id: "teamcraft-day", name: "TeamCraft Day", logo: "logos/TeamCraft_Icon.svg", description: "House style, light" },
+    { id: "teamcraft", name: "TeamCraft", logo: "logos/TeamCraft_Icon.svg", description: "Follows your system: light or dark" },
+    { id: "teamcraft-day", name: "TeamCraft Light", logo: "logos/TeamCraft_Icon.svg", description: "House style, light" },
+    { id: "teamcraft-night", name: "TeamCraft Dark", logo: "logos/TeamCraft_Icon.svg", description: "House style, dark" },
     { id: "arch", name: "Arch", logo: "logos/TeamCraft_Icon.svg", description: "Blueprint grid" },
     { id: "cachyos", name: "CachyOS", logo: "logos/TeamCraft_Icon.svg", description: "Teal dot matrix" },
     { id: "endeavouros", name: "EndeavourOS", logo: "logos/TeamCraft_Icon.svg", description: "Purple sunset" },
@@ -147,9 +148,12 @@
 
   function tool(label, icon, onClick, opts) {
     opts = opts || {};
-    return h("button.tool" + (opts.primary ? ".primary" : "") + (opts.danger ? ".danger" : ""), {
-      type: "button", title: opts.title || label, disabled: opts.disabled, on: { click: onClick }
-    }, [svgIcon(ICONS[icon] || ICONS.plus), label]);
+    // Refresh is an icon button (F5 in the View menu does the same)
+    var iconOnly = icon === "refresh" && label === "Refresh";
+    return h("button.tool" + (opts.primary ? ".primary" : "") + (opts.danger ? ".danger" : "") + (iconOnly ? ".icon" : "") + ".tool-" + icon, {
+      type: "button", title: opts.title || (iconOnly ? "Refresh (F5)" : label), "aria-label": iconOnly ? label : null,
+      disabled: opts.disabled, on: { click: onClick }
+    }, [svgIcon(ICONS[icon] || ICONS.plus), iconOnly ? null : label]);
   }
 
   /** A labelled segment of related toolbar buttons (Lock, Work, Lifecycle …). */
@@ -272,6 +276,17 @@
     ]);
   }
 
+  // The lock holder with the line lock icon (the web UI's lock macro):
+  // muted for your own lock, amber for someone else's.
+  function lockIcon(mine) {
+    var svg = svgIcon(ICONS.checkout);
+    svg.setAttribute("class", "lock-icon" + (mine ? " lock-mine" : ""));
+    return svg;
+  }
+  function lockBadge(name, mine) {
+    return h("span.badge.badge-lock", { title: "Checked out by " + name }, [lockIcon(mine), name]);
+  }
+
   function errorText(err) {
     if (!err) return "Unknown error";
     if (typeof err === "string") return err;
@@ -376,6 +391,17 @@
     var light = getComputedStyle(root).colorScheme.indexOf("light") !== -1;
     root.classList.toggle("skin-light", light);
     if (state.viewer) renderActive(); // the 3D view takes its colours from the skin
+  }
+
+  // The System skin follows the OS: re-apply it when the OS switches between
+  // light and dark (WebKitGTK, WebView2 and WKWebView all report it).
+  if (window.matchMedia) {
+    var schemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    if (schemeQuery.addEventListener) {
+      schemeQuery.addEventListener("change", function () {
+        applySkin(document.documentElement.getAttribute("data-skin"));
+      });
+    }
   }
 
   // ======================================================================
@@ -486,6 +512,7 @@
   }
 
   function initShell() {
+    if (/Mac/.test(navigator.platform)) $("search-kbd").textContent = "⌘F"; // the View → Search shortcut
     document.querySelectorAll(".rail button[data-view]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var view = btn.getAttribute("data-view");
@@ -730,9 +757,9 @@
     var mine = state.projects.filter(function (p) { return p.active && state.me.projects.indexOf(p.id) !== -1; });
     var others = state.projects.filter(function (p) { return p.active && state.me.projects.indexOf(p.id) === -1; });
     clear(nav);
-    nav.appendChild(navHead("Project groups", [
-      h("button.small", { type: "button", title: "Copy the files of whole project groups into your workspace", on: { click: function () { getProjectsDialog(); } } }, "Get…"),
-      canEdit() ? h("button.small", { type: "button", title: "Import an existing CAD folder (Tools → Import CAD Folder…)", on: { click: function () { importFolderDialog(); } } }, "Import…") : null,
+    nav.appendChild(navHead("Projects", [
+      h("button.small.icon", { type: "button", title: "Get project groups: copy their files into your workspace", "aria-label": "Get project groups…", on: { click: function () { getProjectsDialog(); } } }, svgIcon(ICONS.download)),
+      canEdit() ? h("button.small.icon", { type: "button", title: "Import an existing CAD folder (Tools → Import CAD Folder…)", "aria-label": "Import CAD folder…", on: { click: function () { importFolderDialog(); } } }, svgIcon(ICONS.folder)) : null,
       canEdit() ? h("button.small", { type: "button", title: "New item (Ctrl+N)", on: { click: function () { newItemDialog(); } } }, [svgIcon(ICONS.plus), "New"]) : null
     ]));
     function group(title, list) {
@@ -793,7 +820,7 @@
       nav.appendChild(h("p.section-title", { text: "Checked out by me (" + w.checkouts.length + ")" }));
       nav.appendChild(w.checkouts.length ? h("ul.tree", null, w.checkouts.map(function (r) {
         return h("li", null, h("div.node", { title: "Checked out " + fmtDate(r.checked_out_at), on: { click: function () { openRevision(r.item_number, r.code); } } }, [
-          h("span.twisty"), h("span.ico", { text: "🔒" }),
+          h("span.twisty"), h("span.ico", null, lockIcon(true)),
           h("span.label", null, [h("span.mono", { text: r.item_number + "/" + r.code }), " ", r.name]),
           h("span.meta.small.dim", { text: lockAge(r.checked_out_at) })
         ]));
@@ -847,7 +874,7 @@
       title: g.item_number + "/" + g.revision_code + " " + g.item_name + " – " + n + " change" + (n === 1 ? "" : "s") + " to check",
       on: { click: function () { openRevision(g.item_number, g.revision_code, "references"); } }
     }, [
-      twisty, h("span.ico.warn", { text: "⚠" }),
+      twisty, h("span.ico.warn", { text: "△" }),
       h("span.label", null, [h("span.mono", { text: g.item_number + "/" + g.revision_code }), " ", g.item_name]),
       h("span.meta", null, h("span.count-badge", { text: String(n) }))
     ]);
@@ -1026,16 +1053,16 @@
     ]);
     var w = state.worklist;
     var welcome = h("div.welcome", null, [
-      h("h1", { text: "Hello, " + (state.me ? state.me.display_name : "") }),
-      h("p.muted", { text: "Open a project group in the navigator, search above or pick something from your worklist." })
+      h("h1", { text: "Home" }),
+      h("p.muted", { text: "Open an item from the navigator, or press " + (/Mac/.test(navigator.platform) ? "⌘F" : "Ctrl+F") + " to search." })
     ]);
     body.appendChild(welcome);
     var fill = function (wl) {
       if (!wl) return;
       var s = wl.stats;
       append(welcome, h("div.stats", null, [
-        stat(s.items, "Items"), stat(s.revisions_in_work, "Revisions in work"), stat(s.revisions_in_review, "In review"),
-        stat(s.revisions_released, "Released revisions"), stat(s.open_changes, "Open changes"), stat(fmtSize(s.stored_bytes), s.files + " files in the vault")
+        stat(s.items, "Items"), stat(s.revisions_in_work, "In work"), stat(s.revisions_in_review, "In review"),
+        stat(s.revisions_released, "Released"), stat(s.open_changes, "Open changes"), stat(fmtSize(s.stored_bytes), s.files + " files in the vault")
       ]));
       var groups = impactGroups(wl);
       if (groups.length) {
@@ -1078,7 +1105,8 @@
           on: r.open ? { dblclick: r.open, click: r.single ? r.open : null } : null,
           title: r.open ? "Double-click to open" : null
         }, r.cells.map(function (c, i) {
-          var td = h("td" + (opts.numeric && opts.numeric.indexOf(i) !== -1 ? ".num" : ""));
+          var td = h("td" + (opts.numeric && opts.numeric.indexOf(i) !== -1 ? ".num" : "") +
+            (opts.nowrap && opts.nowrap.indexOf(i) !== -1 ? ".nowrap" : ""));
           append(td, c);
           return td;
         }));
@@ -1974,7 +2002,7 @@
         h("h1", null, [h("span.mono", { text: rev.item_number + "/" + rev.code }), " · " + rev.name]),
         h("div.meta", null, [
           badge(rev.state),
-          rev.checked_out_by_name ? h("span.badge.badge-lock", { text: "🔒 " + rev.checked_out_by_name }) : null,
+          rev.checked_out_by_name ? lockBadge(rev.checked_out_by_name, rev.checked_out_by === state.me.id) : null,
           h("span", { text: "created " + fmtDate(rev.created_at) + " by " + rev.created_by_name })
         ])
       ])
@@ -2669,7 +2697,7 @@
         ]),
         h("p.small.muted", null, ["Folder: ", h("span.mono", { text: ws.dir }),
           " · files you have not checked out are read-only; check out to change them."]),
-        rev.checked_out_by ? h("p.small", null, [badge("lock", "🔒 " + (lockedByOther ? rev.checked_out_by_name : "You")),
+        rev.checked_out_by ? h("p.small", null, [lockBadge(lockedByOther ? rev.checked_out_by_name : "You", !lockedByOther),
           " checked out " + fmtDate(rev.checked_out_at) + " (" + lockAge(rev.checked_out_at) + ")" +
           (lockedByOther ? " – locked by " + rev.checked_out_by_name + ": only they can check in right now; your local changes stay in the working folder." : "")]) : null,
         !ws.exists ? h("p.empty", { text: "Not in your working folder yet – check out (or “Get files”) to copy the files." }) :
@@ -3261,12 +3289,12 @@
       h("section.panel", null, [h("h2", { text: "Reviewers" }),
         tab.data.reviews.length ? table(["Reviewer", "Decision", "Comment"], tab.data.reviews.map(function (r) {
           return { cells: [r.reviewer_name, badge(r.decision), h("span.pre", { text: r.comment || "" })] };
-        })) : h("p.empty", { text: "No reviewers assigned yet." }),
+        }), { nowrap: [0, 1] }) : h("p.empty", { text: "No reviewers assigned yet." }),
         owner && c.status === "draft" ? suggestedReviewers(c.number) : null])
     ]));
     body.appendChild(h("section.panel", null, [h("h2", { text: "Affected revisions" }),
       tab.data.items.length ? table(["Revision", "Name", "State"], tab.data.items.map(function (i) {
-        return { cells: [h("span.mono", { text: i.item_number + "/" + i.code }), i.name, h("span", null, [badge(i.state), i.checked_out_by_name ? h("span.badge.badge-lock", { text: "🔒 " + i.checked_out_by_name }) : null])], open: function () { openRevision(i.item_number, i.code); } };
+        return { cells: [h("span.mono", { text: i.item_number + "/" + i.code }), i.name, h("span", null, [badge(i.state), i.checked_out_by_name ? lockBadge(i.checked_out_by_name, i.checked_out_by === state.me.id) : null])], open: function () { openRevision(i.item_number, i.code); } };
       })) : h("p.empty", { text: "No revisions yet." })]));
     // Release readiness: unreleased dependencies block the submit.
     if ((c.status === "draft" || c.status === "rejected") && tab.data.items.length) {
@@ -4119,7 +4147,9 @@
         h("span.skin-swatch", { "aria-hidden": "true" }, [h("span"), h("span"), h("span"), h("span")])]);
     }));
     var body = h("div.stack", null, [
-      h("h3", { text: "Skin" }), skins,
+      h("h3", { text: "Appearance" }),
+      h("p.hint", { text: "Choose how TeamCraft Desktop looks. The distribution skins are dark." }),
+      skins,
       h("h3", { text: "Workspace" }),
       field("Folder for checked-out files", h("div.row", null, [ws,
         TAURI.dialog ? h("button", { type: "button", on: { click: function () {
@@ -4173,7 +4203,7 @@
       h("img.connect-logo.skin-logo-light", { src: "/static/media/logos/TeamCraft_Logo_Blue.svg", alt: "TeamCraft" }),
       h("p", { text: "TeamCraft Desktop " + state.session.version + " – the rich client of TeamCraft, the open-source product lifecycle management." }),
       h("p.small", { text: "Pre-release: TeamCraft is a work in progress and has no official release yet. It is provided as is, without warranty of any kind (MPL-2.0, sections 6 and 7). Keep backups of your data." }),
-      h("p.small.muted", { text: "TeamCraft is open source under the Mozilla Public License 2.0. Fonts: Montserrat and Oswald (SIL Open Font License 1.1)." }),
+      h("p.small.muted", { text: "TeamCraft is open source under the Mozilla Public License 2.0. Font: Montserrat (SIL Open Font License 1.1), text in the system UI face." }),
       h("p.small.muted", { text: "Server: " + (state.session.server_url || "—") })
     ]), [{ label: "Close", primary: true, onClick: function (d) { d.close(); } }]);
   }

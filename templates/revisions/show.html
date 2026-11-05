@@ -7,68 +7,87 @@
 
 <div class="page-head">
   <div>
-    <h1><span class="mono">{{ rev.item_number }}/{{ rev.code }}</span> · {{ rev.name }}</h1>
-    <p class="subtitle">
-      {{ rev.item_type|label }} · {{ m.badge(rev.state) }}
-      {% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name) }}
-      <span class="small muted" title="Checked out {{ rev.checked_out_at|dt }}">for {{ rev.checked_out_at|age }}</span>{% endif %}
-      {% if item.project_code %}· project <strong>{{ item.project_code }}</strong>{% endif %}
-    </p>
+    <p class="crumbs"><a href="/items">Items</a>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% endif %}<span>{{ rev.item_number }}</span></p>
+    <div class="title-row">
+      <h1><span class="id">{{ rev.item_number }}</span>{{ m.revbox(rev.code) }} {{ rev.name }}</h1>
+      <form method="post" action="/items/{{ item.id }}/favorite">
+        <input type="hidden" name="favorite" value="{% if favorite %}0{% else %}1{% endif %}">
+        <input type="hidden" name="back" value="{{ back }}">
+        <button class="ghost icon-btn" type="submit" aria-pressed="{% if favorite %}true{% else %}false{% endif %}" aria-label="Favorite"
+                title="{% if favorite %}Remove {{ rev.item_number }} from your favorites{% else %}Keep {{ rev.item_number }} at hand in Vault → Favorites{% endif %}">{{ m.star(favorite) }}</button>
+      </form>
+      <form method="post" action="/items/{{ item.id }}/watch">
+        <input type="hidden" name="watch" value="{% if watching %}0{% else %}1{% endif %}">
+        <input type="hidden" name="back" value="{{ back }}">
+        <button class="ghost small" type="submit" title="{% if watching %}Stop the notifications about {{ rev.item_number }}{% else %}Get notified about new revisions, releases and check-ins of {{ rev.item_number }}{% endif %}">{{ m.eye() }}{% if watching %}Unwatch{% else %}Watch{% endif %}</button>
+      </form>
+    </div>
   </div>
   <div class="actions">
-    <form method="post" action="/items/{{ item.id }}/watch">
-      <input type="hidden" name="watch" value="{% if watching %}0{% else %}1{% endif %}">
-      <input type="hidden" name="back" value="{{ back }}">
-      <button type="submit" title="{% if watching %}Stop the notifications about {{ rev.item_number }}{% else %}Get notified about new revisions, releases and check-ins of {{ rev.item_number }}{% endif %}">{% if watching %}Unwatch{% else %}Watch{% endif %}</button>
-    </form>
-    <form method="post" action="/items/{{ item.id }}/favorite">
-      <input type="hidden" name="favorite" value="{% if favorite %}0{% else %}1{% endif %}">
-      <input type="hidden" name="back" value="{{ back }}">
-      <button type="submit" title="{% if favorite %}Remove {{ rev.item_number }} from your favorites{% else %}Keep {{ rev.item_number }} at hand in Vault → ★ Favorites{% endif %}">{% if favorite %}★ Favorite{% else %}☆ Favorite{% endif %}</button>
-    </form>
-    {% if me.role != "viewer" %}<a class="button" href="/revisions/{{ rev.id }}/save-as" title="A new item with the attributes, files and BOM of this revision">Save as…</a>{% endif %}
-    {% if can.edit %}<a class="button primary" href="/revisions/{{ rev.id }}/edit">Edit attributes</a>{% endif %}
-    {% if can.checkout %}
-    <form method="post" action="/revisions/{{ rev.id }}/checkout"><button class="primary" type="submit" title="Take the exclusive edit lock">Check out</button></form>
+    {% if assistant_enabled %}
+    <button class="ghost" type="button" data-toggle="assistant-panel" title="Release notes, release check or any question about this revision">Ask TeamCraft…</button>
     {% endif %}
+    {#- One primary action, chosen by the state of the revision. -#}
     {% if can.checkin %}
-    <button type="button" data-toggle="checkin-form" title="Upload new file versions and release the lock">Check in…</button>
-    {% endif %}
-    {% if can.cancel_checkout %}
-    {#- Cancelling your own check-out takes effect at once; releasing someone else's lock is confirmed. -#}
-    <form method="post" action="/revisions/{{ rev.id }}/cancel-checkout"
-          {% if rev.checked_out_by != me.id %}data-confirm="Release the check-out held by {{ rev.checked_out_by_name }}?"{% endif %}>
-      <button type="submit" title="{% if rev.checked_out_by != me.id %}Release the lock held by {{ rev.checked_out_by_name }}{% else %}Release your lock without uploading anything{% endif %}">{% if rev.checked_out_by != me.id %}Force unlock{% else %}Cancel check-out{% endif %}</button>
+    <button class="primary" type="button" data-toggle="checkin-form" aria-controls="checkin-form" aria-expanded="false" title="Upload new file versions and release the lock">Check in…</button>
+    {% elif can.checkout %}
+    <form method="post" action="/revisions/{{ rev.id }}/checkout"><button class="primary" type="submit" title="Take the exclusive edit lock">Check out</button></form>
+    {% elif open_change and rev.state == "in_review" %}
+    <a class="button primary" href="/changes/{{ open_change.id }}">Open change</a>
+    {% elif can.revise %}
+    <form method="post" action="/revisions/{{ rev.id }}/revise"
+          data-confirm="Create a new revision of {{ rev.item_number }} based on {{ rev.code }}?">
+      <button class="primary" type="submit">Revise</button>
     </form>
     {% endif %}
-    {% if can.revise %}
+    {% if can.edit %}<a class="button" href="/revisions/{{ rev.id }}/edit">Edit attributes</a>{% endif %}
+    {% if can.revise and (can.checkin or can.checkout or (open_change and rev.state == "in_review")) %}
     <form method="post" action="/revisions/{{ rev.id }}/revise"
           data-confirm="Create a new revision of {{ rev.item_number }} based on {{ rev.code }}?">
       <button type="submit">Revise</button>
     </form>
     {% endif %}
-    {% if can.add_to_change %}
-    <a class="button" href="/changes/new?revision={{ rev.id }}">Release via new change…</a>
-    {% endif %}
-    <a class="button" href="/requests/new?revision={{ rev.id }}" title="Report a problem or propose a change to {{ rev.item_number }}/{{ rev.code }} (change request)">Request change…{% if open_requests %}<span class="badge badge-count" title="{{ open_requests|length }} open change request(s)">{{ open_requests|length }}</span>{% endif %}</a>
-    {% if can.obsolete %}
-    <form method="post" action="/revisions/{{ rev.id }}/obsolete"
-          data-confirm="Mark {{ rev.item_number }}/{{ rev.code }} as obsolete? This cannot be undone.">
-      <button class="danger" type="submit">Mark obsolete</button>
-    </form>
-    {% endif %}
-    {% if can.delete %}
-    <form method="post" action="/items/{{ item.id }}/delete"
-          data-confirm="Delete {{ rev.item_number }} permanently? Only possible because it was never released.">
-      <input type="hidden" name="back" value="{{ back }}">
-      <button class="danger" type="submit">Delete item</button>
-    </form>
-    {% endif %}
-    {% if assistant_enabled %}
-    <button type="button" data-toggle="assistant-panel" title="Release notes, release check or any question about this revision">Ask TeamCraft…</button>
-    {% endif %}
+    <details class="menu">
+      <summary class="button">More <span class="chev" aria-hidden="true"></span></summary>
+      <div class="menu-pop menu-right">
+        {% if me.role != "viewer" %}<a href="/revisions/{{ rev.id }}/save-as" title="A new item with the attributes, files and BOM of this revision">Save as…</a>{% endif %}
+        {% if can.add_to_change %}<a href="/changes/new?revision={{ rev.id }}">Release via new change…</a>{% endif %}
+        <a href="/requests/new?revision={{ rev.id }}" title="Report a problem or propose a change to {{ rev.item_number }}/{{ rev.code }} (change request)">Request change…{% if open_requests %}<span class="badge badge-count" title="{{ open_requests|length }} open change request(s)">{{ open_requests|length }}</span>{% endif %}</a>
+        <a href="/revisions/{{ rev.id }}/package.zip" title="This revision with all files of its structure (BOM), bom.csv and manifest.json">Pack and Go (ZIP)</a>
+        {% if can.cancel_checkout or can.obsolete or can.delete %}<div class="menu-sep" role="separator"></div>{% endif %}
+        {% if can.cancel_checkout %}
+        {#- Cancelling your own check-out takes effect at once; releasing someone else's lock is confirmed. -#}
+        <form method="post" action="/revisions/{{ rev.id }}/cancel-checkout"
+              {% if rev.checked_out_by != me.id %}data-confirm="Release the check-out held by {{ rev.checked_out_by_name }}?"{% endif %}>
+          <button class="danger" type="submit" title="{% if rev.checked_out_by != me.id %}Release the lock held by {{ rev.checked_out_by_name }}{% else %}Release your lock without uploading anything{% endif %}">{% if rev.checked_out_by != me.id %}Force unlock{% else %}Cancel check-out{% endif %}</button>
+        </form>
+        {% endif %}
+        {% if can.obsolete %}
+        <form method="post" action="/revisions/{{ rev.id }}/obsolete"
+              data-confirm="Mark {{ rev.item_number }}/{{ rev.code }} as obsolete? This cannot be undone.">
+          <button class="danger" type="submit">Mark obsolete</button>
+        </form>
+        {% endif %}
+        {% if can.delete %}
+        <form method="post" action="/items/{{ item.id }}/delete"
+              data-confirm="Delete {{ rev.item_number }} permanently? Only possible because it was never released.">
+          <input type="hidden" name="back" value="{{ back }}">
+          <button class="danger" type="submit">Delete item</button>
+        </form>
+        {% endif %}
+      </div>
+    </details>
   </div>
 </div>
+<dl class="titleblock">
+  <div><dt>Type</dt><dd>{{ rev.item_type|label }}</dd></div>
+  <div><dt>Revision</dt><dd>{{ m.revbox(rev.code) }}{% if not is_latest %} <a class="small" href="/revisions/{{ latest_id }}">latest</a>{% endif %}</dd></div>
+  <div><dt>State</dt><dd>{{ m.badge(rev.state) }}</dd></div>
+  <div><dt>Lock</dt><dd>{% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name, rev.checked_out_by == me.id) }} <span class="dim" title="Checked out {{ rev.checked_out_at|dt }}">for {{ rev.checked_out_at|age }}</span>{% else %}<span class="dim">Not checked out</span>{% endif %}</dd></div>
+  <div><dt>Project</dt><dd>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% else %}<span class="dim">—</span>{% endif %}</dd></div>
+  <div><dt>Modified</dt><dd>{{ m.time(rev.updated_at) }}</dd></div>
+  <div><dt>Released</dt><dd>{{ m.time(rev.released_at) }}</dd></div>
+</dl>
 {% if assistant_enabled %}
 {{ m.assistant_panel([["release_notes", "Draft release notes"], ["release_check", "Check before release"]], rev.item_number, rev.code, "", back) }}
 {% endif %}
@@ -108,7 +127,8 @@
 </section>
 {% endif %}
 
-<div class="grid grid-2">
+<div class="with-rail">
+<div>
   <section class="card">
     <h2>Attributes</h2>
     <dl class="props">
@@ -155,6 +175,7 @@
     {% endif %}
   </section>
 </div>
+<aside class="rail">
 
 <section class="card" id="lifecycle">
   <div class="card-head">
@@ -162,24 +183,29 @@
     <button class="small" type="button" data-toggle="lifecycle-rules">All rules</button>
   </div>
   <ol class="lifecycle-track" aria-label="Lifecycle states">
-    {% for s in lifecycle.states %}<li class="{% if s == rev.state %}current{% endif %}"{% if s == rev.state %} aria-current="step"{% endif %}>{{ m.badge(s) }}</li>{% endfor %}
+    {%- set lc = namespace(passed=false) %}
+    {%- for s in lifecycle.states %}
+    {%- if s == rev.state %}<li class="current" aria-current="step">{{ m.badge(s) }}</li>{% set lc.passed = true %}
+    {%- elif not lc.passed and s != "obsolete" %}<li class="done"><span class="badge badge-released"><span class="glyph" aria-hidden="true">✓</span>{{ s|label }}<span class="visually-hidden">, done</span></span></li>
+    {%- else %}<li class="future"><span class="badge">{{ s|label }}<span class="visually-hidden">, not reached</span></span></li>{% endif %}
+    {%- endfor %}
   </ol>
+  <div class="lifecycle-text">
   {% if lifecycle.next %}
-  <dl class="props">
     {% for r in lifecycle.next %}
-    <dt>→ {{ r.to|label }}</dt><dd>{{ r.how }} <span class="muted">{{ r.who }}</span></dd>
+    <p>→ {{ r.to|label }}: {{ r.how }} <span class="muted">{{ r.who }}</span></p>
     {% endfor %}
-  </dl>
   {% else %}
-  <p class="small muted">Obsolete is the final state.</p>
+    <p>Obsolete is the final state.</p>
   {% endif %}
   {% if rev.state == "in_work" %}
-  <p class="small muted">Attributes, files and BOM change only while the revision is checked out – possible for CAD editors of
+    <p class="note">Attributes, files and BOM change only while the revision is checked out – possible for CAD editors of
     {{ item.project_code or "the project group" }} and admins.</p>
   {% elif rev.state in ["released", "obsolete"] %}
-  <p class="small muted">Released data never changes; further work happens in a new revision (<em>Revise</em>) by CAD editors of
+    <p class="note">Released data never changes; further work happens in a new revision (Revise) by CAD editors of
     {{ item.project_code or "the project group" }} and admins.</p>
   {% endif %}
+  </div>
   <div id="lifecycle-rules" class="table-wrap hidden">
     <table>
       <thead><tr><th>From</th><th>To</th><th>How</th><th>Who</th></tr></thead>
@@ -196,14 +222,13 @@
   <h2>Revisions</h2>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Rev</th><th>Name</th><th>State</th><th>Created</th><th>Released</th></tr></thead>
+    <thead><tr><th>Rev</th><th>State</th><th>Created</th><th>Released</th></tr></thead>
     <tbody>
     {% for r in revisions %}
       <tr class="{% if r.id == rev.id %}current{% endif %}">
-        <td class="mono"><a href="/revisions/{{ r.id }}">{{ r.code }}</a></td>
-        <td>{{ r.name }}</td>
+        <td title="{{ r.name }}"><a class="revbox" href="/revisions/{{ r.id }}">{{ r.code }}</a></td>
         <td>{{ m.badge(r.state) }}{% if r.checked_out_by_name %} {{ m.lock(r.checked_out_by_name) }}{% endif %}</td>
-        <td class="small nowrap">{{ m.time(r.created_at) }} · {{ r.created_by_name }}</td>
+        <td class="small">{{ m.time(r.created_at) }}<span class="muted block">{{ r.created_by_name }}</span></td>
         <td class="small nowrap">{{ m.time(r.released_at) }}</td>
       </tr>
     {% endfor %}
@@ -211,6 +236,8 @@
   </table>
   </div>
 </section>
+</aside>
+</div>
 
 <section class="card" id="files">
   <div class="card-head">
@@ -219,43 +246,52 @@
   </div>
   {% if files %}
   <div class="table-wrap">
-  <table>
-    <thead><tr><th>File</th><th title="Place inside the project group – the desktop working folder mirrors it">Folder</th><th>Version</th><th class="num">Size</th><th>Uploaded</th><th>SHA-256</th><th></th></tr></thead>
+  <table class="dense files-table">
+    <thead><tr><th>File</th><th title="Place inside the project group – the desktop working folder mirrors it">Folder</th><th>Version</th><th class="num">Size</th><th>Uploaded</th><th>SHA-256</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
     <tbody>
     {% for f in files %}
       <tr>
-        <td>
+        <td><div class="file-cell">
           {% if f.format_info and f.format_info.thumbnail %}<a class="thumb-link" href="/files/{{ f.id }}/thumbnail" title="Preview image stored in the file"><img class="file-thumb" src="/files/{{ f.id }}/thumbnail?v={{ f.sha256 }}" alt="" loading="lazy" data-hide-broken></a>{% endif %}
           <a href="/files/{{ f.id }}/download">{{ f.filename }}</a>
           {% if f.format_info %}<span class="fmt fmt-{{ f.format_info.kind }}" title="{{ f.format_info.system_name }} · {{ f.format_info.kind_label }} · {{ f.content_type }}">{{ f.format_info.label }}</span>{% else %}<span class="muted small">{{ f.content_type }}</span>{% endif %}
-          {% if f.preview %}<a class="button small" href="/files/{{ f.id }}/preview" title="3D preview in the browser">3D</a>{% endif %}
-        </td>
-        <td class="small">
-          {% if can.edit %}
-          <form class="inline folder-form" method="post" action="/files/{{ f.id }}/folder">
-            <input type="hidden" name="back" value="{{ back }}#files">
-            <input class="mono" type="text" name="folder" value="{{ f.folder }}" maxlength="400" placeholder="(top of the group)"
-                   aria-label="Folder of {{ f.filename }}" title="Folder inside {{ rev.project_code or 'the project group' }}, e.g. chassis/brackets">
-            <button class="small" type="submit">Move</button>
-          </form>
-          {% elif f.folder %}<span class="mono" title="{{ rev.project_code or '' }}/{{ f.folder }}/{{ f.filename }} in the desktop working folder">{{ f.folder }}/</span>
-          {% else %}<span class="muted" title="At the top of the project group in the desktop working folder">—</span>{% endif %}
+          {% if f.preview %}<a class="button xs" href="/files/{{ f.id }}/preview" title="3D preview in the browser">3D</a>{% endif %}
+        </div></td>
+        <td>
+          {% if f.folder %}<span class="mono" title="{{ rev.project_code or '' }}/{{ f.folder }}/{{ f.filename }} in the desktop working folder">{{ f.folder }}/</span>
+          {% else %}<span class="dim" title="At the top of the project group in the desktop working folder">—</span>{% endif %}
         </td>
         <td class="nowrap">
-          <span class="badge">v{{ f.version }}</span>
-          {% if f.versions|length > 1 %}<button class="small" type="button" data-toggle="versions-{{ f.id }}">History</button>{% endif %}
+          v{{ f.version }}
+          {% if f.versions|length > 1 %}<button class="xs ghost" type="button" data-toggle="versions-{{ f.id }}" aria-expanded="false">History</button>{% endif %}
         </td>
         <td class="num">{{ f.size_bytes|filesize }}</td>
-        <td class="small nowrap">{{ m.time(f.uploaded_at) }} · {{ f.uploaded_by_name }}</td>
-        <td class="mono small" title="{{ f.sha256 }}">{{ f.sha256[:12] }}…</td>
-        <td class="right nowrap">
-          <a class="button small" href="/requests/new?revision={{ rev.id }}&amp;file={{ f.filename|urlencode }}" title="Request a change to {{ f.filename }}">Request…</a>
-          {% if can.edit %}
-          <form class="inline" method="post" action="/files/{{ f.id }}/delete" data-confirm="Remove {{ f.filename }} and all its versions from this revision?">
-            <input type="hidden" name="back" value="{{ back }}#files">
-            <button class="small danger" type="submit">Remove</button>
-          </form>
-          {% endif %}
+        <td class="nowrap muted">{{ m.time(f.uploaded_at) }} · {{ f.uploaded_by_name }}</td>
+        <td class="mono small" title="{{ f.sha256 }}">{{ f.sha256[:8] }}</td>
+        <td class="row-actions">
+          <details class="menu">
+            <summary class="button xs ghost" aria-label="Actions for {{ f.filename }}" title="Actions">⋯</summary>
+            <div class="menu-pop menu-right">
+              {% if can.edit %}
+              <form class="menu-form folder-form" method="post" action="/files/{{ f.id }}/folder">
+                <input type="hidden" name="back" value="{{ back }}#files">
+                <label>Move to folder
+                  <input class="mono" type="text" name="folder" value="{{ f.folder }}" maxlength="400" placeholder="(top of the group)"
+                         title="Folder inside {{ rev.project_code or 'the project group' }}, e.g. chassis/brackets">
+                </label>
+                <button class="small" type="submit">Move</button>
+              </form>
+              <div class="menu-sep" role="separator"></div>
+              {% endif %}
+              <a href="/requests/new?revision={{ rev.id }}&amp;file={{ f.filename|urlencode }}" title="Request a change to {{ f.filename }}">Request change…</a>
+              {% if can.edit %}
+              <form method="post" action="/files/{{ f.id }}/delete" data-confirm="Remove {{ f.filename }} and all its versions from this revision?">
+                <input type="hidden" name="back" value="{{ back }}#files">
+                <button class="danger" type="submit">Remove</button>
+              </form>
+              {% endif %}
+            </div>
+          </details>
         </td>
       </tr>
       {% if f.versions|length > 1 %}
@@ -379,7 +415,7 @@
     <select name="role" aria-label="Role of the basis">
       {% for r in simulation.roles %}<option value="{{ r.value }}">{{ r.label }}</option>{% endfor %}
     </select>
-    <input type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Basis item">
+    <input class="item-no" type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Basis item">
     <input class="find" type="text" name="revision" placeholder="latest" aria-label="Revision code">
     <input type="text" name="file" placeholder="File name (optional, pins its current version)" aria-label="Simulated file">
     <input type="text" name="note" placeholder="Note (optional)" maxlength="500" aria-label="Note">
@@ -527,11 +563,11 @@
   {% else %}<p class="empty">No BOM lines.</p>{% endif %}
   {% if can.edit %}
   <h3>Add component</h3>
-  <form class="inline" method="post" action="/revisions/{{ rev.id }}/bom/lines">
-    <input type="text" name="child" placeholder="Item number, e.g. PRT-000012" required aria-label="Child item number">
-    <input class="qty" type="text" name="quantity" value="1" inputmode="decimal" aria-label="Quantity" required>
-    <input class="find" type="text" name="find_number" placeholder="auto" inputmode="numeric" aria-label="Find number">
-    <input type="text" name="notes" placeholder="Notes (optional)" maxlength="500" aria-label="Notes">
+  <form class="inline fields" method="post" action="/revisions/{{ rev.id }}/bom/lines">
+    <label>Item <input class="item-no" type="text" name="child" placeholder="e.g. PRT-000012" required></label>
+    <label>Qty <input class="qty" type="text" name="quantity" value="1" inputmode="decimal" required></label>
+    <label>Find no. <input class="find" type="text" name="find_number" placeholder="auto" inputmode="numeric"></label>
+    <label class="grow">Notes <input type="text" name="notes" placeholder="optional" maxlength="500"></label>
     <button type="submit">Add</button>
   </form>
   {% endif %}
@@ -573,7 +609,7 @@
         <select name="kind" aria-label="Kind of reference">
           {% for k in references.kinds %}<option value="{{ k.value }}">{{ k.label }}</option>{% endfor %}
         </select>
-        <input type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Referenced item">
+        <input class="item-no" type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Referenced item">
         <input type="text" name="note" placeholder="Note (optional)" maxlength="500" aria-label="Note">
         <button type="submit">Add</button>
       </form>

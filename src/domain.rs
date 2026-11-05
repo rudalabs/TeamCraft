@@ -75,9 +75,28 @@ pub struct Skin {
     /// Path below `/static/media/`.
     pub logo: &'static str,
     pub description: &'static str,
-    /// Light background (white or almost white): the pages use the dark
-    /// variants of the logos.
-    pub light: bool,
+    /// Light, dark, or following the operating system (`prefers-color-scheme`).
+    pub scheme: Scheme,
+}
+
+/// The colour scheme of a skin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Scheme {
+    Light,
+    Dark,
+    /// Light or dark, as the operating system (browser) prefers.
+    System,
+}
+
+impl Scheme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Scheme::Light => "light",
+            Scheme::Dark => "dark",
+            Scheme::System => "system",
+        }
+    }
 }
 
 pub const DEFAULT_SKIN: &str = "teamcraft";
@@ -85,69 +104,76 @@ pub const DEFAULT_SKIN: &str = "teamcraft";
 /// The TeamCraft icon (shown in the header, the footer and as favicon).
 pub const TEAMCRAFT_ICON: &str = "logos/TeamCraft_Icon.svg";
 
-pub const SKINS: [Skin; 9] = [
+pub const SKINS: [Skin; 10] = [
     Skin {
         id: "teamcraft",
         name: "TeamCraft",
         logo: TEAMCRAFT_ICON,
-        description: "House style, night",
-        light: false,
+        description: "Follows your system: light or dark",
+        scheme: Scheme::System,
     },
     Skin {
         id: "teamcraft-day",
-        name: "TeamCraft Day",
+        name: "TeamCraft Light",
         logo: TEAMCRAFT_ICON,
         description: "House style, light",
-        light: true,
+        scheme: Scheme::Light,
+    },
+    Skin {
+        id: "teamcraft-night",
+        name: "TeamCraft Dark",
+        logo: TEAMCRAFT_ICON,
+        description: "House style, dark",
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "arch",
         name: "Arch",
         logo: TEAMCRAFT_ICON,
         description: "Blueprint grid",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "cachyos",
         name: "CachyOS",
         logo: TEAMCRAFT_ICON,
         description: "Teal dot matrix",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "endeavouros",
         name: "EndeavourOS",
         logo: TEAMCRAFT_ICON,
         description: "Purple sunset",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "kde",
         name: "KDE",
         logo: TEAMCRAFT_ICON,
         description: "Breeze dark",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "kubuntu",
         name: "Kubuntu",
         logo: TEAMCRAFT_ICON,
         description: "Blue rings",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "opensuse",
         name: "openSUSE",
         logo: TEAMCRAFT_ICON,
         description: "Chameleon scales",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "ubuntu",
         name: "Ubuntu",
         logo: TEAMCRAFT_ICON,
         description: "Circle of friends",
-        light: false,
+        scheme: Scheme::Dark,
     },
 ];
 
@@ -165,10 +191,53 @@ pub fn is_skin(id: &str) -> bool {
     SKINS.iter().any(|s| s.id == id)
 }
 
-/// Whether a skin has a light background (unknown ids: the default skin).
-pub fn skin_is_light(id: &str) -> bool {
+/// The colour scheme of a skin (unknown ids: the default skin).
+pub fn skin_scheme(id: &str) -> Scheme {
     let id = skin_or_default(id);
-    SKINS.iter().any(|s| s.id == id && s.light)
+    SKINS
+        .iter()
+        .find(|s| s.id == id)
+        .map(|s| s.scheme)
+        .unwrap_or(Scheme::System)
+}
+
+/// Up to two initials for the avatar: first letters of the first and last
+/// word of the display name (the username when the name is empty).
+pub fn initials(display_name: &str, username: &str) -> String {
+    let source = if display_name.trim().is_empty() {
+        username
+    } else {
+        display_name
+    };
+    let words: Vec<&str> = source.split_whitespace().collect();
+    let first = |w: &str| {
+        w.chars()
+            .next()
+            .map(|c| c.to_uppercase().collect::<String>())
+    };
+    match words.as_slice() {
+        [] => "?".to_string(),
+        [one] => first(one).unwrap_or_default(),
+        [a, .., b] => format!(
+            "{}{}",
+            first(a).unwrap_or_default(),
+            first(b).unwrap_or_default()
+        ),
+    }
+}
+
+/// A stable avatar tint 1..=6 (`--avatar-N` in skins.css) from the username.
+pub fn avatar_tint(username: &str) -> u32 {
+    // FNV-1a: stable across builds and platforms
+    let hash = username.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    hash % 6 + 1
+}
+
+/// Whether a skin is always light (the System skin is not: it may be dark).
+pub fn skin_is_light(id: &str) -> bool {
+    skin_scheme(id) == Scheme::Light
 }
 
 // ---------------------------------------------------------------------------
@@ -1866,10 +1935,186 @@ mod tests {
 
     #[test]
     fn light_and_dark_skins() {
+        assert_eq!(skin_scheme("teamcraft"), Scheme::System);
+        assert_eq!(skin_scheme("teamcraft-night"), Scheme::Dark);
+        assert_eq!(skin_scheme("nonsense"), Scheme::System, "unknown → default");
         assert!(skin_is_light("teamcraft-day"));
+        assert!(!skin_is_light("teamcraft-night"));
         assert!(!skin_is_light("teamcraft"));
-        assert!(!skin_is_light("nonsense"), "unknown → default (night)");
-        assert_eq!(SKINS.iter().filter(|s| s.light).count(), 1);
+        assert!(!skin_is_light("nonsense"));
+        assert_eq!(
+            SKINS.iter().filter(|s| s.scheme == Scheme::Light).count(),
+            1
+        );
+        assert_eq!(Scheme::System.as_str(), "system");
+    }
+
+    #[test]
+    fn avatar_initials_and_tints() {
+        assert_eq!(initials("Alex Morgan", "admin"), "AM");
+        assert_eq!(initials("Erika Maria Mustermann", "erika"), "EM");
+        assert_eq!(initials("", "max"), "M");
+        assert_eq!(initials(" ", ""), "?");
+        assert_eq!(initials("łukasz", "l"), "Ł");
+        assert_eq!(avatar_tint("admin"), avatar_tint("admin"));
+        assert!((1..=6).contains(&avatar_tint("")));
+        assert!((1..=6).contains(&avatar_tint("someone else")));
+    }
+
+    // --- skins.css: token blocks and contrast --------------------------------
+
+    const SKINS_CSS: &str = include_str!("../static/skins.css");
+
+    /// The text between two marker comments.
+    fn css_between<'a>(css: &'a str, begin: &str, end: &str) -> &'a str {
+        let start = css
+            .find(begin)
+            .unwrap_or_else(|| panic!("{begin} in skins.css"))
+            + begin.len();
+        let stop = css[start..]
+            .find(end)
+            .unwrap_or_else(|| panic!("{end} in skins.css"))
+            + start;
+        &css[start..stop]
+    }
+
+    /// `--name: value` declarations of the first `{ … }` block in `text`.
+    fn css_decls(text: &str) -> Vec<(String, String)> {
+        let open = text.find('{').expect("a CSS block") + 1;
+        let close = text[open..].find('}').expect("end of the CSS block") + open;
+        let mut body = text[open..close].to_string();
+        while let Some(a) = body.find("/*") {
+            let b = body[a..]
+                .find("*/")
+                .map(|b| a + b + 2)
+                .unwrap_or(body.len());
+            body.replace_range(a..b, "");
+        }
+        body.split(';')
+            .filter_map(|d| d.split_once(':'))
+            .map(|(k, v)| {
+                (
+                    k.trim().to_string(),
+                    v.split_whitespace().collect::<Vec<_>>().join(" "),
+                )
+            })
+            .filter(|(k, _)| !k.is_empty())
+            .collect()
+    }
+
+    fn css_map(decls: &[(String, String)]) -> std::collections::HashMap<String, String> {
+        decls.iter().cloned().collect()
+    }
+
+    #[test]
+    fn dark_token_blocks_identical() {
+        let media = css_decls(css_between(
+            SKINS_CSS,
+            "/* DARK-TOKENS:BEGIN media */",
+            "/* DARK-TOKENS:END media */",
+        ));
+        let forced = css_decls(css_between(
+            SKINS_CSS,
+            "/* DARK-TOKENS:BEGIN forced */",
+            "/* DARK-TOKENS:END forced */",
+        ));
+        assert!(media.len() > 40, "{} dark tokens", media.len());
+        assert_eq!(
+            media, forced,
+            "the System dark block and the forced dark block differ"
+        );
+    }
+
+    /// WCAG 2 relative luminance of `#rrggbb`.
+    fn luminance(hex: &str) -> f64 {
+        let hex = hex
+            .strip_prefix('#')
+            .filter(|h| h.len() == 6)
+            .unwrap_or_else(|| panic!("not #rrggbb: {hex}"));
+        let channel = |i: usize| {
+            let c = f64::from(u8::from_str_radix(&hex[i..i + 2], 16).expect("hex digit")) / 255.0;
+            if c <= 0.039_28 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4)
+    }
+
+    fn contrast(a: &str, b: &str) -> f64 {
+        let (la, lb) = (luminance(a), luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    #[test]
+    fn skins_meet_contrast() {
+        let light = css_map(&css_decls(css_between(
+            SKINS_CSS,
+            "/* LIGHT-TOKENS:BEGIN */",
+            "/* LIGHT-TOKENS:END */",
+        )));
+        let dark = css_map(&css_decls(css_between(
+            SKINS_CSS,
+            "/* DARK-TOKENS:BEGIN forced */",
+            "/* DARK-TOKENS:END forced */",
+        )));
+        let mut skins = vec![
+            ("light base".to_string(), light),
+            ("dark base".to_string(), dark.clone()),
+        ];
+        for skin in SKINS.iter().filter(|s| !s.id.starts_with("teamcraft")) {
+            let selector = format!("[data-skin=\"{}\"] {{", skin.id);
+            let at = SKINS_CSS
+                .find(&selector)
+                .unwrap_or_else(|| panic!("{selector}"));
+            let mut tokens = dark.clone();
+            tokens.extend(css_map(&css_decls(&SKINS_CSS[at..])));
+            skins.push((skin.id.to_string(), tokens));
+        }
+        let mut failures = Vec::new();
+        for (name, t) in &skins {
+            // A token may name another one (`--count-bg: var(--primary)`);
+            // it resolves against the same skin, as in the browser.
+            let get = |k: &str| {
+                let mut key = k;
+                loop {
+                    let v = t
+                        .get(key)
+                        .unwrap_or_else(|| panic!("{name}: {key}"))
+                        .as_str();
+                    match v.strip_prefix("var(").and_then(|r| r.strip_suffix(')')) {
+                        Some(inner) => key = inner.trim(),
+                        None => break v,
+                    }
+                }
+            };
+            let mut check = |fg: &str, bg: &str, min: f64| {
+                let ratio = contrast(get(fg), get(bg));
+                if ratio < min {
+                    failures.push(format!("{name}: {fg} on {bg} = {ratio:.2} < {min}"));
+                }
+            };
+            for fg in ["--text", "--text-muted", "--text-dim"] {
+                for bg in ["--bg", "--surface", "--surface-2"] {
+                    check(fg, bg, 4.5);
+                }
+            }
+            check("--text", "--selected", 4.5);
+            check("--text-muted", "--selected", 4.5);
+            check("--text-dim", "--selected", 4.5);
+            check("--link", "--surface", 4.5);
+            check("--on-primary", "--primary", 4.5);
+            check("--control-border", "--surface", 3.0);
+            for state in ["wip", "review", "ok", "danger", "impact"] {
+                let fg = format!("--st-{state}-fg");
+                check(&fg, &format!("--st-{state}-bg"), 4.5);
+                check(&fg, "--surface", 4.5);
+            }
+            check("--st-lock-other", "--surface", 4.5);
+            check("--count-fg", "--count-bg", 4.5);
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     #[test]

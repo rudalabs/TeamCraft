@@ -413,6 +413,9 @@ pub struct WebCtx {
     pub me: Actor,
     pub flash: Option<Flash>,
     pub unread: i64,
+    /// Path and query of this request: the `back` target of the forms in the
+    /// header (appearance), so they return here without JavaScript too.
+    pub here: String,
 }
 
 impl FromRequestParts<AppState> for WebCtx {
@@ -428,6 +431,11 @@ impl FromRequestParts<AppState> for WebCtx {
             me,
             flash: read_flash(&parts.headers),
             unread,
+            here: parts
+                .uri
+                .path_and_query()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_else(|| "/".to_string()),
         })
     }
 }
@@ -444,6 +452,8 @@ fn me_json(me: &Actor) -> Value {
         "id": me.id,
         "username": me.username,
         "display_name": me.display_name,
+        "initials": domain::initials(&me.display_name, &me.username),
+        "avatar": domain::avatar_tint(&me.username),
         "role": me.role,
         "skin": me.skin,
         "is_admin": me.is_admin(),
@@ -482,6 +492,7 @@ pub(crate) fn render(
         map.insert("me".into(), me_json(&ctx.me));
         map.insert("skin".into(), json!(ctx.me.skin));
         map.insert("unread_notifications".into(), json!(ctx.unread));
+        map.insert("here".into(), json!(ctx.here));
         map.insert(
             "assistant_enabled".into(),
             json!(crate::services::assistant::enabled(st)),
@@ -509,7 +520,10 @@ pub(crate) fn render_public(
             .map(domain::skin_or_default)
             .unwrap_or(domain::DEFAULT_SKIN);
         map.insert("skin".into(), json!(skin));
-        map.insert("skin_light".into(), json!(domain::skin_is_light(skin)));
+        map.insert(
+            "skin_scheme".into(),
+            json!(domain::skin_scheme(skin).as_str()),
+        );
     }
     let html = st.templates.get_template(template)?.render(&data)?;
     let mut response = Html(html).into_response();
