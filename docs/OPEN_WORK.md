@@ -17,6 +17,10 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
   dialogs; the same folder imported into a second project group (so far checked in Chromium with a stubbed Tauri)
 - [ ] Decide and document what happens when the same CAD files are imported into two project groups: two independent
   items per file with different numbers, while CAD references are matched by file name (import tutorial, user guide)
+- [ ] Check the desktop *Import BOM…* in the real app (native file dialog; so far checked in Chromium with a stubbed
+  Tauri against a real server)
+- [ ] Cancel long operations (check-in upload, Pack and Go) half-way – today the browser sign-in, Get and the chunked
+  upload of large files can be cancelled (in progress: branch `feature/desktop-cancel-operations`)
 - [ ] *Import BOM…* (CSV/Excel) on a checked-out assembly revision and for a new assembly – plan: a Rust command opens
   the file dialog and sends the file to `POST /api/v1/items/{number}/revisions/{code}/bom/import` (or
   `POST /api/v1/bom-imports`) with `dry_run=true`, the UI shows counts, notes and the first rows, a second call
@@ -167,6 +171,9 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [x] Status per file (up to date, modified, locked, outdated, conflict), check-ins against the base version (409
   instead of overwriting); the desktop asks before opening an outdated, conflicting or foreign-locked file
 - [x] STEP assembly import → items + BOM (feature 3c); browser check of `/import` and `/import/{id}` (2026-11-04)
+- [x] Desktop: *Import BOM…* (CSV/Excel/ODS, STEP assembly) on a checked-out revision (*Structure* tab, *More* menu)
+  and *Tools → Import BOM as New Assembly…*: native file dialog, dry run with counts, notes and the first lines,
+  then the import through the server's BOM import (`desktop/src/bomimport.rs`, tested with a fake server)
 - [x] 3D preview of real-world STEP files: own Part 21 pre-reader, face-by-face fallback, AP242 tessellated geometry,
   "partial preview: N of M faces"
 - [x] Configurable numbering schemes per project group with preview (feature 4)

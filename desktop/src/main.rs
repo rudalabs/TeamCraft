@@ -9,6 +9,7 @@
 mod abortable;
 mod acp;
 mod api;
+mod bomimport;
 mod cadexport;
 mod commands;
 mod folderimport;
@@ -128,6 +129,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&item("open-workspace", "Open Workspace Folder", None)?)
         .item(&item("get-projects", "Get Project Groups…", None)?)
         .item(&item("import-folder", "Import CAD Folder…", None)?)
+        .item(&item("import-bom", "Import BOM as New Assembly…", None)?)
         .item(&item("open-web", "Open in Browser", None)?)
         .build()?;
     let help = SubmenuBuilder::new(app, "Help")
@@ -205,6 +207,8 @@ fn main() {
             commands::upload_files,
             commands::cancel_upload,
             commands::upload_request_attachment,
+            commands::pick_bom_file,
+            commands::import_bom,
             commands::cad_programs,
             commands::cad_export_step,
             commands::scan_folder,
