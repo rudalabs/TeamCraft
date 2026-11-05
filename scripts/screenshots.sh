@@ -440,7 +440,13 @@ viewport() {
     cdp Emulation.setDeviceMetricsOverride \
         "$(jq -nc --argjson w "$1" --argjson h "$2" --argjson s "$3" --argjson m "$4" \
             '{width: $w, height: $h, deviceScaleFactor: $s, mobile: $m}')"
-    cdp Emulation.setEmulatedMedia '{"features":[{"name":"prefers-color-scheme","value":"light"}]}'
+}
+
+# scheme light|dark – the OS colour scheme the pages see. The seeded user
+# keeps the default skin "teamcraft", which follows prefers-color-scheme.
+scheme() {
+    cdp Emulation.setEmulatedMedia \
+        "$(jq -nc --arg v "$1" '{features: [{name: "prefers-color-scheme", value: $v}]}')"
 }
 
 # wait_js EXPRESSION SECONDS WHAT – polls a JS expression until it is true.
@@ -522,17 +528,15 @@ check_png() {
     log "  $file ($(($(wc -c <"$file") / 1024)) KiB)"
 }
 
-capture() {
-    mkdir -p "$OUT_DIR"
-    start_browser
+# capture_pages SUFFIX – the main pages at 1440x900 and the phone dashboard,
+# saved as NAME$SUFFIX.png in the scheme set before.
+capture_pages() {
+    local suffix=$1
     viewport 1440 900 "$SCALE" false
-    sign_in_browser
-
-    log "capturing desktop screenshots (1440x900)"
-    shot dashboard /
-    shot vault-explorer "/vault?folder=$PROJECT_ID&rev=$ENCLOSURE_REV"
-    shot revision "/revisions/$BRACKET_REV"
-    shot revision-files "/revisions/$BRACKET_REV" '#files'
+    shot "dashboard$suffix" /
+    shot "vault-explorer$suffix" "/vault?folder=$PROJECT_ID&rev=$ENCLOSURE_REV"
+    shot "revision$suffix" "/revisions/$BRACKET_REV"
+    shot "revision-files$suffix" "/revisions/$BRACKET_REV" '#files'
 
     log "waiting for the 3D preview of the STEP file"
     open_page "/files/$STEP_FILE/preview"
@@ -541,14 +545,32 @@ capture() {
     if [[ $(js 'return document.getElementById("viewer-canvas").getAttribute("data-ready");') != true ]]; then
         die "the 3D viewer reported: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
     fi
-    snap viewer-3d
-    shot bom "/revisions/$TOP_REV/bom"
-    shot change-review "/changes/$CHANGE_ID"
-    shot notifications /notifications
+    snap "viewer-3d$suffix"
+    shot "bom$suffix" "/revisions/$TOP_REV/bom"
+    shot "change-review$suffix" "/changes/$CHANGE_ID"
+    shot "notifications$suffix" /notifications
+    shot "account$suffix" /account '#appearance'
 
     log "capturing the mobile screenshot (390x844)"
     viewport 390 844 2 true
-    shot mobile-dashboard /
+    shot "mobile-dashboard$suffix" /
+}
+
+capture() {
+    mkdir -p "$OUT_DIR"
+    start_browser
+    viewport 1440 900 "$SCALE" false
+    scheme light
+    sign_in_browser
+
+    # The README shows the light default under the plain names; every page
+    # is captured in the dark scheme as well (NAME-dark.png).
+    log "capturing the web screenshots, light (1440x900)"
+    capture_pages ""
+    log "capturing the web screenshots, dark (1440x900)"
+    scheme dark
+    capture_pages -dark
+    scheme light
 }
 
 # ---------------------------------------------------------------------------
