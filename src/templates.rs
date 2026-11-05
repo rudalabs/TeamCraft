@@ -685,6 +685,7 @@ mod tests {
                                     sim_result("Mass", "none", None)],
                         "summary": { "total": 3, "pass": 1, "fail": 1, "without_limits": 1 },
                         "out_of_date": 1, "roles": basis_roles.clone(),
+                        "views": [{ "id": ME, "filename": "beam <load>.vtu", "version": 2 }],
                     },
                     "based_simulations": [],
                     "can": if editable { can_all.clone() } else { json!({}) }, "max_upload_mb": 512,
@@ -709,6 +710,8 @@ mod tests {
                 "no limit",
                 "/simulation/compare",
                 "/simulation/results.csv",
+                "View result in 3D",
+                "beam &lt;load&gt;.vtu v2",
             ] {
                 assert!(html.contains(expected), "simulation page shows {expected}");
             }
@@ -783,8 +786,15 @@ mod tests {
                 "versions": [version(2, "wall 2.5 mm"), version(1, "first <draft>")],
                 "rev": revision("released", false),
                 "format": format, "is_brep": format == "step", "is_points": format == "las",
+                "is_result": format == "vtk-unstructured",
             }))
         };
+        let html = render(
+            &env,
+            "files/preview.html",
+            preview("vtk-unstructured", true),
+        );
+        assert!(html.contains("coloured by a result field"), "result hint");
         let html = render(&env, "files/preview.html", preview("stl", true));
         assert!(html.contains(&format!("data-src=\"/file-versions/{ME}/mesh\"")));
         assert!(!html.contains("viewer-stl"), "no STL export of an STL file");

@@ -621,6 +621,11 @@ html[data-skin="teamcraft-day"] .login-logo-dark { display: block; }
 .viewer-canvas:focus-visible { outline: 2px solid var(--c3); outline-offset: 2px; }
 .viewer-bar { display: flex; gap: 0.6rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .viewer-bar > p { margin: 0; }
+/* colour scale of simulation results (inserted by viewer.js above the canvas) */
+.viewer-legend { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin: 0 0 var(--space-2); font-size: 0.88rem; }
+.viewer-legend select { width: auto; max-width: 100%; }
+.viewer-legend-value { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.viewer-legend-bar { width: min(16rem, 40vw); height: 0.6rem; border: 1px solid var(--border-strong); border-radius: 999px; }
 
 /* vault explorer: folder tree | items | detail */
 .explorer { display: grid; grid-template-columns: minmax(12rem, 15rem) minmax(0, 1fr) minmax(16rem, 24rem); gap: var(--space-4); align-items: start; }

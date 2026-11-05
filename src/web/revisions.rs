@@ -117,6 +117,14 @@ pub async fn show(
                 )
             })
         });
+    // Result files the browser can show in 3D (VTK, VTU, VTP, FRD); a few
+    // on the Results card (time series have dozens), all in the file list.
+    let result_views: Vec<serde_json::Value> = file_list
+        .iter()
+        .filter(|f| preview_of(f).is_some_and(PreviewFormat::is_result))
+        .take(3)
+        .map(|f| json!({ "id": f.id, "filename": f.filename, "version": f.version }))
+        .collect();
     // The versions this page shows: uploads from its forms are based on them,
     // so a file that changed meanwhile is refused instead of overwritten.
     let file_bases = serde_json::Value::Object(
@@ -215,6 +223,7 @@ pub async fn show(
             "results": results,
             "out_of_date": out_of_date,
             "roles": roles,
+            "views": result_views,
         })
     } else {
         serde_json::Value::Null
@@ -758,7 +767,8 @@ pub async fn preview_version(
 fn no_preview() -> AppError {
     AppError::BadRequest(
         "There is no 3D preview for this file type – meshes (STL, OBJ, PLY, 3MF, glTF, …), \
-         point clouds and STEP are supported; attach a STEP export of native CAD files."
+         point clouds, STEP and simulation results (VTK, VTU, VTP, CalculiX FRD) are \
+         supported; attach a STEP export of native CAD files."
             .into(),
     )
 }
@@ -799,6 +809,7 @@ async fn preview_page(
             "format": format.as_str(),
             "is_brep": format.is_brep(),
             "is_points": format.is_point_cloud(),
+            "is_result": format.is_result(),
         }),
     )
 }

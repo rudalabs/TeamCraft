@@ -566,6 +566,11 @@ table.grid td.actions button { padding: 0.15rem 0.5rem; font-size: 0.85em; }
 .viewer-canvas:active { cursor: grabbing; }
 .viewer-bar { display: flex; gap: 0.6rem; align-items: center; justify-content: space-between; margin-top: 0.5rem; }
 .viewer-bar > p { margin: 0; }
+/* colour scale of simulation results (inserted by viewer.js above the canvas) */
+.viewer-legend { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-bottom: 0.5rem; font-size: 0.88rem; }
+.viewer-legend select { width: auto; max-width: 100%; }
+.viewer-legend-value { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.viewer-legend-bar { width: min(16rem, 30vw); height: 0.6rem; border: 1px solid var(--border-strong); border-radius: 999px; }
 .flash { padding: 0.3rem 0.6rem; border-radius: var(--radius-sm); }
 .flash-error { color: var(--danger); background: var(--danger-soft); }
 

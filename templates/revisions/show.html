@@ -392,6 +392,7 @@
   <div class="card-head">
     <h2>Results</h2>
     <div class="actions">
+      {% for f in simulation.views %}<a class="button small" href="/files/{{ f.id }}/preview" title="{{ f.filename }} v{{ f.version }} in the 3D viewer, coloured by its result fields">{% if simulation.views|length == 1 %}View result in 3D{% else %}3D: {{ f.filename }}{% endif %}</a>{% endfor %}
       {% if revisions|length > 1 %}<a class="button small" href="/revisions/{{ rev.id }}/simulation/compare">Compare with another revision</a>{% endif %}
       {% if simulation.results %}<a class="button small" href="/revisions/{{ rev.id }}/simulation/results.csv">CSV</a>{% endif %}
     </div>
