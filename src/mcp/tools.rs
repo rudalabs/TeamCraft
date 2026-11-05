@@ -201,8 +201,10 @@ const TOOLS: &[Tool] = &[
         name: "get_change_request",
         title: "Change request details",
         description: "A change request with its description, affected items (with the revision the problem \
-            was found in and the latest state), the discussion, attachments (names only), the change orders \
-            implementing it, its history and what the signed-in user may do with it.",
+            was found in and the latest state), the discussion (newest 100 comments, oldest first), \
+            attachments (names and sizes, no contents), the change orders implementing it, its history \
+            (newest 50 entries, newest first) and what the signed-in user may do with it (`you_may` – for \
+            the user in TeamCraft; the tools cannot triage or decide).",
         effect: READ,
         schema: schema_request,
     },
@@ -211,9 +213,10 @@ const TOOLS: &[Tool] = &[
         title: "List simulations",
         description: "Simulations (FEA, CFD, … items of type simulation) with an `out_of_date` reason per \
             basis. With `item`: the simulations whose latest revision is based on that part or assembly, \
-            with result and failure counts and whether a check is open. Without: simulation items (filter by \
-            text and project group) with their latest revision's bases and pass/fail summary. \
-            out_of_date_only=true keeps only those that no longer match their bases.",
+            with result and failure counts, whether a check is open and only their bases on that item \
+            (get_simulation shows all). Without: simulation items (filter by text and project group, at most \
+            50 checked) with their latest revision's bases and pass/fail summary. out_of_date_only=true keeps \
+            only those that no longer match their bases (with `item`: their bases on that item).",
         effect: READ,
         schema: schema_list_simulations,
     },
@@ -1673,10 +1676,12 @@ async fn request_overview(st: &AppState, me: &Actor, request: &ChangeRequest) ->
         requests::comments(&st.db, id),
         requests::attachments(&st.db, id),
         requests::linked_changes(&st.db, id),
-        audit::for_entities(&st.db, &ids, REQUEST_HISTORY),
+        // one more than shown tells whether older entries exist
+        audit::for_entities(&st.db, &ids, REQUEST_HISTORY + 1),
         requests::abilities_of(&st.db, me, request),
     )?;
     let (comments, comments_cut) = newest(comments, MAX_COMMENTS);
+    let (history, history_cut) = capped(history, REQUEST_HISTORY as usize);
     let mut brief = request_brief(request);
     brief["description"] = json!(request.description);
     if request.decided_at.is_some() {
@@ -1719,6 +1724,7 @@ async fn request_overview(st: &AppState, me: &Actor, request: &ChangeRequest) ->
             "action": e.action,
             "summary": e.summary,
         })).collect::<Vec<_>>(),
+        "history_truncated": history_cut,
         "you_may": can,
         "url": web_url(st, &format!("/requests/{}", request.id)),
     }))
