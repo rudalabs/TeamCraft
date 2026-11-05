@@ -191,7 +191,7 @@
     {% else %}<p class="empty">No items named yet.</p>{% endif %}
     {% if can.edit %}
     <form class="inline" method="post" action="/requests/{{ request.id }}/items">
-      <input type="text" name="item_number" placeholder="Item number, e.g. PRT-000012" required aria-label="Item number">
+      <input class="item-no" type="text" name="item_number" placeholder="Item number, e.g. PRT-000012" required aria-label="Item number">
       <input type="text" name="note" placeholder="Note (optional)" maxlength="2000" aria-label="Note">
       <button type="submit">Add item</button>
     </form>

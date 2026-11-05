@@ -132,6 +132,10 @@ promised.
   similar 3D shape and size, ranked by a cheap, explainable shape signature
   (box extents and a D2 shape distribution, no AI) with the reason for each
   hit; on the revision page, in the REST API and as MCP tool.
+- **Light and dark.** The interface follows the light or dark appearance of
+  the operating system; *Light* or *Dark* can be fixed per user, and there are
+  dark distribution skins (Arch, KDE, Ubuntu, …). Dense tables, one primary
+  action per page, and states shown by colour and a glyph.
 - **Teams.** Viewer, CAD editor and admin roles; self-service project groups
   managed by their creators; single sign-on with any OpenID Connect
   provider and group synchronisation.
@@ -206,6 +210,10 @@ the web UI with headless Chrome, TeamCraft Desktop on a virtual X display.
   <tr>
     <td width="50%"><a href="media/screenshots/notifications.png"><img src="media/screenshots/notifications.png" alt="Notifications: review requests, approvals and the release of the standard fasteners" /></a><br /><sub><b>Notifications</b> – in-app, e-mail and Mattermost</sub></td>
     <td width="50%" align="center"><a href="media/screenshots/mobile-dashboard.png"><img src="media/screenshots/mobile-dashboard.png" width="200" alt="The dashboard on a 390 pixel wide phone screen" /></a><br /><sub><b>On the phone</b> – the same pages, responsive</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/dashboard-dark.png"><img src="media/screenshots/dashboard-dark.png" alt="The dashboard in the dark scheme: the same work lists, statistics and dependents to check on dark surfaces" /></a><br /><sub><b>Dark</b> – follows the system appearance, or pick Light or Dark</sub></td>
+    <td width="50%"><a href="media/screenshots/bom-dark.png"><img src="media/screenshots/bom-dark.png" alt="The multi-level bill of materials of the sensor mast assembly in the dark scheme with states, quantities and the mass and cost totals" /></a><br /><sub><b>Multi-level BOM, dark</b> – every page in both schemes</sub></td>
   </tr>
   <tr>
     <td width="50%"><a href="media/screenshots/desktop-home.png"><img src="media/screenshots/desktop-home.png" alt="TeamCraft Desktop start screen: the project group ROVER expanded in the navigator with its items and their states, item statistics and the dependents to check" /></a><br /><sub><b>Desktop app</b> – navigator, statistics and what needs attention</sub></td>

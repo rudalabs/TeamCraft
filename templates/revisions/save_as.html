@@ -4,7 +4,7 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <p class="kicker">Save As</p>
+    <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a><span>Save as</span></p>
     <h1>New item from <a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }}</h1>
     <p class="subtitle">The new item gets the attributes of this revision – and, if you want, its current files and its BOM.
       It starts with revision A, in work and checked out to you. {{ rev.item_number }} itself does not change.</p>

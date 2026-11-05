@@ -5,34 +5,40 @@
 {% import "macros.html" as m %}
 <div class="page-head">
   <div>
-    <p class="kicker">3D preview · {{ format|upper }}</p>
-    <h1>{{ file.filename }} <span class="badge">v{{ shown.version }}</span>{% if is_current %} <span class="badge badge-released">current</span>{% endif %}</h1>
-    <p class="subtitle">
-      <a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }} · {{ m.badge(rev.state) }}
-      · {{ shown.size_bytes|filesize }} · uploaded {{ m.time(shown.uploaded_at) }} by {{ shown.uploaded_by_name }}
-    </p>
-    {% if shown.comment %}<p class="small">{{ shown.comment }}</p>{% endif %}
+    <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ rev.id }}#files">{{ rev.item_number }}/{{ rev.code }}</a><span>3D preview</span></p>
+    <h1>{{ file.filename }}</h1>
+    {% if shown.comment %}<p class="meta">{{ shown.comment }}</p>{% endif %}
   </div>
   <div class="actions">
-    <a class="button" href="/revisions/{{ rev.id }}#files">← Revision</a>
     <a class="button primary" href="/file-versions/{{ shown.id }}/download">Download</a>
   </div>
 </div>
+<dl class="titleblock">
+  <div><dt>Revision</dt><dd><a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> {{ rev.name }}</dd></div>
+  <div><dt>State</dt><dd>{{ m.badge(rev.state) }}</dd></div>
+  <div><dt>Format</dt><dd>{{ format|upper }}</dd></div>
+  <div><dt>Version</dt><dd>v{{ shown.version }}{% if is_current %} <span class="dim">current</span>{% endif %}</dd></div>
+  <div><dt>Size</dt><dd>{{ shown.size_bytes|filesize }}</dd></div>
+  <div><dt>Uploaded</dt><dd>{{ m.time(shown.uploaded_at) }} · {{ shown.uploaded_by_name }}</dd></div>
+</dl>
 
 {% if not is_current %}
 <div class="notice">This is an older version of the file. <a href="/files/{{ file.id }}/preview">Show the current version (v{{ file.version }}).</a></div>
 {% endif %}
 
 <section class="card viewer-card">
-  <canvas id="viewer-canvas" class="viewer-canvas" tabindex="0" data-src="/file-versions/{{ shown.id }}/mesh"
-          data-name="{{ file.filename }}" aria-label="3D view of {{ file.filename }} version {{ shown.version }}"></canvas>
-  <div class="viewer-bar">
-    <p id="viewer-status" class="small muted" role="status">Loading …</p>
-    <div class="actions">
+  <div class="viewer-stage">
+    <canvas id="viewer-canvas" class="viewer-canvas" tabindex="0" data-src="/file-versions/{{ shown.id }}/mesh"
+            data-name="{{ file.filename }}" aria-label="3D view of {{ file.filename }} version {{ shown.version }}"></canvas>
+    {#- the view controls sit on the canvas, so they are never below the fold -#}
+    <div class="viewer-tools actions" role="toolbar" aria-label="View">
       <button id="viewer-up" class="small" type="button" title="Switch between Z-up (most CAD programs, 3D printing) and Y-up models (glTF, games)">Z up</button>
       <button id="viewer-reset" class="small" type="button" title="Back to the initial view (double-click)">Reset view</button>
-      {% if format != "stl" and not is_points %}<button id="viewer-stl" class="small" type="button" disabled title="Save the shown triangles as STL, e.g. for 3D printing (units as in the file, usually mm)">Download STL</button>{% endif %}
+      {% if format != "stl" and not is_points %}<button id="viewer-stl" class="small" type="button" disabled title="Save the shown triangles as STL, e.g. for 3D printing (units as in the file, usually mm)">Export STL</button>{% endif %}
     </div>
+  </div>
+  <div class="viewer-bar">
+    <p id="viewer-status" class="small muted" role="status">Loading …</p>
   </div>
   <p class="hint">Drag to rotate, wheel or pinch to zoom, arrow keys to turn, double-click to reset.
     {% if is_brep %}STEP files are tessellated on the server (pure Rust B-rep kernel) the first time they are shown; large assemblies take a moment.{% endif %}

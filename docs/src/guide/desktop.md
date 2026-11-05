@@ -12,9 +12,9 @@ check-outs and reviews, and a **local working folder**:
 * *Get…* on a revision copies the item **with everything it consists of** –
   its BOM resolved with a revision rule and the parts its CAD files
   reference – so the assembly opens in the CAD program (see below);
-* *Get…* (*Tools → Get Project Groups…*) copies the files of every item of
+* the download icon next to *Projects* in the navigator (*Tools → Get Project Groups…*) copies the files of every item of
   chosen project groups into the working folder – for new team members;
-* *Import…* (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
+* the folder icon next to it (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
   scan first (nothing is uploaded), then one item per part or assembly with
   its drawings and exports; every file keeps its folder, so the working
   folder later looks like the original tree. *Help → How to Import a CAD
@@ -64,6 +64,15 @@ check-outs and reviews, and a **local working folder**:
 Sign-in runs through the browser (single sign-on or password, confirmed on a
 TeamCraft page) or with a personal access token. The app uses the same skins
 and 3D viewer as the web interface; the models are converted by the server.
+*Settings → Appearance*: *TeamCraft* (the default) follows the light or dark
+appearance of the operating system and switches with it, *TeamCraft Light*
+and *TeamCraft Dark* stay fixed, the distribution skins are dark.
+
+The window is built for daily work: object tabs on top, under them the
+toolbar of the open object with its one next step filled (see
+[The toolbar](#the-toolbar)) and the rare tools under *More*. The navigator shows a state as its symbol (a check:
+released, a ring: in review, a half-filled ring: in work, – obsolete, the
+name in the tooltip); the search field is `Ctrl+F` (`⌘F`).
 
 ## The toolbar
 
