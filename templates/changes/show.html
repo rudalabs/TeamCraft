@@ -123,6 +123,20 @@
     {% else %}<p class="empty">No reviewers assigned.</p>{% endif %}
     {% if can.modify %}
       {% if candidates %}
+      {% if suggested %}
+      <h3 id="suggested-reviewers">Suggested reviewers</h3>
+      <ul class="suggestions" aria-labelledby="suggested-reviewers">
+        {% for s in suggested %}
+        <li class="suggestion">
+          <form method="post" action="/changes/{{ change.id }}/reviewers">
+            <input type="hidden" name="username" value="{{ s.username }}">
+            <button class="small" type="submit" aria-describedby="suggested-why-{{ loop.index }}">Add {{ s.display_name }}</button>
+          </form>
+          <p class="small muted" id="suggested-why-{{ loop.index }}">{{ s.reasons | join("; ") }}</p>
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %}
       <form class="inline" method="post" action="/changes/{{ change.id }}/reviewers">
         <select name="username" required aria-label="Reviewer">
           {% for u in candidates %}<option value="{{ u.username }}">{{ u.display_name }} ({{ u.username }})</option>{% endfor %}

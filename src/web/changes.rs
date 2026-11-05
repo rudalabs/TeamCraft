@@ -16,7 +16,9 @@ use super::{
 use crate::{
     domain::{ChangeStatus, Decision, LifecycleState, Priority, Role},
     error::{AppError, AppResult},
-    services::{audit, changes, impacts, items, notifications, requests, revisions, users, Page},
+    services::{
+        audit, changes, impacts, items, notifications, requests, reviewers, revisions, users, Page,
+    },
     AppState,
 };
 
@@ -203,6 +205,12 @@ pub async fn show(
     } else {
         Vec::new()
     };
+    // Who knows the affected items: one-click suggestions next to the picker.
+    let suggested = if modifiable && !candidates.is_empty() {
+        reviewers::suggest(&st.db, id, reviewers::DEFAULT_LIMIT).await?
+    } else {
+        Vec::new()
+    };
     let my_pending_review = status == ChangeStatus::InReview
         && reviews
             .iter()
@@ -235,6 +243,7 @@ pub async fn show(
             "items": affected,
             "reviews": reviews,
             "candidates": candidates,
+            "suggested": suggested,
             "history": history,
             "priorities": priorities(),
             "can": can,

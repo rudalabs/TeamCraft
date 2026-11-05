@@ -23,6 +23,7 @@
 //! Propagation is one level per event: when the dependent is revised and
 //! released, its own dependents are flagged in turn.
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
@@ -151,6 +152,211 @@ pub async fn acknowledge(pool: &PgPool, actor: &Actor, id: Uuid, note: &str) -> 
     .await?;
     tx.commit().await?;
     get(pool, id).await
+}
+
+/// The result of [`acknowledge_all`].
+#[derive(Clone, Debug, Serialize)]
+pub struct Acknowledged {
+    pub item_number: String,
+    pub revision_code: String,
+    /// The impacts acknowledged now (resolved, with the note).
+    pub acknowledged: Vec<Impact>,
+    /// Requested impacts that were resolved in the meantime (skipped).
+    pub skipped: usize,
+}
+
+/// Acknowledges every open impact on a dependent revision with one note –
+/// or only those in `only` (the ones the user saw, so a check flagged a
+/// moment ago is not acknowledged unseen). Impacts resolved in the meantime
+/// are skipped; if none is left, nothing changes (conflict). Same rules as
+/// [`acknowledge`]; one transaction, one audit entry per impact.
+pub async fn acknowledge_all(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_id: Uuid,
+    only: Option<&[Uuid]>,
+    note: &str,
+) -> AppResult<Acknowledged> {
+    actor.require(Role::Editor)?;
+    let note = domain::require_text("Note", note, 2000).map_err(|_| {
+        AppError::BadRequest(
+            "Say why the dependent needs no change (e.g. form, fit and function unchanged).".into(),
+        )
+    })?;
+    let rev = revisions::get(pool, revision_id).await?;
+    if !actor.can_edit_project(rev.project_id) {
+        return Err(AppError::Forbidden(format!(
+            "Only CAD editors of the project group {} (or admins) can acknowledge impacts on {}.",
+            rev.project_code.as_deref().unwrap_or("—"),
+            rev.item_number
+        )));
+    }
+    // The requested ids, without duplicates; an empty list is a mistake of
+    // the caller, not "resolved in the meantime".
+    let wanted = only.map(|o| {
+        let mut wanted = o.to_vec();
+        wanted.sort_unstable();
+        wanted.dedup();
+        wanted
+    });
+    if wanted.as_ref().is_some_and(Vec::is_empty) {
+        return Err(AppError::BadRequest(
+            "List the impacts to acknowledge (or leave the list out for all).".into(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    if let Some(wanted) = &wanted {
+        // Every listed impact has to be one on this revision; otherwise the
+        // answer would count foreign or unknown ids as "resolved meanwhile".
+        let known = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM impacts WHERE revision_id = $1 AND id = ANY($2)",
+        )
+        .bind(revision_id)
+        .bind(wanted)
+        .fetch_one(&mut *tx)
+        .await?;
+        if known != wanted.len() as i64 {
+            return Err(AppError::BadRequest(format!(
+                "Only impacts on {} can be acknowledged here.",
+                revisions::label(&rev)
+            )));
+        }
+    }
+    let ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM impacts
+         WHERE revision_id = $1 AND resolved_at IS NULL AND ($2::uuid[] IS NULL OR id = ANY($2))
+         ORDER BY created_at
+         FOR UPDATE",
+    )
+    .bind(revision_id)
+    .bind(wanted.as_deref())
+    .fetch_all(&mut *tx)
+    .await?;
+    if ids.is_empty() {
+        return Err(AppError::Conflict(format!(
+            "The checks on {} were resolved in the meantime.",
+            revisions::label(&rev)
+        )));
+    }
+    let skipped = wanted.map_or(0, |w| w.len().saturating_sub(ids.len()));
+    sqlx::query(
+        "UPDATE impacts SET resolved_at = now(), resolved_by = $2, resolution = 'acknowledged', note = $3
+         WHERE id = ANY($1) AND resolved_at IS NULL",
+    )
+    .bind(&ids)
+    .bind(actor.id)
+    .bind(&note)
+    .execute(&mut *tx)
+    .await?;
+    let acknowledged = sqlx::query_as::<_, Impact>(&format!(
+        "{IMPACT_SELECT} WHERE im.id = ANY($1) ORDER BY si.number"
+    ))
+    .bind(&ids)
+    .fetch_all(&mut *tx)
+    .await?;
+    for impact in &acknowledged {
+        audit::record(
+            &mut tx,
+            Some(actor),
+            "impact.acknowledge",
+            "item",
+            Some(impact.item_id),
+            format!(
+                "{} checked against {}/{} ({}): {note}",
+                impact.item_number, impact.source_number, impact.source_code, impact.event
+            ),
+            json!({ "impact_id": impact.id, "source_revision_id": impact.source_revision_id }),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Acknowledged {
+        item_number: rev.item_number,
+        revision_code: rev.code,
+        acknowledged,
+        skipped,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Grouping by dependent (worklists)
+// ---------------------------------------------------------------------------
+
+/// The open impacts on one dependent revision: everything that has to be
+/// checked on one assembly, drawing or simulation.
+#[derive(Clone, Debug, Serialize)]
+pub struct DependentGroup {
+    pub item_id: Uuid,
+    pub item_number: String,
+    pub item_name: String,
+    pub project_id: Option<Uuid>,
+    pub project_code: Option<String>,
+    pub revision_id: Uuid,
+    pub revision_code: String,
+    pub revision_state: String,
+    /// When the newest of its impacts was flagged.
+    pub latest_at: DateTime<Utc>,
+    /// The impact ids, comma-separated (the hidden field of the web form
+    /// that acknowledges exactly the impacts shown).
+    pub impact_ids: String,
+    /// The impacts, ordered by source item number.
+    pub impacts: Vec<Impact>,
+}
+
+/// Groups impacts by the dependent revision. Groups keep the order in which
+/// they first appear (newest first for [`open_for`]); inside a group the
+/// sources are ordered by item number and revision.
+pub fn group_by_dependent(impacts: Vec<Impact>) -> Vec<DependentGroup> {
+    let mut groups: Vec<DependentGroup> = Vec::new();
+    for impact in impacts {
+        if let Some(g) = groups
+            .iter_mut()
+            .find(|g| g.revision_id == impact.revision_id)
+        {
+            g.latest_at = g.latest_at.max(impact.created_at);
+            g.impacts.push(impact);
+            continue;
+        }
+        groups.push(DependentGroup {
+            item_id: impact.item_id,
+            item_number: impact.item_number.clone(),
+            item_name: impact.item_name.clone(),
+            project_id: impact.project_id,
+            project_code: impact.project_code.clone(),
+            revision_id: impact.revision_id,
+            revision_code: impact.revision_code.clone(),
+            revision_state: impact.revision_state.clone(),
+            latest_at: impact.created_at,
+            impact_ids: String::new(),
+            impacts: vec![impact],
+        });
+    }
+    for g in &mut groups {
+        g.impacts.sort_by(|a, b| {
+            (&a.source_number, &a.source_code).cmp(&(&b.source_number, &b.source_code))
+        });
+        g.impact_ids = g
+            .impacts
+            .iter()
+            .map(|i| i.id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+    }
+    groups
+}
+
+/// Parses the comma-separated impact ids of a web form (see
+/// [`DependentGroup::impact_ids`]); empty means all open impacts.
+pub fn parse_ids(text: &str) -> AppResult<Option<Vec<Uuid>>> {
+    let ids = text
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            Uuid::parse_str(s).map_err(|_| AppError::BadRequest("Invalid impact list.".into()))
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    Ok((!ids.is_empty()).then_some(ids))
 }
 
 /// Flags the dependents of `source_revision` (see the module docs) and
@@ -687,4 +893,96 @@ pub async fn analysis(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Dep
     });
     out.dedup_by(|a, b| a.item_id == b.item_id && a.via_number == b.via_number);
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn impact(n: u128, dependent: u128, source: &str, minute: u32) -> Impact {
+        Impact {
+            id: Uuid::from_u128(n),
+            item_id: Uuid::from_u128(1000 + dependent),
+            item_number: format!("ASM-{dependent:06}"),
+            project_id: None,
+            project_code: Some("ROVER".into()),
+            revision_id: Uuid::from_u128(2000 + dependent),
+            revision_code: "A".into(),
+            revision_state: "released".into(),
+            item_name: "Enclosure".into(),
+            source_item_id: Uuid::from_u128(3000 + n),
+            source_number: source.into(),
+            source_revision_id: Uuid::from_u128(4000 + n),
+            source_code: "A".into(),
+            source_name: "Screw".into(),
+            event: "released".into(),
+            relation: "bom".into(),
+            detail: String::new(),
+            change_id: None,
+            change_number: None,
+            created_at: Utc.with_ymd_and_hms(2026, 11, 5, 9, minute, 0).unwrap(),
+            resolved_at: None,
+            resolution: None,
+            resolved_by_name: None,
+            note: String::new(),
+        }
+    }
+
+    #[test]
+    fn groups_by_dependent_revision_in_first_seen_order() {
+        // newest first, as open_for returns them
+        let groups = group_by_dependent(vec![
+            impact(1, 2, "PRT-000008", 50),
+            impact(2, 1, "PRT-000008", 40),
+            impact(3, 2, "PRT-000005", 30),
+            impact(4, 2, "PRT-000006", 20),
+            impact(5, 1, "PRT-000006", 10),
+        ]);
+        let shape: Vec<(&str, Vec<&str>)> = groups
+            .iter()
+            .map(|g| {
+                (
+                    g.item_number.as_str(),
+                    g.impacts.iter().map(|i| i.source_number.as_str()).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                ("ASM-000002", vec!["PRT-000005", "PRT-000006", "PRT-000008"]),
+                ("ASM-000001", vec!["PRT-000006", "PRT-000008"]),
+            ]
+        );
+        assert_eq!(groups[0].latest_at.format("%M").to_string(), "50");
+        assert_eq!(groups[0].revision_id, Uuid::from_u128(2002));
+        assert_eq!(
+            groups[1].impact_ids,
+            format!("{},{}", Uuid::from_u128(5), Uuid::from_u128(2))
+        );
+        assert_eq!(parse_ids(&groups[1].impact_ids).unwrap().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn revisions_of_the_same_item_are_separate_groups() {
+        let mut older = impact(1, 1, "PRT-000001", 1);
+        older.revision_id = Uuid::from_u128(99);
+        older.revision_code = "A".into();
+        let mut newer = impact(2, 1, "PRT-000002", 2);
+        newer.revision_code = "B".into();
+        let groups = group_by_dependent(vec![newer, older]);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].revision_code, "B");
+        assert!(group_by_dependent(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn parses_impact_id_lists() {
+        assert_eq!(parse_ids("").unwrap(), None);
+        assert_eq!(parse_ids(" , ").unwrap(), None);
+        let id = Uuid::from_u128(7);
+        assert_eq!(parse_ids(&format!(" {id} ,")).unwrap(), Some(vec![id]));
+        assert!(parse_ids("nope").is_err());
+    }
 }

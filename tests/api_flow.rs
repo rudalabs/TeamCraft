@@ -1867,6 +1867,238 @@ async fn assembly_references_and_change_propagation() {
 }
 
 #[tokio::test]
+async fn impacts_are_grouped_and_acknowledged_together() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    let (_, rev) = app.user_in("rev", Role::Editor, &["ROCKET"]).await;
+    let (_, rover) = app.user_in("rosa", Role::Editor, &["ROVER"]).await;
+    let (_, viewer) = app.user("vera", Role::Viewer).await;
+    let call = |method: Method, uri: String, token: String, body: Option<serde_json::Value>| {
+        let app = &app;
+        async move { app.api(method, &uri, &token, body).await }
+    };
+    for (item_type, name) in [
+        ("part", "Screw"),
+        ("part", "Nut"),
+        ("part", "Washer"),
+        ("assembly", "Enclosure"),
+    ] {
+        let body = json!({ "item_type": item_type, "name": name, "project": "ROCKET" });
+        let r = call(
+            Method::POST,
+            "/api/v1/items".into(),
+            eng.clone(),
+            Some(body),
+        )
+        .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    let parts = ["PRT-000001", "PRT-000002", "PRT-000003"];
+    for (n, part) in parts.iter().enumerate() {
+        let body = json!({ "child": part, "quantity": 1, "find_number": 10 * (n + 1) });
+        let uri = "/api/v1/items/ASM-000001/revisions/A/bom".to_string();
+        let r = call(Method::POST, uri, eng.clone(), Some(body)).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    for item in parts.iter().chain(["ASM-000001"].iter()) {
+        let uri = format!("/api/v1/items/{item}/revisions/A/checkin");
+        call(Method::POST, uri, eng.clone(), None).await;
+    }
+    let all_a: Vec<(&str, &str)> = parts
+        .iter()
+        .chain(["ASM-000001"].iter())
+        .map(|i| (*i, "A"))
+        .collect();
+    release_via_change(&app, &eng, &rev, "rev", &all_a).await;
+
+    // The three parts get revision B, released together: three checks on the assembly.
+    for part in parts {
+        let uri = format!("/api/v1/items/{part}/revisions/A/revise");
+        let r = call(Method::POST, uri, eng.clone(), None).await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+        let uri = format!("/api/v1/items/{part}/revisions/B/checkin");
+        call(Method::POST, uri, eng.clone(), None).await;
+    }
+    let all_b: Vec<(&str, &str)> = parts.iter().map(|i| (*i, "B")).collect();
+    release_via_change(&app, &eng, &rev, "rev", &all_b).await;
+
+    let worklist = call(Method::GET, "/api/v1/worklist".into(), eng.clone(), None)
+        .await
+        .json();
+    let groups = worklist["impact_groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1, "one group per dependent: {worklist}");
+    assert_eq!(groups[0]["item_number"], "ASM-000001");
+    assert_eq!(groups[0]["revision_code"], "A");
+    let sources: Vec<&str> = groups[0]["impacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["source_number"].as_str().unwrap())
+        .collect();
+    assert_eq!(sources, parts.to_vec(), "sources ordered by number");
+    let ids: Vec<String> = groups[0]["impacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["id"].as_str().unwrap().to_string())
+        .collect();
+
+    // One of them is acknowledged on its own first (partially resolved group).
+    let uri = format!("/api/v1/impacts/{}/acknowledge", ids[1]);
+    let r = call(
+        Method::POST,
+        uri,
+        eng.clone(),
+        Some(json!({ "note": "Nut unchanged in size" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+
+    let ack_all = "/api/v1/items/ASM-000001/revisions/A/impacts/acknowledge".to_string();
+    let body = json!({ "note": "Form, fit and function unchanged", "impacts": ids });
+    let r = call(
+        Method::POST,
+        ack_all.clone(),
+        viewer.clone(),
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::FORBIDDEN,
+        "viewers cannot acknowledge"
+    );
+    let r = call(
+        Method::POST,
+        ack_all.clone(),
+        rover.clone(),
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::FORBIDDEN,
+        "editors of another project group cannot acknowledge"
+    );
+    let r = call(
+        Method::POST,
+        ack_all.clone(),
+        eng.clone(),
+        Some(json!({ "note": " ", "impacts": ids })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "a note is required");
+    let note = "Form, fit and function unchanged";
+    let r = call(
+        Method::POST,
+        ack_all.clone(),
+        eng.clone(),
+        Some(json!({ "note": note, "impacts": [] })),
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::BAD_REQUEST,
+        "an empty list is refused"
+    );
+    let mut foreign = ids.clone();
+    foreign.push(uuid::Uuid::new_v4().to_string());
+    let r = call(
+        Method::POST,
+        ack_all.clone(),
+        eng.clone(),
+        Some(json!({ "note": note, "impacts": foreign })),
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::BAD_REQUEST,
+        "ids that are not impacts on this revision are refused, nothing is acknowledged"
+    );
+    let open = call(Method::GET, "/api/v1/impacts".into(), eng.clone(), None)
+        .await
+        .json();
+    assert_eq!(open.as_array().unwrap().len(), 2, "nothing changed: {open}");
+
+    let r = call(
+        Method::POST,
+        ack_all.clone(),
+        eng.clone(),
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let result = r.json();
+    assert_eq!(result["skipped"], 1, "{result}");
+    let acknowledged: Vec<(&str, &str, &str)> = result["acknowledged"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| {
+            (
+                i["source_number"].as_str().unwrap(),
+                i["resolution"].as_str().unwrap(),
+                i["note"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        acknowledged,
+        vec![
+            (
+                "PRT-000001",
+                "acknowledged",
+                "Form, fit and function unchanged"
+            ),
+            (
+                "PRT-000003",
+                "acknowledged",
+                "Form, fit and function unchanged"
+            ),
+        ]
+    );
+    let open = call(Method::GET, "/api/v1/impacts".into(), eng.clone(), None)
+        .await
+        .json();
+    assert_eq!(open, json!([]));
+    let r = call(Method::POST, ack_all.clone(), eng.clone(), Some(body)).await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "all resolved already");
+
+    // One audit entry per impact, in the dependent's history.
+    let history = call(
+        Method::GET,
+        "/api/v1/items/ASM-000001/history".into(),
+        eng.clone(),
+        None,
+    )
+    .await
+    .json();
+    let acks = history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["action"] == "impact.acknowledge")
+        .count();
+    assert_eq!(acks, 3, "{history}");
+
+    // Without a list: every open impact on the revision.
+    let uri = "/api/v1/items/PRT-000002/revisions/B/obsolete".to_string();
+    let r = call(Method::POST, uri, eng.clone(), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let r = call(
+        Method::POST,
+        ack_all,
+        eng.clone(),
+        Some(json!({ "note": "The nut is replaced in the next revision anyway" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["acknowledged"][0]["event"], "obsolete");
+    assert_eq!(r.json()["skipped"], 0);
+    app.teardown().await;
+}
+
+#[tokio::test]
 async fn stored_cad_files_are_scanned_for_references_once() {
     let app = app_or_skip!();
     let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;

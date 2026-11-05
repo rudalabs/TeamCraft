@@ -62,4 +62,5 @@ teamcraft user create --username admin --role admin      # prompts for the passw
 | `teamcraft user list`                                                              | all accounts                                 |
 | `teamcraft vault check [--verify-hashes]`                                          | every stored file present (and intact)?      |
 | `teamcraft rescan-references [--format id]`                                        | read stored CAD file references again        |
+| `teamcraft vault signatures [--convert]`                                           | shape signatures for the similar part search |
 | `teamcraft healthcheck`                                                            | exit 0 when the server answers on `/healthz` |

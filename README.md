@@ -119,12 +119,19 @@ promised.
   [truck](https://github.com/ricosjp/truck) kernel), STL, OBJ, PLY, OFF, 3MF,
   AMF, glTF/GLB, 3DS and point clouds – converted once on the server, in an
   isolated process with a time limit, and drawn by a small WebGL viewer.
+- **FEA/CFD results in 3D.** VTK, VTU/VTP and CalculiX `.frd` results show
+  their outer surface coloured by a result field (von Mises, displacement
+  magnitude, …) with a colour legend and field selector – no ParaView needed.
 - **Previews of native CAD files.** The preview image Inventor, Solid Edge, NX
   and SolidWorks store in their files is shown next to them; on Windows the
   desktop app creates STEP exports with your own Inventor or Solid Edge at
   check-in for the 3D view (see `docs/src/research/cad-previews.md`).
 - **Search.** Ranked full-text search over numbers, names, materials, file
   names and the text inside STEP, IGES and text files; filter by CAD program.
+- **Similar parts.** "Do we already have a part like this?" – parts of
+  similar 3D shape and size, ranked by a cheap, explainable shape signature
+  (box extents and a D2 shape distribution, no AI) with the reason for each
+  hit; on the revision page, in the REST API and as MCP tool.
 - **Teams.** Viewer, CAD editor and admin roles; self-service project groups
   managed by their creators; single sign-on with any OpenID Connect
   provider and group synchronisation.
@@ -145,8 +152,9 @@ promised.
 - **AI assistants (MCP).** A built-in Model Context Protocol server
   (`/api/v1/mcp`, plus a stdio bridge `teamcraft mcp`) lets Claude Code and
   other MCP clients search items and explain BOMs and where-used, compare
-  revisions, check a BOM before a release, draft change orders, summarise,
-  raise and comment on change requests, and check simulations (out of date,
+  revisions, check a BOM before a release, find similar existing parts, draft
+  change orders, summarise, raise and comment on change requests, and check
+  simulations (out of date,
   pass/fail, results between revisions). It uses your rights and never
   submits, approves, releases or decides a change request.
 - **Ask TeamCraft (optional).** With an Anthropic API key configured, the
@@ -247,7 +255,7 @@ native PostgreSQL and the desktop app:
 | `teamcraft` binary   | web interface, REST API (`/api/v1`) and CLI in one process; templates, migrations and assets are embedded          |
 | `domain`, `services` | the rules and the business logic – permissions, row locks, lifecycle checks and the audit entry in one transaction |
 | `vault`              | content-addressed file storage on disk, plus the cached 3D previews                                                |
-| `mesh`, `preview`    | pure-Rust readers for meshes, point clouds and STEP                                                                |
+| `mesh`, `preview`    | pure-Rust readers for meshes, point clouds, STEP and (`simmesh`) VTK/VTU/FRD simulation results                    |
 | PostgreSQL 16+       | the only external service                                                                                          |
 
 Everything is built by `cargo` – no Node.js, no downloaded browser engines,

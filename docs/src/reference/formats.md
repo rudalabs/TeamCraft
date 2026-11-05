@@ -105,9 +105,12 @@ PDF, office documents, CSV, images and archives.
 
 ## Simulation models and results (FEA, CFD)
 
-Recognised and versioned, not parsed or previewed (see
-[Simulations](../guide/simulation.md)). *Model* = setup or solver deck,
-*result* = solver output (kind *Simulation result*).
+Recognised and versioned (see [Simulations](../guide/simulation.md)).
+*Model* = setup or solver deck, *result* = solver output (kind *Simulation
+result*). Legacy VTK (`.vtk`, unstructured grid and polydata), VTK XML
+unstructured grids and polydata (`.vtu`, `.vtp`) and CalculiX `.frd`
+(ASCII) are shown in the 3D viewer, coloured by their result fields; the
+other result formats are stored, not parsed.
 
 | Program / format      | Extensions                                                                                |
 |-----------------------|-------------------------------------------------------------------------------------------|

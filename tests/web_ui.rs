@@ -902,6 +902,21 @@ async fn references_and_impacts_in_the_web_ui() {
     );
     let page = app.get_page("/", Some(&cookie)).await.text();
     assert!(!page.contains("Dependents to check"));
+    // "Acknowledge all" on a revision without open checks: back with an error.
+    let r = app
+        .post_form(
+            &format!("/revisions/{doc_a}/impacts/acknowledge"),
+            Some(&cookie),
+            origin,
+            &[
+                ("note", "Nothing changed"),
+                ("impacts", &impact_id),
+                ("back", &back),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.header("location").as_deref(), Some(back.as_str()));
     let r = app
         .get_page(
             &format!(
@@ -1715,6 +1730,41 @@ async fn simulations_in_the_web_ui() {
         "{}",
         csv.text()
     );
+
+    // A VTU result file: the Results card links the 3D view, the mesh
+    // carries the result fields.
+    let vtu = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim/beam-zlib.vtu"),
+    )
+    .unwrap();
+    let r = app
+        .api_upload(
+            "/api/v1/items/SIM-000001/revisions/A/files",
+            &eng,
+            "beam.vtu",
+            &vtu,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let result_file = r.json()[0]["id"].as_str().unwrap().to_string();
+    let page = app
+        .get_page(&format!("/revisions/{sim_a}"), Some(&cookie))
+        .await
+        .text();
+    assert!(page.contains("View result in 3D"));
+    assert!(page.contains(&format!("/files/{result_file}/preview")));
+    let r = app
+        .get_page(&format!("/files/{result_file}/preview"), Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.text().contains("coloured by a result field"));
+    let r = app
+        .get_page(&format!("/files/{result_file}/mesh"), Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.triangle_count(), 20);
+    assert_eq!(mesh.fields[0].name, "temperature");
 
     // The part lists the simulation.
     let part = app

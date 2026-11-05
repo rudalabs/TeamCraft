@@ -140,7 +140,13 @@ jobs:
             if [ "$RUNNER_OS" = "Linux" ]; then
               cp -r packaging/linux "dist/$name/packaging"
             fi
+            # The repository stores most files with the executable bit; the
+            # archive gets explicit modes: only the binary is executable.
+            find "dist/$name" -type d -exec chmod 755 {} +
+            find "dist/$name" -type f -exec chmod 644 {} +
+            chmod 755 "dist/$name/teamcraft"
             tar -C dist -czf "dist/$name.tar.gz" "$name"
+            tar -tvzf "dist/$name.tar.gz"
           fi
           rm -rf "dist/$name"
           ls -l dist

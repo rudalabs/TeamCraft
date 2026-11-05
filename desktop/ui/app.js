@@ -116,6 +116,10 @@
     revise: "M4 12a8 8 0 0 1 14-5.3L20 9|M20 4v5h-5|M20 12a8 8 0 0 1-14 5.3L4 15|M4 20v-5h5",
     folder: "M3 7h6l2 2h10v10H3z",
     download: "M12 4v11|M7 10l5 5 5-5|M5 20h14",
+    "package": "M3 7.5l9-4.5 9 4.5v9l-9 4.5-9-4.5z|M3 7.5l9 4.5 9-4.5|M12 12v9",
+    cube: "M12 3l8 4.5v9L12 21l-8-4.5v-9z|M4 7.5l8 4.5 8-4.5|M12 12v9",
+    chevron: "M6 9l6 6 6-6",
+    approve: "M5 12.5l4.5 4.5L19 7.5",
     web: "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18|M3 12h18|M12 3c3 3.5 3 14.5 0 18|M12 3c-3 3.5-3 14.5 0 18",
     refresh: "M20 11a8 8 0 1 0-2.3 5.7|M20 4v7h-7",
     plus: "M12 5v14|M5 12h14",
@@ -147,6 +151,88 @@
       type: "button", title: opts.title || label, disabled: opts.disabled, on: { click: onClick }
     }, [svgIcon(ICONS[icon] || ICONS.plus), label]);
   }
+
+  /** A labelled segment of related toolbar buttons (Lock, Work, Lifecycle …). */
+  function toolGroup(name, buttons) {
+    var list = buttons.filter(function (b) { return b; });
+    if (!list.length) return null;
+    return h("div.tool-group", { role: "group", "aria-label": name }, list);
+  }
+
+  /**
+   * "More ▾": the rare actions of a tab in a menu at the end of the toolbar.
+   * items: { label, icon, run, disabled, title, danger, shortcut }.
+   * Keyboard: Enter, Space or ↓ open it on the first item, ↑ on the last;
+   * ↑/↓/Home/End move, Enter/Space run, Esc or Tab close – the focus goes
+   * back to the button. A click outside closes it too.
+   */
+  function moreMenu(items) {
+    items = items.filter(function (i) { return i; });
+    var wrap = h("div.more");
+    var menuId = "more-menu-" + (++moreMenu.seq);
+    var trigger = h("button.tool.more-trigger", {
+      type: "button", title: "More actions", "aria-haspopup": "menu", "aria-expanded": "false", "aria-controls": menuId
+    }, [h("span", { text: "More" }), svgIcon(ICONS.chevron)]);
+    var menu = h("div.menu.hidden", { id: menuId, role: "menu", "aria-label": "More actions" });
+    var entries = items.map(function (it) {
+      var b = h("button.menu-item" + (it.danger && !it.disabled ? ".danger" : ""), {
+        type: "button", role: "menuitem", tabindex: "-1", title: it.title || it.label,
+        "aria-disabled": it.disabled ? "true" : null
+      }, [svgIcon(ICONS[it.icon] || ICONS.plus), h("span.menu-label", { text: it.label }),
+        it.shortcut ? h("kbd", { text: it.shortcut }) : null]);
+      b.addEventListener("click", function () {
+        if (it.disabled) return;
+        close(true);
+        it.run();
+      });
+      if (it.separated) append(menu, h("div.menu-sep", { role: "separator" }));
+      append(menu, b);
+      return b;
+    });
+    function isOpen() { return !menu.classList.contains("hidden"); }
+    function onDoc(e) { if (!wrap.contains(e.target)) close(false); }
+    function open(focusIndex, instant) {
+      if (isOpen()) return;
+      menu.classList.toggle("instant", !!instant);
+      menu.classList.remove("hidden");
+      trigger.setAttribute("aria-expanded", "true");
+      document.addEventListener("pointerdown", onDoc, true);
+      var i = focusIndex < 0 ? entries.length - 1 : focusIndex;
+      if (entries[i]) entries[i].focus();
+    }
+    function close(refocus) {
+      if (!isOpen()) return;
+      menu.classList.add("hidden");
+      trigger.setAttribute("aria-expanded", "false");
+      document.removeEventListener("pointerdown", onDoc, true);
+      if (refocus) trigger.focus();
+    }
+    trigger.addEventListener("click", function (e) {
+      // detail 0: Enter or Space – open without the entrance fade
+      if (isOpen()) close(true); else open(0, e.detail === 0);
+    });
+    trigger.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowDown") { e.preventDefault(); open(0, true); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); open(-1, true); }
+    });
+    menu.addEventListener("keydown", function (e) {
+      var i = entries.indexOf(document.activeElement);
+      var n = entries.length;
+      if (e.key === "ArrowDown") { e.preventDefault(); entries[(i + 1) % n].focus(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); entries[(i - 1 + n) % n].focus(); }
+      else if (e.key === "Home") { e.preventDefault(); entries[0].focus(); }
+      else if (e.key === "End") { e.preventDefault(); entries[n - 1].focus(); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(true); }
+      else if (e.key === "Tab") { close(false); }
+    });
+    // a re-render of the toolbar removes the menu: drop the outside-click listener
+    wrap.addEventListener("focusout", function (e) {
+      if (isOpen() && e.relatedTarget && !wrap.contains(e.relatedTarget)) close(false);
+    });
+    append(wrap, [trigger, menu]);
+    return wrap;
+  }
+  moreMenu.seq = 0;
 
   function fmtDate(iso) {
     if (!iso) return "—";
@@ -417,6 +503,11 @@
     // New notifications: bell count and a toast, every minute while signed in.
     setInterval(function () { if (state.me) pollNotifications(false); }, 60000);
     initSplitter();
+    // back from the CAD program: is the next step of my check-out still right?
+    window.addEventListener("focus", function () {
+      var t = activeTab();
+      if (t && t.data && t.recheckLocal) t.recheckLocal();
+    });
     document.addEventListener("keydown", function (e) {
       var mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === "w" && state.active) {
@@ -583,7 +674,8 @@
   function refreshWorklistCount() {
     return api("GET", "/worklist").then(function (w) {
       state.worklist = w;
-      var n = w.checkouts.length + w.reviews.length + (w.impacts || []).length + (w.requests_assigned || []).length;
+      // dependents count once, however many changes they have to be checked against
+      var n = w.checkouts.length + w.reviews.length + impactGroups(w).length + (w.requests_assigned || []).length;
       var el = $("worklist-count");
       el.textContent = String(n);
       el.classList.toggle("hidden", n === 0);
@@ -708,18 +800,9 @@
       })) : h("p.empty", { text: "Nothing checked out." }));
       nav.appendChild(h("p.section-title", { text: "Waiting for my review (" + w.reviews.length + ")" }));
       nav.appendChild(w.reviews.length ? h("ul.tree", null, w.reviews.map(changeNode)) : h("p.empty", { text: "Nothing to review." }));
-      var impacts = w.impacts || [];
-      nav.appendChild(h("p.section-title", { text: "Dependents to check (" + impacts.length + ")" }));
-      nav.appendChild(impacts.length ? h("ul.tree", null, impacts.map(function (i) {
-        return h("li", null, h("div.node", {
-          title: i.item_number + " " + relationText(i.relation, i.source_number) + " – " + i.source_number + "/" + i.source_code + " " + i.event,
-          on: { click: function () { openRevision(i.item_number, i.revision_code, "references"); } }
-        }, [
-          h("span.twisty"), h("span.ico", { text: "⚠" }),
-          h("span.label", null, [h("span.mono", { text: i.item_number + "/" + i.revision_code }), " ", i.item_name]),
-          h("span.meta.mono", { text: i.source_number + "/" + i.source_code })
-        ]));
-      })) : h("p.empty", { text: "Nothing to check." }));
+      var groups = impactGroups(w);
+      nav.appendChild(h("p.section-title", { text: "Dependents to check (" + groups.length + ")" }));
+      nav.appendChild(groups.length ? h("ul.tree", null, groups.map(dependentNode)) : h("p.empty", { text: "Nothing to check." }));
       nav.appendChild(h("p.section-title", { text: "My open changes (" + w.my_changes.length + ")" }));
       nav.appendChild(w.my_changes.length ? h("ul.tree", null, w.my_changes.map(changeNode)) : h("p.empty", { text: "No open changes." }));
       // change requests (older servers: none)
@@ -729,6 +812,46 @@
       nav.appendChild(h("p.section-title", { text: "My open requests (" + mine.length + ")" }));
       nav.appendChild(mine.length ? h("ul.tree", null, mine.map(requestNode)) : h("p.empty", { text: "Found a problem? Use “Request change…” on a revision or a workspace file." }));
     });
+  }
+
+  /** Worklist: one line per dependent with the number of changes to check;
+   *  the twisty lists them (a click on a source opens it). */
+  function dependentNode(g) {
+    var key = "dep:" + g.revision_id;
+    var open = !!state.expanded[key];
+    var n = g.impacts.length;
+    var children = h("ul.tree" + (open ? "" : ".hidden"), null, g.impacts.map(function (i) {
+      return h("li", null, h("div.node", {
+        title: g.item_number + " " + relationText(i.relation, i.source_number) + (i.detail ? " (" + i.detail + ")" : "") +
+          " – " + i.source_number + "/" + i.source_code + " " + (i.event === "released" ? "was released" : "is obsolete"),
+        on: { click: function () { openRevision(i.source_number, i.source_code); } }
+      }, [
+        h("span.twisty"), h("span.ico.dim", { text: "↳" }),
+        h("span.label", null, [h("span.mono", { text: i.source_number + "/" + i.source_code }), " ", h("span.dim", { text: relationShort(i.relation) })]),
+        h("span.meta.small.dim", { text: i.event === "released" ? "released" : "obsolete" })
+      ]));
+    }));
+    var twisty = h("button.twisty-btn", {
+      type: "button", "aria-expanded": String(open), "aria-label": (open ? "Hide" : "Show") + " the " + n + " changes",
+      on: {
+        click: function (ev) {
+          ev.stopPropagation();
+          state.expanded[key] = !state.expanded[key];
+          twisty.textContent = state.expanded[key] ? "▾" : "▸";
+          twisty.setAttribute("aria-expanded", String(!!state.expanded[key]));
+          children.classList.toggle("hidden", !state.expanded[key]);
+        }
+      }
+    }, open ? "▾" : "▸");
+    var node = h("div.node.dependent", {
+      title: g.item_number + "/" + g.revision_code + " " + g.item_name + " – " + n + " change" + (n === 1 ? "" : "s") + " to check",
+      on: { click: function () { openRevision(g.item_number, g.revision_code, "references"); } }
+    }, [
+      twisty, h("span.ico.warn", { text: "⚠" }),
+      h("span.label", null, [h("span.mono", { text: g.item_number + "/" + g.revision_code }), " ", g.item_name]),
+      h("span.meta", null, h("span.count-badge", { text: String(n) }))
+    ]);
+    return h("li", null, [node, children]);
   }
 
   function requestNode(r) {
@@ -914,10 +1037,11 @@
         stat(s.items, "Items"), stat(s.revisions_in_work, "Revisions in work"), stat(s.revisions_in_review, "In review"),
         stat(s.revisions_released, "Released revisions"), stat(s.open_changes, "Open changes"), stat(fmtSize(s.stored_bytes), s.files + " files in the vault")
       ]));
-      if ((wl.impacts || []).length) {
+      var groups = impactGroups(wl);
+      if (groups.length) {
         append(welcome, h("section.panel", null, [h("h2", { text: "Dependents to check" }),
-          h("p.hint", { text: "These items use or reference something that was released in a new revision or made obsolete: acknowledge (no change needed) or revise them." })
-        ].concat(wl.impacts.map(function (i) { return impactBanner(i, false); }))));
+          h("p.hint", { text: "Something these items use or reference was released in a new revision or made obsolete. Acknowledge what needs no change, or revise the item." })
+        ].concat(groups.map(function (g) { return impactGroup(g, false); }))));
       }
       if (wl.checkouts.length || wl.reviews.length) {
         append(welcome, h("div.grid-2", null, [
@@ -1090,7 +1214,7 @@
       h("p.hint", { text: "Claude reads the PDM data of " + subject + " with your rights. Read-only unless you allow drafts – it never submits, approves or releases. The question and the data the tools return are sent to Anthropic." }),
       h("div.assistant-quick", null, quick),
       field("Your question", question, "optional with a quick action"),
-      drafts ? h("label.check", null, [drafts, "Allow drafting change orders"]) : null,
+      drafts ? h("label.check", null, [drafts, "Allow drafting change orders, change requests and comments"]) : null,
       status,
       answer
     ]);
@@ -1680,11 +1804,15 @@
         rev: r[0].revision, files: r[0].files, bom: r[0].bom, changes: r[0].changes, item: r[1].item, revisions: r[1].revisions,
         requests: r[0].open_requests || [],
         watching: !!r[1].watching,
-        refs: r[2] || { outgoing: [], incoming: [], files: [], file_referrers: [], impacts: [] }
+        refs: r[2] || { outgoing: [], incoming: [], files: [], file_referrers: [], impacts: [] },
+        // my check-out: are there local changes? (decides the primary action)
+        localChanges: null
       };
       tab.title = tab.data.rev.item_number + "/" + tab.data.rev.code + " " + tab.data.rev.name;
       renderTabs();
-      return tab.data;
+      var data = tab.data;
+      if (data.rev.checked_out_by !== state.me.id) return data;
+      return localChanges(data.rev).then(function (changed) { data.localChanges = changed; data.localChangesFresh = true; return data; });
     });
   }
 
@@ -1726,34 +1854,118 @@
     };
   }
 
+  /** Why a toolbar action of a revision is disabled – shown as its tooltip. */
+  function revisionReasons(d) {
+    var rev = d.rev, me = state.me;
+    var group = rev.project_code ? "project group " + rev.project_code : "the project group";
+    var notEditor = canEditProject(rev.project_id) ? null : "Only CAD editors of " + group + " can do this";
+    var stateName = label(rev.state);
+    var other = rev.checked_out_by && rev.checked_out_by !== me.id ? rev.checked_out_by_name : null;
+    var openChange = d.changes.filter(function (c) { return ["draft", "in_review", "rejected"].indexOf(c.status) !== -1; })[0];
+    var openRev = d.revisions.filter(function (r) { return r.state === "in_work" || r.state === "in_review"; })[0];
+    return {
+      checkout: notEditor || (rev.state !== "in_work" ? "Only revisions in work can be checked out – this one is " + stateName +
+        (rev.state === "released" ? "; Revise creates the next revision" : "") : null),
+      checkin: other ? "Checked out by " + other + " – only they can check it in" : "Check out first",
+      cancel: other ? "Checked out by " + other + " – only they or an administrator can cancel the check-out" : "Not checked out",
+      edit: other ? "Checked out by " + other : notEditor ? notEditor : rev.state !== "in_work" ? "Only revisions in work can be edited – this one is " + stateName : "Check out first – the attributes change under your check-out",
+      release: notEditor || (rev.state !== "in_work" ? "Only revisions in work can be released – this one is " + stateName :
+        other ? "Checked out by " + other + " – they check it in first" :
+        openChange ? "Already in change order " + openChange.number + " (" + label(openChange.status) + ")" : null),
+      revise: notEditor || (openRev ? "Revision " + openRev.code + " is still " + label(openRev.state) + " – finish it before the next one" : null),
+      obsolete: notEditor || (rev.state !== "released" ? "Only released revisions can be made obsolete – this one is " + stateName : null)
+    };
+  }
+
+  /**
+   * The most likely next step on a revision – drawn as the toolbar's one
+   * primary button: check out a free revision in work; check in what was
+   * changed locally; release a clean check-out; revise a released revision.
+   * Nothing while it is in review, obsolete or locked by someone else.
+   */
+  function revisionNextStep(d, can) {
+    var mine = d.rev.checked_out_by === state.me.id;
+    if (mine) return d.localChanges === false && can.release ? "release" : "checkin";
+    if (can.checkout) return "checkout";
+    if (d.rev.state === "released" && can.revise) return "revise";
+    return null;
+  }
+
+  /** Whether the user's working copy of a revision has changes to check in
+   * (null when the workspace cannot be read in time). */
+  function localChanges(rev) {
+    var status = call("workspace_status", { project: rev.project_code, item: rev.item_number, code: rev.code }).then(function (ws) {
+      return ws.files.some(function (f) { return f.state === "modified" || f.state === "new" || f.state === "conflict"; });
+    }, function () { return null; });
+    var timeout = new Promise(function (resolve) { setTimeout(function () { resolve(null); }, 1500); });
+    return Promise.race([status, timeout]);
+  }
+
   function renderRevision(tab, body, toolbar) {
-    var d = tab.data, rev = d.rev, can = revisionAbilities(d);
+    var d = tab.data, rev = d.rev, can = revisionAbilities(d), why = revisionReasons(d);
     var latest = d.revisions[0];
+    var next = revisionNextStep(d, can);
+    // Buttons keep their place in every state; only the next step is primary.
+    function act(id, text, icon, onClick, title) {
+      return tool(text, icon, onClick, { primary: next === id, disabled: !can[id], title: can[id] ? title : why[id] });
+    }
+    var checkinTitle = "Upload the changed files from your workspace and release the lock";
+    var noChanges = " (no local changes found)";
+    var lock = rev.checked_out_by ? [
+      act("checkin", "Check in…", "checkin", function () { checkinDialog(tab); },
+        checkinTitle + (d.localChanges === false ? noChanges : "")),
+      act("cancel", rev.checked_out_by !== state.me.id ? "Force unlock" : "Cancel check-out", "cancel", function () { doCancelCheckout(tab); },
+        rev.checked_out_by !== state.me.id ? "Take the lock away from " + rev.checked_out_by_name + " (administrator)" : "Release the lock without uploading anything")
+    ] : [
+      act("checkout", "Check out", "checkout", function () { doCheckout(tab); }, "Take the lock and copy the files into your workspace")
+    ];
+    var releaseButton = act("release", "Release…", "release", function () { releaseDialog(tab); }, "Create a change order with reviewers and submit it");
+    // The working copy changes while the tab stays open (the CAD program saves
+    // into it): look again when the tab is shown from its cache or the window
+    // gets the focus back, so "Release…" is not highlighted over unsaved work.
+    tab.recheckLocal = null;
+    if (rev.checked_out_by === state.me.id) {
+      tab.recheckLocal = function () {
+        localChanges(rev).then(function (changed) {
+          if (changed === null || changed === d.localChanges || tab.data !== d) return;
+          d.localChanges = changed;
+          var step = revisionNextStep(d, can);
+          lock[0].classList.toggle("primary", step === "checkin");
+          releaseButton.classList.toggle("primary", step === "release");
+          lock[0].title = checkinTitle + (changed === false ? noChanges : "");
+        });
+      };
+      if (!d.localChangesFresh) tab.recheckLocal();
+    }
+    d.localChangesFresh = false;
     append(toolbar, [
-      tool("Check out", "checkout", function () { doCheckout(tab); }, { primary: can.checkout, disabled: !can.checkout, title: "Take the lock and copy the files into your workspace" }),
-      tool("Check in…", "checkin", function () { checkinDialog(tab); }, { disabled: !can.checkin, title: "Upload changed files from the workspace and release the lock" }),
-      tool(rev.checked_out_by && rev.checked_out_by !== state.me.id ? "Force unlock" : "Cancel check-out", "cancel", function () { doCancelCheckout(tab); }, { disabled: !can.cancel }),
-      h("span.sep"),
-      tool("Edit", "edit", function () { editDialog(tab); }, { disabled: !can.edit, title: "Edit the attributes (requires the check-out)" }),
-      tool("Release…", "release", function () { releaseDialog(tab); }, { disabled: !can.release, title: "Create a change order with reviewers and submit it" }),
-      tool("Revise", "revise", function () { doRevise(tab); }, { disabled: !can.revise, title: "Create the next revision" }),
-      tool("Obsolete", "obsolete", function () { doObsolete(tab); }, { disabled: !can.obsolete, danger: can.obsolete }),
-      h("span.sep"),
-      tool("Request change…" + (d.requests.length ? " (" + d.requests.length + ")" : ""), "request", function () { requestChangeDialog(rev, null); },
-        { title: "Report a problem or propose a change to " + rev.item_number + "/" + rev.code + " (change request)" }),
-      watchTool(tab, "items", rev.item_number, d.watching),
-      tool("Get…", "download", function () { getStructureDialog(rev); }, { title: "Copy this item and everything it consists of (BOM, referenced CAD files) into your working folder" }),
-      assistantEnabled() ? tool("Ask…", "ask", function () {
-        assistantDialog({ item: rev.item_number, revision: rev.code }, rev.item_number + "/" + rev.code, [
-          ["release_notes", "Draft release notes"], ["release_check", "Check before release"]
-        ]);
-      }, { title: "Ask TeamCraft: release notes, release check or any question about this revision" }) : null,
-      agentButton(tab),
-      tool("Pack and Go…", "download", function () { savePackage(rev, null); }, { title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json) – for sending, not for working" }),
-      tool("Open folder", "folder", function () { openWorkspaceFolder(tab); }, { title: "Open the working folder of this revision" }),
-      tool("Browser", "web", function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, { title: "Open this revision in the web UI" }),
-      tool("Refresh", "refresh", reloadActive),
-      h("span.context", { text: rev.project_code ? "Project group " + rev.project_code : "" })
+      toolGroup("Lock", lock),
+      toolGroup("Work", [
+        act("edit", "Edit", "edit", function () { editDialog(tab); }, "Edit the attributes"),
+        tool("Get…", "download", function () { getStructureDialog(rev); }, { title: "Copy this item and everything it consists of (BOM, referenced CAD files) into your working folder" }),
+        tool("Open folder", "folder", function () { openWorkspaceFolder(tab); }, { title: "Open the working folder of this revision" })
+      ]),
+      toolGroup("Lifecycle", [
+        releaseButton,
+        act("revise", "Revise", "revise", function () { doRevise(tab); }, "Create the next revision")
+      ]),
+      toolGroup("Collaborate", [
+        tool("Request change…" + (d.requests.length ? " (" + d.requests.length + ")" : ""), "request", function () { requestChangeDialog(rev, null); },
+          { title: "Report a problem or propose a change to " + rev.item_number + "/" + rev.code + " (change request)" }),
+        watchTool(tab, "items", rev.item_number, d.watching),
+        assistantEnabled() ? tool("Ask…", "ask", function () {
+          assistantDialog({ item: rev.item_number, revision: rev.code }, rev.item_number + "/" + rev.code, [
+            ["release_notes", "Draft release notes"], ["release_check", "Check before release"]
+          ]);
+        }, { title: "Ask TeamCraft: release notes, release check or any question about this revision" }) : null,
+        agentButton(tab)
+      ]),
+      moreMenu([
+        { label: "Pack and Go…", icon: "package", run: function () { savePackage(rev, null); }, title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json) – for sending, not for working" },
+        { label: "Open in browser", icon: "web", run: function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, title: "Open this revision in the web UI" },
+        { label: "Refresh", icon: "refresh", run: reloadActive, shortcut: "F5", title: "Load this revision again" },
+        { label: "Mark obsolete…", icon: "obsolete", run: function () { doObsolete(tab); }, disabled: !can.obsolete, danger: true, separated: true, title: can.obsolete ? "Retire this released revision – cannot be undone" : why.obsolete }
+      ])
     ]);
 
     body.appendChild(h("div.object-head", null, [
@@ -1774,8 +1986,8 @@
     if (rev.checked_out_by && rev.checked_out_by !== state.me.id) {
       body.appendChild(h("p.notice", { text: "Checked out by " + rev.checked_out_by_name + " since " + fmtDate(rev.checked_out_at) + " – only they can change it right now." }));
     }
-    d.refs.impacts.filter(function (i) { return !i.resolved_at; }).forEach(function (i) {
-      body.appendChild(impactBanner(i, true));
+    groupImpacts(d.refs.impacts.filter(function (i) { return !i.resolved_at; })).forEach(function (g) {
+      body.appendChild(impactGroup(g, true));
     });
     if (d.requests.length) {
       body.appendChild(h("p.notice", null, [d.requests.length + " open change request" + (d.requests.length === 1 ? "" : "s") + " on " + rev.item_number + ": "]
@@ -1833,7 +2045,8 @@
       dt("Description"), dd(h("span.pre", { text: rev.description || "—" })),
       dt("Created"), dd(fmtDate(rev.created_at) + " · " + rev.created_by_name),
       dt("Last modified"), dd(fmtDate(rev.updated_at)),
-      dt("Released"), dd(fmtDate(rev.released_at))
+      dt("Released"), dd(fmtDate(rev.released_at)),
+      dt("Similar parts"), dd(d.files.some(function (f) { var p = previewFormat(f); return p && ["pts", "xyz", "las"].indexOf(p) < 0; }) ? h("button.link", { type: "button", title: "Parts with a similar 3D shape (web UI)", on: { click: function () { call("open_web", { path: "/revisions/" + rev.id + "#similar" }).catch(function (e) { toast(errorText(e), "error"); }); } } }, "Compare the shape in the browser") : "— (no STEP or mesh file)")
     ]);
     var states = ["in_work", "in_review", "released", "obsolete"];
     var next = {
@@ -1845,6 +2058,7 @@
     append(el, h("div.grid-2", null, [
       h("section.panel", null, [h("h2", { text: "Properties" }), props]),
       h("div", null, [
+        revGlance(tab),
         h("section.panel", null, [
           h("h2", { text: "Lifecycle" }),
           h("ol.lifecycle-track", null, states.map(function (s) { return h("li" + (s === rev.state ? ".current" : ""), null, badge(s)); })),
@@ -1862,6 +2076,68 @@
         ])
       ])
     ]));
+  }
+
+  /**
+   * Right column of the overview: the preview image stored in the CAD file
+   * (or the way into the 3D viewer) and the key numbers of the revision;
+   * each number opens its sub-tab. Only "Where used" costs a request.
+   */
+  function revGlance(tab) {
+    var d = tab.data;
+    function go(sub) { return function () { tab.sub = sub; renderActive(); }; }
+    function fact(value, text, sub, title) {
+      var v = h("span.fact-value", { text: String(value) });
+      var body = [v, h("span.fact-label", { text: text })];
+      var el = sub ? h("button.fact", { type: "button", title: title || "Open " + text, on: { click: go(sub) } }, body) : h("div.fact", { title: title || null }, body);
+      return { el: el, value: v };
+    }
+    var refCount = d.refs.outgoing.length + d.refs.incoming.length + d.refs.file_referrers.length +
+      d.refs.files.reduce(function (n, f) { return n + f.references.length; }, 0);
+    var openChanges = d.changes.filter(function (c) { return ["draft", "in_review", "rejected"].indexOf(c.status) !== -1; }).length;
+    var whereUsed = fact(d.whereUsed ? d.whereUsed.length : "…", "Where used", "whereused", "Assemblies that use this item");
+    var facts = [
+      fact(d.files.length, d.files.length === 1 ? "File" : "Files", "files"),
+      fact(d.bom.length, d.bom.length === 1 ? "BOM line" : "BOM lines", "structure", "Open the structure"),
+      whereUsed,
+      fact(refCount, refCount === 1 ? "Reference" : "References", "references"),
+      fact(d.changes.length, "Changes", "changes",
+        "Change orders with this revision" + (openChanges ? " – " + openChanges + " open" : "")),
+      fact(d.requests.length, "Requests", null, "Open change requests on this item – listed above the sub-tabs")
+    ];
+    if (!d.whereUsed) {
+      api("GET", "/items/" + enc(d.rev.item_number) + "/where-used").then(function (list) {
+        d.whereUsed = list;
+        whereUsed.value.textContent = String(list.length);
+      }, function () { whereUsed.value.textContent = "—"; });
+    }
+
+    var preview = null, glanceBody = null;
+    var withThumb = d.files.filter(function (f) { return f.format_info && f.format_info.thumbnail; })[0];
+    var files3d = d.files.filter(function (f) { return previewFormat(f); });
+    var viewerButton = files3d.length ? h("button.glance-3d", {
+      type: "button", title: "Open the 3D viewer (" + files3d.length + " file" + (files3d.length === 1 ? "" : "s") + ")", on: { click: go("viewer") }
+    }, [svgIcon(ICONS.cube), "3D viewer"]) : null;
+    if (withThumb) {
+      var img = thumbImage(withThumb);
+      img.classList.remove("file-thumb");
+      img.classList.add("glance-thumb");
+      img.title = "Preview image stored in " + withThumb.filename;
+      preview = h("figure.glance-preview", null, [img, h("figcaption", null, [h("span.glance-file", { text: withThumb.filename }), viewerButton])]);
+      // the file has no image after all: keep only the way into the viewer
+      thumbCache[withThumb.sha256].catch(function () {
+        if (viewerButton) { img.remove(); return; }
+        preview.remove();
+        if (glanceBody) glanceBody.classList.add("no-preview");
+      });
+    } else if (viewerButton) {
+      preview = h("div.glance-preview", null, [viewerButton]);
+    }
+    glanceBody = h("div.glance-body" + (preview ? "" : ".no-preview"), null, [
+      preview,
+      h("div.facts", null, facts.map(function (f) { return f.el; }))
+    ]);
+    return h("section.panel.glance", null, [h("h2", { text: "At a glance" }), glanceBody]);
   }
 
   function dt(t) { return h("dt", { text: t }); }
@@ -2076,20 +2352,108 @@
     }
   }
 
-  /** An open impact: the dependent has to be checked. */
-  function impactBanner(i, inRevision) {
-    var can = canEditProject(i.project_id);
-    return h("div.impact", { role: "status" }, [
-      h("p", null, [h("strong", { text: "Check needed: " }),
-        h("button.link.mono", { type: "button", on: { click: function () { openRevision(i.source_number, i.source_code); } } }, i.source_number + "/" + i.source_code),
-        " " + i.source_name + (i.event === "released" ? " was released" : " is obsolete and has to be replaced") +
-        (i.change_number ? " (" + i.change_number + ")" : "") + " – " + i.item_number + " " + relationText(i.relation) +
-        (i.detail ? " (" + i.detail + ")" : "") + "."]),
-      h("div.row", null, [
-        can ? h("button.small", { type: "button", on: { click: function () { acknowledgeDialog(i); } } }, "Acknowledge…") : null,
-        inRevision ? null : h("button.small", { type: "button", on: { click: function () { openRevision(i.item_number, i.revision_code, "references"); } } }, "Open " + i.item_number),
-        h("span.hint", { text: "Revising and releasing " + i.item_number + " resolves it as well." })
-      ])
+  /** What links the dependent to the item that changed, short ("BOM line"). */
+  function relationShort(r) {
+    switch (r) {
+      case "bom": return "BOM line";
+      case "drawing": return "Drawing";
+      case "specification": return "Specification";
+      case "reference": return "Reference";
+      case "simulation": return "Simulation basis";
+      case "file": return "CAD file reference";
+      default: return "Dependency";
+    }
+  }
+
+  /** Open impacts grouped by the dependent revision, in first-seen order,
+   *  sources by number (the server's impacts::group_by_dependent). */
+  function groupImpacts(list) {
+    var groups = [], byRevision = {};
+    list.forEach(function (i) {
+      var g = byRevision[i.revision_id];
+      if (!g) {
+        g = byRevision[i.revision_id] = {
+          item_id: i.item_id, item_number: i.item_number, item_name: i.item_name, project_id: i.project_id,
+          project_code: i.project_code, revision_id: i.revision_id, revision_code: i.revision_code,
+          revision_state: i.revision_state, latest_at: i.created_at, impacts: []
+        };
+        groups.push(g);
+      }
+      g.impacts.push(i);
+    });
+    var key = function (i) { return i.source_number + "/" + i.source_code; };
+    groups.forEach(function (g) {
+      g.impacts.sort(function (a, b) { return key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0; });
+    });
+    return groups;
+  }
+
+  /** The worklist's dependents (older servers send only the flat list). */
+  function impactGroups(w) {
+    return w.impact_groups || groupImpacts(w.impacts || []);
+  }
+
+  /** The open impacts on one dependent revision: a compact header with the
+   *  actions for the whole group, one dense row per source, the hint once. */
+  function impactGroup(g, inRevision) {
+    var can = canEditProject(g.project_id);
+    var n = g.impacts.length;
+    var openIt = function () { openRevision(g.item_number, g.revision_code, "references"); };
+    return h("article.impact-group", null, [
+      h("header.impact-group-head", null, [
+        h("h3", null, inRevision
+          ? ["Check needed: ", h("span.mono", { text: g.item_number + "/" + g.revision_code })]
+          : [h("button.link.mono", { type: "button", on: { click: openIt } }, g.item_number + "/" + g.revision_code), " ",
+             h("span.impact-group-name", { text: g.item_name })]),
+        h("span.impact-count", { text: n + " change" + (n === 1 ? "" : "s") + " to check" }),
+        h("div.actions", null, [
+          inRevision ? null : h("button.small", { type: "button", on: { click: openIt } }, "Open"),
+          !inRevision && can && g.revision_state === "released"
+            ? h("button.small", { type: "button", on: { click: function () { reviseRevision(g.item_number, g.revision_code); } } }, "Revise") : null,
+          can && n > 1 ? h("button.small", { type: "button", on: { click: function () { acknowledgeAllDialog(g); } } }, "Acknowledge all…") : null
+        ])
+      ]),
+      h("ul.impact-rows", null, g.impacts.map(function (i) {
+        return h("li", { title: g.item_number + " " + relationText(i.relation) + (i.detail ? " (" + i.detail + ")" : "") }, [
+          h("span.impact-source", null, [
+            h("button.link.mono", { type: "button", on: { click: function () { openRevision(i.source_number, i.source_code); } } }, i.source_number + "/" + i.source_code),
+            " ", h("span.impact-source-name", { text: i.source_name })]),
+          h("span.impact-event", null, [i.event === "released" ? "released" : badge("obsolete"),
+            i.change_number ? " via " : null,
+            i.change_number ? h("button.link.mono", { type: "button", on: { click: function () { openChange(i.change_number); } } }, i.change_number) : null]),
+          h("span.impact-relation", null, [relationShort(i.relation), i.detail ? h("span.impact-detail", { text: " · " + i.detail }) : null]),
+          can ? h("button.small", { type: "button", on: { click: function () { acknowledgeDialog(i); } } }, "Acknowledge…") : null
+        ]);
+      })),
+      h("p.hint", { text: "Revising and releasing " + g.item_number + " resolves " + (n === 1 ? "it" : "all " + n) + " as well." })
+    ]);
+  }
+
+  function acknowledgeAllDialog(g) {
+    var note = h("textarea", { maxlength: "2000", required: true, placeholder: "e.g. form, fit and function unchanged" });
+    var n = g.impacts.length;
+    dialog("Acknowledge all for " + g.item_number + "/" + g.revision_code, h("div.stack", null, [
+      h("p", { text: "One note for all " + n + " changes – " + g.item_number + " needs no change for any of them:" }),
+      h("ul.plain", null, g.impacts.map(function (i) {
+        return h("li", null, [h("span.mono", { text: i.source_number + "/" + i.source_code }), " " + i.source_name + " – " +
+          (i.event === "released" ? "released" : "obsolete") + " · " + relationShort(i.relation)]);
+      })),
+      field("Note", note)
+    ]), [
+      { label: "Cancel", onClick: function (d) { d.close(); } },
+      {
+        label: "Acknowledge " + n, primary: true, submit: true, onClick: function (d) {
+          api("POST", "/items/" + enc(g.item_number) + "/revisions/" + enc(g.revision_code) + "/impacts/acknowledge",
+            { note: note.value, impacts: g.impacts.map(function (i) { return i.id; }) }).then(function (r) {
+            d.close();
+            toast(g.item_number + "/" + g.revision_code + " checked: " + r.acknowledged.length + " acknowledged" +
+              (r.skipped ? " (" + r.skipped + " resolved in the meantime)" : ""));
+            refreshWorklistCount().catch(function () {});
+            if (state.view === "worklist") selectView("worklist");
+            reloadActive();
+          }, function (err) { d.fail(err); });
+        }
+      }
     ]);
   }
 
@@ -2219,7 +2583,7 @@
   function revViewer(tab, el) {
     var files = tab.data.files.filter(function (f) { return previewFormat(f); });
     if (!files.length) {
-      el.appendChild(h("p.empty", { text: "No 3D files (STEP, STL, OBJ, 3MF, glTF, PLY, point clouds, …) – native CAD files (SolidWorks, NX, Creo, CATIA, …) are shown in 3D through a STEP export next to them." }));
+      el.appendChild(h("p.empty", { text: "No 3D files (STEP, STL, OBJ, 3MF, glTF, PLY, point clouds, simulation results, …) – native CAD files (SolidWorks, NX, Creo, CATIA, …) are shown in 3D through a STEP export next to them." }));
       return;
     }
     var current = files.filter(function (f) { return f.id === tab.viewerFile; })[0] || files[0];
@@ -2747,11 +3111,14 @@
   }
 
   function doRevise(tab) {
-    var rev = tab.data.rev;
-    confirmDialog("Revise", "Create a new revision of " + rev.item_number + " based on " + rev.code + "? It is checked out to you.", "Revise").then(function (ok) {
+    reviseRevision(tab.data.rev.item_number, tab.data.rev.code);
+  }
+
+  function reviseRevision(number, code) {
+    confirmDialog("Revise", "Create a new revision of " + number + " based on " + code + "? It is checked out to you.", "Revise").then(function (ok) {
       if (!ok) return;
       run("Creating the next revision", function () {
-        return api("POST", "/items/" + enc(rev.item_number) + "/revisions/" + enc(rev.code) + "/revise");
+        return api("POST", "/items/" + enc(number) + "/revisions/" + enc(code) + "/revise");
       }).then(function (nr) {
         toast("Created " + nr.item_number + "/" + nr.code + " (in work, checked out to you)");
         openRevision(nr.item_number, nr.code, "workspace");
@@ -2788,6 +3155,30 @@
     });
   }
 
+  /**
+   * Suggested reviewers of a draft change (GET …/suggested-reviewers): one
+   * Add button per person with the reasons as text. Loads after the tab.
+   */
+  function suggestedReviewers(number) {
+    var box = h("div.suggestions");
+    api("GET", "/changes/" + enc(number) + "/suggested-reviewers").then(function (r) {
+      if (!r.suggestions.length) return;
+      box.appendChild(h("h3", { text: "Suggested reviewers" }));
+      r.suggestions.forEach(function (s, i) {
+        var whyId = "suggested-why-" + number + "-" + i;
+        var why = h("p.hint", { id: whyId, text: s.reasons.join("; ") });
+        var add = h("button.small", { type: "button", "aria-describedby": whyId, on: { click: function () {
+          add.disabled = true;
+          run("Adding " + s.display_name, function () {
+            return api("POST", "/changes/" + enc(number) + "/reviewers", { username: s.username });
+          }).then(function () { toast("Added reviewer " + s.display_name); reloadActive(); }, function () { add.disabled = false; });
+        } } }, "Add " + s.display_name);
+        box.appendChild(h("div.suggestion", null, [add, why]));
+      });
+    }, function () { /* suggestions are optional */ });
+    return box;
+  }
+
   function renderChange(tab, body, toolbar) {
     var c = tab.data.change, me = state.me;
     var owner = canEdit() && (c.created_by === me.id || me.role === "admin");
@@ -2797,18 +3188,49 @@
       run(text, function () { return api("POST", "/changes/" + enc(c.number) + "/" + path); })
         .then(function () { toast(text + " – done"); reloadActive(); refreshWorklistCount(); }, function () {});
     }
+    var notOwner = owner ? null : "Only " + c.created_by_name + " (who created it) or an administrator can do this";
+    var canSubmit = owner && c.status === "draft", canWithdraw = owner && c.status === "in_review";
+    // The review decision lives in the toolbar – the comment field below goes with it.
+    var comment = canReview ? h("textarea", { maxlength: "4000", placeholder: "Comment – required when rejecting", "aria-label": "Review comment" }) : null;
+    function decide(decision) {
+      if (decision === "reject" && !comment.value.trim()) {
+        toast("Write in the comment why you reject " + c.number, "error");
+        comment.focus();
+        return;
+      }
+      run(decision === "approve" ? "Approving" : "Rejecting", function () {
+        return api("POST", "/changes/" + enc(c.number) + "/review", { decision: decision, comment: comment.value });
+      }).then(function (r) {
+        toast(c.number + " – " + (decision === "approve" ? "approved" : "rejected") + "; status " + label(r.change.status));
+        reloadActive(); refreshWorklistCount();
+      }, function () {});
+    }
     append(toolbar, [
-      tool("Submit for review", "checkin", function () { action("submit", "Submitting " + c.number); },
-        { primary: owner && c.status === "draft", disabled: !(owner && c.status === "draft") }),
-      tool("Withdraw", "cancel", function () { action("withdraw", "Withdrawing " + c.number); }, { disabled: !(owner && c.status === "in_review") }),
-      h("span.sep"),
-      watchTool(tab, "changes", c.number, !!tab.data.watching),
-      assistantEnabled() ? tool("Ask…", "ask", function () {
-        assistantDialog({ change: c.number }, c.number, [["review_brief", "Brief me for this review"]]);
-      }, { title: "Ask TeamCraft: a briefing for the review – what changes, impact, risks, open questions" }) : null,
-      agentButton(tab),
-      tool("Browser", "web", function () { call("open_web", { path: "/changes/" + c.id }).catch(function (e) { toast(errorText(e), "error"); }); }, { title: "Open this change in the web UI (reviewers, items, cancel …)" }),
-      tool("Refresh", "refresh", reloadActive)
+      canReview ? toolGroup("Review", [
+        tool("Approve", "approve", function () { decide("approve"); }, { primary: true, title: "Approve " + c.number + " (with the comment below, if any)" }),
+        tool("Reject", "cancel", function () { decide("reject"); }, { danger: true, title: "Reject " + c.number + " – the comment below says why; the revisions go back to WIP" })
+      ]) : null,
+      toolGroup("Lifecycle", [
+        tool("Submit for review", "checkin", function () { action("submit", "Submitting " + c.number); }, {
+          primary: canSubmit, disabled: !canSubmit,
+          title: canSubmit ? "Send it to the reviewers" : notOwner || "Only a draft is submitted – this one is " + label(c.status)
+        }),
+        tool("Withdraw", "cancel", function () { action("withdraw", "Withdrawing " + c.number); }, {
+          disabled: !canWithdraw,
+          title: canWithdraw ? "Take it back from review – the revisions return to WIP" : notOwner || "Only a change in review can be withdrawn – this one is " + label(c.status)
+        })
+      ]),
+      toolGroup("Collaborate", [
+        watchTool(tab, "changes", c.number, !!tab.data.watching),
+        assistantEnabled() ? tool("Ask…", "ask", function () {
+          assistantDialog({ change: c.number }, c.number, [["review_brief", "Brief me for this review"]]);
+        }, { title: "Ask TeamCraft: a briefing for the review – what changes, impact, risks, open questions" }) : null,
+        agentButton(tab)
+      ]),
+      moreMenu([
+        { label: "Open in browser", icon: "web", run: function () { call("open_web", { path: "/changes/" + c.id }).catch(function (e) { toast(errorText(e), "error"); }); }, title: "Open this change in the web UI (reviewers, items, cancel …)" },
+        { label: "Refresh", icon: "refresh", run: reloadActive, shortcut: "F5", title: "Load this change again" }
+      ])
     ]);
     body.appendChild(h("div.object-head", null, [h("div", null, [
       h("p.kicker", { text: "Change order · priority " + label(c.priority) }),
@@ -2824,20 +3246,8 @@
     if (hints[c.status]) body.appendChild(h("p.notice.info", { text: hints[c.status] }));
 
     if (canReview) {
-      var comment = h("textarea", { maxlength: "4000", placeholder: "Comment – required when rejecting" });
-      var decide = function (decision) {
-        run(decision === "approve" ? "Approving" : "Rejecting", function () {
-          return api("POST", "/changes/" + enc(c.number) + "/review", { decision: decision, comment: comment.value });
-        }).then(function (r) {
-          toast(c.number + " – " + (decision === "approve" ? "approved" : "rejected") + "; status " + label(r.change.status));
-          reloadActive(); refreshWorklistCount();
-        }, function () {});
-      };
       body.appendChild(h("section.panel", null, [h("h2", { text: "Your review" }), comment,
-        h("div.row", null, [
-          h("button.primary", { type: "button", on: { click: function () { decide("approve"); } } }, "Approve"),
-          h("button.danger", { type: "button", on: { click: function () { decide("reject"); } } }, "Reject")
-        ])]));
+        h("p.small.muted.review-hint", { text: "Approve or Reject in the toolbar above. A comment is optional when approving and required when rejecting." })]));
     }
 
     append(body, h("div.grid-2", null, [
@@ -2851,7 +3261,8 @@
       h("section.panel", null, [h("h2", { text: "Reviewers" }),
         tab.data.reviews.length ? table(["Reviewer", "Decision", "Comment"], tab.data.reviews.map(function (r) {
           return { cells: [r.reviewer_name, badge(r.decision), h("span.pre", { text: r.comment || "" })] };
-        })) : h("p.empty", { text: "No reviewers assigned yet." })])
+        })) : h("p.empty", { text: "No reviewers assigned yet." }),
+        owner && c.status === "draft" ? suggestedReviewers(c.number) : null])
     ]));
     body.appendChild(h("section.panel", null, [h("h2", { text: "Affected revisions" }),
       tab.data.items.length ? table(["Revision", "Name", "State"], tab.data.items.map(function (i) {
@@ -3045,19 +3456,38 @@
       return run(text, function () { return api("POST", "/change-requests/" + enc(r.number) + "/" + path, payload === undefined ? null : payload); })
         .then(function () { toast(text + " – done"); reloadActive(); refreshWorklistCount().catch(function () {}); }, function () {});
     }
+    var status = label(r.status);
+    // one primary: start the triage, else turn an accepted request into its change order
+    var next = can.start_triage ? "start_triage" : can.implement ? "implement" : null;
     append(toolbar, [
-      tool("Start triage", "checkout", function () { action("triage", "Starting the triage of " + r.number); },
-        { primary: !!can.start_triage, disabled: !can.start_triage, title: "Take it up (in triage)" + (r.assignee ? "" : ", assigned to you") }),
-      tool("Take up again", "revise", function () { action("reopen", "Taking up " + r.number); }, { disabled: !can.reopen }),
-      tool("Create change order", "release", function () { createChangeFromRequest(tab); },
-        { primary: !!can.implement, disabled: !can.implement, title: "Draft change order with the in-work revisions of the affected items" }),
-      tool("Withdraw", "cancel", function () { action("withdraw", "Withdrawing " + r.number); }, { disabled: !can.withdraw }),
-      tool("Attach…", "plus", function () { attachToRequest(r); }, { disabled: !can.attach || !TAURI.dialog, title: "Attach a screenshot, mark-up or PDF" }),
-      h("span.sep"),
-      watchTool(tab, "change-requests", r.number, !!d.watching),
-      tool("Browser", "web", function () { call("open_web", { path: "/requests/" + r.id }).catch(function (e) { toast(errorText(e), "error"); }); },
-        { title: "Open this change request in the web UI (assign, link a change order, edit …)" }),
-      tool("Refresh", "refresh", reloadActive)
+      toolGroup("Triage", [
+        tool("Start triage", "checkout", function () { action("triage", "Starting the triage of " + r.number); }, {
+          primary: next === "start_triage", disabled: !can.start_triage,
+          title: can.start_triage ? "Take it up (in triage)" + (r.assignee ? "" : ", assigned to you") : "Only a new request is taken up, by the CAD editors of its project groups – this one is " + status
+        }),
+        tool("Take up again", "revise", function () { action("reopen", "Taking up " + r.number); }, {
+          disabled: !can.reopen, title: can.reopen ? "Back into triage" : "Only a deferred request is taken up again, by the CAD editors of its project groups – this one is " + status
+        }),
+        tool("Create change order", "release", function () { createChangeFromRequest(tab); }, {
+          primary: next === "implement", disabled: !can.implement,
+          title: can.implement ? "Draft change order with the in-work revisions of the affected items" : "Possible once the request is accepted, for CAD editors of its project groups – this one is " + status
+        })
+      ]),
+      toolGroup("Requester", [
+        tool("Attach…", "plus", function () { attachToRequest(r); }, {
+          disabled: !can.attach || !TAURI.dialog,
+          title: can.attach ? "Attach a screenshot, mark-up or PDF" : "Attachments are added only while the request is open – this one is " + status
+        }),
+        tool("Withdraw", "cancel", function () { action("withdraw", "Withdrawing " + r.number); }, {
+          disabled: !can.withdraw, title: can.withdraw ? "Take the request back" : "Only " + r.requested_by_name + " (or an administrator) can withdraw it, before it is decided"
+        })
+      ]),
+      toolGroup("Collaborate", [watchTool(tab, "change-requests", r.number, !!d.watching)]),
+      moreMenu([
+        { label: "Open in browser", icon: "web", run: function () { call("open_web", { path: "/requests/" + r.id }).catch(function (e) { toast(errorText(e), "error"); }); },
+          title: "Open this change request in the web UI (assign, link a change order, edit …)" },
+        { label: "Refresh", icon: "refresh", run: reloadActive, shortcut: "F5", title: "Load this change request again" }
+      ])
     ]);
     body.appendChild(h("div.object-head", null, [h("div", null, [
       h("p.kicker", { text: "Change request · " + reasonLabel(r.reason) + " · priority " + label(r.priority) }),
@@ -3818,7 +4248,8 @@
       case "open-workspace": openWorkspaceFolder(activeTab() && activeTab().kind === "revision" ? activeTab() : null); break;
       case "open-web": {
         var t = activeTab();
-        var path = !t || !t.data ? "/" : t.kind === "change" ? "/changes/" + t.data.change.id : "/revisions/" + t.data.rev.id;
+        var path = !t || !t.data ? "/" : t.kind === "change" ? "/changes/" + t.data.change.id :
+          t.kind === "request" ? "/requests/" + t.data.change_request.id : t.data.rev ? "/revisions/" + t.data.rev.id : "/";
         call("open_web", { path: path }).catch(function (e) { toast(errorText(e), "error"); });
         break;
       }

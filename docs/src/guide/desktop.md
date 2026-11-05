@@ -34,6 +34,12 @@ check-outs and reviews, and a **local working folder**:
   (see [Large files](vault.md#large-files-chunked-resumable-uploads));
 * *Check in all* in the worklist checks in every check-out without local
   changes and lists those that still have changes;
+* *Dependents to check* (worklist and home) shows one line per dependent
+  revision with the number of changes it has to be checked against; the
+  arrow lists them (a click opens the item that changed). On the home page
+  every dependent has **Open**, **Revise** and **Acknowledge all…** (one note
+  for all of them, see [Change propagation](structure.md#change-propagation))
+  and an **Acknowledge…** per change;
 * *Request change…* on a revision tab and *Request…* on a file (Files and
   Workspace tabs) raise a [change request](changes.md) with the item,
   revision and file name filled in and an optional screenshot or PDF; the
@@ -58,6 +64,54 @@ check-outs and reviews, and a **local working folder**:
 Sign-in runs through the browser (single sign-on or password, confirmed on a
 TeamCraft page) or with a personal access token. The app uses the same skins
 and 3D viewer as the web interface; the models are converted by the server.
+
+## The toolbar
+
+The toolbar sits right below the tab strip and acts on the active tab. Its
+buttons are grouped, and they keep their place whatever state the object is
+in; a button that does not apply right now is greyed out, and its tooltip
+says why (for example *Check out first* or *Already in change order
+CHG-000002*). The **one highlighted button is the most likely next step**:
+
+| Revision | Highlighted |
+|---|---|
+| in work, not checked out | *Check out* |
+| checked out by you, with local changes (or the workspace could not be read) | *Check in…* |
+| checked out by you, no local changes | *Release…* (when it can be released, otherwise *Check in…*) |
+| in review, obsolete, or checked out by somebody else | nothing |
+| released | *Revise* |
+
+The working folder of your check-out is looked at again whenever the tab is
+shown or the app window gets the focus back – save in the CAD program, switch
+back, and *Check in…* is highlighted.
+
+* revision tab: **Lock** (*Check out*, or *Check in…* and *Cancel check-out*
+  / *Force unlock* while checked out) · **Work** (*Edit*, *Get…*, *Open
+  folder*) · **Lifecycle** (*Release…*, *Revise*) · **Collaborate**
+  (*Request change…*, *Watch*, *Ask…*, *Agent*);
+* change tab: **Review** (*Approve* highlighted, *Reject* – the comment field
+  of *Your review* goes with it, required for a rejection) while your review
+  is pending · **Lifecycle** (*Submit for review*, highlighted on your draft,
+  *Withdraw*) · **Collaborate**;
+* change request tab: **Triage** (*Start triage* or *Create change order*
+  highlighted, *Take up again*) · **Requester** (*Attach…*, *Withdraw*) ·
+  **Collaborate**.
+
+Rare actions are in **More ▾** at the end: *Pack and Go…*, *Open in browser*,
+*Refresh* (`F5`) and *Mark obsolete…*. The menu works with the keyboard:
+`Enter`, `Space` or `↓` opens it, `↑`/`↓`, `Home`/`End` move, `Enter` runs
+the action, `Esc` closes it and returns to the button; a click outside closes
+it too.
+
+The **Overview** of a revision shows *At a glance* next to the properties:
+the preview image stored in an Inventor, Solid Edge, SolidWorks or NX file
+(with the way into the 3D viewer) and the number of files, BOM lines, where
+used, references, change orders and open change requests – a click opens the
+matching sub-tab.
+
+Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
+`Ctrl/Cmd+1/2/3/4` Home, Worklist, Changes, Agent, `Ctrl/Cmd+W` close the tab,
+`Ctrl/Cmd` + `+` / `-` / `0` (or `Ctrl` + mouse wheel) zoom.
 
 ## How files appear on your computer
 
