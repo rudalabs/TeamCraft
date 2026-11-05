@@ -1433,6 +1433,8 @@ mod tests {
                     "new_items": 2, "existing_items": 1, "lines": [{}, {}, {}],
                     "warnings": ["Row 4: <screw> appears again"],
                     "columns": [{ "header": "Part Number", "field": "number", "label": "Part number" }],
+                    "attribute_columns": [{ "header": "Lieferant", "key": "vendor", "label": "Vendor" }],
+                    "unused_columns": ["Cost <Center>"],
                 },
                 "rows": [
                     { "row": 2, "level": 1, "indent": "", "find_number": 1, "file_number": "HOUSING",
@@ -1440,7 +1442,8 @@ mod tests {
                       "quantity": 1.0, "unit": "each", "material": "AlMg3", "mass_kg": 0.8 },
                     { "row": 3, "level": 2, "indent": "indent-2", "find_number": 10,
                       "file_number": "ISO 4762 M6", "number": null, "existing": null, "type": "Part",
-                      "name": "Screw", "quantity": 6.0, "unit": "each", "material": "", "mass_kg": null },
+                      "name": "Screw", "quantity": 6.0, "unit": "each", "material": "", "mass_kg": null,
+                      "classification": "Standard part", "attributes": [{ "key": "vendor", "label": "Vendor", "value": "Würth <GmbH>" }] },
                     { "row": 5, "level": 1, "indent": "", "find_number": 2, "file_number": "PRT-000001",
                       "number": "PRT-000001", "existing": "PRT-000001/B", "type": "Part",
                       "name": "Bracket", "quantity": 2.0, "unit": "each", "material": "", "mass_kg": null },
@@ -1458,6 +1461,10 @@ mod tests {
             "generated",
             "PRT-000001&#x2f;B",
             "badge-released\">existing",
+            "Attribute “Vendor”",
+            "Cost &lt;Center&gt;",
+            "standard part</span>",
+            "Vendor: Würth &lt;GmbH&gt;",
             "<td>Part number</td>",
         ] {
             assert!(

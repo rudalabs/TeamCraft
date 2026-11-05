@@ -260,9 +260,8 @@ real files and belong to section 3 once such files are at hand.
   read yet: complex instances, the quantities of `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`; the geometry of the parts is
   not split into the new items, a STEP file imported *into* a checked-out revision is not attached to it (see *3c*)
 - [ ] CSV/Excel BOM import: test the column recognition with real exports (per CAD program below, also Fusion and
-  Creo); CATIA V5 *Bill of Material* text exports are not understood (see *3b*)
-- [ ] BOM import: map further columns (Inventor *BOM Structure = Purchased*, vendor …) to the classification and to
-  custom attributes (feature 5, second part; `bomtable` has to keep unmapped columns first)
+  Creo); CATIA V5 *Bill of Material* text exports are not understood (see *3b*); this includes the *BOM structure*
+  values and the attribute columns read since feature 5
 
 **3D preview**
 
@@ -378,6 +377,9 @@ real files and belong to section 3 once such files are at hand.
 - [x] Configurable numbering schemes per project group with preview (feature 4)
 - [x] Custom attributes per item type (text, number, yes/no, choice list; versioned per revision), classification
   in-house/purchased/standard part, attribute search in the item list, REST API, saved searches and MCP (feature 5)
+- [x] BOM import fills the classification (*BOM structure* / procurement column: Purchased, Kaufteil, Content Center …)
+  and custom attributes (columns named like an attribute) of new items; values that do not fit are skipped with a
+  warning (feature 5, second part)
 - [x] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts and multi-level where-used in API, MCP
   and web UI (feature 6) – alternates (two-way or one-way) and supersession per item, *Replace in assemblies* from the
   where-used page with a preview (in-work parents changed, released ones listed for a new revision), migration 0030
@@ -474,8 +476,11 @@ Documented in the UI, keep in mind:
    (JSONB; versioned, copied by revise and *Save as*, part of the full-text search), the classification
    in-house/purchased/standard part as item master data (`items.classification`), filters `class`, `attr` + `value`
    (text contains, yes/no, `12`, `>=10`, `10..20`) in the item list, the REST API, saved searches and the MCP search.
-   Open: attributes per file type; the BOM import mapping further columns (e.g. Inventor *BOM Structure =
-   Purchased*, vendor) to the classification and attributes – `bomtable` drops unknown columns today.
+   The BOM import fills both for new items: the *BOM structure* / procurement column (Normal, Purchased,
+   Phantom, Kaufteil, Normteil, Content Center …) sets the classification, other columns whose header is the key
+   or label of an active attribute fill it (`bomtable` keeps unread columns in `extra_columns`); values that do
+   not fit are left out with a warning, existing items stay unchanged, the preview lists the attribute columns and
+   the columns that are not imported. Open: attributes per file type.
 6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate parts, multi-level where-used: done.
    Alternates (`item_alternates`, two-way by default) and supersession (`item_supersessions`, one successor, no
    circles) are item-level relations (`services::interchange`); *Replace in assemblies* on `/items/{id}/where-used`
