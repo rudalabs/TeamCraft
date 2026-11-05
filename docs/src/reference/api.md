@@ -155,7 +155,7 @@ lowest level it is reached on; the report stops at 2000 rows.
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`                                                                    |
 | Change requests  | `GET/POST /change-requests`, `GET/PATCH /change-requests/{number}`, `comments`, `items`, `triage`, `assign`, `decide`, `reopen`, `withdraw`, `create-change`, `link-change`, `attachments`, `watch` |
 | Simulations      | `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
-| Changes          | `GET/POST /changes`, items, reviewers, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact`      |
+| Changes          | `GET/POST /changes`, items, reviewers, `suggested-reviewers`, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact` |
 | Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                 |
 | Notifications    | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                   |
 | Personal         | `GET /favorites`, `POST/DELETE /items/{number}/favorite`, `GET/POST /searches`, `DELETE /searches/{id}`                               |
@@ -170,6 +170,19 @@ Both compare the direct lines; `depth=all` compares every level, with the
 children resolved by `rule=latest|released|as_released` (each line then has
 its `level` and the resolved `revision` on both sides). The expanded BOM
 itself downloads as Excel workbook: `GET …/revisions/{code}/bom.xlsx?rule=`.
+
+### Suggested reviewers
+
+`GET /changes/{number}/suggested-reviewers?limit=5` (1–20) answers *who
+should review this?* from the history of the affected items:
+`{"change": "ECO-000004", "suggestions": [{"user_id", "username",
+"display_name", "role", "score", "reasons": ["edited PRT-000005 3 times in
+the last 90 days", "manager of ROVER"]}]}`, highest score first, ties by
+name. Only active CAD editors and admins are suggested; the author and the
+assigned reviewers never are. It only reads – add a suggestion with
+`POST /changes/{number}/reviewers`. See
+[Suggested reviewers](../guide/changes.md#suggested-reviewers) for the
+sources and points.
 
 ## Change requests (ECR)
 
