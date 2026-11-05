@@ -133,6 +133,18 @@ Like all previews, the conversion runs once per file version in a separate
 process with a time limit and is cached; damaged files show an error message
 instead of a model.
 
+### Large results
+
+Result files can be huge, and TeamCraft does not read them fully. A file above
+`TEAMCRAFT_PREVIEW_MAX_RESULT_MB` (default 64 MB) is stored and downloadable
+but gets no 3D preview (the page says so); smaller ones are converted in an
+isolated process with a time and memory limit. Numbers are never extracted
+from solver output on their own. To get the key figures into the *Results*
+table, type them in, import a CSV/Excel table, or let a script or an agent
+fill them in from a report. For pictures, attach rendered images (PNG, JPEG
+or WebP, at most 8 MB each): they appear as a small gallery on the *Results*
+card of the revision.
+
 ## Comparing results
 
 *Compare with another revision* on the Results card puts the values of two
@@ -141,7 +153,8 @@ with the difference, the relative change and the pass/fail status of both.
 
 ## Limits of version 1
 
-* Result values are not extracted from result files automatically; VTK,
+* Result values are not extracted from result files automatically (by
+  design: large results are never parsed fully); VTK,
   VTU/VTP and `.frd` files are previewed in 3D (see above), the other result
   formats are stored and recognised, not parsed.
 * Large result files go through the normal upload (`TEAMCRAFT_MAX_UPLOAD_MB`);

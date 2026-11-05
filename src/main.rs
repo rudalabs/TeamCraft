@@ -112,6 +112,12 @@ enum Command {
         /// Also write the shape signature (JSON) for the similar part search.
         #[arg(long)]
         signature: Option<std::path::PathBuf>,
+        /// Refuse an input file larger than this before opening it.
+        #[arg(long, default_value_t = u64::MAX)]
+        max_input_bytes: u64,
+        /// Limit the address space of this process (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        max_memory_bytes: u64,
     },
 }
 
@@ -170,18 +176,41 @@ enum VaultCommand {
     },
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let cli = Cli::parse();
+    // The preview process runs before any runtime exists: its address space
+    // limit then counts only what the conversion itself allocates.
     if let Some(Command::PreviewMesh {
         format,
         input,
         output,
         signature,
+        max_input_bytes,
+        max_memory_bytes,
     }) = &cli.command
     {
-        return preview_mesh(format, input, output.as_deref(), signature.as_deref());
+        teamcraft::preview::limit_memory(*max_memory_bytes);
+        return preview_mesh(
+            format,
+            input,
+            output.as_deref(),
+            signature.as_deref(),
+            *max_input_bytes,
+        );
     }
+    match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime.block_on(run(cli)),
+        Err(e) => {
+            eprintln!("Error: the async runtime could not be started: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run(cli: Cli) -> ExitCode {
     // Optional configuration files (see the `config` module).
     for (path, e) in teamcraft::config::load_env_files() {
         eprintln!("warning: {path} could not be loaded completely: {e}");
@@ -343,6 +372,7 @@ fn preview_mesh(
     input: &std::path::Path,
     output: Option<&std::path::Path>,
     signature: Option<&std::path::Path>,
+    max_input_bytes: u64,
 ) -> ExitCode {
     if output.is_none() && signature.is_none() {
         eprintln!("Error: give --output and/or --signature");
@@ -350,7 +380,7 @@ fn preview_mesh(
     }
     // the kernel's panic messages are not meant for users
     std::panic::set_hook(Box::new(|_| {}));
-    match teamcraft::preview::run_job(format, input, output, signature) {
+    match teamcraft::preview::run_job(format, input, output, signature, max_input_bytes) {
         Ok(mesh) => {
             // for people running it by hand (the server ignores stdout)
             let partial = mesh

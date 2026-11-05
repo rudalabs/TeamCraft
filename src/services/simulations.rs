@@ -1322,9 +1322,38 @@ pub async fn compare(
     Ok(compare_results(&b, &a))
 }
 
+/// Largest picture shown on the simulation page (the browser loads each one).
+pub const GALLERY_MAX_BYTES: i64 = 8 * 1024 * 1024;
+
+/// Pictures shown on the simulation page at most.
+pub const GALLERY_MAX_IMAGES: usize = 12;
+
+/// Whether a file of a simulation revision is shown as a picture in the
+/// gallery: PNG, JPEG or WebP (by file name) of at most [`GALLERY_MAX_BYTES`].
+/// Rendered result pictures are the cheap way to show a CFD or FEA result –
+/// nothing is parsed, the browser draws the file.
+pub fn is_gallery_image(filename: &str, size_bytes: i64) -> bool {
+    let lower = filename.to_ascii_lowercase();
+    let ext = lower.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    matches!(ext, "png" | "jpg" | "jpeg" | "webp")
+        && size_bytes > 0
+        && size_bytes <= GALLERY_MAX_BYTES
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gallery_takes_small_pictures_only() {
+        assert!(is_gallery_image("pressure.PNG", 1000));
+        assert!(is_gallery_image("v.v2.jpeg", GALLERY_MAX_BYTES));
+        assert!(is_gallery_image("streamlines.webp", 1));
+        assert!(!is_gallery_image("huge.png", GALLERY_MAX_BYTES + 1));
+        assert!(!is_gallery_image("empty.png", 0));
+        assert!(!is_gallery_image("logo.svg", 10), "SVG can carry scripts");
+        assert!(!is_gallery_image("result.vtu", 10));
+        assert!(!is_gallery_image("png", 10));
+    }
 
     fn result(name: &str, load_case: &str, value: f64, upper: Option<f64>) -> SimulationResult {
         SimulationResult {
