@@ -53,7 +53,10 @@ the known gaps with details. Last update: 2026-11-05.
   items per file with different numbers, while CAD references are matched by file name (import tutorial, user guide)
 - [ ] Desktop Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Desktop: *Import BOM…* (CSV/Excel) on a checked-out assembly
-- [ ] Desktop: cancel long operations (check-in upload, Pack and Go) half-way
+- [x] Desktop: cancel long operations (check-in upload, Pack and Go) half-way – *Cancel* in the check-in dialog stops
+  before the next STEP export, between two chunks (upload sessions discarded, not resumable after a cancel) or
+  half-way through the streamed multipart request: nothing stored, still checked out; Pack and Go has a progress
+  dialog with *Cancel* (also while the server packs) and never leaves a half ZIP (`desktop/src/abortable.rs`)
 - [x] Browser check (no console errors, no overflow at 390 px) of `/import` and `/import/{id}`, with a STEP import
   (2026-11-04)
 - [x] STEP assembly import → items + BOM (feature 3c)
@@ -303,8 +306,6 @@ in the README licence table, follow the definition of done in `CLAUDE.md`.
   assembly can then overlap.
   IGES, BREP, Parasolid, JT, FBX, DAE, USD and E57 are recognised but not
   previewed (no pure-Rust readers yet; candidates: `e57` crate for E57).
-- **Desktop app:** long operations (check-in upload, Pack and Go) cannot be
-  cancelled half-way yet; only the browser sign-in can.
 - CAD file reference scanning (`src/cadrefs.rs`) is a heuristic and was not
   tested with real files of the CAD programs.
 - E-mail (SMTP) and Mattermost delivery were only tested against fakes, not
