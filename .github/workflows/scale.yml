@@ -17,10 +17,6 @@ on:
         default: "5"
   schedule:
     - cron: "23 3 * * 1"
-  # TEMPORARY until the workflow is on main (dispatch needs that): removed before the PR.
-  push:
-    branches: [scale-check]
-    paths: [".github/workflows/scale.yml", "tests/scale.rs", "tests/scale/**", "src/**", "migrations/**"]
 
 permissions:
   contents: read

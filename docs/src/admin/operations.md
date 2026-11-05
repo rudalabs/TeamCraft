@@ -75,9 +75,13 @@ files, content-addressed downloads with `X-Content-Type-Options: nosniff`.
 TeamCraft is measured against a large synthetic vault (see
 [Scale check](#scale-check)): about 100,000 items with 200,000 revisions,
 one million BOM lines in structures ten levels deep, 200,000 files, 20,000
-changes and two million audit entries – some 3 GB in PostgreSQL. Every page
-and API call of the check answers in well under a second on a
-GitHub-hosted runner (4 CPUs, 16 GB RAM), most in a few dozen milliseconds.
+changes and two million audit entries – about 1.6 GB in PostgreSQL. On a
+GitHub-hosted runner (4 CPUs, 16 GB RAM) nearly every page and API call of
+the check answers in less than 200 ms, most in a few dozen milliseconds. The
+slow ones do inherently large work: a search text that names a CAD program
+("solidworks") matches three quarters of the vault (about 1.6 s), and the
+impact analysis of a change with 1600 widely used parts walks tens of
+thousands of dependencies (about 220 ms).
 
 * **PostgreSQL 14 or newer.** For a vault of that size, give PostgreSQL
   about a quarter of the RAM as `shared_buffers` (e.g. `1GB`), set

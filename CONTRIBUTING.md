@@ -108,7 +108,7 @@ docker compose up -d db
 cargo test --release --test scale -- --ignored --nocapture
 ```
 
-The seed (a few minutes, ~3 GB) goes into the database `teamcraft_scale` on
+The seed (a few minutes, ~1.6 GB) goes into the database `teamcraft_scale` on
 the test server and is kept, so the next run only applies new migrations and
 measures; `DROP DATABASE teamcraft_scale` starts over. The report lands in
 `target/scale-report/` (`report.md`, `plans.md` with the
