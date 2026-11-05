@@ -631,15 +631,100 @@ impl Transport for HttpTransport {
     }
 }
 
-/// The MCP tools with the rights of `me`.
+/// Write tools that put free text into objects other users read.
+pub const TEXT_WRITE_TOOLS: [&str; 3] = [
+    "create_change_draft",
+    "create_change_request",
+    "comment_change_request",
+];
+
+/// The answer of a text write tool once the run has read restricted content.
+pub const TAINTED_WRITE: &str =
+    "Not written: this run read content of restricted project groups, and \
+     the text could carry it into an object that other users read. Tell the user to write it \
+     themselves (or to ask again without the restricted content).";
+
+/// The MCP tools with the rights of `me`. A run takes minutes, so every
+/// call uses the user's rights as they are at that moment (a membership
+/// lost or a group restricted during the run applies to the next step).
+///
+/// Confused deputy: text that other users typed (request comments, names,
+/// notes) reaches the model and may tell it to copy restricted content into
+/// a comment or a draft that those users can read. So once a read in this
+/// run returned something a reader without the user's restricted groups
+/// would not have got, the text write tools refuse for the rest of the run.
 pub struct McpTools<'a> {
     pub state: &'a crate::AppState,
     pub me: &'a Actor,
+    /// A read returned restricted content (see above).
+    pub tainted: std::sync::atomic::AtomicBool,
+}
+
+impl<'a> McpTools<'a> {
+    pub fn new(state: &'a crate::AppState, me: &'a Actor) -> McpTools<'a> {
+        McpTools {
+            state,
+            me,
+            tainted: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// `me` without its restricted groups: every restricted group hidden.
+    async fn outsider(&self, me: &Actor) -> Result<Option<Actor>, AppError> {
+        let restricted: Vec<uuid::Uuid> =
+            sqlx::query_scalar("SELECT id FROM projects WHERE visibility = 'restricted'")
+                .fetch_all(&self.state.db)
+                .await?;
+        if restricted.iter().all(|p| me.hidden_projects.contains(p)) {
+            return Ok(None); // the user sees no restricted group
+        }
+        Ok(Some(Actor {
+            role: if me.is_admin() {
+                crate::domain::Role::Editor
+            } else {
+                me.role
+            },
+            hidden_projects: restricted,
+            ..me.clone()
+        }))
+    }
 }
 
 impl Tools for McpTools<'_> {
     async fn call(&self, name: &str, input: &Value) -> Value {
-        mcp::tools::call(self.state, self.me, name, input).await
+        use std::sync::atomic::Ordering;
+        let me = match crate::services::users::active_actor(&self.state.db, self.me.id).await {
+            Ok(Some(me)) => me,
+            Ok(None) => return mcp::tools::failure("The account is no longer active."),
+            Err(e) => {
+                tracing::warn!(error = %e, "reloading the assistant's user failed");
+                return mcp::tools::failure("The tool is not available right now.");
+            }
+        };
+        if TEXT_WRITE_TOOLS.contains(&name) {
+            if self.tainted.load(Ordering::SeqCst) {
+                return mcp::tools::failure(TAINTED_WRITE);
+            }
+            return mcp::tools::call(self.state, &me, name, input).await;
+        }
+        let result = mcp::tools::call(self.state, &me, name, input).await;
+        let read_only = mcp::tools::definitions()
+            .iter()
+            .any(|d| d["name"] == name && d["annotations"]["readOnlyHint"] == true);
+        if read_only && !self.tainted.load(Ordering::SeqCst) {
+            // the same read as somebody outside the user's restricted groups
+            let differs = match self.outsider(&me).await {
+                Ok(None) => false,
+                Ok(Some(outsider)) => {
+                    mcp::tools::call(self.state, &outsider, name, input).await != result
+                }
+                Err(_) => true, // unknown: fail closed
+            };
+            if differs {
+                self.tainted.store(true, Ordering::SeqCst);
+            }
+        }
+        result
     }
 }
 

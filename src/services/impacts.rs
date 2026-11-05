@@ -61,24 +61,76 @@ const IMPACT_SELECT: &str = "
 const LATEST: &str = "pr.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = pr.item_id)
                       AND pr.state <> 'obsolete'";
 
-/// An impact on an item the actor may read; a hidden source is redacted.
-pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Impact> {
+/// Redacts impacts for a reader – every impact that leaves this module goes
+/// through here. Sources the reader may not see lose their identity, and a
+/// releasing change order the reader may not see (it also holds restricted
+/// items, see [`access::change_visible`]) loses its number and id.
+pub async fn redact_all(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    rows: Vec<Impact>,
+) -> AppResult<Vec<Impact>> {
+    let mut changes: Vec<Uuid> = rows.iter().filter_map(|i| i.change_id).collect();
+    changes.sort_unstable();
+    changes.dedup();
+    let visible: Vec<Uuid> = if changes.is_empty() || actor.is_admin() {
+        changes
+    } else {
+        sqlx::query_scalar(&format!(
+            "SELECT c.id FROM changes c WHERE c.id = ANY($1) AND {}",
+            access::change_visible("c", 2, 3)
+        ))
+        .bind(&changes)
+        .bind(actor.id)
+        .bind(&actor.hidden_projects)
+        .fetch_all(&mut *conn)
+        .await?
+    };
+    Ok(rows
+        .into_iter()
+        .map(|i| {
+            let mut i = i.redact(actor);
+            if i.change_id.is_some_and(|c| !visible.contains(&c)) {
+                i.hide_change();
+            }
+            i
+        })
+        .collect())
+}
+
+/// An impact as stored, without a read check (the caller checks; the
+/// audit trail names the real source).
+async fn fetch(conn: &mut PgConnection, id: Uuid) -> AppResult<Impact> {
     let impact = sqlx::query_as::<_, Impact>(&format!("{IMPACT_SELECT} WHERE im.id = $1"))
         .bind(id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await?
         .ok_or_else(|| AppError::not_found("Impact not found."))?;
+    Ok(impact)
+}
+
+/// An impact on an item the actor may read, without redaction.
+async fn fetch_visible(conn: &mut PgConnection, actor: &Actor, id: Uuid) -> AppResult<Impact> {
+    let impact = fetch(conn, id).await?;
     access::ensure_visible(
         actor,
         impact.project_id,
         AppError::not_found("Impact not found."),
     )?;
-    Ok(impact.redact(actor))
+    Ok(impact)
+}
+
+/// An impact on an item the actor may read; a hidden source is redacted.
+pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Impact> {
+    let mut conn = pool.acquire().await?;
+    let impact = fetch_visible(&mut conn, actor, id).await?;
+    Ok(redact_all(&mut conn, actor, vec![impact]).await?.remove(0))
 }
 
 /// Impacts on an item: open ones first, then the 20 most recently resolved.
 /// Sources the actor may not see are redacted.
 pub async fn for_item(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<Vec<Impact>> {
+    let mut conn = pool.acquire().await?;
     let rows = sqlx::query_as::<_, Impact>(&format!(
         "({IMPACT_SELECT} WHERE im.item_id = $1 AND im.resolved_at IS NULL ORDER BY im.created_at DESC)
          UNION ALL
@@ -86,12 +138,12 @@ pub async fn for_item(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<
           ORDER BY im.resolved_at DESC LIMIT 20)"
     ))
     .bind(item_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     if let Some(first) = rows.first() {
         access::ensure_visible(actor, first.project_id, access::not_found_item())?;
     }
-    Ok(rows.into_iter().map(|i| i.redact(actor)).collect())
+    redact_all(&mut conn, actor, rows).await
 }
 
 /// Open impacts the actor can resolve: on items of their project groups
@@ -100,8 +152,9 @@ pub async fn open_for(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Impact>> {
     if !actor.can_edit() {
         return Ok(Vec::new());
     }
+    let mut conn = pool.acquire().await?;
     let projects: Vec<Uuid> = actor.projects.to_vec();
-    Ok(sqlx::query_as::<_, Impact>(&format!(
+    let rows = sqlx::query_as::<_, Impact>(&format!(
         "{IMPACT_SELECT} WHERE im.resolved_at IS NULL AND ($1 OR i.project_id = ANY($2))
            AND {}
          ORDER BY im.created_at DESC LIMIT 200",
@@ -110,11 +163,9 @@ pub async fn open_for(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Impact>> {
     .bind(actor.is_admin())
     .bind(&projects)
     .bind(&actor.hidden_projects)
-    .fetch_all(pool)
-    .await?
-    .into_iter()
-    .map(|i| i.redact(actor))
-    .collect())
+    .fetch_all(&mut *conn)
+    .await?;
+    redact_all(&mut conn, actor, rows).await
 }
 
 /// Marks an open impact as checked: the dependent needs no change.
@@ -125,7 +176,12 @@ pub async fn acknowledge(pool: &PgPool, actor: &Actor, id: Uuid, note: &str) -> 
             "Say why the dependent needs no change (e.g. form, fit and function unchanged).".into(),
         )
     })?;
-    let impact = get(pool, actor, id).await?;
+    // Unredacted: the audit entry names the real source (it is redacted
+    // when read by somebody who may not see it).
+    let impact = {
+        let mut conn = pool.acquire().await?;
+        fetch_visible(&mut conn, actor, id).await?
+    };
     if impact.resolved_at.is_some() {
         return Err(AppError::Conflict(format!(
             "This impact on {} is already resolved.",
@@ -267,8 +323,9 @@ pub async fn acknowledge_all(
     .bind(&note)
     .execute(&mut *tx)
     .await?;
+    // Unredacted for the audit entries; the answer is redacted below.
     let acknowledged = sqlx::query_as::<_, Impact>(&format!(
-        "{IMPACT_SELECT} WHERE im.id = ANY($1) ORDER BY si.number"
+        "{IMPACT_SELECT} WHERE im.id = ANY($1) ORDER BY im.created_at, im.id"
     ))
     .bind(&ids)
     .fetch_all(&mut *tx)
@@ -289,6 +346,7 @@ pub async fn acknowledge_all(
         )
         .await?;
     }
+    let acknowledged = redact_all(&mut tx, actor, acknowledged).await?;
     tx.commit().await?;
     Ok(Acknowledged {
         item_number: rev.item_number,

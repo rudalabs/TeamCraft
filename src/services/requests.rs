@@ -249,7 +249,7 @@ const ITEM_SELECT: &str = "
                         WHERE r2.item_id = i.id ORDER BY r2.seq DESC LIMIT 1) lr";
 
 /// The affected items; items the actor may not see are placeholder rows
-/// (the note, written about the request, stays).
+/// (without identity and note), listed last.
 pub async fn items(pool: &PgPool, actor: &Actor, request_id: Uuid) -> AppResult<Vec<RequestItem>> {
     let mut rows = items_unchecked(pool, request_id).await?;
     for row in &mut rows {
@@ -257,6 +257,8 @@ pub async fn items(pool: &PgPool, actor: &Actor, request_id: Uuid) -> AppResult<
             row.mask();
         }
     }
+    // placeholders last: their position would bound the hidden number
+    rows.sort_by_key(|r| r.restricted);
     Ok(rows)
 }
 
@@ -1384,7 +1386,8 @@ pub async fn create_change(
     .fetch_all(&mut *tx)
     .await?;
     let mut added = Vec::new();
-    let mut added_items = Vec::new();
+    // the items the entry names: added ones and skipped ones by number
+    let mut named_items = Vec::new();
     let mut skipped = Vec::new();
     for (item_id, number, project_id, in_work) in affected {
         // An assignee (or triager) may see the request without seeing every
@@ -1396,6 +1399,7 @@ pub async fn create_change(
             ));
             continue;
         }
+        named_items.push(item_id);
         let Some(rev_id) = in_work else {
             skipped.push(format!(
                 "{number}: no revision in work – revise it, then add it to the change"
@@ -1404,10 +1408,7 @@ pub async fn create_change(
         };
         // User errors are raised before anything is written; skip and go on.
         match changes::add_item_in(&mut tx, actor, change_id, rev_id).await {
-            Ok(label) => {
-                added.push(label);
-                added_items.push(item_id);
-            }
+            Ok(label) => added.push(label),
             Err(
                 e @ (AppError::Conflict(_)
                 | AppError::Forbidden(_)
@@ -1430,7 +1431,7 @@ pub async fn create_change(
         "change_request.create_change",
         "change_request",
         Some(id),
-        &audit::Mentions::items(added_items).with_change(change_id),
+        &audit::Mentions::items(named_items).with_change(change_id),
         format!("Created change {change_number} for {}", request.number),
         json!({ "change_id": change_id, "added": added, "skipped": skipped }),
     )

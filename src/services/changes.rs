@@ -183,6 +183,8 @@ pub async fn items(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<V
             row.mask();
         }
     }
+    // placeholders last: their position would bound the hidden number
+    rows.sort_by_key(|r| r.restricted);
     Ok(rows)
 }
 
@@ -1259,7 +1261,14 @@ async fn emit_review_events(
             .zip(&projects)
             .map(|(rev, project)| (*project, json!({ "revision": rev, "change": change_json })))
             .collect();
-        webhooks::emit_each(conn, Some(actor), WebhookEvent::RevisionReleased, each).await?;
+        webhooks::emit_each(
+            conn,
+            Some(actor),
+            WebhookEvent::RevisionReleased,
+            each,
+            &projects,
+        )
+        .await?;
         webhooks::emit(
             conn,
             Some(actor),

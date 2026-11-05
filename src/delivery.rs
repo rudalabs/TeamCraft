@@ -204,14 +204,17 @@ impl Delivery {
             chat_user: String,
             confidential: bool,
         }
-        let rows = sqlx::query_as::<_, Row>(
+        // `confidential` is evaluated now: a group restricted after the row
+        // was queued keeps the text out of a shared channel.
+        let rows = sqlx::query_as::<_, Row>(&format!(
             "SELECT n.id, n.title, n.body, n.link, n.email_state, n.chat_state, n.delivery_attempts,
                     u.email, u.display_name, COALESCE(u.mattermost_username, u.username) AS chat_user,
-                    n.confidential
+                    {} AS confidential
              FROM notifications n JOIN users u ON u.id = n.user_id
              WHERE n.email_state = 'pending' OR n.chat_state = 'pending'
              ORDER BY n.created_at LIMIT 100",
-        )
+            crate::services::notifications::confidential_now("n")
+        ))
         .fetch_all(pool)
         .await?;
         let mut report = Report::default();

@@ -255,7 +255,34 @@ fn text_of(r: &common::Response) -> String {
     text
 }
 
+/// Whether a response refuses the call: an HTTP error, a redirect (the web
+/// UI's flash message) or an MCP / JSON-RPC error. Only a refusal may echo
+/// the identifiers the caller sent ("Unknown item X"); a successful answer
+/// that contains a hidden number or id leaks it, even if it was sent.
+fn is_refusal(r: &common::Response) -> bool {
+    if !r.status.is_success() {
+        return true;
+    }
+    let Ok(v) = serde_json::from_slice::<Value>(&r.body) else {
+        return false;
+    };
+    v.get("error").is_some() || v["result"]["isError"] == true
+}
+
 fn assert_clean(who: &str, what: &str, r: &common::Response, markers: &[String], sent: &[String]) {
+    let sent: &[String] = if is_refusal(r) { sent } else { &[] };
+    assert_clean_echoing(who, what, r, markers, sent);
+}
+
+/// [`assert_clean`] for an answer that repeats what the caller sent by
+/// design (an MCP prompt is a template filled with its arguments).
+fn assert_clean_echoing(
+    who: &str,
+    what: &str,
+    r: &common::Response,
+    markers: &[String],
+    sent: &[String],
+) {
     let mut seen = text_of(r);
     for name in [
         header::LOCATION,
@@ -440,14 +467,15 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         &app,
         &format!("{asm_rev}/bom"),
         &out_editor,
-        json!({ "child": hid, "quantity": 3.0, "find_number": 30, "notes": "the hidden line" }),
+        json!({ "child": hid, "quantity": 3.0, "find_number": 30,
+                "notes": format!("the hidden line {m}") }),
     )
     .await;
     post_ok(
         &app,
         &format!("{asm_rev}/references"),
         &out_editor,
-        json!({ "item": hid, "kind": "drawing" }),
+        json!({ "item": hid, "kind": "drawing", "note": format!("see sheet 2 {m}") }),
     )
     .await;
     app.api(
@@ -588,8 +616,11 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         attachment_id,
         caller: Uuid::nil(),
     };
+    // (the item number and the group code contain `m`)
     let markers: Vec<String> = vec![
         m.clone(),
+        chg.clone(),
+        ecr.clone(),
         hidden_base.group_id.to_string(),
         hidden_base.item_id.to_string(),
         hidden_base.revision_id.to_string(),
@@ -689,7 +720,8 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
             .clone();
         assert_eq!(line["restricted"], true, "{who}: placeholder {line}");
         assert_eq!(line["quantity"], 3.0);
-        assert_eq!(line["notes"], "the hidden line");
+        // the notes describe the hidden child
+        assert_eq!(line["notes"], "", "{who}: {line}");
         let r = app
             .api(
                 Method::GET,
@@ -862,17 +894,25 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
             "/notifications".to_string(),
         ] {
             let r = app.get_page(&uri, Some(&cookie)).await;
-            assert_clean(who, &uri, &r, &markers, &sent_of(&uri));
+            // (a filter form shows the value typed in)
+            assert_clean_echoing(who, &uri, &r, &markers, &sent_of(&uri));
         }
     }
 
     // --- MCP: every tool and prompt --------------------------------------------
     let args = json!({
         "item": hid, "revision": "A", "with": "A", "change": chg, "request": ecr,
-        "number": ecr, "query": "hidden", "items": [hid], "title": "probe", "body": "probe",
-        "comment": "probe", "levels": 3,
+        "number": ecr, "q": "hidden", "query": "hidden", "items": [hid], "title": "probe",
+        "body": "probe", "comment": "probe", "levels": 3, "project": code, "from": "A",
+        "to": "A", "file": format!("{m}.txt"),
     });
-    let sent = vec![hid.clone(), chg.clone(), ecr.clone()];
+    let sent = vec![
+        hid.clone(),
+        chg.clone(),
+        ecr.clone(),
+        code.clone(),
+        format!("{m}.txt"),
+    ];
     let tools: BTreeSet<String> = teamcraft::mcp::tools::definitions()
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_string())
@@ -894,16 +934,23 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
                 .await;
             assert_clean(who, &format!("MCP {name}"), &r, &markers, &sent);
         }
-        let r = app
-            .api(
-                Method::POST,
-                "/api/v1/mcp",
-                token,
-                Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                             "params": { "name": "search_items", "arguments": { "query": m } } })),
-            )
-            .await;
-        assert!(!r.text().contains(&hid), "{who}: MCP search finds nothing");
+        // full text (also the file content), the group filter
+        for search in [
+            json!({ "q": m }),
+            json!({ "q": "secret content" }),
+            json!({ "project": code }),
+        ] {
+            let r = app
+                .api(
+                    Method::POST,
+                    "/api/v1/mcp",
+                    token,
+                    Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                 "params": { "name": "search_items", "arguments": search } })),
+                )
+                .await;
+            assert_clean(who, &format!("MCP search {search}"), &r, &markers, &sent);
+        }
         for p in teamcraft::mcp::tools::prompts() {
             let r = app
                 .api(
@@ -914,7 +961,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
                                  "params": { "name": p["name"], "arguments": args } })),
                 )
                 .await;
-            assert_clean(who, "MCP prompt", &r, &markers, &sent);
+            assert_clean_echoing(who, "MCP prompt", &r, &markers, &sent);
         }
     }
     app.teardown().await;
@@ -1676,5 +1723,678 @@ async fn texts_naming_restricted_objects_are_redacted() {
             .to_string();
         assert_eq!(number, format!("{code}-ASM-{next}"), "{who}");
     }
+    app.teardown().await;
+}
+
+/// Creates a change with `items`, `reviewer` as its reviewer, submits it and
+/// has the reviewer approve it (release). Returns the change number and id.
+async fn release(
+    app: &common::TestApp,
+    author: &str,
+    reviewer: &str,
+    items: &[&String],
+) -> (String, Uuid) {
+    let chg = number_of(
+        &post_ok(
+            app,
+            "/api/v1/changes",
+            author,
+            json!({ "title": "Release" }),
+        )
+        .await,
+        "change",
+    );
+    for n in items {
+        post_ok(
+            app,
+            &format!("/api/v1/changes/{chg}/items"),
+            author,
+            json!({ "item": n }),
+        )
+        .await;
+    }
+    post_ok(
+        app,
+        &format!("/api/v1/changes/{chg}/reviewers"),
+        author,
+        json!({ "username": reviewer }),
+    )
+    .await;
+    post_ok(
+        app,
+        &format!("/api/v1/changes/{chg}/submit"),
+        author,
+        json!({}),
+    )
+    .await;
+    let id = id_of(app, "SELECT id FROM changes WHERE number = $1", &chg).await;
+    let reviewer = app.actor(reviewer).await;
+    teamcraft::services::changes::review(
+        &app.pool,
+        &reviewer,
+        id,
+        teamcraft::domain::Decision::Approved,
+        "",
+    )
+    .await
+    .expect("release");
+    (chg, id)
+}
+
+async fn mcp_call(app: &common::TestApp, token: &str, name: &str, args: Value) -> common::Response {
+    app.api(
+        Method::POST,
+        "/api/v1/mcp",
+        token,
+        Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                     "params": { "name": name, "arguments": args } })),
+    )
+    .await
+}
+
+/// Second review round: impacts and their releasing changes, writes on
+/// placeholder rows, notes, list order, folder ids, Save As, deleted items,
+/// numbering, webhooks queued before a restriction, the confidential flag
+/// at delivery time, and the assistant's tool loop.
+#[tokio::test]
+async fn second_review_round_leaks_are_closed() {
+    use teamcraft::assistant::{McpTools, Tools};
+
+    let app = app_or_skip!();
+    let m = format!("zs{}", &Uuid::new_v4().simple().to_string()[..12]);
+    let mu = m.to_ascii_uppercase();
+    let (_, admin) = app.user("admin", Role::Admin).await;
+    let (_, mona) = app.user_in("mona", Role::Editor, &["ROVER"]).await;
+    app.user("rex", Role::Editor).await;
+    let (_, vera) = app.user("vera", Role::Viewer).await;
+    let (_, otto) = app.user_in("otto", Role::Editor, &["ROVER"]).await;
+    let code = format!("S{mu}");
+    post_ok(
+        &app,
+        "/api/v1/projects",
+        &mona,
+        json!({ "code": code, "name": "Secret group" }),
+    )
+    .await;
+    for user in ["rex", "vera"] {
+        post_ok(
+            &app,
+            &format!("/api/v1/projects/{code}/members"),
+            &mona,
+            json!({ "username": user }),
+        )
+        .await;
+    }
+    let r = app
+        .api(
+            Method::PUT,
+            &format!("/api/v1/projects/{code}/numbering"),
+            &mona,
+            Some(json!({ "scheme": "{PROJECT}-{TYPE}-{SEQ:4}" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+
+    // --- items: an internal part and assembly, hidden parts ----------------
+    let prt = new_item(&app, &mona, "part", "ROVER").await;
+    let asm = new_item(&app, &mona, "assembly", "ROVER").await;
+    let hp = post_ok(
+        &app,
+        "/api/v1/items",
+        &mona,
+        json!({ "item_type": "part", "name": format!("Hidden {m}"), "project": code }),
+    )
+    .await["item_number"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let hq = new_item(&app, &mona, "part", &code).await;
+    let r = app
+        .api_upload(
+            &format!("{}/files", rev_of(&hp)),
+            &mona,
+            "plain.txt",
+            b"plain",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    post_ok(
+        &app,
+        &format!("{}/bom", rev_of(&asm)),
+        &mona,
+        json!({ "child": prt, "quantity": 1.0, "find_number": 10 }),
+    )
+    .await;
+    post_ok(
+        &app,
+        &format!("{}/bom", rev_of(&asm)),
+        &mona,
+        json!({ "child": hp, "quantity": 2.0, "find_number": 20,
+                "notes": format!("secret note {m}") }),
+    )
+    .await;
+    post_ok(
+        &app,
+        &format!("{}/references", rev_of(&asm)),
+        &mona,
+        json!({ "item": hp, "kind": "drawing", "note": format!("ref note {m}") }),
+    )
+    .await;
+    for n in [&prt, &asm, &hp, &hq] {
+        let r = app
+            .api(Method::POST, &format!("{}/checkin", rev_of(n)), &mona, None)
+            .await;
+        assert!(r.status.is_success(), "{n}: {}", r.text());
+    }
+    // otto's request on an internal part that sorts after the hidden one;
+    // mona adds the hidden part while the group is still internal
+    let zzz = format!("ZZZ-{}", &Uuid::new_v4().simple().to_string()[..6]).to_uppercase();
+    post_ok(
+        &app,
+        "/api/v1/items",
+        &otto,
+        json!({ "item_type": "part", "number": zzz, "name": "Open", "project": "ROVER" }),
+    )
+    .await;
+    let ecr_o = number_of(
+        &post_ok(
+            &app,
+            "/api/v1/change-requests",
+            &otto,
+            json!({ "title": "Open request", "items": [{ "item": zzz }] }),
+        )
+        .await,
+        "change_request",
+    );
+    post_ok(
+        &app,
+        &format!("/api/v1/change-requests/{ecr_o}/items"),
+        &mona,
+        json!({ "item": hp }),
+    )
+    .await;
+    // a hidden item named by a request (deleting it is refused below)
+    let hr = new_item(&app, &mona, "part", &code).await;
+    post_ok(
+        &app,
+        "/api/v1/change-requests",
+        &mona,
+        json!({ "title": format!("About {m}"), "items": [{ "item": hr }] }),
+    )
+    .await;
+    // vera watches hq; a global webhook for releases
+    post_ok(&app, &format!("/api/v1/items/{hq}/watch"), &vera, json!({})).await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/webhooks",
+            &admin,
+            Some(json!({ "name": "ERP", "url": "https://ci.example.org/hook",
+                         "events": ["revision.released"] })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+
+    // --- hq released while the group is internal: queued, then restricted ---
+    release(&app, &mona, "rex", &[&hq]).await;
+    let r = app
+        .api(
+            Method::PUT,
+            &format!("/api/v1/projects/{code}/visibility"),
+            &mona,
+            Some(json!({ "visibility": "restricted" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let group_id = app.project_id(&code).await;
+    // the stored flag is stale; delivery evaluates it again
+    let confidential: Vec<(bool, bool)> = sqlx::query_as(&format!(
+        "SELECT n.confidential, {} FROM notifications n JOIN users u ON u.id = n.user_id
+         WHERE u.username = 'vera' AND n.title LIKE '%' || $1 || '%'",
+        teamcraft::services::notifications::confidential_now("n")
+    ))
+    .bind(&hq)
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    assert!(!confidential.is_empty(), "vera was told of the release");
+    assert!(
+        confidential.iter().all(|(stored, now)| !stored && *now),
+        "{confidential:?}"
+    );
+    // the queued delivery is withheld, not sent
+    let dispatcher = teamcraft::webhooks::Dispatcher::new(
+        "https://plm.example.org",
+        &teamcraft::config::WebhookConfig::default(),
+    )
+    .unwrap();
+    dispatcher.run_once(&app.pool).await.unwrap();
+    let withheld: Vec<(String, String)> = sqlx::query_as(
+        "SELECT status, last_error FROM webhook_deliveries
+         WHERE event = 'revision.released' AND payload -> 'revision' ->> 'item_number' = $1",
+    )
+    .bind(&hq)
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        withheld,
+        vec![(
+            "failed".to_string(),
+            teamcraft::webhooks::WITHHELD_ERROR.to_string()
+        )]
+    );
+
+    // --- a change with the internal part and a hidden one is released -------
+    let (chg1, _) = release(&app, &mona, "rex", &[&prt, &hp]).await;
+    let markers = vec![m.clone(), chg1.clone(), group_id.to_string()];
+    // the internal revision's webhook event leaves the mixed change out
+    let with_change: Vec<bool> = sqlx::query_scalar(
+        "SELECT payload ? 'change' FROM webhook_deliveries
+         WHERE event = 'revision.released' AND payload -> 'revision' ->> 'item_number' = $1",
+    )
+    .bind(&prt)
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(with_change, vec![false]);
+    let to_hidden: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM webhook_deliveries
+         WHERE event = 'revision.released' AND payload -> 'revision' ->> 'item_number' = $1",
+    )
+    .bind(&hp)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(to_hidden, 0);
+
+    // impacts on asm: the hidden source and the hidden change are redacted
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/impacts"),
+            &mona,
+            None,
+        )
+        .await;
+    assert!(
+        r.json()
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["change_number"] == chg1.as_str()),
+        "members see the change: {}",
+        r.text()
+    );
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/impacts"),
+            &otto,
+            None,
+        )
+        .await;
+    let impacts = r.json();
+    assert_eq!(impacts.as_array().unwrap().len(), 2, "{}", r.text());
+    assert!(impacts
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|i| i["change_number"].is_null() && i["change_id"].is_null()));
+    assert_clean("otto", "item impacts", &r, &markers, &[]);
+    let r = app.api(Method::GET, "/api/v1/impacts", &otto, None).await;
+    assert_clean("otto", "open impacts", &r, &markers, &[]);
+    let r = app.api(Method::GET, "/api/v1/worklist", &otto, None).await;
+    assert_clean("otto", "worklist", &r, &markers, &[]);
+    let r = mcp_call(&app, &otto, "my_worklist", json!({})).await;
+    assert_clean("otto", "MCP my_worklist", &r, &markers, &[]);
+    let asm_rev_id = id_of(
+        &app,
+        "SELECT r.id FROM revisions r JOIN items i ON i.id = r.item_id WHERE i.number = $1",
+        &asm,
+    )
+    .await;
+    let cookie = app.login("otto").await;
+    let r = app
+        .get_page(&format!("/revisions/{asm_rev_id}"), Some(&cookie))
+        .await;
+    assert!(r.status.is_success(), "{}", r.status);
+    assert_clean("otto", "revision page", &r, &markers, &[]);
+    let r = app.get_page("/", Some(&cookie)).await;
+    assert_clean("otto", "dashboard", &r, &markers, &[]);
+    // notes of placeholder rows are gone (BOM, references)
+    for uri in [
+        format!("{}/bom", rev_of(&asm)),
+        format!("{}/bom?expand=true", rev_of(&asm)),
+        format!("{}/references", rev_of(&asm)),
+    ] {
+        let r = app.api(Method::GET, &uri, &otto, None).await;
+        assert!(r.status.is_success(), "{uri}: {}", r.text());
+        assert_clean("otto", &uri, &r, &markers, &[]);
+    }
+    // the request lists the placeholder after the visible item
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/change-requests/{ecr_o}"),
+            &otto,
+            None,
+        )
+        .await;
+    let items = r.json()["items"].as_array().unwrap().clone();
+    assert_eq!(items.len(), 2, "{}", r.text());
+    assert_eq!(items[0]["item_number"], zzz.as_str());
+    assert_eq!(items[1]["restricted"], true);
+
+    // "acknowledge all" answers redacted; the history names the real source
+    let r = app
+        .api(
+            Method::POST,
+            &format!("{}/impacts/acknowledge", rev_of(&asm)),
+            &otto,
+            Some(json!({ "note": "form, fit and function unchanged" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["acknowledged"].as_array().unwrap().len(), 2);
+    assert_clean("otto", "acknowledge all", &r, &markers, &[]);
+
+    // --- otto edits and removes the placeholder rows -------------------------
+    let r = app
+        .api(
+            Method::POST,
+            &format!("{}/checkout", rev_of(&asm)),
+            &otto,
+            None,
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.text());
+    let r = app
+        .api(Method::GET, &format!("{}/bom", rev_of(&asm)), &otto, None)
+        .await;
+    let line_id = r
+        .json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["restricted"] == true)
+        .expect("placeholder")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = app
+        .api(
+            Method::PATCH,
+            &format!("/api/v1/bom-lines/{line_id}"),
+            &otto,
+            Some(json!({ "quantity": 5.0, "notes": "" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_clean("otto", "update placeholder", &r, &markers, &[]);
+    let notes: String = sqlx::query_scalar("SELECT notes FROM bom_lines WHERE id = $1::text::uuid")
+        .bind(&line_id)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(notes, format!("secret note {m}"), "the notes stay");
+    let r = app
+        .api(
+            Method::DELETE,
+            &format!("/api/v1/bom-lines/{line_id}"),
+            &otto,
+            None,
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.text());
+    let r = app
+        .api(
+            Method::GET,
+            &format!("{}/references", rev_of(&asm)),
+            &otto,
+            None,
+        )
+        .await;
+    let ref_id = r.json()["outgoing"][0]["id"].as_str().unwrap().to_string();
+    let r = app
+        .api(
+            Method::DELETE,
+            &format!("/api/v1/references/{ref_id}"),
+            &otto,
+            None,
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.text());
+    assert_clean("otto", "remove placeholder reference", &r, &markers, &[]);
+    let hp_id = id_of(&app, "SELECT id FROM items WHERE number = $1", &hp).await;
+    let related: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM audit_log
+         WHERE action IN ('bom.update', 'bom.remove', 'reference.remove', 'impact.acknowledge')
+           AND related_item_id = $1",
+    )
+    .bind(hp_id)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(related, 4, "the writes name the real item");
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/history"),
+            &mona,
+            None,
+        )
+        .await;
+    for action in ["bom.remove", "reference.remove", "impact.acknowledge"] {
+        assert!(
+            r.json()
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["action"] == action && e["summary"].as_str().unwrap().contains(&hp)),
+            "members read {action} with the item: {}",
+            r.text()
+        );
+    }
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/history"),
+            &otto,
+            None,
+        )
+        .await;
+    assert_clean("otto", "assembly history", &r, &markers, &[]);
+
+    // --- folder ids: hidden and unknown answer alike -------------------------
+    let hidden = app
+        .get_page(&format!("/vault?folder={group_id}"), Some(&cookie))
+        .await;
+    let unknown = app
+        .get_page(&format!("/vault?folder={}", Uuid::new_v4()), Some(&cookie))
+        .await;
+    assert_eq!(hidden.status, StatusCode::NOT_FOUND);
+    assert_eq!(unknown.status, hidden.status);
+
+    // --- Save As out of the group: the copy does not name its source ---------
+    let r = app
+        .api(
+            Method::POST,
+            &format!("{}/save-as", rev_of(&hp)),
+            &mona,
+            Some(json!({ "project": "ROVER", "name": "Public copy" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let copy = r.json()["item_number"].as_str().unwrap().to_string();
+    let hp_rev = id_of(
+        &app,
+        "SELECT r.id FROM revisions r JOIN items i ON i.id = r.item_id WHERE i.number = $1",
+        &hp,
+    )
+    .await;
+    let copy_markers = vec![m.clone(), hp_rev.to_string(), hp_id.to_string()];
+    for uri in [
+        format!("/api/v1/items/{copy}/history"),
+        format!("/api/v1/items/{copy}/revisions/A"),
+    ] {
+        let r = app.api(Method::GET, &uri, &otto, None).await;
+        assert!(r.status.is_success(), "{uri}: {}", r.text());
+        assert_clean("otto", &uri, &r, &copy_markers, &[]);
+    }
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{copy}/revisions/A"),
+            &otto,
+            None,
+        )
+        .await;
+    let file_id = r.json()["files"][0]["id"].as_str().unwrap().to_string();
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{file_id}/versions"),
+            &otto,
+            None,
+        )
+        .await;
+    assert!(
+        r.text().contains("Copied from a restricted item"),
+        "{}",
+        r.text()
+    );
+    assert_clean("otto", "copied file versions", &r, &copy_markers, &[]);
+    let r = mcp_call(&app, &otto, "item_history", json!({ "item": copy })).await;
+    assert_clean("otto", "MCP copy history", &r, &copy_markers, &[]);
+
+    // --- a deleted hidden item stays redacted in the change history ----------
+    let mona_actor = app.actor("mona").await;
+    let prt2 = new_item(&app, &mona, "part", "ROVER").await;
+    let hd = new_item(&app, &mona, "part", &code).await;
+    let chg2 = number_of(
+        &post_ok(&app, "/api/v1/changes", &mona, json!({ "title": "Mixed" })).await,
+        "change",
+    );
+    for n in [&prt2, &hd] {
+        post_ok(
+            &app,
+            &format!("/api/v1/changes/{chg2}/items"),
+            &mona,
+            json!({ "item": n }),
+        )
+        .await;
+    }
+    let chg2_id = id_of(&app, "SELECT id FROM changes WHERE number = $1", &chg2).await;
+    let hd_id = id_of(&app, "SELECT id FROM items WHERE number = $1", &hd).await;
+    let hd_rev = id_of(
+        &app,
+        "SELECT id FROM revisions WHERE item_id = $1::text::uuid",
+        &hd_id.to_string(),
+    )
+    .await;
+    teamcraft::services::changes::remove_item(&app.pool, &mona_actor, chg2_id, hd_rev)
+        .await
+        .expect("remove from the change");
+    teamcraft::services::items::delete(&app.pool, &mona_actor, hd_id)
+        .await
+        .expect("delete");
+    let r = app
+        .get_page(&format!("/changes/{chg2_id}"), Some(&cookie))
+        .await;
+    assert!(
+        r.status.is_success(),
+        "the change is visible now: {}",
+        r.status
+    );
+    assert_clean("otto", "change of a deleted item", &r, &markers, &[]);
+    let r = mcp_call(&app, &otto, "get_change", json!({ "change": chg2 })).await;
+    assert_clean("otto", "MCP change of a deleted item", &r, &markers, &[]);
+    // an item named by a request cannot be deleted (the request would open)
+    let hr_id = id_of(&app, "SELECT id FROM items WHERE number = $1", &hr).await;
+    let deleted = teamcraft::services::items::delete(&app.pool, &mona_actor, hr_id).await;
+    assert!(
+        matches!(deleted, Err(teamcraft::error::AppError::Conflict(_))),
+        "{deleted:?}"
+    );
+
+    // --- numbering: the restricted group's counter stays private ------------
+    let ocode = format!("O{}", &Uuid::new_v4().simple().to_string()[..6]).to_uppercase();
+    post_ok(
+        &app,
+        "/api/v1/projects",
+        &otto,
+        json!({ "code": ocode, "name": "Otto's group" }),
+    )
+    .await;
+    let r = app
+        .api(
+            Method::PUT,
+            &format!("/api/v1/projects/{ocode}/numbering"),
+            &otto,
+            Some(json!({ "scheme": format!("{code}-{{TYPE}}-{{SEQ:4}}") })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    assert!(r.text().contains("reserved"), "{}", r.text());
+    let r = app
+        .api(
+            Method::PUT,
+            &format!("/api/v1/projects/{ocode}/numbering"),
+            &otto,
+            Some(json!({ "scheme": "{PROJECT}-{TYPE}-{SEQ:4}" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+
+    // --- the assistant's tools ---------------------------------------------
+    let comments = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM change_request_comments")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap()
+    };
+    let tools = McpTools::new(&app.state, &mona_actor);
+    let read = tools.call("get_item", &json!({ "item": hp })).await;
+    assert_ne!(read["isError"], true, "{read}");
+    let before = comments().await;
+    let wrote = tools
+        .call(
+            "comment_change_request",
+            &json!({ "request": ecr_o, "body": format!("copied {m}") }),
+        )
+        .await;
+    assert_eq!(wrote["isError"], true, "{wrote}");
+    assert_eq!(
+        comments().await,
+        before,
+        "nothing written after a restricted read"
+    );
+    let otto_actor = app.actor("otto").await;
+    let tools = McpTools::new(&app.state, &otto_actor);
+    tools.call("get_item", &json!({ "item": prt })).await;
+    let wrote = tools
+        .call(
+            "comment_change_request",
+            &json!({ "request": ecr_o, "body": "fine" }),
+        )
+        .await;
+    assert_ne!(wrote["isError"], true, "{wrote}");
+    assert_eq!(comments().await, before + 1);
+    // a membership removed during a run applies to the next tool call
+    let vera_actor = app.actor("vera").await;
+    let tools = McpTools::new(&app.state, &vera_actor);
+    let read = tools.call("get_item", &json!({ "item": hp })).await;
+    assert_ne!(read["isError"], true, "{read}");
+    sqlx::query(
+        "DELETE FROM project_members
+         WHERE project_id = $1 AND user_id = (SELECT id FROM users WHERE username = 'vera')",
+    )
+    .bind(group_id)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let read = tools.call("get_item", &json!({ "item": hp })).await;
+    assert_eq!(read["isError"], true, "{read}");
     app.teardown().await;
 }

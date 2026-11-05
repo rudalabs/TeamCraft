@@ -128,7 +128,7 @@ pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run
     let allow_drafts = question.allow_drafts && me.can_edit();
     let system = assistant::system_prompt(me, allow_drafts);
     let instruction = question.instruction();
-    let tools = McpTools { state: st, me };
+    let tools = McpTools::new(st, me);
     let mut guard = CancelGuard {
         st: st.clone(),
         me: me.clone(),

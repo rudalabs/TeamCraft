@@ -388,7 +388,11 @@ async fn restricted_groups_stay_out_of_similar_parts() {
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     for marker in [hidden.as_str(), "Secret bracket", "secret-bracket.stl"] {
-        assert!(!r.text().contains(marker), "MCP shows {marker}: {}", r.text());
+        assert!(
+            !r.text().contains(marker),
+            "MCP shows {marker}: {}",
+            r.text()
+        );
     }
     let cookie = app.login("otto").await;
     let rev_id: Uuid = sqlx::query_scalar(
@@ -403,7 +407,10 @@ async fn restricted_groups_stay_out_of_similar_parts() {
         .await;
     assert_eq!(page.status, StatusCode::OK);
     for marker in [hidden.as_str(), "Secret bracket", "secret-bracket.stl"] {
-        assert!(!page.text().contains(marker), "revision page shows {marker}");
+        assert!(
+            !page.text().contains(marker),
+            "revision page shows {marker}"
+        );
     }
     // and the hidden item itself is not found
     let r = app

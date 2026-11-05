@@ -541,7 +541,8 @@ pub(crate) async fn ensure_may_take_out(
 }
 
 /// Deletes an item created by mistake. Only allowed while it has a single
-/// in-work revision, is not used in any BOM and not part of any change.
+/// in-work revision, is not used in any BOM, not part of any change or
+/// change request and no simulation basis.
 pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<String> {
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
@@ -594,6 +595,20 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
     if crate::services::simulations::item_is_basis(&mut tx, item_id).await? {
         return Err(AppError::Conflict(
             "A simulation is based on the item; remove it from the simulation's basis first."
+                .into(),
+        ));
+    }
+    // A request is hidden while it names a hidden item; deleting the item
+    // (the row would cascade) would silently declassify the request.
+    let in_request = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM change_request_items WHERE item_id = $1)",
+    )
+    .bind(item_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if in_request {
+        return Err(AppError::Conflict(
+            "The item is an affected item of a change request; remove it from the request first."
                 .into(),
         ));
     }

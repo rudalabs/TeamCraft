@@ -358,6 +358,9 @@ pub async fn set_number_scheme(
     .await?
     .ok_or_else(|| AppError::not_found("Project not found."))?;
     require_manager(&mut tx, actor, id).await?;
+    if let Some(s) = &scheme {
+        ensure_private_counters(&mut tx, id, &current.code, s).await?;
+    }
     let project = sqlx::query_as::<_, Project>(&format!(
         "UPDATE projects SET number_scheme = $2 WHERE id = $1 RETURNING {COLUMNS}"
     ))
@@ -381,6 +384,52 @@ pub async fn set_number_scheme(
     .await?;
     tx.commit().await?;
     Ok(project)
+}
+
+/// A restricted group with a scheme of its own has a private counter: no
+/// other group may save a scheme that expands to the same counter key
+/// (it would read and use up the restricted group's numbers). Checked for
+/// every restricted group, visible to the actor or not, with one message.
+async fn ensure_private_counters(
+    conn: &mut PgConnection,
+    id: Uuid,
+    code: &str,
+    scheme: &str,
+) -> AppResult<()> {
+    let scheme = domain::NumberScheme::parse(scheme)?;
+    if scheme == domain::NumberScheme::default_scheme() {
+        return Ok(());
+    }
+    let now = Utc::now();
+    let keys_of = |s: &domain::NumberScheme, code: &str| -> std::collections::HashSet<String> {
+        ItemType::ALL
+            .iter()
+            .map(|t| s.counter_key(&domain::number_context(code, *t, now)))
+            .collect()
+    };
+    let mine = keys_of(&scheme, code);
+    let others = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT code, number_scheme FROM projects
+         WHERE visibility = 'restricted' AND id <> $1 AND number_scheme IS NOT NULL",
+    )
+    .bind(id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for (other_code, other_scheme) in others {
+        let Ok(other) = domain::NumberScheme::of_project(other_scheme.as_deref()) else {
+            continue;
+        };
+        if other == domain::NumberScheme::default_scheme() {
+            continue;
+        }
+        if !mine.is_disjoint(&keys_of(&other, &other_code)) {
+            return Err(AppError::BadRequest(
+                "This numbering scheme is reserved; use a prefix of your own (e.g. {PROJECT}-…)."
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// What a numbering scheme gives in a project group.

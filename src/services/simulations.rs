@@ -81,8 +81,8 @@ pub struct SimulationBasis {
     /// Project group of the basis item (for the read check; never sent).
     #[serde(skip)]
     pub basis_project_id: Option<Uuid>,
-    /// Placeholder for a basis the reader may not see: role, note and
-    /// whether it is out of date stay, the identity is removed.
+    /// Placeholder for a basis the reader may not see: role and whether it
+    /// is out of date stay; the identity and the note are removed.
     #[sqlx(default)]
     pub restricted: bool,
 }
@@ -104,6 +104,8 @@ impl SimulationBasis {
         self.file_current_version = None;
         self.released_revision_id = None;
         self.released_code = None;
+        // written about the hidden basis, possibly by a member
+        self.note = String::new();
         if self.out_of_date.is_some() {
             self.out_of_date = Some("the restricted basis changed".into());
         }
@@ -185,7 +187,7 @@ pub async fn bases(
     revision_id: Uuid,
 ) -> AppResult<Vec<SimulationBasis>> {
     ensure_revision_visible(pool, actor, revision_id).await?;
-    Ok(sqlx::query_as::<_, SimulationBasis>(&format!(
+    let mut rows: Vec<SimulationBasis> = sqlx::query_as::<_, SimulationBasis>(&format!(
         "{BASIS_SELECT} WHERE sb.revision_id = $1 ORDER BY sb.role, bi.number, sb.file_name"
     ))
     .bind(revision_id)
@@ -193,10 +195,19 @@ pub async fn bases(
     .await?
     .into_iter()
     .map(|b| with_status(b).redact(actor))
-    .collect())
+    .collect();
+    // placeholders last in their role: their position would bound the
+    // hidden number
+    rows.sort_by(|a, b| (&a.role, a.restricted).cmp(&(&b.role, b.restricted)));
+    Ok(rows)
 }
 
 pub async fn get_basis(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<SimulationBasis> {
+    Ok(get_basis_unmasked(pool, actor, id).await?.redact(actor))
+}
+
+/// [`get_basis`] without the placeholder (for the audit trail of a write).
+async fn get_basis_unmasked(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<SimulationBasis> {
     let b = sqlx::query_as::<_, SimulationBasis>(&format!("{BASIS_SELECT} WHERE sb.id = $1"))
         .bind(id)
         .fetch_optional(pool)
@@ -206,7 +217,7 @@ pub async fn get_basis(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Simu
     ensure_revision_visible(pool, actor, b.revision_id)
         .await
         .map_err(|_| AppError::not_found("Basis link not found."))?;
-    Ok(b.redact(actor))
+    Ok(b)
 }
 
 /// A simulation based on a revision of an item (the other side of a basis
@@ -453,7 +464,7 @@ pub async fn add_basis(
 
 /// Removes a basis link from a simulation revision checked out by the actor.
 pub async fn remove_basis(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<SimulationBasis> {
-    let existing = get_basis(pool, actor, id).await?;
+    let existing = get_basis_unmasked(pool, actor, id).await?;
     let mut tx = pool.begin().await?;
     let rev = revisions::lock(&mut tx, existing.revision_id).await?;
     revisions::ensure_editable(&rev, actor)?;
@@ -482,7 +493,7 @@ pub async fn remove_basis(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<S
     )
     .await?;
     tx.commit().await?;
-    Ok(existing)
+    Ok(existing.redact(actor))
 }
 
 /// Copies basis links and result values of `from` to the new revision `to`

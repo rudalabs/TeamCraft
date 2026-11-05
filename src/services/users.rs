@@ -66,6 +66,20 @@ pub async fn actor(pool: &PgPool, user_id: Uuid) -> AppResult<Actor> {
     .ok_or_else(|| AppError::not_found("User not found."))
 }
 
+/// The actor of an active user as it is now (memberships and hidden groups
+/// read again); `None` for a deactivated or deleted user. Long-running work
+/// on behalf of a user (the assistant's tool loop) calls this per step, so
+/// a lost membership or a newly restricted group applies at once.
+pub async fn active_actor(pool: &PgPool, user_id: Uuid) -> AppResult<Option<Actor>> {
+    Ok(sqlx::query_as::<_, ActorRow>(&format!(
+        "SELECT {ACTOR_COLUMNS} FROM users u WHERE u.id = $1 AND u.active"
+    ))
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?
+    .map(Actor::from))
+}
+
 // ---------------------------------------------------------------------------
 // Sessions & tokens
 // ---------------------------------------------------------------------------
