@@ -95,8 +95,11 @@ src/mcp/           MCP server at POST /api/v1/mcp (stateless JSON-RPC, bearer PA
                    over services::* (read-mostly, writes only draft changes); `teamcraft mcp` = stdio bridge in main.rs
 src/auth.rs        Argon2 passwords, tokens, cookies, WebUser/ApiUser extractors
 src/oidc.rs        OIDC authorization code + PKCE (any provider), group → role mapping
-src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over the Anthropic Messages API (reqwest, no SDK)
-                   with the MCP tools, Transport/Tools traits (fake in tests), markdown-lite → safe HTML;
+src/llm/           provider-neutral LLM layer (no TeamCraft types): Turn/ToolCall/Reply/Usage/LlmError, pure Provider trait
+                   (encode/decode/error table), Transport trait; http.rs = the one reqwest client (no redirects),
+                   anthropic.rs = Messages API
+src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm with the MCP tools,
+                   Tools trait (fake in tests), markdown-lite → safe HTML;
                    services/assistant.rs runs it for a user and writes the audit record (no content)
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck) → TCMESH01

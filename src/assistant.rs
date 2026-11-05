@@ -3,18 +3,19 @@
 //!
 //! Flow of one run: the question (a quick action or free text) becomes the
 //! first user message; the server sends it with the tool definitions to the
-//! Anthropic Messages API, runs every `tool_use` the model asks for with the
-//! rights of the signed-in user and sends the results back, until the model
-//! answers or a limit (steps, tokens, time) is reached.
+//! model API (through the provider-neutral layer in [`crate::llm`]), runs
+//! every tool call the model asks for with the rights of the signed-in user
+//! and sends the results back, until the model answers or a limit (steps,
+//! tokens, time) is reached.
 //!
 //! * Enabled only when `TEAMCRAFT_ANTHROPIC_API_KEY` is configured; the key
-//!   never leaves this module except in the `x-api-key` header.
+//!   never leaves the transport except in its request header.
 //! * Read-only by default: the write tools (`create_change_draft`,
 //!   `add_to_change`, `create_change_request`, `comment_change_request`)
 //!   are only offered when the request allows drafts.
 //! * No SDK: plain JSON over the existing `reqwest` client. The HTTP part
-//!   sits behind [`Transport`] and the tools behind [`Tools`], so the loop
-//!   is tested without network or database.
+//!   sits behind [`llm::Transport`] and the tools behind [`Tools`], so the
+//!   loop is tested without network or database.
 //!
 //! The audit record of a run (who, which action, question length, tools –
 //! no content) is written by `services::assistant`.
@@ -24,25 +25,22 @@ use std::{collections::HashSet, future::Future, time::Duration};
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::{auth::Actor, config::AssistantConfig, error::AppError, mcp};
+use crate::{
+    auth::Actor,
+    config::AssistantConfig,
+    error::AppError,
+    llm::{
+        self,
+        anthropic::{self, Anthropic},
+        http::HttpTransport,
+        LlmError, Provider, Reply, Request, Stop, ToolResult, ToolSpec, Transport, Turn,
+    },
+    mcp,
+};
 
-/// Messages API endpoint.
-pub const API_URL: &str = "https://api.anthropic.com/v1/messages";
-/// `anthropic-version` header.
-pub const API_VERSION: &str = "2026-10-21";
-/// Beta header of `fallbacks: "default"` (server-side refusal fallback).
-pub const FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
-/// Models that accept `fallbacks: "default"` on the Claude API.
-const FALLBACK_MODELS: &[&str] = &[
-    "claude-opus-5-5",
-    "claude-opus-5",
-    "claude-fable-5-1",
-    "claude-sonnet-5-5",
-];
+pub use llm::http::REQUEST_TIMEOUT;
 /// `max_tokens` of one model call (non-streaming).
 pub const MAX_TOKENS: u32 = 16_000;
-/// Time limit of one HTTP call to the API.
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 /// Time limit of a whole run (all steps and tools).
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(240);
 /// Most input + output tokens of one run, summed over all steps.
@@ -289,131 +287,18 @@ pub fn system_prompt(me: &Actor, allow_drafts: bool) -> String {
     )
 }
 
-/// The tools offered to the model: the MCP tool set in the Messages API
-/// format, without the write tools unless drafts are allowed.
-pub fn tool_specs(allow_drafts: bool) -> Vec<Value> {
+/// The tools offered to the model: the MCP tool set, without the write
+/// tools unless drafts are allowed.
+pub fn tool_specs(allow_drafts: bool) -> Vec<ToolSpec> {
     mcp::tools::definitions()
         .into_iter()
         .filter(|d| allow_drafts || d["annotations"]["readOnlyHint"] == true)
-        .map(|d| {
-            json!({
-                "name": d["name"],
-                "description": d["description"],
-                "input_schema": d["inputSchema"],
-            })
+        .map(|d| ToolSpec {
+            name: d["name"].as_str().unwrap_or_default().to_string(),
+            description: d["description"].as_str().unwrap_or_default().to_string(),
+            schema: d["inputSchema"].clone(),
         })
         .collect()
-}
-
-// ---------------------------------------------------------------------------
-// Messages API: request and response
-// ---------------------------------------------------------------------------
-
-/// One call to the Messages API.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ApiRequest {
-    pub body: Value,
-    /// `anthropic-beta` header, if any.
-    pub beta: Option<&'static str>,
-}
-
-/// Builds the request body of one step.
-pub fn build_request(
-    model: &str,
-    system: &str,
-    tools: &[Value],
-    messages: &[Value],
-    max_tokens: u32,
-) -> ApiRequest {
-    let mut body = json!({
-        "model": model,
-        "max_tokens": max_tokens,
-        "system": system,
-        "tools": tools,
-        "messages": messages,
-        // Automatic prompt caching: every step re-sends the same prefix.
-        "cache_control": { "type": "ephemeral" },
-    });
-    let fallback = FALLBACK_MODELS.contains(&model);
-    if fallback {
-        body["fallbacks"] = json!("default");
-    }
-    ApiRequest {
-        body,
-        beta: fallback.then_some(FALLBACK_BETA),
-    }
-}
-
-/// A `tool_use` block of a response.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub input: Value,
-}
-
-/// The parts of a response the loop needs.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Reply {
-    pub stop_reason: String,
-    /// All content blocks, passed back unchanged in the next request.
-    pub content: Vec<Value>,
-    /// The text blocks, joined.
-    pub text: String,
-    pub tool_calls: Vec<ToolCall>,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-}
-
-/// Parses a Messages API response body.
-pub fn parse_response(body: &Value) -> Result<Reply, AssistantError> {
-    let malformed = |what: &str| AssistantError::Malformed(what.to_string());
-    let content = body["content"]
-        .as_array()
-        .ok_or_else(|| malformed("response without content"))?
-        .clone();
-    let stop_reason = body["stop_reason"]
-        .as_str()
-        .ok_or_else(|| malformed("response without stop_reason"))?
-        .to_string();
-    let mut texts = Vec::new();
-    let mut tool_calls = Vec::new();
-    for block in &content {
-        match block["type"].as_str() {
-            Some("text") => {
-                if let Some(t) = block["text"]
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|t| !t.is_empty())
-                {
-                    texts.push(t.to_string());
-                }
-            }
-            Some("tool_use") => {
-                let (Some(id), Some(name)) = (block["id"].as_str(), block["name"].as_str()) else {
-                    return Err(malformed("tool_use without id or name"));
-                };
-                tool_calls.push(ToolCall {
-                    id: id.to_string(),
-                    name: name.to_string(),
-                    input: block.get("input").cloned().unwrap_or(json!({})),
-                });
-            }
-            _ => {}
-        }
-    }
-    let usage = &body["usage"];
-    let tokens = |key: &str| usage[key].as_u64().unwrap_or(0);
-    Ok(Reply {
-        stop_reason,
-        content,
-        text: texts.join("\n\n"),
-        tool_calls,
-        input_tokens: tokens("input_tokens")
-            + tokens("cache_read_input_tokens")
-            + tokens("cache_creation_input_tokens"),
-        output_tokens: tokens("output_tokens"),
-    })
 }
 
 /// The text of an MCP `CallToolResult` and whether it is an error.
@@ -429,18 +314,7 @@ pub fn tool_result_text(result: &Value) -> (String, bool) {
         })
         .unwrap_or_default();
     let is_error = result["isError"].as_bool().unwrap_or(false);
-    (cut(&text, MAX_TOOL_RESULT_BYTES), is_error)
-}
-
-fn cut(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        return s.to_string();
-    }
-    let mut end = max;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}… [cut – narrow the request]", &s[..end])
+    (llm::cut(&text, MAX_TOOL_RESULT_BYTES), is_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -454,16 +328,6 @@ pub enum AssistantError {
     Disabled,
     #[error("too many assistant runs at the same time")]
     Busy,
-    #[error("the Anthropic API rejected the API key")]
-    Auth,
-    #[error("rate limited by the Anthropic API")]
-    RateLimited,
-    #[error("the Anthropic API is overloaded or failed ({0})")]
-    Overloaded(u16),
-    #[error("the Anthropic API rejected the request ({status}): {message}")]
-    Rejected { status: u16, message: String },
-    #[error("network error: {0}")]
-    Network(String),
     #[error("time limit reached")]
     Timeout,
     #[error("step limit of {0} reached")]
@@ -474,6 +338,19 @@ pub enum AssistantError {
     Refused,
     #[error("unexpected API response: {0}")]
     Malformed(String),
+    /// The model call failed (see [`LlmError`]).
+    #[error(transparent)]
+    Llm(LlmError),
+}
+
+impl From<LlmError> for AssistantError {
+    fn from(e: LlmError) -> AssistantError {
+        match e {
+            LlmError::Timeout => AssistantError::Timeout,
+            LlmError::Malformed(m) => AssistantError::Malformed(m),
+            e => AssistantError::Llm(e),
+        }
+    }
 }
 
 impl AssistantError {
@@ -482,26 +359,19 @@ impl AssistantError {
         match self {
             AssistantError::Disabled => "disabled",
             AssistantError::Busy => "busy",
-            AssistantError::Auth => "auth",
-            AssistantError::RateLimited => "rate_limited",
-            AssistantError::Overloaded(_) => "overloaded",
-            AssistantError::Rejected { .. } => "rejected",
-            AssistantError::Network(_) => "network",
             AssistantError::Timeout => "timeout",
             AssistantError::StepLimit(_) => "step_limit",
             AssistantError::TokenLimit => "token_limit",
             AssistantError::Refused => "refused",
             AssistantError::Malformed(_) => "malformed",
+            AssistantError::Llm(LlmError::Auth) => "auth",
+            AssistantError::Llm(LlmError::RateLimited { .. }) => "rate_limited",
+            AssistantError::Llm(LlmError::Overloaded(_)) => "overloaded",
+            AssistantError::Llm(LlmError::Rejected { .. }) => "rejected",
+            AssistantError::Llm(LlmError::Network(_)) => "network",
+            AssistantError::Llm(LlmError::Timeout) => "timeout",
+            AssistantError::Llm(LlmError::Malformed(_)) => "malformed",
         }
-    }
-
-    fn retryable(&self) -> bool {
-        matches!(
-            self,
-            AssistantError::RateLimited
-                | AssistantError::Overloaded(_)
-                | AssistantError::Network(_)
-        )
     }
 
     /// The error as users see it. Configuration problems (key, model) are
@@ -516,16 +386,20 @@ impl AssistantError {
             AssistantError::Busy => AppError::Unavailable(
                 "The assistant is busy with other questions. Try again in a minute.".into(),
             ),
-            AssistantError::RateLimited | AssistantError::Overloaded(_) => AppError::Unavailable(
-                "The AI service is overloaded right now. Try again in a minute.".into(),
-            ),
-            AssistantError::Network(_) => AppError::Unavailable(
+            AssistantError::Llm(LlmError::RateLimited { .. } | LlmError::Overloaded(_)) => {
+                AppError::Unavailable(
+                    "The AI service is overloaded right now. Try again in a minute.".into(),
+                )
+            }
+            AssistantError::Llm(LlmError::Network(_)) => AppError::Unavailable(
                 "The AI service cannot be reached from the server right now.".into(),
             ),
-            AssistantError::Timeout => AppError::Unavailable(format!(
-                "The assistant took longer than {} seconds. Ask a narrower question.",
-                RUN_TIMEOUT.as_secs()
-            )),
+            AssistantError::Timeout | AssistantError::Llm(LlmError::Timeout) => {
+                AppError::Unavailable(format!(
+                    "The assistant took longer than {} seconds. Ask a narrower question.",
+                    RUN_TIMEOUT.as_secs()
+                ))
+            }
             AssistantError::StepLimit(n) => AppError::BadRequest(format!(
                 "The assistant needed more than {n} steps. Ask a narrower question."
             )),
@@ -535,100 +409,21 @@ impl AssistantError {
             AssistantError::Refused => AppError::BadRequest(
                 "The model declined to answer this request. Rephrase the question.".into(),
             ),
-            e @ (AssistantError::Auth
-            | AssistantError::Rejected { .. }
-            | AssistantError::Malformed(_)) => AppError::Other(anyhow::anyhow!("assistant: {e}")),
-        }
-    }
-}
-
-/// Maps an HTTP error status of the API to an error.
-pub fn status_error(status: u16, body: &str) -> AssistantError {
-    match status {
-        401 | 403 => AssistantError::Auth,
-        429 => AssistantError::RateLimited,
-        500..=599 => AssistantError::Overloaded(status),
-        _ => {
-            let message = serde_json::from_str::<Value>(body)
-                .ok()
-                .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
-                .unwrap_or_default();
-            AssistantError::Rejected {
-                status,
-                message: cut(&message, 300),
-            }
+            e @ (AssistantError::Malformed(_)
+            | AssistantError::Llm(
+                LlmError::Auth | LlmError::Rejected { .. } | LlmError::Malformed(_),
+            )) => AppError::Other(anyhow::anyhow!("assistant: {e}")),
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Transport and tools
+// Tools
 // ---------------------------------------------------------------------------
-
-/// Sends one request to the Messages API and returns the response body.
-pub trait Transport: Sync {
-    fn send(
-        &self,
-        request: &ApiRequest,
-    ) -> impl Future<Output = Result<Value, AssistantError>> + Send;
-}
 
 /// Runs one tool and returns its MCP `CallToolResult`.
 pub trait Tools: Sync {
     fn call(&self, name: &str, input: &Value) -> impl Future<Output = Value> + Send;
-}
-
-/// The real transport: HTTPS to the Anthropic API.
-pub struct HttpTransport {
-    http: reqwest::Client,
-    url: String,
-    api_key: String,
-}
-
-impl HttpTransport {
-    pub fn new(api_key: &str) -> anyhow::Result<HttpTransport> {
-        let http = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(Duration::from_secs(15))
-            .user_agent(concat!("TeamCraft/", env!("CARGO_PKG_VERSION")))
-            .build()?;
-        Ok(HttpTransport {
-            http,
-            url: API_URL.to_string(),
-            api_key: api_key.to_string(),
-        })
-    }
-}
-
-impl Transport for HttpTransport {
-    async fn send(&self, request: &ApiRequest) -> Result<Value, AssistantError> {
-        let mut req = self
-            .http
-            .post(&self.url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", API_VERSION)
-            .json(&request.body);
-        if let Some(beta) = request.beta {
-            req = req.header("anthropic-beta", beta);
-        }
-        let response = req.send().await.map_err(|e| {
-            if e.is_timeout() {
-                AssistantError::Timeout
-            } else {
-                // without the URL: no secrets in it, but keep logs short
-                AssistantError::Network(e.without_url().to_string())
-            }
-        })?;
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .map_err(|e| AssistantError::Network(e.without_url().to_string()))?;
-        if !status.is_success() {
-            return Err(status_error(status.as_u16(), &text));
-        }
-        serde_json::from_str(&text).map_err(|e| AssistantError::Malformed(e.to_string()))
-    }
 }
 
 /// Write tools that put free text into objects other users read.
@@ -867,24 +662,47 @@ pub struct Answer {
     pub truncated: bool,
 }
 
-async fn send_with_retry<T: Transport>(
+/// Longest `retry-after` the single retry waits for; a longer wait is an
+/// error.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(20);
+
+/// How long the single retry waits, or `None` for an error that is not
+/// retried.
+fn retry_delay(error: &LlmError, limits: &Limits) -> Option<Duration> {
+    if !error.retryable() {
+        return None;
+    }
+    match error {
+        LlmError::RateLimited {
+            retry_after: Some(d),
+        } => (*d <= MAX_RETRY_AFTER).then_some(*d),
+        _ => Some(limits.retry_delay),
+    }
+}
+
+async fn complete_with_retry<T: Transport>(
+    provider: &dyn Provider,
     transport: &T,
-    request: &ApiRequest,
+    request: &Request<'_>,
     limits: &Limits,
-) -> Result<Value, AssistantError> {
-    match transport.send(request).await {
-        Err(e) if e.retryable() => {
-            tracing::warn!(error = %e, "assistant: retrying the API call once");
-            tokio::time::sleep(limits.retry_delay).await;
-            transport.send(request).await
-        }
-        other => other,
+) -> Result<Reply, LlmError> {
+    match llm::complete(provider, transport, request).await {
+        Err(e) => match retry_delay(&e, limits) {
+            Some(delay) => {
+                tracing::warn!(error = %e, "assistant: retrying the API call once");
+                tokio::time::sleep(delay).await;
+                llm::complete(provider, transport, request).await
+            }
+            None => Err(e),
+        },
+        ok => ok,
     }
 }
 
 /// Runs the tool loop until the model answers or a limit is reached.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_loop<T: Transport, R: Tools>(
+    provider: &dyn Provider,
     transport: &T,
     tools: &R,
     limits: &Limits,
@@ -895,72 +713,80 @@ pub async fn run_loop<T: Transport, R: Tools>(
     trace: &mut Trace,
 ) -> Result<Answer, AssistantError> {
     let specs = tool_specs(allow_drafts);
-    let offered: HashSet<String> = specs
-        .iter()
-        .filter_map(|s| s["name"].as_str().map(str::to_string))
-        .collect();
-    let mut messages = vec![json!({ "role": "user", "content": instruction })];
+    let offered: HashSet<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+    let mut turns = vec![Turn::User(instruction.to_string())];
     for step in 1..=limits.max_steps {
-        let request = build_request(model, system, &specs, &messages, limits.max_tokens);
-        let body = send_with_retry(transport, &request, limits).await?;
-        let reply = parse_response(&body)?;
+        let request = Request {
+            model,
+            system,
+            tools: &specs,
+            turns: &turns,
+            max_tokens: limits.max_tokens,
+        };
+        let reply = complete_with_retry(provider, transport, &request, limits).await?;
         trace.steps = step;
-        trace.input_tokens += reply.input_tokens;
-        trace.output_tokens += reply.output_tokens;
-        match reply.stop_reason.as_str() {
-            "end_turn" | "stop_sequence" => {
+        trace.input_tokens += reply.usage.input;
+        trace.output_tokens += reply.usage.output;
+        let Reply {
+            text,
+            calls,
+            raw,
+            stop,
+            ..
+        } = reply;
+        match stop {
+            Stop::Done => {
                 return Ok(Answer {
-                    text: reply.text,
+                    text,
                     truncated: false,
                 })
             }
-            "max_tokens" => {
+            Stop::Truncated => {
                 return Ok(Answer {
-                    text: reply.text,
+                    text,
                     truncated: true,
                 })
             }
-            "refusal" => return Err(AssistantError::Refused),
-            "pause_turn" => {
-                messages.push(json!({ "role": "assistant", "content": reply.content }));
-            }
-            "tool_use" => {
-                if reply.tool_calls.is_empty() {
+            Stop::Refused => return Err(AssistantError::Refused),
+            Stop::Paused => turns.push(Turn::Assistant { text, calls, raw }),
+            Stop::ToolCalls => {
+                if calls.is_empty() {
                     return Err(AssistantError::Malformed(
                         "tool_use without tool calls".into(),
                     ));
                 }
-                messages.push(json!({ "role": "assistant", "content": reply.content }));
-                // All results go back in one user message.
                 let mut results = Vec::new();
-                for call in &reply.tool_calls {
-                    let (text, is_error) = if !offered.contains(&call.name) {
+                for call in &calls {
+                    let (text, is_error) = if !offered.contains(call.name.as_str()) {
                         (
                             format!("The tool `{}` is not available here.", call.name),
                             true,
                         )
-                    } else if !call.input.is_object() {
-                        ("The tool input must be a JSON object.".to_string(), true)
                     } else {
-                        tool_result_text(&tools.call(&call.name, &call.input).await)
+                        match &call.input {
+                            Ok(input) if input.is_object() => {
+                                tool_result_text(&tools.call(&call.name, input).await)
+                            }
+                            _ => ("The tool input must be a JSON object.".to_string(), true),
+                        }
                     };
                     trace.tools.push(ToolUse {
                         name: call.name.clone(),
                         ok: !is_error,
                     });
-                    results.push(json!({
-                        "type": "tool_result",
-                        "tool_use_id": call.id,
-                        "content": text,
-                        "is_error": is_error,
-                    }));
+                    results.push(ToolResult {
+                        call_id: call.id.clone(),
+                        name: call.name.clone(),
+                        text,
+                        is_error,
+                    });
                 }
-                messages.push(json!({ "role": "user", "content": results }));
-            }
-            other => {
-                return Err(AssistantError::Malformed(format!(
-                    "unexpected stop_reason `{other}`"
-                )))
+                turns.push(Turn::Assistant {
+                    text: String::new(),
+                    calls,
+                    raw,
+                });
+                turns.push(Turn::ToolResults(results));
             }
         }
         if trace.input_tokens + trace.output_tokens > limits.max_run_tokens {
@@ -972,6 +798,7 @@ pub async fn run_loop<T: Transport, R: Tools>(
 
 /// The configured assistant of a server.
 pub struct Assistant {
+    pub provider: Box<dyn Provider>,
     pub transport: HttpTransport,
     pub model: String,
     pub limits: Limits,
@@ -980,8 +807,15 @@ pub struct Assistant {
 
 impl Assistant {
     pub fn new(config: &AssistantConfig) -> anyhow::Result<Assistant> {
+        let provider = Box::new(Anthropic);
         Ok(Assistant {
-            transport: HttpTransport::new(&config.api_key)?,
+            transport: HttpTransport::new(
+                anthropic::BASE_URL,
+                &config.api_key,
+                provider.auth(),
+                REQUEST_TIMEOUT,
+            )?,
+            provider,
             model: config.model.clone(),
             limits: Limits::from_config(config),
             permits: tokio::sync::Semaphore::new(MAX_CONCURRENT_RUNS),
@@ -1240,30 +1074,36 @@ mod tests {
 
     /// Replays canned responses and records the requests.
     struct FakeApi {
-        replies: Mutex<Vec<Result<Value, AssistantError>>>,
-        requests: Mutex<Vec<ApiRequest>>,
+        replies: Mutex<Vec<Result<Value, LlmError>>>,
+        requests: Mutex<Vec<llm::HttpCall>>,
     }
 
     impl FakeApi {
-        fn new(replies: Vec<Result<Value, AssistantError>>) -> FakeApi {
+        fn new(replies: Vec<Result<Value, LlmError>>) -> FakeApi {
             FakeApi {
                 replies: Mutex::new(replies.into_iter().rev().collect()),
                 requests: Mutex::new(Vec::new()),
             }
         }
-        fn requests(&self) -> Vec<ApiRequest> {
+        fn requests(&self) -> Vec<llm::HttpCall> {
             self.requests.lock().unwrap().clone()
         }
     }
 
     impl Transport for FakeApi {
-        async fn send(&self, request: &ApiRequest) -> Result<Value, AssistantError> {
-            self.requests.lock().unwrap().push(request.clone());
-            self.replies
+        async fn send(&self, call: &llm::HttpCall) -> Result<llm::HttpResponse, LlmError> {
+            self.requests.lock().unwrap().push(call.clone());
+            let reply = self
+                .replies
                 .lock()
                 .unwrap()
                 .pop()
-                .unwrap_or_else(|| Err(AssistantError::Malformed("no more replies".into())))
+                .unwrap_or_else(|| Err(LlmError::Malformed("no more replies".into())))?;
+            Ok(llm::HttpResponse {
+                status: 200,
+                headers: Default::default(),
+                body: reply.to_string(),
+            })
         }
     }
 
@@ -1320,6 +1160,7 @@ mod tests {
     ) -> (Result<Answer, AssistantError>, Trace) {
         let mut trace = Trace::default();
         let result = run_loop(
+            &Anthropic,
             api,
             tools,
             limits,
@@ -1334,40 +1175,9 @@ mod tests {
     }
 
     #[test]
-    fn requests_have_the_messages_api_shape() {
-        let tools = tool_specs(false);
-        let messages = vec![json!({ "role": "user", "content": "hi" })];
-        let r = build_request("claude-opus-5-5", "sys", &tools, &messages, 16_000);
-        assert_eq!(r.body["model"], "claude-opus-5-5");
-        assert_eq!(r.body["max_tokens"], 16_000);
-        assert_eq!(r.body["system"], "sys");
-        assert_eq!(r.body["messages"][0]["content"], "hi");
-        assert_eq!(r.body["cache_control"]["type"], "ephemeral");
-        assert_eq!(r.body["fallbacks"], "default");
-        assert_eq!(r.beta, Some(FALLBACK_BETA));
-        assert!(
-            r.body.get("thinking").is_none() && r.body.get("temperature").is_none(),
-            "model defaults: adaptive thinking, no sampling parameters"
-        );
-        let first = &r.body["tools"][0];
-        assert!(first["name"].is_string() && first["description"].is_string());
-        assert_eq!(first["input_schema"]["type"], "object");
-        assert!(first.get("inputSchema").is_none() && first.get("annotations").is_none());
-
-        // other models: no fallback parameter, no beta header
-        let r = build_request("claude-haiku-4-5", "sys", &tools, &messages, 100);
-        assert!(r.body.get("fallbacks").is_none());
-        assert_eq!(r.beta, None);
-    }
-
-    #[test]
     fn write_tools_only_with_drafts() {
-        let names = |drafts| -> Vec<String> {
-            tool_specs(drafts)
-                .iter()
-                .map(|t| t["name"].as_str().unwrap().to_string())
-                .collect()
-        };
+        let names =
+            |drafts| -> Vec<String> { tool_specs(drafts).iter().map(|t| t.name.clone()).collect() };
         let read_only = names(false);
         assert!(read_only.contains(&"bom_health".to_string()));
         assert!(!read_only.contains(&"create_change_draft".to_string()));
@@ -1388,72 +1198,6 @@ mod tests {
         assert!(with_drafts.contains(&"create_change_draft".to_string()));
         assert!(with_drafts.contains(&"create_change_request".to_string()));
         assert_eq!(with_drafts.len(), read_only.len() + 4);
-    }
-
-    #[test]
-    fn responses_are_parsed() {
-        let r =
-            parse_response(&tool_use(&[("t1", "get_item", json!({ "item": "PRT-1" }))])).unwrap();
-        assert_eq!(r.stop_reason, "tool_use");
-        assert_eq!(
-            r.content.len(),
-            2,
-            "thinking block kept for the next request"
-        );
-        assert_eq!(
-            r.tool_calls,
-            vec![ToolCall {
-                id: "t1".into(),
-                name: "get_item".into(),
-                input: json!({ "item": "PRT-1" })
-            }]
-        );
-        assert_eq!((r.input_tokens, r.output_tokens), (150, 20));
-        let r = parse_response(&json!({
-            "content": [{ "type": "text", "text": "A " }, { "type": "fallback" }, { "type": "text", "text": "B" }],
-            "stop_reason": "end_turn"
-        }))
-        .unwrap();
-        assert_eq!(r.text, "A\n\nB");
-        assert!(matches!(
-            parse_response(&json!({ "content": [] })),
-            Err(AssistantError::Malformed(_))
-        ));
-        assert!(parse_response(&json!({
-            "content": [{ "type": "tool_use", "name": "x" }], "stop_reason": "tool_use"
-        }))
-        .is_err());
-    }
-
-    #[test]
-    fn http_errors_are_mapped() {
-        assert_eq!(status_error(401, ""), AssistantError::Auth);
-        assert_eq!(status_error(429, ""), AssistantError::RateLimited);
-        assert_eq!(status_error(529, ""), AssistantError::Overloaded(529));
-        assert_eq!(
-            status_error(
-                400,
-                r#"{"type":"error","error":{"type":"invalid_request_error","message":"bad model"}}"#
-            ),
-            AssistantError::Rejected {
-                status: 400,
-                message: "bad model".into()
-            }
-        );
-        assert_eq!(
-            AssistantError::Disabled.into_app_error().status(),
-            axum::http::StatusCode::NOT_FOUND
-        );
-        assert_eq!(
-            AssistantError::RateLimited.into_app_error().status(),
-            axum::http::StatusCode::SERVICE_UNAVAILABLE
-        );
-        let internal = AssistantError::Auth.into_app_error();
-        assert!(internal.status().is_server_error());
-        assert!(
-            !internal.public_message().contains("key"),
-            "generic message"
-        );
     }
 
     #[tokio::test]
@@ -1596,19 +1340,53 @@ mod tests {
         );
 
         // one retry when overloaded, then success
-        let api = FakeApi::new(vec![
-            Err(AssistantError::Overloaded(529)),
-            Ok(final_text("ok")),
-        ]);
+        let api = FakeApi::new(vec![Err(LlmError::Overloaded(529)), Ok(final_text("ok"))]);
         let (result, _) = run(&api, &fake_tools(), &limits(3), false).await;
         assert_eq!(result.unwrap().text, "ok");
         assert_eq!(api.requests().len(), 2);
 
         // no retry for a rejected key
-        let api = FakeApi::new(vec![Err(AssistantError::Auth), Ok(final_text("never"))]);
+        let api = FakeApi::new(vec![Err(LlmError::Auth), Ok(final_text("never"))]);
         let (result, _) = run(&api, &fake_tools(), &limits(3), false).await;
-        assert_eq!(result, Err(AssistantError::Auth));
+        assert_eq!(result, Err(AssistantError::Llm(LlmError::Auth)));
         assert_eq!(api.requests().len(), 1);
+    }
+
+    #[test]
+    fn errors_map_to_user_messages_and_retries() {
+        let app = |e: LlmError| AssistantError::from(e).into_app_error();
+        assert_eq!(
+            AssistantError::Disabled.into_app_error().status(),
+            axum::http::StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            app(LlmError::RateLimited { retry_after: None }).status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            app(LlmError::Timeout).status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let internal = app(LlmError::Auth);
+        assert!(internal.status().is_server_error());
+        assert!(
+            !internal.public_message().contains("key"),
+            "generic message"
+        );
+        assert_eq!(AssistantError::from(LlmError::Auth).code(), "auth");
+
+        let l = limits(1);
+        let secs = Duration::from_secs;
+        assert_eq!(
+            retry_delay(&LlmError::Overloaded(529), &l),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(retry_delay(&LlmError::Auth, &l), None);
+        let rate = |d| LlmError::RateLimited { retry_after: d };
+        assert_eq!(retry_delay(&rate(Some(secs(7))), &l), Some(secs(7)));
+        assert_eq!(retry_delay(&rate(Some(secs(20))), &l), Some(secs(20)));
+        assert_eq!(retry_delay(&rate(Some(secs(21))), &l), None, "too long");
+        assert_eq!(retry_delay(&rate(None), &l), Some(Duration::ZERO));
     }
 
     #[test]

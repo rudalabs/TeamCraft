@@ -51,7 +51,8 @@
 | `shared/`                            | UI files of both the web UI and the desktop app: skins and tokens, fonts, 3D viewer (`shared/README.md`) |
 | `src/api/`                           | REST API                                                                                             |
 | `src/mcp/`                           | MCP server for AI assistants (`POST /api/v1/mcp`): JSON-RPC, tools and prompts over the services     |
-| `src/assistant.rs`                   | built-in assistant: tool loop over the Anthropic Messages API with the MCP tools, markdown rendering |
+| `src/llm/`                           | provider-neutral LLM layer: conversation types, `Provider` (wire format, pure), `Transport`; `anthropic.rs` = Messages API |
+| `src/assistant.rs`                   | built-in assistant: tool loop over `src/llm` with the MCP tools, markdown rendering |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs`: VTK/VTU/VTP/FRD simulation results with fields  |

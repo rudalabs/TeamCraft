@@ -142,6 +142,7 @@ pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run
     let result = tokio::time::timeout(
         assistant::RUN_TIMEOUT,
         assistant::run_loop(
+            client.provider.as_ref(),
             &client.transport,
             &tools,
             &client.limits,
