@@ -258,6 +258,56 @@ result_vtu() {
     }' >"$1"
 }
 
+# result_cfd_vtu FILE – writes a small self-made CFD result (ASCII VTU): an
+# O-grid of 96 × 28 × 2 hexahedra around a cylindrical mast fairing (radius
+# 50 mm, outer boundary 150 mm, 30 mm thick) with the analytic potential flow
+# of a 5 m/s wind from the left: point data velocity (vector) and pressure
+# (Bernoulli, gauge). Made-up numbers for the screenshot, not a solver result.
+result_cfd_vtu() {
+    awk -v nr=28 -v nt=96 -v nz=2 -v R=50 -v Ro=150 -v T=30 -v U=5 -v rho=1.2 '
+    function id(s, t, k) { return (t % nt) + nt * (s + (nr + 1) * k) }
+    function rad(s) { return R * exp(log(Ro / R) * s / nr) }
+    # velocity (u, v) and pressure at the point (s, t) of the grid
+    function flow(s, t,    r, th, f) {
+        r = rad(s); th = 2 * PI * t / nt
+        f = (R / r) * (R / r)
+        u = U * (1 - f * cos(2 * th)); v = -U * f * sin(2 * th)
+        p = 0.5 * rho * (U * U - u * u - v * v)
+    }
+    BEGIN {
+        PI = atan2(0, -1)
+        n = nt * (nr + 1) * (nz + 1); c = nt * nr * nz
+        print "<?xml version=\"1.0\"?>"
+        print "<!-- TeamCraft screenshot demo: flow around a cylinder (self-made potential flow, made-up values) -->"
+        print "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">"
+        printf "<UnstructuredGrid><Piece NumberOfPoints=\"%d\" NumberOfCells=\"%d\">\n", n, c
+        print "<PointData Scalars=\"pressure\" Vectors=\"velocity\">"
+        print "<DataArray type=\"Float32\" Name=\"velocity\" NumberOfComponents=\"3\" format=\"ascii\">"
+        for (k = 0; k <= nz; k++) for (s = 0; s <= nr; s++) for (t = 0; t < nt; t++) {
+            flow(s, t); printf "%.4f %.4f 0 ", u, v
+        }
+        print "</DataArray>"
+        print "<DataArray type=\"Float32\" Name=\"pressure\" format=\"ascii\">"
+        for (k = 0; k <= nz; k++) for (s = 0; s <= nr; s++) for (t = 0; t < nt; t++) {
+            flow(s, t); printf "%.4f ", p
+        }
+        print "</DataArray></PointData>"
+        print "<Points><DataArray type=\"Float32\" NumberOfComponents=\"3\" format=\"ascii\">"
+        for (k = 0; k <= nz; k++) for (s = 0; s <= nr; s++) for (t = 0; t < nt; t++)
+            printf "%.3f %.3f %.3f ", rad(s) * cos(2 * PI * t / nt), rad(s) * sin(2 * PI * t / nt), k * T / nz
+        print "</DataArray></Points>"
+        print "<Cells><DataArray type=\"Int32\" Name=\"connectivity\" format=\"ascii\">"
+        for (k = 0; k < nz; k++) for (s = 0; s < nr; s++) for (t = 0; t < nt; t++)
+            printf "%d %d %d %d %d %d %d %d\n", id(s, t, k), id(s + 1, t, k), id(s + 1, t + 1, k), id(s, t + 1, k),
+                id(s, t, k + 1), id(s + 1, t, k + 1), id(s + 1, t + 1, k + 1), id(s, t + 1, k + 1)
+        print "</DataArray><DataArray type=\"Int32\" Name=\"offsets\" format=\"ascii\">"
+        for (e = 1; e <= c; e++) printf "%d ", 8 * e
+        print "</DataArray><DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">"
+        for (e = 1; e <= c; e++) printf "12 "
+        print "</DataArray></Cells></Piece></UnstructuredGrid></VTKFile>"
+    }' >"$1"
+}
+
 checkin() { api "${2:-admin}" POST "/items/${NUM[$1]}/revisions/latest/checkin" >/dev/null; }
 checkout() { api "${2:-admin}" POST "/items/${NUM[$1]}/revisions/latest/checkout" >/dev/null; }
 
@@ -802,6 +852,26 @@ capture_simulation() {
         die "the simulation result has no colour legend: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
     snap simulation-result-3d
     shot simulation-results "/revisions/${REV[sim]}" '#simulation-results'
+
+    # CFD: flow around the mast fairing, coloured by velocity magnitude (the
+    # README image). The viewer has no camera presets: the arrow keys turn
+    # the model (view onto the flow plane, zoomed) and the selector picks the field.
+    log "adding a simulation with a CFD result"
+    item cfd simulation "Mast fairing CFD"
+    result_cfd_vtu "$WORK/mast-fairing-cfd.vtu"
+    result=$(attach cfd "$WORK/mast-fairing-cfd.vtu" mast-fairing-cfd.vtu)
+    checkin cfd
+    open_page "/files/$result/preview"
+    wait_js 'document.getElementById("viewer-canvas").getAttribute("data-ready") !== null' 120 \
+        "the 3D view of the CFD result"
+    [[ $(js 'return document.querySelector(".viewer-legend") !== null;') == true ]] ||
+        die "the CFD result has no colour legend: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
+    js 'var c = document.getElementById("viewer-canvas"); c.focus();
+        function key(k, n) { for (var i = 0; i < n; i++) c.dispatchEvent(new KeyboardEvent("keydown", {key: k, bubbles: true})); }
+        key("ArrowRight", 5); key("ArrowDown", 9); key("+", 2);
+        var f = document.querySelector(".viewer-legend select"), o = Array.prototype.filter.call(f.options, function (x) { return x.textContent.indexOf("velocity") === 0; })[0];
+        f.value = o.value; f.dispatchEvent(new Event("change")); return true;' >/dev/null
+    snap simulation-cfd-3d
 }
 
 # Read permissions – extra images, not used in the README: the settings of a
