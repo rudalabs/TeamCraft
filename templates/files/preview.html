@@ -42,7 +42,8 @@
   </div>
   <p class="hint">Drag to rotate, wheel or pinch to zoom, arrow keys to turn, double-click to reset.
     {% if is_brep %}STEP files are tessellated on the server (pure Rust B-rep kernel) the first time they are shown; large assemblies take a moment.{% endif %}
-    {% if is_points %}Large point clouds are thinned out evenly for the preview.{% endif %}</p>
+    {% if is_points %}Large point clouds are thinned out evenly for the preview.{% endif %}
+    {% if is_result %}Simulation results show the outer surface of the mesh, coloured by a result field: vectors as magnitude, stress tensors as von Mises, cell data averaged to the nodes. Grey means no value.{% endif %}</p>
   {% if versions|length > 1 %}
   <p class="small">Versions:
     {% for v in versions %}

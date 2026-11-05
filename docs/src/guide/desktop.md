@@ -9,7 +9,7 @@ check-outs and reviews, and a **local working folder**:
   CAD files first, name and type follow from the first one;
 * *Check out* takes the lock, copies the files into the working folder and
   makes them writable;
-* *More → Get structure…* on a revision copies the item **with everything it consists of** –
+* *Get…* on a revision copies the item **with everything it consists of** –
   its BOM resolved with a revision rule and the parts its CAD files
   reference – so the assembly opens in the CAD program (see below);
 * the download icon next to *Projects* in the navigator (*Tools → Get Project Groups…*) copies the files of every item of
@@ -69,13 +69,58 @@ appearance of the operating system and switches with it, *TeamCraft Light*
 and *TeamCraft Dark* stay fixed, the distribution skins are dark.
 
 The window is built for daily work: object tabs on top, under them the
-toolbar of the open object with its one main action filled (*Check out*,
-*Check in…* or *Revise*, depending on the state) and only the actions that
-are available now; the less frequent tools (*Get structure…*, *Pack and
-Go…*, *Open folder*, *Open in browser*) are under *More*, and *Refresh* is the
-arrow icon (`F5`). The navigator shows a state as its symbol (a check:
+toolbar of the open object with its one next step filled (see
+[The toolbar](#the-toolbar)) and the rare tools under *More*. The navigator shows a state as its symbol (a check:
 released, a ring: in review, a half-filled ring: in work, – obsolete, the
 name in the tooltip); the search field is `Ctrl+F` (`⌘F`).
+
+## The toolbar
+
+The toolbar sits right below the tab strip and acts on the active tab. Its
+buttons are grouped, and they keep their place whatever state the object is
+in; a button that does not apply right now is greyed out, and its tooltip
+says why (for example *Check out first* or *Already in change order
+CHG-000002*). The **one highlighted button is the most likely next step**:
+
+| Revision | Highlighted |
+|---|---|
+| in work, not checked out | *Check out* |
+| checked out by you, with local changes (or the workspace could not be read) | *Check in…* |
+| checked out by you, no local changes | *Release…* (when it can be released, otherwise *Check in…*) |
+| in review, obsolete, or checked out by somebody else | nothing |
+| released | *Revise* |
+
+The working folder of your check-out is looked at again whenever the tab is
+shown or the app window gets the focus back – save in the CAD program, switch
+back, and *Check in…* is highlighted.
+
+* revision tab: **Lock** (*Check out*, or *Check in…* and *Cancel check-out*
+  / *Force unlock* while checked out) · **Work** (*Edit*, *Get…*, *Open
+  folder*) · **Lifecycle** (*Release…*, *Revise*) · **Collaborate**
+  (*Request change…*, *Watch*, *Ask…*, *Agent*);
+* change tab: **Review** (*Approve* highlighted, *Reject* – the comment field
+  of *Your review* goes with it, required for a rejection) while your review
+  is pending · **Lifecycle** (*Submit for review*, highlighted on your draft,
+  *Withdraw*) · **Collaborate**;
+* change request tab: **Triage** (*Start triage* or *Create change order*
+  highlighted, *Take up again*) · **Requester** (*Attach…*, *Withdraw*) ·
+  **Collaborate**.
+
+Rare actions are in **More ▾** at the end: *Pack and Go…*, *Open in browser*,
+*Refresh* (`F5`) and *Mark obsolete…*. The menu works with the keyboard:
+`Enter`, `Space` or `↓` opens it, `↑`/`↓`, `Home`/`End` move, `Enter` runs
+the action, `Esc` closes it and returns to the button; a click outside closes
+it too.
+
+The **Overview** of a revision shows *At a glance* next to the properties:
+the preview image stored in an Inventor, Solid Edge, SolidWorks or NX file
+(with the way into the 3D viewer) and the number of files, BOM lines, where
+used, references, change orders and open change requests – a click opens the
+matching sub-tab.
+
+Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
+`Ctrl/Cmd+1/2/3/4` Home, Worklist, Changes, Agent, `Ctrl/Cmd+W` close the tab,
+`Ctrl/Cmd` + `+` / `-` / `0` (or `Ctrl` + mouse wheel) zoom.
 
 ## How files appear on your computer
 
@@ -116,7 +161,7 @@ uploads the changed ones and makes them read-only again; *Cancel check-out*
 does the same without uploading. Files you changed are never made read-only
 or overwritten by TeamCraft.
 
-**Get.** *Get structure…* on a revision resolves its structure on the server – the
+**Get.** *Get…* on a revision resolves its structure on the server – the
 multi-level BOM with the revision rule you choose (*latest*: the newest
 revision of every part, also in work; *released*: the newest released
 revision) plus the items whose files its CAD files reference (an assembly

@@ -201,7 +201,7 @@
     </label>
     <div class="actions">
       <button class="primary" type="submit" name="action" value="ask">Ask</button>
-      {% if me.can_edit %}<label class="check small"><input type="checkbox" name="allow_drafts" value="1"> Allow drafting change orders</label>{% endif %}
+      {% if me.can_edit %}<label class="check small"><input type="checkbox" name="allow_drafts" value="1"> Allow drafting change orders, change requests and comments</label>{% endif %}
       <span class="hint assistant-status" role="status"></span>
     </div>
     <p class="hint">Read-only unless you allow drafts; it never submits, approves or releases. The question and the data the

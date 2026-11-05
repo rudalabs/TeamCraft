@@ -147,6 +147,14 @@ fn step_files_get_a_complete_3d_preview() {
         mesh.check().unwrap();
         let bytes = mesh.encode();
         assert_eq!(mesh::Mesh::decode(&bytes).unwrap(), mesh);
+        // the shape signature of the similar part search, from the same mesh
+        let s = teamcraft::shape::compute(&mesh).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        assert!(s.is_valid(), "{rel}: {s:?}");
+        assert!(s.extents[0] >= s.extents[1] && s.extents[1] >= s.extents[2]);
+        assert!(s.area > 0.0 && s.triangles > 0, "{rel}: {s:?}");
+        assert_eq!(s.triangles as usize, mesh.triangle_count(), "{rel}");
+        let same = teamcraft::shape::compare(&s, &s, false);
+        assert!(same.score > 0.999, "{rel}: {same:?}");
     }
 }
 
