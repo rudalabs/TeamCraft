@@ -6,6 +6,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod abortable;
 mod acp;
 mod api;
 mod bomimport;
@@ -40,6 +41,8 @@ pub struct AppState {
     pub sign_in_cancel: Mutex<Option<Arc<Notify>>>,
     /// Cancel switch of the running upload (one per upload).
     pub upload_cancel: Mutex<Arc<AtomicBool>>,
+    /// Cancel switch of the running Pack and Go download (one per download).
+    pub package_cancel: Mutex<Arc<AtomicBool>>,
     /// The running ACP agent session, if one was started.
     pub agent: Mutex<Option<commands::RunningAgent>>,
     /// Number of the last agent session (events carry it).
@@ -156,6 +159,7 @@ fn main() {
                 config_dir,
                 sign_in_cancel: Mutex::new(None),
                 upload_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+                package_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 agent: Mutex::new(None),
                 agent_seq: AtomicU64::new(0),
                 get_cancel: Arc::new(AtomicBool::new(false)),
@@ -198,6 +202,7 @@ fn main() {
             commands::open_web,
             commands::set_zoom,
             commands::save_package,
+            commands::cancel_package,
             commands::save_stl,
             commands::upload_files,
             commands::cancel_upload,

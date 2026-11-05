@@ -663,11 +663,74 @@
     });
   }
 
-  /** "Pack and Go": ZIP of a revision and its structure, saved where the user chooses. */
+  /** "Pack and Go": ZIP of a revision and its structure, saved where the user
+   * chooses. After the save dialog a progress dialog follows the download; its
+   * Cancel stops it (also while the server is still packing) – the partial ZIP
+   * is removed, nothing is written. */
   function savePackage(rev, rule) {
-    run("Packing " + rev.item_number + "/" + rev.code, function () {
-      return call("save_package", { item: rev.item_number, code: rev.code, rule: rule });
-    }).then(function (path) { if (path) toast("Saved " + path); }, function () {});
+    if (packing) { toast("Pack and Go of " + packing.label + " is still running.", "info"); return; }
+    packing = { label: rev.item_number + "/" + rev.code, dialog: null };
+    function done() { if (packing && packing.dialog) packing.dialog.close(); packing = null; }
+    call("save_package", { item: rev.item_number, code: rev.code, rule: rule }).then(function (path) {
+      done();
+      if (path) toast("Saved " + path);
+    }, function (err) {
+      done();
+      toast(errorText(err), isCancelled(err) ? "info" : "error");
+    });
+  }
+
+  // ------------------------------------------------ stopping long operations
+
+  /** An operation the user cancelled (status 499 from the Rust side) – a note, not an error. */
+  function isCancelled(err) { return !!err && err.status === 499; }
+
+  /** The running Pack and Go: its label and progress dialog (opened by the
+   * first `package-progress` event, i.e. after the save dialog). */
+  var packing = null;
+
+  /** Follows the check-in upload of the open check-in dialog (`upload-progress`). */
+  var uploadWatcher = null;
+
+  /** A progress dialog with a bar and Cancel, which asks the Rust side to stop
+   * (`cancelCommand`); Escape and the backdrop do not close it. The caller
+   * closes it when the operation has ended. */
+  function progressDialog(title, cancelCommand) {
+    var bar = h("progress", { max: "1", value: "0" });
+    var text = h("p.small", { role: "status", text: "Starting …" });
+    var stopping = false;
+    var d = dialog(title, h("div.stack", null, [text, bar]), [
+      { label: "Cancel", onClick: function () {
+        if (stopping) return;
+        stopping = true;
+        text.textContent = "Stopping …";
+        call(cancelCommand).catch(function () {});
+      } }
+    ], { modal: true });
+    return {
+      close: d.close,
+      update: function (done, total, line) {
+        if (stopping) return;
+        if (total) { bar.max = total; bar.value = Math.min(done, total); } else { bar.removeAttribute("value"); }
+        text.textContent = line;
+      }
+    };
+  }
+
+  function onPackageProgress(p) {
+    if (!packing) return;
+    if (!packing.dialog) packing.dialog = progressDialog("Pack and Go " + packing.label, "cancel_package");
+    var received = p.received || 0;
+    packing.dialog.update(received, p.total || 0, received
+      ? "Received " + fmtSize(received) + (p.total ? " of " + fmtSize(p.total) : "") + " …"
+      : "The server is packing the files of the structure …");
+  }
+
+  /** The progress line of a check-in: bytes sent, then waiting for the server. */
+  function uploadLine(p) {
+    if (p.total && p.sent >= p.total) return "Sent " + p.file + " – the server is storing it (too late to cancel) …";
+    var pct = p.total ? Math.floor(100 * p.sent / p.total) : 0;
+    return "Uploading " + p.file + " – " + fmtSize(p.sent) + " of " + fmtSize(p.total) + " (" + pct + " %) …";
   }
 
   /** Watch / Unwatch button for the toolbar of a revision or change tab. */
@@ -3047,6 +3110,7 @@
         return { name: f.name, input: h("input", { type: "checkbox", checked: f.state !== "conflict" }), state: f.state };
       });
       var comment = h("input", { type: "text", maxlength: "2000", placeholder: "What changed, e.g. wall thickness 2 → 2.5 mm" });
+      var progressLine = h("p.small.muted.hidden", { role: "status" });
       // Like the Vault add-in or the Teamcenter integration: viewables at check-in.
       var exportable = boxes.filter(function (b) { return exportProgram(b.name, programs); });
       var withStep = h("input", { type: "checkbox", checked: true });
@@ -3062,35 +3126,69 @@
         boxes.some(function (b) { return b.state === "conflict"; }) ? h("p.notice.error", { text: "Conflict: these files changed on the server since you got them. " +
           "The server refuses to overwrite the newer version (nothing is stored) – save your copy under another name, get the current files and merge." }) : null,
         stepNote,
-        field("Comment", comment, "stored with every new version")
+        field("Comment", comment, "stored with every new version"),
+        progressLine
       ]);
+      // While the check-in runs the dialog stays open (no Escape, no backdrop):
+      // Cancel stops it before the next STEP export, between two chunks of a
+      // large file or half-way through the request with the small files –
+      // nothing is stored, the revision stays checked out. Once every byte is
+      // sent the server finishes the check-in; the dialog then says so.
+      var running = false, cancelled = false;
+      var opts = { wide: true };
+      function stopped() { return { status: 499, message: "Cancelled." }; }
       dialog("Check in " + rev.item_number + "/" + rev.code, body, [
-        // also stops a running chunked upload – nothing is stored then
-        { label: "Cancel", onClick: function (d) { call("cancel_upload").catch(function () {}); setStatus(""); d.close(); } },
+        { label: "Cancel", onClick: function (d) {
+          if (!running) { d.close(); return; }
+          if (cancelled) return;
+          cancelled = true;
+          progressLine.textContent = "Stopping …";
+          progressLine.classList.remove("hidden");
+          call("cancel_upload").catch(function () {});
+        } },
         {
           label: "Check in and release", primary: true, submit: true, onClick: function (d) {
+            if (running) return;
+            running = true; cancelled = false; opts.modal = true;
             var files = boxes.filter(function (b) { return b.input.checked; }).map(function (b) { return b.name; });
             var toExport = stepNote && withStep.checked ? files.filter(function (n) { return exportProgram(n, programs); }) : [];
+            function show(text) { if (!cancelled) { progressLine.textContent = text; progressLine.classList.remove("hidden"); } }
             // one export after the other: the CAD program handles one document at a time
             var exported = toExport.reduce(function (chain, name) {
               return chain.then(function () {
-                setStatus("Exporting " + name + " to STEP with " + PROGRAM_LABEL[exportProgram(name, programs)] + " …");
+                if (cancelled) throw stopped();
+                show("Exporting " + name + " to STEP with " + PROGRAM_LABEL[exportProgram(name, programs)] + " …");
                 return exportStep(rev, name).then(function (step) { if (files.indexOf(step) < 0) files.push(step); });
               });
             }, Promise.resolve());
             exported.then(function () {
-              setStatus("Checking in …");
+              if (cancelled) throw stopped();
+              show("Checking in …");
+              uploadWatcher = function (p) { show(uploadLine(p)); };
               return call("workspace_checkin", { project: rev.project_code, item: rev.item_number, code: rev.code, files: files, comment: comment.value });
             }).then(function () {
+              running = false; uploadWatcher = null;
               setStatus("");
               d.close();
-              toast("Checked in " + rev.item_number + "/" + rev.code + (files.length ? " with " + files.join(", ") : ""));
+              toast("Checked in " + rev.item_number + "/" + rev.code + (files.length ? " with " + files.join(", ") : "") +
+                (cancelled ? " – the server already had every file when you cancelled" : ""), cancelled ? "info" : null);
               reloadActive();
               refreshWorklistCount();
-            }, function (err) { setStatus(""); d.fail(err); });
+            }, function (err) {
+              running = false; uploadWatcher = null; opts.modal = false;
+              setStatus("");
+              if (cancelled || isCancelled(err)) {
+                d.close();
+                toast("Check-in of " + rev.item_number + "/" + rev.code + " cancelled – nothing was stored; the revision is still checked out to you.", "info");
+                reloadActive();
+                return;
+              }
+              progressLine.classList.add("hidden");
+              d.fail(err);
+            });
           }
         }
-      ], { wide: true });
+      ], opts);
     }, function (err) { toast(errorText(err), "error"); });
   }
 
@@ -4576,9 +4674,11 @@
     // large files are sent in resumable chunks: show how far they are
     TAURI.event.listen("upload-progress", function (e) {
       var p = e.payload || {};
-      var pct = p.total ? Math.floor(100 * p.sent / p.total) : 100;
-      setStatus("Uploading " + p.file + " – " + fmtSize(p.sent) + " of " + fmtSize(p.total) + " (" + pct + " %) …");
+      setStatus(uploadLine(p));
+      if (uploadWatcher) uploadWatcher(p);
     });
+    // Pack and Go: progress dialog with Cancel
+    TAURI.event.listen("package-progress", function (e) { onPackageProgress(e.payload || {}); });
     TAURI.event.listen("agent", function (e) { onAgentEvent(e.payload); });
     TAURI.event.listen("workspace-progress", function (e) { onGetProgress(e.payload); });
     $("status-get-cancel").addEventListener("click", function () {

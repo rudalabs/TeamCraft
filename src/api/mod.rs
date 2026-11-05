@@ -6,16 +6,17 @@
 //! newest revision.
 
 mod change_requests;
+mod interchange_api;
 mod personal;
 mod simulations;
-mod uploads_api;
+pub(crate) mod uploads_api;
 mod webhooks;
 
 use axum::{
     extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, patch, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use serde::{de::DeserializeOwned, Deserialize, Deserializer};
@@ -66,6 +67,23 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/items", get(list_items).post(create_item))
         .route("/items/{number}", get(get_item))
         .route("/items/{number}/where-used", get(where_used))
+        .route("/items/{number}/interchange", get(interchange_api::show))
+        .route(
+            "/items/{number}/alternates",
+            post(interchange_api::add_alternate),
+        )
+        .route(
+            "/items/{number}/alternates/{alternate}",
+            delete(interchange_api::delete_alternate),
+        )
+        .route(
+            "/items/{number}/supersession",
+            put(interchange_api::supersede).delete(interchange_api::clear_supersession),
+        )
+        .route(
+            "/items/{number}/replace",
+            get(interchange_api::plan_replace).post(interchange_api::replace),
+        )
         .route("/items/{number}/history", get(item_history))
         .route("/items/{number}/impacts", get(item_impacts))
         .route(
@@ -364,7 +382,14 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items?q=&type=&project=&state=&system=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo",
             "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?}",
             "GET    /api/v1/items/{number}",
-            "GET    /api/v1/items/{number}/where-used",
+            "GET    /api/v1/items/{number}/where-used?levels=         levels = N walks N levels up (parents of parents)",
+            "GET    /api/v1/items/{number}/interchange                alternates, one-way 'alternate for', successor (superseded by), predecessors",
+            "POST   /api/v1/items/{number}/alternates                 {item, note?, two_way? = true} – item may be built in instead",
+            "DELETE /api/v1/items/{number}/alternates/{alternate}     both directions if you may edit the alternate's group",
+            "PUT    /api/v1/items/{number}/supersession               {item, note?} – superseded by item (do not use for new designs)",
+            "DELETE /api/v1/items/{number}/supersession",
+            "GET    /api/v1/items/{number}/replace?with=              preview: BOM lines of the latest parent revisions and what replacing would do",
+            "POST   /api/v1/items/{number}/replace                    {with} – replace in every parent that is in work and not checked out by others",
             "GET    /api/v1/items/{number}/history?limit=             audit log of the item and its revisions",
             "GET    /api/v1/items/{number}/impacts                    impacts on the item (open first)",
             "GET    /api/v1/items/{number}/revisions/{code|latest}",

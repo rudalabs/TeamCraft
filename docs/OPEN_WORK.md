@@ -21,6 +21,10 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
   Tauri against a real server)
 - [ ] Cancel long operations (check-in upload, Pack and Go) half-way – today the browser sign-in, Get and the chunked
   upload of large files can be cancelled (in progress: branch `feature/desktop-cancel-operations`)
+- [ ] *Import BOM…* (CSV/Excel) on a checked-out assembly revision and for a new assembly – plan: a Rust command opens
+  the file dialog and sends the file to `POST /api/v1/items/{number}/revisions/{code}/bom/import` (or
+  `POST /api/v1/bom-imports`) with `dry_run=true`, the UI shows counts, notes and the first rows, a second call
+  imports; desktop tests and the row in `desktop/README.md` (in progress: branch `feature/desktop-bom-import`)
 - [ ] Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI)
 - [ ] Screenshots and short GIFs of the desktop app for the README, and screenshots in the book (the web pages are
@@ -30,13 +34,13 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 
 - [ ] Browser check (no console errors, no overflow at 390 px) of `/requests`, `/requests/new` and `/requests/{id}`,
   and the desktop request tab
-- [ ] Chunked resumable uploads from the web UI – `static/app.js` still sends one multipart request; the API and the
-  desktop app use `/api/v1/uploads` (feature 9; in progress: branch `feature/web-chunked-uploads`)
+- [ ] Chunked uploads from the *New item* form of the web UI – it still sends its files in one request (the revision
+  exists only afterwards); the attach and check-in forms use `/uploads` (feature 9)
 - [ ] Custom attributes per item type and file type, classification (standard/purchased parts), attribute search;
   then the BOM import can map further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to attributes
   (feature 5; in progress: branch `feature/custom-attributes`)
-- [ ] Supersede/replace, alternate parts, multi-level where-used in the web UI – API and MCP have it (`levels=N`)
-  (feature 6; in progress: branch `feature/item-supersede-alternates`)
+- [ ] Feature 6 leftovers: local substitutes per BOM line, a warning when a superseded item is added to a BOM in the
+  desktop app
 - [ ] Numbering schemes: a separate scheme per item type within a group, an instance-wide default other than
   `{TYPE}-{SEQ:6}` (feature 4)
 - [ ] Change requests: e-mail digest of new requests per project group
@@ -150,6 +154,10 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [x] Desktop: project groups load again on *Home*, *Refresh* and in the dialogs; the import log is kept per project
   group, so the same folder can be imported into a second group (#58)
 - [x] Bulk action "Check in all my check-outs" (desktop and web) – `POST /api/v1/worklist/checkin-all`
+- [x] Desktop: cancel long operations (check-in upload, Pack and Go) half-way – *Cancel* in the check-in dialog stops
+  before the next STEP export, between two chunks (upload sessions discarded, not resumable after a cancel) or
+  half-way through the streamed multipart request: nothing stored, still checked out; Pack and Go has a progress
+  dialog with *Cancel* (also while the server packs) and never leaves a half ZIP (`desktop/src/abortable.rs`)
 - [x] SOLIDWORKS 2015+ files: preview image and component tree from the compressed sections (`src/swpart.rs`);
   `teamcraft rescan-references` updates assemblies stored before
 - [x] NX `.prt` detection and the reference scan of an assembly verified with the NIST NX 1980 files
@@ -169,8 +177,15 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [x] 3D preview of real-world STEP files: own Part 21 pre-reader, face-by-face fallback, AP242 tessellated geometry,
   "partial preview: N of M faces"
 - [x] Configurable numbering schemes per project group with preview (feature 4)
-- [x] Item copy ("Save as" with files and BOM), multi-level where-used in the API and MCP (feature 6, part)
+- [x] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts and multi-level where-used in API, MCP
+  and web UI (feature 6) – alternates (two-way or one-way) and supersession per item, *Replace in assemblies* from the
+  where-used page with a preview (in-work parents changed, released ones listed for a new revision), migration 0030
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
+- [x] Chunked uploads from the web UI: `static/app.js` sends files above 32 MiB of the attach and check-in forms
+  (revision page, vault explorer) in chunks to `/uploads` (the same sessions, signed in with the session cookie and
+  covered by the same-origin check, `src/web/uploads.rs`), retries a dropped chunk, resumes after a reload when the
+  same file is chosen again, and *Cancel upload* removes the sessions (tested in `tests/uploads.rs` and in Chromium,
+  2026-11-05)
 - [x] Engineering change requests before the change order (web, API, desktop, attachments, triage, *Create change
   order*); MCP tools `create_change_request`, `comment_change_request` and the `triage_requests` prompt
 - [x] Simulation management v1 (item type `simulation`, basis links, out-of-date detection, result values, import,
@@ -248,15 +263,21 @@ Documented in the UI, keep in mind:
    `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{YY}`, `{MM}` and `{SEQ:n}`, preview of the next numbers on the group page and
    via `GET /api/v1/projects/{code}/numbering`; counters are named after the expansion without the sequence.
 5. **Custom attributes:** open (see *To-do*).
-6. **Item copy** ("Save as" with files and BOM) and multi-level where-used in the API and MCP (`levels=N`); open:
-   supersede/replace, alternate parts, where-used levels in the web UI.
+6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate parts, multi-level where-used: done.
+   Alternates (`item_alternates`, two-way by default) and supersession (`item_supersessions`, one successor, no
+   circles) are item-level relations (`services::interchange`); *Replace in assemblies* on `/items/{id}/where-used`
+   (and `GET/POST /api/v1/items/{number}/replace`, MCP `replace_preview`) changes the parents whose latest revision
+   is in work and not checked out by others, and lists the rest with the reason. Research:
+   [supersede-alternates](src/research/supersede-alternates.md). Open: local substitutes per BOM line, a warning
+   when a superseded item is added to a BOM in the desktop app.
 7. **BOM comparison** with Excel export (`rust_xlsxwriter`, MIT/Apache-2.0): direct lines, and over all levels with a
    revision rule (`depth=all`); the expanded BOM itself exports as Excel too.
 8. **Bulk import of a folder tree:** done in the desktop app (*Import CAD Folder…*).
 9. **Chunked resumable uploads:** a tus-like protocol of our own without new dependencies (`POST /api/v1/uploads`,
    `PATCH` with `Upload-Offset`, 409 on a wrong offset, `HEAD` to resume, `finish` or the `uploads` field of a
-   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; used by the desktop app, not yet
-   by the web UI. **Backup/restore** with `pg_dump`/`pg_restore`: `tests/backup_restore.rs` (backup, restore into a
+   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; used by the desktop app and the attach
+   and check-in forms of the web UI (`/uploads` with the session cookie) for files above 32 MiB; only the *New
+   item* form still sends one multipart request. **Backup/restore** with `pg_dump`/`pg_restore`: `tests/backup_restore.rs` (backup, restore into a
    fresh database and vault, identical row counts, file download and API token on the restored instance, `--force`,
    atomic failure) runs in CI, and the CLI smoke test runs `teamcraft backup`/`restore`. Found and fixed on the way: a
    percent-encoded password in `TEAMCRAFT_DATABASE_URL` reached `pg_dump` undecoded; a failed `restore --force` left a
