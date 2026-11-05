@@ -21,8 +21,8 @@ use crate::{
     models::FileRecord,
     preview::PreviewFormat,
     services::{
-        audit, bom, changes, files, impacts, items, notifications, projects, references, requests,
-        revisions, similar, simulations, uploads,
+        audit, bom, changes, files, impacts, interchange, items, notifications, projects,
+        references, requests, revisions, similar, simulations, uploads,
     },
     thumbnail, util, AppState,
 };
@@ -81,6 +81,31 @@ pub async fn show(
         references::incoming_hidden(&st.db, me, item.id),
     )?;
     let favorite = crate::services::personal::is_favorite(&st.db, ctx.me.id, item.id).await?;
+    // alternates and supersession of the item, superseded children of the BOM
+    let child_ids: Vec<Uuid> = lines
+        .iter()
+        .filter(|l| !l.restricted)
+        .map(|l| l.child_item_id)
+        .collect();
+    let (alternates, alternate_for, successor, predecessors, superseded) = tokio::try_join!(
+        interchange::alternates(&st.db, me, item.id),
+        interchange::alternate_for(&st.db, me, item.id),
+        interchange::successor(&st.db, me, item.id),
+        interchange::predecessors(&st.db, me, item.id),
+        interchange::superseded_among(&st.db, me, &child_ids),
+    )?;
+    let superseded: serde_json::Map<String, serde_json::Value> = superseded
+        .into_iter()
+        .map(|(id, number)| (id.to_string(), json!(number)))
+        .collect();
+    let interchange = json!({
+        "alternates": alternates,
+        "alternate_for": alternate_for,
+        "successor": successor,
+        "predecessors": predecessors,
+        "superseded": superseded,
+        "can_edit": me.can_edit() && me.can_edit_project(item.project_id),
+    });
     // Similar parts by the shape of its 3D model: one indexed query; a
     // missing signature is computed in the background – waited for briefly
     // only when the conversion is done (a quick job from the cached mesh,
@@ -253,6 +278,7 @@ pub async fn show(
             "similar": similar_parts,
             "lines": lines,
             "where_used": where_used,
+            "interchange": interchange,
             "hidden": {
                 "parents": hidden_parents,
                 "incoming": hidden_incoming,

@@ -157,6 +157,9 @@ fn fill(path: &str, h: &Hidden) -> Option<String> {
             ("{revision_id}", _) => h.revision_id.to_string(),
             ("{item_id}", _) => h.item_id.to_string(),
             ("{user_id}", _) => h.caller.to_string(),
+            // an alternate: by number in the REST API, by id in the web UI
+            ("{alternate}", _) if path.starts_with("/api/") => h.item_number.clone(),
+            ("{alternate}", _) => h.item_id.to_string(),
             // objects of no fixture: unknown ids must not reveal anything either
             ("{id}", _) | ("{delivery_id}", _) => random.clone(),
             _ => return None,

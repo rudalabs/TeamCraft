@@ -65,8 +65,10 @@ the known gaps with details. Last update: 2026-11-05.
   readers for IGES, BREP, Parasolid, JT, … (E57: `e57` crate)
 - [x] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview, per project group (feature 4)
 - [ ] Custom attributes per item and file type, classification (standard/purchased parts), attribute search (feature 5)
-- [x] Item copy ("Save as" with files and BOM) – done; multi-level where-used in the API and MCP (`levels`); open:
-  supersede/replace, alternate parts, multi-level where-used in the web UI (feature 6)
+- [x] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts and multi-level where-used in API, MCP
+  and web UI (feature 6) – alternates (two-way or one-way) and supersession per item, *Replace in assemblies* from the
+  where-used page with a preview (in-work parents changed, released ones listed for a new revision), migration 0030;
+  open: local substitutes per BOM line
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
 - [x] Engineering change requests (ECR) before the change order: raised by anybody incl. viewers (web, API, desktop
   revision tab and workspace file, screenshot/PDF attachments), discussion, triage/decision by the CAD editors of the
@@ -264,7 +266,15 @@ The history up to the open-source release is squashed into the first commit
    further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to
    attributes.
 6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate
-   parts, multi-level where-used (API and MCP: done, `levels=N`).
+   parts, multi-level where-used: done. Alternates (`item_alternates`, two-way
+   by default) and supersession (`item_supersessions`, one successor, no
+   circles) are item-level relations (`services::interchange`); *Replace in
+   assemblies* on `/items/{id}/where-used` (and `GET/POST
+   /api/v1/items/{number}/replace`, MCP `replace_preview`) changes the parents
+   whose latest revision is in work and not checked out by others, and lists
+   the rest with the reason. Research: [supersede-alternates](src/research/supersede-alternates.md).
+   Open: local substitutes per BOM line, a warning when a superseded item is
+   added to a BOM in the desktop app.
 7. **BOM comparison** between revisions with Excel export (`rust_xlsxwriter`,
    MIT/Apache-2.0): done – direct lines, and over all levels with a revision
    rule (`depth=all`); the expanded BOM itself exports as Excel too.
