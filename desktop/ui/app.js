@@ -498,16 +498,29 @@
     return state.projects.filter(function (p) { return p.id === id; })[0];
   }
 
-  function enterShell() {
+  /** Fetches the project groups and my account (role, memberships) again, so
+   * a group created or joined in the web UI shows without restarting the app. */
+  function reloadProjects() {
     return Promise.all([api("GET", "/me"), api("GET", "/projects")]).then(function (r) {
       state.me = r[0];
       state.projects = r[1] || [];
-      $("connect").classList.add("hidden");
-      $("shell").classList.remove("hidden");
       $("user-name").textContent = state.me.display_name;
       var role = $("user-role");
       role.className = "badge badge-" + state.me.role;
       role.textContent = label(state.me.role);
+    });
+  }
+
+  /** For the dialogs that offer the project groups: fresh lists, the cached
+   * ones when the server cannot be reached (the dialog's request then fails). */
+  function freshProjects() {
+    return reloadProjects().catch(function () {});
+  }
+
+  function enterShell() {
+    return reloadProjects().then(function () {
+      $("connect").classList.add("hidden");
+      $("shell").classList.remove("hidden");
       $("status-server").textContent = state.session.server_url;
       $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
       selectView(state.view);
@@ -776,6 +789,12 @@
   }
 
   function renderHome() {
+    // fetched again each time (Home, Refresh, after an import): groups created or joined meanwhile show up
+    return reloadProjects().then(drawHome);
+  }
+
+  function drawHome() {
+    if (state.view !== "home") return; // switched to another view while loading
     var nav = $("navigator");
     var mine = state.projects.filter(function (p) { return p.active && state.me.projects.indexOf(p.id) !== -1; });
     var others = state.projects.filter(function (p) { return p.active && state.me.projects.indexOf(p.id) === -1; });
@@ -3682,7 +3701,9 @@
     };
   }
 
-  function newItemDialog() {
+  function newItemDialog() { freshProjects().then(openNewItemDialog); }
+
+  function openNewItemDialog() {
     if (!canEdit()) { toast("Viewers cannot create items.", "error"); return; }
     var projects = state.projects.filter(function (p) { return p.active && canEditProject(p.id); });
     if (!projects.length) { toast("You are not a member of any project group – ask an admin to add you.", "error"); return; }
@@ -3772,7 +3793,9 @@
 
   /** For new team members or a fresh computer: copies the files of every item
    * of the chosen project groups into the workspace, one folder per group. */
-  function getProjectsDialog() {
+  function getProjectsDialog() { freshProjects().then(openGetProjectsDialog); }
+
+  function openGetProjectsDialog() {
     function member(p) { return state.me.projects.indexOf(p.id) !== -1; }
     var groups = state.projects.filter(function (p) { return p.active; }).sort(function (a, b) {
       return (member(b) - member(a)) || a.code.localeCompare(b.code);
@@ -3931,14 +3954,40 @@
     return { items: items, duplicates: duplicates, extras: extras.length, ignored: scan.ignored, files: scan.files.length };
   }
 
-  /** Items already imported from a folder (to continue an interrupted import). */
-  function importLog(folder) {
-    try { return JSON.parse(window.localStorage.getItem("teamcraft.import:" + state.session.server_url + ":" + folder)) || {}; }
+  /** Items already imported from a folder into a project group (to continue an
+   * interrupted import) – per group, so the same folder can go into another group. */
+  function importLogKey(project, folder) {
+    return "teamcraft.import-log:" + JSON.stringify([state.session.server_url, project, folder]);
+  }
+  function importLog(project, folder) {
+    try { return JSON.parse(window.localStorage.getItem(importLogKey(project, folder))) || {}; }
     catch (e) { return {}; }
   }
-  function saveImportLog(folder, log) {
-    try { window.localStorage.setItem("teamcraft.import:" + state.session.server_url + ":" + folder, JSON.stringify(log)); }
+  function saveImportLog(project, folder, log) {
+    try { window.localStorage.setItem(importLogKey(project, folder), JSON.stringify(log)); }
     catch (e) { /* the import still works, it just cannot be continued */ }
+  }
+
+  /** Earlier versions kept one log per folder, without the project group. Such
+   * a log is moved to the group of the items it lists (asked for its first
+   * item), so an interrupted import still continues instead of creating the
+   * items twice; it is kept as it is while that item cannot be read. */
+  function adoptFolderImportLog(folder) {
+    var oldKey = "teamcraft.import:" + state.session.server_url + ":" + folder, old = null;
+    try { old = JSON.parse(window.localStorage.getItem(oldKey)); } catch (e) { /* unreadable: ignored */ }
+    var keys = old ? Object.keys(old) : [];
+    if (!keys.length) return Promise.resolve();
+    return api("GET", "/items/" + enc(old[keys[0]])).then(function (r) {
+      var project = r.item && r.item.project_code;
+      if (!project) return;
+      var log = importLog(project, folder);
+      keys.forEach(function (k) { if (!log[k]) log[k] = old[k]; });
+      saveImportLog(project, folder, log);
+      var saved = importLog(project, folder);
+      if (keys.every(function (k) { return saved[k]; })) {
+        try { window.localStorage.removeItem(oldKey); } catch (e) { /* tried again at the next scan */ }
+      }
+    }, function () { /* deleted or not visible: the old log stays unused */ });
   }
 
   /** BOM lines for the parts the new assemblies reference (quantity 1). */
@@ -4001,13 +4050,18 @@
     }).catch(function (err) { failed.push("Releasing the check-outs: " + errorText(err)); });
   }
 
-  function importFolderDialog() {
+  function importFolderDialog() { freshProjects().then(openImportFolderDialog); }
+
+  function openImportFolderDialog() {
     if (!canEdit()) { toast("Viewers cannot import.", "error"); return; }
     var projects = state.projects.filter(function (p) { return p.active && canEditProject(p.id); });
     if (!projects.length) { toast("You are not a member of any project group – ask an admin to add you.", "error"); return; }
     var folder = h("input", { type: "text", spellcheck: "false", placeholder: "Folder with the CAD files" });
+    // another folder: scan again before Import (the plan and the log belong to the scanned folder)
+    function forgetScan() { if (!running) { scanned = null; plan = null; scannedPath = ""; report.textContent = ""; } }
+    folder.addEventListener("input", forgetScan);
     var pick = TAURI.dialog ? h("button", { type: "button", on: { click: function () {
-      TAURI.dialog.open({ directory: true, title: "CAD folder to import" }).then(function (dir) { if (dir) { folder.value = dir; scanned = null; report.textContent = ""; } });
+      TAURI.dialog.open({ directory: true, title: "CAD folder to import" }).then(function (dir) { if (dir && !running) { folder.value = dir; forgetScan(); } });
     } } }, "Choose…") : null;
     var project = h("select", null, projects.map(function (p) { return h("option", { value: p.code, text: p.code + " – " + p.name }); }));
     var fromNames = h("input", { type: "checkbox" });
@@ -4016,14 +4070,14 @@
     var report = h("div.stack");
     var bar = h("progress.hidden", { max: "1", value: "0" });
     var status = h("p.small", { role: "status" });
-    var scanned = null, kinds = null, plan = null, running = false, stop = false;
+    var scanned = null, scannedPath = "", kinds = null, plan = null, running = false, stop = false;
 
     function options() { return { numbersFromNames: fromNames.checked, extras: extras.checked }; }
     function progress(done, total, text) { bar.classList.remove("hidden"); bar.max = Math.max(total, 1); bar.value = done; status.textContent = text; }
 
     function showPlan() {
       plan = planImport(scanned, kinds, options());
-      var log = importLog(folder.value.trim());
+      var log = importLog(project.value, scannedPath);
       var open = plan.items.filter(function (it) { return !log[it.key]; });
       report.textContent = "";
       append(report, [
@@ -4048,18 +4102,20 @@
       var path = folder.value.trim();
       if (!path) { d.fail("Choose the folder first."); return; }
       status.textContent = "Scanning …";
-      Promise.all([call("scan_folder", { path: path }), formatKinds()]).then(function (r) {
-        scanned = r[0]; kinds = r[1];
+      Promise.all([call("scan_folder", { path: path }), formatKinds(), adoptFolderImportLog(path)]).then(function (r) {
+        if (folder.value.trim() !== path) { status.textContent = ""; return; } // changed while scanning
+        scanned = r[0]; kinds = r[1]; scannedPath = path;
         status.textContent = "Scanned – nothing is uploaded yet. Check the list, then Import.";
         showPlan();
       }, function (err) { status.textContent = ""; d.fail(err); });
     }
-    [fromNames, extras].forEach(function (box) { box.addEventListener("change", function () { if (scanned && !running) showPlan(); }); });
+    // the project group too: what counts as "already imported" is kept per group
+    [fromNames, extras, project].forEach(function (box) { box.addEventListener("change", function () { if (scanned && !running) showPlan(); }); });
 
     function importNow(d) {
       if (running) return;
       if (!plan) { d.fail("Scan the folder first."); return; }
-      var path = folder.value.trim(), log = importLog(path);
+      var path = scannedPath, group = project.value, log = importLog(group, path);
       var todo = plan.items.filter(function (it) { return !log[it.key]; });
       var created = [], failed = [], files = 0, checkedIn = 0;
       running = true; stop = false;
@@ -4067,9 +4123,9 @@
         return chain.then(function () {
           if (stop) return;
           progress(i + 1, todo.length, "Item " + (i + 1) + " of " + todo.length + ": " + it.name);
-          return api("POST", "/items", { item_type: it.type, name: it.name, project: project.value, number: it.number }).then(function (rev) {
+          return api("POST", "/items", { item_type: it.type, name: it.name, project: group, number: it.number }).then(function (rev) {
             // remembered at once, so a second run never creates it twice
-            log[it.key] = rev.item_number; saveImportLog(path, log);
+            log[it.key] = rev.item_number; saveImportLog(group, path, log);
             created.push({ rev: rev, item: it });
             return call("upload_files", { item: rev.item_number, code: rev.code, paths: it.files.map(function (f) { return f.path; }),
               comment: "Imported from " + scanned.folder_name, folders: importFolders(it.files, scanned.folder_name) })
@@ -4096,12 +4152,12 @@
         running = false;
         bar.classList.add("hidden");
         status.textContent = "";
-        if (created.length) { delete state.expanded[project.value]; if (state.view === "home") selectView("home"); refreshWorklistCount(); }
+        if (created.length) { delete state.expanded[group]; if (state.view === "home") selectView("home"); refreshWorklistCount(); }
         d.close();
         importFinishedDialog({
           stopped: stop, created: created, files: files, skipped: plan.items.length - todo.length,
           bom: bom.checked, lines: lines, checkedIn: checkedIn, failed: failed,
-          folder: scanned.folder_name, project: project.value
+          folder: scanned.folder_name, project: group
         });
       });
     }
@@ -4174,7 +4230,7 @@
       ]),
       step("3 · Import", [
         "Import creates the items and uploads the files, item by item, with progress. The source folder is only read.",
-        "Stop finishes the current item. The app remembers what was imported: scan and import again to continue.",
+        "Stop finishes the current item. The app remembers what was imported into each project group: scan and import again to continue. The same folder can also be imported into another project group.",
         "At the end every new item is checked in, so nothing stays locked.",
         "When it is done, a report shows the new items and files, the BOM lines and any problems – with a button that opens the top assembly."
       ]),

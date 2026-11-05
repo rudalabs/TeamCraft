@@ -17,9 +17,11 @@ check-outs and reviews, and a **local working folder**:
 * the folder icon next to it (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
   scan first (nothing is uploaded), then one item per part or assembly with
   its drawings and exports; every file keeps its folder, so the working
-  folder later looks like the original tree. *Help → How to Import a CAD
-  Folder* is the step-by-step tutorial (Pack and Go, unique file names,
-  check and release);
+  folder later looks like the original tree. An interrupted import continues
+  where it stopped; the app remembers per project group what it imported, so
+  the same folder can also be imported into another group. *Help → How to
+  Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file
+  names, check and release);
 * the *Workspace* tab shows per file where it is, whether it is up to date,
   modified, outdated, in conflict, new, missing or a name clash, whether it
   is read-only, and who holds the lock for how long; opening an outdated
@@ -117,6 +119,11 @@ the preview image stored in an Inventor, Solid Edge, SolidWorks or NX file
 (with the way into the 3D viewer) and the number of files, BOM lines, where
 used, references, change orders and open change requests – a click opens the
 matching sub-tab.
+
+*Home*, *Refresh* and the dialogs that offer project groups (*New*, *Get
+Project Groups…*, *Import CAD Folder…*) load the groups and your memberships
+from the server again, so a group created or joined in the web UI shows
+without restarting the app.
 
 Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
 `Ctrl/Cmd+1/2/3/4` Home, Worklist, Changes, Agent, `Ctrl/Cmd+W` close the tab,

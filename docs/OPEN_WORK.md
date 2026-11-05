@@ -2,7 +2,7 @@
 
 The to-do list of TeamCraft first – tick an entry (`[x]`) when it is done –,
 then the status of the Prio-1 work plan (worked through in this order) and
-the known gaps with details. Last update: 2026-11-04.
+the known gaps with details. Last update: 2026-11-05.
 
 ## To-do
 
@@ -24,14 +24,15 @@ the known gaps with details. Last update: 2026-11-04.
   to do: a real SOLIDWORKS drawing for the document-manager fallback)
 - [ ] Reference scan: false references in real files – NX parts fixed (stream container, `src/nxpart.rs`); open: noise in JT
   files (gap test in `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is ignored
-- [ ] Desktop: a project group created in the web UI only appears in the navigator after restarting the app – `/me` and
-  `/projects` are loaded once in `enterShell()` (`desktop/ui/app.js`), *Refresh* only redraws the cached
-  `state.projects`; reload both lists when the home view is built and in the *Get project groups* and *Import CAD
-  folder* dialogs; test: a group added on the server shows after *Refresh* (found on Windows 11 ARM64, 2026-11-05)
-- [ ] Desktop folder import: the same folder cannot be imported into a second project group – the log of imported items
-  (`importLog` / `saveImportLog`) is keyed by server and folder only, so every item counts as "already imported"; add
-  the project group to the key and recompute the plan when the project select changes (found on Windows 11 ARM64,
-  2026-11-05; workaround: import a copy of the folder)
+- [x] Desktop: a project group created in the web UI only appeared in the navigator after restarting the app – `/me`
+  and `/projects` were loaded once in `enterShell()` (`desktop/ui/app.js`). Now *Home*, *Refresh* and the dialogs
+  *New*, *Get project groups* and *Import CAD folder* load both again (`reloadProjects()`); checked in Chromium with a
+  stubbed Tauri and a fake server (found on Windows 11 ARM64, 2026-11-05; still to do: check in the real app)
+- [x] Desktop folder import: the same folder could not be imported into a second project group – the log of imported
+  items was keyed by server and folder only, so every item counted as "already imported". The log is now kept per
+  server, project group and folder, the plan is recomputed when the project select changes, a log of the old format
+  is moved once to the group of its items (an interrupted import still continues instead of creating the items twice),
+  and a folder changed after the scan needs a new scan (found on Windows 11 ARM64, 2026-11-05)
 
 **General**
 
