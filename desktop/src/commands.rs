@@ -341,8 +341,30 @@ pub async fn save_package(
     if let Some(r) = rule {
         path.push_str(&format!("?rule={r}"));
     }
-    api.download_to(&path, &target).await?;
+    // a fresh cancel switch for this download (`cancel_package` flips it);
+    // `package-progress` events follow it: {received, total?}
+    let cancel = Arc::new(AtomicBool::new(false));
+    *state.package_cancel.lock().expect("package lock") = cancel.clone();
+    let events = app.clone();
+    let on_bytes = move |received: u64, total: Option<u64>| {
+        let _ = events.emit(
+            "package-progress",
+            json!({ "received": received, "total": total }),
+        );
+    };
+    api.download_to(&path, &target, &cancel, &on_bytes).await?;
     Ok(Some(target))
+}
+
+/// Stops the running Pack and Go download (also while the server is still
+/// packing); the partial ZIP is removed and nothing is written.
+#[tauri::command]
+pub fn cancel_package(state: State<'_, AppState>) {
+    state
+        .package_cancel
+        .lock()
+        .expect("package lock")
+        .store(true, Ordering::Relaxed);
 }
 
 /// Saves bytes from the web view (the STL export of the 3D viewer) to a file

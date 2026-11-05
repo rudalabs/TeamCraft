@@ -1027,3 +1027,6 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
   .skin-card.selected { outline: 2px solid Highlight; }
   .notice { border-left: 3px solid CanvasText; }
 }
+
+/* progress dialogs (Pack and Go) */
+.dialog progress { width: 100%; height: 8px; accent-color: var(--primary); }
