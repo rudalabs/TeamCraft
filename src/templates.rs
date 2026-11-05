@@ -884,7 +884,7 @@ mod tests {
         let html = render(&env, "files/preview.html", preview("stl", true));
         assert!(html.contains(&format!("data-src=\"/file-versions/{ME}/mesh\"")));
         assert!(!html.contains("viewer-stl"), "no STL export of an STL file");
-        assert!(html.contains("/static/viewer.js?v="));
+        assert!(html.contains("/static/shared/v/") && html.contains("/js/viewer.js\""));
         assert!(html.contains("first &lt;draft&gt;"), "comments are escaped");
         let html = render(&env, "files/preview.html", preview("step", false));
         assert!(html.contains("older version"));
@@ -1465,15 +1465,17 @@ mod tests {
     }
 
     /// Every link to an embedded asset carries the asset version, so browsers
-    /// never keep an outdated stylesheet, script or logo after an update.
+    /// never keep an outdated stylesheet, script or logo after an update:
+    /// `?v=` or, for shared scripts, the versioned path (src/assets.rs).
     #[test]
     fn static_links_carry_the_asset_version() {
         for (name, source) in TEMPLATES {
             for (i, _) in source.match_indices("\"/static/") {
                 let link = &source[i + 1..];
                 let link = &link[..link.find('"').unwrap_or(link.len())];
+                let versioned = link.starts_with("/static/shared/v/{{ assets }}/js/");
                 assert!(
-                    link.contains("?v={{ assets }}"),
+                    link.contains("?v={{ assets }}") || versioned,
                     "{name}: {link} has no ?v={{{{ assets }}}}"
                 );
             }

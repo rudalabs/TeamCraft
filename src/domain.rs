@@ -1985,7 +1985,7 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), SKINS.len(), "skin ids are unique");
         // every skin has a CSS block
-        let css = include_str!("../static/skins.css");
+        let css = include_str!("../shared/css/skins.css");
         for skin in SKINS.iter().filter(|s| s.id != DEFAULT_SKIN) {
             assert!(
                 css.contains(&format!("[data-skin=\"{}\"] {{", skin.id)),
@@ -2044,7 +2044,7 @@ mod tests {
 
     // --- skins.css: token blocks and contrast --------------------------------
 
-    const SKINS_CSS: &str = include_str!("../static/skins.css");
+    const SKINS_CSS: &str = include_str!("../shared/css/skins.css");
 
     /// The text between two marker comments.
     fn css_between<'a>(css: &'a str, begin: &str, end: &str) -> &'a str {

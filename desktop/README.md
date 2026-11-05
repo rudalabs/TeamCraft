@@ -48,12 +48,12 @@ Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
 ## Continuous integration
 
 `.github/workflows/desktop.yml` runs on every change to `desktop/`,
-`static/` or `media/`: `cargo fmt`, `clippy` and the tests, a build, and a
+`static/`, `shared/` or `media/`: `cargo fmt`, `clippy` and the tests, a build, and a
 **start-up smoke test** (the app is started with a fresh profile – on Linux
 under a virtual display – and must still be running after 20 seconds) on
 Linux x86_64 (Ubuntu 24.04 and 26.04) and ARM64, macOS ARM64 and Windows
 x86_64; Windows ARM64 runs as a preview that never blocks. A separate job
-parses every script of `ui/` and the web UI (`node --check`; Node.js is only
+parses every script of `ui/`, the web UI and `shared/` (`node --check`; Node.js is only
 used by CI, the app has no build step). Nothing is packaged or published.
 
 ## Run from source
@@ -100,8 +100,11 @@ Where the app keeps its data:
 ## Layout
 
 `build.rs` copies the assets the app shares with the web UI into `ui/static/`
-(git-ignored): `static/skins.css`, the fonts, the logos in `media/` and the 3D
-viewer.
+(git-ignored): the whole `shared/` tree (skins, fonts, the 3D viewer) to
+`ui/static/shared/` and the logos and icons from `media/`. The app loads them
+from the same URLs as the web UI (`/static/shared/…`, `/static/media/…`); the
+test `shared_ui_files_are_mirrored` checks the copy byte for byte. What belongs
+into `shared/` and its rules: [`shared/README.md`](../shared/README.md).
 
 ```text
 src/main.rs        Tauri setup, native menu, state

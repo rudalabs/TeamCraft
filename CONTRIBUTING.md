@@ -204,11 +204,20 @@ code base. These are the most important rules:
     the `every_template_renders` test.
   * No inline JavaScript or styles: the Content Security Policy blocks them.
   * Cancel buttons take effect immediately, without a confirmation.
-  * **Design tokens:** no literal colours outside `static/skins.css`; every
+  * **Design tokens:** no literal colours outside `shared/css/skins.css`; every
     component reads the tokens (`--surface`, `--text-muted`, `--primary`,
     `--st-<state>-fg/-bg/-bd`, …). Tokens are opaque `#rrggbb`; the unit tests
     `skins_meet_contrast` and `dark_token_blocks_identical` (`src/domain.rs`)
     check the WCAG contrast and that the two dark blocks match.
+  * **Shared UI files** (`shared/`): what both the web UI and the desktop
+    app use – skins, fonts, the 3D viewer. The server embeds the folder
+    without a hand-written list (`build.rs`), the desktop build copies it;
+    every `.css`/`.js`/`.svg` starts with
+    `/* SPDX-License-Identifier: MPL-2.0 */`. Rules in `shared/README.md`.
+  * **Density by tokens:** sizes of controls, rows and body text come from
+    `--ctl-h`, `--ctl-h-sm`, `--row-h`, `--fs-body`, `--lh-body`; the web UI
+    uses the defaults, the desktop app `data-density="compact"`. No
+    app-specific copies of these tokens.
   * No gradients, glow, texture, glass or uppercase labels in components
     (`grep -n gradient static/style.css` stays empty;
     only the distro skins' `--glow` / `--pattern` behind the page use them).

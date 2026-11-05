@@ -48,6 +48,7 @@
 | `src/domain.rs`                      | roles, lifecycle, revision letters, skins, validation                                                |
 | `src/services/`                      | items, revisions, files, chunked uploads, BOM, changes, references, impacts, simulations, projects, users, … |
 | `src/web/`, `templates/`, `static/`  | HTML interface                                                                                       |
+| `shared/`                            | UI files of both the web UI and the desktop app: skins and tokens, fonts, 3D viewer (`shared/README.md`) |
 | `src/api/`                           | REST API                                                                                             |
 | `src/mcp/`                           | MCP server for AI assistants (`POST /api/v1/mcp`): JSON-RPC, tools and prompts over the services     |
 | `src/assistant.rs`                   | built-in assistant: tool loop over the Anthropic Messages API with the MCP tools, markdown rendering |

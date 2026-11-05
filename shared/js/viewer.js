@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: MPL-2.0 */
 // TeamCraft 3D preview: a small self-contained WebGL2 viewer.
 //
 // The server converts every supported file (meshes, point clouds, STEP) into
