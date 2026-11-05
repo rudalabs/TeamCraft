@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ request.number }} {{ request.title }}{% endblock %}
 {% block nav_requests %}active{% endblock %}
+{% block tc_context %}data-tc-kind="request" data-tc-request="{{ request.number }}"{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">

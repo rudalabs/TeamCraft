@@ -53,6 +53,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/worklist/checkin-all", post(checkin_all))
         .route("/mcp", post(crate::mcp::http).get(crate::mcp::http_get))
         .route("/assistant", get(assistant_info).post(assistant_ask))
+        .route(
+            "/assistant/thread",
+            get(assistant_thread).delete(assistant_thread_reset),
+        )
         .route("/formats", get(formats))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{code}/visibility", put(set_project_visibility))
@@ -379,7 +383,9 @@ async fn index() -> Json<Value> {
             "PUT    /api/v1/projects/{code}/numbering                 {scheme} e.g. {PROJECT}-{TYPE}-{YYYY}-{SEQ:4}, empty = {TYPE}-{SEQ:6} – managers and admins",
             "POST   /api/v1/mcp                                       Model Context Protocol (JSON-RPC 2.0) for AI assistants, see the MCP reference",
             "GET    /api/v1/assistant                                 whether the built-in assistant is enabled, and its quick actions",
-            "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention, context: {item?, revision?, change?}, allow_drafts?}",
+            "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention|impact|simulation_status, context: {kind?, item?, revision?, change?, request?, project?, view?, rule?, query?, filters?, selected?, shown?}, allow_drafts?, thread?}",
+            "GET    /api/v1/assistant/thread                          the caller's conversation (thread: true questions), newest message last",
+            "DELETE /api/v1/assistant/thread                          new conversation: deletes the caller's thread",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
             "GET    /api/v1/items?q=&type=&project=&state=&system=&class=&attr=&value=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo; class = make|purchased|standard; attr + value = custom attribute (value: text contains, yes/no, 12, >=10, <=20, 10..20, empty = has a value)",
             "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?, classification?, attributes?}",
@@ -534,21 +540,19 @@ async fn assistant_info(State(st): State<AppState>, ApiUser(_me): ApiUser) -> Js
     }))
 }
 
-#[derive(Deserialize, Default)]
-struct AssistantContext {
-    item: Option<String>,
-    revision: Option<String>,
-    change: Option<String>,
-}
-
 #[derive(Deserialize)]
 struct AssistantBody {
     question: Option<String>,
     action: Option<String>,
+    /// The page the caller is on (`crate::pagecontext`): identifiers are
+    /// hints, resolved with the caller's rights.
     #[serde(default)]
-    context: AssistantContext,
+    context: Value,
     #[serde(default)]
     allow_drafts: bool,
+    /// Ask in the caller's conversation (stored, follow-ups see it).
+    #[serde(default)]
+    thread: bool,
 }
 
 /// `POST /api/v1/assistant`: runs the assistant with the caller's rights.
@@ -557,20 +561,42 @@ async fn assistant_ask(
     ApiUser(me): ApiUser,
     ApiJson(body): ApiJson<AssistantBody>,
 ) -> AppResult<Json<Value>> {
+    let run = crate::services::assistant::chat(
+        &st,
+        &me,
+        body.action.as_deref(),
+        body.question.as_deref(),
+        &body.context,
+        body.allow_drafts,
+        body.thread,
+    )
+    .await?;
+    Ok(Json(json!(run)))
+}
+
+/// `GET /api/v1/assistant/thread`: the caller's conversation.
+async fn assistant_thread(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+) -> AppResult<Json<Value>> {
+    let Some(client) = st.assistant.as_deref() else {
+        return Err(crate::assistant::AssistantError::Disabled.into_app_error());
+    };
+    let thread =
+        crate::services::assistant_threads::load(&st.db, &me, client.retention_days).await?;
+    Ok(Json(json!(thread)))
+}
+
+/// `DELETE /api/v1/assistant/thread`: a new conversation.
+async fn assistant_thread_reset(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+) -> AppResult<Json<Value>> {
     if !crate::services::assistant::enabled(&st) {
         return Err(crate::assistant::AssistantError::Disabled.into_app_error());
     }
-    let question = crate::assistant::Question::new(
-        body.action.as_deref(),
-        body.question.as_deref(),
-        body.context.item.as_deref(),
-        body.context.revision.as_deref(),
-        body.context.change.as_deref(),
-        body.allow_drafts,
-    )
-    .map_err(AppError::BadRequest)?;
-    let run = crate::services::assistant::ask(&st, &me, question).await?;
-    Ok(Json(json!(run)))
+    crate::services::assistant_threads::reset(&st.db, &me).await?;
+    Ok(Json(json!({ "deleted": true })))
 }
 
 #[derive(Deserialize)]

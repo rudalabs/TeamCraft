@@ -181,6 +181,8 @@ pub const DEFAULT_ASSISTANT_REQUEST_TIMEOUT: u64 = 180;
 pub const DEFAULT_ASSISTANT_RUN_TIMEOUT: u64 = 240;
 /// Default number of runs at the same time.
 pub const DEFAULT_ASSISTANT_MAX_CONCURRENT: usize = 4;
+/// Default for how long an idle assistant conversation is kept (days).
+pub const DEFAULT_ASSISTANT_RETENTION_DAYS: u32 = 30;
 
 /// Which wire format the assistant speaks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,6 +243,8 @@ pub struct AssistantConfig {
     pub run_timeout: Duration,
     /// Runs at the same time on this server.
     pub max_concurrent: usize,
+    /// Days an idle conversation (thread) is kept before it is deleted.
+    pub retention_days: u32,
 }
 
 impl std::fmt::Debug for AssistantConfig {
@@ -255,6 +259,7 @@ impl std::fmt::Debug for AssistantConfig {
             .field("request_timeout", &self.request_timeout)
             .field("run_timeout", &self.run_timeout)
             .field("max_concurrent", &self.max_concurrent)
+            .field("retention_days", &self.retention_days)
             .finish()
     }
 }
@@ -413,6 +418,13 @@ fn assistant_config<F: Fn(&str) -> Option<String>>(
     if !(1..=64).contains(&max_concurrent) {
         bail!("TEAMCRAFT_ASSISTANT_MAX_CONCURRENT must be between 1 and 64");
     }
+    let retention_days = env.parse_or(
+        "TEAMCRAFT_ASSISTANT_RETENTION_DAYS",
+        DEFAULT_ASSISTANT_RETENTION_DAYS,
+    )?;
+    if !(1..=365).contains(&retention_days) {
+        bail!("TEAMCRAFT_ASSISTANT_RETENTION_DAYS must be between 1 and 365");
+    }
     Ok(Some(AssistantConfig {
         provider,
         base_url,
@@ -423,6 +435,7 @@ fn assistant_config<F: Fn(&str) -> Option<String>>(
         request_timeout: Duration::from_secs(request_timeout),
         run_timeout: Duration::from_secs(run_timeout),
         max_concurrent,
+        retention_days,
     }))
 }
 
@@ -1320,6 +1333,7 @@ mod tests {
             ("TEAMCRAFT_ASSISTANT_MAX_TOKENS", "4000"),
             ("TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT", "600"),
             ("TEAMCRAFT_ASSISTANT_MAX_CONCURRENT", "2"),
+            ("TEAMCRAFT_ASSISTANT_RETENTION_DAYS", "7"),
         ])
         .unwrap()
         .unwrap();
@@ -1327,11 +1341,14 @@ mod tests {
         assert_eq!(a.request_timeout, Duration::from_secs(600));
         assert_eq!(a.run_timeout, Duration::from_secs(600));
         assert_eq!(a.max_concurrent, 2);
+        assert_eq!(a.retention_days, 7);
         for (key, value) in [
             ("TEAMCRAFT_ASSISTANT_MAX_TOKENS", "10"),
             ("TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT", "1"),
             ("TEAMCRAFT_ASSISTANT_RUN_TIMEOUT", "100"), // below the request timeout of 180
             ("TEAMCRAFT_ASSISTANT_MAX_CONCURRENT", "0"),
+            ("TEAMCRAFT_ASSISTANT_RETENTION_DAYS", "0"),
+            ("TEAMCRAFT_ASSISTANT_RETENTION_DAYS", "366"),
         ] {
             assert!(
                 assistant_from(&[("TEAMCRAFT_ASSISTANT_API_KEY", "k"), (key, value)]).is_err(),
@@ -1395,6 +1412,7 @@ mod tests {
         let a = cfg.assistant.as_ref().unwrap();
         assert_eq!(a.model, DEFAULT_ASSISTANT_MODEL);
         assert_eq!(a.max_steps, DEFAULT_ASSISTANT_MAX_STEPS);
+        assert_eq!(a.retention_days, DEFAULT_ASSISTANT_RETENTION_DAYS);
         assert!(
             !cfg.summary().contains("sk-test-key-123"),
             "no key in the log"
@@ -1436,6 +1454,8 @@ mod tests {
 
         for (key, value) in [
             ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "0"),
+            ("TEAMCRAFT_ASSISTANT_RETENTION_DAYS", "0"),
+            ("TEAMCRAFT_ASSISTANT_RETENTION_DAYS", "400"),
             ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "500"),
             ("TEAMCRAFT_ASSISTANT_MODEL", "claude opus"),
         ] {
