@@ -558,6 +558,11 @@ pub fn payload(event: WebhookEvent, id: Uuid, actor: Option<&Actor>, objects: Va
 /// Queues an event for every active webhook that subscribed to it and whose
 /// project group (if any) is one of `projects`. Call it inside the event's
 /// transaction. Returns the number of deliveries queued.
+///
+/// A webhook limited to a project group receives only the entries of a
+/// top-level `revisions` list that belong to its group (a change can hold
+/// revisions of several groups; the other groups' items are none of that
+/// receiver's business).
 pub async fn emit(
     conn: &mut PgConnection,
     actor: Option<&Actor>,
@@ -570,8 +575,17 @@ pub async fn emit(
     let body = payload(event, event_id, actor, objects);
     Ok(sqlx::query(
         "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event, payload)
-         SELECT gen_random_uuid(), w.id, $1, $2, $3
+         SELECT gen_random_uuid(), w.id, $1, $2,
+                CASE WHEN p.code IS NULL OR jsonb_typeof($3::jsonb -> 'revisions') IS DISTINCT FROM 'array'
+                     THEN $3::jsonb
+                     ELSE jsonb_set($3::jsonb, '{revisions}', COALESCE(
+                         (SELECT jsonb_agg(r.value ORDER BY r.ordinality)
+                          FROM jsonb_array_elements($3::jsonb -> 'revisions') WITH ORDINALITY AS r
+                          WHERE r.value ->> 'project' = p.code),
+                         '[]'::jsonb))
+                END
          FROM webhooks w
+         LEFT JOIN projects p ON p.id = w.project_id
          WHERE w.active AND $2 = ANY(w.events)
            AND (w.project_id IS NULL OR w.project_id = ANY($4))",
     )

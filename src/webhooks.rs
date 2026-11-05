@@ -256,7 +256,7 @@ fn is_broadcast(ip: IpAddr) -> bool {
 /// (RFC 1918), shared (100.64/10), link-local (incl. 169.254.169.254),
 /// "this network" (0/8), benchmarking (198.18/15), IPv6 unique-local
 /// (fc00::/7), link-local (fe80::/10) and site-local (fec0::/10), and NAT64
-/// addresses of such IPv4 addresses.
+/// and 6to4 addresses of such IPv4 addresses.
 pub fn is_internal(ip: IpAddr) -> bool {
     match canonical(ip) {
         IpAddr::V4(v4) => {
@@ -271,15 +271,24 @@ pub fn is_internal(ip: IpAddr) -> bool {
         }
         IpAddr::V6(v6) => {
             let s = v6.segments();
+            let v4_at = |hi: u16, lo: u16| {
+                is_internal(IpAddr::V4(Ipv4Addr::new(
+                    (hi >> 8) as u8,
+                    hi as u8,
+                    (lo >> 8) as u8,
+                    lo as u8,
+                )))
+            };
             v6.is_loopback()
                 || (s[0] & 0xfe00) == 0xfc00
                 || (s[0] & 0xffc0) == 0xfe80
                 || (s[0] & 0xffc0) == 0xfec0
-                || (s[0] == 0x64 && s[1] == 0xff9b && s[2..6] == [0, 0, 0, 0] && {
-                    let v4 =
-                        Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8);
-                    is_internal(IpAddr::V4(v4))
-                })
+                // NAT64 well-known prefix 64:ff9b::/96 …
+                || (s[0] == 0x64 && s[1] == 0xff9b && s[2..6] == [0, 0, 0, 0] && v4_at(s[6], s[7]))
+                // … and the local-use prefix 64:ff9b:1::/48 (RFC 8215)
+                || (s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1 && v4_at(s[6], s[7]))
+                // 6to4 (2002:V4ADDR::/48) of an internal IPv4 address
+                || (s[0] == 0x2002 && v4_at(s[1], s[2]))
                 || v6 == Ipv6Addr::UNSPECIFIED
         }
     }
@@ -352,6 +361,12 @@ struct Claimed {
     event: String,
     payload: Value,
     attempts: i32,
+    /// The end of this sender's lease (`next_attempt_at` set by the claim):
+    /// the token that lets only this attempt record its result. A "Retry"
+    /// or a new claim after the lease moves it, so a late result of an
+    /// older attempt cannot overwrite the newer one (`attempts` alone can
+    /// repeat after "Retry" reset it).
+    lease_until: chrono::DateTime<chrono::Utc>,
     url: String,
     secret: String,
 }
@@ -396,7 +411,8 @@ const CLAIM: &str = "
         updated_at = now()
     FROM due, webhooks w
     WHERE d.id = due.id AND w.id = d.webhook_id
-    RETURNING d.id, d.event, d.payload, d.attempts, w.url, w.secret";
+    RETURNING d.id, d.event, d.payload, d.attempts, d.next_attempt_at AS lease_until,
+              w.url, w.secret";
 
 impl Dispatcher {
     pub fn from_config(config: &Config) -> anyhow::Result<Dispatcher> {
@@ -460,19 +476,23 @@ impl Dispatcher {
         Ok(report)
     }
 
-    /// Sends one pending delivery now, whatever its schedule ("Send test",
-    /// "Retry"). `None` if it is not pending or another sender holds it.
+    /// Sends one due delivery now ("Send test", "Retry" – both make it due
+    /// at once). `None` if it is not pending, or another sender holds it:
+    /// a claimed row is leased (`next_attempt_at` in the future) and must
+    /// not be sent a second time while that attempt may still be running.
     pub async fn deliver_now(
         &self,
         pool: &PgPool,
         delivery_id: Uuid,
     ) -> AppResult<Option<Outcome>> {
-        let claimed = sqlx::query_as::<_, Claimed>(&CLAIM.replace("{filter}", "d.id = $3"))
-            .bind(1i64)
-            .bind(LEASE.as_secs_f64())
-            .bind(delivery_id)
-            .fetch_optional(pool)
-            .await?;
+        let claimed = sqlx::query_as::<_, Claimed>(
+            &CLAIM.replace("{filter}", "d.id = $3 AND d.next_attempt_at <= now()"),
+        )
+        .bind(1i64)
+        .bind(LEASE.as_secs_f64())
+        .bind(delivery_id)
+        .fetch_optional(pool)
+        .await?;
         match claimed {
             Some(c) => Ok(Some(self.attempt(pool, c).await?)),
             None => Ok(None),
@@ -499,15 +519,16 @@ impl Dispatcher {
             "pending"
         };
         let delay = retry_delay(c.id, c.attempts);
-        // Only the holder of this attempt records it (a lease that ran out
-        // and was claimed again has a higher attempt count).
+        // Only the holder of this attempt records it: a lease that ran out
+        // and was claimed again, or a "Retry" in between, moved
+        // next_attempt_at away from this attempt's lease.
         sqlx::query(
             "UPDATE webhook_deliveries
              SET status = $3, last_status_code = $4, last_error = $5, updated_at = now(),
                  next_attempt_at = CASE WHEN $3 = 'pending' THEN now() + make_interval(secs => $6)
                                         ELSE next_attempt_at END,
                  delivered_at = CASE WHEN $3 = 'sent' THEN now() ELSE delivered_at END
-             WHERE id = $1 AND attempts = $2 AND status = 'pending'",
+             WHERE id = $1 AND attempts = $2 AND next_attempt_at = $7 AND status = 'pending'",
         )
         .bind(c.id)
         .bind(c.attempts)
@@ -515,6 +536,7 @@ impl Dispatcher {
         .bind(code.map(i32::from))
         .bind(&error)
         .bind(delay.as_secs_f64())
+        .bind(c.lease_until)
         .execute(pool)
         .await?;
         if !error.is_empty() {
@@ -577,7 +599,21 @@ fn describe(e: reqwest::Error) -> String {
 }
 
 /// Removes sent and failed deliveries older than `days`. Returns the count.
+///
+/// First gives up deliveries still pending for an inactive webhook: an event
+/// whose transaction read the webhook as active while an administrator
+/// switched it off can commit a row after the switch gave up the waiting
+/// ones. The sender never claims such rows, so without this they would stay
+/// pending (and in the sender's index) for ever.
 pub async fn purge_finished(pool: &PgPool, days: u32) -> AppResult<u64> {
+    sqlx::query(
+        "UPDATE webhook_deliveries d
+         SET status = 'failed', last_error = 'The webhook was deactivated.', updated_at = now()
+         FROM webhooks w
+         WHERE w.id = d.webhook_id AND NOT w.active AND d.status = 'pending'",
+    )
+    .execute(pool)
+    .await?;
     let mut total = 0;
     loop {
         let removed = sqlx::query(
@@ -731,6 +767,9 @@ mod tests {
             "::ffff:10.0.0.1",
             "::10.0.0.1",
             "64:ff9b::a00:1",
+            "64:ff9b:1::a9fe:a9fe",
+            "2002:7f00:1::1",
+            "2002:a9fe:a9fe::",
         ] {
             assert!(is_internal(ip.parse().unwrap()), "{ip} is internal");
         }
@@ -739,6 +778,7 @@ mod tests {
             "93.184.216.34",
             "2001:4860:4860::8888",
             "::ffff:1.1.1.1",
+            "2002:808:808::1",
         ] {
             assert!(!is_internal(ip.parse().unwrap()), "{ip} is public");
         }
