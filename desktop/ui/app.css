@@ -335,24 +335,82 @@ html.skin-light .skin-logo-dark { display: none; }
 
 /* ---------------------------------------------------------------- toolbar & tabs */
 
+/* The toolbar sits right below the tab strip and shares the active tab's
+   surface: it is visibly the action bar of that tab. Segments (Lock, Work,
+   Lifecycle, Collaborate …) are divided by a hairline; the one next step is
+   the only primary button; rare actions live in "More" at the far end. */
 .toolbar {
-  display: flex; align-items: center; gap: 0.35rem; flex-wrap: wrap;
-  min-height: 44px;
-  padding: 0.45rem 0.8rem;
+  display: flex; align-items: center; gap: var(--space-2) var(--space-3); flex-wrap: wrap;
+  min-height: 46px;
+  padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg-raised) 40%, transparent);
+  background: var(--bg-raised);
 }
 .toolbar .sep { width: 1px; height: 22px; background: var(--border-strong); margin: 0 0.25rem; }
-.toolbar .context { margin-left: auto; color: var(--text-dim); font-size: 0.85em; }
+.tool-group { display: flex; align-items: center; gap: var(--space-1); }
+.tool-group + .tool-group, .tool-group + .more { padding-left: var(--space-3); border-left: 1px solid var(--border); }
+.toolbar .tool { padding: 0.28rem 0.62rem; background: transparent; border-color: var(--border); }
+.toolbar .tool.primary { background: linear-gradient(135deg, var(--primary-from), var(--primary-to)); border-color: color-mix(in srgb, var(--c4) 30%, transparent); font-weight: 600; }
+.toolbar .tool.danger { border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+.toolbar .tool:disabled { background: transparent; border-color: transparent; }
+@media (hover: hover) {
+  .toolbar .tool:where(:enabled):hover { background: var(--surface-hover); border-color: var(--c3); }
+  .toolbar .tool.primary:where(:enabled):hover { background: linear-gradient(135deg, var(--primary-from), var(--primary-to)); }
+  .toolbar .tool.danger:where(:enabled):hover { background: var(--danger-soft); border-color: var(--danger); }
+}
 .tool svg { width: 16px; height: 16px; }
+
+.more { position: relative; margin-left: auto; }
+.tool-group + .more { border-left: none; }
+.more-trigger[aria-expanded="true"] { background: var(--surface-hover); border-color: var(--c3); }
+.more-trigger svg { width: 14px; height: 14px; }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 40;
+  min-width: 15rem;
+  padding: var(--space-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 18px 40px -16px rgb(0 0 0 / 70%);
+  transform-origin: top right;
+  transition: opacity 120ms var(--ease-out), transform 120ms var(--ease-out);
+}
+/* Opened with the pointer: a short fade from the trigger's corner. Opened
+   with the keyboard (.instant) or reduced motion: no animation at all. */
+@starting-style {
+  .menu { opacity: 0; transform: scale(0.97); }
+}
+.menu.instant { transition: none; }
+.menu-item {
+  display: flex; width: 100%; justify-content: flex-start; gap: var(--space-2);
+  padding: 0.42rem 0.6rem;
+  border: none; border-radius: 6px; background: none;
+  text-align: left;
+}
+.menu-item:active { transform: none; }
+.menu-item:focus { outline: none; background: var(--surface-hover); }
+.menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.menu-item svg { width: 16px; height: 16px; flex: none; }
+.menu-item .menu-label { flex: 1; }
+.menu-item kbd { font: inherit; font-size: 0.78em; color: var(--text-dim); }
+.menu-item.danger { color: var(--danger); }
+.menu-item[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.menu-sep { height: 1px; margin: var(--space-1) var(--space-1); background: var(--border); }
+@media (hover: hover) {
+  .menu-item:not([aria-disabled="true"]):hover { background: var(--surface-hover); border: none; }
+  .menu-item.danger:not([aria-disabled="true"]):hover { background: var(--danger-soft); }
+  .menu-item[aria-disabled="true"]:hover { background: none; border: none; }
+}
 
 .tabs {
   display: flex; align-items: flex-end; gap: 0.15rem;
   padding: 0.4rem 0.6rem 0;
-  border-bottom: 1px solid var(--border-strong);
+  /* drawn under the tabs, so the active tab covers it and opens into the toolbar */
+  box-shadow: inset 0 -1px 0 var(--border-strong);
   overflow-x: auto;
   min-height: 38px;
 }
+.tabs:empty { display: none; }
 .tab {
   display: flex; align-items: center; gap: 0.4rem;
   max-width: 260px;
@@ -361,6 +419,7 @@ html.skin-light .skin-logo-dark { display: none; }
   border-bottom: none;
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   background: var(--surface);
+  box-shadow: inset 0 -1px 0 var(--border-strong);
   color: var(--text-muted);
   cursor: pointer;
   white-space: nowrap;
@@ -418,6 +477,34 @@ html.skin-light .skin-logo-dark { display: none; }
 .stat { padding: 0.8rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .stat .value { font-family: var(--display); font-size: 1.7rem; font-weight: 600; }
 .stat .label { color: var(--text-muted); font-size: 0.85em; }
+
+/* Revision overview, right column: the preview image from the CAD file and
+   the key numbers, each a way into its sub-tab. */
+.glance-body { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.glance-body.no-preview { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1100px) { .glance-body { grid-template-columns: minmax(0, 1fr); } }
+.glance-preview { margin: 0; display: grid; gap: var(--space-2); min-width: 0; }
+.glance-thumb {
+  width: 100%; aspect-ratio: 4 / 3; object-fit: contain;
+  background: #fff; border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.glance-preview figcaption { display: grid; gap: var(--space-2); justify-items: start; min-width: 0; }
+.glance-file { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8em; color: var(--text-dim); }
+.glance-3d svg { width: 16px; height: 16px; }
+.facts { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fill, minmax(7.25rem, 1fr)); }
+.fact {
+  display: grid; gap: 0.1rem; justify-items: start; align-content: start;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  white-space: normal; text-align: left;
+}
+.fact-value { font-family: var(--display); font-size: 1.35rem; font-weight: 600; line-height: 1.15; font-variant-numeric: tabular-nums; color: var(--text); }
+.fact-label { font-size: 0.8em; color: var(--text-muted); }
+@media (hover: hover) {
+  button.fact:hover { background: var(--surface-hover); border-color: var(--c3); }
+}
+.review-hint { margin: var(--space-2) 0 0; }
 
 .props { display: grid; grid-template-columns: max-content 1fr; gap: 0.35rem 1.1rem; margin: 0; }
 .props dt { color: var(--text-dim); font-weight: 600; }
@@ -555,6 +642,7 @@ table.grid td.actions button { padding: 0.15rem 0.5rem; font-size: 0.85em; }
     .dialog, .toast { transform: none; }
   }
   button:active:where(:enabled) { transform: none; }
+  .menu { transition: none; }
 }
 
 .loading { color: var(--text-dim); padding: 0.6rem; }
