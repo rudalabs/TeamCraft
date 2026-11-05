@@ -566,6 +566,34 @@ impl NumberScheme {
             other => Self::fixed(other, ctx),
         })
     }
+
+    /// The expansion before and after the sequence, e.g. `ROVER-PRT-2026-`
+    /// and `` for `{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}`.
+    pub fn around_seq(&self, ctx: &NumberContext<'_>) -> (String, String) {
+        let at = self
+            .parts
+            .iter()
+            .position(|p| matches!(p, SchemePart::Seq(_)))
+            .unwrap_or(self.parts.len());
+        let text = |parts: &[SchemePart]| -> String {
+            parts.iter().map(|p| Self::fixed(p, ctx)).collect()
+        };
+        (
+            text(&self.parts[..at]),
+            text(self.parts.get(at + 1..).unwrap_or_default()),
+        )
+    }
+
+    /// The sequence value of `number` if this expansion can produce it
+    /// (any width), e.g. 12 for `ROVER-PRT-2026-0012` or `ROVER-PRT-2026-12`.
+    pub fn seq_of(&self, ctx: &NumberContext<'_>, number: &str) -> Option<i64> {
+        let (prefix, suffix) = self.around_seq(ctx);
+        let digits = number.strip_prefix(&prefix)?.strip_suffix(&suffix)?;
+        if digits.is_empty() || digits.len() > 18 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse().ok()
+    }
 }
 
 /// Formats an automatically generated change number, e.g. `CHG-000007`.
@@ -2337,8 +2365,19 @@ mod tests {
         let wider = NumberScheme::parse("{PROJECT}-{TYPE}-{YYYY}-{SEQ:6}").unwrap();
         assert_eq!(wider.counter_key(&ctx), s.counter_key(&ctx));
 
+        // Numbers the expansion can produce, at any width.
+        assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-0012"), Some(12));
+        assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-123456"), Some(123_456));
+        assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2025-0012"), None);
+        assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-12A"), None);
+        assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-"), None);
+
         let s = NumberScheme::parse("x{YY}{MM}.{SEQ}").unwrap();
         assert_eq!(s.format(&ctx, 12), "X2603.12");
+        assert_eq!(s.around_seq(&ctx), ("X2603.".to_string(), String::new()));
+        let leading = NumberScheme::parse("{SEQ:3}-{PROJECT}").unwrap();
+        assert_eq!(leading.seq_of(&ctx, "042-ROVER"), Some(42));
+        assert_eq!(leading.seq_of(&ctx, "042-ROVERX"), None);
         assert_eq!(s.as_string(), "X{YY}{MM}.{SEQ}");
         assert_eq!(
             NumberScheme::of_project(Some("  ")).unwrap(),

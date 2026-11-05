@@ -68,6 +68,21 @@ impl Depth {
     }
 }
 
+/// Default revision rule of a comparison over all levels (states of the two
+/// revisions). *Latest* and *Latest released* resolve a child by its item
+/// alone, so both sides always get the same child revision and sub-tree;
+/// only *As released* uses the child revisions a released parent was
+/// released with. Without a released side, *Latest* still shows children
+/// that were never released.
+pub fn default_rule(before_state: &str, after_state: &str) -> RevisionRule {
+    let released = |s: &str| matches!(s, "released" | "obsolete");
+    if released(before_state) || released(after_state) {
+        RevisionRule::AsReleased
+    } else {
+        RevisionRule::Latest
+    }
+}
+
 /// One child of either BOM.
 #[derive(Clone, Debug, Serialize)]
 pub struct LineDiff {
@@ -465,6 +480,19 @@ mod tests {
             restricted: false,
             children,
         }
+    }
+
+    #[test]
+    fn default_rules() {
+        assert_eq!(default_rule("in_work", "in_work"), RevisionRule::Latest);
+        assert_eq!(
+            default_rule("released", "in_work"),
+            RevisionRule::AsReleased
+        );
+        assert_eq!(
+            default_rule("obsolete", "released"),
+            RevisionRule::AsReleased
+        );
     }
 
     #[test]

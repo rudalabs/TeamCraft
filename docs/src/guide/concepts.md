@@ -68,8 +68,10 @@ Everything else is literal text from `A–Z 0–9 . _ -`. The built-in scheme is
 Every distinct expansion counts on its own: a scheme with `{YYYY}` starts at 1
 each year, one without `{TYPE}` shares the sequence between all item types,
 and groups with the built-in scheme share its counters. Changing the padding
-width keeps counting. Numbers that are already taken (typed in by hand) are
-skipped, and existing items never change their numbers.
+width keeps counting. When the next number is already taken (typed in by
+hand or imported), the counter continues after the highest existing number
+of the same pattern – so a new scheme can take over an existing numbering
+convention – and existing items never change their numbers.
 
 ## Audit log
 
