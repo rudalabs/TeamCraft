@@ -83,7 +83,7 @@ slow ones do inherently large work: a search text that names a CAD program
 impact analysis of a change with 1600 widely used parts walks tens of
 thousands of dependencies (about 220 ms).
 
-* **PostgreSQL 14 or newer.** For a vault of that size, give PostgreSQL
+* **PostgreSQL 16 or newer.** For a vault of that size, give PostgreSQL
   about a quarter of the RAM as `shared_buffers` (e.g. `1GB`), set
   `effective_cache_size` to about half of the RAM and, on SSDs,
   `random_page_cost = 1.1`; the defaults (128 MB, random I/O priced for
@@ -97,9 +97,15 @@ thousands of dependencies (about 220 ms).
   `CREATE EXTENSION pg_trgm;` in the TeamCraft database and then the
   `CREATE INDEX … gin_trgm_ops` statements of
   `migrations/0023_performance_indexes.sql`.
-* **JIT is off** for TeamCraft's sessions (`jit=off` with every connection):
-  its queries are short, and on a large vault the JIT compilation took
-  longer (100–400 ms) than the queries themselves.
+* **JIT is off and every statement gets a custom plan** in TeamCraft's
+  sessions (`jit=off` and `plan_cache_mode=force_custom_plan`, sent as
+  startup options of every connection; the server's settings for other
+  clients stay as they are): its queries are short, and on a large vault the
+  JIT compilation took longer (100–400 ms) than the queries themselves; a
+  generic plan of a prepared statement ignores how many ids an `= ANY($1)`
+  list holds. Behind a connection pooler that drops the `options` startup
+  parameter (e.g. PgBouncer with `ignore_startup_parameters = options`)
+  the server's own settings apply instead.
 * **Indexes** of new migrations are built with plain `CREATE INDEX` at
   start-up: that blocks writes to the table for the time it takes (seconds
   at the size above, reads go on) and happens before the server accepts
