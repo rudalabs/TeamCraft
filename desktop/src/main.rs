@@ -39,6 +39,8 @@ pub struct AppState {
     pub config_dir: PathBuf,
     /// Cancel signal of the running browser sign-in (one per attempt).
     pub sign_in_cancel: Mutex<Option<Arc<Notify>>>,
+    /// Cancel signal of the running assistant question (one at a time).
+    pub assistant_cancel: Mutex<Option<Arc<Notify>>>,
     /// Cancel switch of the running upload (one per upload).
     pub upload_cancel: Mutex<Arc<AtomicBool>>,
     /// Cancel switch of the running Pack and Go download (one per download).
@@ -120,6 +122,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&item("go-worklist", "My Worklist", Some("CmdOrCtrl+2"))?)
         .item(&item("go-changes", "Changes", Some("CmdOrCtrl+3"))?)
         .item(&item("go-agent", "Agent", Some("CmdOrCtrl+4"))?)
+        .item(&item("go-assistant", "Ask TeamCraft", Some("CmdOrCtrl+5"))?)
         .separator()
         .item(&item("zoom-in", "Zoom In (Ctrl + wheel)", None)?)
         .item(&item("zoom-out", "Zoom Out", None)?)
@@ -158,6 +161,7 @@ fn main() {
                 client: api::client(),
                 config_dir,
                 sign_in_cancel: Mutex::new(None),
+                assistant_cancel: Mutex::new(None),
                 upload_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 package_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 agent: Mutex::new(None),
@@ -189,6 +193,8 @@ fn main() {
             commands::set_skin,
             commands::set_workspace_dir,
             commands::api,
+            commands::assistant_send,
+            commands::assistant_cancel,
             commands::file_bytes,
             commands::workspace_checkout,
             commands::workspace_download,
