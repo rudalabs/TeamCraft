@@ -880,6 +880,11 @@ details.payload pre {
 .viewer-bar { display: flex; gap: var(--space-2); align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .viewer-bar > p { margin: 0; }
 .viewer-card { padding: 0; background: none; border: none; }
+/* colour scale of simulation results (inserted by viewer.js above the canvas) */
+.viewer-legend { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin: 0 0 var(--space-2); font-size: 0.88rem; }
+.viewer-legend select { width: auto; max-width: 100%; }
+.viewer-legend-value { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.viewer-legend-bar { width: min(16rem, 40vw); height: 0.6rem; border: 1px solid var(--border-strong); border-radius: 999px; }
 
 /* Vault explorer: folder tree | items | detail */
 .explorer { display: grid; grid-template-columns: 240px minmax(0, 1fr) 320px; gap: var(--space-4); align-items: start; }
@@ -1037,6 +1042,40 @@ ul.file-refs { margin-bottom: var(--space-3); }
 /* Preview images stored in CAD files (Inventor, Solid Edge, SolidWorks) */
 .thumb-link { display: inline-block; vertical-align: middle; margin-right: 8px; }
 .file-thumb { width: 32px; height: 32px; object-fit: contain; display: block; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface); }
+
+/* similar parts (shape search) on the revision page */
+.similar-list { list-style: none; margin: 0; padding: 0; }
+.similar-list li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3);
+  align-items: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--border);
+}
+.similar-list li.with-thumb { grid-template-columns: 2.5rem minmax(0, 1fr) auto; }
+/* fixed columns: a preview image that fails to load is hidden, not reflowed */
+.similar-list li.with-thumb .similar-main { grid-column: 2; }
+.similar-list li:last-child { border-bottom: 0; }
+.similar-thumb {
+  width: 2.5rem; height: 2.5rem; object-fit: contain; display: block;
+  border: 1px solid var(--border); border-radius: 4px; background: #fff;
+}
+.similar-main { min-width: 0; overflow-wrap: anywhere; }
+.similar-why { display: block; color: var(--text-dim); font-size: 0.8rem; margin-top: 0.15rem; }
+.similar-score { display: flex; align-items: center; gap: var(--space-2); font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+.similar-score meter {
+  appearance: none; width: 4rem; height: 0.4rem; border: 0; border-radius: 999px;
+  background: var(--surface-sunken); overflow: hidden;
+}
+.similar-score meter::-webkit-meter-bar { background: var(--surface-sunken); border: 0; border-radius: 999px; height: 0.4rem; }
+.similar-score meter::-webkit-meter-optimum-value { background: var(--ok); border-radius: 999px; }
+.similar-score meter::-webkit-meter-suboptimum-value { background: var(--accent); border-radius: 999px; }
+.similar-score meter::-webkit-meter-even-less-good-value { background: var(--text-dim); border-radius: 999px; }
+.similar-score meter::-moz-meter-bar { background: var(--accent); border-radius: 999px; }
+.similar-score meter:-moz-meter-optimum::-moz-meter-bar { background: var(--ok); }
+.similar-score meter:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--text-dim); }
+@media (max-width: 560px) {
+  .similar-list li { grid-template-columns: minmax(0, 1fr); }
+  .similar-list li.with-thumb { grid-template-columns: 2.5rem minmax(0, 1fr); }
+  .similar-list li.with-thumb .similar-score { grid-column: 2; }
+}
 
 /* simulations: pass/fail of result values */
 .badge-none { color: var(--text-dim); }

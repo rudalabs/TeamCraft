@@ -1731,6 +1731,41 @@ async fn simulations_in_the_web_ui() {
         csv.text()
     );
 
+    // A VTU result file: the Results card links the 3D view, the mesh
+    // carries the result fields.
+    let vtu = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim/beam-zlib.vtu"),
+    )
+    .unwrap();
+    let r = app
+        .api_upload(
+            "/api/v1/items/SIM-000001/revisions/A/files",
+            &eng,
+            "beam.vtu",
+            &vtu,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let result_file = r.json()[0]["id"].as_str().unwrap().to_string();
+    let page = app
+        .get_page(&format!("/revisions/{sim_a}"), Some(&cookie))
+        .await
+        .text();
+    assert!(page.contains("View result in 3D"));
+    assert!(page.contains(&format!("/files/{result_file}/preview")));
+    let r = app
+        .get_page(&format!("/files/{result_file}/preview"), Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.text().contains("coloured by a result field"));
+    let r = app
+        .get_page(&format!("/files/{result_file}/mesh"), Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.triangle_count(), 20);
+    assert_eq!(mesh.fields[0].name, "temperature");
+
     // The part lists the simulation.
     let part = app
         .get_page(&format!("/revisions/{prt_a}"), Some(&cookie))

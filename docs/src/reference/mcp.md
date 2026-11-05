@@ -99,10 +99,11 @@ at 2000 rows, other lists at 500 entries, and the whole result at 1 MiB.
 | `my_worklist`          | My check-outs, reviews waiting for me, open impacts, my open change orders, change requests assigned to or raised by me, unread notifications |
 | `bom_health`           | Checks every BOM line: unresolved, obsolete, unreleased, missing mass, no files, checked out, open check, cycle       |
 | `find_duplicate_files` | Identical contents stored in more than one item, optionally for one revision                                          |
+| `find_similar_parts`   | Parts of similar 3D shape and size ([how](../guide/similar-parts.md)): `item` (or `PRT-000012/B`), `revision`, `file`, `ignore_scale`, `limit`; each hit with score, shape and size share and a one-line explanation. Meant for agents before a new item or `create_change_draft`, to reuse a part instead of a near-duplicate |
 | `compare_revisions`    | Attributes, files (added, removed, new content by SHA-256) and BOM lines (added, removed, quantity or find number) between two revisions |
 | `list_change_requests` | Change requests (ECR), newest first; `status` (a status, `open` or `all`), `scope` (`mine`, `assigned`), `item`, `limit` |
-| `get_change_request`   | Description, affected items (revision the problem was found in, latest state), discussion (newest 100 comments), attachment names, linked change orders, history and what I may do (`you_may`) |
-| `list_simulations`     | With `item`: the simulations based on that part or assembly, grouped, with result and failure counts, open checks and the out-of-date reason per basis. Without: simulation items (`q`, `project`, at most 50) with their latest revision's bases and pass/fail summary. `out_of_date_only` filters |
+| `get_change_request`   | Description, affected items (revision the problem was found in, latest state), discussion (newest 100 comments), attachment names and sizes, linked change orders, history (newest 50 entries) and what I may do in TeamCraft (`you_may`) |
+| `list_simulations`     | With `item`: the simulations based on that part or assembly, grouped, with result and failure counts, open checks and their bases on that item with the out-of-date reason. Without: simulation items (`q`, `project`, at most 50) with their latest revision's bases and pass/fail summary. `out_of_date_only` filters |
 | `get_simulation`       | Bases of a simulation revision (item revision, file version, role, out-of-date reason) and result values with unit, limits, load case, solver and pass/fail |
 | `compare_simulation_results` | Result values of two revisions of a simulation matched by name and load case: added, removed, changed (delta, percent), unchanged; `changes_only` |
 | `create_change_draft`  | Creates a **draft** change order with the given revisions and, by default, their unreleased dependencies             |
@@ -131,7 +132,7 @@ will ask before `create_change_draft`, `add_to_change`,
 |-------------------|------------------------|------------------------------------------------------------------|
 | `release_notes`   | `item`, `revision`?    | Release notes from the comparison with the previous revision     |
 | `review_change`   | `change`               | Review notes: scope, risks, questions for the author, who else should look at it (`suggest_reviewers`) |
-| `release_check`   | `item`, `revision`?    | Checklist of what blocks or warns before a release              |
+| `release_check`   | `item`, `revision`?    | Checklist of what blocks or warns before a release (for a new part also near-duplicate existing parts) |
 | `worklist_triage` | –                      | Short ordered to-do list from my worklist                       |
 | `triage_requests` | –                      | One block per open change request assigned to me (and new unassigned ones): problem, affected items, open points, a suggested next step – the decision stays mine |
 | `simulation_status` | `item`, `revision`?  | For a part or assembly its simulations, for a simulation its bases: up to date or why not, failed results, changes between revisions, what to re-run |

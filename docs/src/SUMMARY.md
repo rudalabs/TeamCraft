@@ -9,6 +9,7 @@
 - [Vault, check-out and check-in](guide/vault.md)
 - [Files, versions and 3D preview](guide/files.md)
 - [BOM, references and change propagation](guide/structure.md)
+- [Finding similar parts](guide/similar-parts.md)
 - [Change requests, change orders and notifications](guide/changes.md)
 - [Simulations (FEA, CFD)](guide/simulation.md)
 - [Desktop app](guide/desktop.md)
@@ -36,6 +37,7 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [Jira connector for change requests and change orders](research/jira-connector.md)
     - [Previews of native CAD files](research/cad-previews.md)
     - [Importing existing CAD folder trees](research/cad-folder-import.md)
     - [Popular features of Teamcenter](research/teamcenter.md)
