@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{bail, Result};
 
 use super::p21::{self, Instance, Params};
-use super::{check_triangles, Mesh};
+use super::{check_triangles, Mesh, MAX_TRIANGLES};
 
 const FACES: [&str; 4] = [
     "TRIANGULATED_FACE",
@@ -63,6 +63,8 @@ pub fn shape_faces<'a>(
         return Ok(Vec::new());
     }
     let mut annotation = HashSet::new();
+    // a set used by many annotations is read once (no quadratic work)
+    let mut sets = HashSet::new();
     for inst in insts {
         if !name_has(data, inst, &[b"ANNOTATION", b"OCCURRENCE"])? {
             continue;
@@ -71,7 +73,8 @@ pub fn shape_faces<'a>(
             let Some(&i) = by_id.get(&id) else { continue };
             if is_face(&insts[i]) {
                 annotation.insert(i);
-            } else if name_has(data, &insts[i], &[b"GEOMETRIC_SET"])? {
+            } else if !sets.contains(&i) && name_has(data, &insts[i], &[b"GEOMETRIC_SET"])? {
+                sets.insert(i);
                 for inner in p21::references(data, &insts[i])? {
                     if let Some(&j) = by_id.get(&inner) {
                         annotation.insert(j);
@@ -100,21 +103,45 @@ pub fn read(
     // coordinates list → index of its first vertex and its point count
     let mut lists: HashMap<u64, Option<(u32, usize)>> = HashMap::new();
     let mut shown = 0usize;
+    let groups = groups(data, insts, faces)?;
+    let mut bodies = HashSet::new();
     for &f in faces {
         let before = mesh.indices.len();
         match face(data, insts, by_id, &insts[f], &mut mesh, &mut lists) {
-            Ok(true) => shown += 1,
+            Ok(true) => {
+                shown += 1;
+                bodies.insert(groups.get(&f).copied().unwrap_or(f));
+            }
             Ok(false) => {}
+            // the model is too large – not a damaged face
+            Err(e) if mesh.triangle_count() > MAX_TRIANGLES => return Err(e),
             Err(e) => {
                 // a damaged face is left out, its triangles with it
                 tracing::debug!(error = %e, "tessellated face skipped");
                 mesh.indices.truncate(before);
             }
         }
-        check_triangles(mesh.triangle_count())?;
     }
-    mesh.parts = lists.values().filter(|l| l.is_some()).count().max(1) as u32;
+    mesh.parts = bodies.len().max(1) as u32;
     Ok((mesh, shown))
+}
+
+/// Face → the `TESSELLATED_SHELL` / `TESSELLATED_SOLID` it belongs to (a
+/// body of the viewer; a face outside of them is a body of its own).
+fn groups(data: &[u8], insts: &[Instance<'_>], faces: &[usize]) -> Result<HashMap<usize, usize>> {
+    let face_of: HashMap<u64, usize> = faces.iter().map(|&f| (insts[f].id, f)).collect();
+    let mut out = HashMap::new();
+    for (g, inst) in insts.iter().enumerate() {
+        if inst.complex || !(inst.is("TESSELLATED_SHELL") || inst.is("TESSELLATED_SOLID")) {
+            continue;
+        }
+        for id in p21::references(data, inst)? {
+            if let Some(&f) = face_of.get(&id) {
+                out.entry(f).or_insert(g);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// One face: `Ok(true)` when it added triangles.
@@ -171,13 +198,14 @@ fn face(
         let point = if pnindex.is_empty() {
             i
         } else {
-            match usize::try_from(i - 1).ok().and_then(|k| pnindex.get(k)) {
+            let k = i.checked_sub(1).and_then(|k| usize::try_from(k).ok());
+            match k.and_then(|k| pnindex.get(k)) {
                 Some(&v) => v,
                 None => bail!("index {i} out of range"),
             }
         };
-        match usize::try_from(point - 1) {
-            Ok(k) if k < count => Ok(base + k as u32),
+        match point.checked_sub(1).map(usize::try_from) {
+            Some(Ok(k)) if k < count => Ok(base + k as u32),
             _ => bail!("point {point} out of range"),
         }
     };
@@ -254,6 +282,11 @@ fn coordinates(data: &[u8], inst: &Instance<'_>, mesh: &mut Mesh) -> Result<(u32
             })?;
             if point.len() != 3 {
                 bail!("a point needs three coordinates");
+            }
+            // the preview stores f32: 1E39 would become infinite and fail
+            // the whole preview instead of this list
+            if point.iter().any(|&v| !(v as f32).is_finite()) {
+                bail!("coordinate out of range");
             }
             if mesh.vertex_count() >= u32::MAX as usize / 2 {
                 bail!("too many points");
@@ -345,5 +378,61 @@ mod tests {
         assert_eq!(mesh.triangle_count(), 1);
         assert_eq!(mesh.vertex_count(), 3, "the broken list adds no points");
         mesh.check().unwrap();
+    }
+
+    #[test]
+    fn extreme_indices_and_coordinates_skip_the_face() {
+        let min = i64::MIN;
+        let text = file(&format!(
+            "#1=COORDINATES_LIST('',3,((0.,0.,0.),(1.,0.,0.),(1.,1.,0.)));\n\
+             #2=TRIANGULATED_FACE('',#1,3,(),$,(),((1,2,3)));\n\
+             #3=TRIANGULATED_FACE('',#1,3,(),$,(),(({min},2,3)));\n\
+             #4=TRIANGULATED_FACE('',#1,3,(),$,(1,2,{min}),((1,2,3)));\n\
+             #5=TRIANGULATED_FACE('',#1,3,(),$,(1,2,3),(({min},2,3)));\n\
+             #6=COORDINATES_LIST('',3,((0.,0.,0.),(1.E39,0.,0.),(1.,1.,0.)));\n\
+             #7=TRIANGULATED_FACE('',#6,3,(),$,(),((1,2,3)));"
+        ));
+        let (mesh, shown, total) = mesh_of(&text);
+        assert_eq!((shown, total), (1, 5));
+        mesh.check().unwrap();
+    }
+
+    #[test]
+    fn bodies_are_shells_and_solids_not_coordinate_lists() {
+        // one coordinate list per face, as exporters write it
+        let mut body = String::new();
+        for k in 0..4 {
+            let (c, f) = (10 + 2 * k, 11 + 2 * k);
+            body += &format!(
+                "#{c}=COORDINATES_LIST('',3,((0.,0.,{k}.),(1.,0.,{k}.),(1.,1.,{k}.)));\n\
+                 #{f}=TRIANGULATED_FACE('',#{c},3,(),$,(),((1,2,3)));\n"
+            );
+        }
+        body += "#1=TESSELLATED_SOLID('',(#11,#13),$);\n#2=TESSELLATED_SHELL('',(#15),$);";
+        let (mesh, shown, _) = mesh_of(&file(&body));
+        assert_eq!(shown, 4);
+        // the solid, the shell and the face #17 outside of both
+        assert_eq!(mesh.parts, 3);
+    }
+
+    #[test]
+    fn the_triangle_limit_fails_the_preview() {
+        // not a partial preview with the "damaged" faces left out
+        let n = super::MAX_TRIANGLES / 2 + 1;
+        let tris = vec!["(1,2,3)"; n].join(",");
+        let text = file(&format!(
+            "#1=COORDINATES_LIST('',3,((0.,0.,0.),(1.,0.,0.),(1.,1.,0.)));\n\
+             #2=TRIANGULATED_FACE('',#1,3,(),$,(),({tris}));\n\
+             #3=TRIANGULATED_FACE('',#1,3,(),$,(),({tris}));"
+        ));
+        let data = text.as_bytes();
+        let insts = p21::scan(data).unwrap();
+        let by_id = insts.iter().enumerate().map(|(i, x)| (x.id, i)).collect();
+        let faces = shape_faces(data, &insts, &by_id).unwrap();
+        let err = read(data, &insts, &by_id, &faces).unwrap_err();
+        assert!(
+            err.to_string().contains("more than the preview shows"),
+            "{err}"
+        );
     }
 }

@@ -125,6 +125,16 @@ pub fn convert_file(format: PreviewFormat, input: &Path) -> anyhow::Result<Vec<u
 
 /// Reads the file at `input` as a preview mesh.
 pub fn convert(format: PreviewFormat, input: &Path) -> anyhow::Result<crate::mesh::Mesh> {
+    // a STEP file above the limit is not read into memory just to be refused
+    let size = std::fs::metadata(input)?.len();
+    let limit = crate::mesh::MAX_STEP_BYTES as u64;
+    if format == PreviewFormat::Step && size > limit {
+        anyhow::bail!(
+            "The STEP file is too large to preview ({} MB, at most {} MB) – download it instead.",
+            size / (1024 * 1024),
+            limit / (1024 * 1024)
+        );
+    }
     let data = std::fs::read(input)?;
     crate::mesh::read(format.as_str(), &data)
 }
