@@ -597,6 +597,7 @@ capture_pages() {
     shot "bom$suffix" "/revisions/$TOP_REV/bom"
     shot "change-review$suffix" "/changes/$CHANGE_ID"
     shot "notifications$suffix" /notifications
+    shot "assistant$suffix" /assistant
     shot "account$suffix" /account '#appearance'
 
     log "capturing the mobile screenshot (390x844)"
