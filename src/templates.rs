@@ -744,13 +744,19 @@ mod tests {
                 state == "released",
                 "hint for native files without a neutral export"
             );
+            // the sidebar: icon and drawer only when the assistant is enabled;
+            // the page declares where the user is (identifiers only)
             assert_eq!(
-                html.contains("Draft release notes")
-                    && html.contains("Check before release")
-                    && html.contains("name=\"item\" value=\"PRT-000001\"")
-                    && html.contains("name=\"revision\" value=\"B\""),
+                html.contains("id=\"assistant-drawer\"")
+                    && html.contains("id=\"assistant-toggle\""),
                 state == "released",
-                "assistant quick actions only when enabled"
+                "assistant sidebar only when enabled"
+            );
+            assert!(
+                html.contains("data-tc-kind=\"revision\"")
+                    && html.contains("data-tc-item=\"PRT-000001\"")
+                    && html.contains("data-tc-revision=\"B\""),
+                "the revision page declares its context"
             );
         }
 
@@ -1471,14 +1477,28 @@ mod tests {
             render(&env, "dashboard.html", data)
         };
         let html = dashboard(true);
-        assert!(html.contains("What needs my attention") && html.contains("action=\"/assistant\""));
+        for expected in [
+            "id=\"assistant-toggle\"",
+            "aria-controls=\"assistant-drawer\"",
+            "id=\"assistant-drawer\"",
+            "data-module=\"/static/shared/v/",
+            "/js/assistant.js\"",
+            "/static/shared/css/assistant.css?v=",
+            "data-can-edit=\"1\"",
+            "data-tc-kind=\"dashboard\"",
+        ] {
+            assert!(html.contains(expected), "the sidebar markup has {expected}");
+        }
+        let disabled = dashboard(false);
         assert!(
-            html.contains("Allow drafting change orders"),
-            "editors may allow drafts"
+            !disabled.contains("assistant-drawer")
+                && !disabled.contains("assistant-toggle")
+                && !disabled.contains("assistant.css"),
+            "hidden when disabled"
         );
         assert!(
-            !dashboard(false).contains("/assistant"),
-            "hidden when disabled"
+            disabled.contains("data-tc-kind=\"dashboard\""),
+            "the page context is declared either way"
         );
 
         let mut data = with_common(json!({
@@ -1490,8 +1510,9 @@ mod tests {
         data["assistant_enabled"] = json!(true);
         let html = render(&env, "changes/show.html", data);
         assert!(
-            html.contains("Brief me for this review")
-                && html.contains("name=\"change\" value=\"CHG-000001\"")
+            html.contains("data-tc-kind=\"change\"")
+                && html.contains("data-tc-change=\"CHG-000001\""),
+            "a change order declares its number"
         );
 
         let answer = crate::assistant::render_markdown("## Scope\n- PRT-000001 <b>");

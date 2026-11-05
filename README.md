@@ -121,7 +121,7 @@ end-to-end tests against a real PostgreSQL.
 - **Desktop app** – Linux, macOS and Windows client with a local working folder, *Get* of whole assemblies and an import wizard.
 - **REST API** – everything the UI does, with personal access tokens.
 - **MCP server** – AI assistants such as Claude Code search, explain BOMs and draft changes with your rights, never approving anything.
-- **Ask TeamCraft (optional)** – with your own key for Anthropic, OpenAI, Azure OpenAI or any OpenAI-compatible service, or a local model (Ollama, vLLM), the built-in assistant drafts release notes and answers questions, read-only by default.
+- **Ask TeamCraft (optional)** – a sidebar on every page (web and desktop) that knows which page you are on, keeps your conversation and, with your own key for Anthropic, OpenAI, Azure OpenAI or any OpenAI-compatible service, or a local model (Ollama, vLLM), drafts release notes and answers questions with your rights, read-only by default.
 
 ## Download
 

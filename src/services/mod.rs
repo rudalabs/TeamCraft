@@ -6,6 +6,7 @@
 
 pub mod access;
 pub mod assistant;
+pub mod assistant_threads;
 pub mod attributes;
 pub mod audit;
 pub mod bom;

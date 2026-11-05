@@ -77,6 +77,9 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/checkouts/checkin-all", post(dashboard::checkin_all))
         .route("/vault", get(explorer::show))
         .route("/assistant", get(assistant::show).post(assistant::ask))
+        .route("/assistant/thread", get(assistant::thread))
+        .route("/assistant/thread/reset", post(assistant::reset))
+        .route("/assistant/chat", post(assistant::chat))
         // authentication
         .route(
             "/login",
@@ -696,7 +699,7 @@ async fn html_errors(State(st): State<AppState>, req: Request, next: Next) -> Re
         return response;
     }
     // So does the chunked upload of app.js – a 401 too, it then asks to sign in.
-    if path == "/uploads" || path.starts_with("/uploads/") {
+    if path == "/uploads" || path.starts_with("/uploads/") || path.starts_with("/assistant/") {
         return response;
     }
     let Some(info) = response.extensions().get::<ErrorInfo>().cloned() else {
