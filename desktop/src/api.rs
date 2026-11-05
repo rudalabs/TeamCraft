@@ -35,12 +35,16 @@ pub struct Transfer<'a> {
 impl Transfer<'_> {
     fn check_cancel(&self) -> Result<(), ApiError> {
         if self.cancel.load(Ordering::Relaxed) {
-            Err(ApiError::local("Upload cancelled."))
+            Err(crate::abortable::cancelled(UPLOAD_CANCELLED))
         } else {
             Ok(())
         }
     }
 }
+
+/// What a cancelled upload or check-in answers.
+const UPLOAD_CANCELLED: &str =
+    "Cancelled – nothing was stored, and the revision is still checked out to you.";
 
 /// Errors after which sending a chunk again may succeed: network trouble,
 /// a server restart or overload, or an offset the server did not confirm.
@@ -196,20 +200,56 @@ impl Api {
         Ok(resp.bytes().await?.to_vec())
     }
 
-    /// Streams a resource into a file (written next to it first, then renamed).
-    pub async fn download_to(&self, path: &str, dest: &Path) -> Result<u64, ApiError> {
+    /// Streams a resource into a file: written next to it first
+    /// (`<name>.teamcraft-download`), renamed over `dest` only when complete.
+    /// `cancel` stops it at any step – also while the server is still
+    /// preparing the answer – and `on_bytes(received, total)` follows it
+    /// (`total` when the server names the length). On a cancel or an error
+    /// the partial file is removed and `dest` stays untouched.
+    pub async fn download_to(
+        &self,
+        path: &str,
+        dest: &Path,
+        cancel: &AtomicBool,
+        on_bytes: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<u64, ApiError> {
         let url = self.url(path)?;
-        let mut resp = ensure_ok(self.request(Method::GET, &url).send().await?).await?;
-        let tmp = dest.with_extension("teamcraft-download");
-        let mut file = tokio::fs::File::create(&tmp).await?;
-        let mut written = 0u64;
-        while let Some(chunk) = resp.chunk().await? {
-            file.write_all(&chunk).await?;
-            written += chunk.len() as u64;
+        let mut tmp = dest.as_os_str().to_owned();
+        tmp.push(".teamcraft-download");
+        let tmp = PathBuf::from(tmp);
+        let work = async {
+            let mut resp = ensure_ok(self.request(Method::GET, &url).send().await?).await?;
+            let total = resp.content_length();
+            let mut file = tokio::fs::File::create(&tmp).await?;
+            let mut written = 0u64;
+            on_bytes(0, total);
+            while let Some(chunk) = resp.chunk().await? {
+                file.write_all(&chunk).await?;
+                written += chunk.len() as u64;
+                on_bytes(written, total);
+            }
+            file.flush().await?;
+            Ok(written)
+        };
+        // the file handle lives inside `work`: dropped (closed) before the
+        // partial file is removed, which Windows requires
+        let result =
+            crate::abortable::until_cancelled(work, cancel, "Cancelled – no file was written.")
+                .await;
+        let written = match result {
+            Ok(n) => n,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(e);
+            }
+        };
+        if let Err(e) = tokio::fs::rename(&tmp, dest).await {
+            let _ = tokio::fs::remove_file(&tmp).await;
+            return Err(ApiError::local(format!(
+                "{} could not be written (open in another program?): {e}",
+                dest.display()
+            )));
         }
-        file.flush().await?;
-        drop(file);
-        tokio::fs::rename(&tmp, dest).await?;
         Ok(written)
     }
 
@@ -309,11 +349,71 @@ impl Api {
         if !sessions.is_empty() {
             fields.push(("uploads", json!(sessions).to_string()));
         }
-        let result = self.multipart(path, &small, &fields).await;
+        let result = self
+            .multipart_streamed(path, &small, &fields, transfer)
+            .await;
         if result.is_err() {
             self.discard_uploads(&sessions).await;
         }
         result
+    }
+
+    /// [`multipart`](Api::multipart) with the files streamed from disk: the
+    /// request can be stopped half-way through the body (see
+    /// `abortable`), and the progress of the bytes sent is reported as
+    /// `transfer.progress(label, sent, total)`.
+    async fn multipart_streamed(
+        &self,
+        path: &str,
+        files: &[(String, PathBuf)],
+        fields: &[(&str, String)],
+        transfer: &Transfer<'_>,
+    ) -> Result<Value, ApiError> {
+        use crate::abortable::{self, FileStream};
+        let url = self.url(path)?;
+        let progress = std::sync::Arc::new(abortable::Progress::default());
+        let mut form = reqwest::multipart::Form::new();
+        for (name, value) in fields {
+            form = form.text(name.to_string(), value.clone());
+        }
+        let mut total = 0u64;
+        for (filename, file) in files {
+            let source = tokio::fs::File::open(file).await?;
+            let len = source.metadata().await?.len();
+            total += len;
+            let body = reqwest::Body::wrap_stream(FileStream::new(source, progress.clone()));
+            let part = reqwest::multipart::Part::stream_with_length(body, len)
+                .file_name(filename.clone())
+                .mime_str("application/octet-stream")?;
+            form = form.part("file", part);
+        }
+        let label = match files {
+            [(name, _)] => name.clone(),
+            _ => format!("{} files", files.len()),
+        };
+        let report = |sent: u64, total: u64| {
+            if total > 0 {
+                (transfer.progress)(&label, sent, total);
+            }
+        };
+        let send = async {
+            read_json(
+                self.request(Method::POST, &url)
+                    .multipart(form)
+                    .send()
+                    .await?,
+            )
+            .await
+        };
+        let result =
+            abortable::watch_upload(send, &progress, total, transfer.cancel, &report).await;
+        match result {
+            // the body broke off on purpose: the server stored nothing
+            Err(_) if progress.stop.load(Ordering::Relaxed) => {
+                Err(abortable::cancelled(UPLOAD_CANCELLED))
+            }
+            other => other,
+        }
     }
 
     /// Cancels chunked uploads that will not be used (best effort – the

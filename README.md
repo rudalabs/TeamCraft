@@ -64,110 +64,64 @@
 
 ## What works
 
-All of the following works end to end today: creating a project group,
-adding items, checking files out and in, building the BOM, releasing through
-a reviewed change order and seeing what has to be checked after a release.
-It is covered by 114 unit tests and 33 end-to-end tests against a real
-PostgreSQL. Until the first release, the database schema is migrated
-automatically between commits, but nothing else about compatibility is
-promised.
+Everything below works end to end today and is covered by unit tests and
+end-to-end tests against a real PostgreSQL.
 
-- **Check-out / check-in.** Exclusive locks per revision; check-in stores the
-  new file versions and releases the lock in one transaction. Cancel
-  check-out and *Cancel upload* take effect immediately. Check-ins are
-  checked against the version each file was based on, so a version
-  somebody else checked in meanwhile is refused (409) instead of being
-  overwritten; per-file status (up to date, modified, outdated, conflict),
-  lock age and *Check in all my check-outs* on the dashboard and in the
-  desktop worklist.
-- **Vault explorer.** Project groups as folders, every item with its lock
-  owner, files and one-click check-out / check-in in a detail pane.
-- **Versions and rollback.** Every upload of a file name is a new version;
-  download or restore any version – history is never rewritten.
-  Content-addressed storage (SHA-256) stores identical files once.
-- **Lifecycle.** WIP → In Review → Released → Obsolete with revision letters
-  after ASME Y14.35; released data never changes, the next revision does.
-- **Change requests (ECR).** Anybody – shop floor, simulation, test, viewers
-  included – reports a problem on an item or a file (with screenshots or a
-  PDF), discusses it; the CAD editors of the project group triage, accept,
-  defer or reject. An accepted request becomes a draft change order with the
-  in-work revisions and is *implemented* when that change order is released.
-- **Change orders.** Collect revisions, assign reviewers, four-eyes approval,
-  all revisions released atomically, impact analysis before approval.
-- **Structure.** Multi-level BOM with mass and cost roll-up, revision rules *latest*, *latest released* and *as
-  released*, where-used, comparison of two revisions over one or all levels,
-  CSV and Excel export and *Pack and Go* ZIP of a whole assembly.
-- **BOM import.** Items and multi-level BOMs from the BOM tables of CAD
-  programs (Inventor, SolidWorks, Solid Edge, Fusion, Creo, NX, hand-made
-  lists) as CSV/TSV, Excel or OpenDocument – English and German columns,
-  levels or positions `1.1.2`, units – or from the product structure of a
-  STEP assembly of any CAD program; preview first, then one transaction.
-- **Change propagation.** References inside CAD files (SolidWorks, Inventor,
-  Solid Edge, CATIA, NX, STEP, KiCad, …) are tracked; a release flags every
-  dependent for a check.
-- **Simulation management.** Simulation items (FEA, CFD) linked to the exact
-  part revisions and file versions they analysed, flagged *out of date* when
-  the design changes; key result values with limits and pass/fail, CSV/Excel
-  import, comparison between revisions and a REST API for solver scripts.
-  Result formats (VTK, CalculiX, Nastran, ANSYS, Abaqus, OpenFOAM, Fluent,
-  CGNS, Exodus II, LS-DYNA, …) are recognised.
-- **160+ file formats, 200+ extensions.** Native files of SolidWorks, NX, Creo, CATIA,
-  Inventor, Fusion, Solid Edge, AutoCAD, Revit, Navisworks, MicroStation,
-  Archicad, Rhino, Blender, Maya, 3ds Max, Houdini, SolidCraft, FieldCraft,
-  … plus STEP, IGES, Parasolid, JT, IFC, glTF, USD, E57, LAS and more.
-- **3D preview without plug-ins.** STEP (tessellated with the Rust
-  [truck](https://github.com/ricosjp/truck) kernel), STL, OBJ, PLY, OFF, 3MF,
-  AMF, glTF/GLB, 3DS and point clouds – converted once on the server, in an
-  isolated process with a time limit, and drawn by a small WebGL viewer.
-- **FEA/CFD results in 3D.** VTK, VTU/VTP and CalculiX `.frd` results show
-  their outer surface coloured by a result field (von Mises, displacement
-  magnitude, …) with a colour legend and field selector – no ParaView needed.
-- **Previews of native CAD files.** The preview image Inventor, Solid Edge, NX
-  and SolidWorks store in their files is shown next to them; on Windows the
-  desktop app creates STEP exports with your own Inventor or Solid Edge at
-  check-in for the 3D view (see `docs/src/research/cad-previews.md`).
-- **Search.** Ranked full-text search over numbers, names, materials, file
-  names and the text inside STEP, IGES and text files; filter by CAD program.
-- **Similar parts.** "Do we already have a part like this?" – parts of
-  similar 3D shape and size, ranked by a cheap, explainable shape signature
-  (box extents and a D2 shape distribution, no AI) with the reason for each
-  hit; on the revision page, in the REST API and as MCP tool.
-- **Light and dark.** The interface follows the light or dark appearance of
-  the operating system; *Light* or *Dark* can be fixed per user, and there are
-  dark distribution skins (Arch, KDE, Ubuntu, …). Dense tables, one primary
-  action per page, and states shown by colour and a glyph.
-- **Teams and read permissions.** Viewer, CAD editor and admin roles; self-service project groups
-  managed by their creators, optionally **restricted** so that only their members
-  (and admins) see the group and its items, files and changes; single sign-on with any OpenID Connect
-  provider and group synchronisation.
-- **Numbering schemes.** Generated item numbers per project group from
-  `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`, with a preview of the next
-  numbers.
-- **Notifications.** In-app bell, e-mail and Mattermost; watch items,
-  changes and change requests.
-- **Event webhooks.** Signed JSON for releases, changes, change requests and
-  simulation results to CI, ERP or chat – written with the event, retried
-  with backoff, internal targets only when allowed.
-- **Desktop app.** A Tauri client for Linux, macOS and Windows with a local
-  working folder – one folder per project group that mirrors the original
-  folder structure, read-only until you check out – for check-out and
-  check-in, *Get* of whole assemblies (BOM and referenced CAD files), the
-  download of whole project groups and an import wizard for existing CAD
-  folders with a step-by-step tutorial.
-- **AI assistants (MCP).** A built-in Model Context Protocol server
-  (`/api/v1/mcp`, plus a stdio bridge `teamcraft mcp`) lets Claude Code and
-  other MCP clients search items and explain BOMs and where-used, compare
-  revisions, check a BOM before a release, find similar existing parts, draft
-  change orders, summarise, raise and comment on change requests, and check
-  simulations (out of date,
-  pass/fail, results between revisions). It uses your rights and never
-  submits, approves, releases or decides a change request.
-- **Ask TeamCraft (optional).** With an Anthropic API key configured, the
-  web UI and the desktop app offer quick actions – draft release notes,
-  check before release, brief me for a review, what needs my attention –
-  and a free question box. Claude answers on the server with the same tools
-  and your rights, read-only unless you allow drafts.
-- **Audit log.** Every modification with user, time and details.
+**Files and versions**
+
+- **Check-out / check-in** – exclusive locks per revision; a check-in based on an outdated version is refused instead of overwriting it.
+- **Versions and rollback** – every upload is a new version; download or restore any of them, history is never rewritten.
+- **Vault explorer** – project groups as folders with lock owners, files and one-click check-out / check-in.
+- **Large uploads** – chunked, resumable uploads in the web UI; identical files are stored once (SHA-256).
+- **160+ file formats** – native CAD, BIM and DCC files plus STEP, IGES, JT, IFC, glTF, USD, E57, LAS and more are recognised.
+
+**Previews and search**
+
+- **3D preview** – STEP, STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no plug-ins.
+- **Native CAD thumbnails** – the preview images stored in Inventor, Solid Edge, NX and SolidWorks files.
+- **FEA/CFD results** – VTK, VTU/VTP and CalculiX results coloured by a result field, with legend.
+- **Search** – ranked full-text search over numbers, names, materials, file names and file contents.
+- **Similar parts** – finds existing parts of similar 3D shape and size, with the reason for each hit.
+
+**Structure**
+
+- **Multi-level BOM** – mass and cost roll-up, revision rules, comparison of two revisions, CSV/Excel export.
+- **Where-used** – every assembly a part is used in, over all levels.
+- **Alternates and supersession** – alternate parts, superseded parts and *Replace in assemblies* with a preview.
+- **BOM import** – items and BOMs from CAD BOM tables (CSV, Excel, ODS) or a STEP assembly; preview first, one transaction.
+- **Pack and Go** – a ZIP of a whole assembly with all its files.
+
+**Change and release**
+
+- **Lifecycle** – WIP → In Review → Released → Obsolete with revision letters after ASME Y14.35; released data never changes.
+- **Change requests (ECR)** – anybody reports a problem with screenshots; editors accept, defer or reject.
+- **Change orders** – reviewers, four-eyes approval, impact analysis and an atomic release of all revisions.
+- **Change propagation** – references inside CAD files are tracked; a release flags every dependent for a check.
+- **Release readiness** – a check of a BOM for missing, unreleased or outdated parts before release.
+
+**Simulation**
+
+- **Simulation management** – FEA/CFD items linked to the exact revisions they analysed, flagged *out of date* when the design changes.
+- **Result values** – key values with limits and pass/fail, CSV/Excel import and comparison between revisions.
+
+**Teams and administration**
+
+- **Roles and read permissions** – viewer, editor and admin roles; restricted project groups visible only to their members.
+- **Single sign-on** – any OpenID Connect provider, with group synchronisation.
+- **Numbering schemes** – generated item numbers per project group from `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`.
+- **Custom attributes** – vendor, order number, RoHS … as text, number, yes/no or choice list per item type, versioned with each revision; in-house, purchased and standard parts; search by attribute value.
+- **Notifications** – in-app, e-mail and Mattermost; watch items, changes and change requests.
+- **Event webhooks** – signed JSON for releases, changes and simulation results, retried with backoff.
+- **Audit log** – every modification with user, time and details.
+- **Backup and restore** – one command for database and vault (see below).
+
+**Clients and integrations**
+
+- **Web UI** – light and dark design that follows the operating system, plus distribution skins.
+- **Desktop app** – Linux, macOS and Windows client with a local working folder, *Get* of whole assemblies and an import wizard.
+- **REST API** – everything the UI does, with personal access tokens.
+- **MCP server** – AI assistants such as Claude Code search, explain BOMs and draft changes with your rights, never approving anything.
+- **Ask TeamCraft (optional)** – a sidebar on every page (web and desktop) that knows which page you are on, keeps your conversation and, with your own key for Anthropic, OpenAI, Azure OpenAI or any OpenAI-compatible service, or a local model (Ollama, vLLM), drafts release notes and answers questions with your rights, read-only by default.
 
 ## Download
 
@@ -175,10 +129,17 @@ Builds of every tagged version are on the
 **[Releases page](https://github.com/rudalabs/TeamCraft/releases)** – 0.x
 versions are pre-releases (see the warning above):
 
-| | Linux x86_64 | Linux ARM64 | macOS (Apple silicon) | Windows x86_64 |
-|---|---|---|---|---|
-| **Server** (`teamcraft`) | `.tar.gz` | `.tar.gz` | `.tar.gz` | `.zip` |
-| **Desktop app** | `.AppImage`, `.deb`, `.rpm` | `.deb`, `.rpm` | `.dmg`, `.app.zip` | `.msi`, `-setup.exe` |
+| | Linux x86_64 | Linux ARM64 | macOS (Apple silicon) | Windows x64 | Windows ARM64 |
+|---|---|---|---|---|---|
+| **Server** (`teamcraft`) | `.tar.gz` | `.tar.gz` | – | `.zip` | – |
+| **Desktop app** | `.AppImage`, `.deb`, `.rpm`, `.flatpak` | `.deb`, `.rpm`, `.flatpak` | `.dmg`, `.app.zip` | `.msi`, `_x64-setup.exe`, `_x64_portable.zip` | `.msi`, `_arm64-setup.exe`, `_arm64_portable.zip` |
+
+The server runs on Linux in production (or as the
+[Docker image](docs/src/admin/docker.md) on any platform); on macOS build it
+from source ([platforms/macos.md](platforms/macos.md)). The Flatpak bundle
+installs with `flatpak install --user TeamCraft_*.flatpak` and takes the GNOME
+runtime from Flathub. The Windows `_portable.zip` holds `TeamCraft.exe` without
+an installer; it needs the WebView2 runtime, which Windows 10 and 11 include.
 
 Check a download against `SHA256SUMS.txt` (`sha256sum -c --ignore-missing
 SHA256SUMS.txt`). The installers are **not code-signed** yet: macOS asks to
@@ -217,12 +178,23 @@ the web UI with headless Chrome, TeamCraft Desktop on a virtual X display.
     <td width="50%"><a href="media/screenshots/bom-dark.png"><img src="media/screenshots/bom-dark.png" alt="The multi-level bill of materials of the sensor mast assembly in the dark scheme with states, quantities and the mass and cost totals" /></a><br /><sub><b>Multi-level BOM, dark</b> – every page in both schemes</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="media/screenshots/desktop-home.png"><img src="media/screenshots/desktop-home.png" alt="TeamCraft Desktop start screen: the project group ROVER expanded in the navigator with its items and their states, item statistics and the dependents to check" /></a><br /><sub><b>Desktop app</b> – navigator, statistics and what needs attention</sub></td>
-    <td width="50%"><a href="media/screenshots/desktop-revision.png"><img src="media/screenshots/desktop-revision.png" alt="TeamCraft Desktop: the checked-out mounting bracket revision in a tab with check-in, edit and release actions, its properties, lifecycle and the sub-tabs for files, structure, where used and 3D viewer" /></a><br /><sub><b>Desktop revision tab</b> – check-out to a local workspace, check-in</sub></td>
+    <td width="50%"><a href="media/screenshots/assistant.png"><img src="media/screenshots/assistant.png" alt="Ask TeamCraft: the quick action What needs my attention, a free question box, the option to allow drafts and the note that the assistant reads the PDM data with your rights and never approves or releases" /></a><br /><sub><b>Ask TeamCraft</b> – the AI assistant with your rights, read-only by default</sub></td>
+    <td width="50%"><a href="media/screenshots/revision-similar.png"><img src="media/screenshots/revision-similar.png" alt="Similar parts of the mounting bracket: existing parts of similar 3D shape and size, ranked, each with the reason for the hit" /></a><br /><sub><b>Similar parts</b> – "do we already have a part like this?"</sub></td>
   </tr>
   <tr>
+    <td width="50%"><a href="media/screenshots/simulation-result-3d.png"><img src="media/screenshots/simulation-result-3d.png" alt="A static analysis result of the mast arm in the 3D viewer, coloured by von Mises stress with a colour legend and field selector" /></a><br /><sub><b>FEA results in 3D</b> – VTK and CalculiX results coloured by field</sub></td>
+    <td width="50%"><a href="media/screenshots/simulation-cfd-3d.png"><img src="media/screenshots/simulation-cfd-3d.png" alt="Made-up CFD result of the flow around a cylindrical mast fairing in the 3D viewer, coloured by velocity magnitude with a colour legend and field selector" /></a><br /><sub><b>CFD results in 3D</b> – velocity and pressure fields</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/restricted-bom.png"><img src="media/screenshots/restricted-bom.png" alt="The BOM of the sensor test rig as seen by a user outside a restricted project group: one line shows only as Restricted item, and mass and cost exclude it with a note" /></a><br /><sub><b>Read permissions</b> – restricted groups stay hidden, even inside BOMs</sub></td>
+    <td width="50%"><a href="media/screenshots/desktop-home.png"><img src="media/screenshots/desktop-home.png" alt="TeamCraft Desktop start screen: the project group ROVER expanded in the navigator with its items and their states, item statistics and the dependents to check" /></a><br /><sub><b>Desktop app</b> – navigator, statistics and what needs attention</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/desktop-revision.png"><img src="media/screenshots/desktop-revision.png" alt="TeamCraft Desktop: the checked-out mounting bracket revision in a tab with check-in, edit and release actions, its properties, lifecycle and the sub-tabs for files, structure, where used and 3D viewer" /></a><br /><sub><b>Desktop revision tab</b> – check-out to a local workspace, check-in</sub></td>
     <td width="50%"><a href="media/screenshots/desktop-change.png"><img src="media/screenshots/desktop-change.png" alt="TeamCraft Desktop: the enclosure change order in review with the approve and reject form, one approval and one pending reviewer and the affected revisions" /></a><br /><sub><b>Desktop review</b> – approve or reject without leaving the app</sub></td>
-    <td width="50%"><a href="media/screenshots/desktop-worklist.png"><img src="media/screenshots/desktop-worklist.png" alt="TeamCraft Desktop worklist: the revision checked out by me, the change order waiting for my review and four dependents to check" /></a><br /><sub><b>Desktop worklist</b> – check-outs, reviews and dependents</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" align="center" colspan="2"><a href="media/screenshots/desktop-worklist.png"><img src="media/screenshots/desktop-worklist.png" alt="TeamCraft Desktop worklist: the revision checked out by me, the change order waiting for my review and four dependents to check" /></a><br /><sub><b>Desktop worklist</b> – check-outs, reviews and dependents</sub></td>
   </tr>
 </table>
 
@@ -351,6 +323,7 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | reqwest, rustls, lettre              | HTTP client, TLS, e-mail                 | MIT / Apache-2.0                         |
 | argon2, sha2                         | password hashing, content hashes         | MIT / Apache-2.0                         |
 | Tauri 2                              | desktop app                              | MIT / Apache-2.0                         |
+| futures-core                         | desktop app: cancellable streamed uploads | MIT / Apache-2.0                        |
 | Montserrat, Oswald                   | fonts                                    | SIL OFL 1.1                              |
 
 SolidWorks, NX, Creo, CATIA, Inventor, Fusion,

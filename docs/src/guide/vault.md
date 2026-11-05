@@ -96,8 +96,8 @@ Per file, a workspace is in one of these states (desktop Workspace tab,
 
 CAD assemblies and simulation results reach several gigabytes. Sending them
 in one request means starting over after every network hiccup, so API
-clients – and the desktop app for files above 32 MiB – upload them in
-**chunks**:
+clients – and the desktop app and the web UI for files above 32 MiB – upload
+them in **chunks**:
 
 1. `POST /api/v1/uploads` announces the file (revision, name, size,
    optionally its SHA-256, the base version and its folder in the project
@@ -129,6 +129,19 @@ their data at start-up and every hour. Each user may have at most 16
 unfinished uploads at a time, so the space they reserve stays bounded
 (16 × `TEAMCRAFT_MAX_UPLOAD_MB` per user). `DELETE /api/v1/uploads/{id}`
 cancels one at once.
+
+**In the browser** the upload and check-in forms of the revision page and
+the vault explorer do the same on their own: files above 32 MiB go first in
+chunks (to `/uploads`, the same sessions, signed in with the browser
+session), the progress bar counts all files, and the form then stores them
+together with the small files and the comment in one step. A dropped chunk
+is sent again after a short wait (up to six times); if the connection stays
+away, or the page was closed or reloaded, choose the same files again and
+submit – the upload continues where the server stopped, the browser
+remembers the unfinished uploads per revision and file. **Cancel upload**
+removes them on the server. The *New item* form still sends its files in one
+request, within `TEAMCRAFT_MAX_UPLOAD_MB`; attach large files to the new
+revision afterwards.
 
 ## Favorites, saved searches, Save As
 

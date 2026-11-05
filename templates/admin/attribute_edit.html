@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Attribute {{ def.label }}{% endblock %}
+{% block nav_attributes %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <p class="kicker"><a href="/admin/attributes">Attributes</a></p>
+    <h1>{{ def.label }} <span class="mono muted">{{ def.key }}</span></h1>
+    <p class="subtitle">{{ type_label }} · created {{ m.time(def.created_at) }} · stored in {{ in_use }} revision{% if in_use != 1 %}s{% endif %}</p>
+  </div>
+</div>
+
+<div class="card">
+  <form class="stack" method="post" action="/admin/attributes/{{ def.id }}">
+    <div class="form-row">
+      <label>Label <input type="text" name="label" value="{{ def.label }}" maxlength="100" required></label>
+      <label>Unit <input type="text" name="unit" value="{{ def.unit }}" maxlength="16"></label>
+      <label>Order <span class="hint">smaller first</span>
+        <input type="number" name="position" value="{{ def.position }}" step="1"></label>
+    </div>
+    {% if def.data_type == "choice" %}
+    <label>Choices <span class="hint">one per line; values stored before stay even if their choice is removed</span>
+      <textarea name="choices" rows="5">{{ choices_text }}</textarea></label>
+    {% endif %}
+    <fieldset class="event-choices">
+      <legend>Applies to <span class="hint">none ticked = all item types</span></legend>
+      {% for t in item_types %}
+      <label class="check"><input type="checkbox" name="item_type" value="{{ t.value }}" {% if t.checked %}checked{% endif %}> {{ t.label }}</label>
+      {% endfor %}
+    </fieldset>
+    <label class="check"><input type="checkbox" name="active" {% if def.active %}checked{% endif %}> Active
+      <span class="hint">inactive attributes are no longer offered; stored values stay visible</span></label>
+    <div class="actions">
+      <button class="primary" type="submit">Save</button>
+      <a class="button" href="/admin/attributes">Cancel</a>
+    </div>
+  </form>
+  <p class="hint">The key (<span class="mono">{{ def.key }}</span>) and the type stay as they are, because stored values and API clients rely on them.
+    To change them, create a new attribute and deactivate this one.</p>
+</div>
+{% endblock %}

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Dashboard{% endblock %}
 {% block nav_home %}active{% endblock %}
+{% block tc_context %}data-tc-kind="dashboard"{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">
@@ -20,9 +21,6 @@
     </p>
   </div>
   <div class="actions">
-    {% if assistant_enabled %}
-    <button class="ghost" type="button" data-toggle="assistant-panel" title="Triage your worklist or ask any question about the product data">Ask TeamCraft…</button>
-    {% endif %}
     {% if me.can_edit %}
     {#- New item is the primary action on Home, in the desktop app as well -#}
     <a class="button" href="/changes/new">New change</a>
@@ -32,9 +30,6 @@
     {% endif %}
   </div>
 </div>
-{% if assistant_enabled %}
-{{ m.assistant_panel([["attention", "What needs my attention"]], "", "", "", "/") }}
-{% endif %}
 
 <ul class="stat-strip" aria-label="Product data">
   <li><a href="/items"><span class="value">{{ stats.items }}</span><span class="label">Items</span></a></li>

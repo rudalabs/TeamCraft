@@ -2,11 +2,12 @@
 //! question form, `POST /assistant` runs a quick action or a free question
 //! and shows the answer (not stored, so there is nothing to redirect to).
 
-use axum::{extract::State, response::Response, Form};
+use axum::{extract::State, response::Response, Form, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::{is_user_error, render, WebCtx};
+use crate::{api::ApiJson, auth::WebUser};
 use crate::{
     assistant::{self, Action, AssistantError, Question},
     error::{AppError, AppResult},
@@ -28,7 +29,12 @@ pub struct AskForm {
 fn quick_actions(item: &str, change: &str) -> Value {
     let mut list: Vec<Action> = Vec::new();
     if !item.is_empty() {
-        list.extend([Action::ReleaseNotes, Action::ReleaseCheck]);
+        list.extend([
+            Action::ReleaseNotes,
+            Action::ReleaseCheck,
+            Action::Impact,
+            Action::SimulationStatus,
+        ]);
     }
     if !change.is_empty() {
         list.push(Action::ReviewBrief);
@@ -126,4 +132,62 @@ pub async fn ask(
         }
         Err(e) => Err(e),
     }
+}
+
+// ---------------------------------------------------------------------------
+// The sidebar (shared/js/assistant.js, started from static/app.js): JSON over
+// the session cookie. Writes are same-origin only (`csrf_guard`); errors are
+// JSON too (see `html_errors`), never a redirect.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(super) struct ChatBody {
+    action: Option<String>,
+    question: Option<String>,
+    /// The page context (`crate::pagecontext`): a hint of identifiers.
+    #[serde(default)]
+    context: Value,
+    #[serde(default)]
+    allow_drafts: bool,
+}
+
+/// `GET /assistant/thread`: the signed-in user's conversation.
+pub(super) async fn thread(
+    State(st): State<AppState>,
+    WebUser(me): WebUser,
+) -> AppResult<Json<Value>> {
+    let Some(client) = st.assistant.as_deref() else {
+        return Err(AssistantError::Disabled.into_app_error());
+    };
+    let thread = services::assistant_threads::load(&st.db, &me, client.retention_days).await?;
+    Ok(Json(json!(thread)))
+}
+
+/// `POST /assistant/chat`: a question in the user's conversation.
+pub(super) async fn chat(
+    State(st): State<AppState>,
+    WebUser(me): WebUser,
+    ApiJson(body): ApiJson<ChatBody>,
+) -> AppResult<Json<Value>> {
+    let run = services::assistant::chat(
+        &st,
+        &me,
+        body.action.as_deref(),
+        body.question.as_deref(),
+        &body.context,
+        body.allow_drafts,
+        true,
+    )
+    .await?;
+    Ok(Json(json!(run)))
+}
+
+/// `POST /assistant/thread/reset`: "New conversation" deletes the thread.
+pub(super) async fn reset(
+    State(st): State<AppState>,
+    WebUser(me): WebUser,
+) -> AppResult<Json<Value>> {
+    require_enabled(&st)?;
+    services::assistant_threads::reset(&st.db, &me).await?;
+    Ok(Json(json!({ "deleted": true })))
 }

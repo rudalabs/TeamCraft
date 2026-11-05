@@ -32,8 +32,10 @@ pub async fn load(pool: &PgPool, actor: &Actor) -> AppResult<Stats> {
             (SELECT COUNT(*) FROM changes c
              WHERE c.status IN ('draft', 'in_review', 'rejected') AND {change}) AS open_changes,
             (SELECT COUNT(*) FROM vf) AS files,
+            -- byte-wise comparison: the hex digests sort several times
+            -- faster than with the database's linguistic collation
             (SELECT COALESCE(SUM(size_bytes), 0)::bigint FROM
-                (SELECT DISTINCT sha256, size_bytes FROM vf) blobs) AS stored_bytes"
+                (SELECT DISTINCT sha256 COLLATE \"C\", size_bytes FROM vf) blobs) AS stored_bytes"
     ))
     .bind(&actor.hidden_projects)
     .bind(actor.id)

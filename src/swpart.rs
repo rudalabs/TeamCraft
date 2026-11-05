@@ -733,6 +733,31 @@ mod tests {
     }
 
     #[test]
+    fn component_tree_encodings_and_escapes() {
+        let xml = r#"<swSolidWorks><swFile id="1" swPath="C:\p\Gear &amp; Shaft.SLDPRT"/><swFile id="2" swPath="c:\P\gear &amp; shaft.sldprt"/><swModel id="3" swFileRef="1"/><swModel id="4" swFileRef="2"/><swModel id="5"><swReference swModelRef="3"/><swReference swModelRef="4"/></swModel></swSolidWorks>"#;
+        // XML entities are decoded; the same path in another case is one file.
+        assert_eq!(components(xml.as_bytes()), ["C:\\p\\Gear & Shaft.SLDPRT"]);
+        // UTF-8 with BOM, UTF-16 big endian with BOM and UTF-16LE without BOM.
+        let mut bom8 = b"\xEF\xBB\xBF".to_vec();
+        bom8.extend_from_slice(xml.as_bytes());
+        let mut be = vec![0xFE, 0xFF];
+        be.extend(xml.encode_utf16().flat_map(u16::to_be_bytes));
+        let le: Vec<u8> = xml.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        for bytes in [bom8, be, le] {
+            assert_eq!(components(&bytes), components(xml.as_bytes()));
+        }
+    }
+
+    #[test]
+    fn a_model_without_instances_has_no_components() {
+        let xml = br#"<swSolidWorks><swFile id="1" swPath="a.SLDPRT"/><swModel id="2" swFileRef="1"/></swSolidWorks>"#;
+        assert!(components(xml).is_empty());
+        // Instances of unknown models or files are skipped.
+        let xml = br#"<swSolidWorks><swModel id="2" swFileRef="9"/><swModel id="3"><swReference swModelRef="2"/><swReference swModelRef="8"/></swModel></swSolidWorks>"#;
+        assert!(components(xml).is_empty());
+    }
+
+    #[test]
     fn synthetic_container_round_trip() {
         let tree = br#"<swSolidWorks><swFile id="1" swPath="D:\a\Wheel.SLDPRT"/><swModel id="2" swFileRef="1"/><swModel id="3"><swReference swModelRef="2"/></swModel></swSolidWorks>"#;
         let bytes = container(&[

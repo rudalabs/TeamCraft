@@ -20,6 +20,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "explorer.html",
     "items/list.html",
     "items/new.html",
+    "items/where_used.html",
     "revisions/show.html",
     "revisions/edit.html",
     "revisions/bom.html",
@@ -38,6 +39,8 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "admin/users.html",
     "admin/user_edit.html",
     "admin/audit.html",
+    "admin/attributes.html",
+    "admin/attribute_edit.html",
     "admin/webhooks.html",
     "admin/webhook_edit.html",
     "desktop/authorize.html",
@@ -494,18 +497,33 @@ mod tests {
             with_common(json!({
                 "items": [{ "id": ME, "number": "PRT-000001", "item_type": "part", "unit": "each", "project_code": null,
                             "created_at": TS, "latest_revision_id": OTHER, "latest_code": "A", "latest_state": "in_work",
-                            "name": "Bracket", "matched_file": "bracket.step" }],
+                            "name": "Bracket", "matched_file": "bracket.step", "classification": "purchased",
+                            "attributes": { "vendor": "Bosch" } }],
                 "pagination": page(), "base_query": "q=a%20b",
-                "filter": { "q": "a b", "type": "part", "project": "", "state": "", "system": "creo" },
+                "filter": { "q": "a b", "type": "part", "project": "", "state": "", "system": "creo",
+                            "class": "purchased", "attr": "vendor", "value": "Bo" },
+                "filter_error": "Length: 'abc' is not a number.",
                 "projects": [project()], "types": [{ "value": "part", "label": "Part" }],
                 "states": [{ "value": "in_work", "label": "In Work" }],
                 "systems": crate::cadformat::SYSTEMS,
+                "classifications": [{ "value": "make", "label": "In-house" }, { "value": "purchased", "label": "Purchased" }],
+                "attribute_defs": [{ "key": "vendor", "label": "Vendor", "unit": "", "active": true }],
             })),
         );
         assert!(
             html.contains("<option value=\"creo\" selected>PTC Creo"),
             "CAD program filter"
         );
+        assert!(
+            html.contains("<option value=\"vendor\" selected>Vendor"),
+            "attribute filter"
+        );
+        assert!(html.contains("badge-member\" title=\"Classification\">purchased"));
+        assert!(
+            html.contains("name=\"class\" value=\"purchased\""),
+            "saved searches keep the class"
+        );
+        assert!(html.contains("is not a number"), "filter errors are shown");
 
         let html = render(
             &env,
@@ -537,6 +555,53 @@ mod tests {
                 "types": [{ "value": "part", "label": "Part" }], "units": units(),
             })),
         );
+
+        // alternates, supersession and replace in assemblies
+        let linked = |number: &str, restricted: bool| {
+            json!({ "item_id": OTHER, "number": number, "item_type": "part", "name": "Bolt <M6>",
+                    "latest_revision_id": OTHER, "latest_code": "B", "latest_state": "released",
+                    "note": "second <source>", "created_by_name": "Erika", "created_at": TS,
+                    "two_way": true, "restricted": restricted })
+        };
+        let usage = |level: i32, state: &str| {
+            json!({ "level": level, "child_number": "PRT-000001", "line_id": ME, "parent_revision_id": OTHER,
+                    "parent_item_id": ME, "parent_number": "ASM-000001", "parent_code": "A",
+                    "parent_name": "Stage <1>", "parent_state": state, "find_number": 10, "quantity": 2.0,
+                    "released_child_code": null })
+        };
+        let plan_row = |action: &str, label: &str| {
+            json!({ "line_id": ME, "find_number": 10, "quantity": 4.0, "parent_item_id": ME,
+                    "parent_number": "ASM-000003", "parent_revision_id": OTHER, "parent_code": "B",
+                    "parent_name": "Frame <2>", "parent_state": "in_work", "checked_out_by_name": "Max",
+                    "action": action, "action_label": label })
+        };
+        for (with_plan, restricted) in [(true, false), (false, true)] {
+            let html = render(
+                &env,
+                "items/where_used.html",
+                with_common(json!({
+                    "item": item(), "latest": revision("released", false), "levels": 25,
+                    "level_options": [{ "value": 1, "label": "1 level" }, { "value": 25, "label": "All levels" }],
+                    "rows": [usage(1, "released"), usage(2, "in_work")], "truncated": with_plan, "hidden": 2,
+                    "successor": linked("PRT-000002", restricted), "alternates": [linked("PRT-000003", false)],
+                    "with": "PRT-000002",
+                    "plan": if with_plan { json!({
+                        "old_item_id": ME, "old_number": "PRT-000001", "new_item_id": OTHER,
+                        "new_number": "PRT-000002", "replaced": 1, "hidden": 1,
+                        "rows": [plan_row("replace", "will be replaced"),
+                                 plan_row("checked_out", "checked out by somebody else")],
+                    }) } else { Value::Null },
+                    "plan_error": if with_plan { Value::Null } else { json!("Item 'X' not <found>.") },
+                    "can_replace": true,
+                })),
+            );
+            assert!(html.contains("Stage &lt;1&gt;"), "names are escaped");
+            assert!(html.contains("+2 assemblies"), "hidden count");
+            assert_eq!(html.contains("Replace in 1 BOM line"), with_plan);
+            assert_eq!(html.contains("(Max)"), with_plan, "who has it checked out");
+            assert_eq!(html.contains("not &lt;found&gt;"), !with_plan);
+            assert_eq!(html.contains("Restricted item"), restricted);
+        }
 
         for (state, checked_out) in [("in_work", true), ("in_work", false), ("released", false)] {
             let source = json!({ "file_id": OTHER, "filename": "nozzle.step", "sha256": "cd".repeat(32), "format": "step" });
@@ -571,16 +636,53 @@ mod tests {
                     "resolved_impacts": [impact(Some("acknowledged"))],
                     "open_requests": [request("in_triage")], "similar": similar,
                     "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
+                    "interchange": {
+                        "alternates": [linked("PRT-000003", false)],
+                        "alternate_for": [linked("PRT-000004", false)],
+                        "successor": linked("PRT-000002", false),
+                        "predecessors": [linked("PRT-000006", false)],
+                        "superseded": { "88888888-8888-4888-8888-888888888888": "PRT-000005" },
+                        "can_edit": checked_out,
+                    },
                     "lifecycle": {
                         "states": crate::domain::LifecycleState::ALL,
                         "next": crate::domain::rules_from(crate::domain::LifecycleState::parse(state).unwrap()),
                         "rules": crate::domain::LIFECYCLE_RULES,
                     },
+                    "attribute_rows": [{ "key": "length", "label": "Length", "unit": "mm", "value": "12.5", "active": true },
+                                       { "key": "old", "label": "Old <code>", "unit": "", "value": "x", "active": false }],
+                    "classifications": [{ "value": "make", "label": "In-house" }, { "value": "purchased", "label": "Purchased" }],
                 })),
             );
             assert!(
                 html.contains("aria-current=\"step\""),
                 "current lifecycle state is marked"
+            );
+            assert!(html.contains("<dd>12.5 mm</dd>") && html.contains("Old &lt;code&gt;"));
+            assert!(
+                html.contains("no longer in use"),
+                "inactive attributes are marked"
+            );
+            assert!(
+                html.contains("name=\"classification\""),
+                "classification in the master data"
+            );
+            for expected in [
+                "is superseded by",
+                "Superseded by PRT-000005",
+                "id=\"interchange\"",
+                "PRT-000003",
+                "may be replaced by",
+                "supersedes",
+                "second &lt;source&gt;",
+                "/where-used",
+            ] {
+                assert!(html.contains(expected), "revision page shows {expected}");
+            }
+            assert_eq!(
+                html.contains("Add alternate"),
+                checked_out,
+                "forms only for editors of the group"
             );
             assert!(html.contains("four-eyes principle"), "rules are listed");
             if checked_out {
@@ -642,13 +744,19 @@ mod tests {
                 state == "released",
                 "hint for native files without a neutral export"
             );
+            // the sidebar: icon and drawer only when the assistant is enabled;
+            // the page declares where the user is (identifiers only)
             assert_eq!(
-                html.contains("Draft release notes")
-                    && html.contains("Check before release")
-                    && html.contains("name=\"item\" value=\"PRT-000001\"")
-                    && html.contains("name=\"revision\" value=\"B\""),
+                html.contains("id=\"assistant-drawer\"")
+                    && html.contains("id=\"assistant-toggle\""),
                 state == "released",
-                "assistant quick actions only when enabled"
+                "assistant sidebar only when enabled"
+            );
+            assert!(
+                html.contains("data-tc-kind=\"revision\"")
+                    && html.contains("data-tc-item=\"PRT-000001\"")
+                    && html.contains("data-tc-revision=\"B\""),
+                "the revision page declares its context"
             );
         }
 
@@ -698,6 +806,7 @@ mod tests {
                         "summary": { "total": 3, "pass": 1, "fail": 1, "without_limits": 1 },
                         "out_of_date": 1, "roles": basis_roles.clone(),
                         "views": [{ "id": ME, "filename": "beam <load>.vtu", "version": 2 }],
+                        "images": [{ "id": ME, "filename": "pressure <p>.png", "version": 1, "sha256": "ab" }],
                     },
                     "based_simulations": [],
                     "can": if editable { can_all.clone() } else { json!({}) }, "max_upload_mb": 512,
@@ -724,6 +833,8 @@ mod tests {
                 "/simulation/results.csv",
                 "View result in 3D",
                 "beam &lt;load&gt;.vtu v2",
+                "class=\"sim-gallery\"",
+                "pressure &lt;p&gt;.png",
             ] {
                 assert!(html.contains(expected), "simulation page shows {expected}");
             }
@@ -811,7 +922,7 @@ mod tests {
         let html = render(&env, "files/preview.html", preview("stl", true));
         assert!(html.contains(&format!("data-src=\"/file-versions/{ME}/mesh\"")));
         assert!(!html.contains("viewer-stl"), "no STL export of an STL file");
-        assert!(html.contains("/static/viewer.js?v="));
+        assert!(html.contains("/static/shared/v/") && html.contains("/js/viewer.js\""));
         assert!(html.contains("first &lt;draft&gt;"), "comments are escaped");
         let html = render(&env, "files/preview.html", preview("step", false));
         assert!(html.contains("older version"));
@@ -830,6 +941,25 @@ mod tests {
             "revisions/edit.html",
             with_common(json!({ "rev": revision("in_work", false), "error": null })),
         );
+        let html = render(
+            &env,
+            "revisions/edit.html",
+            with_common(json!({
+                "rev": revision("in_work", false), "error": null,
+                "attribute_fields": [
+                    { "key": "vendor", "label": "Vendor", "unit": "", "data_type": "choice",
+                      "choices": ["Bosch", "SKF"], "value": "Old <Ltd>" },
+                    { "key": "rohs", "label": "RoHS", "unit": "", "data_type": "boolean", "choices": [], "value": "yes" },
+                    { "key": "length", "label": "Length", "unit": "mm", "data_type": "number", "choices": [], "value": "12.5" },
+                ],
+            })),
+        );
+        assert!(html.contains("name=\"attr.vendor\"") && html.contains("Length [mm]"));
+        assert!(
+            html.contains("Old &lt;Ltd&gt; (no longer a choice)"),
+            "removed choices stay selectable"
+        );
+        assert!(html.contains("<option value=\"yes\" selected>"));
         render(
             &env,
             "revisions/edit.html",
@@ -1034,6 +1164,10 @@ mod tests {
                               "active": true, "source": "oidc", "added_at": TS, "manager": true }],
                 "candidates": [user()], "is_member": true, "can_edit": true, "oidc_enabled": true,
                 "can_manage": true,
+                "result_templates": [{ "id": OTHER, "project_id": OTHER, "name": "Pressure <drop>", "file_pattern": "*.log",
+                                       "method": "regex", "pattern": "dp:\\s*([0-9.]+)", "csv_column": "", "csv_key_column": "",
+                                       "csv_key_value": "", "pick": "last", "unit": "Pa", "lower_limit": null,
+                                       "upper_limit": 500.0, "load_case": "", "solver": "", "enabled": true }],
                 "numbering": { "scheme": "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}", "is_default": false,
                                "next": [{ "item_type": "part", "label": "Part", "number": "ROCKET-PRT-2026-0001" }] },
                 "scheme_input": "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}", "previewing": true,
@@ -1042,6 +1176,8 @@ mod tests {
         );
         assert!(html.contains("CAD editor"));
         assert!(html.contains("via IdP group"));
+        assert!(html.contains("Pressure &lt;drop&gt;") && html.contains("/result-templates/"));
+        assert!(html.contains("Add template"), "managers add templates");
         assert!(html.contains("manager"), "project managers are marked");
         assert!(html.contains("Add member"), "managers add members");
         assert!(
@@ -1077,6 +1213,32 @@ mod tests {
                 "base_query": "entity_type=item", "pagination": page(), "per_page": 50,
             })),
         );
+        let attr_def = json!({
+            "id": ME, "key": "vendor", "label": "Vendor <Lieferant>", "data_type": "choice",
+            "unit": "", "choices": ["Bosch", "SKF"], "item_types": ["part"], "position": 10,
+            "active": true, "created_at": TS,
+        });
+        let html = render(
+            &env,
+            "admin/attributes.html",
+            with_common(json!({
+                "rows": [{ "def": attr_def, "type_label": "Choice list" }],
+                "data_types": [{ "value": "text", "label": "Text" }],
+                "item_types": [{ "value": "part", "label": "Part", "checked": false }],
+                "next_position": 20,
+            })),
+        );
+        assert!(html.contains("Vendor &lt;Lieferant&gt;") && html.contains("2 choices"));
+        let html = render(
+            &env,
+            "admin/attribute_edit.html",
+            with_common(json!({
+                "def": attr_def, "type_label": "Choice list", "choices_text": "Bosch\nSKF",
+                "item_types": [{ "value": "part", "label": "Part", "checked": true }], "in_use": 3,
+            })),
+        );
+        assert!(html.contains("3 revisions") && html.contains("Bosch\nSKF"));
+        assert!(html.contains("value=\"part\" checked"));
         let webhook = json!({
             "id": ME, "name": "ERP <export>", "url": "https://erp.example.org/in?token=x",
             "secret_hint": "tc_whsec_…a1b2", "events": ["revision.released", "change.released"],
@@ -1324,14 +1486,28 @@ mod tests {
             render(&env, "dashboard.html", data)
         };
         let html = dashboard(true);
-        assert!(html.contains("What needs my attention") && html.contains("action=\"/assistant\""));
+        for expected in [
+            "id=\"assistant-toggle\"",
+            "aria-controls=\"assistant-drawer\"",
+            "id=\"assistant-drawer\"",
+            "data-module=\"/static/shared/v/",
+            "/js/assistant.js\"",
+            "/static/shared/css/assistant.css?v=",
+            "data-can-edit=\"1\"",
+            "data-tc-kind=\"dashboard\"",
+        ] {
+            assert!(html.contains(expected), "the sidebar markup has {expected}");
+        }
+        let disabled = dashboard(false);
         assert!(
-            html.contains("Allow drafting change orders"),
-            "editors may allow drafts"
+            !disabled.contains("assistant-drawer")
+                && !disabled.contains("assistant-toggle")
+                && !disabled.contains("assistant.css"),
+            "hidden when disabled"
         );
         assert!(
-            !dashboard(false).contains("/assistant"),
-            "hidden when disabled"
+            disabled.contains("data-tc-kind=\"dashboard\""),
+            "the page context is declared either way"
         );
 
         let mut data = with_common(json!({
@@ -1343,8 +1519,9 @@ mod tests {
         data["assistant_enabled"] = json!(true);
         let html = render(&env, "changes/show.html", data);
         assert!(
-            html.contains("Brief me for this review")
-                && html.contains("name=\"change\" value=\"CHG-000001\"")
+            html.contains("data-tc-kind=\"change\"")
+                && html.contains("data-tc-change=\"CHG-000001\""),
+            "a change order declares its number"
         );
 
         let answer = crate::assistant::render_markdown("## Scope\n- PRT-000001 <b>");
@@ -1392,15 +1569,17 @@ mod tests {
     }
 
     /// Every link to an embedded asset carries the asset version, so browsers
-    /// never keep an outdated stylesheet, script or logo after an update.
+    /// never keep an outdated stylesheet, script or logo after an update:
+    /// `?v=` or, for shared scripts, the versioned path (src/assets.rs).
     #[test]
     fn static_links_carry_the_asset_version() {
         for (name, source) in TEMPLATES {
             for (i, _) in source.match_indices("\"/static/") {
                 let link = &source[i + 1..];
                 let link = &link[..link.find('"').unwrap_or(link.len())];
+                let versioned = link.starts_with("/static/shared/v/{{ assets }}/js/");
                 assert!(
-                    link.contains("?v={{ assets }}"),
+                    link.contains("?v={{ assets }}") || versioned,
                     "{name}: {link} has no ?v={{{{ assets }}}}"
                 );
             }

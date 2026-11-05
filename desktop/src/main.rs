@@ -6,8 +6,10 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod abortable;
 mod acp;
 mod api;
+mod bomimport;
 mod cadexport;
 mod commands;
 mod folderimport;
@@ -38,8 +40,12 @@ pub struct AppState {
     pub config_dir: PathBuf,
     /// Cancel signal of the running browser sign-in (one per attempt).
     pub sign_in_cancel: Mutex<Option<Arc<Notify>>>,
+    /// Cancel signal of the running assistant question (one at a time).
+    pub assistant_cancel: Mutex<Option<Arc<Notify>>>,
     /// Cancel switch of the running upload (one per upload).
     pub upload_cancel: Mutex<Arc<AtomicBool>>,
+    /// Cancel switch of the running Pack and Go download (one per download).
+    pub package_cancel: Mutex<Arc<AtomicBool>>,
     /// The running ACP agent session, if one was started.
     pub agent: Mutex<Option<commands::RunningAgent>>,
     /// Number of the last agent session (events carry it).
@@ -117,6 +123,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&item("go-worklist", "My Worklist", Some("CmdOrCtrl+2"))?)
         .item(&item("go-changes", "Changes", Some("CmdOrCtrl+3"))?)
         .item(&item("go-agent", "Agent", Some("CmdOrCtrl+4"))?)
+        .item(&item("go-assistant", "Ask TeamCraft", Some("CmdOrCtrl+5"))?)
         .separator()
         .item(&item("zoom-in", "Zoom In (Ctrl + wheel)", None)?)
         .item(&item("zoom-out", "Zoom Out", None)?)
@@ -126,6 +133,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&item("open-workspace", "Open Workspace Folder", None)?)
         .item(&item("get-projects", "Get Project Groups…", None)?)
         .item(&item("import-folder", "Import CAD Folder…", None)?)
+        .item(&item("import-bom", "Import BOM as New Assembly…", None)?)
         .item(&item("open-web", "Open in Browser", None)?)
         .build()?;
     let help = SubmenuBuilder::new(app, "Help")
@@ -154,7 +162,9 @@ fn main() {
                 client: api::client(),
                 config_dir,
                 sign_in_cancel: Mutex::new(None),
+                assistant_cancel: Mutex::new(None),
                 upload_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+                package_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 agent: Mutex::new(None),
                 agent_seq: AtomicU64::new(0),
                 get_cancel: Arc::new(AtomicBool::new(false)),
@@ -184,6 +194,8 @@ fn main() {
             commands::set_skin,
             commands::set_workspace_dir,
             commands::api,
+            commands::assistant_send,
+            commands::assistant_cancel,
             commands::file_bytes,
             commands::workspace_checkout,
             commands::workspace_download,
@@ -197,10 +209,13 @@ fn main() {
             commands::open_web,
             commands::set_zoom,
             commands::save_package,
+            commands::cancel_package,
             commands::save_stl,
             commands::upload_files,
             commands::cancel_upload,
             commands::upload_request_attachment,
+            commands::pick_bom_file,
+            commands::import_bom,
             commands::cad_programs,
             commands::cad_export_step,
             commands::scan_folder,
@@ -215,4 +230,71 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running TeamCraft Desktop");
+}
+
+#[cfg(test)]
+mod shared_ui_tests {
+    use std::{
+        collections::BTreeMap,
+        fs,
+        path::{Path, PathBuf},
+    };
+
+    /// Every file below `dir` with its content, keyed by its `/`-separated
+    /// path relative to `root`.
+    fn files(root: &Path, dir: &Path, out: &mut BTreeMap<String, Vec<u8>>) {
+        for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                files(root, &path, out);
+            } else {
+                let rel = path.strip_prefix(root).unwrap().to_str().unwrap();
+                out.insert(rel.replace('\\', "/"), fs::read(&path).unwrap());
+            }
+        }
+    }
+
+    /// `ui/static/shared/` (copied by build.rs) mirrors the servable files
+    /// of the repository's `shared/` byte for byte – the same files the
+    /// server embeds at `/static/shared/…` (tests in src/assets.rs).
+    #[test]
+    fn shared_ui_files_are_mirrored() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let source = manifest.join("../shared");
+        let copy = manifest.join("ui/static/shared");
+        let mut expected = BTreeMap::new();
+        files(&source, &source, &mut expected);
+        expected.retain(|rel, _| {
+            let name = rel.rsplit('/').next().unwrap_or(rel);
+            !(rel.starts_with("test-vectors/")
+                || name == "README.md"
+                || name.ends_with(".test.js")
+                || name.starts_with('.'))
+        });
+        assert!(expected.contains_key("css/skins.css"));
+        let mut copied = BTreeMap::new();
+        files(&copy, &copy, &mut copied);
+        assert_eq!(
+            copied.keys().collect::<Vec<_>>(),
+            expected.keys().collect::<Vec<_>>(),
+            "ui/static/shared and shared/ list different files"
+        );
+        for (rel, body) in &expected {
+            assert!(copied[rel] == *body, "ui/static/shared/{rel} differs");
+        }
+    }
+
+    /// The page links the shared files at the paths the copy has.
+    #[test]
+    fn index_links_shared_files() {
+        let html = include_str!("../ui/index.html");
+        for url in [
+            "/static/shared/css/skins.css",
+            "/static/shared/js/viewer.js",
+        ] {
+            assert!(html.contains(url), "{url}");
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("ui{url}"));
+            assert!(path.is_file(), "{}", path.display());
+        }
+    }
 }

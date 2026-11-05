@@ -1232,6 +1232,114 @@ mod tests {
     }
 
     #[test]
+    fn extensions_are_case_insensitive() {
+        for name in ["Bracket.SLDPRT", "bracket.sldprt", "BRACKET.SldPrt"] {
+            assert_eq!(id(name, &[]), Some("solidworks-part"), "{name}");
+        }
+        assert_eq!(id("Top.CATProduct", &[]), Some("catia-product"));
+        assert_eq!(id("TOP.CATPRODUCT", &[]), Some("catia-product"));
+        assert_eq!(extension("A.STEP").as_deref(), Some("step"));
+        assert_eq!(extension("noext"), None);
+        assert_eq!(extension("trailing."), None);
+        assert_eq!(extension(".hidden"), None);
+    }
+
+    #[test]
+    fn name_only_detection_trusts_the_extension() {
+        // Without content (`&[]`) the extension decides even for the
+        // extensions that need content otherwise.
+        assert_eq!(id("Job-1.msg", &[]), Some("abaqus-message"));
+        assert_eq!(id("Job-1.sta", &[]), Some("abaqus-status"));
+        assert_eq!(id("crash.k", &[]), Some("lsdyna-keyword"));
+        assert_eq!(id("mesh.e", &[]), Some("exodus"));
+        assert_eq!(id("hull.obj", &[]), Some("obj"));
+        assert_eq!(id("design.sc", &[]), Some("solidcraft-design"));
+        // ... but .dat never counts without Fluent sections.
+        assert_eq!(id("pipe.dat", &[]), None);
+    }
+
+    #[test]
+    fn whole_file_names_and_paths() {
+        assert_eq!(id("case\\system\\controlDict", &[]), Some("openfoam-case"));
+        assert_eq!(
+            id("controldict", &[]),
+            None,
+            "OpenFOAM spells it controlDict"
+        );
+        assert_eq!(id("run/D3PLOT12", &[]), Some("lsdyna-d3plot"));
+        assert_eq!(id("d3plot_a", &[]), None);
+        assert_eq!(id("d3plot01.bak", &[]), None);
+        // The STAR-CCM+ marker is matched case-insensitively.
+        assert_eq!(id("x.sim", b"..starccm+.."), Some("starccm-sim"));
+        // Fluent sections after leading white space; (4 …) too.
+        assert_eq!(id("x.dat", b"\n\t(4 (\"rp\"))"), Some("fluent-data"));
+        assert_eq!(id("x.dat", b"(2 3)"), None);
+        assert_eq!(id("x.e", b"CDF\x03"), None, "unknown netCDF version");
+    }
+
+    #[test]
+    fn solidcraft_json_needs_its_format_marker() {
+        assert_eq!(
+            id("a.sc", b"  {\"format\": \"solvecraft/2\"}"),
+            Some("solidcraft-design")
+        );
+        assert_eq!(id("a.sc", b"{\"format\": \"other/1\"}"), None);
+        assert_eq!(id("a.sc", b"[\"solidcraft/1\"]"), None, "not an object");
+    }
+
+    #[test]
+    fn creo_iteration_limits() {
+        assert_eq!(creo_iteration("a.prt.123456"), Some(("a.prt", 123_456)));
+        assert_eq!(creo_iteration("a.prt.1234567"), None, "at most six digits");
+        assert_eq!(creo_iteration("a.prt."), None);
+        assert_eq!(creo_iteration("a.mfg.3"), Some(("a.mfg", 3)));
+        assert_eq!(creo_iteration("a.MFG.3"), Some(("a.MFG", 3)));
+        // Iterated names keep their Creo format, even for .prt/.asm.
+        assert_eq!(id("plate.prt.12", b"\x00binary"), Some("creo-part"));
+        assert_eq!(id("lay.lay.2", &[]), Some("creo-layout"));
+    }
+
+    #[test]
+    fn kinds_and_labels() {
+        let names: HashSet<&str> = FormatKind::ALL.iter().map(|k| k.as_str()).collect();
+        assert_eq!(names.len(), FormatKind::ALL.len(), "unique ids");
+        let labels: HashSet<&str> = FormatKind::ALL.iter().map(|k| k.label()).collect();
+        assert_eq!(labels.len(), FormatKind::ALL.len(), "unique labels");
+        for f in FORMATS {
+            assert!(FormatKind::ALL.contains(&f.kind));
+        }
+        // serde uses the same ids as as_str
+        for k in FormatKind::ALL {
+            assert_eq!(
+                serde_json::to_value(k).unwrap(),
+                serde_json::Value::String(k.as_str().into())
+            );
+        }
+    }
+
+    #[test]
+    fn content_type_falls_back_to_the_client() {
+        // Office documents have no registered type: the client's is kept.
+        for id in ["word", "spreadsheet", "presentation"] {
+            assert_eq!(content_type(by_id(id), "x/y"), "x/y", "{id}");
+        }
+        assert_eq!(content_type(by_id("nastran-bulk"), OCTET), "text/plain");
+    }
+
+    #[test]
+    fn search_ignores_case_spaces_and_punctuation() {
+        assert_eq!(ids_named_by("SOLID WORKS"), ids_named_by("solidworks"));
+        assert_eq!(ids_named_by("Solid-Edge"), ids_named_by("solid edge"));
+        assert!(ids_named_by("  ").is_empty());
+        let mut ids = ids_of_system("solidworks");
+        ids.sort();
+        let mut named = ids_named_by("SolidWorks");
+        named.sort();
+        assert_eq!(ids, named);
+        assert!(ids_of_system("nope").is_empty());
+    }
+
+    #[test]
     fn infos() {
         let product = info("catia-product").unwrap();
         assert_eq!(product.system_short, "CATIA");

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Vault{% endblock %}
 {% block nav_vault %}active{% endblock %}
+{% block tc_context %}data-tc-kind="vault"{% for f in folders %}{% if f.id == folder %} data-tc-project="{{ f.code }}"{% endif %}{% endfor %}{% if q %} data-tc-query="{{ q }}"{% endif %} data-tc-view="{{ folder if folder in ["mine", "favorites", "locked", "none", "search"] else "project" }}"{% if selected %} data-tc-item="{{ selected.rev.item_number }}" data-tc-revision="{{ selected.rev.code }}" data-tc-selected="{{ selected.rev.item_number }}"{% endif %}{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">
@@ -42,7 +43,7 @@
       <thead><tr><th>Item</th><th>Rev</th><th>Name</th><th>State</th><th>Lock</th><th class="num">Files</th></tr></thead>
       <tbody>
       {% for e in entries %}
-        <tr class="{% if selected and selected.rev.id == e.revision_id %}selected{% endif %}">
+        <tr data-tc-row="{{ e.number }}" class="{% if selected and selected.rev.id == e.revision_id %}selected{% endif %}">
           <td class="nowrap"><a class="mono" href="{{ '/vault?folder=' ~ folder ~ ('&q=' ~ q if q else '') ~ '&rev=' ~ e.revision_id }}"{% if selected and selected.rev.id == e.revision_id %} aria-current="true"{% endif %}>{{ e.number }}</a></td>
           <td>{{ m.revbox(e.code) }}</td>
           <td class="ellipsis" title="{{ e.name }}">{{ e.name }}{% if folder in ["mine", "locked", "search"] and e.project_code %} <span class="muted small">{{ e.project_code }}</span>{% endif %}</td>
@@ -104,7 +105,7 @@
 
     {% if can.checkin %}
     <h3>Check in</h3>
-    <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin?back={{ back }}" enctype="multipart/form-data">
+    <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin?back={{ back }}" enctype="multipart/form-data" data-chunked="{{ rev.id }}">
       <input type="file" name="file" multiple aria-label="New files or versions">
       <input type="text" name="comment" maxlength="2000" placeholder="What changed?" aria-label="Comment">
       <p class="hint">Same file name = next version. Max. {{ max_upload_mb }} MiB per file. Files and lock release happen in one step.</p>

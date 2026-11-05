@@ -10,6 +10,7 @@
 mod account;
 mod admin;
 mod assistant;
+mod attributes;
 mod auth_pages;
 mod bom;
 mod changes;
@@ -18,6 +19,7 @@ mod desktop;
 mod explorer;
 mod formats;
 mod imports;
+mod interchange;
 mod items;
 mod notifications;
 mod personal;
@@ -25,6 +27,7 @@ mod references;
 mod requests;
 mod revisions;
 mod simulations;
+mod uploads;
 mod webhooks;
 
 pub(crate) use bom::{package_response, package_rule};
@@ -74,6 +77,9 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/checkouts/checkin-all", post(dashboard::checkin_all))
         .route("/vault", get(explorer::show))
         .route("/assistant", get(assistant::show).post(assistant::ask))
+        .route("/assistant/thread", get(assistant::thread))
+        .route("/assistant/thread/reset", post(assistant::reset))
+        .route("/assistant/chat", post(assistant::chat))
         // authentication
         .route(
             "/login",
@@ -90,10 +96,31 @@ pub fn router(state: &AppState) -> Router<AppState> {
                 .post(items::create)
                 .layer(DefaultBodyLimit::max(upload_limit)),
         )
+        // chunked, resumable uploads of large files (static/app.js)
+        .route("/uploads", post(uploads::create))
+        .route(
+            "/uploads/{id}",
+            get(uploads::status)
+                .patch(uploads::append)
+                .delete(uploads::abort),
+        )
         .route("/items/new", get(items::new_form))
         .route("/items/{id}", get(items::show))
         .route("/items/{id}/master", post(items::update_master))
         .route("/items/{id}/delete", post(items::delete))
+        // alternates, supersession, multi-level where-used, replace in assemblies
+        .route("/items/{id}/where-used", get(interchange::where_used))
+        .route("/items/{id}/replace", post(interchange::replace))
+        .route("/items/{id}/alternates", post(interchange::add_alternate))
+        .route(
+            "/items/{id}/alternates/{alternate}/delete",
+            post(interchange::delete_alternate),
+        )
+        .route("/items/{id}/supersede", post(interchange::supersede))
+        .route(
+            "/items/{id}/supersede/delete",
+            post(interchange::clear_supersession),
+        )
         .route("/i/{number}", get(items::by_number))
         .route("/formats", get(formats::show))
         // revisions & files
@@ -286,6 +313,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/projects/{id}/visibility", post(admin::update_visibility))
         .route("/projects/{id}/members", post(admin::add_member))
         .route(
+            "/projects/{id}/result-templates",
+            post(admin::add_result_template),
+        )
+        .route(
+            "/result-templates/{id}/delete",
+            post(admin::delete_result_template),
+        )
+        .route(
             "/projects/{id}/members/{user_id}/remove",
             post(admin::remove_member),
         )
@@ -296,6 +331,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/admin/audit", get(admin::audit))
+        .route(
+            "/admin/attributes",
+            get(attributes::list).post(attributes::create),
+        )
+        .route(
+            "/admin/attributes/{id}",
+            get(attributes::show).post(attributes::update),
+        )
         .route(
             "/admin/webhooks",
             get(webhooks::list).post(webhooks::create),
@@ -326,12 +369,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(desktop::authorize_page).post(desktop::authorize_submit),
         )
         // static assets
-        .route("/static/skins.css", get(static_asset))
         .route("/static/style.css", get(static_asset))
         .route("/static/app.js", get(static_asset))
-        .route("/static/viewer.js", get(static_asset))
         .route("/static/media/{*path}", get(static_asset))
-        .route("/static/fonts/{name}", get(static_asset))
+        .route("/static/shared/{*path}", get(static_asset))
         .route("/static/favicon.svg", get(favicon))
         .route("/favicon.ico", get(favicon))
         .fallback(not_found)
@@ -661,7 +702,12 @@ async fn html_errors(State(st): State<AppState>, req: Request, next: Next) -> Re
     let skin = skin_from_cookie(req.headers());
     let response = next.run(req).await;
     // The viewer fetches preview meshes itself and shows the JSON error message.
-    if target.split('?').next().unwrap_or("").ends_with("/mesh") {
+    let path = target.split('?').next().unwrap_or("");
+    if path.ends_with("/mesh") {
+        return response;
+    }
+    // So does the chunked upload of app.js – a 401 too, it then asks to sign in.
+    if path == "/uploads" || path.starts_with("/uploads/") || path.starts_with("/assistant/") {
         return response;
     }
     let Some(info) = response.extensions().get::<ErrorInfo>().cloned() else {
@@ -749,16 +795,16 @@ pub(crate) fn same_origin(headers: &HeaderMap, public_url: &str) -> bool {
 
 /// Embedded stylesheets, scripts, logos and fonts (see `assets`).
 async fn static_asset(uri: Uri, headers: HeaderMap) -> Response {
-    match assets::find(uri.path()) {
-        Some(asset) => assets::respond(asset, uri.query(), &headers),
+    match assets::resolve(uri.path(), uri.query()) {
+        Some((asset, current)) => assets::respond(asset, current, &headers),
         None => not_found().await.into_response(),
     }
 }
 
 /// The TeamCraft icon is the favicon.
 async fn favicon(uri: Uri, headers: HeaderMap) -> Response {
-    match assets::find(assets::FAVICON) {
-        Some(asset) => assets::respond(asset, uri.query(), &headers),
+    match assets::resolve(assets::FAVICON, uri.query()) {
+        Some((asset, current)) => assets::respond(asset, current, &headers),
         None => not_found().await.into_response(),
     }
 }

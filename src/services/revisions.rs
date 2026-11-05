@@ -10,7 +10,7 @@ use crate::{
     error::{AppError, AppResult},
     models::Revision,
     services::{
-        access, audit, impacts,
+        access, attributes, audit, impacts,
         notifications::{self, Notice},
         references, simulations, webhooks,
     },
@@ -20,7 +20,7 @@ pub(crate) const REVISION_SELECT: &str = "
     SELECT r.id, r.item_id, i.number AS item_number, i.item_type, i.unit,
            i.project_id, rp.code AS project_code,
            r.seq, r.code, r.state, r.name, r.description, r.material,
-           r.mass_kg, r.unit_cost,
+           r.mass_kg, r.unit_cost, r.attributes, i.classification,
            r.checked_out_by, co.display_name AS checked_out_by_name, r.checked_out_at,
            r.created_by, cb.display_name AS created_by_name,
            r.created_at, r.updated_at, r.released_at
@@ -174,6 +174,9 @@ pub struct RevisionUpdate {
     pub material: String,
     pub mass_kg: Option<f64>,
     pub unit_cost: Option<f64>,
+    /// Custom attribute changes, `key → value as text`; an empty text removes
+    /// the value, keys not listed keep theirs (see `services::attributes`).
+    pub attributes: Vec<(String, String)>,
 }
 
 impl RevisionUpdate {
@@ -184,6 +187,7 @@ impl RevisionUpdate {
             material: domain::limit_text("Material", &self.material, 200)?,
             mass_kg: domain::validate_non_negative("Mass", self.mass_kg)?,
             unit_cost: domain::validate_non_negative("Unit cost", self.unit_cost)?,
+            attributes: self.attributes,
         })
     }
 }
@@ -198,9 +202,12 @@ pub async fn update(
     let mut tx = pool.begin().await?;
     let rev = lock(&mut tx, id).await?;
     ensure_editable(&rev, actor)?;
+    let attributes =
+        attributes::apply_changes(&mut tx, &rev.item_type, &rev.attributes, &upd.attributes)
+            .await?;
     sqlx::query(
         "UPDATE revisions SET name = $2, description = $3, material = $4, mass_kg = $5,
-                              unit_cost = $6, updated_at = now()
+                              unit_cost = $6, attributes = $7, updated_at = now()
          WHERE id = $1",
     )
     .bind(id)
@@ -209,6 +216,7 @@ pub async fn update(
     .bind(&upd.material)
     .bind(upd.mass_kg)
     .bind(upd.unit_cost)
+    .bind(&attributes)
     .execute(&mut *tx)
     .await?;
     audit::record(
@@ -224,6 +232,7 @@ pub async fn update(
             "material": upd.material,
             "mass_kg": upd.mass_kg,
             "unit_cost": upd.unit_cost,
+            "attributes": attributes,
         }),
     )
     .await?;
@@ -416,8 +425,8 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     let new_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO revisions (id, item_id, seq, code, state, name, description, material,
-                                mass_kg, unit_cost, created_by, checked_out_by, checked_out_at)
-         SELECT $2, item_id, $3, $4, 'in_work', name, description, material, mass_kg, unit_cost, $5, $5, now()
+                                mass_kg, unit_cost, attributes, created_by, checked_out_by, checked_out_at)
+         SELECT $2, item_id, $3, $4, 'in_work', name, description, material, mass_kg, unit_cost, attributes, $5, $5, now()
          FROM revisions WHERE id = $1",
     )
     .bind(src.id)

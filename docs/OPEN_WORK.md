@@ -1,9 +1,196 @@
 # Open work
 
-The to-do list of TeamCraft: the open entries grouped by area, then what is done, then details on the open features.
+The to-do list of TeamCraft, in order of priority, then what is done, then details on the open features.
 Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-11-05.
 
+## Direction
+
+TeamCraft has more features than proof that they hold up. The next effort – of contributors and of AI agents alike –
+goes into **proofing and structure, not new features**:
+
+1. **Proofing** – tests that catch real regressions, above all in the processes that must never leave half a state
+   behind (migrations, backup/restore, imports, multi-row mutations), fuzzing of every file parser, CI gates.
+2. **Structure** – smaller modules with one job each, guard tests for the architecture rules, less duplication
+   between web UI, REST API and MCP.
+3. **Fixes and verification** – known bugs, checks with real CAD data and real servers.
+4. **Parked features** – only finish what is already in progress (custom attributes #60, scale check #47) and fix
+   bugs in existing features. A new feature needs an issue with a reason first.
+
+Rules for every change, features included:
+
+- Tests for the failure paths, not only the happy path: refused permission, conflict (409), rollback on error.
+- Merge only with every check green – never "fix the tests later" (#65 was merged red, fixed in #67).
+- Refactorings keep behaviour: no feature work and no behaviour change in the same PR as a move or split.
+- AI agents pick their next task from sections 1 and 2 unless the maintainer asks for something else.
+
+## Road to v1.0.0 (general availability)
+
+**What 1.0 promises.** Teams can run TeamCraft in production and upgrade it without fear: data is never lost or
+silently changed, upgrades between 1.x versions are automatic, the REST API, MCP tools, configuration and CLI are
+stable (breaking changes only in 2.0), and security issues get fixed releases. 1.0 is a quality milestone, not a
+feature milestone – the features in *What works* are enough; what is missing is proof, stability and operations.
+
+**Milestones** – each is a pre-release with release notes; nothing moves to the next one with an open blocker.
+
+| Version | Theme | Exit criteria |
+|---|---|---|
+| **0.2** | Proofing | Sections 1 and 2 of the to-do list mostly done: migration, backup, import and atomicity tests, fuzzing of every parser, `cargo deny`, coverage report, branch protection; the large modules split |
+| **0.3** | Real data | The CAD-program checks of section 3 with real files (Inventor, Solid Edge, SOLIDWORKS, NX, STEP exports); scale check (#47) with targets met; e-mail/Mattermost against real servers |
+| **0.5** | Beta – frozen interfaces | Assistant with OpenAI-compatible providers shipped (its config is part of the freeze); API, MCP tools, config variables and CLI reviewed and frozen (deprecations marked); upgrade path tested from 0.2 on; first outside test teams |
+| **0.9** | Release candidate | No known data-loss or security bug; docs complete; one RC per fix round, two weeks without a blocker |
+| **1.0.0** | General availability | Work-in-progress notices removed (README, docs, web footer, desktop *About*); support policy published |
+
+**GA criteria** (all must be ticked before 1.0.0)
+
+*Data safety and upgrades*
+
+- [ ] Schema upgrades from every 0.x release since 0.2 and between all 1.x versions are automatic and tested in CI
+  with seeded databases (see *Migrations* in section 1); no edited migrations after 0.5 (`db::EDITED_BEFORE_RELEASE`
+  empty and frozen)
+- [ ] Backup/restore tested for every release in CI, including restore of an older version's backup; documented
+  restore drill; `teamcraft vault check` finds and reports every inconsistency between database and vault
+- [ ] All multi-row mutations proven all-or-nothing and safe under concurrency (section 1, *Atomic processes*)
+- [ ] Upgrade guide in the docs (`docs/src/admin/upgrade.md`): before/after steps, rollback by restore, breaking
+  changes per version
+
+*Stable interfaces*
+
+- [ ] REST API `/api/v1` reviewed: consistent names, error shape, pagination and filters on every list; an OpenAPI
+  description generated from the routes and checked in CI against the router; deprecation policy (an endpoint lives
+  at least one minor version with a `Deprecation` header)
+- [ ] MCP tools and prompts: names and argument schemas frozen and versioned, contract tests per tool
+- [ ] Configuration: every variable documented and validated at start (unknown `TEAMCRAFT_*` variables warned),
+  defaults reviewed; CLI commands and exit codes documented and frozen
+- [ ] Desktop app ↔ server compatibility: version handshake, the desktop tells the user when the server is too old
+  or too new; a supported-versions table
+
+*Assistant*
+
+- [ ] One provider-neutral LLM API layer (`src/llm/`) with the Anthropic Messages backend and an OpenAI-compatible
+  Chat Completions backend (OpenAI, Azure OpenAI, Mistral, OpenRouter, Groq, local Ollama/vLLM/LM Studio) – phases 1
+  and 2 of [agent-interface](src/research/agent-interface.md): provider, base URL, model and key (`_FILE`) in the
+  configuration, `teamcraft assistant check`, the loop tests run for every provider, recorded fixtures per server
+- [ ] Per-user daily budget and admin feature switches for the assistant (phase 4), so that an operator can enable
+  it with a bought key without surprises
+
+*Security*
+
+- [ ] Threat model in `docs/src/dev/` (vault, sessions, PATs, OIDC, uploads, file parsers, webhooks, MCP/assistant);
+  every finding resolved or documented
+- [ ] External review or pentest of authentication, read permissions and file parsing; fuzzing of all parsers
+  running continuously (section 1)
+- [ ] `cargo deny`/`cargo audit` green in CI, SBOM (CycloneDX) attached to each release, release artifacts with
+  build provenance (GitHub attestations); private vulnerability reporting enabled (`SECURITY.md`)
+- [ ] Session, token and password policies reviewed (expiry, rotation, rate limiting of sign-in and API)
+
+*Operations*
+
+- [ ] Metrics endpoint (Prometheus) for requests, latency, outbox backlogs (notifications, webhooks), preview
+  queue, database pool; structured JSON logs; documented alerts
+- [ ] Performance targets met and checked by the scale harness (#47): e.g. 1 M files, 100 k items, BOMs of 10 k
+  lines, 50 concurrent users – page and API p95 times written down and guarded in a scheduled CI job
+- [ ] Production install paths tested end to end per release: Docker Compose (`deploy/`), Linux packages (systemd
+  unit), behind a reverse proxy with TLS; documented sizing and PostgreSQL versions (16–18)
+- [ ] Data retention and cleanup: old previews, staged uploads, expired sessions, audit log retention setting
+- [x] Preview safety: size caps per kind and a memory limit for the preview process (`TEAMCRAFT_PREVIEW_MAX_*`); big result files are stored, never parsed
+
+*Clients and packaging*
+
+- [ ] Flatpak on Flathub with offline cargo sources; AUR packages published; the desktop app's update notice (no
+  silent auto-update). Binaries and installers stay **unsigned** (no code signing or notarisation): the checksums
+  in `SHA256SUMS.txt` and the build provenance are the verification, and the docs explain the first start past
+  SmartScreen and Gatekeeper
+- [ ] Desktop app run and tested on Windows x64/ARM64, macOS and Linux for each RC (a short manual test script in
+  `docs/src/dev/release-checklist.md`)
+- [ ] Accessibility: keyboard use and screen-reader labels on the main web flows checked (WCAG 2.2 AA for contrast
+  is already tested)
+
+*Documentation and project*
+
+- [ ] `CHANGELOG.md` (Keep a Changelog) from 0.2 on, written per PR; release notes from it
+- [ ] User guide, admin guide and API/MCP reference complete and checked against the 1.0 behaviour; screenshots
+  current
+- [ ] Support and versioning policy: SemVer from 1.0, which versions get security fixes (e.g. the latest minor and
+  the previous one for 6 months), how to report bugs
+- [ ] Release checklist (`docs/src/dev/release-checklist.md`): green main, RC soak time, version bump in both
+  `Cargo.toml` files, tag, verify assets and checksums, image tags, announcement
+- [ ] Governance basics: maintainers, review rule (one approving review, green checks), code of conduct
+
+**Not required for 1.0** – CAD add-ins, more 3D readers, the Jira connector, code-signed binaries, the assistant
+features after the budget (threads, streaming, quick actions), the shared UI folder beyond what is already merged, i18n of the UI (English only in 1.0; the
+structure should not prevent translations later). They may land in 1.x minor releases.
+
 ## To-do
+
+### 1. Proofing
+
+**Tests** (priority: more unit tests)
+
+The feature list is covered broadly since #65 (and #67); the weak spots are the processes that must never leave
+half a state behind. Prefer tests that fail on a real regression over tests that restate the code.
+
+- [ ] **Migrations** – today only `db::supported_postgres_versions` is unit-tested. Add: every migration applies in
+  order on an empty database and the schema matches a fresh `migrate` (no drift between numbered files); a database
+  with data from the previous release (seeded fixture, e.g. v0.1.0) upgrades without loss (row counts, foreign keys,
+  CHECK constraints of the enum columns); applying twice is a no-op; a changed checksum of an applied migration is
+  refused unless the version is in `db::EDITED_BEFORE_RELEASE`; numbering of `migrations/` has no duplicates and the
+  gaps are known (0015)
+- [ ] **Backup / restore** – beyond `tests/backup_restore.rs` and the argument/manifest tests in `src/backup.rs`:
+  restore of a backup from an older schema version (then migrate), a vault object missing or corrupt during
+  backup (refused, nothing written), interrupted backup leaves no directory that `verify` accepts, restore into a
+  non-empty target without `--force` is refused, `--force` failure leaves database *and* vault untouched (vault side
+  not covered yet), percent-encoded and `_FILE` credentials, large-object and preview-cache handling
+- [ ] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): the dry-run plan equals what the
+  import writes (property test over generated tables), an error in row *n* rolls back rows 1…*n*-1, re-import of the
+  same table is idempotent (no duplicate items or BOM lines), cycles and self-references refused, quantity/unit
+  parsing edge cases (decimal comma, `1.1.2` positions with gaps, empty levels), malformed STEP (truncated, unknown
+  entities, `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`) never panics (fuzz-style corpus); desktop folder import resumes
+  after an interrupted run without duplicates
+- [ ] **Atomic processes** – each multi-row mutation is all-or-nothing under an injected failure (a failing
+  statement or a closed connection between steps): check-in (file versions + lock release), change order release
+  (all revisions or none, impact flags, notifications and webhooks in the same transaction), *Replace in assemblies*,
+  Save As with files and BOM, chunked upload `finish`, folder import per item, restricted-group visibility switch;
+  concurrent runs of the same mutation (two check-ins, two releases, two numbering requests) give one winner and a
+  clean 409, never a duplicate or a lost update
+- [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
+  make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
+  with two failing integration tests; merge only with green checks
+
+**Parsers and CI gates**
+
+- [ ] Fuzz targets (`cargo fuzz`, own `fuzz/` crate outside the server build) for every reader of untrusted files:
+  `mesh` (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, point clouds), `simmesh` (VTK, VTU/VTP, FRD), `stepbom`, `swpart`,
+  `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex`; crashes found become regression unit tests with the
+  minimised input; a short fuzz run per parser in a scheduled CI job
+- [ ] No `unwrap`/`expect`/indexing panics on file input outside tests: audit `swpart`, `mesh`, `simmesh`, `config`,
+  then enable `clippy::unwrap_used`/`expect_used` for the parser modules
+- [ ] Property tests (`proptest`) for the pure rules in `domain.rs`: revision letter sequence, lifecycle transition
+  table, numbering scheme expansion and counters, skin contrast
+- [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*, report only: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) – open: a floor that may not drop, once the numbers of a few PRs are known
+- [ ] `cargo deny` in CI: licences compatible with MPL-2.0 (see *Rules for all of them* below), security advisories,
+  duplicate major versions
+- [ ] Branch protection on `main`: required checks (fmt/clippy, tests on PostgreSQL 16 and 18, builds, docs links)
+
+### 2. Structure
+
+- [ ] Split the largest modules by area, without behaviour changes, one PR each: `src/mcp/tools.rs` (~3000 lines →
+  one file per area like `services/`), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
+  skins,validation}.rs`), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`),
+  `src/services/requests.rs` (~1900), `desktop/ui/app.js` (~4700 → ES modules per view, no bundler)
+- [ ] Guard tests for the architecture rules, like `tests/no_unchecked_in_handlers.rs`: no `sqlx` in `src/web`,
+  `src/api`, `src/mcp` (holds today – keep it that way); every mutation in `services::*` writes an audit entry (list
+  of audit actions checked against the mutating functions); every template in `TEMPLATES` and in
+  `every_template_renders`; every config variable in `docs/src/admin/configuration.md`
+- [ ] One request/response contract for web, REST and MCP where they do the same thing (e.g. BOM, where-used,
+  change requests): shared view structs in `services::*` instead of three hand-built JSON/HTML shapes
+- [ ] Typed ids (`ItemId`, `RevisionId`, `ChangeId`, … as newtypes over `Uuid`) at the service boundary, so that ids
+  cannot be swapped – start with the services that take several ids
+- [ ] Document the invariants per service function (permission check, rows locked, audit action, notifications and
+  webhooks emitted) in its doc comment; `cargo doc` then is the reference for reviewers
+- [ ] Architecture decision records in `docs/src/dev/` for the decisions that keep coming back: access model (deny
+  list on the actor, 404 for hidden), outbox for notifications and webhooks, content-addressed vault, no Node.js
+
+### 3. Fixes and verification
 
 **Fixes**
 
@@ -11,18 +198,42 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
   in JT files (gap test in `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is ignored; the scan
   (`src/cadrefs.rs`) is a heuristic that was not tested with real files of the CAD programs yet (see the CAD sections)
 
+**Tests with real data**
+
+- [ ] Solid Edge test files: none openly licensed found – create a part, a sheet metal part and an assembly with Solid
+  Edge (Community Edition) and publish them under CC0
+- [ ] End-to-end test against the server with the fixtures: folder import of `tests/fixtures/cad/nist/mtc-assembly/nx`
+  and `…/solidworks` → items, files, references, BOM lines, check-ins, preview images, STEP preview (so far only the
+  request order of the import is tested, in `tests/concurrency.rs`)
+- [ ] One real project with hundreds of files each from Inventor, Solid Edge, SOLIDWORKS and NX: folder import, preview
+  images, STEP export, BOMs – including the heuristics (CAD reference scan, BOM table columns, embedded previews)
+
+**Operations and repository**
+
+- [ ] Test e-mail (SMTP) and Mattermost notifications against real servers (so far only against fakes)
+- [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
+  `SECURITY.md` points to
+- [ ] Run the desktop app once on macOS – CI runs the tests on Linux only, macOS and Windows are build checks (the
+  server is no longer shipped for macOS); Windows 11 ARM64 was run by hand (Parallels VM, 2026-11-05, setup in
+  [platforms/windows.md](../platforms/windows.md))
+- [ ] Install and start the release Flatpak bundles (x86_64, aarch64) and the portable Windows zips (x64, arm64) once –
+  built and checked as files only (#66); GNOME runtime 49 may be end of life on Flathub, move to the current one
+- [ ] Release v0.1.0 again from the current `main` (re-tag), when asked – the published v0.1.0 is from `6f68f9a` and
+  has no Flatpak, Windows ARM64 or portable builds
+
+### 4. Parked features
+
+Only finish what is in progress and fix bugs here; see *Direction*. The CAD-program entries are mostly checks with
+real files and belong to section 3 once such files are at hand.
+
 **Desktop app**
 
 - [ ] Check #58 in the real app (Tauri build, Windows): project groups load again on *Home*, *Refresh* and in the
   dialogs; the same folder imported into a second project group (so far checked in Chromium with a stubbed Tauri)
 - [ ] Decide and document what happens when the same CAD files are imported into two project groups: two independent
   items per file with different numbers, while CAD references are matched by file name (import tutorial, user guide)
-- [ ] *Import BOM…* (CSV/Excel) on a checked-out assembly revision and for a new assembly – plan: a Rust command opens
-  the file dialog and sends the file to `POST /api/v1/items/{number}/revisions/{code}/bom/import` (or
-  `POST /api/v1/bom-imports`) with `dry_run=true`, the UI shows counts, notes and the first rows, a second call
-  imports; desktop tests and the row in `desktop/README.md` (in progress: branch `feature/desktop-bom-import`)
-- [ ] Cancel long operations (check-in upload, Pack and Go) half-way – today the browser sign-in, Get and the chunked
-  upload of large files can be cancelled (in progress: branch `feature/desktop-cancel-operations`)
+- [ ] Check the desktop *Import BOM…* in the real app (native file dialog; so far checked in Chromium with a stubbed
+  Tauri against a real server)
 - [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI)
 - [ ] Screenshots and short GIFs of the desktop app for the README, and screenshots in the book (the web pages are
   captured in CI by `scripts/screenshots.sh`)
@@ -31,13 +242,11 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 
 - [ ] Browser check (no console errors, no overflow at 390 px) of `/requests`, `/requests/new` and `/requests/{id}`,
   and the desktop request tab
-- [ ] Chunked resumable uploads from the web UI – `static/app.js` still sends one multipart request; the API and the
-  desktop app use `/api/v1/uploads` (feature 9; in progress: branch `feature/web-chunked-uploads`)
-- [ ] Custom attributes per item type and file type, classification (standard/purchased parts), attribute search;
-  then the BOM import can map further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to attributes
-  (feature 5; in progress: branch `feature/custom-attributes`)
-- [ ] Supersede/replace, alternate parts, multi-level where-used in the web UI – API and MCP have it (`levels=N`)
-  (feature 6; in progress: branch `feature/item-supersede-alternates`)
+- [ ] Chunked uploads from the *New item* form of the web UI – it still sends its files in one request (the revision
+  exists only afterwards); the attach and check-in forms use `/uploads` (feature 9)
+- [ ] Custom attributes per file type (feature 5, items are done)
+- [ ] Feature 6 leftovers: local substitutes per BOM line, a warning when a superseded item is added to a BOM in the
+  desktop app
 - [ ] Numbering schemes: a separate scheme per item type within a group, an instance-wide default other than
   `{TYPE}-{SEQ:6}` (feature 4)
 - [ ] Change requests: e-mail digest of new requests per project group
@@ -51,6 +260,8 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
   not split into the new items, a STEP file imported *into* a checked-out revision is not attached to it (see *3c*)
 - [ ] CSV/Excel BOM import: test the column recognition with real exports (per CAD program below, also Fusion and
   Creo); CATIA V5 *Bill of Material* text exports are not understood (see *3b*)
+- [ ] BOM import: map further columns (Inventor *BOM Structure = Purchased*, vendor …) to the classification and to
+  custom attributes (feature 5, second part; `bomtable` has to keep unmapped columns first)
 
 **3D preview**
 
@@ -64,7 +275,7 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [ ] OpenFOAM case summary (solver, time steps) from `controlDict` – the 3D preview of VTK and CalculiX results is
   done (#43)
 - [ ] `.sim` detection: verify the STAR-CCM+ marker with real files (heuristic: "STAR-CCM+" near the start)
-- [ ] Read result values from a `teamcraft-results.json`/CSV next to the files at check-in
+- [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded, audited, with source); never from big result files
 - [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
@@ -125,36 +336,30 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [ ] STEP export through the local NX (NX Open / journal), on Windows and Linux
 - [ ] NX load options for the workspace only on request, in the workspace wizard; NX part of the tutorial
 
-**Tests with real data**
-
-- [ ] Solid Edge test files: none openly licensed found – create a part, a sheet metal part and an assembly with Solid
-  Edge (Community Edition) and publish them under CC0
-- [ ] End-to-end test against the server with the fixtures: folder import of `tests/fixtures/cad/nist/mtc-assembly/nx`
-  and `…/solidworks` → items, files, references, BOM lines, check-ins, preview images, STEP preview (so far only the
-  request order of the import is tested, in `tests/concurrency.rs`)
-- [ ] One real project with hundreds of files each from Inventor, Solid Edge, SOLIDWORKS and NX: folder import, preview
-  images, STEP export, BOMs – including the heuristics (CAD reference scan, BOM table columns, embedded previews)
-
-**Operations and repository**
-
-- [ ] Test e-mail (SMTP) and Mattermost notifications against real servers (so far only against fakes)
-- [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
-  `SECURITY.md` points to
-- [ ] Run server and desktop app once on macOS – CI runs the tests on Linux only, macOS and Windows are build checks;
-  Windows 11 ARM64 was run by hand (Parallels VM, 2026-11-05, setup in [platforms/windows.md](../platforms/windows.md))
-
 ## Done
 
 - [x] Desktop Get: resume a single large file half-way – the server answers `Range` / `If-Range` on file downloads
   (ETag = SHA-256, 206 / 416, `src/httprange.rs`); the desktop keeps the bytes received in
   `<name>.<sha>.teamcraft-download`, asks only for the rest and checks the SHA-256 of the whole file before the rename
   (`desktop/src/resume.rs`)
+- [x] Tests across the feature list: functional and semantic unit and integration tests per feature (#65, two audit
+  test expectations fixed in #67)
+- [x] Release pipeline: Flatpak bundles (x86_64, aarch64), desktop installers for Windows ARM64, portable Windows
+  zips (x64, arm64), no macOS server binary (#66); first pre-release v0.1.0 with explicit file modes (#49)
+- [x] README *What works* as a concise feature list (#64)
+- [x] Light and dark web and desktop design (#51, review fixes #53)
+- [x] Read access control: restricted project groups on every read path (#52, review fixes #55)
+- [x] Event webhooks: signed JSON with outbox, retries and SSRF guard (#46)
 - [x] Folder import: items no longer stay in "My check-outs" – every item is checked in right after its files,
   assemblies are checked out once more for their BOM lines and always checked in again, and a run releases the
   check-outs an earlier, interrupted run of the same folder left behind
 - [x] Desktop: project groups load again on *Home*, *Refresh* and in the dialogs; the import log is kept per project
   group, so the same folder can be imported into a second group (#58)
 - [x] Bulk action "Check in all my check-outs" (desktop and web) – `POST /api/v1/worklist/checkin-all`
+- [x] Desktop: cancel long operations (check-in upload, Pack and Go) half-way – *Cancel* in the check-in dialog stops
+  before the next STEP export, between two chunks (upload sessions discarded, not resumable after a cancel) or
+  half-way through the streamed multipart request: nothing stored, still checked out; Pack and Go has a progress
+  dialog with *Cancel* (also while the server packs) and never leaves a half ZIP (`desktop/src/abortable.rs`)
 - [x] SOLIDWORKS 2015+ files: preview image and component tree from the compressed sections (`src/swpart.rs`);
   `teamcraft rescan-references` updates assemblies stored before
 - [x] NX `.prt` detection and the reference scan of an assembly verified with the NIST NX 1980 files
@@ -168,11 +373,23 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [x] Status per file (up to date, modified, locked, outdated, conflict), check-ins against the base version (409
   instead of overwriting); the desktop asks before opening an outdated, conflicting or foreign-locked file
 - [x] STEP assembly import → items + BOM (feature 3c); browser check of `/import` and `/import/{id}` (2026-11-04)
+- [x] Desktop: *Import BOM…* (CSV/Excel/ODS, STEP assembly) on a checked-out revision (*Structure* tab, *More* menu)
+  and *Tools → Import BOM as New Assembly…*: native file dialog, dry run with counts, notes and the first lines,
+  then the import through the server's BOM import (`desktop/src/bomimport.rs`, tested with a fake server)
 - [x] 3D preview of real-world STEP files: own Part 21 pre-reader, face-by-face fallback, AP242 tessellated geometry,
   "partial preview: N of M faces"
 - [x] Configurable numbering schemes per project group with preview (feature 4)
-- [x] Item copy ("Save as" with files and BOM), multi-level where-used in the API and MCP (feature 6, part)
+- [x] Custom attributes per item type (text, number, yes/no, choice list; versioned per revision), classification
+  in-house/purchased/standard part, attribute search in the item list, REST API, saved searches and MCP (feature 5)
+- [x] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts and multi-level where-used in API, MCP
+  and web UI (feature 6) – alternates (two-way or one-way) and supersession per item, *Replace in assemblies* from the
+  where-used page with a preview (in-work parents changed, released ones listed for a new revision), migration 0030
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
+- [x] Chunked uploads from the web UI: `static/app.js` sends files above 32 MiB of the attach and check-in forms
+  (revision page, vault explorer) in chunks to `/uploads` (the same sessions, signed in with the session cookie and
+  covered by the same-origin check, `src/web/uploads.rs`), retries a dropped chunk, resumes after a reload when the
+  same file is chosen again, and *Cancel upload* removes the sessions (tested in `tests/uploads.rs` and in Chromium,
+  2026-11-05)
 - [x] Engineering change requests before the change order (web, API, desktop, attachments, triage, *Create change
   order*); MCP tools `create_change_request`, `comment_change_request` and the `triage_requests` prompt
 - [x] Simulation management v1 (item type `simulation`, basis links, out-of-date detection, result values, import,
@@ -212,6 +429,12 @@ The history up to the open-source release is squashed into the first commit
 | –  | Read access control: restricted project groups                                                                                                                        | `97423bd`, `11127fd` |
 | 9  | Backup/restore end to end with the real PostgreSQL client tools                                                                                                       | `995c597`            |
 | –  | Desktop: project groups load again; import log per project group                                                                                                      | `8a4b4ca`            |
+| 6  | Supersede, replace and alternate parts; multi-level where-used in the web UI                                                                                          | `1274148`            |
+| –  | Desktop: cancel the check-in upload and Pack and Go half-way                                                                                                          | `9ba6e52`            |
+| 9  | Web UI: chunked, resumable uploads of large files                                                                                                                     | `671f277`            |
+| 3b | Desktop: *Import BOM…* from CSV/Excel or a STEP assembly                                                                                                              | `c7a2592`            |
+| –  | README feature list; release: Flatpak, Windows ARM64, portable Windows, no macOS server                                                                              | `bb649bf`, `a873920` |
+| –  | Tests: functional and semantic coverage across the feature list                                                                                                       | `f8f5322`            |
 
 ## Details on the open features
 
@@ -249,16 +472,28 @@ Documented in the UI, keep in mind:
 4. **Numbering schemes:** one scheme per project group (`projects.number_scheme`, `domain::NumberScheme`) with
    `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{YY}`, `{MM}` and `{SEQ:n}`, preview of the next numbers on the group page and
    via `GET /api/v1/projects/{code}/numbering`; counters are named after the expansion without the sequence.
-5. **Custom attributes:** open (see *To-do*).
-6. **Item copy** ("Save as" with files and BOM) and multi-level where-used in the API and MCP (`levels=N`); open:
-   supersede/replace, alternate parts, where-used levels in the web UI.
+5. **Custom attributes:** done for items – definitions under *Admin → Attributes* (`attribute_defs`: key, label,
+   text/number/yes-no/choice list, unit, item types, order, active), values per revision in `revisions.attributes`
+   (JSONB; versioned, copied by revise and *Save as*, part of the full-text search), the classification
+   in-house/purchased/standard part as item master data (`items.classification`), filters `class`, `attr` + `value`
+   (text contains, yes/no, `12`, `>=10`, `10..20`) in the item list, the REST API, saved searches and the MCP search.
+   Open: attributes per file type; the BOM import mapping further columns (e.g. Inventor *BOM Structure =
+   Purchased*, vendor) to the classification and attributes – `bomtable` drops unknown columns today.
+6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate parts, multi-level where-used: done.
+   Alternates (`item_alternates`, two-way by default) and supersession (`item_supersessions`, one successor, no
+   circles) are item-level relations (`services::interchange`); *Replace in assemblies* on `/items/{id}/where-used`
+   (and `GET/POST /api/v1/items/{number}/replace`, MCP `replace_preview`) changes the parents whose latest revision
+   is in work and not checked out by others, and lists the rest with the reason. Research:
+   [supersede-alternates](src/research/supersede-alternates.md). Open: local substitutes per BOM line, a warning
+   when a superseded item is added to a BOM in the desktop app.
 7. **BOM comparison** with Excel export (`rust_xlsxwriter`, MIT/Apache-2.0): direct lines, and over all levels with a
    revision rule (`depth=all`); the expanded BOM itself exports as Excel too.
 8. **Bulk import of a folder tree:** done in the desktop app (*Import CAD Folder…*).
 9. **Chunked resumable uploads:** a tus-like protocol of our own without new dependencies (`POST /api/v1/uploads`,
    `PATCH` with `Upload-Offset`, 409 on a wrong offset, `HEAD` to resume, `finish` or the `uploads` field of a
-   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; used by the desktop app, not yet
-   by the web UI. **Backup/restore** with `pg_dump`/`pg_restore`: `tests/backup_restore.rs` (backup, restore into a
+   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; used by the desktop app and the attach
+   and check-in forms of the web UI (`/uploads` with the session cookie) for files above 32 MiB; only the *New
+   item* form still sends one multipart request. **Backup/restore** with `pg_dump`/`pg_restore`: `tests/backup_restore.rs` (backup, restore into a
    fresh database and vault, identical row counts, file download and API token on the restored instance, `--force`,
    atomic failure) runs in CI, and the CLI smoke test runs `teamcraft backup`/`restore`. Found and fixed on the way: a
    percent-encoded password in `TEAMCRAFT_DATABASE_URL` reached `pg_dump` undecoded; a failed `restore --force` left a

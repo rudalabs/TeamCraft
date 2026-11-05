@@ -55,6 +55,10 @@ pub struct Upload {
     /// `domain::normalize_folder`); `None` keeps the folder of an existing
     /// file (`""` for a new one).
     pub folder: Option<String>,
+    /// The beginning of a small text file (at most `resultscan::SCAN_MAX_BYTES`)
+    /// for result values from exchange files and templates; empty for other
+    /// files.
+    pub scan_head: Vec<u8>,
 }
 
 /// The name a file gets on the server – the key for bases and versions.
@@ -153,8 +157,12 @@ impl Upload {
         filename: String,
         client_content_type: &str,
     ) -> Upload {
+        let mut scan_head = Vec::new();
         let (format, content_text, references) = match vault.object_path(&blob.sha256) {
             Ok(path) => {
+                if crate::resultscan::scannable(&filename) {
+                    scan_head = read_head(&path, crate::resultscan::SCAN_MAX_BYTES).await;
+                }
                 let format = cadformat::detect_stored(&path, &filename).await;
                 let references = match format {
                     Some(f) if cadrefs::scans(f.id) => cadrefs::scan_file(&path, &filename).await,
@@ -177,8 +185,20 @@ impl Upload {
             references,
             base: None,
             folder: None,
+            scan_head,
         }
     }
+}
+
+/// The first `max` bytes of a file (never more, whatever its size).
+async fn read_head(path: &std::path::Path, max: u64) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let Ok(file) = tokio::fs::File::open(path).await else {
+        return Vec::new();
+    };
+    let mut head = Vec::new();
+    let _ = file.take(max).read_to_end(&mut head).await;
+    head
 }
 
 /// Scans the current versions that were stored before reference tracking
@@ -446,6 +466,74 @@ pub async fn get_version(
         AppError::not_found("File version not found."),
     )?;
     Ok((version, filename))
+}
+
+/// Most characters one [`read_text`] call returns.
+pub const MAX_TEXT_PAGE_CHARS: i64 = 50_000;
+
+/// A page of the text that was extracted from a file version for the
+/// full-text search (see `textindex`).
+#[derive(Clone, Debug)]
+pub struct FileText {
+    pub file: FileRecord,
+    /// The version the text belongs to.
+    pub version: i32,
+    /// Characters of the whole extracted text.
+    pub total_chars: i64,
+    /// First character of `text` (0-based).
+    pub offset: i64,
+    pub text: String,
+    /// Whether text is extracted from files of this format at all.
+    pub extracted_format: bool,
+}
+
+/// Reads a page (`offset`, at most `limit` characters, capped at
+/// [`MAX_TEXT_PAGE_CHARS`]) of the extracted text of a file of a revision
+/// (`version`: default the current one). Hidden project groups answer like
+/// a missing revision; nothing is read from the vault, only the text the
+/// upload stored for the search.
+pub async fn read_text(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_id: Uuid,
+    filename: &str,
+    version: Option<i32>,
+    offset: i64,
+    limit: i64,
+) -> AppResult<FileText> {
+    // the access check of the revision's project group
+    let files = list(pool, actor, revision_id).await?;
+    let wanted = filename.trim();
+    let file = files
+        .into_iter()
+        .find(|f| f.filename.eq_ignore_ascii_case(wanted))
+        .ok_or_else(|| {
+            AppError::not_found(format!("File '{wanted}' not found in this revision."))
+        })?;
+    let version = version.unwrap_or(file.version);
+    let limit = limit.clamp(1, MAX_TEXT_PAGE_CHARS);
+    let offset = offset.max(0);
+    let row: Option<(i64, String)> = sqlx::query_as(
+        "SELECT char_length(content_text)::bigint, substr(content_text, $3::int + 1, $4::int)
+         FROM file_versions WHERE file_id = $1 AND version = $2",
+    )
+    .bind(file.id)
+    .bind(version)
+    .bind(offset.min(i64::from(i32::MAX)))
+    .bind(limit)
+    .fetch_optional(pool)
+    .await?;
+    let (total_chars, text) = row
+        .ok_or_else(|| AppError::not_found(format!("File '{wanted}' has no version {version}.")))?;
+    let extracted_format = crate::textindex::indexes(&file.filename);
+    Ok(FileText {
+        file,
+        version,
+        total_chars,
+        offset,
+        text,
+        extracted_format,
+    })
 }
 
 pub(crate) async fn get_version_unchecked(
@@ -753,6 +841,9 @@ pub(crate) async fn store_uploads(
         .bind(rev.id)
         .execute(&mut *conn)
         .await?;
+    // result values from the exchange file and the group's templates, in the
+    // same transaction: a malformed exchange file refuses the whole store
+    crate::services::simulations::apply_file_values(conn, actor, rev, uploads).await?;
     Ok(stored)
 }
 

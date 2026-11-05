@@ -213,7 +213,7 @@ pub async fn is_manager(pool: &PgPool, actor: &Actor, project_id: Uuid) -> AppRe
     can_manage(&mut conn, actor, project_id).await
 }
 
-async fn require_manager(
+pub(crate) async fn require_manager(
     conn: &mut PgConnection,
     actor: &Actor,
     project_id: Uuid,

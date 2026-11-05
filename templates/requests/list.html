@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Change requests{% endblock %}
 {% block nav_requests %}active{% endblock %}
+{% block tc_context %}data-tc-kind="requests"{% if filter.status %} data-tc-filter-status="{{ filter.status }}"{% endif %}{% if filter.scope %} data-tc-filter-scope="{{ filter.scope }}"{% endif %}{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">

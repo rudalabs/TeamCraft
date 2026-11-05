@@ -1,0 +1,9 @@
+{
+  "id": "chatcmpl-9Cc",
+  "object": "chat.completion",
+  "model": "gpt-5.4-2026-03-05",
+  "choices": [
+    { "index": 0, "message": { "role": "assistant", "content": "partial" }, "finish_reason": "length" }
+  ],
+  "usage": { "prompt_tokens": 50, "completion_tokens": 1000, "total_tokens": 1050 }
+}

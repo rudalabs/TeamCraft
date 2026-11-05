@@ -573,6 +573,120 @@ mod tests {
         assert!(!supports("inventor-project") && !supports("step"));
     }
 
+    #[test]
+    fn the_largest_image_wins() {
+        let mut data = vec![0x11; 50];
+        data.extend(png(64, 64));
+        data.extend([0x22; 10]);
+        data.extend(png(256, 128));
+        data.extend([0x33; 10]);
+        data.extend(png(100, 100));
+        let found = find_in(&data, false).unwrap();
+        assert_eq!(found.thumbnail.bytes, png(256, 128));
+        assert_eq!(found.area, 256 * 128);
+        // A bigger DIB only counts when DIBs are looked for.
+        let mut with_dib = data.clone();
+        with_dib.extend(dib(400, 300));
+        assert_eq!(
+            find_in(&with_dib, false).unwrap().thumbnail.content_type,
+            "image/png"
+        );
+        assert_eq!(
+            find_in(&with_dib, true).unwrap().thumbnail.content_type,
+            "image/bmp"
+        );
+        assert!(find_in(b"nothing", true).is_none());
+    }
+
+    #[test]
+    fn size_limits() {
+        assert!(plausible(MIN_SIDE, MAX_SIDE) && plausible(MAX_SIDE, MIN_SIDE));
+        assert!(!plausible(MIN_SIDE - 1, 64) && !plausible(64, MAX_SIDE + 1));
+        assert!(png_at(&png(8, 8)).is_some());
+        assert!(png_at(&png(4097, 16)).is_none());
+    }
+
+    #[test]
+    fn png_structure_is_checked() {
+        // The first chunk must be IHDR.
+        let good = png(32, 32);
+        let mut renamed = good.clone();
+        renamed[12..16].copy_from_slice(b"IHDX");
+        assert!(png_at(&renamed).is_none());
+        // Chunk types are letters only.
+        let mut bad_kind = good.clone();
+        bad_kind[12] = b'1';
+        assert!(png_at(&bad_kind).is_none());
+        // Without IEND the image is incomplete.
+        assert!(png_at(&good[..good.len() - 12]).is_none());
+        // Trailing bytes after IEND are not part of the image.
+        let mut trailing = good.clone();
+        trailing.extend_from_slice(b"garbage");
+        assert_eq!(png_at(&trailing).unwrap().thumbnail.bytes, good);
+    }
+
+    #[test]
+    fn dib_variants() {
+        // Top-down bitmaps have a negative height.
+        let mut top_down = dib(16, 16);
+        top_down[8..12].copy_from_slice(&(-16i32).to_le_bytes());
+        let found = dib_at(&top_down).unwrap();
+        assert_eq!(found.area, 256);
+        // Run-length compression is not supported.
+        let mut rle = dib(16, 16);
+        rle[16..20].copy_from_slice(&1u32.to_le_bytes());
+        assert!(dib_at(&rle).is_none());
+        // A size field far from the real size means it is no bitmap.
+        let mut bogus_size = dib(16, 16);
+        bogus_size[20..24].copy_from_slice(&1_000_000u32.to_le_bytes());
+        assert!(dib_at(&bogus_size).is_none());
+        // Missing pixels.
+        let full = dib(16, 16);
+        assert!(dib_at(&full[..full.len() - 1]).is_none());
+        // Two planes are invalid.
+        let mut planes = dib(16, 16);
+        planes[12..14].copy_from_slice(&2u16.to_le_bytes());
+        assert!(dib_at(&planes).is_none());
+    }
+
+    #[test]
+    fn eight_bit_dibs_carry_their_palette() {
+        let (w, h) = (16u32, 8u32);
+        let mut d = Vec::new();
+        for v in [40u32, w, h] {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        d.extend_from_slice(&1u16.to_le_bytes());
+        d.extend_from_slice(&8u16.to_le_bytes());
+        for v in [0u32, 0, 0, 0, 0, 0] {
+            d.extend_from_slice(&v.to_le_bytes());
+        }
+        d.extend(vec![0x40; 256 * 4]); // palette of 256 colours
+        d.extend(vec![1; (w * h) as usize]);
+        let bmp = dib_at(&d).unwrap().thumbnail.bytes;
+        let offset = u32::from_le_bytes(bmp[10..14].try_into().unwrap());
+        assert_eq!(offset, 14 + 40 + 1024, "pixels follow the palette");
+        assert_eq!(bmp.len(), 14 + d.len());
+    }
+
+    #[test]
+    fn jpeg_size_skips_other_segments() {
+        // A DHT (0xC4) segment before the frame header is not a frame header.
+        let mut d = vec![0xFF, 0xD8, 0xFF, 0xC4, 0x00, 0x04, 0xAA, 0xBB];
+        d.extend_from_slice(&[0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x20, 0x00, 0x40]);
+        d.extend_from_slice(&[0; 10]);
+        assert_eq!(jpeg_size(&d), Some((64, 32)));
+        // A segment length below 2 is broken.
+        assert_eq!(jpeg_size(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01, 0, 0]), None);
+    }
+
+    #[test]
+    fn missing_files_are_errors_and_plain_files_have_no_preview() {
+        assert!(extract(&temp_name()).is_err());
+        let f = write_temp(b"just some text without images");
+        assert_eq!(extract(f.path()).unwrap(), None);
+    }
+
     /// SOI, APP0 (JFIF, 16 bytes), fill byte, SOF0 with `w` × `h`.
     fn jpeg_header(w: u16, h: u16) -> Vec<u8> {
         let mut d = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];

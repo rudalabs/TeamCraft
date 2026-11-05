@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ project.code }} {{ project.name }}{% endblock %}
 {% block nav_projects %}active{% endblock %}
+{% block tc_context %}data-tc-kind="project" data-tc-project="{{ project.code }}"{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">
@@ -142,5 +143,70 @@
     <span class="mono">{SEQ:n}</span> the sequence with <em>n</em> digits, e.g. <span class="mono">{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}</span>.
     Each expansion counts on its own (a scheme with <span class="mono">{YYYY}</span> starts at 1 every year). The scheme applies to new items
     created here, in the BOM import and by “Save as”; numbers typed in by hand and existing items keep their numbers.</p>
+</section>
+
+<section class="card" id="result-templates">
+  <h2>Result extraction templates</h2>
+  <p class="hint">Simulation key numbers are never read out of big result files. A template finds one number in a small <em>text</em> file (solver log, summary .txt/.csv/.html, at most the first 2 MB) when it is checked in with a simulation revision of this group; the value is stored with its file and line. A <span class="mono">teamcraft-results.json</span> or <span class="mono">.csv</span> checked in with the revision does the same without any template.</p>
+  {% if result_templates %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Result</th><th>Files</th><th>Finds</th><th>Unit</th><th class="num">Limits</th>{% if can_manage %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for t in result_templates %}
+      <tr>
+        <td>{{ t.name }}{% if t.load_case %} <span class="small muted">· {{ t.load_case }}</span>{% endif %}{% if not t.enabled %} <span class="badge badge-none">off</span>{% endif %}</td>
+        <td class="mono small">{{ t.file_pattern }}</td>
+        <td class="small">{% if t.method == "regex" %}<span class="mono">{{ t.pattern }}</span>{% else %}CSV column <span class="mono">{{ t.csv_column }}</span>{% if t.csv_key_column %} where <span class="mono">{{ t.csv_key_column }}</span> = <span class="mono">{{ t.csv_key_value }}</span>{% endif %}{% endif %} · {{ t.pick }} match</td>
+        <td class="small">{{ t.unit }}</td>
+        <td class="num small">{% if t.lower_limit is not none %}{{ t.lower_limit }}{% else %}—{% endif %} … {% if t.upper_limit is not none %}{{ t.upper_limit }}{% else %}—{% endif %}</td>
+        {% if can_manage %}
+        <td class="right">
+          <form class="inline" method="post" action="/result-templates/{{ t.id }}/delete">
+            <button class="small danger" type="submit">Remove</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No templates.</p>{% endif %}
+  {% if can_manage %}
+  <h3>Add template</h3>
+  <form class="stack" method="post" action="/projects/{{ project.id }}/result-templates">
+    <div class="template-fields">
+      <label>Result name<input type="text" name="name" maxlength="200" required placeholder="Pressure drop"></label>
+      <label>File name pattern <span class="hint">* and ?</span><input class="mono" type="text" name="file_pattern" maxlength="200" required placeholder="*.log"></label>
+      <label>Method
+        <select name="method">
+          <option value="regex">Regular expression (text)</option>
+          <option value="csv">CSV column</option>
+        </select>
+      </label>
+      <label>If several matches
+        <select name="pick"><option value="last">use the last</option><option value="first">use the first</option></select>
+      </label>
+    </div>
+    <div class="template-fields">
+      <label>Regular expression <span class="hint">one capture group around the number</span>
+        <input class="mono" type="text" name="pattern" maxlength="500" placeholder="Pressure drop:\s*([-+0-9.eE]+)"></label>
+    </div>
+    <div class="template-fields">
+      <label>CSV column <span class="hint">header name</span><input type="text" name="csv_column" maxlength="200"></label>
+      <label>Row key column <span class="hint">optional</span><input type="text" name="csv_key_column" maxlength="200"></label>
+      <label>Row key value<input type="text" name="csv_key_value" maxlength="200"></label>
+    </div>
+    <div class="template-fields">
+      <label>Unit<input class="unit" type="text" name="unit" maxlength="32"></label>
+      <label>Min<input class="limit" type="text" name="lower_limit" inputmode="decimal"></label>
+      <label>Max<input class="limit" type="text" name="upper_limit" inputmode="decimal"></label>
+      <label>Load case<input type="text" name="load_case" maxlength="200"></label>
+      <label>Solver<input type="text" name="solver" maxlength="100"></label>
+    </div>
+    <div class="actions"><button class="primary" type="submit">Add template</button></div>
+  </form>
+  {% endif %}
 </section>
 {% endblock %}

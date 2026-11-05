@@ -279,6 +279,113 @@ mod tests {
             .is_empty());
     }
 
+    /// A synthetic container: the directory entries in the HEADER block, the
+    /// data after it and an empty FOOTER at the end. Entries with `None`
+    /// data are folders (`len` 0).
+    fn synthetic(entries: &[(&str, Option<&[u8]>)]) -> Vec<u8> {
+        let dir_len: usize = 6 + 4 + entries.iter().map(|(n, _)| 4 + n.len() + 16).sum::<usize>();
+        let mut offset = (0x19 + dir_len) as u64;
+        let mut out = MAGIC.to_vec();
+        out.resize(FOOTER_OFFSET_AT, 0);
+        out.extend_from_slice(&0u64.to_le_bytes()); // patched below
+        out.extend_from_slice(b"HEADER");
+        out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+        for (name, data) in entries {
+            let len = data.map_or(0, |d| d.len() as u64);
+            out.extend_from_slice(&(name.len() as u32).to_le_bytes());
+            out.extend_from_slice(name.as_bytes());
+            out.extend_from_slice(&offset.to_le_bytes());
+            out.extend_from_slice(&len.to_le_bytes());
+            offset += len;
+        }
+        for (_, data) in entries {
+            out.extend_from_slice(data.unwrap_or_default());
+        }
+        let footer = out.len() as u64;
+        out[FOOTER_OFFSET_AT..FOOTER_OFFSET_AT + 8].copy_from_slice(&footer.to_le_bytes());
+        out.extend_from_slice(b"FOOTER\x00\x00\x00\x00");
+        out
+    }
+
+    #[test]
+    fn synthetic_directory_round_trip() {
+        let bytes = synthetic(&[
+            ("/Root/", None),
+            (
+                "/Root/UG_PART/ExternalReferences",
+                Some(b"\x00top.prt\x00wheel.prt\x00"),
+            ),
+            (
+                "/Root/history",
+                Some(b"Part renamed from \"C:\\old\\ghost.prt\""),
+            ),
+        ]);
+        let s = streams(&bytes);
+        assert_eq!(
+            s.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
+            ["/Root/UG_PART/ExternalReferences", "/Root/history"],
+            "folders have no data"
+        );
+        assert_eq!(
+            data(&bytes, &s[0]).unwrap(),
+            b"\x00top.prt\x00wheel.prt\x00"
+        );
+        // The seeking reader sees the same directory.
+        let mut part = NxPart::open(Cursor::new(bytes.clone())).unwrap().unwrap();
+        assert_eq!(part.streams(), &s[..]);
+        assert!(
+            part.read("/Root/history", 3).unwrap().is_none(),
+            "larger than max"
+        );
+        assert_eq!(
+            reference_streams(Cursor::new(bytes.clone()), 1 << 20).unwrap(),
+            reference_streams_in(&bytes)
+        );
+        // Only the reference stream is scanned, without the part itself and
+        // without the history of the file.
+        assert_eq!(
+            crate::cadrefs::find(&bytes, "renamed.prt"),
+            vec!["wheel.prt"]
+        );
+    }
+
+    #[test]
+    fn entries_beyond_the_file_are_dropped() {
+        let mut bytes = synthetic(&[(
+            "/Root/FastLoad/ExternalReferences",
+            Some(b"\x00a.prt\x00b.prt"),
+        )]);
+        // Patch the length of the only entry to point past the end.
+        let len_at = 0x19 + 6 + 4 + 4 + "/Root/FastLoad/ExternalReferences".len() + 8;
+        bytes[len_at..len_at + 8].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(streams(&bytes).is_empty());
+        assert!(reference_streams_in(&bytes).is_none());
+        // Without reference streams an NX part has no references to read.
+        let plain = synthetic(&[("/Root/other", Some(b"\x00wheel.prt\x00"))]);
+        assert!(reference_streams_in(&plain).is_none());
+    }
+
+    #[test]
+    fn nx_preview_jpeg_becomes_the_thumbnail() {
+        // SOI, SOF0 with 120 × 90, EOI.
+        let mut jpeg = vec![
+            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 90, 0x00, 120,
+        ];
+        jpeg.extend_from_slice(&[0; 12]);
+        jpeg.extend_from_slice(&[0xFF, 0xD9]);
+        let bytes = synthetic(&[(PREVIEW_STREAM, Some(&jpeg))]);
+        let path = std::env::temp_dir().join(format!("teamcraft-nx-{}.prt", uuid::Uuid::new_v4()));
+        std::fs::write(&path, &bytes).unwrap();
+        let t = crate::thumbnail::extract(&path).unwrap().unwrap();
+        assert_eq!((t.content_type, t.bytes), ("image/jpeg", jpeg));
+        // A preview that is too small is no thumbnail.
+        let mut tiny = vec![0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 4, 0x00, 4];
+        tiny.extend_from_slice(&[0; 12]);
+        std::fs::write(&path, synthetic(&[(PREVIEW_STREAM, Some(&tiny))])).unwrap();
+        assert_eq!(crate::thumbnail::extract(&path).unwrap(), None);
+        std::fs::remove_file(&path).ok();
+    }
+
     #[test]
     fn truncated_files_keep_the_streams_inside() {
         let bytes = fixture("NIST mtc crada assembly.prt");

@@ -77,7 +77,7 @@ committed and pushed right away – before the implementation starts.
 ## Architecture
 
 ```text
-src/main.rs        CLI (clap): serve (default), migrate, user, vault check, rescan-references, healthcheck, mcp (stdio bridge), preview-mesh (hidden)
+src/main.rs        CLI (clap): serve (default), migrate, user, vault check, assistant check, rescan-references, healthcheck, mcp (stdio bridge), preview-mesh (hidden)
 src/lib.rs         AppState, router (healthz/readyz, /api/v1, web UI), security headers, tracing
 src/config.rs      env configuration; every variable also as NAME_FILE; all optional for local use
 src/domain.rs      pure rules: Role, ItemType, LifecycleState, ChangeStatus, revision letters, numbering schemes, skins, validation
@@ -86,7 +86,8 @@ src/services/      business logic – the only code that writes to the database
                     references.rs: item and CAD file references; impacts.rs: change propagation to dependents;
                     notifications.rs: in-app notifications, watch lists, settings – created in the event's transaction;
                     imports.rs: BOM import – one plan for preview and import, one transaction; staged_imports for the web flow;
-                    insights.rs: read-only BOM health check and duplicate files)
+                    insights.rs: read-only BOM health check and duplicate files;
+                    attributes.rs: custom attribute definitions (admins), values per revision in revisions.attributes)
 src/web/           HTML handlers (cookie sessions, flash messages, CSRF origin check, error pages,
                    explorer.rs = /vault, auth_pages.rs incl. first-start /setup, imports.rs = BOM import)
 src/api/           JSON REST API (bearer tokens only, never cookies)
@@ -94,9 +95,14 @@ src/mcp/           MCP server at POST /api/v1/mcp (stateless JSON-RPC, bearer PA
                    over services::* (read-mostly, writes only draft changes); `teamcraft mcp` = stdio bridge in main.rs
 src/auth.rs        Argon2 passwords, tokens, cookies, WebUser/ApiUser extractors
 src/oidc.rs        OIDC authorization code + PKCE (any provider), group → role mapping
-src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over the Anthropic Messages API (reqwest, no SDK)
-                   with the MCP tools, Transport/Tools traits (fake in tests), markdown-lite → safe HTML;
-                   services/assistant.rs runs it for a user and writes the audit record (no content)
+src/llm/           provider-neutral LLM layer (no TeamCraft types): Turn/ToolCall/Reply/Usage/LlmError, pure Provider trait
+                   (encode/decode/error table), Transport trait; http.rs = the one reqwest client (no redirects),
+                   anthropic.rs = Messages API, openai.rs = Chat Completions (OpenAI, Azure, Mistral, Ollama, vLLM …)
+src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm with the MCP tools,
+                   Tools trait (fake in tests), markdown-lite → safe HTML;
+                   services/assistant.rs runs it for a user and writes the audit record (no content); resolves the page
+                   context with the user's rights; services/assistant_threads.rs = the per-user conversation (text only)
+src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows shown): parsing and caps only – ids are hints
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck) → TCMESH01
@@ -115,7 +121,10 @@ src/delivery.rs    e-mail (SMTP via lettre) and Mattermost delivery of notificat
 src/webhooks.rs    outgoing event webhooks: outbox worker (SKIP LOCKED), HMAC signature, backoff, SSRF guard;
                    services/webhooks.rs = admin CRUD + emit() inside the event's transaction
 templates/         MiniJinja templates, embedded via include_str!
-static/            CSS (skins.css shared with the desktop app) / JS (app.js, viewer.js) / fonts, embedded
+static/            web-only CSS (style.css) / JS (app.js), embedded
+shared/            UI files of web UI and desktop app (css/skins.css, fonts/, js/viewer.js; rules in shared/README.md):
+                   served at /static/shared/… via a build.rs asset table (scripts under /static/shared/v/<version>/),
+                   mirrored into desktop/ui/static/shared by desktop/build.rs; SPDX MPL-2.0 header on every file
 migrations/        sqlx migrations, embedded, applied on start
 tests/             end-to-end tests; tests/common creates a temporary database (with fixture project groups) per test
 tests/fixtures/cad openly licensed NIST CAD files (Inventor, NX, SolidWorks, Creo, CATIA V5, STEP) with manifest.tsv, checked by tests/cad_fixtures.rs
@@ -123,7 +132,7 @@ docs/              mdBook documentation (Doxygen-style theme in docs/theme/), pu
 platforms/         short build-and-test guides: linux.md, macos.md, windows.md
 Dockerfile         server image (rust builder → distroless/cc, non-root, HEALTHCHECK), built by CI only
 deploy/            production Docker install: docker-compose.yml (teamcraft + postgres), teamcraft.env.example, install.sh
-.github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 16/18, macOS/Windows builds), docs.yml, desktop.yml,
+.github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 16/18, macOS/Windows builds), docs.yml, desktop.yml, scale.yml (manual/weekly scale check, tests/scale.rs),
                    release.yml (binaries, installers, image + Docker install smoke test)
 desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part of the server build)
 ```
@@ -153,6 +162,9 @@ desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part 
 * **Docs to keep in sync:** `README.md`, `docs/src/**`, `platforms/*.md`,
   `desktop/README.md`, `docker-compose.yml`, `CONTRIBUTING.md` (repeats the
   conventions and commands for outside contributors), `SECURITY.md`.
+* **What to work on:** `docs/OPEN_WORK.md`, section *Direction* – proofing (tests,
+  fuzzing, CI gates) and structure (module splits, guard tests) before new features;
+  without a request from the user, pick the next task from its sections 1 and 2.
 * **Project status:** no release yet (version `0.1.0`). Keep the
   work-in-progress / no-warranty notices in the README, `docs/src/index.md`,
   the web footer and the desktop *About* dialog until the user asks for a release.

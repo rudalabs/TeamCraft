@@ -19,7 +19,7 @@ use axum::{
     http::{header, Method, Request, StatusCode},
     Router,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
     Connection, PgConnection, PgPool,
@@ -495,5 +495,114 @@ impl TestApp {
             .find(|c| c.starts_with("tc_session="))
             .expect("session cookie");
         cookie.split(';').next().unwrap().to_string()
+    }
+}
+
+/// Shorthands for the steps many functional tests repeat.
+impl TestApp {
+    /// Creates an item through the API (`body` as for `POST /api/v1/items`)
+    /// and returns its number.
+    pub async fn create_item(&self, token: &str, body: Value) -> String {
+        let r = self
+            .api(Method::POST, "/api/v1/items", token, Some(body))
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "create item: {}", r.text());
+        r.json()["item_number"].as_str().unwrap().to_string()
+    }
+
+    /// Creates a change order with the in-work revisions of `items` and the
+    /// given reviewers (usernames), submits it and returns its number.
+    pub async fn submit_change(
+        &self,
+        author: &str,
+        title: &str,
+        items: &[&str],
+        reviewers: &[&str],
+    ) -> String {
+        let r = self
+            .api(
+                Method::POST,
+                "/api/v1/changes",
+                author,
+                Some(json!({ "title": title })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "create change: {}", r.text());
+        let number = r.json()["number"].as_str().unwrap().to_string();
+        for item in items {
+            let r = self
+                .api(
+                    Method::POST,
+                    &format!("/api/v1/changes/{number}/items"),
+                    author,
+                    Some(json!({ "item": item })),
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::OK, "add {item}: {}", r.text());
+        }
+        for reviewer in reviewers {
+            let r = self
+                .api(
+                    Method::POST,
+                    &format!("/api/v1/changes/{number}/reviewers"),
+                    author,
+                    Some(json!({ "username": reviewer })),
+                )
+                .await;
+            assert_eq!(
+                r.status,
+                StatusCode::OK,
+                "reviewer {reviewer}: {}",
+                r.text()
+            );
+        }
+        let r = self
+            .api(
+                Method::POST,
+                &format!("/api/v1/changes/{number}/submit"),
+                author,
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "submit {number}: {}", r.text());
+        number
+    }
+
+    /// A reviewer's decision on a change.
+    pub async fn review(
+        &self,
+        change: &str,
+        token: &str,
+        decision: &str,
+        comment: &str,
+    ) -> Response {
+        self.api(
+            Method::POST,
+            &format!("/api/v1/changes/{change}/review"),
+            token,
+            Some(json!({ "decision": decision, "comment": comment })),
+        )
+        .await
+    }
+
+    /// Releases the in-work revisions of `items` through a change order that
+    /// `reviewer` (username, token) approves; returns the change number.
+    pub async fn release(&self, author: &str, reviewer: (&str, &str), items: &[&str]) -> String {
+        let number = self
+            .submit_change(author, "Release", items, &[reviewer.0])
+            .await;
+        let r = self.review(&number, reviewer.1, "approve", "").await;
+        assert_eq!(r.status, StatusCode::OK, "approve {number}: {}", r.text());
+        assert_eq!(r.json()["change"]["status"], "released", "{}", r.text());
+        number
+    }
+
+    /// Actions of the audit log entries about one entity, oldest first.
+    pub async fn audit_actions(&self, entity_id: Uuid) -> Vec<String> {
+        sqlx::query_scalar("SELECT action FROM audit_log WHERE entity_id = $1 ORDER BY id")
+            .bind(entity_id)
+            .fetch_all(&self.pool)
+            .await
+            .expect("read the audit log")
     }
 }
