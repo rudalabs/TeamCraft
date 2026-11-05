@@ -114,6 +114,7 @@ before the answer – never the question or the answer).
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
 | `TEAMCRAFT_TEST_DATABASE_URL` | server for the integration tests (default: the configuration above); each test creates and drops its own `teamcraft_test_*` database |
 | `TEAMCRAFT_REQUIRE_DB_TESTS`  | fail instead of skipping when no database is reachable (CI)                                                                          |
+| `TEAMCRAFT_REQUIRE_PG_TOOLS`  | fail instead of skipping the backup/restore test when `pg_dump`/`pg_restore` are missing or older than the server (CI)              |
 
 ## MCP stdio bridge (client side)
 

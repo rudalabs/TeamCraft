@@ -572,6 +572,29 @@ fn parse_bool(raw: &str) -> Result<bool> {
 /// (falling back to `DATABASE_URL`) or from the individual `TEAMCRAFT_DB_*`
 /// variables. The latter avoids URL-encoding problems with special characters
 /// in passwords and works nicely with secret files.
+/// Decodes `%XX` escapes of a URL component (the user info of the database
+/// URL). Malformed escapes stay as they are; bytes that do not form UTF-8
+/// keep the component undecoded.
+fn percent_decode(component: &str) -> String {
+    let bytes = component.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = |b: u8| (b as char).to_digit(16);
+        match (bytes[i], bytes.get(i + 1), bytes.get(i + 2)) {
+            (b'%', Some(&h), Some(&l)) if hex(h).is_some() && hex(l).is_some() => {
+                out.push((hex(h).unwrap() * 16 + hex(l).unwrap()) as u8);
+                i += 3;
+            }
+            (b, _, _) => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| component.to_string())
+}
+
 fn database_options<F: Fn(&str) -> Option<String>>(
     env: &Env<F>,
 ) -> Result<(PgConnectOptions, String, Option<String>)> {
@@ -589,12 +612,12 @@ fn database_options<F: Fn(&str) -> Option<String>>(
             options.get_port(),
             options.get_database().unwrap_or("?")
         );
-        // The client tools authenticate like the server does; passwords with
-        // characters that need percent-encoding are better set with
-        // TEAMCRAFT_DB_PASSWORD(_FILE).
+        // The client tools (pg_dump, pg_restore) get the same password as the
+        // server. The URL keeps it percent-encoded (`p%40ss` for `p@ss`);
+        // sqlx decodes it, so decode it here as well.
         let password = reqwest::Url::parse(&url)
             .ok()
-            .and_then(|parsed| parsed.password().map(str::to_string))
+            .and_then(|parsed| parsed.password().map(percent_decode))
             .filter(|password| !password.is_empty());
         return Ok((options, display, password));
     }
@@ -664,6 +687,26 @@ mod tests {
         assert_eq!(cfg.database_display, "teamcraft@localhost:5432/teamcraft");
         assert_eq!(cfg.database_password.as_deref(), Some("secret"));
         assert!(!cfg.summary().contains("secret"));
+    }
+
+    #[test]
+    fn database_url_password_is_decoded_for_the_client_tools() {
+        let cfg = config_from(&[(
+            "TEAMCRAFT_DATABASE_URL",
+            "postgres://tc:p%40ss%3Aw%25rd%2F1@db:5432/teamcraft",
+        )])
+        .unwrap();
+        assert_eq!(cfg.database_password.as_deref(), Some("p@ss:w%rd/1"));
+        assert!(!cfg.summary().contains("p@ss") && !cfg.summary().contains("p%40ss"));
+        let cfg = config_from(&[("TEAMCRAFT_DATABASE_URL", "postgres://tc:plain@db/x")]).unwrap();
+        assert_eq!(cfg.database_password.as_deref(), Some("plain"));
+        let cfg = config_from(&[("TEAMCRAFT_DATABASE_URL", "postgres://tc@db/x")]).unwrap();
+        assert!(cfg.database_password.is_none());
+
+        assert_eq!(percent_decode("%C3%A4%20x"), "ä x");
+        assert_eq!(percent_decode("100%"), "100%", "a trailing % stays");
+        assert_eq!(percent_decode("%zz%4"), "%zz%4", "malformed escapes stay");
+        assert_eq!(percent_decode("%FF"), "%FF", "no valid UTF-8: undecoded");
     }
 
     #[test]
