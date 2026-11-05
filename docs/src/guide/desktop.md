@@ -62,8 +62,18 @@ check-outs and reviews, and a **local working folder**:
   [ACP agents](assistant.md#acp-agents-in-the-desktop-app).
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a
-TeamCraft page) or with a personal access token. The app uses the same skins (the default follows the light or dark appearance of the operating system)
+TeamCraft page) or with a personal access token. The app uses the same skins
 and 3D viewer as the web interface; the models are converted by the server.
+*Settings → Appearance*: *TeamCraft* (the default) follows the light or dark
+appearance of the operating system and switches with it, *TeamCraft Light*
+and *TeamCraft Dark* stay fixed, the distribution skins are dark.
+
+The window is built for daily work: object tabs on top, under them the
+toolbar of the open object with its one main action filled (*Check out*,
+*Check in…* or *Revise*, depending on the state) and only the actions that
+are available now; *Refresh* is the arrow icon (`F5`). The navigator shows a
+state as its symbol (✓ released, ○ in review, ◐ in work, – obsolete, the
+name in the tooltip); the search field is `Ctrl+F` (`⌘F`).
 
 ## How files appear on your computer
 

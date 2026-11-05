@@ -277,6 +277,11 @@
   background: #f5f6f8;
   box-shadow: inset -50px 0 0 #101216;
 }
+/* The desktop app's System card: the swatch row on a light and a dark half. */
+.skin-card[data-skin="teamcraft"] .skin-swatch {
+  background: #f5f6f8;
+  box-shadow: inset -34px 0 0 #101216;
+}
 
 /* Both logos are in the page and CSS shows one, because the server cannot
    know the OS scheme. .on-light: the blue logo, .on-dark: the white one

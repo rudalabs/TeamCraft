@@ -144,9 +144,12 @@
 
   function tool(label, icon, onClick, opts) {
     opts = opts || {};
-    return h("button.tool" + (opts.primary ? ".primary" : "") + (opts.danger ? ".danger" : ""), {
-      type: "button", title: opts.title || label, disabled: opts.disabled, on: { click: onClick }
-    }, [svgIcon(ICONS[icon] || ICONS.plus), label]);
+    // Refresh is an icon button (F5 in the View menu does the same)
+    var iconOnly = icon === "refresh" && label === "Refresh";
+    return h("button.tool" + (opts.primary ? ".primary" : "") + (opts.danger ? ".danger" : "") + (iconOnly ? ".icon" : ""), {
+      type: "button", title: opts.title || (iconOnly ? "Refresh (F5)" : label), "aria-label": iconOnly ? label : null,
+      disabled: opts.disabled, on: { click: onClick }
+    }, [svgIcon(ICONS[icon] || ICONS.plus), iconOnly ? null : label]);
   }
 
   function fmtDate(iso) {
@@ -412,6 +415,7 @@
   }
 
   function initShell() {
+    if (/Mac/.test(navigator.platform)) $("search-kbd").textContent = "⌘F"; // the View → Search shortcut
     document.querySelectorAll(".rail button[data-view]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var view = btn.getAttribute("data-view");
@@ -947,8 +951,8 @@
     ]);
     var w = state.worklist;
     var welcome = h("div.welcome", null, [
-      h("h1", { text: "Hello, " + (state.me ? state.me.display_name : "") }),
-      h("p.muted", { text: "Open a project group in the navigator, search above or pick something from your worklist." })
+      h("h1", { text: "Home" }),
+      h("p.muted", { text: "Open an item from the navigator, or press " + (/Mac/.test(navigator.platform) ? "⌘F" : "Ctrl+F") + " to search." })
     ]);
     body.appendChild(welcome);
     var fill = function (wl) {
@@ -1776,12 +1780,12 @@
     var latest = d.revisions[0];
     append(toolbar, [
       tool("Check out", "checkout", function () { doCheckout(tab); }, { primary: can.checkout, disabled: !can.checkout, title: "Take the lock and copy the files into your workspace" }),
-      tool("Check in…", "checkin", function () { checkinDialog(tab); }, { disabled: !can.checkin, title: "Upload changed files from the workspace and release the lock" }),
+      tool("Check in…", "checkin", function () { checkinDialog(tab); }, { primary: can.checkin, disabled: !can.checkin, title: "Upload changed files from the workspace and release the lock" }),
       tool(rev.checked_out_by && rev.checked_out_by !== state.me.id ? "Force unlock" : "Cancel check-out", "cancel", function () { doCancelCheckout(tab); }, { disabled: !can.cancel }),
       h("span.sep"),
       tool("Edit", "edit", function () { editDialog(tab); }, { disabled: !can.edit, title: "Edit the attributes (requires the check-out)" }),
       tool("Release…", "release", function () { releaseDialog(tab); }, { disabled: !can.release, title: "Create a change order with reviewers and submit it" }),
-      tool("Revise", "revise", function () { doRevise(tab); }, { disabled: !can.revise, title: "Create the next revision" }),
+      tool("Revise", "revise", function () { doRevise(tab); }, { primary: can.revise && rev.state === "released" && !can.checkout && !can.checkin, disabled: !can.revise, title: "Create the next revision" }),
       tool("Obsolete", "obsolete", function () { doObsolete(tab); }, { disabled: !can.obsolete, danger: can.obsolete }),
       h("span.sep"),
       tool("Request change…" + (d.requests.length ? " (" + d.requests.length + ")" : ""), "request", function () { requestChangeDialog(rev, null); },
@@ -3850,7 +3854,9 @@
         h("span.skin-swatch", { "aria-hidden": "true" }, [h("span"), h("span"), h("span"), h("span")])]);
     }));
     var body = h("div.stack", null, [
-      h("h3", { text: "Skin" }), skins,
+      h("h3", { text: "Appearance" }),
+      h("p.hint", { text: "TeamCraft follows your system appearance. Choose TeamCraft Dark to keep the dark look; the distribution skins are dark." }),
+      skins,
       h("h3", { text: "Workspace" }),
       field("Folder for checked-out files", h("div.row", null, [ws,
         TAURI.dialog ? h("button", { type: "button", on: { click: function () {
@@ -3904,7 +3910,7 @@
       h("img.connect-logo.skin-logo-light", { src: "/static/media/logos/TeamCraft_Logo_Blue.svg", alt: "TeamCraft" }),
       h("p", { text: "TeamCraft Desktop " + state.session.version + " – the rich client of TeamCraft, the open-source product lifecycle management." }),
       h("p.small", { text: "Pre-release: TeamCraft is a work in progress and has no official release yet. It is provided as is, without warranty of any kind (MPL-2.0, sections 6 and 7). Keep backups of your data." }),
-      h("p.small.muted", { text: "TeamCraft is open source under the Mozilla Public License 2.0. Fonts: Montserrat and Oswald (SIL Open Font License 1.1)." }),
+      h("p.small.muted", { text: "TeamCraft is open source under the Mozilla Public License 2.0. Font: Montserrat (SIL Open Font License 1.1), text in the system UI face." }),
       h("p.small.muted", { text: "Server: " + (state.session.server_url || "—") })
     ]), [{ label: "Close", primary: true, onClick: function (d) { d.close(); } }]);
   }

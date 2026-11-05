@@ -113,7 +113,8 @@ the System skin). The passwords and API tokens are generated for each run
 and never printed.
 
 With `DESKTOP_APP` set to a built TeamCraft Desktop binary (Linux), the script
-also captures the desktop app (`desktop-*.png`): it pre-seeds a fresh profile
+also captures the desktop app, once with *TeamCraft Light* (`desktop-*.png`)
+and once with *TeamCraft Dark* (`desktop-*-dark.png`): it pre-seeds a fresh profile
 in a temporary `XDG_CONFIG_HOME` (server address and a personal access token
 of the demo administrator, see `desktop/src/settings.rs`), starts the app on
 an Xvfb display of 1440 × 900 without a window manager and captures the
@@ -122,7 +123,7 @@ a user: the Ctrl+2 shortcut (worklist) and clicks on navigator rows at fixed
 screen positions (the ROVER group, the checked-out bracket, the change order
 waiting for review). When the desktop layout or the demo data changes, check
 that the `desktop-*.png` images still show what their names say and adjust the
-coordinates in `capture_desktop`.
+coordinates in `desktop_run`.
 
 1. Run the **Screenshots** workflow (`.github/workflows/screenshots.yml`):
    *Actions → Screenshots → Run workflow*, or open a pull request that changes
@@ -202,7 +203,8 @@ code base. These are the most important rules:
   * State is colour **and** a glyph (✓ released, ○ in review, ◐ in work,
     × rejected, – obsolete, △ check needed), never colour alone.
   * Check both schemes: the screenshot workflow captures every web page in
-    light (`NAME.png`) and dark (`NAME-dark.png`).
+    light (`NAME.png`) and dark (`NAME-dark.png`), the desktop app as well
+    (`desktop-*.png`, `desktop-*-dark.png`).
 * **Pure Rust:** everything builds with `cargo` alone. No Node.js, no
   downloaded engines and no C/C++ CAD kernels; 3D conversion stays in
   `src/mesh.rs`.

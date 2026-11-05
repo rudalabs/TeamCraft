@@ -655,10 +655,22 @@ desktop_key() {
 }
 
 capture_desktop() {
-    log "capturing TeamCraft Desktop (1440x900, Xvfb)"
     export DISPLAY=$DESKTOP_DISPLAY
     desktop_profile
     start_xvfb
+    # The README shows the light house skin under the plain names, the dark
+    # one as NAME-dark.png. The forced skins (not the System default) make
+    # the result independent of the Xvfb session's colour scheme.
+    desktop_run "" teamcraft-day
+    desktop_run -dark teamcraft-night
+}
+
+# desktop_run SUFFIX SKIN – starts the app with SKIN, captures the four
+# screens as desktop-*SUFFIX.png and quits the app again.
+desktop_run() {
+    local suffix=$1 skin=$2 settings=$WORK/xdg-config/io.github.rudalabs.teamcraft/settings.json
+    log "capturing TeamCraft Desktop, skin $skin (1440x900, Xvfb)"
+    jq -n --arg url "$BASE_URL" --arg skin "$skin" '{server_url: $url, skin: $skin}' >"$settings"
     XDG_CONFIG_HOME=$WORK/xdg-config XDG_DATA_HOME=$WORK/xdg-data XDG_CACHE_HOME=$WORK/xdg-cache \
         GDK_BACKEND=x11 NO_AT_BRIDGE=1 \
         WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
@@ -679,18 +691,21 @@ capture_desktop() {
     settle 8 "the start screen"
     # The rows of the navigator sit at fixed places for the demo data
     # (1440x900, default zoom); check the images when the layout changes.
-    desktop_click 140 151 # project group ROVER: expand
+    desktop_click 140 145 # project group ROVER: expand
     settle 2 "the items of ROVER"
-    desktop_snap desktop-home
+    desktop_snap "desktop-home$suffix"
     desktop_key ctrl+2
     settle 2 "the worklist"
-    desktop_snap desktop-worklist
-    desktop_click 217 151 # "Checked out by me": the mounting bracket
+    desktop_snap "desktop-worklist$suffix"
+    desktop_click 217 145 # "Checked out by me": the mounting bracket
     settle 2 "the revision tab"
-    desktop_snap desktop-revision
-    desktop_click 210 207 # "Waiting for my review": the enclosure change
+    desktop_snap "desktop-revision$suffix"
+    desktop_click 210 203 # "Waiting for my review": the enclosure change
     settle 2 "the change order tab"
-    desktop_snap desktop-change
+    desktop_snap "desktop-change$suffix"
+    kill "$APP_PID" 2>/dev/null || true
+    wait "$APP_PID" 2>/dev/null || true
+    APP_PID=
 }
 
 # desktop_click X Y – left click at screen position X,Y, then the pointer
