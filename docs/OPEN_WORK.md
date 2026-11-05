@@ -52,7 +52,10 @@ the known gaps with details. Last update: 2026-11-05.
 - [ ] Decide and document what happens when the same CAD files are imported into two project groups: two independent
   items per file with different numbers, while CAD references are matched by file name (import tutorial, user guide)
 - [ ] Desktop Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
-- [ ] Desktop: *Import BOM…* (CSV/Excel) on a checked-out assembly
+- [x] Desktop: *Import BOM…* (CSV/Excel/ODS, STEP assembly) on a checked-out revision (*Structure* tab, *More* menu)
+  and *Tools → Import BOM as New Assembly…*: native file dialog, dry run with counts, notes and the first lines,
+  then the import through the server's BOM import (`desktop/src/bomimport.rs`, tested with a fake server; the dialog
+  checked in Chromium with a stubbed Tauri against a real server, 2026-11-05; still to do: check in the real app)
 - [ ] Desktop: cancel long operations (check-in upload, Pack and Go) half-way
 - [x] Browser check (no console errors, no overflow at 390 px) of `/import` and `/import/{id}`, with a STEP import
   (2026-11-04)
@@ -207,12 +210,13 @@ The history up to the open-source release is squashed into the first commit
 
 ### 3b – CSV/Excel BOM import, remaining parts
 
-- **Desktop app:** *Import BOM…* on a checked-out assembly revision and for a
-  new assembly. Plan: Rust command opens the file dialog, sends the file to
-  `POST /api/v1/items/{number}/revisions/{code}/bom/import` (or
-  `POST /api/v1/bom-imports`) with `dry_run=true`, the UI shows counts,
-  notes and the first rows, a second call imports. Desktop tests and the row
-  in `desktop/README.md`.
+- **Desktop app:** done – *Import BOM…* on a checked-out revision and for a
+  new assembly: `pick_bom_file` opens the native dialog, `import_bom` sends
+  the file to `POST /api/v1/items/{number}/revisions/{code}/bom/import` (or
+  `POST /api/v1/bom-imports`) with `dry_run=true`, the dialog shows counts,
+  notes and the first 15 lines, *Import* sends it again. Type and size are
+  checked before the file is read (`desktop/src/bomimport.rs`, unit tests
+  and a request against a fake server); row in `desktop/README.md`.
 - **Browser check:** done on 2026-11-04 in a Chromium-based browser (not
   automated): `/import` and `/import/{id}` have no console errors and no
   horizontal overflow at 390 px; wide tables scroll inside `.table-wrap`.

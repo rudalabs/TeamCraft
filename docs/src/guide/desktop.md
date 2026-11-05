@@ -22,6 +22,15 @@ check-outs and reviews, and a **local working folder**:
   the same folder can also be imported into another group. *Help → How to
   Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file
   names, check and release);
+* *Import BOM…* (in the *Structure* tab and the *More* menu of a revision you
+  have checked out, or *Tools → Import BOM as New Assembly…*) reads a BOM
+  exported by the CAD program – CSV, Excel, ODS or a STEP assembly – with the
+  same column recognition as the web import: the preview shows the lines,
+  how many items are new or existing and the notes (for example a quantity
+  that is not a number); *Import* adds the lines in one step, creating the
+  missing items. *Part numbers from the file* or *New numbers* (the group's
+  numbering scheme), and whether items with the same number are reused, are
+  chosen in the dialog;
 * the *Workspace* tab shows per file where it is, whether it is up to date,
   modified, outdated, in conflict, new, missing or a name clash, whether it
   is read-only, and who holds the lock for how long; opening an outdated
