@@ -81,8 +81,8 @@ pub struct SimulationBasis {
     /// Project group of the basis item (for the read check; never sent).
     #[serde(skip)]
     pub basis_project_id: Option<Uuid>,
-    /// Placeholder for a basis the reader may not see: role and whether it
-    /// is out of date stay; the identity and the note are removed.
+    /// Placeholder for a basis the reader may not see: the role stays; the
+    /// identity, the note and whether it is out of date are removed.
     #[sqlx(default)]
     pub restricted: bool,
 }
@@ -106,9 +106,9 @@ impl SimulationBasis {
         self.released_code = None;
         // written about the hidden basis, possibly by a member
         self.note = String::new();
-        if self.out_of_date.is_some() {
-            self.out_of_date = Some("the restricted basis changed".into());
-        }
+        // computed from the hidden item (a release, a file check-in,
+        // obsolescence): polling it would tell when the hidden item changes
+        self.out_of_date = None;
         self.basis_project_id = None;
         self.restricted = true;
     }

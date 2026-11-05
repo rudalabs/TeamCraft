@@ -930,6 +930,60 @@ pub async fn remove_item(pool: &PgPool, actor: &Actor, id: Uuid, item_id: Uuid) 
     Ok(())
 }
 
+/// An item that is about to be deleted leaves every request that names it
+/// (the rows go with the item, `items::delete`). Each request records it in
+/// its history – with the note, so nothing is lost without a trace – and
+/// tells its people. The deleter may not see every such request; nothing
+/// here is returned to them, and the entries are shown only to readers of
+/// the request.
+pub(crate) async fn item_deleted(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    item_id: Uuid,
+    item_number: &str,
+) -> AppResult<()> {
+    let rows = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT request_id, note FROM change_request_items WHERE item_id = $1 ORDER BY request_id",
+    )
+    .bind(item_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for (request_id, note) in rows {
+        let request = lock_unchecked(conn, request_id).await?;
+        touch(conn, request_id).await?;
+        audit::record(
+            conn,
+            Some(actor),
+            "change_request.remove_item",
+            "change_request",
+            Some(request_id),
+            format!(
+                "Removed {item_number} from {}: the item was deleted",
+                request.number
+            ),
+            json!({ "item_id": item_id, "item_number": item_number, "note": note,
+                    "reason": "item_deleted" }),
+        )
+        .await?;
+        tell_people(
+            conn,
+            actor,
+            &request,
+            format!(
+                "{} deleted {item_number}, an affected item of {}",
+                actor.display_name, request.number
+            ),
+            if note.is_empty() {
+                String::new()
+            } else {
+                format!("Its note was: {}", domain::truncate_chars(&note, 500))
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// Adds a comment to the discussion. Every signed-in user may comment.
 pub async fn comment(
     pool: &PgPool,

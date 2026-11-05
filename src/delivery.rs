@@ -175,13 +175,15 @@ impl Delivery {
         }
         // A group restricted (or a membership lost) since the notification was
         // queued: the recipient may no longer read it, so it is not sent.
+        // Neither to a recipient deactivated since (deactivation keeps the
+        // memberships, but the account reads nothing any more).
         sqlx::query(&format!(
             "UPDATE notifications n
              SET email_state = CASE WHEN n.email_state = 'pending' THEN 'skipped' ELSE n.email_state END,
                  chat_state = CASE WHEN n.chat_state = 'pending' THEN 'skipped' ELSE n.chat_state END
              FROM users u
              WHERE u.id = n.user_id AND (n.email_state = 'pending' OR n.chat_state = 'pending')
-               AND NOT {}",
+               AND (NOT u.active OR NOT {})",
             crate::services::notifications::notification_visible(
                 "n",
                 "u.id",
@@ -211,7 +213,7 @@ impl Delivery {
                     u.email, u.display_name, COALESCE(u.mattermost_username, u.username) AS chat_user,
                     {} AS confidential
              FROM notifications n JOIN users u ON u.id = n.user_id
-             WHERE n.email_state = 'pending' OR n.chat_state = 'pending'
+             WHERE (n.email_state = 'pending' OR n.chat_state = 'pending') AND u.active
              ORDER BY n.created_at LIMIT 100",
             crate::services::notifications::confidential_now("n")
         ))

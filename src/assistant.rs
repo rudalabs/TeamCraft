@@ -682,9 +682,13 @@ impl<'a> McpTools<'a> {
             sqlx::query_scalar("SELECT id FROM projects WHERE visibility = 'restricted'")
                 .fetch_all(&self.state.db)
                 .await?;
-        if restricted.iter().all(|p| me.hidden_projects.contains(p)) {
-            return Ok(None); // the user sees no restricted group
+        if restricted.is_empty() {
+            // nothing is restricted: every reader gets the same
+            return Ok(None);
         }
+        // Also for a user who is in no restricted group: as author,
+        // reviewer, requester or assignee they still read changes and
+        // requests that hold restricted items.
         Ok(Some(Actor {
             role: if me.is_admin() {
                 crate::domain::Role::Editor
@@ -695,6 +699,27 @@ impl<'a> McpTools<'a> {
             id: uuid::Uuid::new_v4(),
             ..me.clone()
         }))
+    }
+
+    /// The page the question was asked on reaches the model in the first
+    /// message, not through a tool: an item or change order the outsider
+    /// may not see taints the run from the start (its number would
+    /// otherwise be free to copy into a public text).
+    pub async fn note_context(&self, question: &Question) {
+        use std::sync::atomic::Ordering;
+        let mut reads = Vec::new();
+        if let Some(item) = &question.item {
+            reads.push(("get_item", json!({ "item": item })));
+        }
+        if let Some(change) = &question.change {
+            reads.push(("get_change", json!({ "change": change })));
+        }
+        for (name, input) in reads {
+            if self.differs_for_outsider(self.me, name, &input).await {
+                self.tainted.store(true, Ordering::SeqCst);
+                return;
+            }
+        }
     }
 
     /// Whether `name` with `input` returns something to the user that the

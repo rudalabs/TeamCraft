@@ -108,6 +108,14 @@ struct Hidden {
     request_number: String,
     request_id: Uuid,
     attachment_id: Uuid,
+    /// An open impact on the hidden item.
+    impact_id: Uuid,
+    /// A result value of a simulation in the group.
+    result_id: Uuid,
+    /// A member's notification about the hidden item.
+    notification_id: Uuid,
+    /// A member's staged BOM import.
+    import_id: Uuid,
     /// The caller (for `{user_id}`).
     caller: Uuid,
 }
@@ -142,6 +150,10 @@ fn fill(path: &str, h: &Hidden) -> Option<String> {
             ("{id}", "projects") => h.group_id.to_string(),
             ("{id}", "bom-lines") => h.line_id.to_string(),
             ("{id}", "references") => h.reference_id.to_string(),
+            ("{id}", "impacts") => h.impact_id.to_string(),
+            ("{id}", "simulation-results") => h.result_id.to_string(),
+            ("{id}", "notifications") => h.notification_id.to_string(),
+            ("{id}", "import") => h.import_id.to_string(),
             ("{revision_id}", _) => h.revision_id.to_string(),
             ("{item_id}", _) => h.item_id.to_string(),
             ("{user_id}", _) => h.caller.to_string(),
@@ -175,6 +187,10 @@ fn every_route_has_a_placeholder_rule() {
         request_number: "R".into(),
         request_id: Uuid::nil(),
         attachment_id: Uuid::nil(),
+        impact_id: Uuid::nil(),
+        result_id: Uuid::nil(),
+        notification_id: Uuid::nil(),
+        import_id: Uuid::nil(),
         caller: Uuid::nil(),
     };
     let missing: Vec<String> = routes
@@ -303,7 +319,9 @@ fn assert_clean_echoing(
     }
 }
 
-const COUNTED: [&str; 20] = [
+const COUNTED: [&str; 22] = [
+    "simulation_results",
+    "staged_imports",
     "items",
     "revisions",
     "files",
@@ -584,6 +602,106 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     assert_eq!(r.json()["visibility"], "restricted");
 
+    // --- objects of the group that routes address by their own id ------------
+    let sim = post_ok(
+        &app,
+        "/api/v1/items",
+        &editor,
+        json!({ "item_type": "simulation", "name": "Load case", "project": code }),
+    )
+    .await["item_number"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = app
+        .api(
+            Method::PUT,
+            &format!("/api/v1/items/{sim}/revisions/A/simulation/results"),
+            &editor,
+            Some(json!({ "results": [{ "name": "Stress", "value": 182.5, "unit": "MPa" }] })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let result_id = id_of(
+        &app,
+        "SELECT sr.id FROM simulation_results sr JOIN revisions r ON r.id = sr.revision_id
+         JOIN items i ON i.id = r.item_id WHERE i.number = $1",
+        &sim,
+    )
+    .await;
+    let impact_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO impacts (id, item_id, revision_id, source_item_id, source_revision_id,
+                              event, relation, detail)
+         SELECT $1, i.id, r.id, si.id, sr.id, 'released', 'bom', $4
+         FROM items i JOIN revisions r ON r.item_id = i.id,
+              items si JOIN revisions sr ON sr.item_id = si.id
+         WHERE i.number = $2 AND si.number = $3",
+    )
+    .bind(impact_id)
+    .bind(&hid)
+    .bind(&prt)
+    .bind(format!("impact {m}"))
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let member_id = app.actor("member_editor").await.id;
+    let hid_rev_id = id_of(
+        &app,
+        "SELECT r.id FROM revisions r JOIN items i ON i.id = r.item_id WHERE i.number = $1",
+        &hid,
+    )
+    .await;
+    let notification_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO notifications (id, user_id, kind, title, link, subject_type, subject_ref,
+                                    subject_kind, subject_id)
+         SELECT $1, $2, 'item_update', $3, $4, 'revision', $5, 'item', i.id
+         FROM items i WHERE i.number = $6",
+    )
+    .bind(notification_id)
+    .bind(member_id)
+    .bind(format!("Notice {m}"))
+    .bind(format!("/revisions/{hid_rev_id}"))
+    .bind(format!("{hid}/A"))
+    .bind(&hid)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let import_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO staged_imports (id, user_id, kind, filename, size_bytes, content, options)
+         VALUES ($1, $2, 'bom_table', $3, 7, $4, $5)",
+    )
+    .bind(import_id)
+    .bind(member_id)
+    .bind(format!("{m}.csv"))
+    .bind(b"a;b;c\n1".to_vec())
+    .bind(json!({ "target": hid_rev_id }))
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    // what the outsiders' calls must leave as it is (counts do not show it)
+    let id_rows = || {
+        let pool = app.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT concat_ws(' | ',
+                    (SELECT row_to_json(x)::text FROM impacts x WHERE x.id = $1),
+                    (SELECT row_to_json(x)::text FROM simulation_results x WHERE x.id = $2),
+                    (SELECT row_to_json(x)::text FROM notifications x WHERE x.id = $3),
+                    (SELECT x.id::text FROM staged_imports x WHERE x.id = $4))",
+            )
+            .bind(impact_id)
+            .bind(result_id)
+            .bind(notification_id)
+            .bind(import_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
     let hidden_base = Hidden {
         group_code: code.clone(),
         group_id: id_of(&app, "SELECT id FROM projects WHERE code = $1", &code).await,
@@ -614,6 +732,10 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         )
         .await,
         attachment_id,
+        impact_id,
+        result_id,
+        notification_id,
+        import_id,
         caller: Uuid::nil(),
     };
     // (the item number and the group code contain `m`)
@@ -629,6 +751,11 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         hidden_base.change_id.to_string(),
         hidden_base.request_id.to_string(),
         attachment_id.to_string(),
+        impact_id.to_string(),
+        result_id.to_string(),
+        notification_id.to_string(),
+        import_id.to_string(),
+        sim.clone(),
     ];
 
     // --- positive control: members and admins see it -------------------------
@@ -783,6 +910,8 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
     // --- every route, as both outsiders ----------------------------------------
     let routes = all_routes();
     let before = counts(&app).await;
+    let before_rows = id_rows().await;
+    assert_eq!(before_rows.matches(" | ").count(), 3, "{before_rows}");
     for (who, token, actor) in [
         ("outsider_editor", &out_editor, &out_editor_actor),
         ("outsider_viewer", &out_viewer, &out_viewer_actor),
@@ -813,6 +942,11 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         }
     }
     assert_eq!(before, counts(&app).await, "outsiders changed nothing");
+    assert_eq!(
+        before_rows,
+        id_rows().await,
+        "impact, result, notification and import unchanged"
+    );
     // routes without a path parameter: lists, searches, forms, creation
     // (no count check here: tokens, saved searches and the like are created)
     for (who, token, actor) in [
@@ -983,6 +1117,10 @@ fn clone_hidden(h: &Hidden) -> Hidden {
         request_number: h.request_number.clone(),
         request_id: h.request_id,
         attachment_id: h.attachment_id,
+        impact_id: h.impact_id,
+        result_id: h.result_id,
+        notification_id: h.notification_id,
+        import_id: h.import_id,
         caller: h.caller,
     }
 }
@@ -1001,6 +1139,11 @@ fn targets_hidden(uri: &str, h: &Hidden) -> bool {
         h.change_id,
         h.request_id,
         h.attachment_id,
+        h.impact_id,
+        h.result_id,
+        h.notification_id,
+        // (not the staged import: an import that cannot be opened sends the
+        // user back to the upload form with a message, like a gone one)
     ];
     let segments: Vec<&str> = uri.split('/').collect();
     ids.iter()
@@ -2802,9 +2945,22 @@ async fn third_review_round_leaks_are_closed() {
         "numbers counted while restricted are not shown to others"
     );
     assert_eq!(next_part(&app, &mona, &ncode).await, num(4));
-    // otto's numbers skip the taken one and do not use up the group's counter
-    assert_eq!(new_item(&app, &otto, "part", &ocode).await, num(4));
+    // otto's scheme runs into the hidden number: refused, not skipped (a
+    // skip would count the hidden items and use up the group's numbers)
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &otto,
+            Some(json!({ "item_type": "part", "name": "Squat", "project": ocode })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+    assert!(r.text().contains(&num(3)), "{}", r.text());
+    assert!(!r.text().contains(&num(4)), "{}", r.text());
+    assert_eq!(next_part(&app, &otto, &ocode).await, num(3), "counter kept");
     assert_eq!(next_part(&app, &mona, &ncode).await, num(4));
+    assert_eq!(new_item(&app, &mona, "part", &ncode).await, num(4));
     // opened again: the counters merge; restricted again: private again
     set_visibility(&app, &mona, &ncode, "internal").await;
     assert_eq!(next_part(&app, &otto, &ocode).await, num(5));
@@ -2812,6 +2968,20 @@ async fn third_review_round_leaks_are_closed() {
     assert_eq!(new_item(&app, &mona, "part", &ncode).await, num(5));
     assert_eq!(next_part(&app, &otto, &ocode).await, num(5));
     assert_eq!(next_part(&app, &mona, &ncode).await, num(6));
+    // a number typed in in an internal group is still skipped
+    set_scheme(&app, &otto, &ocode, "{PROJECT}-{TYPE}-{SEQ:3}").await;
+    post_ok(
+        &app,
+        "/api/v1/items",
+        &otto,
+        json!({ "item_type": "part", "number": format!("{ocode}-PRT-001"),
+                "name": "Typed", "project": "ROVER" }),
+    )
+    .await;
+    assert_eq!(
+        new_item(&app, &otto, "part", &ocode).await,
+        format!("{ocode}-PRT-002")
+    );
 
     // --- notifications written before their subject was stored --------------
     let hs1_rev = rev_id_of(&app, &hs1).await;
@@ -2866,5 +3036,422 @@ async fn third_review_round_leaks_are_closed() {
     assert!(r.status.is_success(), "{}", r.text());
     assert!(!r.text().contains(&m), "{}", r.text());
     assert_eq!(r.json()["unread"], 0, "{}", r.text());
+    app.teardown().await;
+}
+
+/// Records the e-mails instead of sending them.
+#[derive(Default)]
+struct Mails(std::sync::Mutex<Vec<String>>);
+
+impl teamcraft::delivery::MailSender for Mails {
+    fn send(
+        &self,
+        message: lettre::Message,
+    ) -> teamcraft::delivery::BoxFuture<'_, anyhow::Result<()>> {
+        let text = String::from_utf8_lossy(&message.formatted()).to_string();
+        self.0.lock().unwrap().push(text);
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// Fourth review round: the order of readiness placeholders, numbering
+/// schemes that run into a hidden group's numbers (see the third round),
+/// deleted items leaving requests, the assistant's outsider for users in no
+/// restricted group and the page context, old notifications naming a second
+/// object, the out-of-date flag of hidden simulation bases, memberships
+/// from the identity provider, and e-mails to deactivated users.
+#[tokio::test]
+async fn fourth_review_round_leaks_are_closed() {
+    use teamcraft::assistant::{Action, McpTools, Question, Tools};
+    use teamcraft::services::users::{upsert_oidc_user, OidcIdentity};
+
+    let app = app_or_skip!();
+    let m = format!("zf{}", &Uuid::new_v4().simple().to_string()[..12]);
+    let mu = m.to_ascii_uppercase();
+    let (_, mona) = app.user_in("mona", Role::Editor, &["ROVER"]).await;
+    let (_, otto) = app.user_in("otto", Role::Editor, &["ROVER"]).await;
+    let (_, bob) = app.user_in("bob", Role::Editor, &["ROVER"]).await;
+    let (admin_actor, _) = app.user("root", Role::Admin).await;
+    let code = format!("S{mu}");
+    post_ok(
+        &app,
+        "/api/v1/projects",
+        &mona,
+        json!({ "code": code, "name": "Secret group" }),
+    )
+    .await;
+    post_ok(
+        &app,
+        &format!("/api/v1/projects/{code}/members"),
+        &mona,
+        json!({ "username": "bob" }),
+    )
+    .await;
+    set_visibility(&app, &mona, &code, "restricted").await;
+    let group_id = app.project_id(&code).await;
+    let mona_actor = app.actor("mona").await;
+    let otto_actor = app.actor("otto").await;
+
+    // --- readiness: placeholders last, whatever the hidden number -----------
+    // (the shared default scheme: the hidden part's number lies between)
+    let p10 = new_item(&app, &mona, "part", "ROVER").await;
+    let hs = new_item(&app, &mona, "part", &code).await;
+    let p99 = new_item(&app, &mona, "part", "ROVER").await;
+    assert!(p10 < hs && hs < p99, "{p10} {hs} {p99}");
+    let asm = new_item(&app, &mona, "assembly", "ROVER").await;
+    for child in [&p10, &hs, &p99] {
+        post_ok(
+            &app,
+            &format!("{}/bom", rev_of(&asm)),
+            &mona,
+            json!({ "child": child, "quantity": 1.0 }),
+        )
+        .await;
+    }
+    checkin(&app, &mona, &asm).await;
+    let chg = number_of(
+        &post_ok(
+            &app,
+            "/api/v1/changes",
+            &otto,
+            json!({ "title": "Release" }),
+        )
+        .await,
+        "change",
+    );
+    post_ok(
+        &app,
+        &format!("/api/v1/changes/{chg}/items"),
+        &otto,
+        json!({ "item": asm }),
+    )
+    .await;
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/changes/{chg}/readiness"),
+            &otto,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let order: Vec<String> = r.json()["blockers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["item_number"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        order,
+        vec![p10.clone(), p99.clone(), "restricted item".to_string()],
+        "{}",
+        r.text()
+    );
+    post_ok(
+        &app,
+        &format!("/api/v1/changes/{chg}/reviewers"),
+        &otto,
+        json!({ "username": "mona" }),
+    )
+    .await;
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/changes/{chg}/submit"),
+            &otto,
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+    let text = r.text();
+    let (a, b) = (
+        text.find(&p99).expect("p99 named"),
+        text.find("a restricted dependency").expect("placeholder"),
+    );
+    assert!(a < b, "placeholder last in the summary: {text}");
+
+    // --- a deleted public item leaves its requests with a trace -------------
+    let pub_d = new_item(&app, &otto, "part", "ROVER").await;
+    let pub_d_id = id_of(&app, "SELECT id FROM items WHERE number = $1", &pub_d).await;
+    let ecr = number_of(
+        &post_ok(
+            &app,
+            "/api/v1/change-requests",
+            &mona,
+            json!({ "title": "Variant",
+                    "items": [{ "item": hs }, { "item": pub_d, "note": format!("replace {m}") }] }),
+        )
+        .await,
+        "change_request",
+    );
+    let ecr_id = id_of(
+        &app,
+        "SELECT id FROM change_requests WHERE number = $1",
+        &ecr,
+    )
+    .await;
+    teamcraft::services::items::delete(&app.pool, &otto_actor, pub_d_id)
+        .await
+        .expect("delete the public item");
+    let history = teamcraft::services::audit::for_entities(&app.pool, &mona_actor, &[ecr_id], 50)
+        .await
+        .unwrap();
+    let entry = history
+        .iter()
+        .find(|e| e.action == "change_request.remove_item")
+        .expect("the request records the removal");
+    assert!(entry.summary.contains(&pub_d), "{}", entry.summary);
+    assert_eq!(entry.details["note"], format!("replace {m}"));
+    let told: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND title LIKE '%' || $2 || '%'",
+    )
+    .bind(mona_actor.id)
+    .bind(format!("deleted {pub_d}"))
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(told, 1, "the requester is told");
+    let r = app
+        .api(Method::GET, "/api/v1/notifications", &otto, None)
+        .await;
+    assert!(
+        !r.text().contains(&ecr),
+        "the deleter learns nothing: {}",
+        r.text()
+    );
+
+    // --- the assistant: identity reads of a user in no restricted group -----
+    let hb = new_item(&app, &bob, "part", &code).await;
+    checkin(&app, &bob, &hb).await;
+    let chg_b = number_of(
+        &post_ok(
+            &app,
+            "/api/v1/changes",
+            &bob,
+            json!({ "title": format!("Bob {m}") }),
+        )
+        .await,
+        "change",
+    );
+    post_ok(
+        &app,
+        &format!("/api/v1/changes/{chg_b}/items"),
+        &bob,
+        json!({ "item": hb }),
+    )
+    .await;
+    let bob_id = app.actor("bob").await.id;
+    teamcraft::services::projects::remove_member(&app.pool, &mona_actor, group_id, bob_id)
+        .await
+        .expect("remove bob");
+    let bob_actor = app.actor("bob").await;
+    assert!(bob_actor.hidden_projects.contains(&group_id));
+    let pub_q = new_item(&app, &otto, "part", "ROVER").await;
+    let ecr_pub = number_of(
+        &post_ok(
+            &app,
+            "/api/v1/change-requests",
+            &otto,
+            json!({ "title": "Public", "items": [{ "item": pub_q }] }),
+        )
+        .await,
+        "change_request",
+    );
+    let comment = json!({ "request": ecr_pub, "body": "copied" });
+    let comments = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM change_request_comments")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap()
+    };
+    let before = comments().await;
+    let tools = McpTools::new(&app.state, &bob_actor);
+    let read = tools.call("get_change", &json!({ "change": chg_b })).await;
+    assert_ne!(read["isError"], true, "the author reads it: {read}");
+    let wrote = tools.call("comment_change_request", &comment).await;
+    assert_eq!(wrote["isError"], true, "identity reads taint: {wrote}");
+    assert_eq!(comments().await, before);
+
+    // --- the assistant: the page the question was asked on ------------------
+    let question = |item: &str| Question {
+        action: Action::Ask,
+        text: "Answer the open question".into(),
+        item: Some(item.to_string()),
+        revision: Some("A".into()),
+        change: None,
+        allow_drafts: true,
+    };
+    let tools = McpTools::new(&app.state, &mona_actor);
+    tools.note_context(&question(&hs)).await;
+    let wrote = tools.call("comment_change_request", &comment).await;
+    assert_eq!(wrote["isError"], true, "a restricted page taints: {wrote}");
+    assert_eq!(comments().await, before);
+    let tools = McpTools::new(&app.state, &mona_actor);
+    tools.note_context(&question(&p10)).await;
+    let wrote = tools.call("comment_change_request", &comment).await;
+    assert_ne!(wrote["isError"], true, "a public page does not: {wrote}");
+    assert_eq!(comments().await, before + 1);
+
+    // --- notifications written before 0025 that name a second object --------
+    let asm_id = id_of(&app, "SELECT id FROM items WHERE number = $1", &asm).await;
+    sqlx::query(
+        "INSERT INTO notifications (id, user_id, kind, title, body, link, subject_type,
+                                    subject_ref, subject_kind, subject_id)
+         VALUES ($1, $2, 'impact', $3, $4, '/', 'revision', $5, 'item', $6)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(otto_actor.id)
+    .bind(format!("Check needed: {asm} – {hs}/B was released."))
+    .bind(format!("old {m} (find no. 30)"))
+    .bind(format!("{asm}/A"))
+    .bind(asm_id)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let r = app
+        .api(Method::GET, "/api/v1/notifications", &otto, None)
+        .await;
+    assert!(r.text().contains(&m), "stored as it was: {}", r.text());
+    sqlx::raw_sql(include_str!("../migrations/0028_notification_mentions.sql"))
+        .execute(&app.pool)
+        .await
+        .expect("migration 0028");
+    let r = app
+        .api(Method::GET, "/api/v1/notifications", &otto, None)
+        .await;
+    assert!(r.status.is_success(), "{}", r.text());
+    assert!(!r.text().contains(&m), "{}", r.text());
+
+    // --- the out-of-date flag of a hidden simulation basis ------------------
+    let r = app
+        .api_upload(
+            &format!("{}/files", rev_of(&hs)),
+            &mona,
+            "secret.step",
+            b"ISO-10303-21; v1",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let sim = new_item(&app, &mona, "simulation", "ROVER").await;
+    let r = app
+        .api(
+            Method::POST,
+            &format!("{}/simulation/bases", rev_of(&sim)),
+            &mona,
+            Some(json!({ "item": hs, "revision": "A", "file": "secret.step" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let r = app
+        .api_upload(
+            &format!("{}/files", rev_of(&hs)),
+            &mona,
+            "secret.step",
+            b"ISO-10303-21; v2",
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let bases_uri = format!("{}/simulation/bases", rev_of(&sim));
+    let r = app.api(Method::GET, &bases_uri, &mona, None).await;
+    assert!(r.json()[0]["out_of_date"].is_string(), "{}", r.text());
+    let r = app.api(Method::GET, &bases_uri, &otto, None).await;
+    let placeholder = r.json()[0].clone();
+    assert_eq!(placeholder["restricted"], true, "{placeholder}");
+    assert_eq!(placeholder["out_of_date"], Value::Null, "{placeholder}");
+    let r = app
+        .api(
+            Method::GET,
+            &format!("{}/simulation", rev_of(&sim)),
+            &otto,
+            None,
+        )
+        .await;
+    assert_eq!(r.json()["out_of_date"], false, "{}", r.text());
+
+    // --- memberships from the identity provider stay synchronised -----------
+    let rocket = app.project_id("ROCKET").await;
+    let identity = |groups: &[&str]| OidcIdentity {
+        subject: format!("idp-{m}"),
+        username_hint: "sam".into(),
+        display_name: "Sam".into(),
+        email: None,
+        role: Role::Editor,
+        groups: groups.iter().map(|g| g.to_string()).collect(),
+    };
+    upsert_oidc_user(&app.pool, identity(&["teamcraft-rocket"]))
+        .await
+        .expect("provision");
+    let sam_id = app.actor("sam").await.id;
+    let membership = || async {
+        sqlx::query_as::<_, (String, bool)>(
+            "SELECT source, manager FROM project_members WHERE project_id = $1 AND user_id = $2",
+        )
+        .bind(rocket)
+        .bind(sam_id)
+        .fetch_optional(&app.pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(membership().await, Some(("oidc".to_string(), false)));
+    teamcraft::services::projects::add_member(&app.pool, &admin_actor, rocket, "sam", true)
+        .await
+        .expect("make sam a manager");
+    assert_eq!(
+        membership().await,
+        Some(("oidc".to_string(), true)),
+        "promoting keeps the membership synchronised"
+    );
+    let removed =
+        teamcraft::services::projects::remove_member(&app.pool, &admin_actor, rocket, sam_id).await;
+    assert!(
+        matches!(removed, Err(teamcraft::error::AppError::Conflict(_))),
+        "an IdP membership would come back: {removed:?}"
+    );
+    upsert_oidc_user(&app.pool, identity(&[]))
+        .await
+        .expect("login again");
+    assert_eq!(membership().await, None, "the IdP dropped sam");
+
+    // --- no e-mail to a user deactivated after the notification was queued --
+    sqlx::query("UPDATE users SET email = 'mona@example.test' WHERE id = $1")
+        .bind(mona_actor.id)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let queued = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO notifications (id, user_id, kind, title, email_state)
+         VALUES ($1, $2, 'item_update', $3, 'pending')",
+    )
+    .bind(queued)
+    .bind(mona_actor.id)
+    .bind(format!("Mail {m}"))
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE users SET active = false WHERE id = $1")
+        .bind(mona_actor.id)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let mails = std::sync::Arc::new(Mails::default());
+    let delivery = teamcraft::delivery::Delivery::with_senders(
+        "https://plm.example.test",
+        "TeamCraft",
+        Some((mails.clone(), "TeamCraft <teamcraft@example.test>")),
+        None,
+    )
+    .unwrap();
+    delivery.run_once(&app.pool).await.unwrap();
+    assert!(
+        mails.0.lock().unwrap().iter().all(|t| !t.contains(&m)),
+        "nothing sent to the deactivated user"
+    );
+    let state: String = sqlx::query_scalar("SELECT email_state FROM notifications WHERE id = $1")
+        .bind(queued)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "skipped");
     app.teardown().await;
 }

@@ -547,10 +547,13 @@ pub async fn add_member(
         .ok_or_else(|| AppError::BadRequest(format!("Unknown user '{}'.", username.trim())))?;
     let mut tx = pool.begin().await?;
     require_manager(&mut tx, actor, project_id).await?;
+    // An existing membership keeps its source: one synchronised from the
+    // identity provider stays one (also when its holder is made a manager),
+    // so it still ends when the IdP drops the user from the group.
     let changed = sqlx::query(
         "INSERT INTO project_members (project_id, user_id, source, manager) VALUES ($1, $2, 'manual', $3)
          ON CONFLICT (project_id, user_id)
-         DO UPDATE SET source = 'manual', manager = project_members.manager OR EXCLUDED.manager",
+         DO UPDATE SET manager = project_members.manager OR EXCLUDED.manager",
     )
     .bind(project_id)
     .bind(user.id)
@@ -611,6 +614,26 @@ pub async fn remove_member(
         return Err(AppError::Conflict(format!(
             "{} needs at least one manager – make someone else a manager first.",
             project.code
+        )));
+    }
+    // A membership from the identity provider would come back at the user's
+    // next SSO login: removing it here would only look like revoking access.
+    let from_idp = sqlx::query_scalar::<_, bool>(
+        "SELECT pm.source = 'oidc' AND p.oidc_group IS NOT NULL
+         FROM project_members pm JOIN projects p ON p.id = pm.project_id
+         WHERE pm.project_id = $1 AND pm.user_id = $2",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .unwrap_or(false);
+    if from_idp {
+        return Err(AppError::Conflict(format!(
+            "This membership comes from the identity-provider group {} and would return at the next SSO login. \
+             Remove the user from that group in the identity provider, or ask an administrator to unlink \
+             the group or deactivate the user.",
+            project.oidc_group.as_deref().unwrap_or("")
         )));
     }
     let username = sqlx::query_scalar::<_, String>(

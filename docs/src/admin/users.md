@@ -44,4 +44,7 @@ Keycloak, Entra ID, Google, …). Register the redirect URI
 Accounts are created at the first sign-in; the role follows the groups at
 every sign-in. A project group bound to an IdP group (*Projects → group →
 Edit*, administrators) gets its members synchronised at every sign-in;
-manually added members stay.
+manually added members stay. A synchronised membership stays one when its
+holder is made a manager, and it cannot be removed in TeamCraft (it would
+return at the next sign-in): remove the user from the IdP group, unlink the
+group or deactivate the user instead.

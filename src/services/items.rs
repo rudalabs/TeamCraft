@@ -350,6 +350,7 @@ pub(crate) async fn create_tx(
             let scheme = domain::NumberScheme::of_project(scheme.as_deref())?;
             let ctx = domain::number_context(&code, input.item_type, Utc::now());
             let (counter, seed) = projects::number_counter(project_id, &visibility, &scheme, &ctx);
+            let own_scheme = scheme != domain::NumberScheme::default_scheme();
             let mut attempts = 0;
             loop {
                 let next = projects::next_number(tx, &counter, seed.as_deref()).await?;
@@ -359,14 +360,29 @@ pub(crate) async fn create_tx(
                         "The numbering scheme of the project group {code} gives the invalid item number '{generated}'; enter a number or change the scheme."
                     ))
                 })?;
-                let taken = sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS(SELECT 1 FROM items WHERE number = $1)",
+                // the group of the item that holds the number already
+                let taken = sqlx::query_scalar::<_, Option<Uuid>>(
+                    "SELECT project_id FROM items WHERE number = $1",
                 )
                 .bind(&candidate)
-                .fetch_one(&mut *tx)
+                .fetch_optional(&mut *tx)
                 .await?;
-                if !taken {
+                let Some(holder) = taken else {
                     break candidate;
+                };
+                // A scheme of the group's own that runs into the numbers of a
+                // group the actor may not see (e.g. one copying a restricted
+                // group's prefix) stops instead of skipping: skipping would
+                // count the hidden items in one call, follow every new one
+                // and use up the hidden group's next numbers. The error says
+                // no more than typing that one number in (and the counter
+                // stays where it was). The built-in shared counter has
+                // counted past every generated number already, so it only
+                // meets typed-in numbers and keeps skipping them.
+                if own_scheme && !actor.can_see_project(holder) {
+                    return Err(AppError::Conflict(format!(
+                        "The numbering scheme of the project group {code} gives the item number '{candidate}', which is already in use; change the scheme or enter a number."
+                    )));
                 }
                 attempts += 1;
                 if attempts > 1000 {
@@ -631,6 +647,11 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
             "The item is an affected item of a change request; remove it from the request first."
                 .into(),
         ));
+    }
+    if !restricted {
+        // the rows go with the item: every request records it in its
+        // history and tells its people (only readers of the request see it)
+        crate::services::requests::item_deleted(&mut tx, actor, item_id, &item.number).await?;
     }
     sqlx::query("DELETE FROM items WHERE id = $1")
         .bind(item_id)
