@@ -67,7 +67,7 @@ jobs:
           echo "/usr/lib/postgresql/${{ matrix.postgres }}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked
+      - run: cargo test --locked --no-fail-fast
       - name: CLI smoke test
         env:
           TEAMCRAFT_DATABASE_URL: postgres://teamcraft@localhost:5432/teamcraft
@@ -131,7 +131,7 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - name: Run the tests with coverage
-        run: cargo llvm-cov --locked --no-report
+        run: cargo llvm-cov --locked --no-report --no-fail-fast
       - name: Summary per file
         run: |
           cargo llvm-cov report --summary-only | tee coverage-summary.txt
