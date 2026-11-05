@@ -3,7 +3,7 @@
 Everything in this folder is used by **both** user interfaces: the
 server-rendered web UI and the desktop app (Tauri). The design behind it is the
 research page *Sharing UI code between the web UI and the desktop app*
-(`docs/src/research/shared-ui.md`): one CSS, one markup contract, two renderers.
+([`docs/src/research/shared-ui.md`](../docs/src/research/shared-ui.md)): one CSS, one markup contract, two renderers.
 
 ```text
 css/skins.css   design tokens and skins (colours, radii, spacing, density, fonts)
