@@ -125,8 +125,9 @@ promised.
   check-in for the 3D view (see `docs/src/research/cad-previews.md`).
 - **Search.** Ranked full-text search over numbers, names, materials, file
   names and the text inside STEP, IGES and text files; filter by CAD program.
-- **Teams.** Viewer, CAD editor and admin roles; self-service project groups
-  managed by their creators; single sign-on with any OpenID Connect
+- **Teams and read permissions.** Viewer, CAD editor and admin roles; self-service project groups
+  managed by their creators, optionally **restricted** so that only their members
+  (and admins) see the group and its items, files and changes; single sign-on with any OpenID Connect
   provider and group synchronisation.
 - **Numbering schemes.** Generated item numbers per project group from
   `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`, with a preview of the next

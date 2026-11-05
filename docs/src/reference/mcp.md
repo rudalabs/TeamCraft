@@ -142,6 +142,15 @@ will ask before `create_change_draft`, `add_to_change`,
   checks that user's role and project groups, exactly like the REST API.
   A viewer's assistant can only read, raise change requests and comment on
   them – the same as a viewer in the web interface.
+* **Restricted groups.** Every tool result is filtered by the user's read
+  permissions ([restricted project groups](../admin/permissions.md)): an
+  item, change or request of a restricted group the user is not a member of
+  is reported as not found, with the same message as an unknown number;
+  BOM lines and other links to such items come back as placeholders with
+  `"restricted": true` and no number or name, and lists report how many
+  entries they left out (`hidden_parents`, `hidden_dependents`,
+  `hidden_changes`). The server instructions tell the model not to guess or
+  retry.
 * **No decisions.** There are no tools to check out, upload, edit BOMs,
   submit, review, release or make anything obsolete, and none to triage,
   assign, accept, defer, reject or withdraw a change request. The assistant

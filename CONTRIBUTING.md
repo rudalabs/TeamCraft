@@ -171,6 +171,16 @@ code base. These are the most important rules:
 
   The web handlers (`src/web/`), API handlers (`src/api/`) and MCP tools
   (`src/mcp/`) stay thin and call the same service functions.
+* **Reads take the actor.** [Restricted project groups](docs/src/admin/permissions.md)
+  hide their data from non-members, so every read service takes `&Actor`
+  and answers "not found" for hidden objects. Only `services::access` writes
+  the SQL guards (`access::item_visible` and friends); lists put the guard
+  into the query that the `COUNT(*)` shares. The `*_unchecked` getters are
+  for background and system code – `tests/no_unchecked_in_handlers.rs` fails
+  if one is called from `src/web`, `src/api` or `src/mcp`.
+* **New routes and MCP tools** are exercised by the leak test
+  (`tests/read_permissions.rs`), which reads the router sources: a route with
+  a new kind of path parameter needs a placeholder rule in its `fill()`.
 * **SQL** uses runtime queries (`sqlx::query_as::<_, T>` with `FromRow`), not
   the `query!` macros, so building needs no database.
 * **Schema changes** go into a new numbered file in `migrations/`. Never edit

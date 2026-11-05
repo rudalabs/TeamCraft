@@ -9,11 +9,19 @@ SHA-256 hashes only.
 
 ## Roles
 
-| Role       | Stored as | May                                                                 |
-|------------|-----------|---------------------------------------------------------------------|
-| Viewer     | `viewer`  | read everything                                                     |
-| CAD editor | `editor`  | change items of their project groups, create project groups, review |
-| Admin      | `admin`   | everything, plus users, all groups, lock overrides                  |
+| Role       | Stored as | May                                                                                    |
+|------------|-----------|----------------------------------------------------------------------------------------|
+| Viewer     | `viewer`  | read internal project groups and the restricted groups they are a member of           |
+| CAD editor | `editor`  | read like a viewer; change items of their project groups, create project groups, review |
+| Admin      | `admin`   | everything, including restricted groups, plus users, all groups, lock overrides        |
+
+A project group can be **restricted** to its members: everybody else –
+viewers and CAD editors who are not members – gets "not found" for the
+group and everything in it. Viewers who are members read it. See
+[Read permissions and restricted groups](permissions.md) for the full
+rules, what outsiders see of links into a restricted group, the delay of
+memberships synchronised from the identity provider and what stays
+visible on a shared instance.
 
 ## Single sign-on (OpenID Connect)
 
