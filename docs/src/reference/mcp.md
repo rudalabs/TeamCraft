@@ -151,7 +151,14 @@ will ask before `create_change_draft`, `add_to_change`,
   `"restricted": true` and no number or name, and lists report how many
   entries they left out (`hidden_parents`, `hidden_dependents`,
   `hidden_changes`). The server instructions tell the model not to guess or
-  retry.
+  retry. Rights are read on every HTTP request; the messages of one
+  JSON-RPC batch share that snapshot.
+* **Copying out of restricted groups.** Text other users typed can try to
+  make a model copy restricted content into a comment or draft that those
+  users can read. The built-in assistant refuses its text-writing tools for
+  the rest of a run once it has read such content; an external MCP client
+  gets no such check and acts with the full rights of the token's user
+  (see [Notifications, e-mail, chat, webhooks, assistant](../admin/permissions.md#notifications-e-mail-chat-webhooks-assistant)).
 * **No decisions.** There are no tools to check out, upload, edit BOMs,
   submit, review, release or make anything obsolete, and none to triage,
   assign, accept, defer, reject or withdraw a change request. The assistant

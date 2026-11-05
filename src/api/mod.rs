@@ -684,7 +684,7 @@ async fn project_numbering(
     Query(q): Query<NumberingQuery>,
 ) -> AppResult<Json<Value>> {
     let project = projects::get_by_code(&st.db, &me, &code).await?;
-    let preview = projects::numbering_preview(&st.db, &me, &project, q.scheme.as_deref()).await?;
+    let preview = projects::numbering_preview(&st.db, &project, q.scheme.as_deref()).await?;
     Ok(Json(json!(preview)))
 }
 
@@ -708,7 +708,7 @@ async fn set_project_numbering(
         body.scheme.as_deref().unwrap_or(""),
     )
     .await?;
-    let preview = projects::numbering_preview(&st.db, &me, &project, None).await?;
+    let preview = projects::numbering_preview(&st.db, &project, None).await?;
     Ok(Json(json!({ "project": project, "numbering": preview })))
 }
 

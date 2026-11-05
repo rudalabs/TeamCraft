@@ -49,7 +49,8 @@ A simulation is **out of date** when, for one of its bases,
 * the pinned file has a newer version (or the pinned version was deleted).
 
 The reason is shown next to the basis (*PRT-000012/C was released
-(simulated: B)*). Releasing or obsoleting a basis also **flags the
+(simulated: B)*). A basis in a restricted group that the reader may not see
+shows no reason (see [Read permissions](../admin/permissions.md)). Releasing or obsoleting a basis also **flags the
 simulation for a check** through the normal [change
 propagation](structure.md#change-propagation): the simulation shows *Check
 needed*, its author and watchers are notified, and the change's impact

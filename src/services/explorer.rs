@@ -96,6 +96,15 @@ pub async fn list(
     query: &str,
 ) -> AppResult<Vec<Entry>> {
     if let Listing::Project(id) = listing {
+        // unknown and hidden groups answer alike (no existence oracle)
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM projects WHERE id = $1)")
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
+        if !exists {
+            return Err(AppError::not_found("Folder not found."));
+        }
         access::ensure_visible(actor, Some(id), AppError::not_found("Folder not found."))?;
     }
     let pattern = if query.trim().is_empty() {

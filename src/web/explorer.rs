@@ -84,9 +84,7 @@ pub async fn show(
                 "can": {
                     "checkout": can_work && rev.checked_out_by.is_none(),
                     "checkin": rev.checked_out_by == Some(me.id),
-                    "cancel_checkout": rev.checked_out_by.is_some()
-                        && me.can_edit()
-                        && (rev.checked_out_by == Some(me.id) || me.is_admin()),
+                    "cancel_checkout": revisions::may_cancel_checkout(&st.db, me, &rev).await?,
                 },
             }))
         }

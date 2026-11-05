@@ -39,6 +39,9 @@ pub const PASSWORD: &str = "integration-test-password";
 
 pub struct TestApp {
     pub router: Router,
+    /// The state behind the router (for services that take it).
+    #[allow(dead_code)]
+    pub state: AppState,
     pub pool: PgPool,
     admin_options: PgConnectOptions,
     db_name: String,
@@ -166,7 +169,8 @@ pub async fn setup_with(extra: &'static [(&'static str, &'static str)]) -> Optio
         .await
         .expect("app state");
     Some(TestApp {
-        router: teamcraft::router(state),
+        router: teamcraft::router(state.clone()),
+        state,
         pool,
         admin_options,
         db_name,

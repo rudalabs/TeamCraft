@@ -97,7 +97,8 @@ pub async fn get_by_code(
 }
 
 /// Revisions currently checked out by the actor (only those it may still
-/// read: a user who left a restricted group asks an admin to cancel them).
+/// read: a user who left a restricted group asks a manager of the group or
+/// an admin to cancel them, see [`cancel_checkout`]).
 pub async fn checked_out_by(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Revision>> {
     Ok(sqlx::query_as::<_, Revision>(&format!(
         "{REVISION_SELECT} WHERE r.checked_out_by = $1 AND {}
@@ -259,7 +260,9 @@ pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
 }
 
 /// Releases the edit lock without uploading anything ("cancel check-out").
-/// Administrators may release locks of other users. A check-in with new file
+/// Administrators may release locks of other users, managers of the item's
+/// group those of users who are no longer members (who cannot release them
+/// themselves once a restricted group hides the revision). A check-in with new file
 /// versions is `files::check_in`.
 pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
     actor.require(Role::Editor)?;
@@ -269,7 +272,8 @@ pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResul
     let Some(owner) = rev.checked_out_by else {
         return Ok(rev);
     };
-    if owner != actor.id && !actor.is_admin() {
+    if owner != actor.id && !actor.is_admin() && !orphaned_lock(&mut tx, actor, &rev, owner).await?
+    {
         return Err(AppError::Forbidden(format!(
             "{} is checked out by {}; only they or an administrator can check it in.",
             label(&rev),
@@ -320,6 +324,47 @@ pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResul
     }
     tx.commit().await?;
     get(pool, actor, id).await
+}
+
+/// For pages: whether [`cancel_checkout`] would release the revision's lock.
+pub async fn may_cancel_checkout(pool: &PgPool, actor: &Actor, rev: &Revision) -> AppResult<bool> {
+    let Some(owner) = rev.checked_out_by else {
+        return Ok(false);
+    };
+    if !actor.can_edit() {
+        return Ok(false);
+    }
+    if owner == actor.id || actor.is_admin() {
+        return Ok(true);
+    }
+    let mut conn = pool.acquire().await?;
+    orphaned_lock(&mut conn, actor, rev, owner).await
+}
+
+/// A lock that a manager of the revision's group may release: its owner is
+/// no longer a member of the group (removed, or never one before the group
+/// was restricted) and so can neither see nor check in the revision of a
+/// restricted group, nor edit it in an internal one.
+async fn orphaned_lock(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    rev: &Revision,
+    owner: Uuid,
+) -> AppResult<bool> {
+    let Some(project_id) = rev.project_id else {
+        return Ok(false);
+    };
+    if !crate::services::projects::can_manage(conn, actor, project_id).await? {
+        return Ok(false);
+    }
+    let owner_is_member = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2)",
+    )
+    .bind(project_id)
+    .bind(owner)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(!owner_is_member)
 }
 
 /// Tells the watchers of an item about something that happened to a revision.

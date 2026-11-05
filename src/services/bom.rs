@@ -69,7 +69,14 @@ pub(crate) async fn lines_unchecked(
 
 /// A BOM line of a parent the actor may read (hidden child = placeholder).
 pub async fn line(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<BomLine> {
-    let mut l = sqlx::query_as::<_, BomLine>(&format!("{LINE_SELECT} WHERE bl.id = $1"))
+    let l = line_unmasked(pool, actor, id).await?;
+    Ok(masked_for(actor, l))
+}
+
+/// [`line`] without the placeholder: the audit trail of a write names the
+/// real child (redacted when read by somebody who may not see it).
+async fn line_unmasked(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<BomLine> {
+    let l = sqlx::query_as::<_, BomLine>(&format!("{LINE_SELECT} WHERE bl.id = $1"))
         .bind(id)
         .fetch_optional(pool)
         .await?
@@ -77,10 +84,14 @@ pub async fn line(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<BomLine> 
     revisions::get(pool, actor, l.parent_revision_id)
         .await
         .map_err(|_| AppError::not_found("BOM line not found."))?;
+    Ok(l)
+}
+
+fn masked_for(actor: &Actor, mut l: BomLine) -> BomLine {
     if !actor.can_see_project(l.child_project_id) {
         l.mask();
     }
-    Ok(l)
+    l
 }
 
 /// Would adding `child_item_id` below `parent_item_id` create a cycle?
@@ -244,7 +255,14 @@ pub async fn update(
             "Find numbers must be positive.".into(),
         ));
     }
-    let existing = line(pool, actor, line_id).await?;
+    let existing = line_unmasked(pool, actor, line_id).await?;
+    // The notes of a line to a hidden child are not shown to the actor
+    // (placeholder), so a form sends them back empty: they stay as stored.
+    let notes = if actor.can_see_project(existing.child_project_id) {
+        notes
+    } else {
+        existing.notes.clone()
+    };
     let mut tx = pool.begin().await?;
     let parent = revisions::lock(&mut tx, existing.parent_revision_id).await?;
     revisions::ensure_editable(&parent, actor)?;
@@ -288,7 +306,7 @@ pub async fn update(
 }
 
 pub async fn remove(pool: &PgPool, actor: &Actor, line_id: Uuid) -> AppResult<BomLine> {
-    let existing = line(pool, actor, line_id).await?;
+    let existing = line_unmasked(pool, actor, line_id).await?;
     let mut tx = pool.begin().await?;
     let parent = revisions::lock(&mut tx, existing.parent_revision_id).await?;
     revisions::ensure_editable(&parent, actor)?;
@@ -313,7 +331,7 @@ pub async fn remove(pool: &PgPool, actor: &Actor, line_id: Uuid) -> AppResult<Bo
     )
     .await?;
     tx.commit().await?;
-    Ok(existing)
+    Ok(masked_for(actor, existing))
 }
 
 async fn touch(conn: &mut PgConnection, revision_id: Uuid) -> AppResult<()> {
@@ -496,6 +514,7 @@ impl StructureLine {
         self.child_name = None;
         self.child_mass_kg = None;
         self.child_unit_cost = None;
+        self.notes = String::new();
         self.child_project_id = None;
         self.restricted = true;
     }

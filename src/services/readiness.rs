@@ -56,6 +56,9 @@ pub struct Dependency {
     /// Placeholder for a dependency the reader may not see: it still
     /// blocks, but its identity is removed.
     pub restricted: bool,
+    /// The depending revision is hidden from the reader (never sent).
+    #[serde(skip)]
+    pub revision_restricted: bool,
     /// Project groups of the dependency and of the depending revision (for
     /// the read check; never sent).
     #[serde(skip)]
@@ -96,6 +99,7 @@ impl Dependency {
     fn mask_revision(&mut self) {
         self.revision_id = Uuid::nil();
         self.revision_label = crate::services::access::RESTRICTED_LABEL.into();
+        self.revision_restricted = true;
     }
 
     /// The other open change is named only to readers who may see it.
@@ -123,6 +127,43 @@ impl Dependency {
     }
 }
 
+/// Moves masked rows behind the visible ones (see [`Readiness::redact`]).
+/// The sort is stable, so the visible rows keep their order; rows of a
+/// hidden depending revision and placeholders are ordered by what the
+/// reader sees only, so their order says nothing about hidden numbers.
+fn placeholders_last(rows: &mut [Dependency]) {
+    // the place of each visible depending revision in the checked order
+    let mut first: std::collections::HashMap<Uuid, usize> = std::collections::HashMap::new();
+    for (i, d) in rows.iter().enumerate() {
+        first.entry(d.revision_id).or_insert(i);
+    }
+    rows.sort_by_cached_key(|d| {
+        if d.revision_restricted {
+            (
+                true,
+                0,
+                d.restricted,
+                d.item_number.clone(),
+                d.relation.clone(),
+            )
+        } else {
+            // placeholders by what they show: their relation
+            let relation = if d.restricted {
+                d.relation.clone()
+            } else {
+                String::new()
+            };
+            (
+                false,
+                first[&d.revision_id],
+                d.restricted,
+                String::new(),
+                relation,
+            )
+        }
+    });
+}
+
 /// Result of the readiness check.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Readiness {
@@ -140,6 +181,13 @@ impl Readiness {
     /// file-name matches, obsolete items) are dropped. Hidden depending
     /// revisions lose their label, and another open change the actor may not
     /// see is not named.
+    ///
+    /// The check sorts by the item numbers of the depending revision and of
+    /// the dependency, so a placeholder left in place would bound the hidden
+    /// number between its visible neighbours. Rows of hidden depending
+    /// revisions therefore go last (ordered by what the reader sees), and
+    /// within each depending revision the hidden dependencies follow the
+    /// visible ones.
     pub fn redact(mut self, actor: &crate::auth::Actor) -> Self {
         self.warnings
             .retain(|d| actor.can_see_project(d.project_id));
@@ -153,6 +201,8 @@ impl Readiness {
                 d.mask();
             }
         }
+        placeholders_last(&mut self.blockers);
+        placeholders_last(&mut self.warnings);
         self
     }
 
@@ -381,6 +431,7 @@ pub async fn check(conn: &mut PgConnection, change_id: Uuid) -> AppResult<Readin
             blocking,
             addable,
             restricted: false,
+            revision_restricted: false,
             project_id: row.project_id,
             revision_project_id: row.revision_project_id,
             other_change_access: row.other_change_id.and_then(|id| access.get(&id).cloned()),
@@ -452,6 +503,7 @@ mod tests {
             blocking: true,
             addable,
             restricted: false,
+            revision_restricted: false,
             project_id: None,
             revision_project_id: None,
             other_change_access: None,
@@ -490,6 +542,61 @@ mod tests {
         assert_eq!(r.warnings[0].revision_id, Uuid::nil());
         assert_eq!(r.blockers[0].other_change.as_deref(), Some(OTHER_CHANGE));
         assert_eq!(r.blockers[1].other_change.as_deref(), Some("CHG-000062"));
+    }
+
+    #[test]
+    fn redact_puts_placeholders_last() {
+        use crate::{auth::Actor, domain::Role};
+        let secret = Uuid::new_v4();
+        let reader = Actor::test(Role::Editor, vec![], vec![secret]);
+        let asm = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        // as the check sorts them: by depending item, then dependency number
+        let on = |rev: Uuid, label: &str, number: &str, hidden_dep: bool, hidden_rev: bool| {
+            let mut d = dep(number, "bom", true, Uuid::new_v4());
+            d.revision_id = rev;
+            d.revision_label = label.into();
+            if hidden_dep {
+                d.project_id = Some(secret);
+            }
+            if hidden_rev {
+                d.revision_project_id = Some(secret);
+            }
+            d
+        };
+        let hidden_a = Uuid::new_v4();
+        let hidden_b = Uuid::new_v4();
+        let r = Readiness {
+            blockers: vec![
+                on(asm, "ASM-000001/A", "PRT-000010", false, false),
+                on(asm, "ASM-000001/A", "PRT-000057", true, false),
+                on(asm, "ASM-000001/A", "PRT-000099", false, false),
+                on(hidden_a, "ASM-000005/A", "PRT-000030", false, true),
+                on(hidden_b, "ASM-000006/A", "PRT-000020", false, true),
+                on(other, "ASM-000009/A", "PRT-000011", false, false),
+            ],
+            warnings: vec![],
+        }
+        .redact(&reader);
+        let seen: Vec<(String, String)> = r
+            .blockers
+            .iter()
+            .map(|d| (d.revision_label.clone(), d.item_number.clone()))
+            .collect();
+        let pair = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(
+            seen,
+            vec![
+                pair("ASM-000001/A", "PRT-000010"),
+                pair("ASM-000001/A", "PRT-000099"),
+                pair("ASM-000001/A", "restricted item"),
+                pair("ASM-000009/A", "PRT-000011"),
+                // hidden depending revisions: last, by the visible dependency
+                pair("restricted item", "PRT-000020"),
+                pair("restricted item", "PRT-000030"),
+            ]
+        );
+        assert!(r.blocker_summary().contains("PRT-000099/A"));
     }
 
     #[test]

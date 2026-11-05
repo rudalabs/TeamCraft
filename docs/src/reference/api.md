@@ -23,11 +23,19 @@ Every answer contains only what the token's user may read (see
 * Rows that link a visible object to a hidden item are **placeholders**:
   `"restricted": true`, the identity fields (number, name, type, revision,
   state) empty and the ids the nil UUID; structural fields (find number,
-  quantity, notes of the line, kind and note of a reference, role and note
-  of a simulation basis) stay. This applies to BOM lines and trees, item
-  references, simulation bases, change order and change request items and
-  readiness blockers; impacts get `"source_restricted": true` with the
-  source and the releasing change removed.
+  quantity, kind of a reference, role of a simulation basis) stay. Notes
+  are emptied (they describe the hidden item), a hidden simulation basis
+  has `out_of_date: null`, and placeholders come after the visible rows of
+  their kind. This applies to BOM lines and trees, item references,
+  simulation bases, change order and change request items and readiness
+  blockers and warnings; impacts get `"source_restricted": true` with the
+  source removed. The releasing change order of an impact
+  (`change_id`, `change_number`) is left out, and another open change in
+  readiness (`other_change`) reads "another open change order", when the
+  user may not see that change.
+* Creating an item whose generated number is already held by an item the
+  user cannot see answers 409 ("already in use; change the scheme or enter
+  a number") instead of skipping to the next number.
 * Expanded BOMs (`?expand=true`) carry `restricted_lines` and
   `rollup_incomplete`; a working set carries `restricted_lines`; the Pack and
   Go `manifest.json` carries `restricted_lines`.

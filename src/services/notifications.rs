@@ -167,11 +167,16 @@ fn subject_kind(subject: Subject) -> Option<&'static str> {
 
 /// SQL guard: the notification aliased `n` may still be read by the user
 /// `actor` (an SQL expression) whose hidden groups are `hidden`: its subject
-/// and everything its text names are visible. Rows of deleted subjects and
-/// rows written before the subject was stored stay readable.
+/// and everything its text names are visible, and none of the groups those
+/// items were in when it was written is hidden (`mentioned_projects`: this
+/// also covers items deleted since). Rows written before the subject was
+/// stored got it from their link in migration 0027 (and the objects their
+/// text names from its numbers in 0028); personal ones (and
+/// old rows whose subject is gone) have none.
 pub(crate) fn notification_visible(n: &str, actor: &str, hidden: &str) -> String {
     format!(
-        "(({n}.subject_kind IS DISTINCT FROM 'item' OR NOT EXISTS (
+        "(NOT ({n}.mentioned_projects && {hidden})
+          AND ({n}.subject_kind IS DISTINCT FROM 'item' OR NOT EXISTS (
              SELECT 1 FROM items ni WHERE ni.id = {n}.subject_id AND NOT {item_subject}))
           AND ({n}.subject_kind IS DISTINCT FROM 'change' OR NOT EXISTS (
              SELECT 1 FROM changes nc WHERE nc.id = {n}.subject_id AND NOT {change_subject}))
@@ -186,6 +191,31 @@ pub(crate) fn notification_visible(n: &str, actor: &str, hidden: &str) -> String
         request = access::request_visible_for("nq", actor, hidden),
         item_mention = access::project_visible_in("nmi.project_id", hidden),
         change_mention = access::change_visible_for("nmc", actor, hidden),
+    )
+}
+
+/// SQL expression: the notification aliased `n` is confidential *now* – the
+/// stored flag, or its subject or something its text names is in a
+/// restricted group at delivery time (the group may have been restricted
+/// after the row was queued).
+pub fn confidential_now(n: &str) -> String {
+    let restricted = "cp.visibility = 'restricted'";
+    format!(
+        "({n}.confidential
+          OR EXISTS (SELECT 1 FROM projects cp WHERE cp.id = ANY({n}.mentioned_projects) AND {restricted})
+          OR EXISTS (SELECT 1 FROM items ci JOIN projects cp ON cp.id = ci.project_id
+                     WHERE {restricted}
+                       AND (ci.id = ANY({n}.mentioned_items)
+                            OR ({n}.subject_kind = 'item' AND ci.id = {n}.subject_id)))
+          OR EXISTS (SELECT 1 FROM change_items cci JOIN revisions cr ON cr.id = cci.revision_id
+                     JOIN items ci ON ci.id = cr.item_id JOIN projects cp ON cp.id = ci.project_id
+                     WHERE {restricted}
+                       AND (cci.change_id = ANY({n}.mentioned_changes)
+                            OR ({n}.subject_kind = 'change' AND cci.change_id = {n}.subject_id)))
+          OR EXISTS (SELECT 1 FROM change_request_items cri JOIN items ci ON ci.id = cri.item_id
+                     JOIN projects cp ON cp.id = ci.project_id
+                     WHERE {restricted} AND {n}.subject_kind = 'request'
+                       AND cri.request_id = {n}.subject_id))"
     )
 }
 
@@ -313,11 +343,15 @@ pub(crate) async fn notify(
         created += sqlx::query(&format!(
             "INSERT INTO notifications (id, user_id, kind, title, body, link, subject_type, subject_ref,
                                         actor_name, email_state, chat_state, confidential,
-                                        subject_kind, subject_id, mentioned_items, mentioned_changes)
+                                        subject_kind, subject_id, mentioned_items, mentioned_changes,
+                                        mentioned_projects)
              SELECT gen_random_uuid(), u.id, $2, $3, $4, $5, $6, $7, $8,
                     CASE WHEN u.notify_email AND COALESCE(u.email, '') <> '' THEN 'pending' ELSE 'none' END,
                     CASE WHEN u.notify_mattermost THEN 'pending' ELSE 'none' END,
-                    $11, $16, $10, $14, $15
+                    $11, $16, $10, $14, $15,
+                    ARRAY(SELECT DISTINCT pi.project_id FROM items pi
+                          WHERE pi.project_id IS NOT NULL
+                            AND (pi.id = ANY($14) OR ($16 = 'item' AND pi.id = $10)))
              FROM users u
              WHERE u.id = ANY($1) AND u.active AND u.id <> $9
                AND ($2 = 'test' OR NOT ($2 = ANY(u.notify_muted)))
