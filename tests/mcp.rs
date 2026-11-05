@@ -138,6 +138,8 @@ async fn mcp_protocol_and_tools() {
         "suggest_reviewers",
         "create_change_draft",
         "compare_revisions",
+        "find_duplicate_files",
+        "find_similar_parts",
     ] {
         assert!(tools.contains(&name.to_string()), "{name} in {tools:?}");
     }

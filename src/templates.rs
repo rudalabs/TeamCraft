@@ -529,6 +529,22 @@ mod tests {
         );
 
         for (state, checked_out) in [("in_work", true), ("in_work", false), ("released", false)] {
+            let source = json!({ "file_id": OTHER, "filename": "nozzle.step", "sha256": "cd".repeat(32), "format": "step" });
+            let similar = if checked_out {
+                json!({ "status": "pending", "message": "computing", "source": source,
+                        "signature": null, "ignore_scale": false, "candidates": [] })
+            } else {
+                json!({ "status": "ready", "message": null, "source": source, "ignore_scale": false,
+                        "signature": { "extents": [120.0, 40.0, 8.0], "area": 1.0, "volume": null, "closed": false, "triangles": 12 },
+                        "candidates": [{
+                            "item_id": ME, "item_number": "PRT-000007", "item_type": "part", "project_code": "ROCKET",
+                            "revision_id": OTHER, "revision_code": "B", "state": "released", "name": "Nozzle <i>",
+                            "file_id": OTHER, "filename": "old-nozzle.stl", "identical": false,
+                            "score": 91, "shape": 94, "size": 97, "extents": [118.0, 40.0, 8.0],
+                            "explanation": "extents 118 × 40 × 8 vs 120 × 40 × 8, shape distribution 94 % similar",
+                            "thumbnail_file_id": if state == "released" { json!(ME) } else { json!(null) },
+                        }] })
+            };
             let html = render(
                 &env,
                 "revisions/show.html",
@@ -542,7 +558,7 @@ mod tests {
                     "history": [audit_entry()], "projects": [project()], "units": units(),
                     "references": references.clone(), "impact_groups": [impact_group()],
                     "resolved_impacts": [impact(Some("acknowledged"))],
-                    "open_requests": [request("in_triage")],
+                    "open_requests": [request("in_triage")], "similar": similar,
                     "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
                     "lifecycle": {
                         "states": crate::domain::LifecycleState::ALL,
@@ -556,6 +572,20 @@ mod tests {
                 "current lifecycle state is marked"
             );
             assert!(html.contains("four-eyes principle"), "rules are listed");
+            if checked_out {
+                assert!(
+                    html.contains("Comparing the shape of nozzle.step"),
+                    "similar parts pending"
+                );
+            } else {
+                assert!(
+                    html.contains("PRT-000007/B")
+                        && html.contains("Nozzle &lt;i&gt;")
+                        && html.contains("shape distribution 94 % similar")
+                        && html.contains("value=\"91\""),
+                    "similar parts listed"
+                );
+            }
             assert!(html.contains("Bracket &lt;b&gt;"), "names are escaped");
             assert!(
                 html.contains("/files/") && html.contains("/restore"),
