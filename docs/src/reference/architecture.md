@@ -47,6 +47,7 @@
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache                                                                     |
+| `src/webhooks.rs`                    | event webhooks: outbox worker, HMAC-SHA256 signature, backoff, target (SSRF) guard                   |
 | `migrations/`                        | PostgreSQL schema                                                                                    |
 | `tests/`                             | end-to-end tests, each against its own temporary database                                            |
 | `desktop/`                           | the Tauri desktop client (separate Cargo project)                                                    |
