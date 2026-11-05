@@ -1,0 +1,24 @@
+{
+  "id": "chatcmpl-az1",
+  "object": "chat.completion",
+  "created": 1767225602,
+  "model": "gpt-5.4",
+  "prompt_filter_results": [
+    { "prompt_index": 0, "content_filter_results": { "hate": { "filtered": false, "severity": "safe" }, "violence": { "filtered": false, "severity": "safe" } } }
+  ],
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "tool_calls",
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          { "id": "call_az_1", "type": "function", "function": { "name": "bom_health", "arguments": "{\"item\": \"ASM-000002\"}" } }
+        ]
+      },
+      "content_filter_results": {}
+    }
+  ],
+  "usage": { "prompt_tokens": 210, "completion_tokens": 22, "total_tokens": 232 }
+}

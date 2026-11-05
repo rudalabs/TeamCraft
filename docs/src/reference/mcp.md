@@ -16,8 +16,9 @@ release or make anything obsolete, and it cannot triage, accept, defer or
 reject change requests. Those decisions stay with people.
 
 The same tools also power the optional server-side assistant,
-[Ask TeamCraft](../guide/assistant.md). It needs no client, only an
-Anthropic API key on the server.
+[Ask TeamCraft](../guide/assistant.md). It needs no client, only an AI
+provider (Anthropic, OpenAI-compatible or a local model) configured on the
+server.
 
 ## Endpoint
 

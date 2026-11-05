@@ -5,7 +5,7 @@ use axum::http::HeaderMap;
 use serde_json::{json, Value};
 
 use super::{
-    error_message, retry_after, AuthStyle, HttpCall, LlmError, Provider, Reply, Request, Stop,
+    retry_after, status_error, AuthStyle, HttpCall, LlmError, Provider, Reply, Request, Stop,
     ToolCall, Turn, Usage,
 };
 
@@ -147,22 +147,17 @@ impl Provider for Anthropic {
                 input: tokens("input_tokens") + cached + tokens("cache_creation_input_tokens"),
                 cached_input: cached,
                 output: tokens("output_tokens"),
+                reported: usage.is_object(),
             },
         })
     }
 
     fn error(&self, status: u16, headers: &HeaderMap, body: &str) -> LlmError {
-        match status {
-            401 | 403 => LlmError::Auth,
-            429 => LlmError::RateLimited {
-                retry_after: retry_after(headers),
-            },
-            500..=599 => LlmError::Overloaded(status),
-            _ => LlmError::Rejected {
-                status,
-                message: error_message(body),
-            },
+        // A 429 without `retry-after` is the spend cap: waiting does not help.
+        if status == 429 && retry_after(headers).is_none() {
+            return LlmError::Quota;
         }
+        status_error(status, headers, body)
     }
 }
 
@@ -171,32 +166,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::llm::{complete, HttpResponse, ToolResult, ToolSpec, Transport};
-
-    /// A recorded API answer: a bare body (200) or `{status, headers, body}`.
-    fn recorded(text: &str) -> HttpResponse {
-        let v: Value = serde_json::from_str(text).unwrap();
-        if v.get("status").is_some() {
-            let mut headers = HeaderMap::new();
-            for (k, val) in v["headers"].as_object().unwrap() {
-                headers.insert(
-                    axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
-                    val.as_str().unwrap().parse().unwrap(),
-                );
-            }
-            HttpResponse {
-                status: v["status"].as_u64().unwrap() as u16,
-                headers,
-                body: v["body"].to_string(),
-            }
-        } else {
-            HttpResponse {
-                status: 200,
-                headers: HeaderMap::new(),
-                body: text.to_string(),
-            }
-        }
-    }
+    use crate::llm::{complete, testing::recorded, HttpResponse, ToolResult, ToolSpec, Transport};
 
     macro_rules! fixture {
         ($name:literal) => {
@@ -402,6 +372,15 @@ mod tests {
                 status: 400,
                 message: "bad model".into()
             }
+        );
+        // a 429 without retry-after is the spend cap: no retry
+        assert_eq!(
+            Anthropic.error(429, &HeaderMap::new(), "{}"),
+            LlmError::Quota
+        );
+        assert_eq!(
+            Anthropic.error(400, &HeaderMap::new(), "prompt is too long: 250000 tokens"),
+            LlmError::ContextLength
         );
         // a 3xx (redirects are not followed) is an error, not a body
         let e = Anthropic.error(302, &HeaderMap::new(), "");

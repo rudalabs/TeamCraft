@@ -572,7 +572,7 @@ fn schema_create_request() -> Value {
             "description": { "type": "string", "maxLength": MAX_REQUEST_TEXT, "description": "Problem, where it was found and the proposed solution" },
             "reason": { "type": "string", "enum": REQUEST_REASONS, "default": "other" },
             "priority": { "type": "string", "enum": ["low", "normal", "high", "critical"], "default": "normal" },
-            "due_date": { "type": "string", "format": "date", "description": "Wanted by (YYYY-MM-DD), optional" },
+            "due_date": { "type": "string", "description": "Wanted by (YYYY-MM-DD), optional" },
             "items": {
                 "type": "array",
                 "items": { "type": "string" },

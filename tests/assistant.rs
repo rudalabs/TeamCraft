@@ -163,3 +163,34 @@ async fn assistant_requests_are_validated() {
     assert_eq!(r.status, StatusCode::FORBIDDEN);
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn assistant_with_a_local_openai_compatible_server_needs_no_key() {
+    // Nothing listens there: the requests below never reach the server.
+    let Some(app) = common::setup_with(&[
+        ("TEAMCRAFT_ASSISTANT_PROVIDER", "openai-compatible"),
+        ("TEAMCRAFT_ASSISTANT_BASE_URL", "http://127.0.0.1:9/v1"),
+        ("TEAMCRAFT_ASSISTANT_MODEL", "llama3.1:8b"),
+    ])
+    .await
+    else {
+        return;
+    };
+    let (_, token) = app.user("vera", Role::Viewer).await;
+    let r = app
+        .api(Method::GET, "/api/v1/assistant", &token, None)
+        .await;
+    assert_eq!(r.json()["enabled"], true);
+    assert_eq!(r.json()["provider"], "openai-compatible");
+    assert_eq!(r.json()["model"], "llama3.1:8b");
+    assert_eq!(r.json()["host"], "127.0.0.1");
+    // the page names where the data goes (host, never a key)
+    let cookie = app.login("vera").await;
+    let page = app.get_page("/assistant", Some(&cookie)).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.text().contains(
+        "the AI provider configured by your administrator (openai-compatible, 127.0.0.1)"
+    ));
+    assert!(!page.text().contains("sent to Anthropic"));
+    app.teardown().await;
+}

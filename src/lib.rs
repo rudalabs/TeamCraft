@@ -93,17 +93,31 @@ impl AppState {
                 config.vault_dir.display()
             )
         })?;
-        let templates =
+        let mut templates =
             templates::environment(&config.instance_name).context("loading templates failed")?;
+        if let Some(a) = &config.assistant {
+            // privacy wording of the assistant panels: where the data goes
+            templates.add_global(
+                "assistant_destination",
+                format!(
+                    "the AI provider configured by your administrator ({}, {})",
+                    a.provider.as_str(),
+                    a.host()
+                ),
+            );
+        }
         let oidc = match &config.oidc {
             Some(o) => Some(Arc::new(OidcClient::new(o.clone(), &config.public_url)?)),
             None => None,
         };
         let previews = Arc::new(Previews::new(&vault));
         let assistant = match &config.assistant {
-            Some(a) => Some(Arc::new(
-                assistant::Assistant::new(a).context("setting up the assistant failed")?,
-            )),
+            Some(a) => Some(Arc::new({
+                if let Some(warning) = a.insecure_key_warning() {
+                    tracing::warn!("{warning}");
+                }
+                assistant::Assistant::new(a).context("setting up the assistant failed")?
+            })),
             None => None,
         };
         let webhooks = webhooks::Dispatcher::from_config(&config)

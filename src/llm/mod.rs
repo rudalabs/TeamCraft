@@ -17,6 +17,40 @@ use serde_json::Value;
 
 pub mod anthropic;
 pub mod http;
+pub mod openai;
+
+#[cfg(test)]
+pub(crate) mod testing {
+    use axum::http::{HeaderMap, HeaderName};
+    use serde_json::Value;
+
+    use super::HttpResponse;
+
+    /// A recorded API answer: a bare body (status 200) or
+    /// `{status, headers, body}` for an error.
+    pub fn recorded(text: &str) -> HttpResponse {
+        let v: Value = serde_json::from_str(text).unwrap();
+        if v.get("status").is_none() {
+            return HttpResponse {
+                status: 200,
+                headers: HeaderMap::new(),
+                body: text.to_string(),
+            };
+        }
+        let mut headers = HeaderMap::new();
+        for (k, val) in v["headers"].as_object().unwrap() {
+            headers.insert(
+                HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                val.as_str().unwrap().parse().unwrap(),
+            );
+        }
+        HttpResponse {
+            status: v["status"].as_u64().unwrap() as u16,
+            headers,
+            body: v["body"].to_string(),
+        }
+    }
+}
 
 /// A tool the model may call. `schema` is the JSON Schema of the input.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,6 +125,9 @@ pub struct Usage {
     pub input: u64,
     pub cached_input: u64,
     pub output: u64,
+    /// The server reported token counts. Without them (some local servers)
+    /// the token limit of a run cannot count the call.
+    pub reported: bool,
 }
 
 /// A decoded model reply.
@@ -141,6 +178,10 @@ pub enum LlmError {
     Overloaded(u16),
     #[error("the AI service rejected the request ({status}): {message}")]
     Rejected { status: u16, message: String },
+    #[error("the AI service refused: its usage or spending limit is reached")]
+    Quota,
+    #[error("the input is longer than the model accepts")]
+    ContextLength,
     #[error("network error: {0}")]
     Network(String),
     #[error("time limit reached")]
@@ -207,11 +248,45 @@ pub fn retry_after(headers: &HeaderMap) -> Option<Duration> {
 
 /// The `error.message` of a JSON error body, cut short.
 pub fn error_message(body: &str) -> String {
-    let message = serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+    let v = serde_json::from_str::<Value>(body).unwrap_or_default();
+    // `{"error": {"message": …}}`, or a plain string (Ollama, some proxies)
+    let message = v["error"]["message"]
+        .as_str()
+        .or_else(|| v["error"].as_str())
+        .or_else(|| v["message"].as_str())
         .unwrap_or_default();
-    cut(&message, 300)
+    cut(message, 300)
+}
+
+/// The one error table of all providers (design page): 401/403 are an
+/// authentication error, 402 and a billing-quota 429 a quota error (no
+/// retry), other 429s are rate limits with their `retry-after`, 5xx (also
+/// 529) an overloaded service, a context-length rejection its own error,
+/// everything else a rejected request.
+pub fn status_error(status: u16, headers: &HeaderMap, body: &str) -> LlmError {
+    let lower = body.to_ascii_lowercase();
+    match status {
+        401 | 403 => LlmError::Auth,
+        402 => LlmError::Quota,
+        429 if lower.contains("insufficient_quota") || lower.contains("billing") => LlmError::Quota,
+        429 => LlmError::RateLimited {
+            retry_after: retry_after(headers),
+        },
+        500..=599 => LlmError::Overloaded(status),
+        400 | 413 | 422
+            if lower.contains("context_length_exceeded")
+                || lower.contains("prompt is too long")
+                || lower.contains("maximum context length")
+                || lower.contains("context length")
+                || lower.contains("context window") =>
+        {
+            LlmError::ContextLength
+        }
+        _ => LlmError::Rejected {
+            status,
+            message: error_message(body),
+        },
+    }
 }
 
 /// Cuts `s` to at most `max` bytes at a character boundary.

@@ -8,7 +8,7 @@
 //! and sends the results back, until the model answers or a limit (steps,
 //! tokens, time) is reached.
 //!
-//! * Enabled only when `TEAMCRAFT_ANTHROPIC_API_KEY` is configured; the key
+//! * Enabled only when an API key (or a local server) is configured; the key
 //!   never leaves the transport except in its request header.
 //! * Read-only by default: the write tools (`create_change_draft`,
 //!   `add_to_change`, `create_change_request`, `comment_change_request`)
@@ -27,32 +27,26 @@ use serde_json::{json, Value};
 
 use crate::{
     auth::Actor,
-    config::AssistantConfig,
+    config::{AssistantConfig, AssistantProvider},
     error::AppError,
     llm::{
         self,
-        anthropic::{self, Anthropic},
+        anthropic::Anthropic,
         http::HttpTransport,
+        openai::{Flavour, OpenAi},
         LlmError, Provider, Reply, Request, Stop, ToolResult, ToolSpec, Transport, Turn,
     },
     mcp,
 };
 
-pub use llm::http::REQUEST_TIMEOUT;
-/// `max_tokens` of one model call (non-streaming).
-pub const MAX_TOKENS: u32 = 16_000;
-/// Time limit of a whole run (all steps and tools).
-pub const RUN_TIMEOUT: Duration = Duration::from_secs(240);
 /// Most input + output tokens of one run, summed over all steps.
 pub const MAX_RUN_TOKENS: u64 = 800_000;
+/// Wait before the single retry of an overloaded or rate-limited call.
+const RETRY_DELAY: Duration = Duration::from_secs(3);
 /// Longest free question in characters.
 pub const MAX_QUESTION_CHARS: usize = 4_000;
 /// Longest tool result handed to the model, in bytes.
 pub const MAX_TOOL_RESULT_BYTES: usize = 200_000;
-/// Runs at the same time on this server (protects the API budget).
-pub const MAX_CONCURRENT_RUNS: usize = 4;
-/// Wait before the single retry of an overloaded or rate-limited call.
-const RETRY_DELAY: Duration = Duration::from_secs(3);
 
 // ---------------------------------------------------------------------------
 // Questions and quick actions
@@ -348,6 +342,7 @@ impl From<LlmError> for AssistantError {
         match e {
             LlmError::Timeout => AssistantError::Timeout,
             LlmError::Malformed(m) => AssistantError::Malformed(m),
+            LlmError::ContextLength => AssistantError::TokenLimit,
             e => AssistantError::Llm(e),
         }
     }
@@ -365,6 +360,8 @@ impl AssistantError {
             AssistantError::Refused => "refused",
             AssistantError::Malformed(_) => "malformed",
             AssistantError::Llm(LlmError::Auth) => "auth",
+            AssistantError::Llm(LlmError::Quota) => "quota",
+            AssistantError::Llm(LlmError::ContextLength) => "token_limit",
             AssistantError::Llm(LlmError::RateLimited { .. }) => "rate_limited",
             AssistantError::Llm(LlmError::Overloaded(_)) => "overloaded",
             AssistantError::Llm(LlmError::Rejected { .. }) => "rejected",
@@ -380,7 +377,8 @@ impl AssistantError {
         match self {
             AssistantError::Disabled => AppError::NotFound(
                 "The assistant is not enabled on this server. An administrator can enable it with \
-                 TEAMCRAFT_ANTHROPIC_API_KEY."
+                 TEAMCRAFT_ASSISTANT_API_KEY (or TEAMCRAFT_ANTHROPIC_API_KEY) and, for another \
+                 provider, TEAMCRAFT_ASSISTANT_PROVIDER."
                     .into(),
             ),
             AssistantError::Busy => AppError::Unavailable(
@@ -395,17 +393,22 @@ impl AssistantError {
                 "The AI service cannot be reached from the server right now.".into(),
             ),
             AssistantError::Timeout | AssistantError::Llm(LlmError::Timeout) => {
-                AppError::Unavailable(format!(
-                    "The assistant took longer than {} seconds. Ask a narrower question.",
-                    RUN_TIMEOUT.as_secs()
-                ))
+                AppError::Unavailable(
+                    "The assistant took too long. Ask a narrower question.".into(),
+                )
             }
+            AssistantError::Llm(LlmError::Quota) => AppError::Unavailable(
+                "The AI service has reached its usage limit. Ask an administrator.".into(),
+            ),
             AssistantError::StepLimit(n) => AppError::BadRequest(format!(
                 "The assistant needed more than {n} steps. Ask a narrower question."
             )),
-            AssistantError::TokenLimit => AppError::BadRequest(
-                "The question needs too much data to answer at once. Ask about fewer items.".into(),
-            ),
+            AssistantError::TokenLimit | AssistantError::Llm(LlmError::ContextLength) => {
+                AppError::BadRequest(
+                    "The question needs too much data to answer at once. Ask about fewer items."
+                        .into(),
+                )
+            }
             AssistantError::Refused => AppError::BadRequest(
                 "The model declined to answer this request. Rephrase the question.".into(),
             ),
@@ -630,7 +633,7 @@ impl Limits {
     pub fn from_config(config: &AssistantConfig) -> Limits {
         Limits {
             max_steps: config.max_steps,
-            max_tokens: MAX_TOKENS,
+            max_tokens: config.max_tokens,
             max_run_tokens: MAX_RUN_TOKENS,
             retry_delay: RETRY_DELAY,
         }
@@ -651,6 +654,9 @@ pub struct Trace {
     pub tools: Vec<ToolUse>,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Model calls whose reply carried no token counts (some local
+    /// servers): the token limit could not count them.
+    pub unreported_steps: u32,
 }
 
 /// The final answer of a run.
@@ -727,6 +733,9 @@ pub async fn run_loop<T: Transport, R: Tools>(
         trace.steps = step;
         trace.input_tokens += reply.usage.input;
         trace.output_tokens += reply.usage.output;
+        if !reply.usage.reported {
+            trace.unreported_steps += 1;
+        }
         let Reply {
             text,
             calls,
@@ -796,6 +805,15 @@ pub async fn run_loop<T: Transport, R: Tools>(
     Err(AssistantError::StepLimit(limits.max_steps))
 }
 
+/// The wire format of a configured provider.
+pub fn provider_for(kind: AssistantProvider) -> Box<dyn Provider> {
+    match kind {
+        AssistantProvider::Anthropic => Box::new(Anthropic),
+        AssistantProvider::OpenAi => Box::new(OpenAi(Flavour::OpenAi)),
+        AssistantProvider::OpenAiCompatible => Box::new(OpenAi(Flavour::Compatible)),
+    }
+}
+
 /// The configured assistant of a server.
 pub struct Assistant {
     pub provider: Box<dyn Provider>,
@@ -803,24 +821,142 @@ pub struct Assistant {
     pub model: String,
     pub limits: Limits,
     pub permits: tokio::sync::Semaphore,
+    /// Time limit of a whole run.
+    pub run_timeout: Duration,
+    /// `provider:model@host`, for the log (never the key).
+    pub label: String,
+    /// Provider name and host of the API base, shown to users (privacy).
+    pub provider_name: &'static str,
+    pub host: String,
 }
 
 impl Assistant {
     pub fn new(config: &AssistantConfig) -> anyhow::Result<Assistant> {
-        let provider = Box::new(Anthropic);
+        let provider = provider_for(config.provider);
         Ok(Assistant {
             transport: HttpTransport::new(
-                anthropic::BASE_URL,
-                &config.api_key,
+                &config.base_url,
+                config.api_key.as_deref().unwrap_or_default(),
                 provider.auth(),
-                REQUEST_TIMEOUT,
+                config.request_timeout,
             )?,
             provider,
             model: config.model.clone(),
             limits: Limits::from_config(config),
-            permits: tokio::sync::Semaphore::new(MAX_CONCURRENT_RUNS),
+            permits: tokio::sync::Semaphore::new(config.max_concurrent),
+            run_timeout: config.run_timeout,
+            label: config.label(),
+            provider_name: config.provider.as_str(),
+            host: config.host(),
         })
     }
+}
+
+/// One line of `teamcraft assistant check`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckLine {
+    pub what: &'static str,
+    pub ok: bool,
+    pub detail: String,
+}
+
+/// Sends one small request with one tool and reports reachability, the
+/// key, the model, tool support and token counts. Never includes the key.
+pub async fn check<T: Transport>(
+    provider: &dyn Provider,
+    transport: &T,
+    model: &str,
+    max_tokens: u32,
+    has_key: bool,
+) -> Vec<CheckLine> {
+    let line = |what, ok, detail: &str| CheckLine {
+        what,
+        ok,
+        detail: detail.to_string(),
+    };
+    let tools = [ToolSpec {
+        name: "ping".into(),
+        description: "Connection test: call this once with value \"ok\".".into(),
+        schema: json!({
+            "type": "object",
+            "properties": { "value": { "type": "string", "description": "always \"ok\"" } },
+            "required": ["value"],
+        }),
+    }];
+    let turns = [Turn::User(
+        "Call the tool `ping` once with value \"ok\". Do not answer in text.".into(),
+    )];
+    let request = Request {
+        model,
+        system: "You are a connection test of a PLM server.",
+        tools: &tools,
+        turns: &turns,
+        max_tokens: max_tokens.min(1024),
+    };
+    let key_unused = if has_key {
+        "accepted"
+    } else {
+        "no key configured"
+    };
+    let reply = match llm::complete(provider, transport, &request).await {
+        Ok(reply) => reply,
+        Err(e @ (LlmError::Network(_) | LlmError::Timeout)) => {
+            return vec![line("reachable", false, &e.to_string())]
+        }
+        Err(LlmError::Auth) => {
+            return vec![
+                line("reachable", true, "the server answered"),
+                line("API key", false, "rejected (401/403)"),
+            ]
+        }
+        Err(e @ (LlmError::Rejected { .. } | LlmError::ContextLength)) => {
+            return vec![
+                line("reachable", true, "the server answered"),
+                line("API key", true, key_unused),
+                line("model", false, &format!("{e} (check the model name)")),
+            ]
+        }
+        Err(e) => {
+            return vec![
+                line("reachable", true, "the server answered"),
+                line("API key", true, key_unused),
+                line("request", false, &e.to_string()),
+            ]
+        }
+    };
+    let mut lines = vec![
+        line("reachable", true, "the server answered"),
+        line("API key", true, key_unused),
+        line("model", true, model),
+    ];
+    let called = reply
+        .calls
+        .iter()
+        .any(|c| c.name == "ping" && c.input.as_ref().is_ok_and(Value::is_object));
+    lines.push(if called {
+        line("tool calls", true, "the model called the test tool")
+    } else {
+        line(
+            "tool calls",
+            false,
+            "the model did not call the test tool: it may be served without tool support \
+             (the assistant needs it)",
+        )
+    });
+    lines.push(line(
+        "token counts",
+        true,
+        &if reply.usage.reported {
+            format!(
+                "reported ({} in, {} out)",
+                reply.usage.input, reply.usage.output
+            )
+        } else {
+            "not reported: the token limit of a run cannot count this model (the step limit still applies)"
+                .to_string()
+        },
+    ));
+    lines
 }
 
 // ---------------------------------------------------------------------------
@@ -1137,22 +1273,121 @@ mod tests {
         }
     }
 
-    fn tool_use(calls: &[(&str, &str, Value)]) -> Value {
-        let mut content = vec![json!({ "type": "thinking", "thinking": "", "signature": "sig" })];
-        content.extend(calls.iter().map(|(id, name, input)| {
-            json!({ "type": "tool_use", "id": id, "name": name, "input": input })
-        }));
-        json!({ "type": "message", "role": "assistant", "content": content, "stop_reason": "tool_use",
-                "usage": { "input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 50 } })
+    /// The wire formats the loop tests run against: every loop test runs
+    /// once per provider with replies in that provider's own shape.
+    #[derive(Clone, Copy, Debug)]
+    enum Wire {
+        Anthropic,
+        OpenAi,
+        Compatible,
     }
 
-    fn final_text(text: &str) -> Value {
-        json!({ "type": "message", "role": "assistant",
-                "content": [{ "type": "text", "text": text }], "stop_reason": "end_turn",
-                "usage": { "input_tokens": 200, "output_tokens": 80 } })
+    const WIRES: [Wire; 3] = [Wire::Anthropic, Wire::OpenAi, Wire::Compatible];
+
+    impl Wire {
+        fn provider(self) -> Box<dyn Provider> {
+            provider_for(match self {
+                Wire::Anthropic => AssistantProvider::Anthropic,
+                Wire::OpenAi => AssistantProvider::OpenAi,
+                Wire::Compatible => AssistantProvider::OpenAiCompatible,
+            })
+        }
+
+        /// 150 input tokens (100 + 50 cached on the Anthropic wire), 20 output.
+        fn tool_use(self, calls: &[(&str, &str, Value)]) -> Value {
+            match self {
+                Wire::Anthropic => {
+                    let mut content =
+                        vec![json!({ "type": "thinking", "thinking": "", "signature": "sig" })];
+                    content.extend(calls.iter().map(|(id, name, input)| {
+                        json!({ "type": "tool_use", "id": id, "name": name, "input": input })
+                    }));
+                    json!({ "type": "message", "role": "assistant", "content": content, "stop_reason": "tool_use",
+                            "usage": { "input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 50 } })
+                }
+                _ => {
+                    let tool_calls: Vec<Value> = calls
+                        .iter()
+                        .map(|(id, name, input)| {
+                            json!({ "id": id, "type": "function",
+                                    "function": { "name": name, "arguments": input.to_string() } })
+                        })
+                        .collect();
+                    json!({ "choices": [{ "index": 0, "finish_reason": "tool_calls",
+                            "message": { "role": "assistant", "content": null, "tool_calls": tool_calls } }],
+                            "usage": { "prompt_tokens": 150, "completion_tokens": 20 } })
+                }
+            }
+        }
+
+        /// 200 input, 80 output tokens.
+        fn final_text(self, text: &str) -> Value {
+            match self {
+                Wire::Anthropic => json!({ "type": "message", "role": "assistant",
+                    "content": [{ "type": "text", "text": text }], "stop_reason": "end_turn",
+                    "usage": { "input_tokens": 200, "output_tokens": 80 } }),
+                _ => json!({ "choices": [{ "index": 0, "finish_reason": "stop",
+                    "message": { "role": "assistant", "content": text } }],
+                    "usage": { "prompt_tokens": 200, "completion_tokens": 80 } }),
+            }
+        }
+
+        fn refusal(self) -> Value {
+            match self {
+                Wire::Anthropic => json!({ "content": [], "stop_reason": "refusal" }),
+                _ => json!({ "choices": [{ "finish_reason": "content_filter",
+                    "message": { "role": "assistant" } }] }),
+            }
+        }
+
+        fn truncated(self, text: &str) -> Value {
+            match self {
+                Wire::Anthropic => {
+                    json!({ "content": [{ "type": "text", "text": text }], "stop_reason": "max_tokens" })
+                }
+                _ => json!({ "choices": [{ "finish_reason": "length",
+                    "message": { "role": "assistant", "content": text } }] }),
+            }
+        }
+
+        /// The tool results at the end of a request: (call id, text, is_error).
+        fn tool_results(self, body: &Value) -> Vec<(String, String, bool)> {
+            let messages = body["messages"].as_array().unwrap();
+            match self {
+                Wire::Anthropic => messages.last().unwrap()["content"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|r| {
+                        (
+                            r["tool_use_id"].as_str().unwrap().to_string(),
+                            r["content"].as_str().unwrap().to_string(),
+                            r["is_error"].as_bool().unwrap(),
+                        )
+                    })
+                    .collect(),
+                _ => messages
+                    .iter()
+                    .rev()
+                    .take_while(|m| m["role"] == "tool")
+                    .map(|m| {
+                        let text = m["content"].as_str().unwrap();
+                        (
+                            m["tool_call_id"].as_str().unwrap().to_string(),
+                            text.strip_prefix("Error: ").unwrap_or(text).to_string(),
+                            text.starts_with("Error: "),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect(),
+            }
+        }
     }
 
     async fn run(
+        wire: Wire,
         api: &FakeApi,
         tools: &FakeTools,
         limits: &Limits,
@@ -1160,11 +1395,11 @@ mod tests {
     ) -> (Result<Answer, AssistantError>, Trace) {
         let mut trace = Trace::default();
         let result = run_loop(
-            &Anthropic,
+            wire.provider().as_ref(),
             api,
             tools,
             limits,
-            "claude-opus-5-5",
+            "model-x",
             "system",
             "question",
             allow_drafts,
@@ -1200,156 +1435,340 @@ mod tests {
         assert_eq!(with_drafts.len(), read_only.len() + 4);
     }
 
+    /// Every tool schema stays inside the subset that all the listed
+    /// servers accept (OpenAI, Azure, Mistral, OpenRouter, Groq, Ollama,
+    /// vLLM): a new tool cannot break a provider by accident.
+    #[test]
+    fn tool_schemas_stay_in_the_portable_subset() {
+        const KEYWORDS: [&str; 14] = [
+            "minLength",
+            "maxLength",
+            "minItems",
+            "maxItems",
+            "type",
+            "properties",
+            "required",
+            "description",
+            "enum",
+            "items",
+            "minimum",
+            "maximum",
+            "default",
+            "additionalProperties",
+        ];
+        const TYPES: [&str; 6] = ["object", "string", "integer", "number", "boolean", "array"];
+        fn walk(path: &str, schema: &Value) {
+            let object = schema
+                .as_object()
+                .unwrap_or_else(|| panic!("{path}: a schema must be an object"));
+            for key in object.keys() {
+                assert!(
+                    KEYWORDS.contains(&key.as_str()),
+                    "{path}: `{key}` is outside the portable JSON-schema subset"
+                );
+            }
+            let ty = object
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("{path}: `type` must be one single type name"));
+            assert!(TYPES.contains(&ty), "{path}: type `{ty}`");
+            if let Some(props) = object.get("properties") {
+                assert_eq!(ty, "object", "{path}");
+                for (name, sub) in props.as_object().expect("properties is an object") {
+                    walk(&format!("{path}.{name}"), sub);
+                }
+            }
+            if let Some(required) = object.get("required") {
+                for name in required.as_array().expect("required is an array") {
+                    let name = name.as_str().unwrap();
+                    assert!(
+                        object["properties"].get(name).is_some(),
+                        "{path}: required `{name}` is not a property"
+                    );
+                }
+            }
+            if ty == "array" {
+                walk(&format!("{path}[]"), &object["items"]);
+            }
+            if let Some(extra) = object.get("additionalProperties") {
+                assert!(
+                    extra.is_boolean(),
+                    "{path}: additionalProperties is a boolean"
+                );
+            }
+        }
+        for spec in tool_specs(true) {
+            assert_eq!(spec.schema["type"], "object", "{}", spec.name);
+            walk(&spec.name, &spec.schema);
+        }
+    }
+
+    #[tokio::test]
+    async fn the_connection_check_reports_each_step() {
+        let ping = |wire: Wire| wire.tool_use(&[("c1", "ping", json!({ "value": "ok" }))]);
+        let lines = |wire: Wire, reply: Result<Value, LlmError>, key: bool| {
+            let api = FakeApi::new(vec![reply]);
+            async move {
+                let provider = wire.provider();
+                let lines = check(provider.as_ref(), &api, "model-x", 16_000, key).await;
+                // the request has one tool and a small limit
+                let body = api.requests()[0].body.clone();
+                assert_eq!(body["tools"].as_array().unwrap().len(), 1);
+                let limit = body.get("max_tokens").or(body.get("max_completion_tokens"));
+                assert_eq!(limit, Some(&json!(1024)));
+                lines
+            }
+        };
+        for wire in WIRES {
+            let l = lines(wire, Ok(ping(wire)), true).await;
+            assert!(l.iter().all(|l| l.ok), "{wire:?}: {l:?}");
+            assert_eq!(
+                l.iter().map(|l| l.what).collect::<Vec<_>>(),
+                [
+                    "reachable",
+                    "API key",
+                    "model",
+                    "tool calls",
+                    "token counts"
+                ]
+            );
+
+            // answers in text: no tool support
+            let l = lines(wire, Ok(wire.final_text("hello")), false).await;
+            let tool = l.iter().find(|l| l.what == "tool calls").unwrap();
+            assert!(!tool.ok && tool.detail.contains("tool support"));
+            assert_eq!(l[1].detail, "no key configured");
+
+            // network failure stops after "reachable"
+            let l = lines(wire, Err(LlmError::Network("refused".into())), true).await;
+            assert_eq!((l.len(), l[0].ok), (1, false));
+            // rejected key: reachable, key fails
+            let l = lines(wire, Err(LlmError::Auth), true).await;
+            assert_eq!((l[0].ok, l[1].what, l[1].ok), (true, "API key", false));
+            // unknown model
+            let e = LlmError::Rejected {
+                status: 404,
+                message: "model not found".into(),
+            };
+            let l = lines(wire, Err(e), true).await;
+            assert_eq!((l[2].what, l[2].ok), ("model", false));
+            assert!(l[2].detail.contains("model not found"));
+        }
+        // a server without token counts
+        let no_usage = json!({ "choices": [{ "finish_reason": "tool_calls", "message": {
+            "tool_calls": [{ "id": "a", "function": { "name": "ping", "arguments": "{\"value\":\"ok\"}" } }] } }] });
+        let l = lines(Wire::Compatible, Ok(no_usage), false).await;
+        let counts = l.last().unwrap();
+        assert!(counts.ok && counts.detail.contains("not reported"));
+    }
+
     #[tokio::test]
     async fn the_loop_runs_tools_and_returns_the_answer() {
-        let api = FakeApi::new(vec![
-            Ok(tool_use(&[
-                ("t1", "get_item", json!({ "item": "PRT-000001" })),
-                ("t2", "get_item", json!({ "item": "PRT-404" })),
-            ])),
-            Ok(tool_use(&[(
-                "t3",
-                "bom_health",
-                json!({ "item": "ASM-000002" }),
-            )])),
-            Ok(final_text("## Ready\n- PRT-000001 is fine")),
-        ]);
-        let tools = fake_tools();
-        let (result, trace) = run(&api, &tools, &limits(5), false).await;
-        let answer = result.unwrap();
-        assert_eq!(answer.text, "## Ready\n- PRT-000001 is fine");
-        assert!(!answer.truncated);
-        assert_eq!(trace.steps, 3);
-        assert_eq!(
-            trace.tools,
-            vec![
-                ToolUse {
-                    name: "get_item".into(),
-                    ok: true
-                },
-                ToolUse {
-                    name: "get_item".into(),
-                    ok: false
-                },
-                ToolUse {
-                    name: "bom_health".into(),
-                    ok: true
-                },
-            ]
-        );
-        assert_eq!(trace.input_tokens, 150 + 150 + 200);
-        assert_eq!(
-            *tools.calls.lock().unwrap(),
-            ["get_item", "get_item", "bom_health"]
-        );
+        for wire in WIRES {
+            let api = FakeApi::new(vec![
+                Ok(wire.tool_use(&[
+                    ("t1", "get_item", json!({ "item": "PRT-000001" })),
+                    ("t2", "get_item", json!({ "item": "PRT-404" })),
+                ])),
+                Ok(wire.tool_use(&[("t3", "bom_health", json!({ "item": "ASM-000002" }))])),
+                Ok(wire.final_text("## Ready\n- PRT-000001 is fine")),
+            ]);
+            let tools = fake_tools();
+            let (result, trace) = run(wire, &api, &tools, &limits(5), false).await;
+            let answer = result.unwrap();
+            assert_eq!(answer.text, "## Ready\n- PRT-000001 is fine", "{wire:?}");
+            assert!(!answer.truncated);
+            assert_eq!(trace.steps, 3);
+            assert_eq!(
+                trace.tools,
+                vec![
+                    ToolUse {
+                        name: "get_item".into(),
+                        ok: true
+                    },
+                    ToolUse {
+                        name: "get_item".into(),
+                        ok: false
+                    },
+                    ToolUse {
+                        name: "bom_health".into(),
+                        ok: true
+                    },
+                ]
+            );
+            assert_eq!(trace.input_tokens, 150 + 150 + 200, "{wire:?}");
+            assert_eq!(trace.output_tokens, 20 + 20 + 80);
+            assert_eq!(trace.unreported_steps, 0);
+            assert_eq!(
+                *tools.calls.lock().unwrap(),
+                ["get_item", "get_item", "bom_health"]
+            );
 
-        let requests = api.requests();
-        assert_eq!(requests.len(), 3);
-        // second request: user, assistant (unchanged content), user with both results
-        let messages = requests[1].body["messages"].as_array().unwrap().clone();
-        assert_eq!(messages.len(), 3);
-        assert_eq!(messages[0]["content"], "question");
-        assert_eq!(messages[1]["role"], "assistant");
-        assert_eq!(messages[1]["content"][0]["type"], "thinking");
-        let results = messages[2]["content"].as_array().unwrap();
-        assert_eq!(results.len(), 2, "all results in one message");
-        assert_eq!(results[0]["tool_use_id"], "t1");
-        assert_eq!(results[0]["is_error"], false);
-        assert!(results[0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("PRT-000001"));
-        assert_eq!(results[1]["is_error"], true);
-        assert_eq!(results[1]["content"], "Item PRT-404 not found.");
-        assert_eq!(requests[2].body["messages"].as_array().unwrap().len(), 5);
+            let requests = api.requests();
+            assert_eq!(requests.len(), 3);
+            // second request: both results, in the order of the calls
+            let results = wire.tool_results(&requests[1].body);
+            assert_eq!(results.len(), 2, "{wire:?}");
+            assert_eq!(results[0].0, "t1");
+            assert!(results[0].1.contains("PRT-000001") && !results[0].2);
+            assert_eq!(results[1].0, "t2");
+            assert_eq!(results[1].1, "Item PRT-404 not found.");
+            assert!(results[1].2);
+            if let Wire::Anthropic = wire {
+                // the thinking block goes back unchanged
+                assert_eq!(
+                    requests[1].body["messages"][1]["content"][0]["type"],
+                    "thinking"
+                );
+            }
+            let last = wire.tool_results(&requests[2].body);
+            assert_eq!(last.len(), 1);
+            assert_eq!(last[0].0, "t3");
+        }
     }
 
     #[tokio::test]
     async fn write_tools_are_refused_without_drafts() {
-        let api = FakeApi::new(vec![
-            Ok(tool_use(&[(
-                "t1",
-                "create_change_draft",
-                json!({ "title": "x", "items": ["PRT-000001"] }),
-            )])),
-            Ok(final_text("I cannot create it.")),
-        ]);
-        let tools = fake_tools();
-        let (result, trace) = run(&api, &tools, &limits(5), false).await;
-        assert!(result.is_ok());
-        assert!(tools.calls.lock().unwrap().is_empty(), "never executed");
-        assert_eq!(
-            trace.tools,
-            vec![ToolUse {
-                name: "create_change_draft".into(),
-                ok: false
-            }]
-        );
-        let result = &api.requests()[1].body["messages"][2]["content"][0];
-        assert_eq!(result["is_error"], true);
+        for wire in WIRES {
+            let draft = || {
+                wire.tool_use(&[(
+                    "t1",
+                    "create_change_draft",
+                    json!({ "title": "x", "items": ["PRT-000001"] }),
+                )])
+            };
+            let api = FakeApi::new(vec![
+                Ok(draft()),
+                Ok(wire.final_text("I cannot create it.")),
+            ]);
+            let tools = fake_tools();
+            let (result, trace) = run(wire, &api, &tools, &limits(5), false).await;
+            assert!(result.is_ok());
+            assert!(tools.calls.lock().unwrap().is_empty(), "never executed");
+            assert_eq!(
+                trace.tools,
+                vec![ToolUse {
+                    name: "create_change_draft".into(),
+                    ok: false
+                }]
+            );
+            let results = wire.tool_results(&api.requests()[1].body);
+            assert!(results[0].2, "{wire:?}");
+            // the write tools are not even offered
+            let offered = serde_json::to_string(&api.requests()[0].body["tools"]).unwrap();
+            assert!(!offered.contains("\"name\":\"create_change_draft\""));
 
-        // with drafts the tool runs
-        let api = FakeApi::new(vec![
-            Ok(tool_use(&[(
-                "t1",
-                "create_change_draft",
-                json!({ "title": "x", "items": ["PRT-000001"] }),
-            )])),
-            Ok(final_text("Draft created.")),
-        ]);
-        let tools = fake_tools();
-        let (result, _) = run(&api, &tools, &limits(5), true).await;
-        assert!(result.is_ok());
-        assert_eq!(*tools.calls.lock().unwrap(), ["create_change_draft"]);
+            // with drafts the tool runs
+            let api = FakeApi::new(vec![Ok(draft()), Ok(wire.final_text("Draft created."))]);
+            let tools = fake_tools();
+            let (result, _) = run(wire, &api, &tools, &limits(5), true).await;
+            assert!(result.is_ok());
+            assert_eq!(*tools.calls.lock().unwrap(), ["create_change_draft"]);
+        }
     }
 
     #[tokio::test]
     async fn limits_and_stop_reasons() {
-        // step limit
-        let api = FakeApi::new(vec![
-            Ok(tool_use(&[("t1", "my_worklist", json!({}))])),
-            Ok(tool_use(&[("t2", "my_worklist", json!({}))])),
-        ]);
-        let (result, trace) = run(&api, &fake_tools(), &limits(2), false).await;
-        assert_eq!(result, Err(AssistantError::StepLimit(2)));
-        assert_eq!(trace.tools.len(), 2, "the trace survives the error");
+        for wire in WIRES {
+            // step limit
+            let api = FakeApi::new(vec![
+                Ok(wire.tool_use(&[("t1", "my_worklist", json!({}))])),
+                Ok(wire.tool_use(&[("t2", "my_worklist", json!({}))])),
+            ]);
+            let (result, trace) = run(wire, &api, &fake_tools(), &limits(2), false).await;
+            assert_eq!(result, Err(AssistantError::StepLimit(2)));
+            assert_eq!(trace.tools.len(), 2, "the trace survives the error");
 
-        // token limit
-        let mut tight = limits(10);
-        tight.max_run_tokens = 100;
-        let api = FakeApi::new(vec![Ok(tool_use(&[("t1", "my_worklist", json!({}))]))]);
-        let (result, _) = run(&api, &fake_tools(), &tight, false).await;
-        assert_eq!(result, Err(AssistantError::TokenLimit));
+            // token limit
+            let mut tight = limits(10);
+            tight.max_run_tokens = 100;
+            let api = FakeApi::new(vec![Ok(wire.tool_use(&[("t1", "my_worklist", json!({}))]))]);
+            let (result, _) = run(wire, &api, &fake_tools(), &tight, false).await;
+            assert_eq!(result, Err(AssistantError::TokenLimit));
 
-        // refusal
-        let api = FakeApi::new(vec![Ok(json!({ "content": [], "stop_reason": "refusal" }))]);
-        let (result, _) = run(&api, &fake_tools(), &limits(3), false).await;
-        assert_eq!(result, Err(AssistantError::Refused));
+            // refusal
+            let api = FakeApi::new(vec![Ok(wire.refusal())]);
+            let (result, _) = run(wire, &api, &fake_tools(), &limits(3), false).await;
+            assert_eq!(result, Err(AssistantError::Refused));
 
-        // cut at max_tokens
-        let api = FakeApi::new(vec![Ok(json!({
-            "content": [{ "type": "text", "text": "partial" }], "stop_reason": "max_tokens"
-        }))]);
-        let (result, _) = run(&api, &fake_tools(), &limits(3), false).await;
-        assert_eq!(
-            result,
-            Ok(Answer {
-                text: "partial".into(),
-                truncated: true
-            })
-        );
+            // cut at the output limit
+            let api = FakeApi::new(vec![Ok(wire.truncated("partial"))]);
+            let (result, _) = run(wire, &api, &fake_tools(), &limits(3), false).await;
+            assert_eq!(
+                result,
+                Ok(Answer {
+                    text: "partial".into(),
+                    truncated: true
+                })
+            );
 
-        // one retry when overloaded, then success
-        let api = FakeApi::new(vec![Err(LlmError::Overloaded(529)), Ok(final_text("ok"))]);
-        let (result, _) = run(&api, &fake_tools(), &limits(3), false).await;
-        assert_eq!(result.unwrap().text, "ok");
-        assert_eq!(api.requests().len(), 2);
+            // one retry when overloaded, then success
+            let api = FakeApi::new(vec![
+                Err(LlmError::Overloaded(529)),
+                Ok(wire.final_text("ok")),
+            ]);
+            let (result, _) = run(wire, &api, &fake_tools(), &limits(3), false).await;
+            assert_eq!(result.unwrap().text, "ok");
+            assert_eq!(api.requests().len(), 2);
 
-        // no retry for a rejected key
-        let api = FakeApi::new(vec![Err(LlmError::Auth), Ok(final_text("never"))]);
-        let (result, _) = run(&api, &fake_tools(), &limits(3), false).await;
-        assert_eq!(result, Err(AssistantError::Llm(LlmError::Auth)));
-        assert_eq!(api.requests().len(), 1);
+            // no retry for a rejected key or a spent quota
+            for e in [LlmError::Auth, LlmError::Quota] {
+                let api = FakeApi::new(vec![Err(e.clone()), Ok(wire.final_text("never"))]);
+                let (result, _) = run(wire, &api, &fake_tools(), &limits(3), false).await;
+                assert_eq!(result, Err(AssistantError::Llm(e)));
+                assert_eq!(api.requests().len(), 1);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_arguments_ids_and_stop_of_chat_completions() {
+        for wire in [Wire::OpenAi, Wire::Compatible] {
+            // arguments that are not JSON: a tool error, the run goes on;
+            // no id from the server: a made-up one is used both ways;
+            // `finish_reason: stop` together with tool calls: the calls win
+            let bad = json!({ "choices": [{ "finish_reason": "stop", "message": {
+                "role": "assistant", "content": null, "tool_calls": [
+                    { "type": "function", "function": { "name": "get_item", "arguments": "{item: PRT-1" } },
+                    { "type": "function", "function": { "name": "get_item", "arguments": "{\"item\":\"PRT-000001\"}" } }
+                ] } }] });
+            let api = FakeApi::new(vec![Ok(bad), Ok(wire.final_text("done"))]);
+            let tools = fake_tools();
+            let (result, trace) = run(wire, &api, &tools, &limits(5), false).await;
+            assert_eq!(result.unwrap().text, "done");
+            assert_eq!(
+                *tools.calls.lock().unwrap(),
+                ["get_item"],
+                "only the valid call ran"
+            );
+            assert_eq!(
+                trace.tools.iter().map(|t| t.ok).collect::<Vec<_>>(),
+                [false, true]
+            );
+            assert_eq!(trace.unreported_steps, 1, "no usage in the first reply");
+
+            let requests = api.requests();
+            let sent_calls = requests[1].body["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|m| m["role"] == "assistant")
+                .unwrap()["tool_calls"]
+                .clone();
+            let results = wire.tool_results(&requests[1].body);
+            assert_eq!(results.len(), 2);
+            assert!(results[0].2 && results[0].1.contains("JSON object"));
+            assert!(!results[1].2);
+            for (i, (id, _, _)) in results.iter().enumerate() {
+                assert_eq!(id.len(), 9, "made-up id");
+                assert_eq!(
+                    sent_calls[i]["id"],
+                    id.as_str(),
+                    "the call carries the same id"
+                );
+            }
+            assert_ne!(results[0].0, results[1].0);
+        }
     }
 
     #[test]
