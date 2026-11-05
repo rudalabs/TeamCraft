@@ -44,9 +44,66 @@ pub struct Actor {
     pub skin: String,
     /// Project groups the user is a member of.
     pub projects: Vec<Uuid>,
+    /// Restricted project groups the user is NOT a member of; always empty
+    /// for administrators. Never serialized: it names groups the user may
+    /// not know about. The SQL guards in `services::access` bind it.
+    #[serde(skip)]
+    pub hidden_projects: Vec<Uuid>,
 }
 
 impl Actor {
+    /// Whether the actor may read data of a project group (`None` = items
+    /// without a group, readable by everyone).
+    pub fn can_see_project(&self, project_id: Option<Uuid>) -> bool {
+        project_id.is_none_or(|p| !self.hidden_projects.contains(&p))
+    }
+
+    /// A webhook evaluated as a virtual reader: it sees its own group and
+    /// every internal group; a global webhook (`project_id = None`) sees
+    /// internal groups only. `restricted` = all restricted groups.
+    pub fn for_webhook(project_id: Option<Uuid>, restricted: &[Uuid]) -> Actor {
+        Actor {
+            id: Uuid::nil(),
+            username: "webhook".into(),
+            display_name: "Webhook".into(),
+            role: Role::Viewer,
+            skin: String::new(),
+            projects: project_id.into_iter().collect(),
+            hidden_projects: restricted
+                .iter()
+                .copied()
+                .filter(|p| Some(*p) != project_id)
+                .collect(),
+        }
+    }
+
+    /// An actor for unit tests.
+    #[doc(hidden)]
+    pub fn test(role: Role, projects: Vec<Uuid>, hidden_projects: Vec<Uuid>) -> Actor {
+        Actor {
+            id: Uuid::new_v4(),
+            username: "test".into(),
+            display_name: "Test".into(),
+            role,
+            skin: "teamcraft".into(),
+            projects,
+            hidden_projects,
+        }
+    }
+
+    /// The system itself (background workers): sees everything.
+    pub fn system() -> Actor {
+        Actor {
+            id: Uuid::nil(),
+            username: "system".into(),
+            display_name: "TeamCraft".into(),
+            role: Role::Admin,
+            skin: String::new(),
+            projects: Vec::new(),
+            hidden_projects: Vec::new(),
+        }
+    }
+
     /// Fails with `403 Forbidden` unless the actor has at least role `min`.
     pub fn require(&self, min: Role) -> AppResult<()> {
         if self.role >= min {
@@ -301,6 +358,7 @@ mod tests {
             role: Role::Editor,
             skin: "teamcraft".into(),
             projects: vec![rocket],
+            hidden_projects: vec![],
         };
         assert!(actor.require(Role::Viewer).is_ok());
         assert!(actor.require(Role::Editor).is_ok());
@@ -321,5 +379,32 @@ mod tests {
         );
         actor.role = Role::Viewer;
         assert!(!actor.can_edit_project(Some(rocket)), "viewers never edit");
+    }
+
+    #[test]
+    fn actor_read_visibility() {
+        let open = Uuid::new_v4();
+        let secret = Uuid::new_v4();
+        let actor = Actor::test(Role::Editor, vec![open], vec![secret]);
+        assert!(actor.can_see_project(None), "items without a group");
+        assert!(actor.can_see_project(Some(open)));
+        assert!(!actor.can_see_project(Some(secret)));
+        let admin = Actor::test(Role::Admin, vec![], vec![]);
+        assert!(admin.can_see_project(Some(secret)));
+        // webhooks: own group plus internal groups
+        let hook = Actor::for_webhook(Some(secret), &[secret, open]);
+        assert!(hook.can_see_project(Some(secret)));
+        assert!(!hook.can_see_project(Some(open)));
+        let global = Actor::for_webhook(None, &[secret]);
+        assert!(!global.can_see_project(Some(secret)));
+    }
+
+    #[test]
+    fn actor_serialization_skips_hidden_projects() {
+        let secret = Uuid::new_v4();
+        let actor = Actor::test(Role::Viewer, vec![], vec![secret]);
+        let json = serde_json::to_string(&actor).unwrap();
+        assert!(!json.contains("hidden_projects"));
+        assert!(!json.contains(&secret.to_string()));
     }
 }

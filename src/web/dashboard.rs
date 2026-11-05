@@ -4,18 +4,20 @@ use serde_json::json;
 use super::{finish, redirect_flash, render, Flash, WebCtx};
 use crate::{
     error::AppResult,
-    services::{audit, changes, checkouts, impacts, revisions, stats},
+    services::{audit, changes, checkouts, impacts, requests, revisions, stats},
     AppState,
 };
 
 pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
-    let (stats, checkouts, reviews, my_changes, activity, impacts) = tokio::try_join!(
-        stats::load(&st.db),
-        revisions::checked_out_by(&st.db, ctx.me.id),
-        changes::pending_reviews(&st.db, ctx.me.id),
-        changes::open_by(&st.db, ctx.me.id),
-        audit::recent(&st.db, 15),
+    let (stats, checkouts, reviews, my_changes, activity, impacts, assigned, my_requests) = tokio::try_join!(
+        stats::load(&st.db, &ctx.me),
+        revisions::checked_out_by(&st.db, &ctx.me),
+        changes::pending_reviews(&st.db, &ctx.me),
+        changes::open_by(&st.db, &ctx.me),
+        audit::recent(&st.db, &ctx.me, 15),
         impacts::open_for(&st.db, &ctx.me),
+        requests::assigned_to(&st.db, &ctx.me),
+        requests::open_by(&st.db, &ctx.me),
     )?;
     render(
         &st,
@@ -27,7 +29,9 @@ pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response
             "reviews": reviews,
             "my_changes": my_changes,
             "activity": activity,
-            "impacts": impacts,
+            "impact_groups": impacts::group_by_dependent(impacts),
+            "assigned_requests": assigned,
+            "my_requests": my_requests,
         }),
     )
 }

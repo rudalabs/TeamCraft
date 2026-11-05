@@ -39,6 +39,9 @@ pub const PASSWORD: &str = "integration-test-password";
 
 pub struct TestApp {
     pub router: Router,
+    /// The state behind the router (for services that take it).
+    #[allow(dead_code)]
+    pub state: AppState,
     pub pool: PgPool,
     admin_options: PgConnectOptions,
     db_name: String,
@@ -149,21 +152,25 @@ pub async fn setup_with(extra: &'static [(&'static str, &'static str)]) -> Optio
     let vault_dir = std::env::temp_dir().join(format!("teamcraft-test-vault-{}", Uuid::new_v4()));
     let vault = vault_dir.to_string_lossy().to_string();
     // The pool is injected below; the database settings only satisfy validation.
-    let config = Config::from_lookup(move |key| match key {
-        "TEAMCRAFT_VAULT_DIR" => Some(vault.clone()),
-        "TEAMCRAFT_MAX_UPLOAD_MB" => Some("1".into()),
-        "TEAMCRAFT_LOCAL_LOGIN" => Some("true".into()),
-        _ => extra
-            .iter()
-            .find(|(k, _)| *k == key)
-            .map(|(_, v)| v.to_string()),
+    // `extra` wins over the test defaults (e.g. a larger upload limit).
+    let config = Config::from_lookup(move |key| {
+        if let Some((_, v)) = extra.iter().find(|(k, _)| *k == key) {
+            return Some(v.to_string());
+        }
+        match key {
+            "TEAMCRAFT_VAULT_DIR" => Some(vault.clone()),
+            "TEAMCRAFT_MAX_UPLOAD_MB" => Some("1".into()),
+            "TEAMCRAFT_LOCAL_LOGIN" => Some("true".into()),
+            _ => None,
+        }
     })
     .expect("test configuration");
     let state = AppState::new(config, pool.clone())
         .await
         .expect("app state");
     Some(TestApp {
-        router: teamcraft::router(state),
+        router: teamcraft::router(state.clone()),
+        state,
         pool,
         admin_options,
         db_name,

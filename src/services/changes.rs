@@ -22,18 +22,18 @@ use crate::{
     auth::Actor,
     domain::{
         self, ChangeStatus, Decision, LifecycleState, NotificationKind, Priority, ReviewOutcome,
-        Role,
+        Role, WebhookEvent,
     },
     error::{AppError, AppResult},
     models::{Change, ChangeItem, ChangeReview},
     services::{
-        audit, impacts, next_counter,
+        access, audit, impacts, next_counter,
         notifications::{self, Notice},
-        readiness, revisions, users, Page,
+        readiness, requests, revisions, users, webhooks, Page,
     },
 };
 
-const CHANGE_SELECT: &str = "
+pub(crate) const CHANGE_SELECT: &str = "
     SELECT c.id, c.number, c.title, c.description, c.priority, c.status,
            c.created_by, u.display_name AS created_by_name,
            c.created_at, c.updated_at, c.submitted_at, c.closed_at
@@ -43,31 +43,90 @@ pub fn status_of(change: &Change) -> ChangeStatus {
     ChangeStatus::parse(&change.status).unwrap_or(ChangeStatus::Cancelled)
 }
 
+/// Change orders the actor may see (see `access::change_visible`); the
+/// total counts the same rows.
 pub async fn list(
     pool: &PgPool,
+    actor: &Actor,
     status: Option<ChangeStatus>,
     page: Page,
 ) -> AppResult<(Vec<Change>, i64)> {
     let status = status.map(ChangeStatus::as_str);
+    let guard = access::change_visible("c", 4, 5);
     let rows = sqlx::query_as::<_, Change>(&format!(
-        "{CHANGE_SELECT} WHERE ($1::text IS NULL OR c.status = $1)
+        "{CHANGE_SELECT} WHERE ($1::text IS NULL OR c.status = $1) AND {guard}
          ORDER BY c.created_at DESC LIMIT $2 OFFSET $3"
     ))
     .bind(status)
     .bind(page.limit)
     .bind(page.offset)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?;
-    let total = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM changes WHERE ($1::text IS NULL OR status = $1)",
-    )
+    let total = sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(*) FROM changes c WHERE ($1::text IS NULL OR c.status = $1) AND {}",
+        access::change_visible("c", 2, 3)
+    ))
     .bind(status)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_one(pool)
     .await?;
     Ok((rows, total))
 }
 
-pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Change> {
+/// Whether the actor may see the change (`access::change_visible`).
+pub(crate) async fn is_visible(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    change_id: Uuid,
+) -> AppResult<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(&format!(
+        "SELECT EXISTS(SELECT 1 FROM changes c WHERE c.id = $1 AND {})",
+        access::change_visible("c", 2, 3)
+    ))
+    .bind(change_id)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
+/// Whether the actor sees every affected item of the change (required to
+/// submit, review or reopen it).
+pub(crate) async fn sees_all_items(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    change_id: Uuid,
+) -> AppResult<bool> {
+    if actor.hidden_projects.is_empty() {
+        return Ok(true);
+    }
+    Ok(!sqlx::query_scalar::<_, bool>(&format!(
+        "SELECT EXISTS(SELECT 1 FROM change_items ci
+                       JOIN revisions r ON r.id = ci.revision_id
+                       JOIN items i ON i.id = r.item_id
+                       WHERE ci.change_id = $1 AND NOT {})",
+        access::item_visible("i", 2)
+    ))
+    .bind(change_id)
+    .bind(&actor.hidden_projects)
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
+fn ensure_sees_all(sees_all: bool) -> AppResult<()> {
+    if sees_all {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden(
+            "You can no longer see all items of this change.".into(),
+        ))
+    }
+}
+
+pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<Change> {
     sqlx::query_as::<_, Change>(&format!("{CHANGE_SELECT} WHERE c.id = $1"))
         .bind(id)
         .fetch_optional(pool)
@@ -75,27 +134,64 @@ pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Change> {
         .ok_or_else(|| AppError::not_found("Change not found."))
 }
 
-pub async fn get_by_number(pool: &PgPool, number: &str) -> AppResult<Change> {
+/// A change the actor may see; hidden changes answer like missing ones.
+pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Change> {
+    let change = get_unchecked(pool, id).await?;
+    let mut conn = pool.acquire().await?;
+    if !is_visible(&mut conn, actor, id).await? {
+        return Err(AppError::not_found("Change not found."));
+    }
+    Ok(change)
+}
+
+/// A change by number, if the actor may see it.
+pub async fn get_by_number(pool: &PgPool, actor: &Actor, number: &str) -> AppResult<Change> {
     let number = number.trim().to_ascii_uppercase();
-    sqlx::query_as::<_, Change>(&format!("{CHANGE_SELECT} WHERE c.number = $1"))
+    let missing = || AppError::not_found(format!("Change '{number}' not found."));
+    let change = sqlx::query_as::<_, Change>(&format!("{CHANGE_SELECT} WHERE c.number = $1"))
         .bind(&number)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| AppError::not_found(format!("Change '{number}' not found.")))
+        .ok_or_else(missing)?;
+    let mut conn = pool.acquire().await?;
+    if !is_visible(&mut conn, actor, change.id).await? {
+        return Err(missing());
+    }
+    Ok(change)
 }
 
-async fn lock(conn: &mut PgConnection, id: Uuid) -> AppResult<Change> {
-    sqlx::query_as::<_, Change>(&format!("{CHANGE_SELECT} WHERE c.id = $1 FOR UPDATE OF c"))
-        .bind(id)
-        .fetch_optional(&mut *conn)
-        .await?
-        .ok_or_else(|| AppError::not_found("Change not found."))
+/// Locks a change the actor may see (hidden ones answer "not found").
+async fn lock(conn: &mut PgConnection, actor: &Actor, id: Uuid) -> AppResult<Change> {
+    let change =
+        sqlx::query_as::<_, Change>(&format!("{CHANGE_SELECT} WHERE c.id = $1 FOR UPDATE OF c"))
+            .bind(id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .ok_or_else(|| AppError::not_found("Change not found."))?;
+    if !is_visible(conn, actor, id).await? {
+        return Err(AppError::not_found("Change not found."));
+    }
+    Ok(change)
 }
 
-pub async fn items(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeItem>> {
+/// The affected revisions of a change. Revisions of items the actor may not
+/// read are placeholder rows (`restricted`, no identity).
+pub async fn items(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Vec<ChangeItem>> {
+    let mut rows = items_unchecked(pool, change_id).await?;
+    for row in &mut rows {
+        if !actor.can_see_project(row.project_id) {
+            row.mask();
+        }
+    }
+    // placeholders last: their position would bound the hidden number
+    rows.sort_by_key(|r| r.restricted);
+    Ok(rows)
+}
+
+pub(crate) async fn items_unchecked(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeItem>> {
     Ok(sqlx::query_as::<_, ChangeItem>(
         "SELECT r.id AS revision_id, i.id AS item_id, i.number AS item_number, r.code, r.name, r.state,
-                co.display_name AS checked_out_by_name
+                co.display_name AS checked_out_by_name, i.project_id
          FROM change_items ci
          JOIN revisions r ON r.id = ci.revision_id
          JOIN items i ON i.id = r.item_id
@@ -121,45 +217,88 @@ pub async fn reviews(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeRevi
     .await?)
 }
 
-/// Changes that reference a revision.
-pub async fn for_revision(pool: &PgPool, revision_id: Uuid) -> AppResult<Vec<Change>> {
-    Ok(sqlx::query_as::<_, Change>(&format!(
+/// Changes the actor may see that reference a revision, plus the number of
+/// those it may not see ("part of N change orders you cannot see").
+pub async fn for_revision(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_id: Uuid,
+) -> AppResult<(Vec<Change>, i64)> {
+    let all = sqlx::query_as::<_, Change>(&format!(
         "{CHANGE_SELECT} JOIN change_items ci ON ci.change_id = c.id
          WHERE ci.revision_id = $1 ORDER BY c.created_at DESC"
     ))
     .bind(revision_id)
     .fetch_all(pool)
-    .await?)
+    .await?;
+    let visible = visible_ids(pool, actor, &all.iter().map(|c| c.id).collect::<Vec<_>>()).await?;
+    let hidden = all.iter().filter(|c| !visible.contains(&c.id)).count() as i64;
+    Ok((
+        all.into_iter()
+            .filter(|c| visible.contains(&c.id))
+            .collect(),
+        hidden,
+    ))
 }
 
-/// Changes in review that wait for a decision of the given user.
-pub async fn pending_reviews(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Change>> {
-    Ok(sqlx::query_as::<_, Change>(&format!(
-        "{CHANGE_SELECT} JOIN change_reviews cr ON cr.change_id = c.id
-         WHERE c.status = 'in_review' AND cr.reviewer_id = $1 AND cr.decision = 'pending'
-         ORDER BY c.submitted_at"
+/// Of the given changes, those the actor may see.
+pub(crate) async fn visible_ids(
+    pool: &PgPool,
+    actor: &Actor,
+    ids: &[Uuid],
+) -> AppResult<Vec<Uuid>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_scalar::<_, Uuid>(&format!(
+        "SELECT c.id FROM changes c WHERE c.id = ANY($1) AND {}",
+        access::change_visible("c", 2, 3)
     ))
-    .bind(user_id)
+    .bind(ids)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?)
 }
 
-/// Open changes authored by the given user.
-pub async fn open_by(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Change>> {
+/// Changes in review that wait for a decision of the actor (only those it
+/// can still see completely).
+pub async fn pending_reviews(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Change>> {
+    Ok(sqlx::query_as::<_, Change>(&format!(
+        "{CHANGE_SELECT} JOIN change_reviews cr ON cr.change_id = c.id
+         WHERE c.status = 'in_review' AND cr.reviewer_id = $1 AND cr.decision = 'pending'
+           AND NOT EXISTS (SELECT 1 FROM change_items pci
+                           JOIN revisions pr ON pr.id = pci.revision_id
+                           JOIN items pi ON pi.id = pr.item_id
+                           WHERE pci.change_id = c.id AND NOT {})
+         ORDER BY c.submitted_at",
+        access::item_visible("pi", 2)
+    ))
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Open changes authored by the actor.
+pub async fn open_by(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Change>> {
     Ok(sqlx::query_as::<_, Change>(&format!(
         "{CHANGE_SELECT} WHERE c.created_by = $1 AND c.status IN ('draft', 'in_review', 'rejected')
          ORDER BY c.updated_at DESC"
     ))
-    .bind(user_id)
+    .bind(actor.id)
     .fetch_all(pool)
     .await?)
 }
 
-/// Draft changes (targets for "add revision to change").
-pub async fn drafts(pool: &PgPool) -> AppResult<Vec<Change>> {
+/// Draft changes the actor may see (targets for "add revision to change").
+pub async fn drafts(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Change>> {
     Ok(sqlx::query_as::<_, Change>(&format!(
-        "{CHANGE_SELECT} WHERE c.status = 'draft' ORDER BY c.number DESC"
+        "{CHANGE_SELECT} WHERE c.status = 'draft' AND {} ORDER BY c.number DESC",
+        access::change_visible("c", 1, 2)
     ))
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?)
 }
@@ -254,6 +393,29 @@ async fn tell(
     Ok(())
 }
 
+/// [`tell`] with a body that names the change's items (`named`): recipients
+/// who may see the change but not all of them get `redacted_body`.
+#[allow(clippy::too_many_arguments)]
+async fn tell_naming(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    change: &Change,
+    kind: NotificationKind,
+    recipients: &[Uuid],
+    title: String,
+    body: String,
+    named: &audit::Mentions,
+    redacted_body: String,
+) -> AppResult<()> {
+    let notice = Notice::change(kind, change.id, &change.number, title.clone(), body).naming(
+        named.clone(),
+        title,
+        redacted_body,
+    );
+    notifications::notify(conn, Some(actor), recipients, &notice).await?;
+    Ok(())
+}
+
 /// Tells the watchers of the released items (who are not already told about
 /// the change itself) that their item was released.
 async fn tell_item_watchers(
@@ -267,14 +429,22 @@ async fn tell_item_watchers(
         let rev = revisions::lock(conn, *id).await?;
         let mut watchers = notifications::watchers(conn, "item", &[rev.item_id]).await?;
         watchers.retain(|w| !already.contains(w));
+        let title = format!("{} was released", revisions::label(&rev));
+        // Watchers who may not see the change (it holds restricted items)
+        // learn only that the item was released.
         let notice = Notice::revision(
             NotificationKind::ItemUpdate,
             &rev,
-            format!("{} was released", revisions::label(&rev)),
+            title.clone(),
             format!(
                 "{} – released with {} ({}).",
                 rev.name, change.number, change.title
             ),
+        )
+        .naming(
+            audit::Mentions::change(change.id),
+            title,
+            format!("{} – released.", rev.name),
         );
         notifications::notify(conn, Some(actor), &watchers, &notice).await?;
     }
@@ -288,11 +458,23 @@ pub struct ChangeInput {
 }
 
 pub async fn create(pool: &PgPool, actor: &Actor, input: ChangeInput) -> AppResult<Change> {
+    let mut tx = pool.begin().await?;
+    let id = create_in(&mut tx, actor, input).await?;
+    tx.commit().await?;
+    get(pool, actor, id).await
+}
+
+/// Creates a draft change inside the caller's transaction (also used when an
+/// accepted change request creates its change order) and returns its id.
+pub(crate) async fn create_in(
+    tx: &mut PgConnection,
+    actor: &Actor,
+    input: ChangeInput,
+) -> AppResult<Uuid> {
     actor.require(Role::Editor)?;
     let title = domain::require_text("Title", &input.title, 200)?;
     let description = domain::limit_text("Description", &input.description, 20_000)?;
-    let mut tx = pool.begin().await?;
-    let number = domain::format_change_number(next_counter(&mut tx, "change").await?);
+    let number = domain::format_change_number(next_counter(&mut *tx, "change").await?);
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO changes (id, number, title, description, priority, status, created_by)
@@ -307,7 +489,7 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: ChangeInput) -> AppResu
     .execute(&mut *tx)
     .await?;
     audit::record(
-        &mut tx,
+        &mut *tx,
         Some(actor),
         "change.create",
         "change",
@@ -316,8 +498,7 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: ChangeInput) -> AppResu
         json!({ "priority": input.priority.as_str() }),
     )
     .await?;
-    tx.commit().await?;
-    get(pool, id).await
+    Ok(id)
 }
 
 pub async fn update(
@@ -329,7 +510,7 @@ pub async fn update(
     let title = domain::require_text("Title", &input.title, 200)?;
     let description = domain::limit_text("Description", &input.description, 20_000)?;
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, id).await?;
+    let change = lock(&mut tx, actor, id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft, ChangeStatus::Rejected])?;
     sqlx::query(
@@ -352,7 +533,7 @@ pub async fn update(
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Adds an in-work revision to a draft change.
@@ -363,12 +544,26 @@ pub async fn add_item(
     revision_id: Uuid,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
-    ensure_owner(&change, actor)?;
-    ensure_status(&change, &[ChangeStatus::Draft])?;
-    add_item_tx(&mut tx, actor, &change, revision_id).await?;
+    add_item_in(&mut tx, actor, change_id, revision_id).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// [`add_item`] inside the caller's transaction (used when a change request
+/// creates its change order). User errors are raised before anything is
+/// written, so the caller may skip a revision and go on. Returns its label.
+pub(crate) async fn add_item_in(
+    tx: &mut PgConnection,
+    actor: &Actor,
+    change_id: Uuid,
+    revision_id: Uuid,
+) -> AppResult<String> {
+    let change = lock(&mut *tx, actor, change_id).await?;
+    ensure_owner(&change, actor)?;
+    ensure_status(&change, &[ChangeStatus::Draft])?;
+    add_item_tx(&mut *tx, actor, &change, revision_id).await?;
+    let rev = revisions::lock(&mut *tx, revision_id).await?;
+    Ok(revisions::label(&rev))
 }
 
 /// Adds a revision to a locked draft change. Returns whether it was new.
@@ -389,19 +584,47 @@ async fn add_item_tx(
             revisions::state_of(&rev).label()
         )));
     }
-    let other = sqlx::query_scalar::<_, String>(
-        "SELECT c.number FROM change_items ci JOIN changes c ON c.id = ci.change_id
+    // The other change is named only if the actor may see it (it can hold
+    // restricted items of other groups).
+    let other = sqlx::query_as::<_, (String, bool)>(&format!(
+        "SELECT c.number, {} FROM change_items ci JOIN changes c ON c.id = ci.change_id
          WHERE ci.revision_id = $1 AND c.id <> $2 AND c.status IN ('draft', 'in_review', 'rejected')
          LIMIT 1",
-    )
+        access::change_visible("c", 3, 4)
+    ))
     .bind(revision_id)
     .bind(change_id)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_optional(&mut *conn)
     .await?;
-    if let Some(other) = other {
+    if let Some((other, visible)) = other {
+        return Err(AppError::Conflict(if visible {
+            format!(
+                "{} is already part of the open change {other}.",
+                revisions::label(&rev)
+            )
+        } else {
+            format!(
+                "{} is already part of another open change.",
+                revisions::label(&rev)
+            )
+        }));
+    }
+    // Every reviewer must be able to see the new item (the caller sees it).
+    let blind = sqlx::query_scalar::<_, String>(&format!(
+        "SELECT u.display_name FROM change_reviews cr JOIN users u ON u.id = cr.reviewer_id
+         WHERE cr.change_id = $1 AND NOT {} LIMIT 1",
+        access::user_sees_project("u", "$2::uuid")
+    ))
+    .bind(change_id)
+    .bind(rev.project_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(name) = blind {
         return Err(AppError::Conflict(format!(
-            "{} is already part of the open change {other}.",
-            revisions::label(&rev)
+            "Reviewer {name} is not a member of group {}.",
+            rev.project_code.as_deref().unwrap_or("?")
         )));
     }
     let inserted = sqlx::query(
@@ -414,12 +637,13 @@ async fn add_item_tx(
     .rows_affected();
     if inserted > 0 {
         touch(conn, change_id).await?;
-        audit::record(
+        audit::record_related(
             conn,
             Some(actor),
             "change.add_item",
             "change",
             Some(change_id),
+            Some(rev.item_id),
             format!("Added {} to {}", revisions::label(&rev), change.number),
             json!({ "revision_id": revision_id, "item_id": rev.item_id }),
         )
@@ -429,9 +653,29 @@ async fn add_item_tx(
 }
 
 /// The release readiness of a change (see `services::readiness`).
-pub async fn readiness(pool: &PgPool, change_id: Uuid) -> AppResult<readiness::Readiness> {
+pub async fn readiness(
+    pool: &PgPool,
+    actor: &Actor,
+    change_id: Uuid,
+) -> AppResult<readiness::Readiness> {
     let mut conn = pool.acquire().await?;
-    readiness::check(&mut conn, change_id).await
+    Ok(readiness::check(&mut conn, change_id).await?.redact(actor))
+}
+
+/// Impact analysis of a change the actor may see: the dependents of its
+/// revisions (hidden ones dropped and counted).
+pub async fn impact(
+    pool: &PgPool,
+    actor: &Actor,
+    change_id: Uuid,
+) -> AppResult<(Vec<impacts::Dependent>, i64)> {
+    get(pool, actor, change_id).await?;
+    let ids: Vec<Uuid> = items_unchecked(pool, change_id)
+        .await?
+        .iter()
+        .map(|i| i.revision_id)
+        .collect();
+    impacts::analysis(pool, actor, &ids).await
 }
 
 /// Upper bound for the rounds of [`add_dependencies`]: each round adds the
@@ -447,7 +691,7 @@ pub async fn add_dependencies(
     change_id: Uuid,
 ) -> AppResult<Vec<String>> {
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
+    let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
     let mut added = Vec::new();
@@ -487,7 +731,7 @@ pub async fn remove_item(
     revision_id: Uuid,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
+    let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
     let removed = sqlx::query("DELETE FROM change_items WHERE change_id = $1 AND revision_id = $2")
@@ -503,12 +747,13 @@ pub async fn remove_item(
     }
     let rev = revisions::lock(&mut tx, revision_id).await?;
     touch(&mut tx, change_id).await?;
-    audit::record(
+    audit::record_related(
         &mut tx,
         Some(actor),
         "change.remove_item",
         "change",
         Some(change_id),
+        Some(rev.item_id),
         format!("Removed {} from {}", revisions::label(&rev), change.number),
         json!({ "revision_id": revision_id, "item_id": rev.item_id }),
     )
@@ -540,13 +785,35 @@ pub async fn add_reviewer(
         )));
     }
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
+    let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
+    // The check below looks at every item; for items the actor cannot see
+    // it would tell who is a member of their group.
+    ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
     if reviewer.id == change.created_by {
         return Err(AppError::BadRequest(
             "The author of a change cannot review it (four-eyes principle).".into(),
         ));
+    }
+    // A reviewer must see everything they approve.
+    let blind = sqlx::query_scalar::<_, bool>(&format!(
+        "SELECT EXISTS(SELECT 1 FROM change_items ci
+                       JOIN revisions r ON r.id = ci.revision_id
+                       JOIN items i ON i.id = r.item_id
+                       JOIN users u ON u.id = $2
+                       WHERE ci.change_id = $1 AND NOT {})",
+        access::user_sees_project("u", "i.project_id")
+    ))
+    .bind(change_id)
+    .bind(reviewer.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if blind {
+        return Err(AppError::Conflict(format!(
+            "{} cannot see every item of {} (not a member of a restricted project group).",
+            reviewer.display_name, change.number
+        )));
     }
     let inserted = sqlx::query(
         "INSERT INTO change_reviews (change_id, reviewer_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -583,7 +850,7 @@ pub async fn remove_reviewer(
     reviewer_id: Uuid,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
+    let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
     let removed =
@@ -616,9 +883,10 @@ pub async fn remove_reviewer(
 /// Submits a draft change for review and freezes its revisions.
 pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
+    let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
+    ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
     let item_ids =
         sqlx::query_scalar::<_, Uuid>("SELECT revision_id FROM change_items WHERE change_id = $1")
             .bind(change_id)
@@ -653,7 +921,7 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
             }
         }
     }
-    let ready = readiness::check(&mut tx, change_id).await?;
+    let ready = readiness::check(&mut tx, change_id).await?.redact(actor);
     if !ready.is_ready() {
         return Err(AppError::Conflict(format!(
             "{} cannot be submitted: {} not released – {}. Add {} to this change or release {} first.",
@@ -672,12 +940,17 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     .bind(change_id)
     .execute(&mut *tx)
     .await?;
-    audit::record(
+    // The labels name every item of the change: readers who see the change
+    // (author, reviewer, or later after items were removed) but not all of
+    // its items get a redacted entry.
+    let named = audit::Mentions::items(audit::change_item_ids(&mut tx, change_id).await?);
+    audit::record_mentioning(
         &mut tx,
         Some(actor),
         "change.submit",
         "change",
         Some(change_id),
+        &named,
         format!(
             "Submitted {} for review ({})",
             change.number,
@@ -687,7 +960,7 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     )
     .await?;
     let reviewers = reviewer_ids(&mut tx, change_id).await?;
-    tell(
+    tell_naming(
         &mut tx,
         actor,
         &change,
@@ -699,11 +972,13 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
             actor.display_name,
             labels.join(", ")
         ),
+        &named,
+        format!("{} asks you to review this change.", actor.display_name),
     )
     .await?;
     let mut watchers = notifications::watchers(&mut tx, "change", &[change_id]).await?;
     watchers.retain(|w| !reviewers.contains(w));
-    tell(
+    tell_naming(
         &mut tx,
         actor,
         &change,
@@ -711,10 +986,24 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
         &watchers,
         format!("{} was submitted for review", change.number),
         format!("{} – {}", change.title, labels.join(", ")),
+        &named,
+        change.title.clone(),
     )
     .await?;
+    if webhooks::wanted(&mut tx, &[WebhookEvent::ChangeSubmitted]).await? {
+        let (revs, projects) = webhooks::change_revisions(&mut tx, change_id).await?;
+        webhooks::emit(
+            &mut tx,
+            Some(actor),
+            WebhookEvent::ChangeSubmitted,
+            &projects,
+            json!({ "change": webhooks::change_object(&change, ChangeStatus::InReview.as_str()),
+                    "revisions": revs }),
+        )
+        .await?;
+    }
     tx.commit().await?;
-    get(pool, change_id).await
+    get(pool, actor, change_id).await
 }
 
 /// Records the decision of a reviewer and finishes the change when possible.
@@ -736,8 +1025,9 @@ pub async fn review(
         ));
     }
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
+    let change = lock(&mut tx, actor, change_id).await?;
     ensure_status(&change, &[ChangeStatus::InReview])?;
+    ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
     let current = sqlx::query_scalar::<_, String>(
         "SELECT decision FROM change_reviews WHERE change_id = $1 AND reviewer_id = $2",
     )
@@ -798,7 +1088,8 @@ pub async fn review(
             .filter_map(|d| Decision::parse(d))
             .collect();
     let people = notifications::change_people(&mut tx, change_id).await?;
-    match domain::review_outcome(&decisions) {
+    let outcome = domain::review_outcome(&decisions);
+    match outcome {
         ReviewOutcome::Pending => {
             touch(&mut tx, change_id).await?;
             tell(
@@ -831,12 +1122,14 @@ pub async fn review(
                 .bind(change_id)
                 .execute(&mut *tx)
                 .await?;
-            audit::record(
+            let named = audit::Mentions::items(audit::change_item_ids(&mut tx, change_id).await?);
+            audit::record_mentioning(
                 &mut tx,
                 Some(actor),
                 "change.rejected",
                 "change",
                 Some(change_id),
+                &named,
                 format!(
                     "{} was rejected; {} returned to In Work",
                     change.number,
@@ -845,7 +1138,7 @@ pub async fn review(
                 json!({ "revisions": labels }),
             )
             .await?;
-            tell(
+            tell_naming(
                 &mut tx,
                 actor,
                 &change,
@@ -853,6 +1146,8 @@ pub async fn review(
                 &people,
                 format!("{} was rejected by {}", change.number, actor.display_name),
                 format!("{comment}\n{} returned to In Work.", labels.join(", ")),
+                &named,
+                format!("{comment}\nIts revisions returned to In Work."),
             )
             .await?;
         }
@@ -872,12 +1167,14 @@ pub async fn review(
             .bind(change_id)
             .execute(&mut *tx)
             .await?;
-            audit::record(
+            let named = audit::Mentions::items(audit::change_item_ids(&mut tx, change_id).await?);
+            audit::record_mentioning(
                 &mut tx,
                 Some(actor),
                 "change.released",
                 "change",
                 Some(change_id),
+                &named,
                 format!(
                     "{} was approved; released {}",
                     change.number,
@@ -886,7 +1183,7 @@ pub async fn review(
                 json!({ "revisions": labels }),
             )
             .await?;
-            tell(
+            tell_naming(
                 &mut tx,
                 actor,
                 &change,
@@ -899,19 +1196,98 @@ pub async fn review(
                     labels.join(", "),
                     actor.display_name
                 ),
+                &named,
+                format!(
+                    "{} – released (last approval by {}).",
+                    change.title, actor.display_name
+                ),
             )
             .await?;
             tell_item_watchers(&mut tx, actor, &change, &released, &people).await?;
+            // The accepted change requests this change implements are done.
+            requests::on_change_released(&mut tx, actor, &change).await?;
         }
     }
+    emit_review_events(&mut tx, actor, &change, decision, &comment, outcome).await?;
     tx.commit().await?;
-    get(pool, change_id).await
+    get(pool, actor, change_id).await
+}
+
+/// Webhook events of a review decision: `change.approved` or
+/// `change.rejected`, and on the last approval `revision.released` for each
+/// revision and `change.released`.
+async fn emit_review_events(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    change: &Change,
+    decision: Decision,
+    comment: &str,
+    outcome: ReviewOutcome,
+) -> AppResult<()> {
+    let status = match outcome {
+        ReviewOutcome::Pending => ChangeStatus::InReview,
+        ReviewOutcome::Rejected => ChangeStatus::Rejected,
+        ReviewOutcome::Approved => ChangeStatus::Released,
+    }
+    .as_str();
+    let event = if decision == Decision::Approved {
+        WebhookEvent::ChangeApproved
+    } else {
+        WebhookEvent::ChangeRejected
+    };
+    let mut events = vec![event];
+    if outcome == ReviewOutcome::Approved {
+        events.extend([WebhookEvent::RevisionReleased, WebhookEvent::ChangeReleased]);
+    }
+    if !webhooks::wanted(conn, &events).await? {
+        return Ok(());
+    }
+    let change_json = webhooks::change_object(change, status);
+    let (revs, projects) = webhooks::change_revisions(conn, change.id).await?;
+    let review = json!({
+        "reviewer": actor.username,
+        "decision": decision.as_str(),
+        "comment": comment,
+        "change_status": status,
+    });
+    webhooks::emit(
+        conn,
+        Some(actor),
+        event,
+        &projects,
+        json!({ "change": change_json, "review": review, "revisions": revs }),
+    )
+    .await?;
+    if outcome == ReviewOutcome::Approved {
+        let each = revs
+            .iter()
+            .zip(&projects)
+            .map(|(rev, project)| (*project, json!({ "revision": rev, "change": change_json })))
+            .collect();
+        webhooks::emit_each(
+            conn,
+            Some(actor),
+            WebhookEvent::RevisionReleased,
+            each,
+            &projects,
+        )
+        .await?;
+        webhooks::emit(
+            conn,
+            Some(actor),
+            WebhookEvent::ChangeReleased,
+            &projects,
+            json!({ "change": change_json, "revisions": revs }),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// Pulls a change back from review into draft.
 pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
+    let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::InReview])?;
     let labels = transition_items(&mut tx, change_id, LifecycleState::InWork).await?;
@@ -922,12 +1298,14 @@ pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResul
     .bind(change_id)
     .execute(&mut *tx)
     .await?;
-    audit::record(
+    let named = audit::Mentions::items(audit::change_item_ids(&mut tx, change_id).await?);
+    audit::record_mentioning(
         &mut tx,
         Some(actor),
         "change.withdraw",
         "change",
         Some(change_id),
+        &named,
         format!("Withdrew {} from review", change.number),
         json!({ "revisions": labels }),
     )
@@ -947,15 +1325,16 @@ pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResul
     )
     .await?;
     tx.commit().await?;
-    get(pool, change_id).await
+    get(pool, actor, change_id).await
 }
 
 /// Turns a rejected change back into a draft so it can be fixed and resubmitted.
 pub async fn reopen(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
+    let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Rejected])?;
+    ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
     reset_reviews(&mut tx, change_id).await?;
     sqlx::query(
         "UPDATE changes SET status = 'draft', submitted_at = NULL, updated_at = now() WHERE id = $1",
@@ -974,12 +1353,12 @@ pub async fn reopen(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     )
     .await?;
     tx.commit().await?;
-    get(pool, change_id).await
+    get(pool, actor, change_id).await
 }
 
 pub async fn cancel(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
-    let change = lock(&mut tx, change_id).await?;
+    let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft, ChangeStatus::Rejected])?;
     sqlx::query(
@@ -1010,5 +1389,5 @@ pub async fn cancel(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     )
     .await?;
     tx.commit().await?;
-    get(pool, change_id).await
+    get(pool, actor, change_id).await
 }

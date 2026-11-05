@@ -87,6 +87,11 @@ promised.
   Content-addressed storage (SHA-256) stores identical files once.
 - **Lifecycle.** WIP → In Review → Released → Obsolete with revision letters
   after ASME Y14.35; released data never changes, the next revision does.
+- **Change requests (ECR).** Anybody – shop floor, simulation, test, viewers
+  included – reports a problem on an item or a file (with screenshots or a
+  PDF), discusses it; the CAD editors of the project group triage, accept,
+  defer or reject. An accepted request becomes a draft change order with the
+  in-work revisions and is *implemented* when that change order is released.
 - **Change orders.** Collect revisions, assign reviewers, four-eyes approval,
   all revisions released atomically, impact analysis before approval.
 - **Structure.** Multi-level BOM with mass and cost roll-up, revision rules *latest*, *latest released* and *as
@@ -100,7 +105,13 @@ promised.
 - **Change propagation.** References inside CAD files (SolidWorks, Inventor,
   Solid Edge, CATIA, NX, STEP, KiCad, …) are tracked; a release flags every
   dependent for a check.
-- **130+ file formats, 170+ extensions.** Native files of SolidWorks, NX, Creo, CATIA,
+- **Simulation management.** Simulation items (FEA, CFD) linked to the exact
+  part revisions and file versions they analysed, flagged *out of date* when
+  the design changes; key result values with limits and pass/fail, CSV/Excel
+  import, comparison between revisions and a REST API for solver scripts.
+  Result formats (VTK, CalculiX, Nastran, ANSYS, Abaqus, OpenFOAM, Fluent,
+  CGNS, Exodus II, LS-DYNA, …) are recognised.
+- **160+ file formats, 200+ extensions.** Native files of SolidWorks, NX, Creo, CATIA,
   Inventor, Fusion, Solid Edge, AutoCAD, Revit, Navisworks, MicroStation,
   Archicad, Rhino, Blender, Maya, 3ds Max, Houdini, SolidCraft, FieldCraft,
   … plus STEP, IGES, Parasolid, JT, IFC, glTF, USD, E57, LAS and more.
@@ -108,29 +119,49 @@ promised.
   [truck](https://github.com/ricosjp/truck) kernel), STL, OBJ, PLY, OFF, 3MF,
   AMF, glTF/GLB, 3DS and point clouds – converted once on the server, in an
   isolated process with a time limit, and drawn by a small WebGL viewer.
+- **FEA/CFD results in 3D.** VTK, VTU/VTP and CalculiX `.frd` results show
+  their outer surface coloured by a result field (von Mises, displacement
+  magnitude, …) with a colour legend and field selector – no ParaView needed.
 - **Previews of native CAD files.** The preview image Inventor, Solid Edge, NX
   and SolidWorks store in their files is shown next to them; on Windows the
   desktop app creates STEP exports with your own Inventor or Solid Edge at
   check-in for the 3D view (see `docs/src/research/cad-previews.md`).
 - **Search.** Ranked full-text search over numbers, names, materials, file
   names and the text inside STEP, IGES and text files; filter by CAD program.
-- **Teams.** Viewer, CAD editor and admin roles; self-service project groups
-  managed by their creators; single sign-on with any OpenID Connect
+- **Similar parts.** "Do we already have a part like this?" – parts of
+  similar 3D shape and size, ranked by a cheap, explainable shape signature
+  (box extents and a D2 shape distribution, no AI) with the reason for each
+  hit; on the revision page, in the REST API and as MCP tool.
+- **Light and dark.** The interface follows the light or dark appearance of
+  the operating system; *Light* or *Dark* can be fixed per user, and there are
+  dark distribution skins (Arch, KDE, Ubuntu, …). Dense tables, one primary
+  action per page, and states shown by colour and a glyph.
+- **Teams and read permissions.** Viewer, CAD editor and admin roles; self-service project groups
+  managed by their creators, optionally **restricted** so that only their members
+  (and admins) see the group and its items, files and changes; single sign-on with any OpenID Connect
   provider and group synchronisation.
 - **Numbering schemes.** Generated item numbers per project group from
   `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`, with a preview of the next
   numbers.
-- **Notifications.** In-app bell, e-mail and Mattermost; watch items and
-  changes.
+- **Notifications.** In-app bell, e-mail and Mattermost; watch items,
+  changes and change requests.
+- **Event webhooks.** Signed JSON for releases, changes, change requests and
+  simulation results to CI, ERP or chat – written with the event, retried
+  with backoff, internal targets only when allowed.
 - **Desktop app.** A Tauri client for Linux, macOS and Windows with a local
-  workspace (one folder per project group) for check-out and check-in, the
+  working folder – one folder per project group that mirrors the original
+  folder structure, read-only until you check out – for check-out and
+  check-in, *Get* of whole assemblies (BOM and referenced CAD files), the
   download of whole project groups and an import wizard for existing CAD
   folders with a step-by-step tutorial.
 - **AI assistants (MCP).** A built-in Model Context Protocol server
   (`/api/v1/mcp`, plus a stdio bridge `teamcraft mcp`) lets Claude Code and
   other MCP clients search items and explain BOMs and where-used, compare
-  revisions, check a BOM before a release and draft change orders. It uses
-  your rights and never submits, approves or releases.
+  revisions, check a BOM before a release, find similar existing parts, draft
+  change orders, summarise, raise and comment on change requests, and check
+  simulations (out of date,
+  pass/fail, results between revisions). It uses your rights and never
+  submits, approves, releases or decides a change request.
 - **Ask TeamCraft (optional).** With an Anthropic API key configured, the
   web UI and the desktop app offer quick actions – draft release notes,
   check before release, brief me for a review, what needs my attention –
@@ -161,7 +192,8 @@ Flatpak are described in [packaging/](packaging/README.md).
 ## Screenshots
 
 Demo data from the openly licensed [NIST CAD test files](tests/fixtures/cad/README.md),
-captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh).
+captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh) –
+the web UI with headless Chrome, TeamCraft Desktop on a virtual X display.
 
 <table>
   <tr>
@@ -179,6 +211,18 @@ captured automatically by [`scripts/screenshots.sh`](scripts/screenshots.sh).
   <tr>
     <td width="50%"><a href="media/screenshots/notifications.png"><img src="media/screenshots/notifications.png" alt="Notifications: review requests, approvals and the release of the standard fasteners" /></a><br /><sub><b>Notifications</b> – in-app, e-mail and Mattermost</sub></td>
     <td width="50%" align="center"><a href="media/screenshots/mobile-dashboard.png"><img src="media/screenshots/mobile-dashboard.png" width="200" alt="The dashboard on a 390 pixel wide phone screen" /></a><br /><sub><b>On the phone</b> – the same pages, responsive</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/dashboard-dark.png"><img src="media/screenshots/dashboard-dark.png" alt="The dashboard in the dark scheme: the same work lists, statistics and dependents to check on dark surfaces" /></a><br /><sub><b>Dark</b> – follows the system appearance, or pick Light or Dark</sub></td>
+    <td width="50%"><a href="media/screenshots/bom-dark.png"><img src="media/screenshots/bom-dark.png" alt="The multi-level bill of materials of the sensor mast assembly in the dark scheme with states, quantities and the mass and cost totals" /></a><br /><sub><b>Multi-level BOM, dark</b> – every page in both schemes</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/desktop-home.png"><img src="media/screenshots/desktop-home.png" alt="TeamCraft Desktop start screen: the project group ROVER expanded in the navigator with its items and their states, item statistics and the dependents to check" /></a><br /><sub><b>Desktop app</b> – navigator, statistics and what needs attention</sub></td>
+    <td width="50%"><a href="media/screenshots/desktop-revision.png"><img src="media/screenshots/desktop-revision.png" alt="TeamCraft Desktop: the checked-out mounting bracket revision in a tab with check-in, edit and release actions, its properties, lifecycle and the sub-tabs for files, structure, where used and 3D viewer" /></a><br /><sub><b>Desktop revision tab</b> – check-out to a local workspace, check-in</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/desktop-change.png"><img src="media/screenshots/desktop-change.png" alt="TeamCraft Desktop: the enclosure change order in review with the approve and reject form, one approval and one pending reviewer and the affected revisions" /></a><br /><sub><b>Desktop review</b> – approve or reject without leaving the app</sub></td>
+    <td width="50%"><a href="media/screenshots/desktop-worklist.png"><img src="media/screenshots/desktop-worklist.png" alt="TeamCraft Desktop worklist: the revision checked out by me, the change order waiting for my review and four dependents to check" /></a><br /><sub><b>Desktop worklist</b> – check-outs, reviews and dependents</sub></td>
   </tr>
 </table>
 
@@ -220,7 +264,7 @@ native PostgreSQL and the desktop app:
 | `teamcraft` binary   | web interface, REST API (`/api/v1`) and CLI in one process; templates, migrations and assets are embedded          |
 | `domain`, `services` | the rules and the business logic – permissions, row locks, lifecycle checks and the audit entry in one transaction |
 | `vault`              | content-addressed file storage on disk, plus the cached 3D previews                                                |
-| `mesh`, `preview`    | pure-Rust readers for meshes, point clouds and STEP                                                                |
+| `mesh`, `preview`    | pure-Rust readers for meshes, point clouds, STEP and (`simmesh`) VTK/VTU/FRD simulation results                    |
 | PostgreSQL 16+       | the only external service                                                                                          |
 
 Everything is built by `cargo` – no Node.js, no downloaded browser engines,

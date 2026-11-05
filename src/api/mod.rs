@@ -5,13 +5,17 @@
 //! `GET /api/v1/items/PRT-000042/revisions/B`. The code `latest` selects the
 //! newest revision.
 
+mod change_requests;
 mod personal;
+mod simulations;
+mod uploads_api;
+mod webhooks;
 
 use axum::{
     extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{get, patch, post, put},
     Json, Router,
 };
 use serde::{de::DeserializeOwned, Deserialize, Deserializer};
@@ -19,15 +23,17 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
-    auth::ApiUser,
+    auth::{Actor, ApiUser},
     domain::{
-        ChangeStatus, Decision, ItemType, LifecycleState, Priority, ReferenceKind, RevisionRule,
+        ChangeStatus, Decision, ItemType, LifecycleState, Priority, ProjectVisibility,
+        ReferenceKind, RevisionRule,
     },
     error::{AppError, AppResult},
     models::Revision,
     services::{
         audit, bom, changes, checkouts, desktop, files, impacts, imports, items, notifications,
-        package, projects, references, revisions, stats, users, Page,
+        package, projects, references, requests, reviewers, revisions, similar, stats, uploads,
+        users, workset, Page,
     },
     web, AppState,
 };
@@ -37,6 +43,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .unwrap_or(usize::MAX)
         .saturating_add(1024 * 1024);
     let import_limit = imports::MAX_STEP_BYTES + 1024 * 1024;
+    let attachment_limit = requests::MAX_ATTACHMENT_BYTES + 1024 * 1024;
     Router::new()
         .route("/", get(index))
         .route("/me", get(me))
@@ -47,6 +54,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/assistant", get(assistant_info).post(assistant_ask))
         .route("/formats", get(formats))
         .route("/projects", get(list_projects).post(create_project))
+        .route("/projects/{code}/visibility", put(set_project_visibility))
         .route(
             "/projects/{code}/members",
             get(project_members).post(add_project_member),
@@ -65,6 +73,41 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(get_references).post(add_reference),
         )
         .route("/references/{id}", axum::routing::delete(delete_reference))
+        // simulations
+        .route(
+            "/items/{number}/revisions/{code}/simulation",
+            get(simulations::get_simulation),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/bases",
+            get(simulations::list_bases).post(simulations::add_basis),
+        )
+        .route(
+            "/simulation-bases/{id}",
+            axum::routing::delete(simulations::delete_basis),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/results",
+            get(simulations::list_results)
+                .post(simulations::add_result)
+                .put(simulations::put_results),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/results/import",
+            post(simulations::import_results).layer(DefaultBodyLimit::max(import_limit)),
+        )
+        .route(
+            "/simulation-results/{id}",
+            patch(simulations::patch_result).delete(simulations::delete_result),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/simulation/compare",
+            get(simulations::compare),
+        )
+        .route(
+            "/items/{number}/simulations",
+            get(simulations::item_simulations),
+        )
         .route("/impacts", get(list_impacts))
         .route("/notifications", get(list_notifications))
         .route("/notifications/read", post(read_notifications))
@@ -105,6 +148,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(watch_change).delete(watch_change),
         )
         .route("/impacts/{id}/acknowledge", post(acknowledge_impact))
+        .route(
+            "/items/{number}/revisions/{code}/impacts/acknowledge",
+            post(acknowledge_impacts),
+        )
         .route("/changes/{number}/impact", get(change_impact))
         .route(
             "/items/{number}/revisions/{code}",
@@ -125,6 +172,8 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/items/{number}/revisions/{code}/revise", post(revise))
         .route("/items/{number}/revisions/{code}/package", get(get_package))
+        .route("/items/{number}/revisions/{code}/workset", get(get_workset))
+        .route("/items/{number}/revisions/{code}/similar", get(get_similar))
         .route(
             "/bom-imports",
             post(import_bom).layer(DefaultBodyLimit::max(import_limit)),
@@ -152,7 +201,18 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/bom-lines/{id}",
             patch(update_bom_line).delete(delete_bom_line),
         )
-        .route("/files/{id}", get(file_meta).delete(delete_file))
+        .route("/uploads", post(uploads_api::create))
+        .route(
+            "/uploads/{id}",
+            get(uploads_api::status)
+                .patch(uploads_api::append)
+                .delete(uploads_api::abort),
+        )
+        .route("/uploads/{id}/finish", post(uploads_api::finish))
+        .route(
+            "/files/{id}",
+            get(file_meta).patch(update_file).delete(delete_file),
+        )
         .route("/files/{id}/content", get(download))
         .route("/files/{id}/thumbnail", get(file_thumbnail))
         .route("/files/{id}/versions", get(file_versions))
@@ -166,12 +226,87 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{number}/reviewers", post(add_change_reviewer))
         .route("/changes/{number}/readiness", get(change_readiness))
         .route(
+            "/changes/{number}/suggested-reviewers",
+            get(change_suggested_reviewers),
+        )
+        .route(
             "/changes/{number}/dependencies",
             post(add_change_dependencies),
         )
         .route("/changes/{number}/submit", post(submit_change))
         .route("/changes/{number}/review", post(review_change))
         .route("/changes/{number}/withdraw", post(withdraw_change))
+        .route(
+            "/change-requests",
+            get(change_requests::list).post(change_requests::create),
+        )
+        .route(
+            "/change-requests/{number}",
+            get(change_requests::get).patch(change_requests::update),
+        )
+        .route(
+            "/change-requests/{number}/comments",
+            post(change_requests::comment),
+        )
+        .route(
+            "/change-requests/{number}/items",
+            post(change_requests::add_item),
+        )
+        .route(
+            "/change-requests/{number}/triage",
+            post(change_requests::triage),
+        )
+        .route(
+            "/change-requests/{number}/assign",
+            post(change_requests::assign),
+        )
+        .route(
+            "/change-requests/{number}/decide",
+            post(change_requests::decide),
+        )
+        .route(
+            "/change-requests/{number}/reopen",
+            post(change_requests::reopen),
+        )
+        .route(
+            "/change-requests/{number}/withdraw",
+            post(change_requests::withdraw),
+        )
+        .route(
+            "/change-requests/{number}/create-change",
+            post(change_requests::create_change),
+        )
+        .route(
+            "/change-requests/{number}/link-change",
+            post(change_requests::link_change),
+        )
+        .route(
+            "/change-requests/{number}/attachments",
+            post(change_requests::attach).layer(DefaultBodyLimit::max(attachment_limit)),
+        )
+        .route(
+            "/change-requests/{number}/watch",
+            post(change_requests::watch).delete(change_requests::watch),
+        )
+        .route(
+            "/change-request-attachments/{id}/content",
+            get(change_requests::attachment_content),
+        )
+        // outgoing event webhooks (administrators)
+        .route("/webhooks", get(webhooks::list).post(webhooks::create))
+        .route(
+            "/webhooks/{id}",
+            get(webhooks::get)
+                .patch(webhooks::update)
+                .delete(webhooks::delete),
+        )
+        .route(
+            "/webhooks/{id}/rotate-secret",
+            post(webhooks::rotate_secret),
+        )
+        .route("/webhooks/{id}/test", post(webhooks::test))
+        .route("/webhooks/{id}/deliveries", get(webhooks::deliveries))
+        .route("/webhook-deliveries/{id}/retry", post(webhooks::retry))
         .fallback(not_found)
 }
 
@@ -213,10 +348,11 @@ async fn index() -> Json<Value> {
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
             "GET    /api/v1/me",
-            "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, dependents to check (impacts), statistics",
+            "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts, and grouped by dependent revision as impact_groups), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
-            "GET    /api/v1/projects",
-            "POST   /api/v1/projects                                  {code, name, description?, oidc_group?}",
+            "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
+            "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
+            "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
             "GET    /api/v1/projects/{code}/members",
             "POST   /api/v1/projects/{code}/members                   {username, manager?} – managers and admins",
             "GET    /api/v1/projects/{code}/numbering?scheme=         next generated item numbers per type; scheme = preview another scheme",
@@ -234,7 +370,12 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code|latest}",
             "PATCH  /api/v1/items/{number}/revisions/{code}           {name?, description?, material?, mass_kg?, unit_cost?}",
             "POST   /api/v1/items/{number}/revisions/{code}/checkout",
-            "POST   /api/v1/items/{number}/revisions/{code}/checkin   optional multipart: 'file' (new versions), 'comment', 'bases' = {\"name\": version | sha256} → 409 if a file moved on",
+            "POST   /api/v1/items/{number}/revisions/{code}/checkin   optional multipart: 'file' (new versions), 'comment', 'bases' = {\"name\": version | sha256} → 409 if a file moved on, 'folder' or 'folders' = {\"name\": \"folder\"}, 'uploads' = [upload id] (chunked uploads)",
+            "POST   /api/v1/uploads                                   {item, revision, filename, size, sha256?, content_type?, base?, folder?} – start a chunked, resumable upload (checked-out revision)",
+            "GET    /api/v1/uploads/{id}                              state and offset to resume from (also HEAD: Upload-Offset, Upload-Length)",
+            "PATCH  /api/v1/uploads/{id}                              header Upload-Offset, body = next chunk (≤ chunk_bytes) → 409 at any other offset",
+            "POST   /api/v1/uploads/{id}/finish                       {comment?, check_in?} – verify size and sha256, store the new version (and release the check-out)",
+            "DELETE /api/v1/uploads/{id}                              cancel the upload",
             "GET    /api/v1/items/{number}/revisions/{code}/file-status   current version, sha256 and lock of every file",
             "POST   /api/v1/items/{number}/revisions/{code}/file-status   {files: [{filename, sha256, base_version? | base_sha256?}]} → up_to_date | modified | outdated | conflict | new | missing",
             "POST   /api/v1/worklist/checkin-all                      {revisions?: [id]} – check in my check-outs without new files (lock release), one by one",
@@ -245,6 +386,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/bom       {child, quantity, find_number?, notes?}",
             "GET    /api/v1/items/{number}/revisions/{code}/bom.xlsx?rule=  the expanded BOM as Excel workbook (the BOM import reads it back)",
             "GET    /api/v1/items/{number}/revisions/{code}/package?rule=  Pack and Go: ZIP with all files of the structure, bom.csv, manifest.json",
+            "GET    /api/v1/items/{number}/revisions/{code}/workset?rule=&references=true  desktop Get: files of the structure and the CAD files it references, with folder, version, sha256, lock",
             "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM or STEP assembly of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
             "POST   /api/v1/items/{number}/revisions/{code}/bom/import  same multipart fields – imports below the revision (checked out by me)",
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
@@ -252,6 +394,18 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/references  references, referrers, CAD file references, impacts",
             "POST   /api/v1/items/{number}/revisions/{code}/references  {item, kind: drawing|specification|reference, note?}",
             "DELETE /api/v1/references/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation  basis links (out of date?), result values (pass/fail), summary",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/bases",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/bases  {item, revision?, file? | file_version_id?, role: geometry|mesh|material|load_case|other, note?}",
+            "DELETE /api/v1/simulation-bases/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/results",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/results  {name, value, unit?, lower_limit?, upper_limit?, load_case?, solver?, solver_version?, note?}",
+            "PUT    /api/v1/items/{number}/revisions/{code}/simulation/results  {results: [...], replace?: true} – the result set of a solver run",
+            "POST   /api/v1/items/{number}/revisions/{code}/simulation/results/import  multipart: file (CSV/Excel: name,value,unit,limit_low,limit_high,load_case), replace?",
+            "PATCH  /api/v1/simulation-results/{id}                   any result field",
+            "DELETE /api/v1/simulation-results/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/compare?with=A   result values of two revisions",
+            "GET    /api/v1/items/{number}/simulations                simulations based on the item (out of date?)",
             "GET    /api/v1/impacts                                   open impacts on items of my project groups",
             "GET    /api/v1/notifications?unread=true&limit=          my notifications and the unread count",
             "POST   /api/v1/notifications/read                        {ids?} – mark as read (all without a body)",
@@ -270,9 +424,11 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/bom/compare.xlsx?with=A   the same comparison as an Excel workbook",
             "POST   /api/v1/changes/{number}/watch                    watch a change (DELETE: stop)",
             "POST   /api/v1/impacts/{id}/acknowledge                  {note} – the dependent needs no change",
+            "POST   /api/v1/items/{number}/revisions/{code}/impacts/acknowledge  {note, impacts?: [id]} – acknowledge all open impacts on the dependent revision (or the listed ones) at once",
             "GET    /api/v1/items/{number}/revisions/{code}/files",
-            "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases'",
+            "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases', 'folder' (in the project group) or 'folders' = {\"name\": \"folder\"}",
             "GET    /api/v1/files/{id}",
+            "PATCH  /api/v1/files/{id}                                {folder} – its place in the working folder (revision checked out by you)",
             "GET    /api/v1/files/{id}/content",
             "GET    /api/v1/files/{id}/thumbnail                      preview image stored in Inventor, Solid Edge and SolidWorks files (PNG or BMP, 404 if none)",
             "GET    /api/v1/files/{id}/versions",
@@ -285,22 +441,49 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/changes/{number}/impact                   impact analysis: items that depend on its revisions",
             "POST   /api/v1/changes/{number}/items                    {item, revision?}",
             "POST   /api/v1/changes/{number}/reviewers                {username}",
+            "GET    /api/v1/changes/{number}/suggested-reviewers?limit=  ranked reviewer suggestions with reasons (never assigns)",
             "GET    /api/v1/changes/{number}/readiness                release readiness: unreleased (blocking) and obsolete or file-scan (warning) dependencies",
             "POST   /api/v1/changes/{number}/dependencies             add the in-work revisions of all unreleased dependencies, level by level",
             "POST   /api/v1/changes/{number}/submit",
             "POST   /api/v1/changes/{number}/review                   {decision: approve|reject, comment?}",
-            "POST   /api/v1/changes/{number}/withdraw"
+            "POST   /api/v1/changes/{number}/withdraw",
+            "GET    /api/v1/change-requests?status=open|all|<status>&scope=mine|assigned&item=&limit=&offset=",
+            "POST   /api/v1/change-requests                           {title, description?, reason?, priority?, due_date?, items?: [{item, revision?, note?}]} – any signed-in user",
+            "GET    /api/v1/change-requests/{number}                  request, items, comments, attachments, change orders, history, what I may do",
+            "PATCH  /api/v1/change-requests/{number}                  {title?, description?, reason?, priority?, due_date?}",
+            "POST   /api/v1/change-requests/{number}/comments         {body} – any signed-in user",
+            "POST   /api/v1/change-requests/{number}/items            {item, revision?, note?}",
+            "POST   /api/v1/change-requests/{number}/triage           new → in triage (CAD editors of the affected groups, admins)",
+            "POST   /api/v1/change-requests/{number}/assign           {username|null}",
+            "POST   /api/v1/change-requests/{number}/decide           {decision: accept|reject|defer, comment?}",
+            "POST   /api/v1/change-requests/{number}/reopen           deferred → in triage",
+            "POST   /api/v1/change-requests/{number}/withdraw         the requester, before the decision",
+            "POST   /api/v1/change-requests/{number}/create-change    {title?, priority?} – draft change order with the in-work revisions of the affected items",
+            "POST   /api/v1/change-requests/{number}/link-change      {change} – link an open change order",
+            "POST   /api/v1/change-requests/{number}/attachments      multipart 'file': PNG, JPEG, GIF, WebP or PDF, up to 10 MiB",
+            "GET    /api/v1/change-request-attachments/{id}/content",
+            "POST   /api/v1/change-requests/{number}/watch            watch a change request (DELETE: stop)",
+            "GET    /api/v1/webhooks                                  outgoing event webhooks and the event names – admins",
+            "POST   /api/v1/webhooks                                  {name, url, events, project?, active?} – returns the secret once",
+            "GET    /api/v1/webhooks/{id}                             PATCH {name?, url?, events?, project?, active?}, DELETE",
+            "POST   /api/v1/webhooks/{id}/rotate-secret               a new secret (shown once)",
+            "POST   /api/v1/webhooks/{id}/test                        sends a ping now; returns the delivery",
+            "GET    /api/v1/webhooks/{id}/deliveries?limit=           latest deliveries with status, attempts, last error",
+            "POST   /api/v1/webhook-deliveries/{id}/retry             send a failed delivery again"
         ]
     }))
 }
 
-async fn me(State(st): State<AppState>, ApiUser(me): ApiUser) -> Json<Value> {
+async fn me(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
+    // `hidden_projects` is never serialized; the client learns only which of
+    // its own groups are restricted (for a badge).
     let mut body = json!(me);
+    body["restricted_projects"] = json!(projects::restricted_memberships(&st.db, &me).await?);
     body["capabilities"] = json!({
         "assistant": crate::services::assistant::enabled(&st),
         "mcp": true,
     });
-    Json(body)
+    Ok(Json(body))
 }
 
 /// `GET /api/v1/assistant`: whether the assistant is enabled and what it offers.
@@ -375,13 +558,17 @@ async fn desktop_token(
 
 /// The personal start page of the desktop app (and the web dashboard).
 async fn worklist(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
+    let open = impacts::open_for(&st.db, &me).await?;
     Ok(Json(json!({
-        "checkouts": revisions::checked_out_by(&st.db, me.id).await?,
-        "reviews": changes::pending_reviews(&st.db, me.id).await?,
-        "impacts": impacts::open_for(&st.db, &me).await?,
-        "notifications_unread": notifications::unread_count(&st.db, me.id).await?,
-        "my_changes": changes::open_by(&st.db, me.id).await?,
-        "stats": stats::load(&st.db).await?,
+        "checkouts": revisions::checked_out_by(&st.db, &me).await?,
+        "reviews": changes::pending_reviews(&st.db, &me).await?,
+        "impacts": open,
+        "impact_groups": impacts::group_by_dependent(open.clone()),
+        "notifications_unread": notifications::unread_count(&st.db, &me).await?,
+        "my_changes": changes::open_by(&st.db, &me).await?,
+        "requests_assigned": requests::assigned_to(&st.db, &me).await?,
+        "my_requests": requests::open_by(&st.db, &me).await?,
+        "stats": stats::load(&st.db, &me).await?,
     })))
 }
 
@@ -400,11 +587,8 @@ async fn formats(ApiUser(_me): ApiUser) -> Json<Value> {
 // Projects
 // ---------------------------------------------------------------------------
 
-async fn list_projects(
-    State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
-) -> AppResult<Json<Value>> {
-    Ok(Json(json!(projects::list(&st.db, false).await?)))
+async fn list_projects(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
+    Ok(Json(json!(projects::list(&st.db, &me, false).await?)))
 }
 
 #[derive(Deserialize)]
@@ -414,6 +598,8 @@ struct CreateProject {
     #[serde(default)]
     description: String,
     oidc_group: Option<String>,
+    /// `internal` (default) or `restricted`.
+    visibility: Option<String>,
 }
 
 async fn create_project(
@@ -428,17 +614,42 @@ async fn create_project(
         &body.name,
         &body.description,
         body.oidc_group.as_deref(),
+        parse_visibility(body.visibility.as_deref().unwrap_or("internal"))?,
     )
     .await?;
     Ok((StatusCode::CREATED, Json(json!(project))).into_response())
 }
 
+fn parse_visibility(raw: &str) -> AppResult<ProjectVisibility> {
+    ProjectVisibility::parse(raw)
+        .ok_or_else(|| AppError::BadRequest("visibility must be internal or restricted.".into()))
+}
+
+#[derive(Deserialize)]
+struct SetVisibility {
+    visibility: String,
+}
+
+/// `PUT /api/v1/projects/{code}/visibility` – managers of the group, admins.
+async fn set_project_visibility(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    ApiJson(body): ApiJson<SetVisibility>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code(&st.db, &me, &code).await?;
+    let visibility = parse_visibility(&body.visibility)?;
+    Ok(Json(json!(
+        projects::set_visibility(&st.db, &me, project.id, visibility).await?
+    )))
+}
+
 async fn project_members(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(code): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let project = projects::get_by_code(&st.db, &code).await?;
+    let project = projects::get_by_code(&st.db, &me, &code).await?;
     Ok(Json(json!(projects::members(&st.db, project.id).await?)))
 }
 
@@ -455,7 +666,7 @@ async fn add_project_member(
     Path(code): Path<String>,
     ApiJson(body): ApiJson<AddMember>,
 ) -> AppResult<Response> {
-    let project = projects::get_by_code(&st.db, &code).await?;
+    let project = projects::get_by_code(&st.db, &me, &code).await?;
     let member =
         projects::add_member(&st.db, &me, project.id, &body.username, body.manager).await?;
     Ok((StatusCode::CREATED, Json(json!(member))).into_response())
@@ -468,11 +679,11 @@ struct NumberingQuery {
 
 async fn project_numbering(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(code): Path<String>,
     Query(q): Query<NumberingQuery>,
 ) -> AppResult<Json<Value>> {
-    let project = projects::get_by_code(&st.db, &code).await?;
+    let project = projects::get_by_code(&st.db, &me, &code).await?;
     let preview = projects::numbering_preview(&st.db, &project, q.scheme.as_deref()).await?;
     Ok(Json(json!(preview)))
 }
@@ -489,7 +700,7 @@ async fn set_project_numbering(
     Path(code): Path<String>,
     ApiJson(body): ApiJson<SetNumbering>,
 ) -> AppResult<Json<Value>> {
-    let project = projects::get_by_code(&st.db, &code).await?;
+    let project = projects::get_by_code(&st.db, &me, &code).await?;
     let project = projects::set_number_scheme(
         &st.db,
         &me,
@@ -521,11 +732,11 @@ struct ItemQuery {
 
 async fn list_items(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Query(q): Query<ItemQuery>,
 ) -> AppResult<Json<Value>> {
     let project_id = match q.project.as_deref().filter(|p| !p.trim().is_empty()) {
-        Some(code) => Some(projects::get_by_code(&st.db, code).await?.id),
+        Some(code) => Some(projects::get_by_code(&st.db, &me, code).await?.id),
         None => None,
     };
     let item_type = match q.item_type.as_deref().filter(|t| !t.is_empty()) {
@@ -559,7 +770,7 @@ async fn list_items(
         system,
     };
     let page = Page::new(q.limit, q.offset);
-    let (rows, total) = items::search(&st.db, &filter, page).await?;
+    let (rows, total) = items::search(&st.db, &me, &filter, page).await?;
     Ok(Json(
         json!({ "items": rows, "total": total, "limit": page.limit, "offset": page.offset }),
     ))
@@ -587,10 +798,12 @@ async fn create_item(
     ApiJson(body): ApiJson<CreateItem>,
 ) -> AppResult<Response> {
     let item_type = ItemType::parse(&body.item_type).ok_or_else(|| {
-        AppError::BadRequest("item_type must be part, assembly, document or software.".into())
+        AppError::BadRequest(
+            "item_type must be part, assembly, document, software or simulation.".into(),
+        )
     })?;
     let project_id = match body.project.as_deref().filter(|p| !p.trim().is_empty()) {
-        Some(code) => Some(projects::get_by_code(&st.db, code).await?.id),
+        Some(code) => Some(projects::get_by_code(&st.db, &me, code).await?.id),
         None => None,
     };
     let rev = items::create(
@@ -617,21 +830,34 @@ async fn get_item(
     ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let item = items::get_by_number(&st.db, &number).await?;
-    let revs = items::revisions(&st.db, item.id).await?;
+    let item = items::get_by_number(&st.db, &me, &number).await?;
+    let revs = items::revisions(&st.db, &me, item.id).await?;
     let watching = notifications::is_watching(&st.db, me.id, "item", item.id).await?;
     Ok(Json(
         json!({ "item": item, "revisions": revs, "watching": watching }),
     ))
 }
 
+#[derive(Deserialize)]
+struct WhereUsedQuery {
+    /// Walk up this many levels (multi-level report with `level` and
+    /// `child_number` per row); without it the single-level list.
+    levels: Option<i32>,
+}
+
 async fn where_used(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(number): Path<String>,
-) -> AppResult<Json<Value>> {
-    let item = items::get_by_number(&st.db, &number).await?;
-    Ok(Json(json!(items::where_used(&st.db, item.id).await?)))
+    Query(q): Query<WhereUsedQuery>,
+) -> AppResult<Response> {
+    let item = items::get_by_number(&st.db, &me, &number).await?;
+    let body = Json(match q.levels {
+        None => json!(items::where_used(&st.db, &me, item.id).await?),
+        Some(levels) => json!(items::where_used_levels(&st.db, &me, item.id, levels).await?),
+    });
+    let hidden = items::hidden_parents(&st.db, &me, item.id).await?;
+    Ok(with_hidden_count(body, hidden))
 }
 
 #[derive(Deserialize)]
@@ -642,43 +868,49 @@ struct HistoryQuery {
 /// Audit log entries of an item and all its revisions, newest first.
 async fn item_history(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(number): Path<String>,
     Query(q): Query<HistoryQuery>,
 ) -> AppResult<Json<Value>> {
-    let item = items::get_by_number(&st.db, &number).await?;
-    let mut ids: Vec<uuid::Uuid> = items::revisions(&st.db, item.id)
+    let item = items::get_by_number(&st.db, &me, &number).await?;
+    let mut ids: Vec<uuid::Uuid> = items::revisions(&st.db, &me, item.id)
         .await?
         .iter()
         .map(|r| r.id)
         .collect();
     ids.push(item.id);
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
-    Ok(Json(json!(audit::for_entities(&st.db, &ids, limit).await?)))
+    Ok(Json(json!(
+        audit::for_entities(&st.db, &me, &ids, limit).await?
+    )))
 }
 
 /// Resolves `/items/{number}/revisions/{code}`; `latest` selects the newest revision.
-async fn revision_at(st: &AppState, number: &str, code: &str) -> AppResult<Revision> {
-    let item = items::get_by_number(&st.db, number).await?;
+/// Items the caller may not read answer exactly like unknown numbers.
+async fn revision_at(st: &AppState, me: &Actor, number: &str, code: &str) -> AppResult<Revision> {
+    let item = items::get_by_number(&st.db, me, number).await?;
     if code.eq_ignore_ascii_case("latest") {
-        items::latest_revision(&st.db, item.id).await
+        items::latest_revision(&st.db, me, item.id).await
     } else {
-        revisions::get_by_code(&st.db, item.id, code).await
+        revisions::get_by_code(&st.db, me, item.id, code).await
     }
 }
 
 async fn get_revision(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
-    let attachments = files::list(&st.db, rev.id).await?;
-    let lines = bom::lines(&st.db, rev.id).await?;
-    let rev_changes = changes::for_revision(&st.db, rev.id).await?;
-    Ok(Json(
-        json!({ "revision": rev, "files": attachments, "bom": lines, "changes": rev_changes }),
-    ))
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    let attachments = files::list(&st.db, &me, rev.id).await?;
+    let lines = bom::lines(&st.db, &me, rev.id).await?;
+    let (rev_changes, hidden_changes) = changes::for_revision(&st.db, &me, rev.id).await?;
+    let open_requests = requests::open_for_item(&st.db, &me, rev.item_id).await?;
+    Ok(Json(json!({
+        "revision": rev, "files": attachments, "bom": lines, "changes": rev_changes,
+        "hidden_changes": hidden_changes,
+        "open_requests": open_requests,
+    })))
 }
 
 #[derive(Deserialize)]
@@ -698,7 +930,7 @@ async fn update_revision(
     Path((number, code)): Path<(String, String)>,
     ApiJson(body): ApiJson<UpdateRevision>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let updated = revisions::update(
         &st.db,
         &me,
@@ -720,7 +952,7 @@ async fn checkout(
     ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     Ok(Json(json!(revisions::checkout(&st.db, &me, rev.id).await?)))
 }
 
@@ -733,7 +965,7 @@ async fn checkin(
     Path((number, code)): Path<(String, String)>,
     req: Request,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     if rev.checked_out_by != Some(me.id) {
         return Err(AppError::Conflict(format!(
             "You have not checked out {}.",
@@ -745,7 +977,7 @@ async fn checkin(
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|ct| ct.starts_with("multipart/form-data"));
-    let received = if is_multipart {
+    let mut received = if is_multipart {
         let mut multipart = Multipart::from_request(req, &st)
             .await
             .map_err(|e| AppError::BadRequest(e.body_text()))?;
@@ -753,8 +985,11 @@ async fn checkin(
     } else {
         web::Received::default()
     };
+    // Large files sent before as chunked uploads (field `uploads`).
+    let sessions = web::take_session_uploads(&st, &me, rev.id, &mut received).await?;
     let (rev, stored) =
         files::check_in(&st.db, &me, rev.id, &received.uploads, &received.comment).await?;
+    uploads::forget(&st.db, &st.vault, &sessions).await;
     web::warm_previews(&st, &received.uploads);
     let changed: Vec<Value> = stored
         .iter()
@@ -768,7 +1003,7 @@ async fn cancel_checkout(
     ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     Ok(Json(json!(
         revisions::cancel_checkout(&st.db, &me, rev.id).await?
     )))
@@ -779,7 +1014,7 @@ async fn revise(
     ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Response> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let new_rev = revisions::revise(&st.db, &me, rev.id).await?;
     Ok((StatusCode::CREATED, Json(json!(new_rev))).into_response())
 }
@@ -789,7 +1024,7 @@ async fn obsolete(
     ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     Ok(Json(json!(revisions::obsolete(&st.db, &me, rev.id).await?)))
 }
 
@@ -806,16 +1041,16 @@ struct BomQuery {
 
 async fn get_bom(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<BomQuery>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     if q.expand.unwrap_or(false) {
         let rule = bom_rule(q.rule.as_deref())?;
-        Ok(Json(json!(bom::tree(&st.db, rev.id, rule).await?)))
+        Ok(Json(json!(bom::tree(&st.db, &me, rev.id, rule).await?)))
     } else {
-        Ok(Json(json!(bom::lines(&st.db, rev.id).await?)))
+        Ok(Json(json!(bom::lines(&st.db, &me, rev.id).await?)))
     }
 }
 
@@ -831,13 +1066,13 @@ fn bom_rule(raw: Option<&str>) -> AppResult<RevisionRule> {
 /// The expanded BOM as Excel workbook.
 async fn get_bom_xlsx(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<BomQuery>,
 ) -> AppResult<Response> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let rule = bom_rule(q.rule.as_deref())?;
-    let tree = bom::tree(&st.db, rev.id, rule).await?;
+    let tree = bom::tree(&st.db, &me, rev.id, rule).await?;
     let filename = format!(
         "{}_{}_bom_{}.xlsx",
         rev.item_number,
@@ -864,7 +1099,7 @@ async fn import_bom_into(
     Path((number, code)): Path<(String, String)>,
     mut multipart: Multipart,
 ) -> AppResult<Response> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     bom_import(&st, &me, Some(rev.id), &mut multipart).await
 }
 
@@ -878,7 +1113,7 @@ async fn bom_import(
 ) -> AppResult<Response> {
     let (file, fields) = web::receive_import(multipart).await?;
     let project_id = match fields.get("project").map(|p| p.trim()) {
-        Some(code) if !code.is_empty() => Some(projects::get_by_code(&st.db, code).await?.id),
+        Some(code) if !code.is_empty() => Some(projects::get_by_code(&st.db, me, code).await?.id),
         _ => None,
     };
     let options = web::import_options(&fields, target, project_id)?;
@@ -912,18 +1147,73 @@ struct PackageQuery {
 /// latest otherwise.
 async fn get_package(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<PackageQuery>,
 ) -> AppResult<Response> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     if let Some(r) = q.rule.as_deref().filter(|r| !r.trim().is_empty()) {
         RevisionRule::parse(r).ok_or_else(|| {
             AppError::BadRequest("rule must be latest, released or as_released.".into())
         })?;
     }
     let rule = web::package_rule(q.rule.as_deref(), &rev.state);
-    web::package_response(package::build(&st.db, &st.vault, rev.id, rule).await?)
+    web::package_response(package::build(&st.db, &st.vault, &me, rev.id, rule).await?)
+}
+
+#[derive(Deserialize)]
+struct WorksetQuery {
+    rule: Option<String>,
+    /// `false` leaves out the items found through references inside CAD files.
+    references: Option<bool>,
+}
+
+/// The working set for the desktop "Get": the revision, its multi-level BOM
+/// under a revision rule (default latest) and the items holding the CAD files
+/// they reference – every file with folder, version, SHA-256 and the lock of
+/// its revision.
+async fn get_workset(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<WorksetQuery>,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    let rule = bom_rule(q.rule.as_deref().filter(|r| !r.trim().is_empty()))?;
+    Ok(Json(json!(
+        workset::resolve(&st.db, &me, rev.id, rule, q.references.unwrap_or(true)).await?
+    )))
+}
+
+#[derive(Deserialize)]
+struct SimilarQuery {
+    limit: Option<i64>,
+    /// Compare proportions and shape only.
+    ignore_scale: Option<bool>,
+    /// The 3D file to compare by (default: the STEP model, else the first mesh).
+    file: Option<String>,
+    /// Seconds to wait for a shape signature that is still being computed.
+    wait: Option<u64>,
+}
+
+/// Similar parts by shape (see `services::similar`).
+async fn get_similar(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<SimilarQuery>,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    let options = similar::Options {
+        limit: q.limit.unwrap_or(10).clamp(1, similar::MAX_LIMIT),
+        ignore_scale: q.ignore_scale.unwrap_or(false),
+    };
+    let wait = std::time::Duration::from_secs(q.wait.unwrap_or(30).min(200));
+    let report = similar::for_revision(&st, &me, &rev, q.file.as_deref(), options, wait).await?;
+    let mut out = json!(report);
+    out["item"] = json!(rev.item_number);
+    out["revision"] = json!(rev.code);
+    Ok(Json(out))
 }
 
 #[derive(Deserialize)]
@@ -941,7 +1231,7 @@ async fn add_bom_line(
     Path((number, code)): Path<(String, String)>,
     ApiJson(body): ApiJson<AddBomLine>,
 ) -> AppResult<Response> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let line = bom::add(
         &st.db,
         &me,
@@ -970,7 +1260,7 @@ async fn update_bom_line(
     Path(id): Path<Uuid>,
     ApiJson(body): ApiJson<UpdateBomLine>,
 ) -> AppResult<Json<Value>> {
-    let current = bom::line(&st.db, id).await?;
+    let current = bom::line(&st.db, &me, id).await?;
     let line = bom::update(
         &st.db,
         &me,
@@ -1004,16 +1294,17 @@ async fn delete_bom_line(
 /// files, and the impacts on the item.
 async fn get_references(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     Ok(Json(json!({
-        "outgoing": references::outgoing(&st.db, rev.id).await?,
-        "incoming": references::incoming(&st.db, rev.item_id).await?,
-        "files": references::files_of_revision(&st.db, rev.id).await?,
-        "file_referrers": references::file_referrers(&st.db, rev.id).await?,
-        "impacts": impacts::for_item(&st.db, rev.item_id).await?,
+        "outgoing": references::outgoing(&st.db, &me, rev.id).await?,
+        "incoming": references::incoming(&st.db, &me, rev.item_id).await?,
+        "files": references::files_of_revision(&st.db, &me, rev.id).await?,
+        "file_referrers": references::file_referrers(&st.db, &me, rev.id).await?,
+        "hidden_incoming": references::incoming_hidden(&st.db, &me, rev.item_id).await?,
+        "impacts": impacts::for_item(&st.db, &me, rev.item_id).await?,
     })))
 }
 
@@ -1036,7 +1327,7 @@ async fn add_reference(
     let kind = ReferenceKind::parse(&body.kind).ok_or_else(|| {
         AppError::BadRequest("kind must be drawing, specification or reference.".into())
     })?;
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let reference = references::add(
         &st.db,
         &me,
@@ -1067,11 +1358,11 @@ async fn list_impacts(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppRe
 
 async fn item_impacts(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let item = items::get_by_number(&st.db, &number).await?;
-    Ok(Json(json!(impacts::for_item(&st.db, item.id).await?)))
+    let item = items::get_by_number(&st.db, &me, &number).await?;
+    Ok(Json(json!(impacts::for_item(&st.db, &me, item.id).await?)))
 }
 
 #[derive(Deserialize)]
@@ -1090,19 +1381,48 @@ async fn acknowledge_impact(
     )))
 }
 
+#[derive(Deserialize)]
+struct AcknowledgeAll {
+    note: String,
+    /// Only these impacts (the ones the user saw); all open ones without.
+    #[serde(default)]
+    impacts: Option<Vec<Uuid>>,
+}
+
+/// Acknowledges the open impacts on a dependent revision at once.
+async fn acknowledge_impacts(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    ApiJson(body): ApiJson<AcknowledgeAll>,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    Ok(Json(json!(
+        impacts::acknowledge_all(&st.db, &me, rev.id, body.impacts.as_deref(), &body.note).await?
+    )))
+}
+
 /// Impact analysis of a change: the items that depend on its revisions.
 async fn change_impact(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(number): Path<String>,
-) -> AppResult<Json<Value>> {
-    let change = changes::get_by_number(&st.db, &number).await?;
-    let ids: Vec<Uuid> = changes::items(&st.db, change.id)
-        .await?
-        .iter()
-        .map(|i| i.revision_id)
-        .collect();
-    Ok(Json(json!(impacts::analysis(&st.db, &ids).await?)))
+) -> AppResult<Response> {
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
+    let (dependents, hidden) = changes::impact(&st.db, &me, change.id).await?;
+    Ok(with_hidden_count(Json(json!(dependents)), hidden))
+}
+
+/// A list answer plus `x-hidden-count`: how many entries were left out
+/// because they belong to restricted project groups the caller is not a
+/// member of (the list itself keeps its shape).
+pub(super) fn with_hidden_count(body: Json<Value>, hidden: i64) -> Response {
+    let mut response = body.into_response();
+    response.headers_mut().insert(
+        "x-hidden-count",
+        axum::http::HeaderValue::from(hidden.max(0) as u64),
+    );
+    response
 }
 
 // ---------------------------------------------------------------------------
@@ -1111,11 +1431,11 @@ async fn change_impact(
 
 async fn list_files(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
-    Ok(Json(json!(files::list(&st.db, rev.id).await?)))
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    Ok(Json(json!(files::list(&st.db, &me, rev.id).await?)))
 }
 
 async fn upload_files(
@@ -1124,21 +1444,21 @@ async fn upload_files(
     Path((number, code)): Path<(String, String)>,
     mut multipart: Multipart,
 ) -> AppResult<Response> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let stored = web::upload_files(&st, &me, rev.id, &mut multipart).await?;
     let mut records = Vec::with_capacity(stored.len());
     for s in &stored {
-        records.push(files::get(&st.db, s.file_id).await?);
+        records.push(files::get(&st.db, &me, s.file_id).await?);
     }
     Ok((StatusCode::CREATED, Json(json!(records))).into_response())
 }
 
 async fn file_versions(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Value>> {
-    Ok(Json(json!(files::versions(&st.db, id).await?)))
+    Ok(Json(json!(files::versions(&st.db, &me, id).await?)))
 }
 
 #[derive(Deserialize)]
@@ -1159,19 +1479,19 @@ async fn restore_file(
 
 async fn download_version(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    web::version_response(&st, id).await
+    web::version_response(&st, &me, id).await
 }
 
 /// 3D preview mesh of the current version (binary `TCMESH01`, see `mesh`).
 async fn file_mesh(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let file = files::get(&st.db, id).await?;
+    let file = files::get(&st.db, &me, id).await?;
     let sha = file.sha256.clone();
     web::mesh_response(&st, &file, &sha).await
 }
@@ -1179,37 +1499,55 @@ async fn file_mesh(
 /// 3D preview mesh of a file version.
 async fn version_mesh(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let (version, _) = files::get_version(&st.db, id).await?;
-    let file = files::get(&st.db, version.file_id).await?;
+    let (version, _) = files::get_version(&st.db, &me, id).await?;
+    let file = files::get(&st.db, &me, version.file_id).await?;
     web::mesh_response(&st, &file, &version.sha256).await
 }
 
 async fn file_meta(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Value>> {
-    Ok(Json(json!(files::get(&st.db, id).await?)))
+    Ok(Json(json!(files::get(&st.db, &me, id).await?)))
+}
+
+#[derive(Deserialize)]
+struct UpdateFile {
+    /// Folder inside the project group (`""` = top).
+    folder: String,
+}
+
+/// Changes the folder of a file while its revision is checked out.
+async fn update_file(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+    ApiJson(body): ApiJson<UpdateFile>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(
+        files::set_folder(&st.db, &me, id, &body.folder).await?
+    )))
 }
 
 async fn download(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    web::file_response(&st, id).await
+    web::file_response(&st, &me, id).await
 }
 
 /// The preview image embedded in an Inventor, Solid Edge or SolidWorks file.
 async fn file_thumbnail(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    web::thumbnail_response(&st, id).await
+    web::thumbnail_response(&st, &me, id).await
 }
 
 async fn delete_file(
@@ -1234,7 +1572,7 @@ struct ChangeQuery {
 
 async fn list_changes(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Query(q): Query<ChangeQuery>,
 ) -> AppResult<Json<Value>> {
     let status = match q.status.as_deref().filter(|s| !s.is_empty()) {
@@ -1245,7 +1583,7 @@ async fn list_changes(
         None => None,
     };
     let page = Page::new(q.limit, q.offset);
-    let (rows, total) = changes::list(&st.db, status, page).await?;
+    let (rows, total) = changes::list(&st.db, &me, status, page).await?;
     Ok(Json(
         json!({ "changes": rows, "total": total, "limit": page.limit, "offset": page.offset }),
     ))
@@ -1281,9 +1619,9 @@ async fn create_change(
     Ok((StatusCode::CREATED, Json(json!(change))).into_response())
 }
 
-async fn change_json(st: &AppState, number: &str) -> AppResult<Value> {
-    let change = changes::get_by_number(&st.db, number).await?;
-    let affected = changes::items(&st.db, change.id).await?;
+async fn change_json(st: &AppState, me: &Actor, number: &str) -> AppResult<Value> {
+    let change = changes::get_by_number(&st.db, me, number).await?;
+    let affected = changes::items(&st.db, me, change.id).await?;
     let reviews = changes::reviews(&st.db, change.id).await?;
     Ok(json!({ "change": change, "items": affected, "reviews": reviews }))
 }
@@ -1293,8 +1631,8 @@ async fn get_change(
     ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let mut value = change_json(&st, &number).await?;
-    let change = changes::get_by_number(&st.db, &number).await?;
+    let mut value = change_json(&st, &me, &number).await?;
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
     value["watching"] =
         json!(notifications::is_watching(&st.db, me.id, "change", change.id).await?);
     Ok(Json(value))
@@ -1318,12 +1656,12 @@ async fn list_notifications(
 ) -> AppResult<Json<Value>> {
     let list = notifications::list(
         &st.db,
-        me.id,
+        &me,
         q.unread.unwrap_or(false),
         q.limit.unwrap_or(50),
     )
     .await?;
-    let unread = notifications::unread_count(&st.db, me.id).await?;
+    let unread = notifications::unread_count(&st.db, &me).await?;
     Ok(Json(json!({ "unread": unread, "notifications": list })))
 }
 
@@ -1395,7 +1733,7 @@ async fn test_notification(
 }
 
 async fn list_watches(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
-    Ok(Json(json!(notifications::watched(&st.db, me.id).await?)))
+    Ok(Json(json!(notifications::watched(&st.db, &me).await?)))
 }
 
 async fn watch_item(
@@ -1404,7 +1742,7 @@ async fn watch_item(
     method: axum::http::Method,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let item = items::get_by_number(&st.db, &number).await?;
+    let item = items::get_by_number(&st.db, &me, &number).await?;
     let watching = notifications::set_watch(
         &st.db,
         &me,
@@ -1422,7 +1760,7 @@ async fn watch_change(
     method: axum::http::Method,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let change = changes::get_by_number(&st.db, &number).await?;
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
     let watching = notifications::set_watch(
         &st.db,
         &me,
@@ -1450,12 +1788,12 @@ async fn add_change_item(
     Path(number): Path<String>,
     ApiJson(body): ApiJson<AddChangeItem>,
 ) -> AppResult<Json<Value>> {
-    let change = changes::get_by_number(&st.db, &number).await?;
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
     let rev = match body.revision.as_deref() {
-        Some(code) => revision_at(&st, &body.item, code).await?,
+        Some(code) => revision_at(&st, &me, &body.item, code).await?,
         None => {
-            let item = items::get_by_number(&st.db, &body.item).await?;
-            items::open_revision(&st.db, item.id)
+            let item = items::get_by_number(&st.db, &me, &body.item).await?;
+            items::open_revision(&st.db, &me, item.id)
                 .await?
                 .ok_or_else(|| {
                     AppError::Conflict(format!("{} has no open revision.", item.number))
@@ -1463,7 +1801,7 @@ async fn add_change_item(
         }
     };
     changes::add_item(&st.db, &me, change.id, rev.id).await?;
-    Ok(Json(change_json(&st, &number).await?))
+    Ok(Json(change_json(&st, &me, &number).await?))
 }
 
 #[derive(Deserialize)]
@@ -1477,7 +1815,7 @@ async fn add_change_reviewer(
     Path(number): Path<String>,
     ApiJson(body): ApiJson<AddReviewer>,
 ) -> AppResult<Json<Value>> {
-    let change = changes::get_by_number(&st.db, &number).await?;
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
     if users::find_by_username(&st.db, &body.username)
         .await?
         .is_none()
@@ -1488,20 +1826,43 @@ async fn add_change_reviewer(
         )));
     }
     changes::add_reviewer(&st.db, &me, change.id, &body.username).await?;
-    Ok(Json(change_json(&st, &number).await?))
+    Ok(Json(change_json(&st, &me, &number).await?))
 }
 
 /// The release readiness of a change: unreleased (blocking) and obsolete or
 /// heuristic (warning) dependencies of its revisions.
 async fn change_readiness(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let change = changes::get_by_number(&st.db, &number).await?;
-    let readiness = changes::readiness(&st.db, change.id).await?;
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
+    let readiness = changes::readiness(&st.db, &me, change.id).await?;
     Ok(Json(
         json!({ "ready": readiness.is_ready(), "blockers": readiness.blockers, "warnings": readiness.warnings }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct SuggestQuery {
+    limit: Option<i64>,
+}
+
+/// Who should review the change: ranked users with the reasons.
+async fn change_suggested_reviewers(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(number): Path<String>,
+    Query(q): Query<SuggestQuery>,
+) -> AppResult<Json<Value>> {
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
+    let limit = q
+        .limit
+        .unwrap_or(reviewers::DEFAULT_LIMIT as i64)
+        .clamp(1, reviewers::MAX_LIMIT as i64) as usize;
+    let suggestions = reviewers::suggest(&st.db, &me, change.id, limit).await?;
+    Ok(Json(
+        json!({ "change": change.number, "suggestions": suggestions }),
     ))
 }
 
@@ -1511,9 +1872,9 @@ async fn add_change_dependencies(
     ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let change = changes::get_by_number(&st.db, &number).await?;
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
     let added = changes::add_dependencies(&st.db, &me, change.id).await?;
-    let mut value = change_json(&st, &number).await?;
+    let mut value = change_json(&st, &me, &number).await?;
     value["added"] = json!(added);
     Ok(Json(value))
 }
@@ -1523,9 +1884,9 @@ async fn submit_change(
     ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let change = changes::get_by_number(&st.db, &number).await?;
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
     changes::submit(&st.db, &me, change.id).await?;
-    Ok(Json(change_json(&st, &number).await?))
+    Ok(Json(change_json(&st, &me, &number).await?))
 }
 
 #[derive(Deserialize)]
@@ -1541,12 +1902,12 @@ async fn review_change(
     Path(number): Path<String>,
     ApiJson(body): ApiJson<ReviewBody>,
 ) -> AppResult<Json<Value>> {
-    let change = changes::get_by_number(&st.db, &number).await?;
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
     let decision = Decision::parse(&body.decision)
         .filter(|d| *d != Decision::Pending)
         .ok_or_else(|| AppError::BadRequest("decision must be approve or reject.".into()))?;
     changes::review(&st.db, &me, change.id, decision, &body.comment).await?;
-    Ok(Json(change_json(&st, &number).await?))
+    Ok(Json(change_json(&st, &me, &number).await?))
 }
 
 async fn withdraw_change(
@@ -1554,9 +1915,9 @@ async fn withdraw_change(
     ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let change = changes::get_by_number(&st.db, &number).await?;
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
     changes::withdraw(&st.db, &me, change.id).await?;
-    Ok(Json(change_json(&st, &number).await?))
+    Ok(Json(change_json(&st, &me, &number).await?))
 }
 
 // ---------------------------------------------------------------------------
@@ -1589,7 +1950,7 @@ async fn file_status(
     Path((number, code)): Path<(String, String)>,
     body: axum::body::Bytes,
 ) -> AppResult<Json<Value>> {
-    let rev = revision_at(&st, &number, &code).await?;
+    let rev = revision_at(&st, &me, &number, &code).await?;
     let body: FileStatusBody = optional_json(&body)?.unwrap_or_default();
     Ok(Json(json!(
         checkouts::file_status(&st.db, &me, rev.id, &body.files).await?

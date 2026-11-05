@@ -2,9 +2,10 @@
 
 ## Items and revisions
 
-An **item** is a part, assembly, document or software component with a
-unique number – generated from the numbering scheme of its project group
-(built in: `PRT-000042`, `ASM-…`, `DOC-…`, `SW-…`) or typed in by hand. Its state of development is kept in **revisions** `A, B, …, Y,
+An **item** is a part, assembly, document, software component or simulation
+with a unique number – generated from the numbering scheme of its project
+group (built in: `PRT-000042`, `ASM-…`, `DOC-…`, `SW-…`, `SIM-…`) or typed in
+by hand. Its state of development is kept in **revisions** `A, B, …, Y,
 AA, …` (I, O, Q, S, X and Z are skipped, as in ASME Y14.35). A revision
 carries the attributes (name, description, material, mass, unit cost), the
 files and the bill of materials.
@@ -30,9 +31,9 @@ data never changes – further work happens in a new revision (*Revise*).
 ## Project groups and roles
 
 | Role       | May                                                                                                 |
-|------------|-----------------------------------------------------------------------------------------------------|
-| Viewer     | read everything                                                                                     |
-| CAD editor | create and change items of the project groups they belong to, create project groups, review changes |
+| Viewer     | read internal project groups and the restricted groups they belong to, raise and discuss change requests |
+| Viewer     | read everything, raise and discuss change requests                                                  |
+| CAD editor | create and change items of the project groups they belong to, create project groups, review changes, triage and decide change requests on their groups |
 | Admin      | everything, plus users, all project groups and lock overrides                                       |
 
 Every item belongs to a **project group** – a product or product line, a
@@ -40,6 +41,13 @@ machine, a customer project, a building, a vehicle or a rover. CAD editors start
 managers edit the group and add or remove members. A group can also be bound
 to a group of the identity provider (administrators only); its members are
 then synchronised at every single sign-on.
+
+A group is **internal** (everybody reads it) or **restricted**: then only its
+members – viewers included – and administrators see the group, its items,
+files and the changes about them; for everybody else it does not exist.
+Links from other groups show a *Restricted item* placeholder. Managers switch
+this on the group's page; see
+[Read permissions and restricted groups](../admin/permissions.md).
 
 ## Item numbers
 

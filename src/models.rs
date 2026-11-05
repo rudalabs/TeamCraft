@@ -49,6 +49,14 @@ pub struct Project {
     /// Numbering scheme for generated item numbers (`None` = the built-in
     /// `{TYPE}-{SEQ:6}`), see `domain::NumberScheme`.
     pub number_scheme: Option<String>,
+    /// `internal` or `restricted` (see `domain::ProjectVisibility`).
+    pub visibility: String,
+}
+
+impl Project {
+    pub fn is_restricted(&self) -> bool {
+        self.visibility == crate::domain::ProjectVisibility::Restricted.as_str()
+    }
 }
 
 /// A member of a project group.
@@ -141,6 +149,9 @@ pub struct FileRecord {
     pub version: i32,
     /// Format id (see `cadformat`), `""` if unknown.
     pub format: String,
+    /// Folder inside the project group (`chassis/brackets`, `""` = top);
+    /// the desktop working folder mirrors it.
+    pub folder: String,
     /// Label, CAD program and kind of the format; filled by `files::list` / `files::get`.
     #[sqlx(skip)]
     pub format_info: Option<crate::cadformat::FormatInfo>,
@@ -181,6 +192,35 @@ pub struct BomLine {
     /// Child revision the line resolved to when the parent was released.
     pub released_child_revision_id: Option<Uuid>,
     pub released_child_code: Option<String>,
+    /// Project group of the child (for the read check; never sent).
+    #[sqlx(default)]
+    #[serde(skip)]
+    pub child_project_id: Option<Uuid>,
+    /// Placeholder for a child the reader may not see: find number and
+    /// quantity stay; the child's identity and the notes (they describe the
+    /// hidden child, possibly written by a member) are removed.
+    #[sqlx(default)]
+    pub restricted: bool,
+}
+
+impl BomLine {
+    /// Turns the line into a placeholder for a hidden child.
+    pub fn mask(&mut self) {
+        let label = crate::services::access::RESTRICTED_LABEL;
+        self.child_item_id = Uuid::nil();
+        self.child_number = label.into();
+        self.child_type = String::new();
+        self.child_unit = String::new();
+        self.child_latest_revision_id = Uuid::nil();
+        self.child_latest_code = String::new();
+        self.child_latest_state = String::new();
+        self.child_name = String::new();
+        self.notes = String::new();
+        self.released_child_revision_id = None;
+        self.released_child_code = None;
+        self.child_project_id = None;
+        self.restricted = true;
+    }
 }
 
 /// A parent revision that uses a given item ("where used").
@@ -197,6 +237,18 @@ pub struct WhereUsed {
     pub quantity: f64,
     /// Revision of the item the parent was released with.
     pub released_child_code: Option<String>,
+}
+
+/// One usage in a multi-level where-used report: `child_number` is used in
+/// the parent, which is `level` levels above the item asked about.
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct WhereUsedLevel {
+    pub level: i32,
+    /// The item used in the parent (the item asked about on level 1).
+    pub child_number: String,
+    #[sqlx(flatten)]
+    #[serde(flatten)]
+    pub usage: WhereUsed,
 }
 
 /// A reference of a revision to another item besides the BOM (drawing of,
@@ -218,6 +270,32 @@ pub struct ItemReference {
     pub released_to_revision_id: Option<Uuid>,
     pub released_to_code: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// Project group of the target (for the read check; never sent).
+    #[sqlx(default)]
+    #[serde(skip)]
+    pub to_project_id: Option<Uuid>,
+    /// Placeholder for a target the reader may not see.
+    #[sqlx(default)]
+    pub restricted: bool,
+}
+
+impl ItemReference {
+    /// Turns the reference into a placeholder for a hidden target (the kind
+    /// stays; the note describes the hidden target and is removed).
+    pub fn mask(&mut self) {
+        self.to_item_id = Uuid::nil();
+        self.note = String::new();
+        self.to_number = crate::services::access::RESTRICTED_LABEL.into();
+        self.to_type = String::new();
+        self.to_latest_revision_id = Uuid::nil();
+        self.to_latest_code = String::new();
+        self.to_latest_state = String::new();
+        self.to_name = String::new();
+        self.released_to_revision_id = None;
+        self.released_to_code = None;
+        self.to_project_id = None;
+        self.restricted = true;
+    }
 }
 
 /// A revision that references a given item (the other side of an
@@ -269,6 +347,41 @@ pub struct Impact {
     pub resolution: Option<String>,
     pub resolved_by_name: Option<String>,
     pub note: String,
+    /// Project group of the source item (for the read check; never sent).
+    #[sqlx(default)]
+    #[serde(skip)]
+    pub source_project_id: Option<Uuid>,
+    /// The source is an item the reader may not see: its identity and the
+    /// releasing change are removed ("a restricted item this depends on
+    /// was released").
+    #[sqlx(default)]
+    pub source_restricted: bool,
+}
+
+impl Impact {
+    /// Removes the releasing change order (the reader may not see it).
+    pub fn hide_change(&mut self) {
+        self.change_id = None;
+        self.change_number = None;
+    }
+
+    /// Removes the source when the reader may not see it. The releasing
+    /// change needs a database check of its own (`impacts::redact_all`).
+    pub fn redact(mut self, actor: &crate::auth::Actor) -> Self {
+        if !actor.can_see_project(self.source_project_id) {
+            self.source_item_id = Uuid::nil();
+            self.source_number = crate::services::access::RESTRICTED_LABEL.into();
+            self.source_revision_id = Uuid::nil();
+            self.source_code = String::new();
+            self.source_name = String::new();
+            self.detail = String::new();
+            self.change_id = None;
+            self.change_number = None;
+            self.source_project_id = None;
+            self.source_restricted = true;
+        }
+        self
+    }
 }
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
@@ -297,6 +410,28 @@ pub struct ChangeItem {
     pub name: String,
     pub state: String,
     pub checked_out_by_name: Option<String>,
+    /// Project group of the item (for the read check; never sent).
+    #[sqlx(default)]
+    #[serde(skip)]
+    pub project_id: Option<Uuid>,
+    /// Placeholder for an item the reader may not see: identity removed.
+    #[sqlx(default)]
+    pub restricted: bool,
+}
+
+impl ChangeItem {
+    /// Turns the row into a placeholder for a hidden item.
+    pub fn mask(&mut self) {
+        self.revision_id = Uuid::nil();
+        self.item_id = Uuid::nil();
+        self.item_number = crate::services::access::RESTRICTED_LABEL.into();
+        self.code = String::new();
+        self.name = String::new();
+        self.state = String::new();
+        self.checked_out_by_name = None;
+        self.project_id = None;
+        self.restricted = true;
+    }
 }
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
@@ -307,6 +442,99 @@ pub struct ChangeReview {
     pub decision: String,
     pub comment: String,
     pub decided_at: Option<DateTime<Utc>>,
+}
+
+/// An engineering change request (ECR).
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct ChangeRequest {
+    pub id: Uuid,
+    pub number: String,
+    pub title: String,
+    pub description: String,
+    pub reason: String,
+    pub priority: String,
+    pub status: String,
+    pub requested_by: Uuid,
+    pub requested_by_name: String,
+    pub assignee: Option<Uuid>,
+    pub assignee_name: Option<String>,
+    pub assignee_username: Option<String>,
+    pub decision_comment: String,
+    pub decided_by: Option<Uuid>,
+    pub decided_by_name: Option<String>,
+    pub decided_at: Option<DateTime<Utc>>,
+    pub due_date: Option<chrono::NaiveDate>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub closed_at: Option<DateTime<Utc>>,
+    /// Number of affected items (list views).
+    pub item_count: i64,
+}
+
+/// An item affected by a change request.
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct RequestItem {
+    pub item_id: Uuid,
+    pub item_number: String,
+    pub item_type: String,
+    pub project_id: Option<Uuid>,
+    pub project_code: Option<String>,
+    /// The revision the problem was found in (if given).
+    pub revision_id: Option<Uuid>,
+    pub revision_code: Option<String>,
+    pub revision_state: Option<String>,
+    /// Name, code, state and id of the latest revision.
+    pub name: String,
+    pub latest_revision_id: Uuid,
+    pub latest_code: String,
+    pub latest_state: String,
+    pub note: String,
+    /// Placeholder for an item the reader may not see: identity removed.
+    #[sqlx(default)]
+    pub restricted: bool,
+}
+
+impl RequestItem {
+    /// Turns the row into a placeholder for a hidden item.
+    pub fn mask(&mut self) {
+        self.item_id = Uuid::nil();
+        self.item_number = crate::services::access::RESTRICTED_LABEL.into();
+        self.item_type = String::new();
+        self.project_id = None;
+        self.project_code = None;
+        self.revision_id = None;
+        self.revision_code = None;
+        self.revision_state = None;
+        self.name = String::new();
+        self.latest_revision_id = Uuid::nil();
+        self.latest_code = String::new();
+        self.latest_state = String::new();
+        // the note describes the hidden item (written by a member of its group)
+        self.note = String::new();
+        self.restricted = true;
+    }
+}
+
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct RequestComment {
+    pub id: Uuid,
+    pub author_id: Uuid,
+    pub author_name: String,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct RequestAttachment {
+    pub id: Uuid,
+    pub request_id: Uuid,
+    pub filename: String,
+    pub content_type: String,
+    pub size_bytes: i64,
+    pub sha256: String,
+    pub uploaded_by: Uuid,
+    pub uploaded_by_name: String,
+    pub uploaded_at: DateTime<Utc>,
 }
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
@@ -320,4 +548,12 @@ pub struct AuditEntry {
     pub entity_id: Option<Uuid>,
     pub summary: String,
     pub details: serde_json::Value,
+    /// The entry names an item the reader may not see (then redacted).
+    #[sqlx(default)]
+    #[serde(skip)]
+    pub related_hidden: bool,
+    /// The text names an item or change order the reader may not see.
+    #[sqlx(default)]
+    #[serde(skip)]
+    pub mentions_hidden: bool,
 }

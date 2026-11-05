@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Change requests{% endblock %}
+{% block nav_requests %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Change requests</h1>
+    <p class="subtitle">Problems and ideas from everybody (ECR) – triaged by the CAD editors of the affected project groups, implemented by a change order.</p>
+  </div>
+  <div class="actions">{{ m.new_button("/requests/new", "Request change") }}</div>
+</div>
+
+<div class="card">
+  <form class="inline" method="get" action="/requests">
+    <select name="status" aria-label="Status">
+      <option value="open" {% if filter.status == "open" %}selected{% endif %}>Open</option>
+      <option value="all" {% if filter.status == "all" %}selected{% endif %}>All states</option>
+      {% for s in statuses %}<option value="{{ s.value }}" {% if filter.status == s.value %}selected{% endif %}>{{ s.label }}</option>{% endfor %}
+    </select>
+    <select name="scope" aria-label="Whose">
+      <option value="" {% if not filter.scope %}selected{% endif %}>Everybody's</option>
+      <option value="mine" {% if filter.scope == "mine" %}selected{% endif %}>Raised by me</option>
+      <option value="assigned" {% if filter.scope == "assigned" %}selected{% endif %}>Assigned to me</option>
+    </select>
+    <input type="text" name="item" value="{{ filter.item }}" placeholder="Item number" aria-label="Item number">
+    <button type="submit">Filter</button>
+  </form>
+</div>
+
+<div class="card">
+  {% if requests %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Number</th><th>Title</th><th>Reason</th><th>Priority</th><th>Status</th><th class="num">Items</th><th>Requested by</th><th>Assignee</th><th>Due</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for r in requests %}
+      <tr>
+        <td class="nowrap mono"><a href="/requests/{{ r.id }}">{{ r.number }}</a></td>
+        <td>{{ r.title }}</td>
+        <td class="small nowrap">{{ r.reason|label }}</td>
+        <td>{{ m.badge(r.priority) }}</td>
+        <td>{{ m.badge(r.status) }}</td>
+        <td class="num">{{ r.item_count }}</td>
+        <td class="nowrap">{{ r.requested_by_name }}</td>
+        <td class="nowrap">{{ r.assignee_name or "—" }}</td>
+        <td class="small nowrap">{{ r.due_date or "—" }}</td>
+        <td class="small nowrap">{{ m.time(r.created_at) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {{ m.pager(pagination, base_query) }}
+  {% else %}<p class="empty">No change requests found.</p>{% endif %}
+</div>
+{% endblock %}

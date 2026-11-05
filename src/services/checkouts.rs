@@ -68,6 +68,8 @@ pub struct FileStatus {
     pub version: Option<i32>,
     pub sha256: Option<String>,
     pub size_bytes: Option<i64>,
+    /// Folder inside the project group (`None` for files only in the workspace).
+    pub folder: Option<String>,
     pub uploaded_by_name: Option<String>,
     pub uploaded_at: Option<DateTime<Utc>>,
     /// The local file as the client reported it.
@@ -104,9 +106,9 @@ pub async fn file_status(
     revision_id: Uuid,
     client: &[ClientFile],
 ) -> AppResult<RevisionStatus> {
-    let rev = revisions::get(pool, revision_id).await?;
+    let rev = revisions::get(pool, actor, revision_id).await?;
     let (list, versions) = tokio::try_join!(
-        files::list(pool, revision_id),
+        files::list(pool, actor, revision_id),
         files::versions_of_revision(pool, revision_id)
     )?;
     let mut history: HashMap<Uuid, Vec<(i32, String)>> = HashMap::new();
@@ -158,6 +160,7 @@ pub async fn file_status(
             version: Some(f.version),
             sha256: Some(f.sha256.clone()),
             size_bytes: Some(f.size_bytes),
+            folder: Some(f.folder.clone()),
             uploaded_by_name: Some(f.uploaded_by_name.clone()),
             uploaded_at: Some(f.uploaded_at),
             local_sha256: local_sha,
@@ -179,6 +182,7 @@ pub async fn file_status(
             version: None,
             sha256: None,
             size_bytes: None,
+            folder: None,
             uploaded_by_name: None,
             uploaded_at: None,
             local_sha256: c.sha256.as_deref().map(str::to_ascii_lowercase),
@@ -251,7 +255,7 @@ pub async fn check_in_all(
     only: Option<&[Uuid]>,
 ) -> AppResult<Vec<CheckInOutcome>> {
     actor.require(domain::Role::Editor)?;
-    let mine = revisions::checked_out_by(pool, actor.id).await?;
+    let mine = revisions::checked_out_by(pool, actor).await?;
     let mut outcomes = Vec::new();
     if let Some(ids) = only {
         // Requested revisions that are not (or no longer) checked out by the actor.
@@ -259,7 +263,7 @@ pub async fn check_in_all(
             if mine.iter().any(|r| r.id == *id) {
                 continue;
             }
-            if let Ok(rev) = revisions::get(pool, *id).await {
+            if let Ok(rev) = revisions::get(pool, actor, *id).await {
                 outcomes.push(CheckInOutcome::of(
                     &rev,
                     Err(AppError::Conflict(format!(

@@ -4,6 +4,7 @@
 //! Both the web UI and the REST API call into these functions, so the rules
 //! are enforced identically for both.
 
+pub mod access;
 pub mod assistant;
 pub mod audit;
 pub mod bom;
@@ -23,10 +24,17 @@ pub mod personal;
 pub mod projects;
 pub mod readiness;
 pub mod references;
+pub mod requests;
+pub mod reviewers;
 pub mod revisions;
 pub mod save_as;
+pub mod similar;
+pub mod simulations;
 pub mod stats;
+pub mod uploads;
 pub mod users;
+pub mod webhooks;
+pub mod workset;
 
 use sqlx::PgConnection;
 

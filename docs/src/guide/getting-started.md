@@ -35,7 +35,7 @@ installations and the desktop app:
    password (10+ characters). The form disappears afterwards.
 2. **Projects → New project group**: every item belongs to one. The creator
    manages the group and adds the team members.
-3. **Users** (admins): create accounts for your team, or connect single
+3. **Admin → Users** (admins): create accounts for your team, or connect single
    sign-on (see [Users, roles and SSO](../admin/users.md)).
 4. **Items → New item**: choose the CAD file (s) first – the model, its
    drawing and a STEP export for the 3D preview. Name and type are taken from
@@ -43,6 +43,19 @@ installations and the desktop app:
    created together with its files; its first revision *A* is *in work* and
    checked out to you.
 5. **Check in**, then release it with a change order.
+
+**Appearance:** TeamCraft follows the light or dark appearance of your
+operating system. The menu under your name (top right) and *Account →
+Appearance* switch between *System*, *Light* and *Dark*; choose *Dark* to keep
+the dark look of earlier versions. The distribution skins (Arch, CachyOS,
+EndeavourOS, KDE, Kubuntu, openSUSE, Ubuntu) are dark. The choice is personal
+and also styles the login page in that browser.
+
+**Keyboard:** `/` or `Ctrl+K` (`⌘K`) jumps to the search field. The single-key
+`/` can be switched off under *Account → Appearance → Keyboard* (per browser).
+
+Keyboard: `/` jumps to the search field (on the vault explorer: to its
+filter); in menus, `Esc` closes and the arrow keys move.
 
 On a server that is reachable from other machines, create the first
 administrator from the command line instead:
@@ -61,4 +74,6 @@ teamcraft user create --username admin --role admin      # prompts for the passw
 | `teamcraft user set-password --username U`                                         | reset a password                             |
 | `teamcraft user list`                                                              | all accounts                                 |
 | `teamcraft vault check [--verify-hashes]`                                          | every stored file present (and intact)?      |
+| `teamcraft rescan-references [--format id]`                                        | read stored CAD file references again        |
+| `teamcraft vault signatures [--convert]`                                           | shape signatures for the similar part search |
 | `teamcraft healthcheck`                                                            | exit 0 when the server answers on `/healthz` |

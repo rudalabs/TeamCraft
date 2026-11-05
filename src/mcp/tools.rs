@@ -6,8 +6,10 @@
 //! long lists are capped and flagged with `truncated`.
 //!
 //! Writes only prepare work: a draft change order and its affected
-//! revisions. Submitting, reviewing, releasing and making obsolete are not
-//! offered – those decisions stay with people.
+//! revisions, a new change request (which every signed-in user may raise)
+//! and comments on one. Submitting, reviewing, releasing, making obsolete
+//! and triaging or deciding change requests are not offered – those
+//! decisions stay with people.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -15,12 +17,15 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     auth::Actor,
-    domain::{ChangeStatus, ItemType, LifecycleState, Priority, RevisionRule, Role},
+    domain::{
+        ChangeStatus, ItemType, LifecycleState, Priority, RequestReason, RequestStatus,
+        RevisionRule, Role,
+    },
     error::{AppError, AppResult},
-    models::{BomLine, Change, FileRecord, Revision},
+    models::{BomLine, Change, ChangeRequest, FileRecord, Revision},
     services::{
         audit, bom, changes, files, impacts, insights, items, notifications, projects, references,
-        revisions, Page,
+        requests, reviewers, revisions, similar, simulations, Page,
     },
     AppState,
 };
@@ -33,6 +38,18 @@ pub const MAX_LIST: usize = 500;
 pub const MAX_TEXT_BYTES: usize = 1024 * 1024;
 /// Most item references in one `create_change_draft` / `add_to_change` call.
 const MAX_CHANGE_ITEMS: usize = 100;
+/// Most simulations in one `list_simulations` result without `item` (each
+/// costs two queries).
+const MAX_SIMULATIONS: usize = 50;
+/// Newest comments of a change request in one result.
+const MAX_COMMENTS: usize = 100;
+/// Longest comment and request description (as the services allow).
+const MAX_COMMENT_CHARS: usize = 10_000;
+const MAX_REQUEST_TEXT: usize = 20_000;
+/// History entries of a change request in one result.
+const REQUEST_HISTORY: i64 = 50;
+/// Open change requests and simulations shown with an item or revision.
+const MAX_RELATED: usize = 50;
 
 // ---------------------------------------------------------------------------
 // Definitions
@@ -95,10 +112,11 @@ const TOOLS: &[Tool] = &[
     Tool {
         name: "where_used",
         title: "Where used",
-        description: "The parent revisions whose BOM uses an item (single level), with quantity and the \
-            revision they were released with.",
+        description: "The parent revisions whose BOM uses an item, with quantity and the revision they were \
+            released with. `levels` > 1 walks further up (parents of parents); every row names its level \
+            and the item used on that line (`via`).",
         effect: READ,
-        schema: schema_item,
+        schema: schema_where_used,
     },
     Tool {
         name: "item_history",
@@ -125,11 +143,22 @@ const TOOLS: &[Tool] = &[
         schema: schema_change,
     },
     Tool {
+        name: "suggest_reviewers",
+        title: "Suggest reviewers",
+        description: "Use when preparing or reviewing a change order to propose who should review it: \
+            ranked CAD editors and admins with plain reasons (recent edits of the affected items, reviews of \
+            earlier changes on the same items, owners of dependents, project group managers, requesters of \
+            linked change requests). Excludes the author, deactivated users and assigned reviewers. Never \
+            assigns anybody – the author adds reviewers in TeamCraft.",
+        effect: READ,
+        schema: schema_suggest_reviewers,
+    },
+    Tool {
         name: "my_worklist",
         title: "My worklist",
         description: "What is waiting for the signed-in user: own check-outs, reviews waiting for a \
-            decision, open impacts (dependents to check) in their project groups, own open change orders \
-            and the number of unread notifications.",
+            decision, open impacts (dependents to check) in their project groups, own open change orders, \
+            open change requests assigned to or raised by them and the number of unread notifications.",
         effect: READ,
         schema: schema_none,
     },
@@ -151,6 +180,20 @@ const TOOLS: &[Tool] = &[
         schema: schema_duplicates,
     },
     Tool {
+        name: "find_similar_parts",
+        title: "Find similar parts",
+        description: "Parts whose 3D model has a similar shape and size – \"do we already have a part like \
+            this?\". Use it before creating a new item or a create_change_draft for a new part, to reuse an \
+            existing one instead of a near-duplicate; find_duplicate_files finds only identical contents. \
+            Compares the revision's STEP or mesh file (or `file`) with the latest revisions of all other \
+            items by oriented bounding box extents and a D2 shape distribution; each hit has a score (0–100), \
+            its shape and size parts and a one-line explanation. ignore_scale=true compares proportions \
+            only (scaled variants). Status `no_shape_file`: the revision has no STEP or mesh file; \
+            `pending`: the signature is still being computed, call again shortly.",
+        effect: READ,
+        schema: schema_similar,
+    },
+    Tool {
         name: "compare_revisions",
         title: "Compare two revisions",
         description: "What changed between two revisions of an item: attributes, files added, removed or \
@@ -158,6 +201,56 @@ const TOOLS: &[Tool] = &[
             Defaults: to = latest, from = the revision before `to`.",
         effect: READ,
         schema: schema_compare,
+    },
+    Tool {
+        name: "list_change_requests",
+        title: "List change requests",
+        description: "Engineering change requests (ECR: reported problems and proposed changes before a \
+            change order), newest first. Filters: status (a status, `open` = not finished, or `all`), scope \
+            (`mine` = raised by the user, `assigned` = assigned to the user) and item (requests naming it).",
+        effect: READ,
+        schema: schema_list_requests,
+    },
+    Tool {
+        name: "get_change_request",
+        title: "Change request details",
+        description: "A change request with its description, affected items (with the revision the problem \
+            was found in and the latest state), the discussion (newest 100 comments, oldest first), \
+            attachments (names and sizes, no contents), the change orders implementing it, its history \
+            (newest 50 entries, newest first) and what the signed-in user may do with it (`you_may` – for \
+            the user in TeamCraft; the tools cannot triage or decide).",
+        effect: READ,
+        schema: schema_request,
+    },
+    Tool {
+        name: "list_simulations",
+        title: "List simulations",
+        description: "Simulations (FEA, CFD, … items of type simulation) with an `out_of_date` reason per \
+            basis. With `item`: the simulations whose latest revision is based on that part or assembly, \
+            with result and failure counts, whether a check is open and only their bases on that item \
+            (get_simulation shows all). Without: simulation items (filter by text and project group, at most \
+            50 checked) with their latest revision's bases and pass/fail summary. out_of_date_only=true keeps \
+            only those that no longer match their bases (with `item`: their bases on that item).",
+        effect: READ,
+        schema: schema_list_simulations,
+    },
+    Tool {
+        name: "get_simulation",
+        title: "Simulation details",
+        description: "One simulation revision: its basis links (item revision and file version it was \
+            computed with, role, and why it is out of date: newer release, obsolete basis or newer file \
+            version) and its result values with unit, limits, load case, solver and pass/fail.",
+        effect: READ,
+        schema: schema_revision,
+    },
+    Tool {
+        name: "compare_simulation_results",
+        title: "Compare simulation results",
+        description: "Result values of two revisions of a simulation matched by name and load case: added, \
+            removed, changed (with delta and percent) and unchanged, with pass/fail on both sides. \
+            Defaults: to = latest, from = the revision before `to`.",
+        effect: READ,
+        schema: schema_compare_results,
     },
     Tool {
         name: "create_change_draft",
@@ -176,6 +269,24 @@ const TOOLS: &[Tool] = &[
             change orders, optionally with their unreleased dependencies. Returns the release readiness.",
         effect: Effect::Write { idempotent: true },
         schema: schema_add_to_change,
+    },
+    Tool {
+        name: "create_change_request",
+        title: "Raise a change request",
+        description: "Raises an engineering change request (ECR): a reported problem or proposed \
+            improvement on items, before any change order. Every signed-in user may raise one. It starts as \
+            `new`; CAD editors of the affected project groups triage, accept or reject it in TeamCraft – this \
+            tool never decides. Create it only when the user asks for it.",
+        effect: Effect::Write { idempotent: false },
+        schema: schema_create_request,
+    },
+    Tool {
+        name: "comment_change_request",
+        title: "Comment on a change request",
+        description: "Adds a comment to the discussion of a change request in the user's name (the \
+            requester, assignee and watchers are notified). Post only text the user asked to post.",
+        effect: Effect::Write { idempotent: false },
+        schema: schema_comment_request,
     },
 ];
 
@@ -256,7 +367,7 @@ fn schema_search_items() -> Value {
     object(
         json!({
             "q": { "type": "string", "description": "Search text (number, name, material, file name or content)" },
-            "type": { "type": "string", "enum": ["part", "assembly", "document", "software"] },
+            "type": { "type": "string", "enum": ["part", "assembly", "document", "software", "simulation"] },
             "project": { "type": "string", "description": "Project group code, e.g. ROVER" },
             "state": { "type": "string", "enum": ["in_work", "in_review", "released", "obsolete"], "description": "State of the latest revision" },
             "system": { "type": "string", "description": "CAD program with files in the latest revision, e.g. solidworks, nx, creo, inventor, freecad" },
@@ -280,6 +391,16 @@ fn schema_revision() -> Value {
 fn schema_bom() -> Value {
     object(
         json!({ "item": p_item(), "revision": p_revision(), "rule": p_rule() }),
+        &["item"],
+    )
+}
+
+fn schema_where_used() -> Value {
+    object(
+        json!({
+            "item": p_item(),
+            "levels": p_limit(1, i64::from(items::MAX_WHERE_USED_LEVELS)),
+        }),
         &["item"],
     )
 }
@@ -308,6 +429,16 @@ fn schema_change() -> Value {
     )
 }
 
+fn schema_suggest_reviewers() -> Value {
+    object(
+        json!({
+            "change": { "type": "string", "description": "Change number, e.g. ECO-000004" },
+            "limit": p_limit(reviewers::DEFAULT_LIMIT as i64, reviewers::MAX_LIMIT as i64),
+        }),
+        &["change"],
+    )
+}
+
 fn schema_duplicates() -> Value {
     object(
         json!({
@@ -316,6 +447,19 @@ fn schema_duplicates() -> Value {
             "limit": p_limit(100, 1000),
         }),
         &[],
+    )
+}
+
+fn schema_similar() -> Value {
+    object(
+        json!({
+            "item": { "type": "string", "description": "Item number, e.g. PRT-000012 (or PRT-000012/B)" },
+            "revision": p_revision(),
+            "file": { "type": "string", "description": "File name of the 3D model to compare by (default: the STEP file, else the first mesh)" },
+            "ignore_scale": { "type": "boolean", "description": "Compare proportions and shape only (default false)" },
+            "limit": p_limit(10, 50),
+        }),
+        &["item"],
     )
 }
 
@@ -351,6 +495,105 @@ fn schema_add_to_change() -> Value {
             "include_dependencies": { "type": "boolean", "default": false },
         }),
         &["change"],
+    )
+}
+
+/// Status filter of `list_change_requests`: every status plus `open` and `all`.
+const REQUEST_STATUS_FILTERS: &[&str] = &[
+    "open",
+    "all",
+    "new",
+    "in_triage",
+    "accepted",
+    "rejected",
+    "deferred",
+    "implemented",
+    "withdrawn",
+];
+
+const REQUEST_REASONS: &[&str] = &[
+    "defect",
+    "improvement",
+    "cost",
+    "manufacturing",
+    "supplier",
+    "safety",
+    "customer",
+    "other",
+];
+
+fn p_request() -> Value {
+    json!({ "type": "string", "description": "Change request number, e.g. ECR-000004" })
+}
+
+fn schema_list_requests() -> Value {
+    object(
+        json!({
+            "status": { "type": "string", "enum": REQUEST_STATUS_FILTERS, "default": "all" },
+            "scope": { "type": "string", "enum": ["mine", "assigned"], "description": "mine = raised by me, assigned = assigned to me" },
+            "item": { "type": "string", "description": "Only requests that name this item number" },
+            "limit": p_limit(20, 100),
+        }),
+        &[],
+    )
+}
+
+fn schema_request() -> Value {
+    object(json!({ "request": p_request() }), &["request"])
+}
+
+fn schema_create_request() -> Value {
+    object(
+        json!({
+            "title": { "type": "string", "maxLength": 200, "description": "The problem in one line" },
+            "description": { "type": "string", "maxLength": MAX_REQUEST_TEXT, "description": "Problem, where it was found and the proposed solution" },
+            "reason": { "type": "string", "enum": REQUEST_REASONS, "default": "other" },
+            "priority": { "type": "string", "enum": ["low", "normal", "high", "critical"], "default": "normal" },
+            "due_date": { "type": "string", "format": "date", "description": "Wanted by (YYYY-MM-DD), optional" },
+            "items": {
+                "type": "array",
+                "items": { "type": "string" },
+                "maxItems": requests::MAX_ITEMS,
+                "description": "Affected item numbers, optionally with the revision the problem was found in: \
+                    PRT-000012 or PRT-000012/B",
+            },
+        }),
+        &["title"],
+    )
+}
+
+fn schema_comment_request() -> Value {
+    object(
+        json!({
+            "request": p_request(),
+            "body": { "type": "string", "maxLength": MAX_COMMENT_CHARS },
+        }),
+        &["request", "body"],
+    )
+}
+
+fn schema_compare_results() -> Value {
+    object(
+        json!({
+            "item": { "type": "string", "description": "Simulation number, e.g. SIM-000003" },
+            "from": { "type": "string", "description": "Older revision code (default: the one before `to`)" },
+            "to": { "type": "string", "description": "Newer revision code or `latest` (default)" },
+            "changes_only": { "type": "boolean", "default": false, "description": "Leave out unchanged values" },
+        }),
+        &["item"],
+    )
+}
+
+fn schema_list_simulations() -> Value {
+    object(
+        json!({
+            "item": { "type": "string", "description": "Part or assembly number: the simulations based on it" },
+            "q": { "type": "string", "description": "Without item: search text for simulation items" },
+            "project": { "type": "string", "description": "Without item: project group code" },
+            "out_of_date_only": { "type": "boolean", "default": false },
+            "limit": p_limit(20, MAX_SIMULATIONS as i64),
+        }),
+        &[],
     )
 }
 
@@ -538,20 +781,29 @@ pub fn parse_item_ref(s: &str) -> (String, Option<String>) {
 pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value {
     let a = Args::new(args);
     let result = match name {
-        "search_items" => search_items(st, &a).await,
-        "get_item" => get_item(st, &a).await,
-        "get_revision" => get_revision(st, &a).await,
-        "get_bom" => get_bom(st, &a).await,
-        "where_used" => where_used(st, &a).await,
-        "item_history" => item_history(st, &a).await,
-        "list_changes" => list_changes(st, &a).await,
-        "get_change" => get_change(st, &a).await,
+        "search_items" => search_items(st, me, &a).await,
+        "get_item" => get_item(st, me, &a).await,
+        "get_revision" => get_revision(st, me, &a).await,
+        "get_bom" => get_bom(st, me, &a).await,
+        "where_used" => where_used(st, me, &a).await,
+        "item_history" => item_history(st, me, &a).await,
+        "list_changes" => list_changes(st, me, &a).await,
+        "get_change" => get_change(st, me, &a).await,
+        "suggest_reviewers" => suggest_reviewers(st, me, &a).await,
         "my_worklist" => my_worklist(st, me).await,
-        "bom_health" => bom_health(st, &a).await,
-        "find_duplicate_files" => find_duplicate_files(st, &a).await,
-        "compare_revisions" => compare_revisions(st, &a).await,
+        "bom_health" => bom_health(st, me, &a).await,
+        "find_duplicate_files" => find_duplicate_files(st, me, &a).await,
+        "find_similar_parts" => find_similar_parts(st, me, &a).await,
+        "compare_revisions" => compare_revisions(st, me, &a).await,
         "create_change_draft" => create_change_draft(st, me, &a).await,
         "add_to_change" => add_to_change(st, me, &a).await,
+        "list_change_requests" => list_change_requests(st, me, &a).await,
+        "get_change_request" => get_change_request(st, me, &a).await,
+        "create_change_request" => create_change_request(st, me, &a).await,
+        "comment_change_request" => comment_change_request(st, me, &a).await,
+        "list_simulations" => list_simulations(st, me, &a).await,
+        "get_simulation" => get_simulation(st, me, &a).await,
+        "compare_simulation_results" => compare_simulation_results(st, me, &a).await,
         _ => Err(bad(format!("Unknown tool `{name}`."))),
     };
     match result {
@@ -639,6 +891,7 @@ fn bom_line_brief(l: &BomLine) -> Value {
         "latest_state": l.child_latest_state,
         "released_with": l.released_child_code,
         "notes": l.notes,
+        "restricted": l.restricted,
     })
 }
 
@@ -651,36 +904,43 @@ fn web_url(st: &AppState, path: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// A revision by item number and code; `None` or `latest` = the newest.
-async fn revision_at(st: &AppState, number: &str, code: Option<&str>) -> AppResult<Revision> {
-    let item = items::get_by_number(&st.db, number).await?;
+async fn revision_at(
+    st: &AppState,
+    me: &Actor,
+    number: &str,
+    code: Option<&str>,
+) -> AppResult<Revision> {
+    let item = items::get_by_number(&st.db, me, number).await?;
     match code {
-        None => items::latest_revision(&st.db, item.id).await,
+        None => items::latest_revision(&st.db, me, item.id).await,
         Some(c) if c.eq_ignore_ascii_case("latest") => {
-            items::latest_revision(&st.db, item.id).await
+            items::latest_revision(&st.db, me, item.id).await
         }
-        Some(c) => revisions::get_by_code(&st.db, item.id, c).await,
+        Some(c) => revisions::get_by_code(&st.db, me, item.id, c).await,
     }
 }
 
-async fn revision_arg(st: &AppState, a: &Args<'_>) -> AppResult<Revision> {
+async fn revision_arg(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Revision> {
     let number = a.req_str("item")?;
-    revision_at(st, &number, a.opt_str("revision")?.as_deref()).await
+    revision_at(st, me, &number, a.opt_str("revision")?.as_deref()).await
 }
 
 /// The revision a change order should carry: the given code, or the item's
 /// in-work revision.
-async fn change_revision(st: &AppState, reference: &str) -> AppResult<Revision> {
+async fn change_revision(st: &AppState, me: &Actor, reference: &str) -> AppResult<Revision> {
     let (number, code) = parse_item_ref(reference);
     match code {
-        Some(code) => revision_at(st, &number, Some(&code)).await,
+        Some(code) => revision_at(st, me, &number, Some(&code)).await,
         None => {
-            let item = items::get_by_number(&st.db, &number).await?;
-            items::open_revision(&st.db, item.id).await?.ok_or_else(|| {
-                AppError::Conflict(format!(
-                    "{} has no in-work revision; revise it first.",
-                    item.number
-                ))
-            })
+            let item = items::get_by_number(&st.db, me, &number).await?;
+            items::open_revision(&st.db, me, item.id)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Conflict(format!(
+                        "{} has no in-work revision; revise it first.",
+                        item.number
+                    ))
+                })
         }
     }
 }
@@ -698,9 +958,9 @@ fn default_rule(rev: &Revision) -> RevisionRule {
 // Read tools
 // ---------------------------------------------------------------------------
 
-async fn search_items(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
+async fn search_items(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
     let project_id = match a.opt_str("project")? {
-        Some(code) => Some(projects::get_by_code(&st.db, &code).await?.id),
+        Some(code) => Some(projects::get_by_code(&st.db, me, &code).await?.id),
         None => None,
     };
     let item_type = a
@@ -708,7 +968,7 @@ async fn search_items(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
         .map(|t| {
             ItemType::parse(&t).ok_or_else(|| {
                 bad(format!(
-                    "Unknown item type '{t}' (part, assembly, document, software)."
+                    "Unknown item type '{t}' (part, assembly, document, software, simulation)."
                 ))
             })
         })
@@ -736,7 +996,7 @@ async fn search_items(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
         state,
         system,
     };
-    let (rows, total) = items::search(&st.db, &filter, Page::new(Some(limit), None)).await?;
+    let (rows, total) = items::search(&st.db, me, &filter, Page::new(Some(limit), None)).await?;
     let list: Vec<Value> = rows
         .iter()
         .map(|r| {
@@ -759,9 +1019,15 @@ async fn search_items(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn get_item(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let item = items::get_by_number(&st.db, &a.req_str("item")?).await?;
-    let revs = items::revisions(&st.db, item.id).await?;
+async fn get_item(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let item = items::get_by_number(&st.db, me, &a.req_str("item")?).await?;
+    let revs = items::revisions(&st.db, me, item.id).await?;
+    let (open_requests, requests_cut) = open_requests_of(st, me, item.id).await?;
+    let (based, based_cut) = if item.item_type == ItemType::Simulation.as_str() {
+        (Vec::new(), false)
+    } else {
+        simulations_of(st, me, item.id).await?
+    };
     Ok(json!({
         "item": {
             "number": item.number,
@@ -779,22 +1045,40 @@ async fn get_item(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
             "created_at": r.created_at,
             "released_at": r.released_at,
         })).collect::<Vec<_>>(),
+        "open_change_requests": open_requests,
+        "simulations": based,
+        "truncated": requests_cut || based_cut,
         "url": web_url(st, &format!("/items/{}", item.id)),
     }))
 }
 
-async fn get_revision(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let rev = revision_arg(st, a).await?;
-    let (file_list, files_cut) = capped(files::list(&st.db, rev.id).await?, MAX_LIST);
-    let (lines, bom_cut) = capped(bom::lines(&st.db, rev.id).await?, MAX_BOM_ROWS);
-    let outgoing = references::outgoing(&st.db, rev.id).await?;
-    let (incoming, incoming_cut) =
-        capped(references::incoming(&st.db, rev.item_id).await?, MAX_LIST);
-    let (cad, cad_cut) = capped(
-        references::files_of_revision(&st.db, rev.id).await?,
+async fn get_revision(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let rev = revision_arg(st, me, a).await?;
+    let (file_list, files_cut) = capped(files::list(&st.db, me, rev.id).await?, MAX_LIST);
+    let (lines, bom_cut) = capped(bom::lines(&st.db, me, rev.id).await?, MAX_BOM_ROWS);
+    let outgoing = references::outgoing(&st.db, me, rev.id).await?;
+    let (incoming, incoming_cut) = capped(
+        references::incoming(&st.db, me, rev.item_id).await?,
         MAX_LIST,
     );
-    let rev_changes = changes::for_revision(&st.db, rev.id).await?;
+    let (cad, cad_cut) = capped(
+        references::files_of_revision(&st.db, me, rev.id).await?,
+        MAX_LIST,
+    );
+    let (rev_changes, _) = changes::for_revision(&st.db, me, rev.id).await?;
+    let (open_requests, requests_cut) = open_requests_of(st, me, rev.item_id).await?;
+    // A simulation shows what it is based on; anything else the
+    // simulations based on it.
+    let (simulation, based, based_cut) = if rev.item_type == ItemType::Simulation.as_str() {
+        (
+            Some(simulation_state(st, me, &rev).await?),
+            Vec::new(),
+            false,
+        )
+    } else {
+        let (based, cut) = simulations_of(st, me, rev.item_id).await?;
+        (None, based, cut)
+    };
     Ok(json!({
         "revision": rev_full(&rev),
         "files": file_list.iter().map(file_brief).collect::<Vec<_>>(),
@@ -829,15 +1113,18 @@ async fn get_revision(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
         "changes": rev_changes.iter().map(change_brief).collect::<Vec<_>>(),
-        "truncated": files_cut || bom_cut || incoming_cut || cad_cut,
+        "open_change_requests": open_requests,
+        "simulation": simulation,
+        "simulations": based,
+        "truncated": files_cut || bom_cut || incoming_cut || cad_cut || requests_cut || based_cut,
         "url": web_url(st, &format!("/items/{}", rev.item_id)),
     }))
 }
 
-async fn get_bom(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let rev = revision_arg(st, a).await?;
+async fn get_bom(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let rev = revision_arg(st, me, a).await?;
     let rule = a.rule()?.unwrap_or_else(|| default_rule(&rev));
-    let tree = bom::tree(&st.db, rev.id, rule).await?;
+    let tree = bom::tree(&st.db, me, rev.id, rule).await?;
     let (rows, truncated) = capped(bom::flatten(&tree.children), MAX_BOM_ROWS);
     let rows: Vec<Value> = rows
         .iter()
@@ -850,7 +1137,8 @@ async fn get_bom(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
                 "name": n.revision.as_ref().map(|r| r.name.clone()),
                 "type": n.item_type,
                 "revision": n.revision.as_ref().map(|r| r.code.clone()),
-                "state": n.revision.as_ref().map_or("unresolved", |r| r.state.as_str()),
+                "state": n.revision.as_ref().map_or(if n.restricted { "restricted" } else { "unresolved" }, |r| r.state.as_str()),
+                "restricted": n.restricted,
                 "quantity": n.quantity,
                 "unit": n.unit,
                 "unit_mass_kg": n.unit_mass_kg,
@@ -868,6 +1156,8 @@ async fn get_bom(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
         "rule": rule.as_str(),
         "line_count": tree.line_count,
         "unresolved_count": tree.unresolved_count,
+        "restricted_lines": tree.restricted_lines,
+        "rollup_incomplete": tree.rollup_incomplete,
         "total_mass_kg": tree.total_mass_kg,
         "mass_complete": tree.mass_complete,
         "total_cost": tree.total_cost,
@@ -877,12 +1167,19 @@ async fn get_bom(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn where_used(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let item = items::get_by_number(&st.db, &a.req_str("item")?).await?;
-    let (parents, truncated) = capped(items::where_used(&st.db, item.id).await?, MAX_LIST);
+async fn where_used(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let item = items::get_by_number(&st.db, me, &a.req_str("item")?).await?;
+    let levels = a.limit("levels", 1, i64::from(items::MAX_WHERE_USED_LEVELS))?;
+    let rows = items::where_used_levels(&st.db, me, item.id, levels as i32).await?;
+    let hidden_parents = items::hidden_parents(&st.db, me, item.id).await?;
+    let (rows, truncated) = capped(rows, MAX_LIST);
     Ok(json!({
         "item": item.number,
-        "used_in": parents.iter().map(|p| json!({
+        "levels": levels,
+        "hidden_parents": hidden_parents,
+        "used_in": rows.iter().map(|row| (row.level, &row.child_number, &row.usage)).map(|(level, via, p)| json!({
+            "level": level,
+            "via": via,
             "item": p.parent_number,
             "revision": p.parent_code,
             "name": p.parent_name,
@@ -895,16 +1192,16 @@ async fn where_used(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn item_history(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let item = items::get_by_number(&st.db, &a.req_str("item")?).await?;
+async fn item_history(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let item = items::get_by_number(&st.db, me, &a.req_str("item")?).await?;
     let limit = a.limit("limit", 50, 200)?;
-    let mut ids: Vec<uuid::Uuid> = items::revisions(&st.db, item.id)
+    let mut ids: Vec<uuid::Uuid> = items::revisions(&st.db, me, item.id)
         .await?
         .iter()
         .map(|r| r.id)
         .collect();
     ids.push(item.id);
-    let entries = audit::for_entities(&st.db, &ids, limit).await?;
+    let entries = audit::for_entities(&st.db, me, &ids, limit).await?;
     Ok(json!({
         "item": item.number,
         "entries": entries.iter().map(|e| json!({
@@ -916,13 +1213,13 @@ async fn item_history(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
     }))
 }
 
-async fn list_changes(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
+async fn list_changes(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
     let status = a
         .opt_str("status")?
         .map(|s| ChangeStatus::parse(&s).ok_or_else(|| bad(format!("Unknown status '{s}'."))))
         .transpose()?;
     let limit = a.limit("limit", 20, 100)?;
-    let (rows, total) = changes::list(&st.db, status, Page::new(Some(limit), None)).await?;
+    let (rows, total) = changes::list(&st.db, me, status, Page::new(Some(limit), None)).await?;
     Ok(json!({
         "total": total,
         "truncated": total > rows.len() as i64,
@@ -946,10 +1243,15 @@ fn dependency_brief(d: &crate::services::readiness::Dependency) -> Value {
 
 /// A change order with its revisions, reviews and release readiness, and
 /// optionally the impact analysis.
-async fn change_overview(st: &AppState, change: &Change, with_impact: bool) -> AppResult<Value> {
-    let affected = changes::items(&st.db, change.id).await?;
+async fn change_overview(
+    st: &AppState,
+    me: &Actor,
+    change: &Change,
+    with_impact: bool,
+) -> AppResult<Value> {
+    let affected = changes::items(&st.db, me, change.id).await?;
     let reviews = changes::reviews(&st.db, change.id).await?;
-    let readiness = changes::readiness(&st.db, change.id).await?;
+    let readiness = changes::readiness(&st.db, me, change.id).await?;
     let mut value = json!({
         "change": change_brief(change),
         "description": change.description,
@@ -975,8 +1277,8 @@ async fn change_overview(st: &AppState, change: &Change, with_impact: bool) -> A
         "url": web_url(st, &format!("/changes/{}", change.id)),
     });
     if with_impact {
-        let ids: Vec<uuid::Uuid> = affected.iter().map(|i| i.revision_id).collect();
-        let (deps, truncated) = capped(impacts::analysis(&st.db, &ids).await?, MAX_LIST);
+        let (deps, hidden) = changes::impact(&st.db, me, change.id).await?;
+        let (deps, truncated) = capped(deps, MAX_LIST);
         value["impact"] = json!({
             "dependents": deps.iter().map(|d| json!({
                 "level": d.level,
@@ -989,22 +1291,47 @@ async fn change_overview(st: &AppState, change: &Change, with_impact: bool) -> A
                 "in_change": d.in_change,
             })).collect::<Vec<_>>(),
             "truncated": truncated,
+            "hidden_dependents": hidden,
         });
     }
     Ok(value)
 }
 
-async fn get_change(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let change = changes::get_by_number(&st.db, &a.req_str("change")?).await?;
-    change_overview(st, &change, true).await
+async fn get_change(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let change = changes::get_by_number(&st.db, me, &a.req_str("change")?).await?;
+    change_overview(st, me, &change, true).await
+}
+
+async fn suggest_reviewers(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let change = changes::get_by_number(&st.db, me, &a.req_str("change")?).await?;
+    let limit = a.limit(
+        "limit",
+        reviewers::DEFAULT_LIMIT as i64,
+        reviewers::MAX_LIMIT as i64,
+    )?;
+    let suggestions = reviewers::suggest(&st.db, me, change.id, limit as usize).await?;
+    Ok(json!({
+        "change": change.number,
+        "status": change.status,
+        "suggestions": suggestions.iter().map(|s| json!({
+            "username": s.username,
+            "name": s.display_name,
+            "role": s.role,
+            "score": s.score,
+            "reasons": s.reasons,
+        })).collect::<Vec<_>>(),
+        "note": "Suggestions only; reviewers are added by the author of the change in TeamCraft.",
+    }))
 }
 
 async fn my_worklist(st: &AppState, me: &Actor) -> AppResult<Value> {
-    let checkouts = revisions::checked_out_by(&st.db, me.id).await?;
-    let reviews = changes::pending_reviews(&st.db, me.id).await?;
+    let checkouts = revisions::checked_out_by(&st.db, me).await?;
+    let reviews = changes::pending_reviews(&st.db, me).await?;
     let (open_impacts, impacts_cut) = capped(impacts::open_for(&st.db, me).await?, MAX_LIST);
-    let mine = changes::open_by(&st.db, me.id).await?;
-    let unread = notifications::unread_count(&st.db, me.id).await?;
+    let mine = changes::open_by(&st.db, me).await?;
+    let unread = notifications::unread_count(&st.db, me).await?;
+    let (assigned, assigned_cut) = capped(requests::assigned_to(&st.db, me).await?, MAX_LIST);
+    let (raised, raised_cut) = capped(requests::open_by(&st.db, me).await?, MAX_LIST);
     Ok(json!({
         "user": { "username": me.username, "name": me.display_name, "role": me.role.as_str() },
         "checkouts": checkouts.iter().map(|r| {
@@ -1025,14 +1352,17 @@ async fn my_worklist(st: &AppState, me: &Actor) -> AppResult<Value> {
         })).collect::<Vec<_>>(),
         "open_impacts_truncated": impacts_cut,
         "my_open_changes": mine.iter().map(change_brief).collect::<Vec<_>>(),
+        "change_requests_assigned": assigned.iter().map(request_brief).collect::<Vec<_>>(),
+        "my_open_change_requests": raised.iter().map(request_brief).collect::<Vec<_>>(),
+        "change_requests_truncated": assigned_cut || raised_cut,
         "notifications_unread": unread,
     }))
 }
 
-async fn bom_health(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let rev = revision_arg(st, a).await?;
+async fn bom_health(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let rev = revision_arg(st, me, a).await?;
     let rule = a.rule()?.unwrap_or_else(|| default_rule(&rev));
-    Ok(json!(insights::bom_health(&st.db, rev.id, rule).await?))
+    Ok(json!(insights::bom_health(&st.db, me, rev.id, rule).await?))
 }
 
 /// Duplicate contents grouped by SHA-256 (largest first, as returned).
@@ -1064,17 +1394,65 @@ pub fn group_duplicates(rows: &[insights::DuplicateFile]) -> Vec<Value> {
         .collect()
 }
 
-async fn find_duplicate_files(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
+async fn find_duplicate_files(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
     let limit = a.limit("limit", 100, 1000)?;
     let revision = match a.opt_str("item")? {
-        Some(number) => Some(revision_at(st, &number, a.opt_str("revision")?.as_deref()).await?),
+        Some(number) => {
+            Some(revision_at(st, me, &number, a.opt_str("revision")?.as_deref()).await?)
+        }
         None => None,
     };
-    let rows = insights::duplicate_files(&st.db, revision.as_ref().map(|r| r.id), limit).await?;
+    let rows =
+        insights::duplicate_files(&st.db, me, revision.as_ref().map(|r| r.id), limit).await?;
     Ok(json!({
         "scope": revision.as_ref().map(revisions::label),
         "groups": group_duplicates(&rows),
         "truncated": rows.len() as i64 >= limit,
+    }))
+}
+
+async fn find_similar_parts(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let (number, code) = parse_item_ref(&a.req_str("item")?);
+    let code = match a.opt_str("revision")? {
+        Some(c) => Some(c),
+        None => code,
+    };
+    let rev = revision_at(st, me, &number, code.as_deref()).await?;
+    let options = similar::Options {
+        limit: a.limit("limit", 10, similar::MAX_LIMIT)?,
+        ignore_scale: a.flag("ignore_scale", false)?,
+    };
+    let file = a.opt_str("file")?;
+    let report = similar::for_revision(
+        st,
+        me,
+        &rev,
+        file.as_deref(),
+        options,
+        std::time::Duration::from_secs(60),
+    )
+    .await?;
+    Ok(json!({
+        "source": revisions::label(&rev),
+        "status": report.status,
+        "message": report.message,
+        "file": report.source.as_ref().map(|s| &s.filename),
+        "signature": report.signature,
+        "ignore_scale": report.ignore_scale,
+        "similar": report.candidates.iter().map(|c| json!({
+            "item": c.item_number,
+            "revision": c.revision_code,
+            "name": c.name,
+            "type": c.item_type,
+            "state": c.state,
+            "project": c.project_code,
+            "file": c.filename,
+            "score": c.score,
+            "shape": c.shape,
+            "size": c.size,
+            "identical": c.identical,
+            "explanation": c.explanation,
+        })).collect::<Vec<_>>(),
     }))
 }
 
@@ -1260,16 +1638,18 @@ pub fn compare(old: &Snapshot, new: &Snapshot) -> Value {
     })
 }
 
-async fn snapshot(st: &AppState, rev: &Revision) -> AppResult<Snapshot> {
-    let file_list = files::list(&st.db, rev.id).await?;
-    let lines = bom::lines(&st.db, rev.id).await?;
+async fn snapshot(st: &AppState, me: &Actor, rev: &Revision) -> AppResult<Snapshot> {
+    let file_list = files::list(&st.db, me, rev.id).await?;
+    let lines = bom::lines(&st.db, me, rev.id).await?;
     Ok(Snapshot::of(rev, &file_list, &lines))
 }
 
-async fn compare_revisions(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
-    let item = items::get_by_number(&st.db, &a.req_str("item")?).await?;
+/// The two revisions of `item` a comparison is about: `to` (default the
+/// latest) and `from` (default the revision before `to`).
+async fn revision_pair(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<(Revision, Revision)> {
+    let item = items::get_by_number(&st.db, me, &a.req_str("item")?).await?;
     // newest first
-    let revs = items::revisions(&st.db, item.id).await?;
+    let revs = items::revisions(&st.db, me, item.id).await?;
     let find = |code: &str| {
         revs.iter()
             .find(|r| r.code.eq_ignore_ascii_case(code))
@@ -1290,12 +1670,429 @@ async fn compare_revisions(st: &AppState, a: &Args<'_>) -> AppResult<Value> {
             ))
         })?,
     };
-    let old = snapshot(st, from).await?;
-    let new = snapshot(st, to).await?;
+    Ok((from.clone(), to.clone()))
+}
+
+async fn compare_revisions(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let (from, to) = revision_pair(st, me, a).await?;
+    let (from, to) = (&from, &to);
+    let old = snapshot(st, me, from).await?;
+    let new = snapshot(st, me, to).await?;
     let mut value = compare(&old, &new);
     value["from_state"] = json!(from.state);
     value["to_state"] = json!(to.state);
     Ok(value)
+}
+
+// ---------------------------------------------------------------------------
+// Change requests
+// ---------------------------------------------------------------------------
+
+fn request_brief(r: &ChangeRequest) -> Value {
+    json!({
+        "number": r.number,
+        "title": r.title,
+        "status": r.status,
+        "reason": r.reason,
+        "priority": r.priority,
+        "requested_by": r.requested_by_name,
+        "assignee": r.assignee_name,
+        "due_date": r.due_date,
+        "item_count": r.item_count,
+        "created_at": r.created_at,
+        "updated_at": r.updated_at,
+        "closed_at": r.closed_at,
+    })
+}
+
+/// The `status` argument of `list_change_requests`: a status, `open` (not
+/// finished) or `all` (default) → (status filter, open only).
+pub fn request_status_filter(raw: Option<&str>) -> AppResult<(Option<RequestStatus>, bool)> {
+    match raw.map(str::trim).unwrap_or("all") {
+        "" | "all" => Ok((None, false)),
+        "open" => Ok((None, true)),
+        s => RequestStatus::parse(s)
+            .map(|status| (Some(status), false))
+            .ok_or_else(|| {
+                bad(format!(
+                    "Unknown status '{s}' ({}).",
+                    REQUEST_STATUS_FILTERS.join(", ")
+                ))
+            }),
+    }
+}
+
+/// The `scope` argument: `mine` → (requested by me, –), `assigned` →
+/// (–, assigned to me), none → no filter.
+pub fn request_scope(
+    raw: Option<&str>,
+    me: uuid::Uuid,
+) -> AppResult<(Option<uuid::Uuid>, Option<uuid::Uuid>)> {
+    match raw.map(str::trim).unwrap_or("") {
+        "" => Ok((None, None)),
+        "mine" => Ok((Some(me), None)),
+        "assigned" => Ok((None, Some(me))),
+        s => Err(bad(format!("Unknown scope '{s}' (mine or assigned)."))),
+    }
+}
+
+/// Keeps the newest `max` entries of a list ordered oldest first.
+fn newest<T>(mut list: Vec<T>, max: usize) -> (Vec<T>, bool) {
+    let truncated = list.len() > max;
+    if truncated {
+        list.drain(..list.len() - max);
+    }
+    (list, truncated)
+}
+
+async fn list_change_requests(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let (status, open_only) = request_status_filter(a.opt_str("status")?.as_deref())?;
+    let (requested_by, assignee) = request_scope(a.opt_str("scope")?.as_deref(), me.id)?;
+    let item_id = match a.opt_str("item")? {
+        Some(number) => Some(items::get_by_number(&st.db, me, &number).await?.id),
+        None => None,
+    };
+    let limit = a.limit("limit", 20, 100)?;
+    let filter = requests::RequestFilter {
+        status,
+        open_only,
+        requested_by,
+        assignee,
+        item_id,
+    };
+    let (rows, total) = requests::list(&st.db, me, &filter, Page::new(Some(limit), None)).await?;
+    Ok(json!({
+        "total": total,
+        "truncated": total > rows.len() as i64,
+        "change_requests": rows.iter().map(request_brief).collect::<Vec<_>>(),
+    }))
+}
+
+/// A change request with everything an assistant needs to discuss it.
+async fn request_overview(st: &AppState, me: &Actor, request: &ChangeRequest) -> AppResult<Value> {
+    let id = request.id;
+    let ids = [id];
+    let (affected, comments, attachments, linked, history, can) = tokio::try_join!(
+        requests::items(&st.db, me, id),
+        requests::comments(&st.db, id),
+        requests::attachments(&st.db, id),
+        requests::linked_changes(&st.db, me, id),
+        // one more than shown tells whether older entries exist
+        audit::for_entities(&st.db, me, &ids, REQUEST_HISTORY + 1),
+        requests::abilities_of(&st.db, me, request),
+    )?;
+    let (comments, comments_cut) = newest(comments, MAX_COMMENTS);
+    let (history, history_cut) = capped(history, REQUEST_HISTORY as usize);
+    let mut brief = request_brief(request);
+    brief["description"] = json!(request.description);
+    if request.decided_at.is_some() {
+        brief["decision"] = json!({
+            "by": request.decided_by_name,
+            "at": request.decided_at,
+            "comment": request.decision_comment,
+        });
+    }
+    Ok(json!({
+        "change_request": brief,
+        "items": affected.iter().map(|i| json!({
+            "item": i.item_number,
+            "name": i.name,
+            "type": i.item_type,
+            "project": i.project_code,
+            "found_in_revision": i.revision_code,
+            "found_in_state": i.revision_state,
+            "latest_revision": i.latest_code,
+            "latest_state": i.latest_state,
+            "note": i.note,
+        })).collect::<Vec<_>>(),
+        "comments": comments.iter().map(|c| json!({
+            "author": c.author_name,
+            "at": c.created_at,
+            "body": c.body,
+        })).collect::<Vec<_>>(),
+        "comments_truncated": comments_cut,
+        "attachments": attachments.iter().map(|f| json!({
+            "filename": f.filename,
+            "content_type": f.content_type,
+            "size_bytes": f.size_bytes,
+            "uploaded_by": f.uploaded_by_name,
+            "uploaded_at": f.uploaded_at,
+        })).collect::<Vec<_>>(),
+        "changes": linked.0.iter().map(change_brief).collect::<Vec<_>>(),
+        "hidden_changes": linked.1,
+        "history": history.iter().map(|e| json!({
+            "at": e.at,
+            "user": e.username,
+            "action": e.action,
+            "summary": e.summary,
+        })).collect::<Vec<_>>(),
+        "history_truncated": history_cut,
+        "you_may": can,
+        "url": web_url(st, &format!("/requests/{}", request.id)),
+    }))
+}
+
+async fn get_change_request(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let request = requests::get_by_number(&st.db, me, &a.req_str("request")?).await?;
+    request_overview(st, me, &request).await
+}
+
+/// Open change requests on an item, for `get_item` / `get_revision`.
+async fn open_requests_of(
+    st: &AppState,
+    me: &Actor,
+    item_id: uuid::Uuid,
+) -> AppResult<(Vec<Value>, bool)> {
+    let (rows, cut) = capped(
+        requests::open_for_item(&st.db, me, item_id).await?,
+        MAX_RELATED,
+    );
+    Ok((rows.iter().map(request_brief).collect(), cut))
+}
+
+// ---------------------------------------------------------------------------
+// Simulations
+// ---------------------------------------------------------------------------
+
+fn basis_brief(b: &simulations::SimulationBasis) -> Value {
+    json!({
+        "role": b.role,
+        "item": b.basis_number,
+        "revision": b.basis_code,
+        "name": b.basis_name,
+        "type": b.basis_type,
+        "state": b.basis_state,
+        "file": (!b.file_name.is_empty()).then_some(&b.file_name),
+        "file_version": b.file_version,
+        "file_current_version": b.file_current_version,
+        "newest_released_revision": b.released_code,
+        "note": b.note,
+        "out_of_date": b.out_of_date,
+    })
+}
+
+fn result_brief(r: &simulations::SimulationResult) -> Value {
+    json!({
+        "name": r.name,
+        "value": r.value,
+        "unit": r.unit,
+        "lower_limit": r.lower_limit,
+        "upper_limit": r.upper_limit,
+        "load_case": r.load_case,
+        "status": r.status.map(|s| s.as_str()),
+        "solver": r.solver,
+        "solver_version": r.solver_version,
+        "note": r.note,
+    })
+}
+
+/// The basis links of one simulation, grouped (the service returns one row
+/// per link, ordered by simulation number).
+pub fn group_based(rows: &[simulations::BasedSimulation]) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for row in rows {
+        let same = out
+            .last()
+            .is_some_and(|v| v["simulation"] == row.simulation_number.as_str());
+        if !same {
+            out.push(json!({
+                "simulation": row.simulation_number,
+                "revision": row.simulation_code,
+                "name": row.simulation_name,
+                "state": row.simulation_state,
+                "result_count": row.result_count,
+                "failed_count": row.failed_count,
+                "check_open": false,
+                "out_of_date": false,
+                "bases": [],
+            }));
+        }
+        let entry = out.last_mut().expect("pushed above");
+        if row.open_impact_id.is_some() {
+            entry["check_open"] = json!(true);
+        }
+        if row.basis.out_of_date.is_some() {
+            entry["out_of_date"] = json!(true);
+        }
+        if let Some(bases) = entry["bases"].as_array_mut() {
+            bases.push(basis_brief(&row.basis));
+        }
+    }
+    out
+}
+
+/// Simulations based on an item, for `get_item` / `get_revision`.
+async fn simulations_of(
+    st: &AppState,
+    me: &Actor,
+    item_id: uuid::Uuid,
+) -> AppResult<(Vec<Value>, bool)> {
+    let (rows, _) = simulations::based_on_item(&st.db, me, item_id).await?;
+    Ok(capped(group_based(&rows), MAX_RELATED))
+}
+
+fn ensure_simulation(rev: &Revision) -> AppResult<()> {
+    if rev.item_type == ItemType::Simulation.as_str() {
+        Ok(())
+    } else {
+        Err(bad(format!(
+            "{} is a {}, not a simulation; list_simulations with item={} lists the simulations based on it.",
+            revisions::label(rev),
+            rev.item_type,
+            rev.item_number
+        )))
+    }
+}
+
+/// Basis links and results of a simulation revision.
+async fn simulation_state(st: &AppState, me: &Actor, rev: &Revision) -> AppResult<Value> {
+    let (bases, results) = tokio::try_join!(
+        simulations::bases(&st.db, me, rev.id),
+        simulations::results(&st.db, me, rev.id),
+    )?;
+    let reasons: Vec<&String> = bases
+        .iter()
+        .filter_map(|b| b.out_of_date.as_ref())
+        .collect();
+    let (shown, results_cut) = capped(results.iter().collect::<Vec<_>>(), simulations::MAX_RESULTS);
+    Ok(json!({
+        "out_of_date": !reasons.is_empty(),
+        "out_of_date_reasons": reasons,
+        "summary": simulations::summarize(&results),
+        "bases": bases.iter().map(basis_brief).collect::<Vec<_>>(),
+        "results": shown.into_iter().map(result_brief).collect::<Vec<_>>(),
+        "results_truncated": results_cut,
+    }))
+}
+
+async fn list_simulations(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let out_of_date_only = a.flag("out_of_date_only", false)?;
+    let limit = a.limit("limit", 20, MAX_SIMULATIONS as i64)? as usize;
+    if let Some(number) = a.opt_str("item")? {
+        let item = items::get_by_number(&st.db, me, &number).await?;
+        let (rows, _) = simulations::based_on_item(&st.db, me, item.id).await?;
+        let mut list = group_based(&rows);
+        if out_of_date_only {
+            list.retain(|s| s["out_of_date"] == true);
+        }
+        let (list, truncated) = capped(list, limit);
+        let mut value = json!({
+            "based_on": item.number,
+            "simulations": list,
+            "truncated": truncated,
+        });
+        if item.item_type == ItemType::Simulation.as_str() {
+            value["hint"] = json!(format!(
+                "{} is itself a simulation: get_simulation shows its bases and results.",
+                item.number
+            ));
+        }
+        return Ok(value);
+    }
+    let project_id = match a.opt_str("project")? {
+        Some(code) => Some(projects::get_by_code(&st.db, me, &code).await?.id),
+        None => None,
+    };
+    // With the filter every simulation up to the cap is checked.
+    let scan = if out_of_date_only {
+        MAX_SIMULATIONS
+    } else {
+        limit
+    };
+    let filter = items::ItemFilter {
+        query: a.opt_str("q")?,
+        item_type: Some(ItemType::Simulation),
+        project_id,
+        state: None,
+        system: None,
+    };
+    let (rows, total) =
+        items::search(&st.db, me, &filter, Page::new(Some(scan as i64), None)).await?;
+    let mut list = Vec::new();
+    for sim in &rows {
+        let (bases, results) = tokio::try_join!(
+            simulations::bases(&st.db, me, sim.latest_revision_id),
+            simulations::results(&st.db, me, sim.latest_revision_id),
+        )?;
+        let reasons: Vec<String> = bases.iter().filter_map(|b| b.out_of_date.clone()).collect();
+        if out_of_date_only && reasons.is_empty() {
+            continue;
+        }
+        list.push(json!({
+            "simulation": sim.number,
+            "revision": sim.latest_code,
+            "name": sim.name,
+            "state": sim.latest_state,
+            "project": sim.project_code,
+            "out_of_date": !reasons.is_empty(),
+            "out_of_date_reasons": reasons,
+            "based_on": bases.iter().map(|b| format!("{}/{}", b.basis_number, b.basis_code)).collect::<Vec<_>>(),
+            "results": simulations::summarize(&results),
+        }));
+    }
+    let (list, cut) = capped(list, limit);
+    Ok(json!({
+        "total_simulations": total,
+        "checked": rows.len(),
+        "simulations": list,
+        "truncated": cut || total > rows.len() as i64,
+    }))
+}
+
+async fn get_simulation(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let rev = revision_arg(st, me, a).await?;
+    ensure_simulation(&rev)?;
+    let mut value = simulation_state(st, me, &rev).await?;
+    value["simulation"] = rev_brief(&rev);
+    value["url"] = json!(web_url(st, &format!("/items/{}", rev.item_id)));
+    Ok(value)
+}
+
+/// One matched result value of [`simulations::compare_results`].
+pub fn diff_brief(d: &simulations::ResultDiff) -> Value {
+    let side = |r: &Option<simulations::SimulationResult>| {
+        r.as_ref().map(|r| {
+            json!({
+                "value": r.value,
+                "unit": r.unit,
+                "lower_limit": r.lower_limit,
+                "upper_limit": r.upper_limit,
+                "status": r.status.map(|s| s.as_str()),
+            })
+        })
+    };
+    json!({
+        "change": d.change,
+        "name": d.name,
+        "load_case": d.load_case,
+        "unit": d.unit,
+        "before": side(&d.before),
+        "after": side(&d.after),
+        "delta": d.delta,
+        "delta_percent": d.delta_percent.map(|p| (p * 100.0).round() / 100.0),
+    })
+}
+
+async fn compare_simulation_results(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let (from, to) = revision_pair(st, me, a).await?;
+    ensure_simulation(&to)?;
+    let changes_only = a.flag("changes_only", false)?;
+    let diffs = simulations::compare(&st.db, &from, &to).await?;
+    let summary = simulations::compare_summary(&diffs);
+    let shown: Vec<&simulations::ResultDiff> = diffs
+        .iter()
+        .filter(|d| !changes_only || d.change != crate::services::bom_compare::Change::Unchanged)
+        .collect();
+    let (shown, truncated) = capped(shown, simulations::MAX_RESULTS);
+    Ok(json!({
+        "from": revisions::label(&from),
+        "to": revisions::label(&to),
+        "from_state": from.state,
+        "to_state": to.state,
+        "summary": summary,
+        "diffs": shown.into_iter().map(diff_brief).collect::<Vec<_>>(),
+        "truncated": truncated,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1314,11 +2111,11 @@ fn with_context(e: AppError, prefix: &str) -> AppError {
 }
 
 /// Resolves the item references of a call, each revision once.
-async fn change_revisions(st: &AppState, refs: &[String]) -> AppResult<Vec<Revision>> {
+async fn change_revisions(st: &AppState, me: &Actor, refs: &[String]) -> AppResult<Vec<Revision>> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for r in refs {
-        let rev = change_revision(st, r).await?;
+        let rev = change_revision(st, me, r).await?;
         if seen.insert(rev.id) {
             out.push(rev);
         }
@@ -1369,7 +2166,7 @@ async fn create_change_draft(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResu
     let with_dependencies = a.flag("include_dependencies", true)?;
     // Everything that can be checked up front is, so that a mistake does
     // not even create a draft.
-    let revs = change_revisions(st, &refs).await?;
+    let revs = change_revisions(st, me, &refs).await?;
     for rev in &revs {
         revisions::ensure_project_access(rev, me)?;
     }
@@ -1398,15 +2195,15 @@ async fn create_change_draft(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResu
             ));
         }
     };
-    let change = changes::get(&st.db, change.id).await?;
-    let mut value = change_overview(st, &change, false).await?;
+    let change = changes::get(&st.db, me, change.id).await?;
+    let mut value = change_overview(st, me, &change, false).await?;
     value["added_dependencies"] = json!(dependencies);
     value["next_steps"] = json!(NEXT_STEPS);
     Ok(value)
 }
 
 async fn add_to_change(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
-    let change = changes::get_by_number(&st.db, &a.req_str("change")?).await?;
+    let change = changes::get_by_number(&st.db, me, &a.req_str("change")?).await?;
     let refs = a.list("items", MAX_CHANGE_ITEMS)?;
     let with_dependencies = a.flag("include_dependencies", false)?;
     if refs.is_empty() && !with_dependencies {
@@ -1414,13 +2211,102 @@ async fn add_to_change(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Val
             "Give `items` to add, or include_dependencies=true to add the unreleased dependencies.",
         ));
     }
-    let revs = change_revisions(st, &refs).await?;
+    let revs = change_revisions(st, me, &refs).await?;
     let dependencies = fill_change(st, me, &change, &revs, with_dependencies).await?;
-    let change = changes::get(&st.db, change.id).await?;
-    let mut value = change_overview(st, &change, false).await?;
+    let change = changes::get(&st.db, me, change.id).await?;
+    let mut value = change_overview(st, me, &change, false).await?;
     value["added_dependencies"] = json!(dependencies);
     value["next_steps"] = json!(NEXT_STEPS);
     Ok(value)
+}
+
+pub fn request_reason(raw: Option<&str>) -> AppResult<RequestReason> {
+    let raw = raw
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("other");
+    RequestReason::parse(raw).ok_or_else(|| {
+        bad(format!(
+            "Unknown reason '{raw}' ({}).",
+            REQUEST_REASONS.join(", ")
+        ))
+    })
+}
+
+/// An affected item of a new request: `PRT-000012` or `PRT-000012/B`.
+async fn affected_item(
+    st: &AppState,
+    me: &Actor,
+    reference: &str,
+) -> AppResult<requests::AffectedItem> {
+    let (number, code) = parse_item_ref(reference);
+    Ok(match code {
+        Some(code) => {
+            let rev = revision_at(st, me, &number, Some(&code)).await?;
+            requests::AffectedItem {
+                item_id: rev.item_id,
+                revision_id: Some(rev.id),
+                note: String::new(),
+            }
+        }
+        None => requests::AffectedItem {
+            item_id: items::get_by_number(&st.db, me, &number).await?.id,
+            revision_id: None,
+            note: String::new(),
+        },
+    })
+}
+
+const REQUEST_NEXT_STEPS: &str = "The change request is new. CAD editors of the affected project groups \
+    triage it in TeamCraft and accept, defer or reject it; an accepted request is implemented by a change \
+    order. The assistant cannot decide it.";
+
+async fn create_change_request(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let title = a.req_str("title")?;
+    let description = a.opt_str("description")?.unwrap_or_default();
+    let reason = request_reason(a.opt_str("reason")?.as_deref())?;
+    let priority = a.opt_str("priority")?.unwrap_or_else(|| "normal".into());
+    let priority = Priority::parse(&priority)
+        .ok_or_else(|| bad("priority must be low, normal, high or critical."))?;
+    let due_date = requests::parse_due_date(a.opt_str("due_date")?.as_deref())?;
+    let refs = a.list("items", requests::MAX_ITEMS as usize)?;
+    // Resolve every item before anything is written.
+    let mut affected = Vec::with_capacity(refs.len());
+    for r in &refs {
+        affected.push(affected_item(st, me, r).await?);
+    }
+    let request = requests::create(
+        &st.db,
+        me,
+        requests::RequestInput {
+            title,
+            description,
+            reason,
+            priority,
+            due_date,
+        },
+        affected,
+    )
+    .await?;
+    let mut value = request_overview(st, me, &request).await?;
+    value["next_steps"] = json!(REQUEST_NEXT_STEPS);
+    Ok(value)
+}
+
+async fn comment_change_request(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let request = requests::get_by_number(&st.db, me, &a.req_str("request")?).await?;
+    let body = a.req_str("body")?;
+    let comment = requests::comment(&st.db, me, request.id, &body).await?;
+    Ok(json!({
+        "change_request": request.number,
+        "status": request.status,
+        "comment": {
+            "author": comment.author_name,
+            "at": comment.created_at,
+            "body": comment.body,
+        },
+        "url": web_url(st, &format!("/requests/{}", request.id)),
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -1465,6 +2351,29 @@ const PROMPTS: &[Prompt] = &[
         title: "Worklist triage",
         description: "Orders what is waiting for me into a short to-do list.",
         arguments: &[],
+    },
+    Prompt {
+        name: "triage_requests",
+        title: "Prepare request triage",
+        description:
+            "Summarises the open change requests assigned to me (and new unassigned ones) so I \
+            can triage them; the decisions stay mine.",
+        arguments: &[],
+    },
+    Prompt {
+        name: "simulation_status",
+        title: "Simulation status",
+        description:
+            "Whether the simulations of a part or assembly – or one simulation – still match \
+            their bases, and how the results look.",
+        arguments: &[
+            (
+                "item",
+                "Part, assembly or simulation number, e.g. SIM-000003",
+                true,
+            ),
+            ("revision", "Revision code (default: latest)", false),
+        ],
     },
 ];
 
@@ -1524,9 +2433,11 @@ pub fn prompt(name: &str, args: &Value) -> Result<Value, String> {
                  1. Call get_change with change={change}.\n\
                  2. For each revision in it, call compare_revisions (item, to=its revision) to see what it changes; \
                  for assemblies also call bom_health with rule=released.\n\
+                 3. Call suggest_reviewers with change={change} to see who else knows the affected items.\n\
                  Produce a concise review for an engineer: Scope (what is released, in one line each); Risks (readiness \
                  blockers and warnings, dependents from the impact analysis that are not in the change, check-outs, \
-                 missing files or mass); Questions for the author; a suggestion whether it looks ready. The decision \
+                 missing files or mass); Questions for the author; people who should also look at it (only from \
+                 suggest_reviewers, with its reason; it never assigns them); a suggestion whether it looks ready. The decision \
                  (approve or reject) is mine – you cannot and should not make it."
             )
         }
@@ -1537,8 +2448,11 @@ pub fn prompt(name: &str, args: &Value) -> Result<Value, String> {
                  1. Call get_revision for {item}/{revision}.\n\
                  2. Call bom_health with item={item}, revision={revision}, rule=released.\n\
                  3. Call find_duplicate_files with item={item}, revision={revision}.\n\
+                 4. If it is a new part (revision A), call find_similar_parts with item={item}, revision={revision} for \
+                 existing parts of nearly the same shape (score 90 or more).\n\
                  Produce a checklist: Blocking (must be fixed or released together: unreleased or unresolved BOM lines and \
-                 references, check-outs) and Warnings (missing mass or files, obsolete parts, duplicate files, open \
+                 references, check-outs) and Warnings (missing mass or files, obsolete parts, duplicate files, near-duplicate \
+                 existing parts, open \
                  checks). End with the items a change order would need. Offer to draft it with create_change_draft, but \
                  only create it if I say so."
             )
@@ -1549,6 +2463,33 @@ pub fn prompt(name: &str, args: &Value) -> Result<Value, String> {
              cancel), then my own change orders that are drafts or were rejected. One line per entry with the item or \
              change number and the next action. Say plainly if there is nothing to do."
             .to_string(),
+        "triage_requests" => "Prepare the triage of my TeamCraft change requests.\n\
+             1. Call list_change_requests with scope=assigned and status=open.\n\
+             2. Call list_change_requests with status=new for requests nobody has looked at yet.\n\
+             3. For each request found (at most 10, highest priority and oldest due date first), call \
+             get_change_request; for an affected item that looks central, call get_item for its state, open \
+             change orders and simulations.\n\
+             Produce one short block per request: number and title; the problem in one sentence; affected items \
+             with their latest state; what the discussion already settled and what is open; duplicates or \
+             related requests; a suggested next step (ask the requester, check a simulation, candidate for \
+             accepting, deferring or rejecting – with the reason). You cannot triage, accept, defer or reject: \
+             those decisions are mine and are made in TeamCraft. Say plainly if there is nothing to triage."
+            .to_string(),
+        "simulation_status" => {
+            let item = arg("item").unwrap_or_default();
+            format!(
+                "Report the simulation status of {item} revision {revision} in TeamCraft.\n\
+                 1. Call get_item with item={item}. If it is a simulation, call get_simulation with item={item} \
+                 and revision={revision}, and compare_simulation_results with item={item} and to={revision} when \
+                 there is an earlier revision.\n\
+                 2. Otherwise call list_simulations with item={item}, then get_simulation for each simulation \
+                 that is out of date or has failed results.\n\
+                 Produce: a table of the simulations (number, revision, state, up to date or the out-of-date \
+                 reason, results passed/failed); then the failed values with value, limit and load case; then \
+                 what changed in the results between the revisions, if compared; then a recommendation which \
+                 simulations need to be re-run or re-checked. Do not invent values the data does not give."
+            )
+        }
         _ => unreachable!("prompt names are checked above"),
     };
     Ok(json!({
@@ -1759,7 +2700,222 @@ mod tests {
             .filter(|d| d["annotations"]["readOnlyHint"] == false)
             .map(|d| d["name"].as_str().unwrap())
             .collect();
-        assert_eq!(writes, vec!["create_change_draft", "add_to_change"]);
+        assert_eq!(
+            writes,
+            vec![
+                "create_change_draft",
+                "add_to_change",
+                "create_change_request",
+                "comment_change_request"
+            ]
+        );
+        // change requests are raised and discussed, never decided
+        for name in [
+            "decide_change_request",
+            "accept_change_request",
+            "triage_change_request",
+            "reject_change_request",
+        ] {
+            assert!(!exists(name));
+        }
+        let def = |name: &str| defs.iter().find(|d| d["name"] == name).unwrap().clone();
+        // the shape sibling of find_duplicate_files: read-only, by item
+        let similar = def("find_similar_parts");
+        assert_eq!(similar["annotations"]["readOnlyHint"], true);
+        assert_eq!(similar["inputSchema"]["required"], json!(["item"]));
+        assert!(similar["description"]
+            .as_str()
+            .unwrap()
+            .contains("create_change_draft"));
+        // reviewers are suggested, never assigned
+        let suggest = def("suggest_reviewers");
+        assert_eq!(suggest["annotations"]["readOnlyHint"], true);
+        assert!(suggest["description"]
+            .as_str()
+            .unwrap()
+            .contains("Never assigns"));
+        assert!(!exists("add_reviewer") && !exists("assign_reviewers"));
+        let create = def("create_change_request");
+        assert_eq!(create["annotations"]["idempotentHint"], false);
+        assert_eq!(
+            create["inputSchema"]["properties"]["items"]["maxItems"],
+            requests::MAX_ITEMS
+        );
+        assert_eq!(
+            create["inputSchema"]["properties"]["reason"]["enum"]
+                .as_array()
+                .unwrap()
+                .len(),
+            RequestReason::ALL.len()
+        );
+        let list = def("list_change_requests");
+        assert_eq!(
+            list["inputSchema"]["properties"]["status"]["enum"]
+                .as_array()
+                .unwrap()
+                .len(),
+            RequestStatus::ALL.len() + 2
+        );
+        assert_eq!(
+            def("list_simulations")["inputSchema"]["properties"]["limit"]["maximum"],
+            MAX_SIMULATIONS
+        );
+        for read in [
+            "get_change_request",
+            "get_simulation",
+            "compare_simulation_results",
+        ] {
+            assert_eq!(def(read)["annotations"]["readOnlyHint"], true, "{read}");
+        }
+    }
+
+    #[test]
+    fn request_arguments_are_checked() {
+        assert_eq!(request_status_filter(None).unwrap(), (None, false));
+        assert_eq!(request_status_filter(Some("all")).unwrap(), (None, false));
+        assert_eq!(request_status_filter(Some(" open ")).unwrap(), (None, true));
+        assert_eq!(
+            request_status_filter(Some("in_triage")).unwrap(),
+            (Some(RequestStatus::InTriage), false)
+        );
+        assert!(request_status_filter(Some("decided")).is_err());
+        // every listed filter parses
+        for s in REQUEST_STATUS_FILTERS {
+            assert!(request_status_filter(Some(s)).is_ok(), "{s}");
+        }
+
+        let me = uuid::Uuid::new_v4();
+        assert_eq!(request_scope(None, me).unwrap(), (None, None));
+        assert_eq!(request_scope(Some("mine"), me).unwrap(), (Some(me), None));
+        assert_eq!(
+            request_scope(Some("assigned"), me).unwrap(),
+            (None, Some(me))
+        );
+        assert!(request_scope(Some("everyone"), me).is_err());
+
+        assert_eq!(request_reason(None).unwrap(), RequestReason::Other);
+        assert_eq!(request_reason(Some(" ")).unwrap(), RequestReason::Other);
+        assert_eq!(
+            request_reason(Some("Defect")).unwrap(),
+            RequestReason::Defect
+        );
+        assert!(request_reason(Some("boredom")).is_err());
+        for r in REQUEST_REASONS {
+            assert!(request_reason(Some(r)).is_ok(), "{r}");
+        }
+
+        // the newest comments are kept, in their order
+        assert_eq!(newest(vec![1, 2, 3, 4], 2), (vec![3, 4], true));
+        assert_eq!(newest(vec![1, 2], 5), (vec![1, 2], false));
+
+        // the item list of a new request is bounded like the service
+        let many: Vec<String> = (0..=requests::MAX_ITEMS)
+            .map(|i| format!("PRT-{i}"))
+            .collect();
+        let v = json!({ "items": many });
+        assert!(Args::new(&v)
+            .list("items", requests::MAX_ITEMS as usize)
+            .is_err());
+    }
+
+    fn sim_result(name: &str, value: f64, upper: Option<f64>) -> simulations::SimulationResult {
+        simulations::SimulationResult {
+            id: uuid::Uuid::new_v4(),
+            revision_id: uuid::Uuid::nil(),
+            position: 0,
+            name: name.into(),
+            value,
+            unit: "MPa".into(),
+            lower_limit: None,
+            upper_limit: upper,
+            load_case: "LC1".into(),
+            solver: String::new(),
+            solver_version: String::new(),
+            note: String::new(),
+            updated_at: chrono::Utc::now(),
+            status: Some(crate::domain::result_status(value, None, upper)),
+        }
+    }
+
+    #[test]
+    fn result_diffs_are_compact() {
+        let before = [sim_result("Stress", 200.0, Some(250.0))];
+        let after = [
+            sim_result("Stress", 260.0, Some(250.0)),
+            sim_result("Mass", 1.0, None),
+        ];
+        let diffs = simulations::compare_results(&before, &after);
+        let views: Vec<Value> = diffs.iter().map(diff_brief).collect();
+        let stress = views.iter().find(|v| v["name"] == "Stress").unwrap();
+        assert_eq!(stress["change"], "changed");
+        assert_eq!(stress["before"]["status"], "pass");
+        assert_eq!(stress["after"]["status"], "fail");
+        assert_eq!(stress["delta"], 60.0);
+        assert_eq!(stress["delta_percent"], 30.0);
+        let mass = views.iter().find(|v| v["name"] == "Mass").unwrap();
+        assert_eq!(mass["change"], "added");
+        assert_eq!(mass["before"], Value::Null);
+        assert_eq!(mass["after"]["status"], "none");
+    }
+
+    fn based(sim: &str, basis: &str, out_of_date: Option<&str>) -> simulations::BasedSimulation {
+        simulations::BasedSimulation {
+            simulation_item_id: uuid::Uuid::nil(),
+            simulation_number: sim.into(),
+            simulation_code: "A".into(),
+            simulation_state: "released".into(),
+            simulation_name: format!("{sim} static"),
+            result_count: 3,
+            failed_count: 1,
+            open_impact_id: out_of_date.map(|_| uuid::Uuid::nil()),
+            basis: simulations::SimulationBasis {
+                id: uuid::Uuid::new_v4(),
+                revision_id: uuid::Uuid::nil(),
+                role: "geometry".into(),
+                note: String::new(),
+                basis_item_id: uuid::Uuid::nil(),
+                basis_number: basis.into(),
+                basis_type: "part".into(),
+                basis_revision_id: uuid::Uuid::nil(),
+                basis_code: "A".into(),
+                basis_seq: 1,
+                basis_state: "released".into(),
+                basis_name: "Bracket".into(),
+                file_version_id: None,
+                file_id: None,
+                file_name: String::new(),
+                file_version: None,
+                file_current_version: None,
+                released_revision_id: None,
+                released_code: Some("A".into()),
+                released_seq: Some(1),
+                created_at: chrono::Utc::now(),
+                out_of_date: out_of_date.map(str::to_string),
+                basis_project_id: None,
+                restricted: false,
+            },
+        }
+    }
+
+    #[test]
+    fn based_simulations_are_grouped() {
+        let g = group_based(&[
+            based("SIM-1", "PRT-1", None),
+            based(
+                "SIM-1",
+                "PRT-2",
+                Some("PRT-2/B was released (simulated: A)"),
+            ),
+            based("SIM-2", "PRT-1", None),
+        ]);
+        assert_eq!(g.len(), 2);
+        assert_eq!(g[0]["simulation"], "SIM-1");
+        assert_eq!(g[0]["bases"].as_array().unwrap().len(), 2);
+        assert_eq!(g[0]["out_of_date"], true);
+        assert_eq!(g[0]["check_open"], true);
+        assert_eq!(g[0]["bases"][0]["file"], Value::Null);
+        assert_eq!(g[1]["out_of_date"], false);
+        assert_eq!(g[1]["failed_count"], 1);
     }
 
     #[test]
@@ -1770,6 +2926,7 @@ mod tests {
         let p = prompt("review_change", &json!({ "change": "ECO-000004" })).unwrap();
         let text = p["messages"][0]["content"]["text"].as_str().unwrap();
         assert!(text.contains("get_change with change=ECO-000004"));
+        assert!(text.contains("suggest_reviewers with change=ECO-000004"));
         let p = prompt("release_notes", &json!({ "item": "ASM-1" })).unwrap();
         let text = p["messages"][0]["content"]["text"].as_str().unwrap();
         assert!(text.contains("to=latest"));

@@ -1,29 +1,145 @@
 {#- Shared template helpers. Import inside a block: {% import "macros.html" as m %} -#}
 
+{#- The glyph of a state: colour is never the only cue (style.css, badges). -#}
+{% macro glyph_char(value) -%}
+{%- if value in ["released", "approved", "accepted", "implemented", "pass", "sent", "up_to_date"] %}✓
+{%- elif value in ["in_review", "pending", "in_triage", "retrying", "out_of_date"] %}○
+{%- elif value in ["rejected", "fail", "failed"] %}×
+{%- elif value in ["obsolete", "cancelled", "withdrawn", "deferred"] %}–
+{%- elif value in ["in_work", "draft", "new"] %}◐
+{%- elif value == "high" %}▲
+{%- elif value == "critical" %}▲▲
+{%- endif -%}
+{%- endmacro %}
+
+{#- A lifecycle / status badge: glyph plus label. -#}
 {% macro badge(value) -%}
-<span class="badge badge-{{ value }}">
-  {%- if value in ["released", "approved"] %}<img src="/static/media/icons/Green_tick.svg?v={{ assets }}" alt="">
-  {%- elif value in ["in_review", "pending"] %}<img src="/static/media/icons/Yellow_circle.svg?v={{ assets }}" alt="">
-  {%- elif value in ["rejected", "obsolete", "cancelled"] %}<img src="/static/media/icons/Red_cross.svg?v={{ assets }}" alt="">
-  {%- endif %}{{ value|label }}</span>
+{%- if value in ["low", "normal"] -%}
+<span class="badge badge-{{ value }}">{{ value|label }}</span>
+{%- else -%}
+{%- set g = glyph_char(value) -%}
+<span class="badge badge-{{ value }}">{% if g %}<span class="glyph" aria-hidden="true">{{ g }}</span>{% endif %}{{ value|label }}</span>
+{%- endif -%}
+{%- endmacro %}
+
+{#- The state as a glyph only (dense lists); the label is the tooltip. -#}
+{% macro state_glyph(value) -%}
+<span class="state-glyph st-{{ value }}" title="{{ value|label }}" role="img" aria-label="{{ value|label }}">{{ glyph_char(value) or "•" }}</span>
+{%- endmacro %}
+
+{#- The revision letter in its own box. -#}
+{% macro revbox(code) -%}
+<span class="revbox" title="Revision {{ code }}">{{ code }}</span>
+{%- endmacro %}
+
+{#- Placeholder for an item of a restricted project group the reader is not
+    a member of: no number, no name, no link. -#}
+{% macro restricted(text="Restricted item") -%}
+<span class="badge badge-restricted" title="In a restricted project group you are not a member of">{{ text }}</span>
+{%- endmacro %}
+
+{#- "+N … in groups you cannot see" below a list that left them out. -#}
+{% macro hidden_count(n, what) -%}
+{% if n %}<p class="hint hidden-count">+{{ n }} {{ what }} in groups you cannot see</p>{% endif %}
 {%- endmacro %}
 
 {#- How a dependent depends on the item that changed (impacts, impact analysis). -#}
 {% macro relation(r, target="it") -%}
-{% if r == "bom" %}uses {{ target }} in its BOM{% elif r == "drawing" %}is a drawing of {{ target }}{% elif r == "specification" %}is a specification for {{ target }}{% elif r == "reference" %}references {{ target }}{% elif r == "file" %}has a CAD file that references {% if target == "it" %}its files{% else %}files of {{ target }}{% endif %}{% else %}depends on {{ target }}{% endif %}
+{% if r == "bom" %}uses {{ target }} in its BOM{% elif r == "drawing" %}is a drawing of {{ target }}{% elif r == "specification" %}is a specification for {{ target }}{% elif r == "reference" %}references {{ target }}{% elif r == "simulation" %}is a simulation based on {{ target }}{% elif r == "file" %}has a CAD file that references {% if target == "it" %}its files{% else %}files of {{ target }}{% endif %}{% else %}depends on {{ target }}{% endif %}
+{%- endmacro %}
+
+{#- The same, short: what links the dependent to the item that changed. -#}
+{% macro relation_short(r) -%}
+{% if r == "bom" %}BOM line{% elif r == "drawing" %}Drawing{% elif r == "specification" %}Specification{% elif r == "reference" %}Reference{% elif r == "simulation" %}Simulation basis{% elif r == "file" %}CAD file reference{% else %}Dependency{% endif %}
+{%- endmacro %}
+
+{#- Open impacts on one dependent revision (services::impacts::DependentGroup):
+    a compact header with the actions for the whole group, one dense row per
+    source. `on_revision`: shown on the dependent's own page (no Open/Revise). -#}
+{% macro impact_group(g, back, can_ack, on_revision=false) -%}
+{% set n = g.impacts|length %}
+<article class="impact-group" aria-labelledby="ig-{{ g.revision_id }}">
+  <header class="impact-group-head">
+    <h3 id="ig-{{ g.revision_id }}">
+      {%- if on_revision %}Check needed: <span class="mono">{{ g.item_number }}/{{ g.revision_code }}</span>
+      {%- else %}<a class="mono" href="/revisions/{{ g.revision_id }}">{{ g.item_number }}/{{ g.revision_code }}</a> <span class="impact-group-name">{{ g.item_name }}</span>{% endif -%}
+    </h3>
+    <span class="impact-count">{{ n }} change{% if n != 1 %}s{% endif %} to check</span>
+    <div class="actions">
+      {% if not on_revision %}
+      <a class="button small ghost" href="/revisions/{{ g.revision_id }}#references">Open</a>
+      {% if can_ack and g.revision_state == "released" %}
+      <form method="post" action="/revisions/{{ g.revision_id }}/revise"
+            data-confirm="Create a new revision of {{ g.item_number }} based on {{ g.revision_code }}?">
+        <button class="small ghost" type="submit">Revise</button>
+      </form>
+      {% endif %}
+      {% endif %}
+      {% if can_ack and n > 1 %}
+      <button class="small" type="button" data-toggle="ack-all-{{ g.revision_id }}" aria-controls="ack-all-{{ g.revision_id }}" aria-expanded="false">Acknowledge all…</button>
+      {% endif %}
+    </div>
+  </header>
+  {% if can_ack and n > 1 %}
+  <form class="impact-ack hidden" id="ack-all-{{ g.revision_id }}" method="post" action="/revisions/{{ g.revision_id }}/impacts/acknowledge">
+    <input type="hidden" name="back" value="{{ back }}">
+    <input type="hidden" name="impacts" value="{{ g.impact_ids }}">
+    <input type="text" name="note" maxlength="2000" required aria-label="Why {{ g.item_number }} needs no change for any of the {{ n }}"
+           placeholder="Why none of the {{ n }} needs a change, e.g. form, fit and function unchanged">
+    <button class="small primary" type="submit">Acknowledge {{ n }}</button>
+  </form>
+  {% endif %}
+  <ul class="impact-rows">
+    {% for i in g.impacts %}
+    <li title="{{ g.item_number }} {{ relation(i.relation) }}{% if i.detail %} ({{ i.detail }}){% endif %}">
+      <span class="impact-source">{% if i.source_restricted %}{{ restricted() }} <span class="impact-source-name">a restricted item this depends on</span>
+        {%- else %}<a class="mono" href="/revisions/{{ i.source_revision_id }}">{{ i.source_number }}/{{ i.source_code }}</a>
+        <span class="impact-source-name">{{ i.source_name }}</span>{% endif %}</span>
+      <span class="impact-event">{% if i.event == "released" %}released{% else %}<span class="badge badge-obsolete">obsolete</span>{% endif %}
+        {%- if i.change_number %} via <a class="mono" href="/changes/{{ i.change_id }}">{{ i.change_number }}</a>{% endif %}</span>
+      <span class="impact-relation">{{ relation_short(i.relation) }}{% if i.detail %} <span class="impact-detail">· {{ i.detail }}</span>{% endif %}</span>
+      <span class="impact-when">{{ time(i.created_at) }}</span>
+      {% if can_ack %}
+      <button class="small ghost" type="button" data-toggle="ack-{{ i.id }}" aria-controls="ack-{{ i.id }}" aria-expanded="false">Acknowledge…</button>
+      <form class="impact-ack hidden" id="ack-{{ i.id }}" method="post" action="/impacts/{{ i.id }}/acknowledge">
+        <input type="hidden" name="back" value="{{ back }}">
+        <input type="text" name="note" maxlength="2000" required aria-label="Why no change is needed for {{ i.source_number }}/{{ i.source_code }}"
+               placeholder="Why no change is needed, e.g. form, fit and function unchanged">
+        <button class="small primary" type="submit">Acknowledge</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="hint">Revising and releasing {{ g.item_number }} resolves {% if n == 1 %}it{% else %}all {{ n }}{% endif %} as well.</p>
+</article>
 {%- endmacro %}
 
 {#- Primary "create" button with the plus icon. -#}
 {% macro new_button(href, text) -%}
-<a class="button primary" href="{{ href }}"><img src="/static/media/icons/White_plus.svg?v={{ assets }}" alt="">{{ text }}</a>
+<a class="button primary" href="{{ href }}"><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>{{ text }}</a>
+{%- endmacro %}
+
+{#- Icons (16 px, stroke = currentColor). -#}
+{% macro eye() -%}
+<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/></svg>
+{%- endmacro %}
+{% macro star(filled=false) -%}
+<svg class="icon{% if filled %} filled{% endif %}" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.8l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.6l-3.8 2 .7-4.3-3.1-3 4.3-.6z"/></svg>
 {%- endmacro %}
 
 {% macro time(value) -%}
 {% if value %}<time datetime="{{ value }}">{{ value|dt }}</time>{% else %}<span class="muted">—</span>{% endif %}
 {%- endmacro %}
 
-{% macro lock(name) -%}
-<span class="badge badge-lock" title="Checked out">🔒 {{ name }}</span>
+{#- The same, the date alone (narrow columns); the tooltip has the time. -#}
+{% macro date(value) -%}
+{% if value %}<time datetime="{{ value }}" data-date>{{ value|dt }}</time>{% else %}<span class="muted">—</span>{% endif %}
+{%- endmacro %}
+
+{#- Who holds the lock; `mine`: the signed-in user. -#}
+{% macro lock(name, mine=false) -%}
+<span class="lock{% if mine %} lock-mine{% endif %}" title="Checked out by {% if mine %}you{% else %}{{ name }}{% endif %}"><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg>{{ name }}{% if mine %} <span class="dim">(you)</span>{% endif %}</span>
 {%- endmacro %}
 
 {% macro entity_link(e) -%}
@@ -33,6 +149,8 @@
 <a href="/revisions/{{ e.entity_id }}">{{ e.summary }}</a>
 {%- elif e.entity_type == "change" and e.entity_id -%}
 <a href="/changes/{{ e.entity_id }}">{{ e.summary }}</a>
+{%- elif e.entity_type == "change_request" and e.entity_id -%}
+<a href="/requests/{{ e.entity_id }}">{{ e.summary }}</a>
 {%- else -%}
 {{ e.summary }}
 {%- endif -%}
@@ -95,7 +213,7 @@
     </label>
     <div class="actions">
       <button class="primary" type="submit" name="action" value="ask">Ask</button>
-      {% if me.can_edit %}<label class="check small"><input type="checkbox" name="allow_drafts" value="1"> Allow drafting change orders</label>{% endif %}
+      {% if me.can_edit %}<label class="check small"><input type="checkbox" name="allow_drafts" value="1"> Allow drafting change orders, change requests and comments</label>{% endif %}
       <span class="hint assistant-status" role="status"></span>
     </div>
     <p class="hint">Read-only unless you allow drafts; it never submits, approves or releases. The question and the data the

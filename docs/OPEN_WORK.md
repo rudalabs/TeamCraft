@@ -17,11 +17,21 @@ the known gaps with details. Last update: 2026-11-04.
   behind (request order tested in `tests/concurrency.rs`; still to do: test import against a real server)
 - [x] Bulk action "Check in all my check-outs" (desktop and web) – dashboard button and desktop worklist; the desktop
   checks in only revisions without local changes; `POST /api/v1/worklist/checkin-all`
-- [ ] SOLIDWORKS 2015+ files: the preview image and the referenced file names sit in compressed segments of the
-  container – inflate them before the preview search and the reference scan (gap test in `tests/cad_fixtures.rs`,
-  found with the NIST files)
+- [x] SOLIDWORKS 2015+ files: the preview image and the referenced file names sit in compressed segments of the
+  container – `src/swpart.rs` reads the Deflate sections (bounded, CRC-checked): preview from `PreviewPNG`, assembly
+  components from the component tree (`swXmlContents/COMPINSTANCETREE`, exactly the eight parts of the NIST
+  assembly); `teamcraft rescan-references` updates assemblies stored before (tested in `tests/cad_fixtures.rs`; still
+  to do: a real SOLIDWORKS drawing for the document-manager fallback)
 - [ ] Reference scan: false references in real files – NX parts fixed (stream container, `src/nxpart.rs`); open: noise in JT
   files (gap test in `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is ignored
+- [ ] Desktop: a project group created in the web UI only appears in the navigator after restarting the app – `/me` and
+  `/projects` are loaded once in `enterShell()` (`desktop/ui/app.js`), *Refresh* only redraws the cached
+  `state.projects`; reload both lists when the home view is built and in the *Get project groups* and *Import CAD
+  folder* dialogs; test: a group added on the server shows after *Refresh* (found on Windows 11 ARM64, 2026-11-05)
+- [ ] Desktop folder import: the same folder cannot be imported into a second project group – the log of imported items
+  (`importLog` / `saveImportLog`) is keyed by server and folder only, so every item counts as "already imported"; add
+  the project group to the key and recompute the plan when the project select changes (found on Windows 11 ARM64,
+  2026-11-05; workaround: import a copy of the folder)
 
 **General**
 
@@ -36,29 +46,66 @@ the known gaps with details. Last update: 2026-11-04.
 - [x] Desktop workspace: one subfolder per project group (alternatively git-style: only the chosen project groups are
   visible locally)
 - [x] Desktop: new members download everything of one or more project groups at once
+- [x] Desktop working folder that mirrors the original folder structure (`files.folder`), read-only files until check-out,
+  *Get* of a structure (BOM + referenced CAD files, revision rule, progress, cancel), migration of the old layout
+- [ ] Decide and document what happens when the same CAD files are imported into two project groups: two independent
+  items per file with different numbers, while CAD references are matched by file name (import tutorial, user guide)
+- [ ] Desktop Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Desktop: *Import BOM…* (CSV/Excel) on a checked-out assembly
 - [ ] Desktop: cancel long operations (check-in upload, Pack and Go) half-way
 - [x] Browser check (no console errors, no overflow at 390 px) of `/import` and `/import/{id}`, with a STEP import
   (2026-11-04)
 - [x] STEP assembly import → items + BOM (feature 3c)
 - [ ] Try the STEP assembly import with real exports of Inventor, SolidWorks, Solid Edge, Fusion, CATIA and NX
-- [ ] 3D preview: test real STEP exports of the CAD programs and assembly placements (`mapped_item`); readers for IGES,
-  BREP, Parasolid, JT, … (E57: `e57` crate)
+- [x] 3D preview of real-world STEP files: own Part 21 pre-reader (`src/mesh/p21.rs`) so AP242 PMI no longer makes the
+  kernel's parser reject the file (the NIST CTC-01 AP242 file), face-by-face fallback when the kernel panics, AP242
+  tessellated geometry without B-rep, "partial preview: N of M faces" in the viewer
+- [ ] 3D preview: test real STEP exports of the CAD programs and assembly placements (`mapped_item`), length units;
+  readers for IGES, BREP, Parasolid, JT, … (E57: `e57` crate)
 - [x] Configurable numbering schemes `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{SEQ:n}` with preview, per project group (feature 4)
 - [ ] Custom attributes per item and file type, classification (standard/purchased parts), attribute search (feature 5)
-- [x] Item copy ("Save as" with files and BOM) – done; open: supersede/replace, alternate parts, multi-level where-used
-  (feature 6)
+- [x] Item copy ("Save as" with files and BOM) – done; multi-level where-used in the API and MCP (`levels`); open:
+  supersede/replace, alternate parts, multi-level where-used in the web UI (feature 6)
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
+- [x] Engineering change requests (ECR) before the change order: raised by anybody incl. viewers (web, API, desktop
+  revision tab and workspace file, screenshot/PDF attachments), discussion, triage/decision by the CAD editors of the
+  affected project groups, *Create change order* with the in-work revisions or link an open one, *implemented* on the
+  release of the change order (migration 0017)
+- [ ] MCP tools for change requests (`create_change_request`, a triage prompt) once the MCP server is merged
+- [ ] Browser check (no console errors, no overflow at 390 px) of `/requests`, `/requests/new` and `/requests/{id}`,
+  and the desktop request tab
+- [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI), e-mail digest of
+  new requests per project group
 - [x] Backup/restore of the database and vault as CLI commands (`teamcraft backup`, `teamcraft restore`) – see
   [Operations](src/admin/operations.md)
 - [ ] Test `teamcraft backup` and `teamcraft restore` once end to end with the real PostgreSQL client tools
-- [ ] Chunked resumable uploads (tus) (feature 9)
-- [ ] README screenshots/GIFs: web pages captured in CI by `scripts/screenshots.sh` (PNGs still to commit); desktop app and GIFs open
+- [x] Chunked resumable uploads (feature 9): `/api/v1/uploads` (offset-checked chunks, resume, SHA-256 check, same
+  check-in code path, base version and folder per session), used by the desktop app for files above 32 MiB; open:
+  chunked uploads from the web UI (`static/app.js`)
+- [x] README screenshots of the web pages: captured in CI by `scripts/screenshots.sh` (run 41919547600), committed in
+  `media/screenshots/`
+- [ ] Desktop app screenshots and short GIFs for the README
 - [x] Enable GitHub Pages for the docs (*Settings → Pages → Source: GitHub Actions*) and check the first docs build
 - [x] Check the CI runs (`ci.yml`, `docs.yml`, `desktop.yml`), including the macOS and Windows builds
 - [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
   `SECURITY.md` points to
 - [ ] Test e-mail (SMTP) and Mattermost notifications against real servers
+
+**Simulation management (FEA/CFD)**
+
+- [x] v1: item type `simulation` (`SIM-`), basis links to item revisions and exact file versions, out-of-date
+  detection and change propagation (relation `simulation`), result values with limits and pass/fail, CSV/Excel import,
+  comparison between revisions, REST API, result file formats (VTK, CalculiX, Nastran, ANSYS, Abaqus, OpenFOAM,
+  Fluent, STAR-CCM+, CGNS, Exodus II, LS-DYNA) – guide in `docs/src/guide/simulation.md`
+- [ ] 3D preview of results: VTK (legacy and XML) and CalculiX `.frd` with a scalar field (colour map) in the viewer;
+  OpenFOAM case summary (solver, time steps) from `controlDict`
+- [ ] `.sim` detection: verify the STAR-CCM+ marker with real files (heuristic: "STAR-CCM+" near the start)
+- [ ] Read result values from a `teamcraft-results.json`/CSV next to the files at check-in
+- [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
+- [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
+  checked out read-only into `basis/`, check-in of selected result time steps only
+- [ ] Retention for large result files (`files.retention = 'latest'`) after chunked resumable uploads (feature 9)
+- [ ] Save As of a simulation: copy basis links and result values
 
 **All CAD programs**
 
@@ -85,7 +132,8 @@ the known gaps with details. Last update: 2026-11-04.
 - [ ] Folder import: read the paths of an included `.ipj`; recognise Content Center and library folders
 - [ ] Test the reference scan with real `.iam` files, also with derived parts, iParts/iAssemblies and Frame Generator
 - [ ] Test the STEP export (built) with real files on Windows – the preview images are verified with the NIST Inventor
-  2021 files
+  2021 files. Inventor 2027 is registered for COM in the Windows 11 ARM64 test VM (`Inventor.Application`,
+  `Inventor.exe /Automation`, found by the app's registry check); the export itself was not tried there yet
 - [ ] Test the BOM import with real exports of the BOM editor (structured and parts only)
 - [ ] Extend the Inventor part of the tutorial: Pack and Go, `.ipj`, Design Assistant for broken references
 
@@ -99,7 +147,9 @@ the known gaps with details. Last update: 2026-11-04.
 **SOLIDWORKS**
 
 - [ ] STEP export through the locally installed SOLIDWORKS (API), like Inventor and Solid Edge
-- [ ] Test preview images of SOLIDWORKS 2014 and older (OLE files) with real files – 2015 and newer: see *Fixes*
+- [ ] Test preview images of SOLIDWORKS 2014 and older (OLE files) with real files – 2015 and newer: done (see *Fixes*)
+- [ ] Test the SOLIDWORKS 2015+ reader with drawings (`.slddrw`), nested sub-assemblies and other versions than 2018
+- [ ] Use the instance counts of the component tree (`swReference`, without `swExcludeFromBOM`) for BOM quantities
 - [ ] Take configurations and Toolbox parts into account in the import and the reference scan
 - [ ] Test the BOM import with real BOM exports
 
@@ -212,12 +262,15 @@ The history up to the open-source release is squashed into the first commit
    further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to
    attributes.
 6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate
-   parts, multi-level where-used.
+   parts, multi-level where-used (API and MCP: done, `levels=N`).
 7. **BOM comparison** between revisions with Excel export (`rust_xlsxwriter`,
    MIT/Apache-2.0): done – direct lines, and over all levels with a revision
    rule (`depth=all`); the expanded BOM itself exports as Excel too.
 8. **Bulk import of a folder tree** (NAS/Drive) as items with files (candidate: `walkdir`, MIT/Unlicense).
-9. **Chunked resumable uploads** (tus protocol, `tus-js-client`); **backup/restore** of the database and vault is done
+9. **Chunked resumable uploads**: done without new dependencies – a tus-like protocol of our own (`POST /api/v1/uploads`,
+   `PATCH` with `Upload-Offset`, 409 on a wrong offset, `HEAD` to resume, `finish` or the `uploads` field of a
+   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; the desktop app uses it for large
+   files, the web UI still sends one multipart request. **Backup/restore** of the database and vault is done
    (`teamcraft backup`/`teamcraft restore` with `pg_dump`/`pg_restore`, unit tests for the manifest, argument building,
    hashes and path safety); the end-to-end check with the real client tools is still open (see the to-do list).
 
@@ -235,8 +288,9 @@ in the README licence table, follow the definition of done in `CLAUDE.md`.
   and GIFs, and the screenshots in the book.
 - **CI:** `ci.yml`, `docs.yml` and `desktop.yml` pass (`099737e`), the docs
   are live at <https://rudalabs.github.io/TeamCraft/>. The tests run on Linux
-  only; macOS and Windows are build checks – server and desktop app were not
-  run there yet.
+  only; macOS and Windows are build checks. On Windows 11 ARM64 (Parallels VM, 2026-11-05, `97423bd`) server and
+  desktop app were built, started and used by hand – setup in [platforms/windows.md](../platforms/windows.md); not run
+  on macOS yet.
 - **3D preview:** STEP is read with truck (planes, B-splines, cylinders, …);
   real exports of the CAD programs were not tested, and assembly placements (`mapped_item`) may be ignored – parts of an
   assembly can then overlap.

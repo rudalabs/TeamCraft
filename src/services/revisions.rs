@@ -6,13 +6,13 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::{self, LifecycleState, NotificationKind, Role},
+    domain::{self, LifecycleState, NotificationKind, Role, WebhookEvent},
     error::{AppError, AppResult},
     models::Revision,
     services::{
-        audit, impacts,
+        access, audit, impacts,
         notifications::{self, Notice},
-        references,
+        references, simulations, webhooks,
     },
 };
 
@@ -39,7 +39,7 @@ pub fn label(rev: &Revision) -> String {
     format!("{}/{}", rev.item_number, rev.code)
 }
 
-pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Revision> {
+pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<Revision> {
     sqlx::query_as::<_, Revision>(&format!("{REVISION_SELECT} WHERE r.id = $1"))
         .bind(id)
         .fetch_optional(pool)
@@ -47,7 +47,11 @@ pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Revision> {
         .ok_or_else(|| AppError::not_found("Revision not found."))
 }
 
-pub async fn get_by_code(pool: &PgPool, item_id: Uuid, code: &str) -> AppResult<Revision> {
+pub(crate) async fn get_by_code_unchecked(
+    pool: &PgPool,
+    item_id: Uuid,
+    code: &str,
+) -> AppResult<Revision> {
     sqlx::query_as::<_, Revision>(&format!(
         "{REVISION_SELECT} WHERE r.item_id = $1 AND r.code = $2"
     ))
@@ -69,19 +73,50 @@ pub(crate) async fn lock(conn: &mut PgConnection, id: Uuid) -> AppResult<Revisio
     .ok_or_else(|| AppError::not_found("Revision not found."))
 }
 
-/// Revisions currently checked out by a user.
-pub async fn checked_out_by(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<Revision>> {
+/// A revision the actor may read; hidden ones answer like missing ones.
+pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
+    let rev = get_unchecked(pool, id).await?;
+    access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
+    Ok(rev)
+}
+
+/// A revision of an item by its code (`A`, `B`, …), if the actor may read it.
+pub async fn get_by_code(
+    pool: &PgPool,
+    actor: &Actor,
+    item_id: Uuid,
+    code: &str,
+) -> AppResult<Revision> {
+    let rev = get_by_code_unchecked(pool, item_id, code).await?;
+    access::ensure_visible(
+        actor,
+        rev.project_id,
+        AppError::not_found(format!("Revision '{code}' not found.")),
+    )?;
+    Ok(rev)
+}
+
+/// Revisions currently checked out by the actor (only those it may still
+/// read: a user who left a restricted group asks a manager of the group or
+/// an admin to cancel them, see [`cancel_checkout`]).
+pub async fn checked_out_by(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Revision>> {
     Ok(sqlx::query_as::<_, Revision>(&format!(
-        "{REVISION_SELECT} WHERE r.checked_out_by = $1 ORDER BY r.checked_out_at DESC"
+        "{REVISION_SELECT} WHERE r.checked_out_by = $1 AND {}
+         ORDER BY r.checked_out_at DESC",
+        access::item_visible("i", 2)
     ))
-    .bind(user_id)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?)
 }
 
 /// Fails unless `actor` may change data of the revision's project:
-/// CAD editor (or admin) and member of the item's project group.
+/// CAD editor (or admin) and member of the item's project group. A revision
+/// the actor may not even read answers "not found", so the message below
+/// (which names the group) never reaches outsiders of restricted groups.
 pub fn ensure_project_access(rev: &Revision, actor: &Actor) -> AppResult<()> {
+    access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
     actor.require(Role::Editor)?;
     if actor.can_edit_project(rev.project_id) {
         Ok(())
@@ -193,7 +228,7 @@ pub async fn update(
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Takes the exclusive edit lock of an in-work revision.
@@ -221,20 +256,24 @@ pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Releases the edit lock without uploading anything ("cancel check-out").
-/// Administrators may release locks of other users. A check-in with new file
+/// Administrators may release locks of other users, managers of the item's
+/// group those of users who are no longer members (who cannot release them
+/// themselves once a restricted group hides the revision). A check-in with new file
 /// versions is `files::check_in`.
 pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
     let rev = lock(&mut tx, id).await?;
+    access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
     let Some(owner) = rev.checked_out_by else {
         return Ok(rev);
     };
-    if owner != actor.id && !actor.is_admin() {
+    if owner != actor.id && !actor.is_admin() && !orphaned_lock(&mut tx, actor, &rev, owner).await?
+    {
         return Err(AppError::Forbidden(format!(
             "{} is checked out by {}; only they or an administrator can check it in.",
             label(&rev),
@@ -284,7 +323,48 @@ pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResul
         notifications::notify(&mut tx, Some(actor), &[owner], &notice).await?;
     }
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
+}
+
+/// For pages: whether [`cancel_checkout`] would release the revision's lock.
+pub async fn may_cancel_checkout(pool: &PgPool, actor: &Actor, rev: &Revision) -> AppResult<bool> {
+    let Some(owner) = rev.checked_out_by else {
+        return Ok(false);
+    };
+    if !actor.can_edit() {
+        return Ok(false);
+    }
+    if owner == actor.id || actor.is_admin() {
+        return Ok(true);
+    }
+    let mut conn = pool.acquire().await?;
+    orphaned_lock(&mut conn, actor, rev, owner).await
+}
+
+/// A lock that a manager of the revision's group may release: its owner is
+/// no longer a member of the group (removed, or never one before the group
+/// was restricted) and so can neither see nor check in the revision of a
+/// restricted group, nor edit it in an internal one.
+async fn orphaned_lock(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    rev: &Revision,
+    owner: Uuid,
+) -> AppResult<bool> {
+    let Some(project_id) = rev.project_id else {
+        return Ok(false);
+    };
+    if !crate::services::projects::can_manage(conn, actor, project_id).await? {
+        return Ok(false);
+    }
+    let owner_is_member = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2)",
+    )
+    .bind(project_id)
+    .bind(owner)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(!owner_is_member)
 }
 
 /// Tells the watchers of an item about something that happened to a revision.
@@ -350,8 +430,9 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     // The new revision starts with the current version of every file as v1.
     let files = sqlx::query(
         "INSERT INTO files (id, revision_id, filename, content_type, size_bytes, sha256, uploaded_by, uploaded_at,
-                            format)
-         SELECT gen_random_uuid(), $2, filename, content_type, size_bytes, sha256, uploaded_by, uploaded_at, format
+                            format, folder)
+         SELECT gen_random_uuid(), $2, filename, content_type, size_bytes, sha256, uploaded_by, uploaded_at, format,
+                folder
          FROM files WHERE revision_id = $1",
     )
     .bind(src.id)
@@ -391,6 +472,8 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     .execute(&mut *tx)
     .await?;
     let references = references::copy_to_revision(&mut tx, src.id, new_id).await?;
+    let (simulation_bases, simulation_results) =
+        simulations::copy_to_revision(&mut tx, src.id, new_id).await?;
     let lines = sqlx::query(
         "INSERT INTO bom_lines (id, parent_revision_id, child_item_id, find_number, quantity, notes)
          SELECT gen_random_uuid(), $2, child_item_id, find_number, quantity, notes
@@ -412,7 +495,8 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
             src.item_number, src.code
         ),
         json!({ "item_id": src.item_id, "from": src.code, "files": files, "bom_lines": lines,
-                "references": references }),
+                "references": references, "simulation_bases": simulation_bases,
+                "simulation_results": simulation_results }),
     )
     .await?;
     let new_rev = lock(&mut tx, new_id).await?;
@@ -428,7 +512,7 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     )
     .await?;
     tx.commit().await?;
-    get(pool, new_id).await
+    get(pool, actor, new_id).await
 }
 
 /// Marks a released revision as obsolete.
@@ -458,8 +542,16 @@ pub async fn obsolete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
         format!("{} marked {} as obsolete.", actor.display_name, rev.name),
     )
     .await?;
+    webhooks::emit(
+        &mut tx,
+        Some(actor),
+        WebhookEvent::RevisionObsoleted,
+        &[rev.project_id],
+        json!({ "revision": webhooks::revision_object(&rev, LifecycleState::Obsolete.as_str()) }),
+    )
+    .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Moves a (locked) revision to another lifecycle state after validating

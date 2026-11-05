@@ -5,76 +5,95 @@
 {% import "macros.html" as m %}
 <div class="page-head">
   <div>
-    <h1>BOM of <a class="mono" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }}</h1>
-    <p class="subtitle">Multi-level structure with mass and cost roll-up.</p>
+    <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a><span>BOM</span></p>
+    <div class="title-row">
+      <h1><a class="id title-link" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }}</h1>
+    </div>
+    <p class="meta">
+      Total mass {{ tree.total_mass_kg|fixed(3) }} kg{% if not tree.mass_complete %} <span class="marker-impact" title="A mass is missing in the structure">△ incomplete</span>{% endif %}
+      · Total cost {{ tree.total_cost|fixed(2) }} €{% if not tree.cost_complete %} <span class="marker-impact" title="A cost is missing in the structure">△ incomplete</span>{% endif %}
+      · {{ tree.line_count }} line{% if tree.line_count != 1 %}s{% endif %}
+      · <span class="{% if tree.unresolved_count %}warn-text{% endif %}">{{ tree.unresolved_count }} unresolved</span>
+    </p>
   </div>
   <div class="actions">
     <form class="inline" method="get" action="/revisions/{{ rev.id }}/bom">
       <label class="check">Revision rule
-        <select name="rule">
+        <select name="rule" data-autosubmit>
           <option value="latest" {% if rule == "latest" %}selected{% endif %}>Latest (any state)</option>
           <option value="released" {% if rule == "released" %}selected{% endif %}>Latest released</option>
           <option value="as_released" {% if rule == "as_released" %}selected{% endif %}>As released (exact configuration)</option>
         </select>
       </label>
-      <button type="submit">Apply</button>
+      <noscript><button type="submit">Apply</button></noscript>
     </form>
     <a class="button" href="/revisions/{{ rev.id }}/bom/compare" title="Added, removed and changed lines compared with another revision">Compare…</a>
-    <a class="button" href="/revisions/{{ rev.id }}/bom.csv?rule={{ rule }}">Export CSV</a>
-    <a class="button" href="/revisions/{{ rev.id }}/bom.xlsx?rule={{ rule }}" title="The expanded BOM as Excel workbook – the BOM import reads it back">Export Excel</a>
-    <a class="button" href="/revisions/{{ rev.id }}/package.zip?rule={{ rule }}" title="All files of the structure with this revision rule, bom.csv and manifest.json">Pack and Go (ZIP)</a>
+    <details class="menu">
+      <summary class="button">Export <span class="chev" aria-hidden="true"></span></summary>
+      <div class="menu-pop menu-right">
+        <a href="/revisions/{{ rev.id }}/bom.csv?rule={{ rule }}">CSV</a>
+        <a href="/revisions/{{ rev.id }}/bom.xlsx?rule={{ rule }}" title="The expanded BOM as Excel workbook – the BOM import reads it back">Excel</a>
+        <a href="/revisions/{{ rev.id }}/package.zip?rule={{ rule }}" title="All files of the structure with this revision rule, bom.csv and manifest.json">Pack and Go (ZIP)</a>
+      </div>
+    </details>
   </div>
-</div>
-
-<div class="grid grid-stats">
-  <div class="card stat">
-    <div class="value">{{ tree.total_mass_kg|num(3) }} kg</div>
-    <div class="label">Total mass{% if not tree.mass_complete %} · <span class="badge badge-in_review">incomplete</span>{% endif %}</div>
-  </div>
-  <div class="card stat">
-    <div class="value">{{ tree.total_cost|num(2) }} €</div>
-    <div class="label">Total cost{% if not tree.cost_complete %} · <span class="badge badge-in_review">incomplete</span>{% endif %}</div>
-  </div>
-  <div class="card stat"><div class="value">{{ tree.line_count }}</div><div class="label">Lines (expanded)</div></div>
-  <div class="card stat"><div class="value">{{ tree.unresolved_count }}</div><div class="label">Unresolved by rule</div></div>
 </div>
 
 <div class="card">
   {% if rows %}
-  <div class="table-wrap">
-  <table>
+  <div class="table-wrap sticky">
+  <table class="dense">
     <thead>
       <tr>
-        <th>Lvl</th><th class="num">Find</th><th>Item</th><th>Rev</th><th>Name</th>
-        <th class="num">Qty</th><th class="num">Unit mass [kg]</th><th class="num">Total mass [kg]</th>
-        <th class="num">Total cost [€]</th><th>Notes</th>
+        <th class="lvl-col" title="Level in the structure">Lvl</th><th class="num">Find no.</th><th class="bom-item">Item</th><th>Rev</th><th>State</th><th>Name</th>
+        <th class="num">Qty</th><th class="num">Unit mass (kg)</th><th class="num">Total mass (kg)</th>
+        <th class="num">Cost (€)</th><th>Notes</th>
       </tr>
     </thead>
     <tbody>
     {% for row in rows %}
       {% set n = row.node %}
-      <tr class="{% if not n.revision %}unresolved{% endif %}">
-        <td><span class="lvl">{{ row.level }}</span></td>
-        <td class="num">{{ n.find_number }}</td>
-        <td class="mono nowrap {% if row.level > 6 %}indent-deep{% elif row.level > 1 %}indent-{{ row.level }}{% endif %}">
-          {% if n.revision %}<a href="/revisions/{{ n.revision.id }}">{{ n.item_number }}</a>{% else %}{{ n.item_number }}{% endif %}
+      <tr class="{% if not n.revision and not n.restricted %}unresolved{% endif %}">
+        <td class="lvl-col"><span class="lvl">{{ row.level }}</span></td>
+        <td class="num dim">{{ n.find_number }}</td>
+        <td class="nowrap bom-item{% if row.level > 6 %} lvl-deep{% elif row.level > 1 %} lvl-{{ row.level }}{% endif %}">
+          {% if row.level > 1 %}<span class="tree-guide" aria-hidden="true">└</span>{% endif %}
+          {% if n.restricted %}{{ m.restricted() }}{% elif n.revision %}<a class="mono" href="/revisions/{{ n.revision.id }}">{{ n.item_number }}</a>{% else %}<span class="mono">{{ n.item_number }}</span>{% endif %}
           {% if n.cycle %}<span class="badge badge-rejected">cycle</span>{% endif %}
         </td>
-        <td class="nowrap">{% if n.revision %}<span class="mono">{{ n.revision.code }}</span> {{ m.badge(n.revision.state) }}{% else %}<span class="badge badge-in_review">no {{ rule|replace("_", " ") }} revision</span>{% endif %}</td>
-        <td>{% if n.revision %}{{ n.revision.name }}{% endif %}</td>
-        <td class="num">{{ n.quantity|num(6) }} {{ n.unit }}</td>
-        <td class="num">{{ n.unit_mass_kg|num(4) }}{% if not n.mass_complete %} <span title="mass missing in this sub-tree">⚠</span>{% endif %}</td>
-        <td class="num">{{ n.total_mass_kg|num(4) }}</td>
-        <td class="num">{{ n.total_cost|num(2) }}{% if not n.cost_complete %} <span title="cost missing in this sub-tree">⚠</span>{% endif %}</td>
-        <td class="small">{{ n.notes }}</td>
+        <td>{% if n.revision %}{{ m.revbox(n.revision.code) }}{% endif %}</td>
+        <td class="nowrap">{% if n.restricted %}{% elif n.revision %}{{ m.badge(n.revision.state) }}{% else %}<span class="badge badge-in_review"><span class="glyph" aria-hidden="true">○</span>no {{ rule|replace("_", " ") }} revision</span>{% endif %}</td>
+        <td class="ellipsis" title="{% if n.revision %}{{ n.revision.name }}{% endif %}">{% if n.revision %}{{ n.revision.name }}{% endif %}</td>
+        <td class="num">{{ n.quantity|num(6) }}{% if n.unit and n.unit != "each" %} <span class="dim">{{ n.unit }}</span>{% endif %}</td>
+        {% if n.restricted %}
+        <td class="num dim" title="Not included in the totals">–</td>
+        <td class="num dim" title="Not included in the totals">–</td>
+        <td class="num dim" title="Not included in the totals">–</td>
+        {% else %}
+        <td class="num">{{ n.unit_mass_kg|fixed(3) }}{% if not n.mass_complete %} <span class="marker-impact" title="A mass is missing in this sub-tree">△</span>{% endif %}</td>
+        <td class="num">{{ n.total_mass_kg|fixed(3) }}</td>
+        <td class="num">{{ n.total_cost|fixed(2) }}{% if not n.cost_complete %} <span class="marker-impact" title="A cost is missing in this sub-tree">△</span>{% endif %}</td>
+        {% endif %}
+        <td class="muted ellipsis" title="{{ n.notes }}">{{ n.notes }}</td>
       </tr>
     {% endfor %}
     </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="8">Total</td>
+        <td class="num">{{ tree.total_mass_kg|fixed(3) }}</td>
+        <td class="num">{{ tree.total_cost|fixed(2) }}</td>
+        <td></td>
+      </tr>
+    </tfoot>
   </table>
   </div>
-  <p class="hint">Unit mass = own mass of the revision + roll-up of its children. ⚠ marks sub-trees where a mass or cost is missing.</p>
+  {% if tree.restricted_lines %}<p class="hint">Mass and cost exclude {{ tree.restricted_lines }} restricted line{% if tree.restricted_lines != 1 %}s{% endif %} (items of project groups you are not a member of).</p>{% endif %}
   {% else %}
   <p class="empty">This revision has no BOM lines.</p>
   {% endif %}
 </div>
+{% if rows and (not tree.mass_complete or not tree.cost_complete) %}
+<p class="hint">Unit mass = own mass of the revision + roll-up of its children. △ marks sub-trees where a mass or cost is missing.</p>
+{% endif %}
 {% endblock %}

@@ -24,6 +24,7 @@ use uuid::Uuid;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 use crate::{
+    auth::Actor,
     domain::RevisionRule,
     error::{AppError, AppResult},
     services::{bom, files, revisions},
@@ -48,11 +49,12 @@ struct Entry {
 pub async fn build(
     pool: &PgPool,
     vault: &Vault,
+    actor: &Actor,
     root_revision_id: Uuid,
     rule: RevisionRule,
 ) -> AppResult<Package> {
-    let root = revisions::get(pool, root_revision_id).await?;
-    let tree = bom::tree(pool, root_revision_id, rule).await?;
+    let root = revisions::get(pool, actor, root_revision_id).await?;
+    let tree = bom::tree(pool, actor, root_revision_id, rule).await?;
 
     // Every revision of the structure once: the root, then depth first.
     let mut revs = vec![(
@@ -75,18 +77,22 @@ pub async fn build(
                 r.state.clone(),
             )),
             Some(_) => {}
+            // hidden children contribute no files and no identity
+            None if n.restricted => {}
             None => unresolved.push(
                 json!({ "item": n.item_number, "find_number": n.find_number, "level": n.level }),
             ),
         }
     }
 
+    let ids: Vec<Uuid> = revs.iter().map(|r| r.0).collect();
+    let mut files_of = files::list_many_by_revision(pool, &ids).await?;
     let mut entries = Vec::new();
     let mut manifest_revisions = Vec::new();
     for (id, number, code, name, state) in &revs {
         let folder = format!("{number}_{code}");
         let mut listed = Vec::new();
-        for f in files::list(pool, *id).await? {
+        for f in files_of.remove(id).unwrap_or_default() {
             let zip_path = format!("{folder}/{}", f.filename);
             listed.push(
                 json!({ "path": zip_path, "sha256": f.sha256, "size": f.size_bytes,
@@ -107,6 +113,7 @@ pub async fn build(
         "rule": rule.as_str(),
         "revisions": manifest_revisions,
         "unresolved": unresolved,
+        "restricted_lines": tree.restricted_lines,
     });
     let bom_csv = bom::to_csv(&tree);
 

@@ -52,8 +52,8 @@ pub async fn show(
         ),
     };
     let (folders, entries) = tokio::try_join!(
-        explorer::folders(&st.db),
-        explorer::list(&st.db, listing, &q)
+        explorer::folders(&st.db, &ctx.me),
+        explorer::list(&st.db, &ctx.me, listing, &q)
     )?;
 
     // the detail pane of the selected revision
@@ -61,8 +61,10 @@ pub async fn show(
     let selected = match rev_id {
         None => None,
         Some(id) => {
-            let (rev, file_list) =
-                tokio::try_join!(revisions::get(&st.db, id), files::list(&st.db, id))?;
+            let (rev, file_list) = tokio::try_join!(
+                revisions::get(&st.db, &ctx.me, id),
+                files::list(&st.db, &ctx.me, id)
+            )?;
             let me = &ctx.me;
             let can_work = revisions::ensure_checkout_possible(&rev, me).is_ok();
             let file_list: Vec<_> = file_list
@@ -82,9 +84,7 @@ pub async fn show(
                 "can": {
                     "checkout": can_work && rev.checked_out_by.is_none(),
                     "checkin": rev.checked_out_by == Some(me.id),
-                    "cancel_checkout": rev.checked_out_by.is_some()
-                        && me.can_edit()
-                        && (rev.checked_out_by == Some(me.id) || me.is_admin()),
+                    "cancel_checkout": revisions::may_cancel_checkout(&st.db, me, &rev).await?,
                 },
             }))
         }

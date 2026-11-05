@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use super::{finish, parse_opt_uuid, render, xlsx_response, WebCtx};
 use crate::{
+    auth::Actor,
     domain::RevisionRule,
     error::{AppError, AppResult},
     models::Revision,
@@ -113,11 +114,11 @@ pub async fn save_as_form(
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     let (rev, projects, lines) = tokio::try_join!(
-        revisions::get(&st.db, id),
+        revisions::get(&st.db, &ctx.me, id),
         projects::editable_by(&st.db, &ctx.me),
-        crate::services::bom::lines(&st.db, id),
+        crate::services::bom::lines(&st.db, &ctx.me, id),
     )?;
-    let files = crate::services::files::list(&st.db, id).await?;
+    let files = crate::services::files::list(&st.db, &ctx.me, id).await?;
     render(
         &st,
         &ctx,
@@ -225,10 +226,15 @@ impl Comparison {
 
 /// Loads both revisions (older first) and compares their BOMs. `with` is a
 /// revision id; the default is the previous revision of the item.
-async fn comparison(st: &AppState, id: Uuid, q: &CompareQuery) -> AppResult<Comparison> {
+async fn comparison(
+    st: &AppState,
+    me: &Actor,
+    id: Uuid,
+    q: &CompareQuery,
+) -> AppResult<Comparison> {
     let depth = q.depth()?;
-    let rev = revisions::get(&st.db, id).await?;
-    let all = items::revisions(&st.db, rev.item_id).await?;
+    let rev = revisions::get(&st.db, me, id).await?;
+    let all = items::revisions(&st.db, me, rev.item_id).await?;
     let other_id = match parse_opt_uuid("Revision", q.with.as_deref())? {
         Some(other) => other,
         // the revision before this one, else the one after it
@@ -245,7 +251,7 @@ async fn comparison(st: &AppState, id: Uuid, q: &CompareQuery) -> AppResult<Comp
                 ))
             })?,
     };
-    let other = revisions::get(&st.db, other_id).await?;
+    let other = revisions::get(&st.db, me, other_id).await?;
     // two revisions of one item: the older one first; two items: this one
     // first, compared with the other
     let (before, after) = if other.item_id == rev.item_id && other.seq < rev.seq {
@@ -254,7 +260,7 @@ async fn comparison(st: &AppState, id: Uuid, q: &CompareQuery) -> AppResult<Comp
         (rev.clone(), other)
     };
     let rule = q.rule(&before, &after);
-    let diffs = bom_compare::compare(&st.db, before.id, after.id, depth, rule).await?;
+    let diffs = bom_compare::compare(&st.db, me, before.id, after.id, depth, rule).await?;
     Ok(Comparison {
         rev,
         revisions: all,
@@ -272,7 +278,7 @@ pub async fn bom_compare(
     Path(id): Path<Uuid>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let cmp = comparison(&st, id, &q).await?;
+    let cmp = comparison(&st, &ctx.me, id, &q).await?;
     let summary = bom_compare::summary(&cmp.diffs);
     render(
         &st,
@@ -295,11 +301,11 @@ pub async fn bom_compare(
 /// workbook (same `with` query as the page).
 pub async fn bom_compare_xlsx(
     State(st): State<AppState>,
-    _ctx: WebCtx,
+    ctx: WebCtx,
     Path(id): Path<Uuid>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let cmp = comparison(&st, id, &q).await?;
+    let cmp = comparison(&st, &ctx.me, id, &q).await?;
     let bytes = bom_compare::to_xlsx(&cmp.diffs)?;
     Ok(xlsx_response(bytes, &cmp.file_name()))
 }

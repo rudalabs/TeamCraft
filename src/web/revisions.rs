@@ -16,12 +16,13 @@ use super::{finish, items::BackForm, render, WebCtx};
 use crate::{
     auth::{Actor, WebUser},
     cadformat::FormatKind,
-    domain::{self, LifecycleState, ReferenceKind, COMMON_UNITS},
+    domain::{self, BasisRole, ItemType, LifecycleState, ReferenceKind, COMMON_UNITS},
     error::{AppError, AppResult},
     models::FileRecord,
     preview::PreviewFormat,
     services::{
-        audit, bom, changes, files, impacts, items, notifications, projects, references, revisions,
+        audit, bom, changes, files, impacts, items, notifications, projects, references, requests,
+        revisions, similar, simulations, uploads,
     },
     thumbnail, util, AppState,
 };
@@ -37,8 +38,9 @@ pub async fn show(
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, id).await?;
-    let item = items::get(&st.db, rev.item_id).await?;
+    let me = &ctx.me;
+    let rev = revisions::get(&st.db, me, id).await?;
+    let item = items::get(&st.db, me, rev.item_id).await?;
     // independent queries run concurrently
     let (
         all_revisions,
@@ -52,26 +54,64 @@ pub async fn show(
         file_referrers,
         item_impacts,
         watching,
-        rev_changes,
+        (rev_changes, hidden_changes),
         projects,
+        open_requests,
     ) = tokio::try_join!(
-        items::revisions(&st.db, item.id),
+        items::revisions(&st.db, me, item.id),
         files::versions_of_revision(&st.db, id),
-        files::list(&st.db, id),
-        bom::lines(&st.db, id),
-        items::where_used(&st.db, item.id),
+        files::list(&st.db, me, id),
+        bom::lines(&st.db, me, id),
+        items::where_used(&st.db, me, item.id),
         // reference tracking and change propagation
-        references::outgoing(&st.db, id),
-        references::incoming(&st.db, item.id),
-        references::files_of_revision(&st.db, id),
-        references::file_referrers(&st.db, id),
-        impacts::for_item(&st.db, item.id),
+        references::outgoing(&st.db, me, id),
+        references::incoming(&st.db, me, item.id),
+        references::files_of_revision(&st.db, me, id),
+        references::file_referrers(&st.db, me, id),
+        impacts::for_item(&st.db, me, item.id),
         notifications::is_watching(&st.db, ctx.me.id, "item", item.id),
-        changes::for_revision(&st.db, id),
+        changes::for_revision(&st.db, me, id),
         // target groups for moving the item (only groups the user may edit)
         projects::editable_by(&st.db, &ctx.me),
+        // change requests (ECR) on the item that are not finished
+        requests::open_for_item(&st.db, me, item.id),
+    )?;
+    let (hidden_parents, hidden_incoming) = tokio::try_join!(
+        items::hidden_parents(&st.db, me, item.id),
+        references::incoming_hidden(&st.db, me, item.id),
     )?;
     let favorite = crate::services::personal::is_favorite(&st.db, ctx.me.id, item.id).await?;
+    // Similar parts by the shape of its 3D model: one indexed query; a
+    // missing signature is computed in the background – waited for briefly
+    // only when the conversion is done (a quick job from the cached mesh,
+    // or its cached failure), never for a conversion, so the page is not
+    // held up.
+    let wait = match similar::pick_file(&file_list, None) {
+        Ok(Some((f, _))) if st.previews.is_converted(&f.sha256).await => {
+            std::time::Duration::from_millis(1500)
+        }
+        _ => std::time::Duration::ZERO,
+    };
+    let similar_parts = match similar::for_files(
+        &st,
+        &ctx.me,
+        &rev,
+        &file_list,
+        None,
+        similar::Options {
+            limit: 6,
+            ignore_scale: false,
+        },
+        wait,
+    )
+    .await
+    {
+        Ok(report) => Some(report),
+        Err(e) => {
+            tracing::warn!(revision = %rev.id, error = %e, "similar part search failed");
+            None
+        }
+    };
     // Native CAD files can only be viewed in 3D through a neutral export.
     let native_without_preview = !file_list.iter().any(|f| preview_of(f).is_some())
         && file_list.iter().any(|f| {
@@ -82,6 +122,14 @@ pub async fn show(
                 )
             })
         });
+    // Result files the browser can show in 3D (VTK, VTU, VTP, FRD); a few
+    // on the Results card (time series have dozens), all in the file list.
+    let result_views: Vec<serde_json::Value> = file_list
+        .iter()
+        .filter(|f| preview_of(f).is_some_and(PreviewFormat::is_result))
+        .take(3)
+        .map(|f| json!({ "id": f.id, "filename": f.filename, "version": f.version }))
+        .collect();
     // The versions this page shows: uploads from its forms are based on them,
     // so a file that changed meanwhile is refused instead of overwritten.
     let file_bases = serde_json::Value::Object(
@@ -105,10 +153,9 @@ pub async fn show(
         .collect();
     let mut entity_ids: Vec<Uuid> = all_revisions.iter().map(|r| r.id).collect();
     entity_ids.push(item.id);
-    let history = audit::for_entities(&st.db, &entity_ids, 50).await?;
+    let history = audit::for_entities(&st.db, me, &entity_ids, 50).await?;
 
     let state = revisions::state_of(&rev);
-    let me = &ctx.me;
     // editable = checked out by me; can_work = could check out / add to a change
     let editable = revisions::ensure_editable(&rev, me).is_ok();
     let can_work = revisions::ensure_checkout_possible(&rev, me).is_ok();
@@ -120,7 +167,7 @@ pub async fn show(
         .find(|c| changes::status_of(c).is_open())
         .cloned();
     let drafts = if can_work && open_change.is_none() {
-        changes::drafts(&st.db)
+        changes::drafts(&st.db, me)
             .await?
             .into_iter()
             .filter(|c| c.created_by == me.id || me.is_admin())
@@ -133,16 +180,16 @@ pub async fn show(
         "edit": editable,
         "checkout": can_work && rev.checked_out_by.is_none(),
         "checkin": rev.checked_out_by == Some(me.id),
-        "cancel_checkout": rev.checked_out_by.is_some()
-            && me.can_edit()
-            && (rev.checked_out_by == Some(me.id) || me.is_admin()),
+        "cancel_checkout": revisions::may_cancel_checkout(&st.db, me, &rev).await?,
         "revise": in_project && !item_has_open_revision,
         "obsolete": in_project && state == LifecycleState::Released,
         "delete": ((item.created_by == me.id && in_project) || me.is_admin())
             && all_revisions.len() == 1
             && state == LifecycleState::InWork
             && where_used.is_empty()
-            && rev_changes.is_empty(),
+            && hidden_parents == 0
+            && rev_changes.is_empty()
+            && hidden_changes == 0,
         "master": in_project,
         "add_to_change": can_work && open_change.is_none(),
         "acknowledge": me.can_edit() && me.can_edit_project(item.project_id),
@@ -161,6 +208,35 @@ pub async fn show(
         .map(|k| json!({ "value": k.as_str(), "label": k.label() }))
         .collect();
     let latest_id = all_revisions.first().map(|r| r.id);
+    // Simulations: basis links and result values of a simulation revision;
+    // for every other item the simulations based on it.
+    let is_simulation = rev.item_type == ItemType::Simulation.as_str();
+    let simulation = if is_simulation {
+        let (bases, results) = tokio::try_join!(
+            simulations::bases(&st.db, me, id),
+            simulations::results(&st.db, me, id)
+        )?;
+        let out_of_date = bases.iter().filter(|b| b.out_of_date.is_some()).count();
+        let roles: Vec<_> = BasisRole::ALL
+            .iter()
+            .map(|r| json!({ "value": r.as_str(), "label": r.label() }))
+            .collect();
+        json!({
+            "summary": simulations::summarize(&results),
+            "bases": bases,
+            "results": results,
+            "out_of_date": out_of_date,
+            "roles": roles,
+            "views": result_views,
+        })
+    } else {
+        serde_json::Value::Null
+    };
+    let (based_simulations, hidden_simulations) = if is_simulation {
+        (Vec::new(), 0)
+    } else {
+        simulations::based_on_item(&st.db, me, item.id).await?
+    };
     render(
         &st,
         &ctx,
@@ -174,8 +250,15 @@ pub async fn show(
             "files": attachments,
             "file_bases": file_bases,
             "native_without_preview": native_without_preview,
+            "similar": similar_parts,
             "lines": lines,
             "where_used": where_used,
+            "hidden": {
+                "parents": hidden_parents,
+                "incoming": hidden_incoming,
+                "changes": hidden_changes,
+                "simulations": hidden_simulations,
+            },
             "references": {
                 "outgoing": outgoing,
                 "incoming": incoming,
@@ -184,11 +267,14 @@ pub async fn show(
                 "suggestions": suggestions,
                 "kinds": reference_kinds,
             },
-            "open_impacts": open_impacts,
+            "impact_groups": impacts::group_by_dependent(open_impacts),
+            "simulation": simulation,
+            "based_simulations": based_simulations,
             "watching": watching,
             "favorite": favorite,
             "resolved_impacts": resolved_impacts,
             "changes": rev_changes,
+            "open_requests": open_requests,
             "open_change": open_change,
             "drafts": drafts,
             "history": history,
@@ -210,7 +296,7 @@ pub async fn edit_form(
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, id).await?;
+    let rev = revisions::get(&st.db, &ctx.me, id).await?;
     revisions::ensure_editable(&rev, &ctx.me)?;
     render(
         &st,
@@ -261,7 +347,7 @@ pub async fn update(
         )),
         Err(e) if super::is_user_error(&e) => {
             // Re-render the form with the submitted values.
-            let mut rev = revisions::get(&st.db, id).await?;
+            let mut rev = revisions::get(&st.db, &ctx.me, id).await?;
             rev.name = form.name;
             rev.description = form.description;
             rev.material = form.material;
@@ -313,7 +399,7 @@ pub async fn checkin(
 ) -> AppResult<Response> {
     let back = back_of(id, &query);
     let result = async {
-        let rev = revisions::get(&st.db, id).await?;
+        let rev = revisions::get(&st.db, &ctx.me, id).await?;
         if rev.checked_out_by != Some(ctx.me.id) {
             return Err(AppError::Conflict(format!(
                 "You have not checked out {}.",
@@ -454,6 +540,12 @@ pub(crate) async fn receive_uploads(
         let bases = files::parse_bases(raw)?;
         files::apply_bases(&mut received.uploads, &bases);
     }
+    // Where the files sit in the project group (the desktop working folder).
+    let (folder, folders) = files::parse_folders(
+        received.fields.get("folder").map(String::as_str),
+        received.fields.get("folders").map(String::as_str),
+    )?;
+    files::apply_folders(&mut received.uploads, folder.as_deref(), &folders);
     Ok(received)
 }
 
@@ -466,7 +558,8 @@ pub(crate) async fn upload_files(
     multipart: &mut Multipart,
 ) -> AppResult<Vec<files::Stored>> {
     files::ensure_can_attach(&st.db, actor, revision_id).await?;
-    let received = receive_uploads(st, multipart).await?;
+    let mut received = receive_uploads(st, multipart).await?;
+    let sessions = take_session_uploads(st, actor, revision_id, &mut received).await?;
     let stored = files::attach(
         &st.db,
         actor,
@@ -475,16 +568,63 @@ pub(crate) async fn upload_files(
         &received.comment,
     )
     .await?;
+    uploads::forget(&st.db, &st.vault, &sessions).await;
     warm_previews(st, &received.uploads);
     Ok(stored)
 }
 
+/// Adds the chunked uploads listed in the `uploads` field (ids of complete
+/// `/api/v1/uploads` sessions of the actor) to the received files, so large
+/// files join a multipart upload or check-in – stored in the same
+/// transaction. A session's own base and folder win over the `bases`,
+/// `folders` and `folder` fields. Returns the session ids, to be forgotten
+/// once the versions are stored.
+pub(crate) async fn take_session_uploads(
+    st: &AppState,
+    actor: &Actor,
+    revision_id: Uuid,
+    received: &mut Received,
+) -> AppResult<Vec<Uuid>> {
+    let Some(raw) = received.fields.get("uploads") else {
+        return Ok(Vec::new());
+    };
+    let ids = uploads::parse_ids(raw)?;
+    let bases = match received.fields.get("bases") {
+        Some(raw) => files::parse_bases(raw)?,
+        None => Default::default(),
+    };
+    let (folder, folders) = files::parse_folders(
+        received.fields.get("folder").map(String::as_str),
+        received.fields.get("folders").map(String::as_str),
+    )?;
+    for id in &ids {
+        let mut upload =
+            uploads::complete(&st.db, &st.vault, actor, *id, Some(revision_id)).await?;
+        let key = files::stored_name(&upload.filename).to_lowercase();
+        if upload.base.is_none() {
+            upload.base = bases.get(&key).cloned();
+        }
+        if upload.folder.is_none() {
+            upload.folder = folders.get(&key).cloned().or_else(|| folder.clone());
+        }
+        received.uploads.push(upload);
+    }
+    Ok(ids)
+}
+
 /// Starts the 3D preview conversion of freshly stored files in the
-/// background, so the first viewer gets the model at once.
+/// background, so the first viewer gets the model at once – together with
+/// the shape signature for the similar part search.
 pub(crate) fn warm_previews(st: &AppState, uploads: &[files::Upload]) {
     for upload in uploads {
-        if let Some(format) = PreviewFormat::of(&upload.filename) {
-            st.previews.warm(&st.vault, &upload.blob.sha256, format);
+        match PreviewFormat::of(&upload.filename) {
+            Some(format) if format.is_point_cloud() => {
+                st.previews.warm(&st.vault, &upload.blob.sha256, format)
+            }
+            Some(format) => {
+                similar::spawn_ensure(st, &upload.blob.sha256, format);
+            }
+            None => {}
         }
     }
 }
@@ -539,14 +679,18 @@ pub(crate) async fn blob_response(
 }
 
 /// Current version of a file. Shared with the REST API.
-pub(crate) async fn file_response(st: &AppState, file_id: Uuid) -> AppResult<Response> {
-    let f = files::get(&st.db, file_id).await?;
+pub(crate) async fn file_response(st: &AppState, me: &Actor, file_id: Uuid) -> AppResult<Response> {
+    let f = files::get(&st.db, me, file_id).await?;
     blob_response(st, &f.sha256, &f.filename, &f.content_type, f.size_bytes).await
 }
 
 /// A specific version of a file (`name.v2.ext`). Shared with the REST API.
-pub(crate) async fn version_response(st: &AppState, version_id: Uuid) -> AppResult<Response> {
-    let (v, filename) = files::get_version(&st.db, version_id).await?;
+pub(crate) async fn version_response(
+    st: &AppState,
+    me: &Actor,
+    version_id: Uuid,
+) -> AppResult<Response> {
+    let (v, filename) = files::get_version(&st.db, me, version_id).await?;
     let versioned = match filename.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => format!("{stem}.v{}.{ext}", v.version),
         _ => format!("{filename}.v{}", v.version),
@@ -556,17 +700,21 @@ pub(crate) async fn version_response(st: &AppState, version_id: Uuid) -> AppResu
 
 pub async fn download(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    file_response(&st, id).await
+    file_response(&st, &me, id).await
 }
 
 /// The preview image stored inside a CAD file (Inventor, Solid Edge,
 /// SolidWorks), read once and cached next to the 3D previews. Shared with
 /// the REST API.
-pub(crate) async fn thumbnail_response(st: &AppState, file_id: Uuid) -> AppResult<Response> {
-    let f = files::get(&st.db, file_id).await?;
+pub(crate) async fn thumbnail_response(
+    st: &AppState,
+    me: &Actor,
+    file_id: Uuid,
+) -> AppResult<Response> {
+    let f = files::get(&st.db, me, file_id).await?;
     if !thumbnail::supports(&f.format) {
         return Err(AppError::not_found(
             "Files of this type have no embedded preview image.",
@@ -586,7 +734,7 @@ pub(crate) async fn thumbnail_response(st: &AppState, file_id: Uuid) -> AppResul
     };
     Response::builder()
         .header(header::CONTENT_TYPE, image.content_type)
-        .header(header::CACHE_CONTROL, "private, max-age=86400")
+        .header(header::CACHE_CONTROL, "private, no-cache")
         .header(header::ETAG, format!("\"{}-thumb\"", f.sha256))
         .body(Body::from(image.bytes))
         .map_err(|e| {
@@ -598,18 +746,18 @@ pub(crate) async fn thumbnail_response(st: &AppState, file_id: Uuid) -> AppResul
 
 pub async fn thumbnail(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    thumbnail_response(&st, id).await
+    thumbnail_response(&st, &me, id).await
 }
 
 pub async fn download_version(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    version_response(&st, id).await
+    version_response(&st, &me, id).await
 }
 
 /// 3D preview page of the current version of a file.
@@ -618,7 +766,7 @@ pub async fn preview(
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let file = files::get(&st.db, id).await?;
+    let file = files::get(&st.db, &ctx.me, id).await?;
     let current = file.version;
     preview_page(&st, &ctx, file, current).await
 }
@@ -629,15 +777,16 @@ pub async fn preview_version(
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let (version, _) = files::get_version(&st.db, id).await?;
-    let file = files::get(&st.db, version.file_id).await?;
+    let (version, _) = files::get_version(&st.db, &ctx.me, id).await?;
+    let file = files::get(&st.db, &ctx.me, version.file_id).await?;
     preview_page(&st, &ctx, file, version.version).await
 }
 
 fn no_preview() -> AppError {
     AppError::BadRequest(
         "There is no 3D preview for this file type – meshes (STL, OBJ, PLY, 3MF, glTF, …), \
-         point clouds and STEP are supported; attach a STEP export of native CAD files."
+         point clouds, STEP and simulation results (VTK, VTU, VTP, CalculiX FRD) are \
+         supported; attach a STEP export of native CAD files."
             .into(),
     )
 }
@@ -650,16 +799,21 @@ async fn preview_page(
 ) -> AppResult<Response> {
     let format = preview_of(&file).ok_or_else(no_preview)?;
     let (versions, rev) = tokio::try_join!(
-        files::versions(&st.db, file.id),
-        revisions::get(&st.db, file.revision_id)
+        files::versions(&st.db, &ctx.me, file.id),
+        revisions::get(&st.db, &ctx.me, file.revision_id)
     )?;
     let shown = versions
         .iter()
         .find(|v| v.version == version)
         .cloned()
         .ok_or_else(|| AppError::not_found("File version not found."))?;
-    // start the conversion while the browser loads the page
-    st.previews.warm(&st.vault, &shown.sha256, format);
+    // start the conversion while the browser loads the page (with the
+    // shape signature, unless it is a point cloud)
+    if format.is_point_cloud() {
+        st.previews.warm(&st.vault, &shown.sha256, format);
+    } else {
+        similar::spawn_ensure(st, &shown.sha256, format);
+    }
     render(
         st,
         ctx,
@@ -673,6 +827,7 @@ async fn preview_page(
             "format": format.as_str(),
             "is_brep": format.is_brep(),
             "is_points": format.is_point_cloud(),
+            "is_result": format.is_result(),
         }),
     )
 }
@@ -698,10 +853,7 @@ pub(crate) async fn mesh_response(
     Response::builder()
         .header(header::CONTENT_TYPE, "application/octet-stream")
         .header(header::CONTENT_LENGTH, size)
-        .header(
-            header::CACHE_CONTROL,
-            "private, max-age=31536000, immutable",
-        )
+        .header(header::CACHE_CONTROL, "private, no-cache")
         .header("x-content-sha256", sha256)
         .body(Body::from_stream(ReaderStream::new(handle)))
         .map_err(|e| AppError::Other(anyhow::anyhow!("building the mesh response failed: {e}")))
@@ -710,10 +862,10 @@ pub(crate) async fn mesh_response(
 /// Preview mesh of the current version of a file.
 pub async fn mesh(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let file = files::get(&st.db, id).await?;
+    let file = files::get(&st.db, &me, id).await?;
     let sha = file.sha256.clone();
     let mut response = mesh_response(&st, &file, &sha).await?;
     // "current version" changes with every check-in
@@ -727,11 +879,11 @@ pub async fn mesh(
 /// Preview mesh of a specific file version.
 pub async fn mesh_version(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let (version, _) = files::get_version(&st.db, id).await?;
-    let file = files::get(&st.db, version.file_id).await?;
+    let (version, _) = files::get_version(&st.db, &me, id).await?;
+    let file = files::get(&st.db, &me, version.file_id).await?;
     mesh_response(&st, &file, &version.sha256).await
 }
 
@@ -754,6 +906,35 @@ pub async fn restore_version(
         (
             back.clone(),
             format!("Restored {} – it is now version {}", f.filename, f.version),
+        )
+    })
+}
+
+#[derive(Deserialize)]
+pub struct FolderForm {
+    #[serde(default)]
+    folder: String,
+    back: Option<String>,
+}
+
+/// Moves a file to another folder of the project group (its place in the
+/// desktop working folder) while the revision is checked out.
+pub async fn set_file_folder(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<FolderForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = files::set_folder(&st.db, &ctx.me, id, &form.folder).await;
+    finish(&st, result, &back, |file| {
+        (
+            format!("/revisions/{}#files", file.revision_id),
+            if file.folder.is_empty() {
+                format!("{} is now at the top of the project group", file.filename)
+            } else {
+                format!("{} is now in {}/", file.filename, file.folder)
+            },
         )
     })
 }

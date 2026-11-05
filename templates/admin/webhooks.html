@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Webhooks{% endblock %}
+{% block nav_webhooks %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Webhooks</h1>
+    <p class="subtitle">
+      Tell CI, ERP or chat when something happens: a signed JSON <span class="mono">POST</span> for each event,
+      retried for about two hours when the receiver is down.
+      <a href="https://rudalabs.github.io/TeamCraft/admin/webhooks.html" rel="noopener">How receivers check the signature</a>
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  {% if webhooks %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Name</th><th>Receiver</th><th>Events</th><th>Project group</th><th>Status</th><th>Last delivery</th><th class="right">Waiting</th></tr></thead>
+    <tbody>
+    {% for w in webhooks %}
+      <tr>
+        <td class="nowrap"><a href="/admin/webhooks/{{ w.id }}">{{ w.name }}</a></td>
+        <td class="mono small">{{ w.host }}</td>
+        <td class="small">{% for e in w.events %}<span class="mono">{{ e }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</td>
+        <td class="small">{{ w.project_code or "all" }}</td>
+        <td>{% if w.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">inactive</span>{% endif %}</td>
+        <td class="small nowrap">
+          {% if w.last_status %}<span class="badge badge-{{ w.last_status }}">{{ w.last_status }}</span> {{ m.time(w.last_delivery_at) }}{% else %}<span class="muted">none yet</span>{% endif %}
+          {% if w.failed_recently %}<br><span class="badge badge-failed">{{ w.failed_recently }} failed in 7 days</span>{% endif %}
+        </td>
+        <td class="right">{{ w.pending }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty">No webhooks yet. Add one below to send releases to your ERP, start a CAM job or post to a channel.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>New webhook</h2>
+  <form class="stack" method="post" action="/admin/webhooks">
+    <div class="form-row">
+      <label>Name <input type="text" name="name" maxlength="100" required placeholder="ERP BOM export"></label>
+      <label>URL <span class="hint">receives a POST with JSON</span>
+        <input type="url" name="url" maxlength="2000" required placeholder="https://erp.example.org/teamcraft/events" spellcheck="false"></label>
+    </div>
+    <fieldset class="event-choices">
+      <legend>Send these events</legend>
+      {% for e in events %}
+      <label class="check"><input type="checkbox" name="event" value="{{ e.value }}" {% if e.value == "revision.released" %}checked{% endif %}> {{ e.label }} <span class="mono">{{ e.value }}</span></label>
+      {% endfor %}
+    </fieldset>
+    <div class="form-row">
+      <label>Project group
+        <select name="project">
+          <option value="">All internal project groups</option>
+          {% for p in projects %}<option value="{{ p.id }}">{{ p.code }} – {{ p.name }}{% if p.restricted %} (restricted){% endif %}</option>{% endfor %}
+        </select>
+        {% if projects|selectattr("restricted")|list %}<span class="hint">A webhook for all groups receives no events of restricted groups; choose the group to get them.</span>{% endif %}
+      </label>
+      <label class="check"><input type="checkbox" name="active" checked> Active</label>
+    </div>
+    <p class="hint">
+      {% if targets.allowed_hosts %}This server only sends to {% for h in targets.allowed_hosts %}<span class="mono">{{ h }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.
+      {% elif targets.allow_private %}Receivers in the internal network are allowed on this server.
+      {% else %}Receivers must be public: internal addresses (10.x, 192.168.x, localhost, …) are blocked until the server administrator lists the host in <span class="mono">TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS</span>.{% endif %}
+      The secret for checking signatures is shown once after you create the webhook.
+    </p>
+    <div class="actions"><button class="primary" type="submit">Create webhook</button></div>
+  </form>
+</div>
+{% endblock %}

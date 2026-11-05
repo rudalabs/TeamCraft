@@ -17,12 +17,14 @@ use crate::error::AppError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
-    /// Read-only access to all product data.
+    /// Read-only access to internal project groups and to restricted groups
+    /// the user is a member of.
     Viewer,
-    /// "CAD editor": create and modify product data of their project groups,
-    /// author changes, review changes.
+    /// "CAD editor": edits the groups they are a member of (create and modify
+    /// product data, author changes, review changes); reads like a viewer.
     Editor,
-    /// Everything, plus user/project administration and lock overrides.
+    /// Everything, including restricted groups, plus user/project
+    /// administration and lock overrides.
     Admin,
 }
 
@@ -63,6 +65,45 @@ impl Role {
 }
 
 // ---------------------------------------------------------------------------
+// Project group visibility
+// ---------------------------------------------------------------------------
+
+/// Who may read the data of a project group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectVisibility {
+    /// Every signed-in user reads; members edit (the default).
+    Internal,
+    /// Only members (of any role) and administrators read anything in it;
+    /// everybody else gets "not found".
+    Restricted,
+}
+
+impl ProjectVisibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProjectVisibility::Internal => "internal",
+            ProjectVisibility::Restricted => "restricted",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ProjectVisibility::Internal => "Internal",
+            ProjectVisibility::Restricted => "Restricted",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ProjectVisibility> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "internal" => Some(ProjectVisibility::Internal),
+            "restricted" => Some(ProjectVisibility::Restricted),
+            _ => None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Skins
 // ---------------------------------------------------------------------------
 
@@ -75,9 +116,28 @@ pub struct Skin {
     /// Path below `/static/media/`.
     pub logo: &'static str,
     pub description: &'static str,
-    /// Light background (white or almost white): the pages use the dark
-    /// variants of the logos.
-    pub light: bool,
+    /// Light, dark, or following the operating system (`prefers-color-scheme`).
+    pub scheme: Scheme,
+}
+
+/// The colour scheme of a skin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Scheme {
+    Light,
+    Dark,
+    /// Light or dark, as the operating system (browser) prefers.
+    System,
+}
+
+impl Scheme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Scheme::Light => "light",
+            Scheme::Dark => "dark",
+            Scheme::System => "system",
+        }
+    }
 }
 
 pub const DEFAULT_SKIN: &str = "teamcraft";
@@ -85,69 +145,76 @@ pub const DEFAULT_SKIN: &str = "teamcraft";
 /// The TeamCraft icon (shown in the header, the footer and as favicon).
 pub const TEAMCRAFT_ICON: &str = "logos/TeamCraft_Icon.svg";
 
-pub const SKINS: [Skin; 9] = [
+pub const SKINS: [Skin; 10] = [
     Skin {
         id: "teamcraft",
         name: "TeamCraft",
         logo: TEAMCRAFT_ICON,
-        description: "House style, night",
-        light: false,
+        description: "Follows your system: light or dark",
+        scheme: Scheme::System,
     },
     Skin {
         id: "teamcraft-day",
-        name: "TeamCraft Day",
+        name: "TeamCraft Light",
         logo: TEAMCRAFT_ICON,
         description: "House style, light",
-        light: true,
+        scheme: Scheme::Light,
+    },
+    Skin {
+        id: "teamcraft-night",
+        name: "TeamCraft Dark",
+        logo: TEAMCRAFT_ICON,
+        description: "House style, dark",
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "arch",
         name: "Arch",
         logo: TEAMCRAFT_ICON,
         description: "Blueprint grid",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "cachyos",
         name: "CachyOS",
         logo: TEAMCRAFT_ICON,
         description: "Teal dot matrix",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "endeavouros",
         name: "EndeavourOS",
         logo: TEAMCRAFT_ICON,
         description: "Purple sunset",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "kde",
         name: "KDE",
         logo: TEAMCRAFT_ICON,
         description: "Breeze dark",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "kubuntu",
         name: "Kubuntu",
         logo: TEAMCRAFT_ICON,
         description: "Blue rings",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "opensuse",
         name: "openSUSE",
         logo: TEAMCRAFT_ICON,
         description: "Chameleon scales",
-        light: false,
+        scheme: Scheme::Dark,
     },
     Skin {
         id: "ubuntu",
         name: "Ubuntu",
         logo: TEAMCRAFT_ICON,
         description: "Circle of friends",
-        light: false,
+        scheme: Scheme::Dark,
     },
 ];
 
@@ -165,10 +232,53 @@ pub fn is_skin(id: &str) -> bool {
     SKINS.iter().any(|s| s.id == id)
 }
 
-/// Whether a skin has a light background (unknown ids: the default skin).
-pub fn skin_is_light(id: &str) -> bool {
+/// The colour scheme of a skin (unknown ids: the default skin).
+pub fn skin_scheme(id: &str) -> Scheme {
     let id = skin_or_default(id);
-    SKINS.iter().any(|s| s.id == id && s.light)
+    SKINS
+        .iter()
+        .find(|s| s.id == id)
+        .map(|s| s.scheme)
+        .unwrap_or(Scheme::System)
+}
+
+/// Up to two initials for the avatar: first letters of the first and last
+/// word of the display name (the username when the name is empty).
+pub fn initials(display_name: &str, username: &str) -> String {
+    let source = if display_name.trim().is_empty() {
+        username
+    } else {
+        display_name
+    };
+    let words: Vec<&str> = source.split_whitespace().collect();
+    let first = |w: &str| {
+        w.chars()
+            .next()
+            .map(|c| c.to_uppercase().collect::<String>())
+    };
+    match words.as_slice() {
+        [] => "?".to_string(),
+        [one] => first(one).unwrap_or_default(),
+        [a, .., b] => format!(
+            "{}{}",
+            first(a).unwrap_or_default(),
+            first(b).unwrap_or_default()
+        ),
+    }
+}
+
+/// A stable avatar tint 1..=6 (`--avatar-N` in skins.css) from the username.
+pub fn avatar_tint(username: &str) -> u32 {
+    // FNV-1a: stable across builds and platforms
+    let hash = username.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    hash % 6 + 1
+}
+
+/// Whether a skin is always light (the System skin is not: it may be dark).
+pub fn skin_is_light(id: &str) -> bool {
+    skin_scheme(id) == Scheme::Light
 }
 
 // ---------------------------------------------------------------------------
@@ -182,14 +292,18 @@ pub enum ItemType {
     Assembly,
     Document,
     Software,
+    /// An analysis (FEA, CFD, …): model, solver deck, results and report,
+    /// linked to the revisions it is based on (see `services::simulations`).
+    Simulation,
 }
 
 impl ItemType {
-    pub const ALL: [ItemType; 4] = [
+    pub const ALL: [ItemType; 5] = [
         ItemType::Part,
         ItemType::Assembly,
         ItemType::Document,
         ItemType::Software,
+        ItemType::Simulation,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -198,6 +312,7 @@ impl ItemType {
             ItemType::Assembly => "assembly",
             ItemType::Document => "document",
             ItemType::Software => "software",
+            ItemType::Simulation => "simulation",
         }
     }
 
@@ -207,6 +322,7 @@ impl ItemType {
             ItemType::Assembly => "Assembly",
             ItemType::Document => "Document",
             ItemType::Software => "Software",
+            ItemType::Simulation => "Simulation",
         }
     }
 
@@ -217,6 +333,7 @@ impl ItemType {
             ItemType::Assembly => "ASM",
             ItemType::Document => "DOC",
             ItemType::Software => "SW",
+            ItemType::Simulation => "SIM",
         }
     }
 
@@ -226,6 +343,7 @@ impl ItemType {
             "assembly" => Some(ItemType::Assembly),
             "document" => Some(ItemType::Document),
             "software" => Some(ItemType::Software),
+            "simulation" => Some(ItemType::Simulation),
             _ => None,
         }
     }
@@ -797,6 +915,189 @@ pub fn review_outcome(decisions: &[Decision]) -> ReviewOutcome {
 }
 
 // ---------------------------------------------------------------------------
+// Change requests (ECR) – the step before a change order (ECO)
+// ---------------------------------------------------------------------------
+
+/// Formats an automatically generated change request number, e.g. `ECR-000007`.
+pub fn format_request_number(value: i64) -> String {
+    format!("ECR-{value:06}")
+}
+
+/// Status of an engineering change request.
+///
+/// ```text
+///   new ──▶ in_triage ──▶ accepted ──▶ implemented (linked change order released)
+///    │          │      ──▶ rejected
+///    │          │      ──▶ deferred ──▶ in_triage (reopened) / accepted / rejected
+///    └──────────┴──▶ withdrawn (by the requester)
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestStatus {
+    New,
+    InTriage,
+    Accepted,
+    Rejected,
+    Deferred,
+    Implemented,
+    Withdrawn,
+}
+
+impl RequestStatus {
+    pub const ALL: [RequestStatus; 7] = [
+        RequestStatus::New,
+        RequestStatus::InTriage,
+        RequestStatus::Accepted,
+        RequestStatus::Rejected,
+        RequestStatus::Deferred,
+        RequestStatus::Implemented,
+        RequestStatus::Withdrawn,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RequestStatus::New => "new",
+            RequestStatus::InTriage => "in_triage",
+            RequestStatus::Accepted => "accepted",
+            RequestStatus::Rejected => "rejected",
+            RequestStatus::Deferred => "deferred",
+            RequestStatus::Implemented => "implemented",
+            RequestStatus::Withdrawn => "withdrawn",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RequestStatus::New => "New",
+            RequestStatus::InTriage => "In Triage",
+            RequestStatus::Accepted => "Accepted",
+            RequestStatus::Rejected => "Rejected",
+            RequestStatus::Deferred => "Deferred",
+            RequestStatus::Implemented => "Implemented",
+            RequestStatus::Withdrawn => "Withdrawn",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<RequestStatus> {
+        let s = s.trim().to_ascii_lowercase();
+        RequestStatus::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+
+    /// Not finished yet: still waiting for a decision or for its change order.
+    pub fn is_open(self) -> bool {
+        matches!(
+            self,
+            RequestStatus::New
+                | RequestStatus::InTriage
+                | RequestStatus::Accepted
+                | RequestStatus::Deferred
+        )
+    }
+
+    /// Allowed status transitions. Everything else is rejected.
+    pub fn can_transition_to(self, to: RequestStatus) -> bool {
+        use RequestStatus::*;
+        matches!(
+            (self, to),
+            (New, InTriage)
+                | (New | InTriage | Deferred, Accepted | Rejected)
+                | (New | InTriage, Deferred)
+                | (Deferred, InTriage)
+                | (New | InTriage, Withdrawn)
+                | (Accepted, Implemented)
+        )
+    }
+}
+
+/// Why a change is requested.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestReason {
+    Defect,
+    Improvement,
+    Cost,
+    Manufacturing,
+    Supplier,
+    Safety,
+    Customer,
+    Other,
+}
+
+impl RequestReason {
+    pub const ALL: [RequestReason; 8] = [
+        RequestReason::Defect,
+        RequestReason::Improvement,
+        RequestReason::Cost,
+        RequestReason::Manufacturing,
+        RequestReason::Supplier,
+        RequestReason::Safety,
+        RequestReason::Customer,
+        RequestReason::Other,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RequestReason::Defect => "defect",
+            RequestReason::Improvement => "improvement",
+            RequestReason::Cost => "cost",
+            RequestReason::Manufacturing => "manufacturing",
+            RequestReason::Supplier => "supplier",
+            RequestReason::Safety => "safety",
+            RequestReason::Customer => "customer",
+            RequestReason::Other => "other",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RequestReason::Defect => "Defect / error",
+            RequestReason::Improvement => "Improvement",
+            RequestReason::Cost => "Cost reduction",
+            RequestReason::Manufacturing => "Manufacturing / assembly",
+            RequestReason::Supplier => "Supplier / purchasing",
+            RequestReason::Safety => "Safety / compliance",
+            RequestReason::Customer => "Customer request",
+            RequestReason::Other => "Other",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<RequestReason> {
+        let s = s.trim().to_ascii_lowercase();
+        if s.is_empty() {
+            return Some(RequestReason::Other);
+        }
+        RequestReason::ALL.into_iter().find(|v| v.as_str() == s)
+    }
+}
+
+/// The decision of the triage on a change request.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestDecision {
+    Accept,
+    Reject,
+    Defer,
+}
+
+impl RequestDecision {
+    pub fn parse(s: &str) -> Option<RequestDecision> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "accept" | "accepted" => Some(RequestDecision::Accept),
+            "reject" | "rejected" => Some(RequestDecision::Reject),
+            "defer" | "deferred" => Some(RequestDecision::Defer),
+            _ => None,
+        }
+    }
+
+    pub fn status(self) -> RequestStatus {
+        match self {
+            RequestDecision::Accept => RequestStatus::Accepted,
+            RequestDecision::Reject => RequestStatus::Rejected,
+            RequestDecision::Defer => RequestStatus::Deferred,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BOM revision rules
 // ---------------------------------------------------------------------------
 
@@ -886,6 +1187,135 @@ impl ReferenceKind {
 }
 
 // ---------------------------------------------------------------------------
+// Simulations
+// ---------------------------------------------------------------------------
+
+/// What a simulation takes from the revision it is based on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BasisRole {
+    /// The analysed geometry (part, assembly).
+    Geometry,
+    /// A mesh / FE model kept as its own item.
+    Mesh,
+    /// Material data (specification, data sheet).
+    Material,
+    /// Where the loads come from (load specification, test report).
+    LoadCase,
+    Other,
+}
+
+impl BasisRole {
+    pub const ALL: [BasisRole; 5] = [
+        BasisRole::Geometry,
+        BasisRole::Mesh,
+        BasisRole::Material,
+        BasisRole::LoadCase,
+        BasisRole::Other,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BasisRole::Geometry => "geometry",
+            BasisRole::Mesh => "mesh",
+            BasisRole::Material => "material",
+            BasisRole::LoadCase => "load_case",
+            BasisRole::Other => "other",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BasisRole::Geometry => "Geometry",
+            BasisRole::Mesh => "Mesh",
+            BasisRole::Material => "Material",
+            BasisRole::LoadCase => "Load case",
+            BasisRole::Other => "Other",
+        }
+    }
+
+    /// Also accepts `load-case` and `load case`.
+    pub fn parse(s: &str) -> Option<BasisRole> {
+        match s
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['-', ' '], "_")
+            .as_str()
+        {
+            "geometry" => Some(BasisRole::Geometry),
+            "mesh" => Some(BasisRole::Mesh),
+            "material" => Some(BasisRole::Material),
+            "load_case" => Some(BasisRole::LoadCase),
+            "other" => Some(BasisRole::Other),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a result value is within its limits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultStatus {
+    Pass,
+    Fail,
+    /// No limit given: the value is informative only (`"none"`).
+    #[serde(rename = "none")]
+    NoLimits,
+}
+
+impl ResultStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResultStatus::Pass => "pass",
+            ResultStatus::Fail => "fail",
+            ResultStatus::NoLimits => "none",
+        }
+    }
+}
+
+/// Pass when `lower <= value <= upper` (limits inclusive, either may be
+/// missing), fail otherwise; [`ResultStatus::NoLimits`] without limits.
+pub fn result_status(value: f64, lower: Option<f64>, upper: Option<f64>) -> ResultStatus {
+    if lower.is_none() && upper.is_none() {
+        return ResultStatus::NoLimits;
+    }
+    let above_lower = lower.is_none_or(|l| value >= l);
+    let below_upper = upper.is_none_or(|u| value <= u);
+    if value.is_finite() && above_lower && below_upper {
+        ResultStatus::Pass
+    } else {
+        ResultStatus::Fail
+    }
+}
+
+/// Validates a result value and its limits (finite numbers, lower ≤ upper).
+pub fn validate_result_numbers(
+    name: &str,
+    value: f64,
+    lower: Option<f64>,
+    upper: Option<f64>,
+) -> Result<(), AppError> {
+    if !value.is_finite() {
+        return Err(AppError::BadRequest(format!(
+            "{name}: the value must be a finite number."
+        )));
+    }
+    if lower.is_some_and(|v| !v.is_finite()) || upper.is_some_and(|v| !v.is_finite()) {
+        return Err(AppError::BadRequest(format!(
+            "{name}: the limits must be finite numbers."
+        )));
+    }
+    if let (Some(l), Some(u)) = (lower, upper) {
+        if l > u {
+            return Err(AppError::BadRequest(format!(
+                "{name}: the lower limit {l} is above the upper limit {u}."
+            )));
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Notifications
 // ---------------------------------------------------------------------------
 
@@ -905,18 +1335,22 @@ pub enum NotificationKind {
     ItemUpdate,
     /// Somebody else released your check-out.
     Unlock,
+    /// A change request you raised, are assigned to, watch or have to triage
+    /// was raised, commented, assigned, decided or implemented.
+    ChangeRequest,
     /// Test message from the account page.
     Test,
 }
 
 impl NotificationKind {
     /// The kinds a user can switch off.
-    pub const MUTABLE: [NotificationKind; 5] = [
+    pub const MUTABLE: [NotificationKind; 6] = [
         NotificationKind::ReviewRequested,
         NotificationKind::ChangeUpdate,
         NotificationKind::Impact,
         NotificationKind::ItemUpdate,
         NotificationKind::Unlock,
+        NotificationKind::ChangeRequest,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -926,6 +1360,7 @@ impl NotificationKind {
             NotificationKind::Impact => "impact",
             NotificationKind::ItemUpdate => "item_update",
             NotificationKind::Unlock => "unlock",
+            NotificationKind::ChangeRequest => "change_request",
             NotificationKind::Test => "test",
         }
     }
@@ -937,6 +1372,9 @@ impl NotificationKind {
             NotificationKind::Impact => "Checks needed on my items (change propagation)",
             NotificationKind::ItemUpdate => "Items I watch: new revisions, releases, check-ins",
             NotificationKind::Unlock => "Somebody released my check-out",
+            NotificationKind::ChangeRequest => {
+                "Change requests I raised, triage, am assigned to or watch"
+            }
             NotificationKind::Test => "Test messages",
         }
     }
@@ -948,10 +1386,89 @@ impl NotificationKind {
             NotificationKind::Impact,
             NotificationKind::ItemUpdate,
             NotificationKind::Unlock,
+            NotificationKind::ChangeRequest,
             NotificationKind::Test,
         ]
         .into_iter()
         .find(|k| k.as_str() == s.trim())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Webhooks
+// ---------------------------------------------------------------------------
+
+/// An event an outgoing webhook can subscribe to (`webhooks.events`; the
+/// CHECK constraint in migration 0022 lists the same names).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WebhookEvent {
+    #[serde(rename = "revision.released")]
+    RevisionReleased,
+    #[serde(rename = "revision.obsoleted")]
+    RevisionObsoleted,
+    #[serde(rename = "change.submitted")]
+    ChangeSubmitted,
+    #[serde(rename = "change.approved")]
+    ChangeApproved,
+    #[serde(rename = "change.rejected")]
+    ChangeRejected,
+    #[serde(rename = "change.released")]
+    ChangeReleased,
+    #[serde(rename = "change_request.created")]
+    ChangeRequestCreated,
+    #[serde(rename = "change_request.decided")]
+    ChangeRequestDecided,
+    #[serde(rename = "simulation.result_added")]
+    SimulationResultAdded,
+}
+
+impl WebhookEvent {
+    pub const ALL: [WebhookEvent; 9] = [
+        WebhookEvent::RevisionReleased,
+        WebhookEvent::RevisionObsoleted,
+        WebhookEvent::ChangeSubmitted,
+        WebhookEvent::ChangeApproved,
+        WebhookEvent::ChangeRejected,
+        WebhookEvent::ChangeReleased,
+        WebhookEvent::ChangeRequestCreated,
+        WebhookEvent::ChangeRequestDecided,
+        WebhookEvent::SimulationResultAdded,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WebhookEvent::RevisionReleased => "revision.released",
+            WebhookEvent::RevisionObsoleted => "revision.obsoleted",
+            WebhookEvent::ChangeSubmitted => "change.submitted",
+            WebhookEvent::ChangeApproved => "change.approved",
+            WebhookEvent::ChangeRejected => "change.rejected",
+            WebhookEvent::ChangeReleased => "change.released",
+            WebhookEvent::ChangeRequestCreated => "change_request.created",
+            WebhookEvent::ChangeRequestDecided => "change_request.decided",
+            WebhookEvent::SimulationResultAdded => "simulation.result_added",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WebhookEvent::RevisionReleased => "A revision was released",
+            WebhookEvent::RevisionObsoleted => "A revision was made obsolete",
+            WebhookEvent::ChangeSubmitted => "A change was submitted for review",
+            WebhookEvent::ChangeApproved => "A reviewer approved a change",
+            WebhookEvent::ChangeRejected => "A change was rejected",
+            WebhookEvent::ChangeReleased => "A change was released",
+            WebhookEvent::ChangeRequestCreated => "A change request was raised",
+            WebhookEvent::ChangeRequestDecided => {
+                "A change request was accepted, rejected or deferred"
+            }
+            WebhookEvent::SimulationResultAdded => "Simulation result values were added",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<WebhookEvent> {
+        WebhookEvent::ALL
+            .into_iter()
+            .find(|e| e.as_str() == s.trim())
     }
 }
 
@@ -1038,6 +1555,84 @@ pub fn require_text(field: &str, value: &str, max: usize) -> Result<String, AppE
         return Err(AppError::BadRequest(format!("{field} must not be empty.")));
     }
     limit_text(field, v, max)
+}
+
+// ---------------------------------------------------------------------------
+// Working folder: where a file sits inside its project group
+// ---------------------------------------------------------------------------
+
+/// Longest folder path of a file (characters).
+pub const MAX_FOLDER_LEN: usize = 400;
+/// Deepest folder nesting of a file.
+pub const MAX_FOLDER_DEPTH: usize = 32;
+/// Longest single folder name.
+pub const MAX_FOLDER_SEGMENT: usize = 120;
+
+/// Normalises the folder of a file inside its project group – the place it
+/// gets in the desktop working folder `<workspace>/<GROUP>/<folder>/<file>`.
+///
+/// Backslashes become `/`, empty and `.` segments as well as leading and
+/// trailing slashes are dropped (`""` is the top of the group). Refused:
+/// `..`, names that are not valid on Windows, macOS and Linux (`<>:"|?*`,
+/// control characters, trailing dots or spaces, `CON`, `NUL`, `COM1`, …) and
+/// paths longer than [`MAX_FOLDER_LEN`] or deeper than [`MAX_FOLDER_DEPTH`].
+pub fn normalize_folder(raw: &str) -> Result<String, AppError> {
+    let bad = |why: String| AppError::BadRequest(format!("Folder '{}': {why}", raw.trim()));
+    let mut segments = Vec::new();
+    for segment in raw.trim().split(['/', '\\']) {
+        let segment = segment.trim_start();
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            return Err(bad(
+                "'..' is not allowed – folders are relative to the project group.".into(),
+            ));
+        }
+        if let Some(c) = segment
+            .chars()
+            .find(|c| c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*'))
+        {
+            return Err(bad(format!(
+                "the character {c:?} is not allowed in folder names."
+            )));
+        }
+        if segment.ends_with(['.', ' ']) {
+            return Err(bad(format!(
+                "'{segment}' ends with a dot or a space (not valid on Windows)."
+            )));
+        }
+        let stem = segment
+            .split('.')
+            .next()
+            .unwrap_or(segment)
+            .to_ascii_uppercase();
+        let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || (stem.len() == 4
+                && (stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.as_bytes()[3].is_ascii_digit());
+        if reserved {
+            return Err(bad(format!("'{segment}' is a reserved name on Windows.")));
+        }
+        if segment.chars().count() > MAX_FOLDER_SEGMENT {
+            return Err(bad(format!(
+                "folder names must be at most {MAX_FOLDER_SEGMENT} characters."
+            )));
+        }
+        segments.push(segment);
+    }
+    if segments.len() > MAX_FOLDER_DEPTH {
+        return Err(bad(format!(
+            "at most {MAX_FOLDER_DEPTH} folder levels are allowed."
+        )));
+    }
+    let folder = segments.join("/");
+    if folder.chars().count() > MAX_FOLDER_LEN {
+        return Err(bad(format!(
+            "the path must be at most {MAX_FOLDER_LEN} characters."
+        )));
+    }
+    Ok(folder)
 }
 
 /// Trims a text and checks it is at most `max` characters.
@@ -1275,6 +1870,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn project_visibility_parse() {
+        for v in [ProjectVisibility::Internal, ProjectVisibility::Restricted] {
+            assert_eq!(ProjectVisibility::parse(v.as_str()), Some(v));
+        }
+        assert_eq!(
+            ProjectVisibility::parse(" Restricted "),
+            Some(ProjectVisibility::Restricted)
+        );
+        assert_eq!(ProjectVisibility::parse("secret"), None);
+    }
+
+    #[test]
     fn base_versions() {
         let sha = "AB".repeat(32);
         assert_eq!(
@@ -1409,10 +2016,198 @@ mod tests {
 
     #[test]
     fn light_and_dark_skins() {
+        assert_eq!(skin_scheme("teamcraft"), Scheme::System);
+        assert_eq!(skin_scheme("teamcraft-night"), Scheme::Dark);
+        assert_eq!(skin_scheme("nonsense"), Scheme::System, "unknown → default");
         assert!(skin_is_light("teamcraft-day"));
+        assert!(!skin_is_light("teamcraft-night"));
         assert!(!skin_is_light("teamcraft"));
-        assert!(!skin_is_light("nonsense"), "unknown → default (night)");
-        assert_eq!(SKINS.iter().filter(|s| s.light).count(), 1);
+        assert!(!skin_is_light("nonsense"));
+        assert_eq!(
+            SKINS.iter().filter(|s| s.scheme == Scheme::Light).count(),
+            1
+        );
+        assert_eq!(Scheme::System.as_str(), "system");
+    }
+
+    #[test]
+    fn avatar_initials_and_tints() {
+        assert_eq!(initials("Alex Morgan", "admin"), "AM");
+        assert_eq!(initials("Erika Maria Mustermann", "erika"), "EM");
+        assert_eq!(initials("", "max"), "M");
+        assert_eq!(initials(" ", ""), "?");
+        assert_eq!(initials("łukasz", "l"), "Ł");
+        assert_eq!(avatar_tint("admin"), avatar_tint("admin"));
+        assert!((1..=6).contains(&avatar_tint("")));
+        assert!((1..=6).contains(&avatar_tint("someone else")));
+    }
+
+    // --- skins.css: token blocks and contrast --------------------------------
+
+    const SKINS_CSS: &str = include_str!("../static/skins.css");
+
+    /// The text between two marker comments.
+    fn css_between<'a>(css: &'a str, begin: &str, end: &str) -> &'a str {
+        let start = css
+            .find(begin)
+            .unwrap_or_else(|| panic!("{begin} in skins.css"))
+            + begin.len();
+        let stop = css[start..]
+            .find(end)
+            .unwrap_or_else(|| panic!("{end} in skins.css"))
+            + start;
+        &css[start..stop]
+    }
+
+    /// `--name: value` declarations of the first `{ … }` block in `text`.
+    fn css_decls(text: &str) -> Vec<(String, String)> {
+        let open = text.find('{').expect("a CSS block") + 1;
+        let close = text[open..].find('}').expect("end of the CSS block") + open;
+        let mut body = text[open..close].to_string();
+        while let Some(a) = body.find("/*") {
+            let b = body[a..]
+                .find("*/")
+                .map(|b| a + b + 2)
+                .unwrap_or(body.len());
+            body.replace_range(a..b, "");
+        }
+        body.split(';')
+            .filter_map(|d| d.split_once(':'))
+            .map(|(k, v)| {
+                (
+                    k.trim().to_string(),
+                    v.split_whitespace().collect::<Vec<_>>().join(" "),
+                )
+            })
+            .filter(|(k, _)| !k.is_empty())
+            .collect()
+    }
+
+    fn css_map(decls: &[(String, String)]) -> std::collections::HashMap<String, String> {
+        decls.iter().cloned().collect()
+    }
+
+    #[test]
+    fn dark_token_blocks_identical() {
+        let media = css_decls(css_between(
+            SKINS_CSS,
+            "/* DARK-TOKENS:BEGIN media */",
+            "/* DARK-TOKENS:END media */",
+        ));
+        let forced = css_decls(css_between(
+            SKINS_CSS,
+            "/* DARK-TOKENS:BEGIN forced */",
+            "/* DARK-TOKENS:END forced */",
+        ));
+        assert!(media.len() > 40, "{} dark tokens", media.len());
+        assert_eq!(
+            media, forced,
+            "the System dark block and the forced dark block differ"
+        );
+    }
+
+    /// WCAG 2 relative luminance of `#rrggbb`.
+    fn luminance(hex: &str) -> f64 {
+        let hex = hex
+            .strip_prefix('#')
+            .filter(|h| h.len() == 6)
+            .unwrap_or_else(|| panic!("not #rrggbb: {hex}"));
+        let channel = |i: usize| {
+            let c = f64::from(u8::from_str_radix(&hex[i..i + 2], 16).expect("hex digit")) / 255.0;
+            if c <= 0.039_28 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4)
+    }
+
+    fn contrast(a: &str, b: &str) -> f64 {
+        let (la, lb) = (luminance(a), luminance(b));
+        (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    }
+
+    #[test]
+    fn skins_meet_contrast() {
+        let light = css_map(&css_decls(css_between(
+            SKINS_CSS,
+            "/* LIGHT-TOKENS:BEGIN */",
+            "/* LIGHT-TOKENS:END */",
+        )));
+        let dark = css_map(&css_decls(css_between(
+            SKINS_CSS,
+            "/* DARK-TOKENS:BEGIN forced */",
+            "/* DARK-TOKENS:END forced */",
+        )));
+        let mut skins = vec![
+            ("light base".to_string(), light),
+            ("dark base".to_string(), dark.clone()),
+        ];
+        for skin in SKINS.iter().filter(|s| !s.id.starts_with("teamcraft")) {
+            let selector = format!("[data-skin=\"{}\"] {{", skin.id);
+            let at = SKINS_CSS
+                .find(&selector)
+                .unwrap_or_else(|| panic!("{selector}"));
+            let mut tokens = dark.clone();
+            tokens.extend(css_map(&css_decls(&SKINS_CSS[at..])));
+            skins.push((skin.id.to_string(), tokens));
+        }
+        let mut failures = Vec::new();
+        for (name, t) in &skins {
+            // A token may name another one (`--count-bg: var(--primary)`);
+            // it resolves against the same skin, as in the browser.
+            let get = |k: &str| {
+                let mut key = k;
+                loop {
+                    let v = t
+                        .get(key)
+                        .unwrap_or_else(|| panic!("{name}: {key}"))
+                        .as_str();
+                    match v.strip_prefix("var(").and_then(|r| r.strip_suffix(')')) {
+                        Some(inner) => key = inner.trim(),
+                        None => break v,
+                    }
+                }
+            };
+            let mut check = |fg: &str, bg: &str, min: f64| {
+                let ratio = contrast(get(fg), get(bg));
+                if ratio < min {
+                    failures.push(format!("{name}: {fg} on {bg} = {ratio:.2} < {min}"));
+                }
+            };
+            for fg in ["--text", "--text-muted", "--text-dim"] {
+                for bg in ["--bg", "--surface", "--surface-2"] {
+                    check(fg, bg, 4.5);
+                }
+            }
+            check("--text", "--selected", 4.5);
+            check("--text-muted", "--selected", 4.5);
+            check("--text-dim", "--selected", 4.5);
+            for bg in ["--bg", "--surface", "--surface-2", "--selected"] {
+                check("--link", bg, 4.5);
+            }
+            check("--on-primary", "--primary", 4.5);
+            // a hovered or pressed primary button keeps its edge and its label
+            for state in ["--primary-hover", "--primary-active"] {
+                check(state, "--surface", 3.0);
+                check("--on-primary", state, 4.5);
+            }
+            for bg in ["--bg", "--surface", "--surface-2"] {
+                check("--focus", bg, 3.0);
+            }
+            for bg in ["--surface", "--surface-2", "--input-bg", "--sidebar"] {
+                check("--control-border", bg, 3.0);
+            }
+            for state in ["wip", "review", "ok", "danger", "impact"] {
+                let fg = format!("--st-{state}-fg");
+                check(&fg, &format!("--st-{state}-bg"), 4.5);
+                check(&fg, "--surface", 4.5);
+            }
+            check("--st-lock-other", "--surface", 4.5);
+            check("--count-fg", "--count-bg", 4.5);
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     #[test]
@@ -1641,6 +2436,53 @@ mod tests {
     }
 
     #[test]
+    fn simulation_items_and_basis_roles() {
+        let ctx = NumberContext {
+            project: "ROVER",
+            item_type: ItemType::Simulation,
+            year: 2026,
+            month: 3,
+        };
+        assert_eq!(NumberScheme::default_scheme().format(&ctx, 3), "SIM-000003");
+        assert_eq!(ItemType::parse(" Simulation "), Some(ItemType::Simulation));
+        for t in ItemType::ALL {
+            assert_eq!(ItemType::parse(t.as_str()), Some(t));
+        }
+        for r in BasisRole::ALL {
+            assert_eq!(BasisRole::parse(r.as_str()), Some(r));
+        }
+        assert_eq!(BasisRole::parse("Load-Case"), Some(BasisRole::LoadCase));
+        assert_eq!(BasisRole::parse("load case"), Some(BasisRole::LoadCase));
+        assert_eq!(BasisRole::parse("sketch"), None);
+    }
+
+    #[test]
+    fn result_pass_fail() {
+        use ResultStatus::{Fail, Pass};
+        assert_eq!(result_status(5.0, None, None), ResultStatus::NoLimits);
+        assert_eq!(result_status(5.0, Some(1.0), Some(10.0)), Pass);
+        assert_eq!(result_status(1.0, Some(1.0), Some(10.0)), Pass, "inclusive");
+        assert_eq!(
+            result_status(10.0, Some(1.0), Some(10.0)),
+            Pass,
+            "inclusive"
+        );
+        assert_eq!(result_status(0.5, Some(1.0), Some(10.0)), Fail);
+        assert_eq!(result_status(11.0, Some(1.0), Some(10.0)), Fail);
+        // only an upper limit (max. stress), only a lower one (safety factor)
+        assert_eq!(result_status(180e6, None, Some(200e6)), Pass);
+        assert_eq!(result_status(210e6, None, Some(200e6)), Fail);
+        assert_eq!(result_status(1.4, Some(1.5), None), Fail);
+        assert_eq!(result_status(-3.0, Some(-5.0), None), Pass);
+        assert_eq!(result_status(f64::NAN, Some(0.0), None), Fail);
+        assert_eq!(Pass.as_str(), "pass");
+        assert!(validate_result_numbers("Stress", 1.0, Some(2.0), Some(1.0)).is_err());
+        assert!(validate_result_numbers("Stress", f64::INFINITY, None, None).is_err());
+        assert!(validate_result_numbers("Stress", 1.0, Some(f64::NAN), None).is_err());
+        assert!(validate_result_numbers("Stress", 1.0, Some(1.0), Some(1.0)).is_ok());
+    }
+
+    #[test]
     fn like_patterns_are_escaped() {
         assert_eq!(like_pattern("valve"), "%valve%");
         assert_eq!(like_pattern("50%_x\\"), "%50\\%\\_x\\\\%");
@@ -1650,5 +2492,123 @@ mod tests {
     fn password_policy() {
         assert!(validate_password("short").is_err());
         assert!(validate_password("long enough pw").is_ok());
+    }
+
+    #[test]
+    fn change_request_transitions() {
+        use RequestStatus::*;
+        // the regular path: raised → triage → accepted → implemented
+        assert!(New.can_transition_to(InTriage));
+        assert!(InTriage.can_transition_to(Accepted));
+        assert!(Accepted.can_transition_to(Implemented));
+        // decisions straight from new, and out of deferred
+        assert!(New.can_transition_to(Accepted));
+        assert!(New.can_transition_to(Rejected));
+        assert!(InTriage.can_transition_to(Deferred));
+        assert!(Deferred.can_transition_to(InTriage));
+        assert!(Deferred.can_transition_to(Accepted));
+        assert!(Deferred.can_transition_to(Rejected));
+        // the requester withdraws only before a decision
+        assert!(New.can_transition_to(Withdrawn));
+        assert!(InTriage.can_transition_to(Withdrawn));
+        assert!(!Accepted.can_transition_to(Withdrawn));
+        assert!(!Deferred.can_transition_to(Withdrawn));
+        // implemented only through a released change order
+        assert!(!New.can_transition_to(Implemented));
+        assert!(!InTriage.can_transition_to(Implemented));
+        assert!(!Accepted.can_transition_to(Rejected));
+        // final states
+        for end in [Rejected, Implemented, Withdrawn] {
+            assert!(!end.is_open());
+            for to in RequestStatus::ALL {
+                assert!(!end.can_transition_to(to), "{end:?} → {to:?}");
+            }
+        }
+        for s in RequestStatus::ALL {
+            assert!(!s.can_transition_to(s), "no self transition for {s:?}");
+            assert_eq!(RequestStatus::parse(s.as_str()), Some(s));
+        }
+        assert!(New.is_open() && Accepted.is_open() && Deferred.is_open());
+        assert_eq!(RequestStatus::parse(" IN_TRIAGE "), Some(InTriage));
+        assert_eq!(RequestStatus::parse("open"), None);
+    }
+
+    #[test]
+    fn change_request_reasons_and_decisions() {
+        for r in RequestReason::ALL {
+            assert_eq!(RequestReason::parse(r.as_str()), Some(r));
+        }
+        assert_eq!(RequestReason::parse(""), Some(RequestReason::Other));
+        assert_eq!(RequestReason::parse("bogus"), None);
+        assert_eq!(
+            RequestDecision::parse("accept").map(RequestDecision::status),
+            Some(RequestStatus::Accepted)
+        );
+        assert_eq!(
+            RequestDecision::parse("Defer").map(RequestDecision::status),
+            Some(RequestStatus::Deferred)
+        );
+        assert_eq!(RequestDecision::parse("approve"), None);
+        // the desktop app has its own copy of the reasons
+        let app = include_str!("../desktop/ui/app.js");
+        for r in RequestReason::ALL {
+            assert!(
+                app.contains(&format!(
+                    "{{ value: \"{}\", label: \"{}\" }}",
+                    r.as_str(),
+                    r.label()
+                )),
+                "desktop/ui/app.js lists the reason {}",
+                r.as_str()
+            );
+        }
+        assert_eq!(format_request_number(7), "ECR-000007");
+        assert_eq!(
+            NotificationKind::parse("change_request"),
+            Some(NotificationKind::ChangeRequest)
+        );
+    }
+
+    #[test]
+    fn folders_are_normalised() {
+        let ok = |raw: &str| normalize_folder(raw).unwrap();
+        assert_eq!(ok(""), "");
+        assert_eq!(ok("  "), "");
+        assert_eq!(ok("/"), "");
+        assert_eq!(ok("chassis"), "chassis");
+        assert_eq!(ok("chassis/brackets"), "chassis/brackets");
+        assert_eq!(ok("chassis\\brackets\\"), "chassis/brackets");
+        assert_eq!(ok("/chassis//./brackets/"), "chassis/brackets");
+        assert_eq!(ok("Rover 2 (old)/Parts"), "Rover 2 (old)/Parts");
+        assert_eq!(ok("a..b/v1.2"), "a..b/v1.2", "dots inside names are fine");
+        assert_eq!(ok("Ölwanne/Gehäuse"), "Ölwanne/Gehäuse");
+        assert_eq!(ok("CONSOLE/COM10"), "CONSOLE/COM10");
+        for bad in [
+            "..",
+            "chassis/../etc",
+            "../outside",
+            "a\\..\\b",
+            "C:/CAD",
+            "a|b",
+            "what?",
+            "star*",
+            "quote\"",
+            "<x>",
+            "tab\there",
+            "trailing./x",
+            "space /x",
+            "CON",
+            "parts/nul.txt",
+            "Com1",
+            "LPT9/x",
+        ] {
+            assert!(normalize_folder(bad).is_err(), "{bad:?} must be refused");
+        }
+        let deep = vec!["a"; MAX_FOLDER_DEPTH + 1].join("/");
+        assert!(normalize_folder(&deep).is_err());
+        assert!(normalize_folder(&vec!["a"; MAX_FOLDER_DEPTH].join("/")).is_ok());
+        let long = vec!["x".repeat(100); 5].join("/");
+        assert!(normalize_folder(&long).is_err(), "longer than 400");
+        assert!(normalize_folder(&"y".repeat(MAX_FOLDER_SEGMENT + 1)).is_err());
     }
 }

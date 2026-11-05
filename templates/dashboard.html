@@ -5,121 +5,175 @@
 {% import "macros.html" as m %}
 <div class="page-head">
   <div>
-    <h1>Hello, {{ me.display_name }}</h1>
-    <p class="subtitle">Product data of {{ instance_name }} at a glance.</p>
+    <h1>Dashboard</h1>
+    {%- set nr = reviews|length %}{% set ni = impact_groups|length %}{% set nc = checkouts|length %}
+    <p class="meta">
+      {%- if nr or ni or nc -%}
+      {% if nr %}<a href="#reviews">{{ nr }} review{% if nr != 1 %}s{% endif %} waiting for you</a>{% endif %}
+      {%- if nr and (ni or nc) %} · {% endif %}
+      {%- if ni %}<a href="#impacts">{{ ni }} dependent{% if ni != 1 %}s{% endif %} to check</a>{% endif %}
+      {%- if ni and nc %} · {% endif %}
+      {%- if nc %}<a href="#checkouts">{{ nc }} revision{% if nc != 1 %}s{% endif %} checked out by you</a>{% endif %}
+      {%- else -%}
+      Nothing waits for you right now.
+      {%- endif -%}
+    </p>
   </div>
-  {% if me.can_edit or assistant_enabled %}
   <div class="actions">
     {% if assistant_enabled %}
-    <button type="button" data-toggle="assistant-panel" title="Triage your worklist or ask any question about the product data">Ask TeamCraft…</button>
+    <button class="ghost" type="button" data-toggle="assistant-panel" title="Triage your worklist or ask any question about the product data">Ask TeamCraft…</button>
     {% endif %}
     {% if me.can_edit %}
+    {#- New item is the primary action on Home, in the desktop app as well -#}
+    <a class="button" href="/changes/new">New change</a>
     {{ m.new_button("/items/new", "New item") }}
-    {{ m.new_button("/changes/new", "New change") }}
+    {% else %}
+    {{ m.new_button("/requests/new", "Request change") }}
     {% endif %}
   </div>
-  {% endif %}
 </div>
 {% if assistant_enabled %}
 {{ m.assistant_panel([["attention", "What needs my attention"]], "", "", "", "/") }}
 {% endif %}
 
-<div class="grid grid-stats">
-  <div class="card stat"><div class="value">{{ stats.items }}</div><div class="label">Items</div></div>
-  <div class="card stat"><div class="value">{{ stats.revisions_in_work }}</div><div class="label">Revisions in work</div></div>
-  <div class="card stat"><div class="value">{{ stats.revisions_in_review }}</div><div class="label">In review</div></div>
-  <div class="card stat"><div class="value">{{ stats.revisions_released }}</div><div class="label">Released revisions</div></div>
-  <div class="card stat"><div class="value">{{ stats.open_changes }}</div><div class="label">Open changes</div></div>
-  <div class="card stat"><div class="value">{{ stats.stored_bytes|filesize }}</div><div class="label">{{ stats.files }} files in the vault</div></div>
-</div>
+<ul class="stat-strip" aria-label="Product data">
+  <li><a href="/items"><span class="value">{{ stats.items }}</span><span class="label">Items</span></a></li>
+  <li><a href="/items?state=in_work"><span class="value">{{ stats.revisions_in_work }}</span><span class="label">WIP</span></a></li>
+  <li><a href="/items?state=in_review"><span class="value">{{ stats.revisions_in_review }}</span><span class="label">In Review</span></a></li>
+  <li><a href="/items?state=released"><span class="value">{{ stats.revisions_released }}</span><span class="label">Released</span></a></li>
+  <li><a href="/changes"><span class="value">{{ stats.open_changes }}</span><span class="label">Open changes</span></a></li>
+  <li><a href="/vault"><span class="value">{{ stats.stored_bytes|filesize }}</span><span class="label">{{ stats.files }} files in the vault</span></a></li>
+</ul>
+
+<section class="card" id="reviews">
+  <div class="card-head"><h2>Waiting for my review <span class="count">{{ reviews|length }}</span></h2></div>
+  {% if reviews %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Change</th><th>Title</th><th class="hide-narrow">Priority</th><th class="hide-narrow">Author</th><th class="hide-narrow"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+    {% for c in reviews %}
+      <tr>
+        <td class="nowrap"><a class="mono" href="/changes/{{ c.id }}">{{ c.number }}</a></td>
+        <td class="ellipsis" title="{{ c.title }}">{{ c.title }}<span class="show-narrow">{{ m.badge(c.priority) }}</span></td>
+        <td class="nowrap hide-narrow">{{ m.badge(c.priority) }}</td>
+        <td class="muted nowrap hide-narrow">{{ c.created_by_name }}</td>
+        <td class="row-actions hide-narrow"><a class="button small" href="/changes/{{ c.id }}#decision">Open review</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">Nothing to review.</p>{% endif %}
+</section>
+
+{% if impact_groups %}
+<section class="card" id="impacts">
+  <div class="card-head">
+    <h2>Dependents to check <span class="count">{{ impact_groups|length }}</span></h2>
+    <span class="hint info" title="Something these items use or reference was released in a new revision or made obsolete. Acknowledge what needs no change, or revise the item."><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M8 7.25v3.5M8 5.2v.1"/></svg>A part they use was released or made obsolete</span>
+  </div>
+  {% for g in impact_groups %}{{ m.impact_group(g, "/#impacts", me.can_edit) }}{% endfor %}
+</section>
+{% endif %}
 
 <div class="grid grid-2">
-  {% if impacts %}
-  <section class="card span-all" id="impacts">
-    <h2>Dependents to check</h2>
-    <p class="hint">These items use or reference something that was released in a new revision or made obsolete.
-      Open one, then acknowledge (no change needed) or revise it.</p>
-    <div class="table-wrap">
-    <table>
-      <tbody>
-      {% for i in impacts %}
-        <tr>
-          <td class="mono nowrap"><a href="/revisions/{{ i.revision_id }}">{{ i.item_number }}/{{ i.revision_code }}</a></td>
-          <td>{{ i.item_name }} <span class="small muted">· {{ m.relation(i.relation) }}</span></td>
-          <td class="nowrap"><a class="mono" href="/revisions/{{ i.source_revision_id }}">{{ i.source_number }}/{{ i.source_code }}</a>
-            {% if i.event == "released" %}released{% else %}<span class="badge badge-obsolete">obsolete</span>{% endif %}</td>
-          <td class="small muted nowrap">{{ i.project_code or "" }} · {{ m.time(i.created_at) }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    </div>
-  </section>
-  {% endif %}
-
-  <section class="card">
-    <h2>Waiting for my review</h2>
-    {% if reviews %}
-    <table>
-      <tbody>
-      {% for c in reviews %}
-        <tr>
-          <td class="nowrap"><a href="/changes/{{ c.id }}">{{ c.number }}</a></td>
-          <td>{{ c.title }}</td>
-          <td>{{ m.badge(c.priority) }}</td>
-          <td class="small muted nowrap">{{ c.created_by_name }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    {% else %}<p class="empty">Nothing to review.</p>{% endif %}
-  </section>
-
-  <section class="card">
+  <section class="card" id="checkouts">
     <div class="card-head">
-      <h2>Checked out by me</h2>
+      <h2>Checked out by me <span class="count">{{ checkouts|length }}</span></h2>
       {% if checkouts %}
       <form method="post" action="/checkouts/checkin-all">
-        <button class="small" type="submit" title="Release every lock you hold – the revisions keep their current files">Check in all</button>
+        <button class="small" type="submit" title="Release every lock you hold – the revisions keep their current files. Upload changed files with the revision's own check-in first.">Check in all</button>
       </form>
       {% endif %}
     </div>
     {% if checkouts %}
+    <div class="table-wrap">
     <table>
+      <thead><tr><th>Revision</th><th>Name</th><th class="num">Held for</th></tr></thead>
       <tbody>
       {% for r in checkouts %}
         <tr>
-          <td class="nowrap"><a href="/revisions/{{ r.id }}">{{ r.item_number }}/{{ r.code }}</a></td>
-          <td>{{ r.name }}</td>
-          <td class="small muted nowrap" title="Checked out {{ r.checked_out_at|dt }}">for {{ r.checked_out_at|age }}</td>
+          <td class="nowrap"><a class="mono" href="/revisions/{{ r.id }}">{{ r.item_number }}/{{ r.code }}</a></td>
+          <td class="ellipsis" title="{{ r.name }}">{{ r.name }}</td>
+          <td class="num muted" title="Checked out {{ r.checked_out_at|dt }}">{{ r.checked_out_at|age }}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
-    <p class="hint">“Check in all” releases the locks without new files – upload changed files with the revision's own check-in first (the desktop app checks in only revisions without local changes).</p>
+    </div>
     {% else %}<p class="empty">No check-outs.</p>{% endif %}
   </section>
 
   <section class="card">
-    <h2>My open changes</h2>
+    <div class="card-head">
+      <h2>My open changes <span class="count">{{ my_changes|length }}</span></h2>
+    </div>
     {% if my_changes %}
+    <div class="table-wrap">
     <table>
+      <thead><tr><th>Change</th><th>Title</th><th>Status</th></tr></thead>
       <tbody>
       {% for c in my_changes %}
         <tr>
-          <td class="nowrap"><a href="/changes/{{ c.id }}">{{ c.number }}</a></td>
-          <td>{{ c.title }}</td>
-          <td>{{ m.badge(c.status) }}</td>
+          <td class="nowrap"><a class="mono" href="/changes/{{ c.id }}">{{ c.number }}</a></td>
+          <td class="ellipsis" title="{{ c.title }}">{{ c.title }}</td>
+          <td class="nowrap">{{ m.badge(c.status) }}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
+    </div>
     {% else %}<p class="empty">No open changes.</p>{% endif %}
   </section>
 
-  <section class="card span-all">
-    <h2>Recent activity</h2>
-    {{ m.history(activity) }}
+  <section class="card">
+    <div class="card-head"><h2>Requests assigned to me <span class="count">{{ (assigned_requests or [])|length }}</span></h2></div>
+    {% if assigned_requests %}
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Request</th><th>Title</th><th>Status</th><th>Due</th></tr></thead>
+      <tbody>
+      {% for r in assigned_requests %}
+        <tr>
+          <td class="nowrap"><a class="mono" href="/requests/{{ r.id }}">{{ r.number }}</a></td>
+          <td class="ellipsis" title="{{ r.title }}">{{ r.title }}</td>
+          <td class="nowrap">{{ m.badge(r.status) }}</td>
+          <td class="muted nowrap">{% if r.due_date %}due {{ r.due_date }}{% else %}{{ r.requested_by_name }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}<p class="empty">No change requests assigned to you.</p>{% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>My open requests <span class="count">{{ (my_requests or [])|length }}</span></h2>
+      <a class="button small ghost" href="/requests/new">Request change</a>
+    </div>
+    {% if my_requests %}
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Request</th><th>Title</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for r in my_requests %}
+        <tr>
+          <td class="nowrap"><a class="mono" href="/requests/{{ r.id }}">{{ r.number }}</a></td>
+          <td class="ellipsis" title="{{ r.title }}">{{ r.title }}</td>
+          <td class="nowrap">{{ m.badge(r.status) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}<p class="empty">Found a problem? Raise a change request – the CAD editors of the item take it from there.</p>{% endif %}
   </section>
 </div>
+
+<section class="card">
+  <div class="card-head"><h2>Recent activity</h2></div>
+  {{ m.history(activity) }}
+</section>
 {% endblock %}

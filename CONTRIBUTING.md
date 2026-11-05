@@ -92,7 +92,7 @@ database.
 | If you changed …  | also run                                                            |
 |-------------------|---------------------------------------------------------------------|
 | the desktop app   | `cargo fmt/clippy/test --manifest-path desktop/Cargo.toml`          |
-| the documentation | `mdbook build docs` (mdBook 0.5)                                    |
+| the documentation | `mdbook build docs` (mdBook 0.5) and `scripts/check-doc-links.sh`   |
 | the web UI        | check the changed pages in a browser (no CSP errors in the console) |
 
 ## Updating the README screenshots
@@ -106,17 +106,46 @@ and assemblies with the NIST files from `tests/fixtures/cad`, a multi-level
 BOM, a released and a pending change order, check-outs and notifications. It
 then drives headless Chrome through chromedriver's WebDriver API (with `curl`
 and `jq`, no Node or Python) and saves the pages as PNGs: 1440 × 900 for the
-desktop and 390 pixels wide for the phone. The passwords and API tokens are
-generated for each run and never printed.
+desktop and 390 pixels wide for the phone, each in the light scheme
+(`NAME.png`, the names the README uses) and again in the dark scheme
+(`NAME-dark.png`; Chrome emulates `prefers-color-scheme`, the demo user keeps
+the System skin). The passwords and API tokens are generated for each run
+and never printed.
+
+With `DESKTOP_APP` set to a built TeamCraft Desktop binary (Linux), the script
+also captures the desktop app, once with *TeamCraft Light* (`desktop-*.png`)
+and once with *TeamCraft Dark* (`desktop-*-dark.png`): it pre-seeds a fresh profile
+in a temporary `XDG_CONFIG_HOME` (server address and a personal access token
+of the demo administrator, see `desktop/src/settings.rs`), starts the app on
+an Xvfb display of 1440 × 900 without a window manager and captures the
+screen with ImageMagick. The app has no deep links, so `xdotool` drives it like
+a user: the Ctrl+2 shortcut (worklist) and clicks on navigator rows at fixed
+screen positions (the ROVER group, the checked-out bracket, the change order
+waiting for review). When the desktop layout or the demo data changes, check
+that the `desktop-*.png` images still show what their names say and adjust the
+coordinates in `desktop_run`.
 
 1. Run the **Screenshots** workflow (`.github/workflows/screenshots.yml`):
    *Actions → Screenshots → Run workflow*, or open a pull request that changes
-   the script or the workflow. It builds the release binary, starts it against
-   an empty PostgreSQL 17 and runs the script.
+   the script or the workflow. It builds the release binary and the desktop
+   app, starts the server against an empty PostgreSQL 17 and runs the script.
 2. Download the `screenshots` artifact of the run (kept for 30 days), for
    example with `gh run download <run-id> -n screenshots -D media/screenshots`.
 3. Look at every image, then commit the PNGs in `media/screenshots/`. The
    workflow never commits anything itself.
+4. Commit the images **in the same pull request** as the README lines that
+   show them. The **Docs** workflow (`.github/workflows/docs.yml`) runs
+   [`scripts/check-doc-links.sh`](scripts/check-doc-links.sh) for every pull
+   request that touches Markdown or `media/`: it fails and lists every local
+   image or link target in `README.md`, the other top-level Markdown files,
+   `platforms/`, `desktop/README.md` and `docs/src/` that does not exist. Run it
+   locally with `scripts/check-doc-links.sh` before you push.
+
+At the end of a run, `scripts/screenshots.sh` compares its PNGs with the
+`media/screenshots/*.png` names in the README and prints a warning (a
+workflow annotation on GitHub) for every image the README shows that the run
+did not make – the run itself does not fail. Without `DESKTOP_APP` the
+`desktop-*.png` images are among them.
 
 To run it locally against a throw-away database and vault (Chrome and a
 matching chromedriver installed):
@@ -146,6 +175,16 @@ code base. These are the most important rules:
 
   The web handlers (`src/web/`), API handlers (`src/api/`) and MCP tools
   (`src/mcp/`) stay thin and call the same service functions.
+* **Reads take the actor.** [Restricted project groups](docs/src/admin/permissions.md)
+  hide their data from non-members, so every read service takes `&Actor`
+  and answers "not found" for hidden objects. Only `services::access` writes
+  the SQL guards (`access::item_visible` and friends); lists put the guard
+  into the query that the `COUNT(*)` shares. The `*_unchecked` getters are
+  for background and system code – `tests/no_unchecked_in_handlers.rs` fails
+  if one is called from `src/web`, `src/api` or `src/mcp`.
+* **New routes and MCP tools** are exercised by the leak test
+  (`tests/read_permissions.rs`), which reads the router sources: a route with
+  a new kind of path parameter needs a placeholder rule in its `fill()`.
 * **SQL** uses runtime queries (`sqlx::query_as::<_, T>` with `FromRow`), not
   the `query!` macros, so building needs no database.
 * **Schema changes** go into a new numbered file in `migrations/`. Never edit
@@ -161,6 +200,21 @@ code base. These are the most important rules:
     the `every_template_renders` test.
   * No inline JavaScript or styles: the Content Security Policy blocks them.
   * Cancel buttons take effect immediately, without a confirmation.
+  * **Design tokens:** no literal colours outside `static/skins.css`; every
+    component reads the tokens (`--surface`, `--text-muted`, `--primary`,
+    `--st-<state>-fg/-bg/-bd`, …). Tokens are opaque `#rrggbb`; the unit tests
+    `skins_meet_contrast` and `dark_token_blocks_identical` (`src/domain.rs`)
+    check the WCAG contrast and that the two dark blocks match.
+  * No gradients, glow, texture, glass or uppercase labels in components
+    (`grep -n gradient static/style.css` stays empty;
+    only the distro skins' `--glow` / `--pattern` behind the page use them).
+  * One filled (primary) button per view; the rest is secondary, ghost or in
+    a *More* menu.
+  * State is colour **and** a glyph (✓ released, ○ in review, ◐ in work,
+    × rejected, – obsolete, △ check needed), never colour alone.
+  * Check both schemes: the screenshot workflow captures every web page in
+    light (`NAME.png`) and dark (`NAME-dark.png`), the desktop app as well
+    (`desktop-*.png`, `desktop-*-dark.png`).
 * **Pure Rust:** everything builds with `cargo` alone. No Node.js, no
   downloaded engines and no C/C++ CAD kernels; 3D conversion stays in
   `src/mesh.rs`.

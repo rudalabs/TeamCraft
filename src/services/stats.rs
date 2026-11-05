@@ -3,7 +3,7 @@
 use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::error::AppResult;
+use crate::{auth::Actor, error::AppResult, services::access};
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct Stats {
@@ -16,18 +16,27 @@ pub struct Stats {
     pub stored_bytes: i64,
 }
 
-pub async fn load(pool: &PgPool) -> AppResult<Stats> {
-    Ok(sqlx::query_as::<_, Stats>(
-        "SELECT
-            (SELECT COUNT(*) FROM items) AS items,
-            (SELECT COUNT(*) FROM revisions WHERE state = 'in_work') AS revisions_in_work,
-            (SELECT COUNT(*) FROM revisions WHERE state = 'in_review') AS revisions_in_review,
-            (SELECT COUNT(*) FROM revisions WHERE state = 'released') AS revisions_released,
-            (SELECT COUNT(*) FROM changes WHERE status IN ('draft', 'in_review', 'rejected')) AS open_changes,
-            (SELECT COUNT(*) FROM files) AS files,
+/// Counts over what the actor may see (admins: the whole vault).
+pub async fn load(pool: &PgPool, actor: &Actor) -> AppResult<Stats> {
+    let item = access::item_visible("i", 1);
+    let change = access::change_visible("c", 2, 1);
+    Ok(sqlx::query_as::<_, Stats>(&format!(
+        "WITH vr AS (SELECT r.id, r.state FROM revisions r JOIN items i ON i.id = r.item_id
+                     WHERE {item}),
+              vf AS (SELECT f.sha256, f.size_bytes FROM files f JOIN vr ON vr.id = f.revision_id)
+         SELECT
+            (SELECT COUNT(*) FROM items i WHERE {item}) AS items,
+            (SELECT COUNT(*) FROM vr WHERE state = 'in_work') AS revisions_in_work,
+            (SELECT COUNT(*) FROM vr WHERE state = 'in_review') AS revisions_in_review,
+            (SELECT COUNT(*) FROM vr WHERE state = 'released') AS revisions_released,
+            (SELECT COUNT(*) FROM changes c
+             WHERE c.status IN ('draft', 'in_review', 'rejected') AND {change}) AS open_changes,
+            (SELECT COUNT(*) FROM vf) AS files,
             (SELECT COALESCE(SUM(size_bytes), 0)::bigint FROM
-                (SELECT DISTINCT sha256, size_bytes FROM files) blobs) AS stored_bytes",
-    )
+                (SELECT DISTINCT sha256, size_bytes FROM vf) blobs) AS stored_bytes"
+    ))
+    .bind(&actor.hidden_projects)
+    .bind(actor.id)
     .fetch_one(pool)
     .await?)
 }

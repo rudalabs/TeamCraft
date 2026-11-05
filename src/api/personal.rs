@@ -31,7 +31,7 @@ pub(super) async fn list_favorites(
     ApiUser(me): ApiUser,
 ) -> AppResult<Json<Value>> {
     Ok(Json(json!(
-        explorer::list(&st.db, Listing::Favorites(me.id), "").await?
+        explorer::list(&st.db, &me, Listing::Favorites(me.id), "").await?
     )))
 }
 
@@ -42,7 +42,7 @@ pub(super) async fn set_favorite(
     method: Method,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let item = items::get_by_number(&st.db, &number).await?;
+    let item = items::get_by_number(&st.db, &me, &number).await?;
     let on = method != Method::DELETE;
     personal::set_favorite(&st.db, &me, item.id, on).await?;
     Ok(Json(json!({ "item": item.number, "favorite": on })))
@@ -119,14 +119,14 @@ pub(super) async fn save_as(
     Path((number, code)): Path<(String, String)>,
     ApiJson(body): ApiJson<SaveAsBody>,
 ) -> AppResult<Response> {
-    let src = revision_at(&st, &number, &code).await?;
+    let src = revision_at(&st, &me, &number, &code).await?;
     let project_id = match body
         .project
         .as_deref()
         .map(str::trim)
         .filter(|p| !p.is_empty())
     {
-        Some(code) => Some(projects::get_by_code(&st.db, code).await?.id),
+        Some(code) => Some(projects::get_by_code(&st.db, &me, code).await?.id),
         None => None,
     };
     let rev = save_as::save_as(
@@ -159,6 +159,7 @@ pub(super) struct CompareQuery {
 /// Both revisions of a comparison (older first) and their BOM differences.
 async fn compare_at(
     st: &AppState,
+    me: &crate::auth::Actor,
     number: &str,
     code: &str,
     q: &CompareQuery,
@@ -171,23 +172,23 @@ async fn compare_at(
         None => None,
     };
     let (a, b) = tokio::try_join!(
-        revision_at(st, number, &q.with),
-        revision_at(st, number, code)
+        revision_at(st, me, number, &q.with),
+        revision_at(st, me, number, code)
     )?;
     let (before, after) = if a.seq <= b.seq { (a, b) } else { (b, a) };
     let rule = rule.unwrap_or_else(|| bom_compare::default_rule(&before.state, &after.state));
-    let diffs = bom_compare::compare(&st.db, before.id, after.id, depth, rule).await?;
+    let diffs = bom_compare::compare(&st.db, me, before.id, after.id, depth, rule).await?;
     Ok((before, after, diffs))
 }
 
 /// `GET /items/{number}/revisions/{code}/bom/compare?with=A`
 pub(super) async fn bom_compare(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Json<Value>> {
-    let (before, after, diffs) = compare_at(&st, &number, &code, &q).await?;
+    let (before, after, diffs) = compare_at(&st, &me, &number, &code, &q).await?;
     let summary = bom_compare::summary(&diffs);
     Ok(Json(json!({
         "before": before.code,
@@ -201,11 +202,11 @@ pub(super) async fn bom_compare(
 /// comparison as the JSON endpoint, as an Excel workbook.
 pub(super) async fn bom_compare_xlsx(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let (before, after, diffs) = compare_at(&st, &number, &code, &q).await?;
+    let (before, after, diffs) = compare_at(&st, &me, &number, &code, &q).await?;
     let bytes = bom_compare::to_xlsx(&diffs)?;
     let filename = format!("bom-compare-{}-{}-{}.xlsx", number, before.code, after.code);
     Ok(web::xlsx_response(bytes, &filename))

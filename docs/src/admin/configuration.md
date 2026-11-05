@@ -38,10 +38,21 @@ Migrations run automatically (`teamcraft serve --no-migrate` skips them).
 
 ## Files
 
-| Variable                  | Default        | Meaning                                        |
-|---------------------------|----------------|------------------------------------------------|
-| `TEAMCRAFT_VAULT_DIR`     | `./data/vault` | file vault and cached 3D previews – back it up |
-| `TEAMCRAFT_MAX_UPLOAD_MB` | `512`          | largest file per upload                        |
+| Variable                    | Default        | Meaning                                                                 |
+|-----------------------------|----------------|-------------------------------------------------------------------------|
+| `TEAMCRAFT_VAULT_DIR`       | `./data/vault` | file vault and cached 3D previews – back it up                          |
+| `TEAMCRAFT_MAX_UPLOAD_MB`   | `512`          | largest file per upload, also for chunked uploads                       |
+| `TEAMCRAFT_UPLOAD_CHUNK_MB` | `16`           | largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/…`), 1–1024 |
+
+Chunked uploads ([Large files](../guide/vault.md#large-files-chunked-resumable-uploads))
+hold one chunk in memory and write it to `uploads/` in the vault directory,
+so `TEAMCRAFT_MAX_UPLOAD_MB` can be raised for multi-gigabyte CAD or
+simulation files (e.g. `20480`) without more memory; a single multipart
+request (web UI, small files) still has to fit this limit as a whole, and a
+reverse proxy in front must allow request bodies of one chunk
+(`client_max_body_size` ≥ `TEAMCRAFT_UPLOAD_CHUNK_MB`) – or of the largest
+multipart upload. Make sure the vault's disk has room for the unfinished
+uploads too: each user may hold 16 of them for 24 hours.
 
 ## Sign-in
 
@@ -60,8 +71,23 @@ Migrations run automatically (`teamcraft serve --no-migrate` skips them).
 | `TEAMCRAFT_SMTP_URL`           | SMTP server in lettre syntax: `smtps://user:password@host:465`, `smtp://host:587?tls=required`, `smtp://localhost:25` |
 | `TEAMCRAFT_MAIL_FROM`          | sender, `Name <address>` (required with SMTP)                                                                         |
 | `TEAMCRAFT_MATTERMOST_WEBHOOK` | incoming webhook for notifications                                                                                    |
-| `TEAMCRAFT_MATTERMOST_DIRECT`  | `true`: direct messages, `false` (default): mention in the webhook's channel                                          |
+| `TEAMCRAFT_MATTERMOST_DIRECT`  | `true`: direct messages, `false` (default): mention in the webhook's channel – notifications about [restricted project groups](permissions.md) then show only a generic text and the link |
 | `MATTERMOST_ERROR_WEBHOOK`     | incoming webhook that receives internal server errors (rate limited)                                                  |
+
+## Event webhooks
+
+Administrators register outgoing webhooks on the web page *Webhooks* or
+through the API ([Event webhooks](webhooks.md)). These variables limit where
+they may send to:
+
+| Variable                           | Default | Meaning                                                                                                                                  |
+|------------------------------------|---------|------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS`  | –       | comma separated host names, IP addresses or `*.domain`; when set, webhooks can only target these hosts, and these may be internal       |
+| `TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE`  | `false` | `true`: every host may resolve to private, loopback or link-local addresses (single-network installations, development)                 |
+| `TEAMCRAFT_WEBHOOK_RETENTION_DAYS` | `30`    | sent and failed deliveries are removed after this many days (1–3650)                                                                    |
+
+By default webhooks reach public addresses only. An on-premises ERP or CI
+server is internal, so list it: `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS=erp.corp.example,ci.corp.example`.
 
 ## Assistant (optional)
 

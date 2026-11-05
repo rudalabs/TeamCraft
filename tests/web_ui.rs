@@ -227,7 +227,8 @@ async fn three_d_preview_pages_and_meshes() {
         .get_page(&format!("/file-versions/{v2}/mesh"), Some(&cookie))
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
-    assert!(r.header("cache-control").unwrap().contains("immutable"));
+    // not cached for good: access can be withdrawn (restricted project groups)
+    assert!(r.header("cache-control").unwrap().contains("no-cache"));
     let mesh = teamcraft::mesh::Mesh::decode(&r.body).expect("TCMESH01");
     assert_eq!(mesh.triangle_count(), 1);
     assert_eq!(mesh.bounds()[3], 10.0, "the binary v2 (10 units wide)");
@@ -902,6 +903,21 @@ async fn references_and_impacts_in_the_web_ui() {
     );
     let page = app.get_page("/", Some(&cookie)).await.text();
     assert!(!page.contains("Dependents to check"));
+    // "Acknowledge all" on a revision without open checks: back with an error.
+    let r = app
+        .post_form(
+            &format!("/revisions/{doc_a}/impacts/acknowledge"),
+            Some(&cookie),
+            origin,
+            &[
+                ("note", "Nothing changed"),
+                ("impacts", &impact_id),
+                ("back", &back),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.header("location").as_deref(), Some(back.as_str()));
     let r = app
         .get_page(
             &format!(
@@ -1055,6 +1071,7 @@ async fn notifications_in_the_web_ui() {
                 ("want", "change_update"),
                 ("want", "impact"),
                 ("want", "unlock"),
+                ("want", "change_request"),
                 ("mattermost", "on"),
                 ("mattermost_username", "Rolf.R"),
             ],
@@ -1585,5 +1602,201 @@ async fn numbering_scheme_on_the_project_page() {
         r.json()["item_number"],
         format!("ROCKET-PRT{:02}-001", year % 100)
     );
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn simulations_in_the_web_ui() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    let cookie = app.login("eng").await;
+    let origin = Some("http://localhost:8080");
+    for (item_type, name) in [("part", "Bracket"), ("simulation", "Bracket – modal")] {
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/items",
+                &eng,
+                Some(json!({ "item_type": item_type, "name": name, "project": "ROCKET" })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    let revision_id = |number: &str| {
+        let uri = format!("/api/v1/items/{number}/revisions/A");
+        let eng = eng.clone();
+        let app = &app;
+        async move {
+            app.api(Method::GET, &uri, &eng, None).await.json()["revision"]["id"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+    };
+    let prt_a = revision_id("PRT-000001").await;
+    let sim_a = revision_id("SIM-000001").await;
+    app.api_upload(
+        "/api/v1/items/PRT-000001/revisions/A/files",
+        &eng,
+        "bracket.step",
+        b"ISO-10303-21;",
+    )
+    .await;
+
+    // The new-item form offers the type, the simulation page its cards.
+    let form = app
+        .get_page("/items/new?type=simulation", Some(&cookie))
+        .await
+        .text();
+    assert!(
+        form.contains("value=\"simulation\" selected"),
+        "type preselected"
+    );
+    let page = app
+        .get_page(&format!("/revisions/{sim_a}"), Some(&cookie))
+        .await
+        .text();
+    assert!(page.contains("id=\"simulation-basis\"") && page.contains("id=\"simulation-results\""));
+    assert!(page.contains("No basis yet"));
+
+    // Basis and results through the forms.
+    let r = app
+        .post_form(
+            &format!("/revisions/{sim_a}/simulation/bases"),
+            Some(&cookie),
+            origin,
+            &[
+                ("role", "geometry"),
+                ("item", "PRT-000001"),
+                ("revision", ""),
+                ("file", "bracket.step"),
+                ("note", ""),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let r = app
+        .post_form(
+            &format!("/revisions/{sim_a}/simulation/results"),
+            Some(&cookie),
+            origin,
+            &[
+                ("name", "First eigenfrequency"),
+                ("value", "182,5"),
+                ("unit", "Hz"),
+                ("lower_limit", "200"),
+                ("upper_limit", ""),
+                ("load_case", "modal"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let r = post_multipart(
+        &app,
+        &format!("/revisions/{sim_a}/simulation/results/import"),
+        &cookie,
+        (
+            "results.csv",
+            b"name;value;unit;limit_low;limit_high;load_case\nMax. displacement;0,35;mm;;0,5;LC1\n",
+        ),
+        &[],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let page = app
+        .get_page(&format!("/revisions/{sim_a}"), Some(&cookie))
+        .await
+        .text();
+    for expected in [
+        "PRT-000001/A",
+        "bracket.step",
+        "Up to date",
+        "First eigenfrequency",
+        "Max. displacement",
+        "1 failed",
+        "1 passed",
+        "badge badge-fail",
+    ] {
+        assert!(page.contains(expected), "simulation page shows {expected}");
+    }
+    let csv = app
+        .get_page(
+            &format!("/revisions/{sim_a}/simulation/results.csv"),
+            Some(&cookie),
+        )
+        .await;
+    assert_eq!(csv.status, StatusCode::OK);
+    assert!(
+        csv.text().contains("Max. displacement,0.35,mm,,0.5,LC1"),
+        "{}",
+        csv.text()
+    );
+
+    // A VTU result file: the Results card links the 3D view, the mesh
+    // carries the result fields.
+    let vtu = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim/beam-zlib.vtu"),
+    )
+    .unwrap();
+    let r = app
+        .api_upload(
+            "/api/v1/items/SIM-000001/revisions/A/files",
+            &eng,
+            "beam.vtu",
+            &vtu,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let result_file = r.json()[0]["id"].as_str().unwrap().to_string();
+    let page = app
+        .get_page(&format!("/revisions/{sim_a}"), Some(&cookie))
+        .await
+        .text();
+    assert!(page.contains("View result in 3D"));
+    assert!(page.contains(&format!("/files/{result_file}/preview")));
+    let r = app
+        .get_page(&format!("/files/{result_file}/preview"), Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.text().contains("coloured by a result field"));
+    let r = app
+        .get_page(&format!("/files/{result_file}/mesh"), Some(&cookie))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.triangle_count(), 20);
+    assert_eq!(mesh.fields[0].name, "temperature");
+
+    // The part lists the simulation.
+    let part = app
+        .get_page(&format!("/revisions/{prt_a}"), Some(&cookie))
+        .await
+        .text();
+    assert!(
+        part.contains("id=\"simulations\"") && part.contains("SIM-000001/A"),
+        "{part}"
+    );
+
+    // A part a simulation is based on cannot be deleted.
+    let part_item = app
+        .api(Method::GET, "/api/v1/items/PRT-000001", &eng, None)
+        .await
+        .json()["item"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r = app
+        .post_form(
+            &format!("/items/{part_item}/delete"),
+            Some(&cookie),
+            origin,
+            &[("back", format!("/revisions/{prt_a}").as_str())],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+    let r = app
+        .api(Method::GET, "/api/v1/items/PRT-000001", &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "the basis item still exists");
     app.teardown().await;
 }

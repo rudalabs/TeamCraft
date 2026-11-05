@@ -61,6 +61,15 @@ enum Command {
         #[command(subcommand)]
         command: VaultCommand,
     },
+    /// Read the referenced CAD files of the stored files again (current
+    /// versions) and replace the stored references – after an update that
+    /// reads a format better, e.g. SOLIDWORKS 2015+ assemblies.
+    RescanReferences {
+        /// Format id to rescan (repeatable), e.g. --format solidworks-assembly;
+        /// default: solidworks-assembly and solidworks-drawing.
+        #[arg(long = "format")]
+        formats: Vec<String>,
+    },
     /// Bridge an MCP client that speaks stdio (e.g. Claude Desktop) to the
     /// MCP endpoint of a TeamCraft server. The personal access token is read
     /// from TEAMCRAFT_TOKEN or --token-file.
@@ -86,13 +95,18 @@ enum Command {
     /// runs every conversion in its own process with a time limit).
     #[command(hide = true)]
     PreviewMesh {
-        /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, pts, xyz, las
+        /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, pts, xyz, las –
+        /// or tcm for a cached preview mesh (only --signature)
         #[arg(long)]
         format: String,
         #[arg(long)]
         input: std::path::PathBuf,
+        /// The preview mesh to write.
         #[arg(long)]
-        output: std::path::PathBuf,
+        output: Option<std::path::PathBuf>,
+        /// Also write the shape signature (JSON) for the similar part search.
+        #[arg(long)]
+        signature: Option<std::path::PathBuf>,
     },
 }
 
@@ -130,6 +144,17 @@ enum VaultCommand {
         #[arg(long)]
         verify_hashes: bool,
     },
+    /// Compute the missing shape signatures of the similar part search from
+    /// the cached 3D previews (each in the isolated preview process).
+    Signatures {
+        /// Also convert 3D files that have no cached preview yet (slower).
+        #[arg(long)]
+        convert: bool,
+        /// Signatures computed at the same time (1–2, the limit of the
+        /// preview processes).
+        #[arg(long, default_value_t = teamcraft::preview::MAX_PARALLEL)]
+        jobs: usize,
+    },
 }
 
 #[tokio::main]
@@ -139,9 +164,10 @@ async fn main() -> ExitCode {
         format,
         input,
         output,
+        signature,
     }) = &cli.command
     {
-        return preview_mesh(format, input, output);
+        return preview_mesh(format, input, output.as_deref(), signature.as_deref());
     }
     // Optional configuration files (see the `config` module).
     for (path, e) in teamcraft::config::load_env_files() {
@@ -163,6 +189,7 @@ async fn main() -> ExitCode {
         Command::Restore { dir, force } => restore_command(dir, force).await,
         Command::User { command } => user_command(command).await,
         Command::Vault { command } => vault_command(command).await,
+        Command::RescanReferences { formats } => rescan_references(formats).await,
     };
     match result {
         Ok(code) => code,
@@ -216,7 +243,10 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
         "notification delivery"
     );
     teamcraft::delivery::spawn(pool.clone(), delivery);
+    let webhook_retention_days = config.webhooks.retention_days;
     let state = AppState::new(config, pool.clone()).await?;
+    // Outgoing event webhooks (the outbox `webhook_deliveries`).
+    teamcraft::webhooks::spawn(pool.clone(), state.webhooks.clone());
 
     // Files from before the format registry (or reset to NULL) get their CAD
     // format, then the CAD files among them are scanned for references.
@@ -238,7 +268,9 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
         });
     }
 
-    // Housekeeping: remove expired sessions, stale OIDC states and staged imports.
+    // Housekeeping: remove expired sessions, stale OIDC states, staged imports
+    // and expired chunked uploads (the first tick runs at once, at start-up).
+    let vault = state.vault.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
@@ -252,6 +284,16 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed stale staged imports"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "staged import cleanup failed"),
+            }
+            match services::uploads::purge_expired(&pool, &vault).await {
+                Ok(n) if n > 0 => tracing::info!(removed = n, "removed expired uploads"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "upload cleanup failed"),
+            }
+            match teamcraft::webhooks::purge_finished(&pool, webhook_retention_days).await {
+                Ok(n) if n > 0 => tracing::info!(removed = n, "removed old webhook deliveries"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "webhook delivery cleanup failed"),
             }
         }
     });
@@ -268,18 +310,35 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `teamcraft preview-mesh`: one conversion, errors as the last line of stderr.
-fn preview_mesh(format: &str, input: &std::path::Path, output: &std::path::Path) -> ExitCode {
-    let Some(format) = teamcraft::preview::PreviewFormat::of_format(format) else {
-        eprintln!("Error: no 3D preview for the format '{format}'");
+/// `teamcraft preview-mesh`: one conversion and/or shape signature, errors
+/// as the last line of stderr.
+fn preview_mesh(
+    format: &str,
+    input: &std::path::Path,
+    output: Option<&std::path::Path>,
+    signature: Option<&std::path::Path>,
+) -> ExitCode {
+    if output.is_none() && signature.is_none() {
+        eprintln!("Error: give --output and/or --signature");
         return ExitCode::FAILURE;
-    };
+    }
     // the kernel's panic messages are not meant for users
     std::panic::set_hook(Box::new(|_| {}));
-    match teamcraft::preview::convert_file(format, input)
-        .and_then(|bytes| std::fs::write(output, bytes).map_err(Into::into))
-    {
-        Ok(()) => ExitCode::SUCCESS,
+    match teamcraft::preview::run_job(format, input, output, signature) {
+        Ok(mesh) => {
+            // for people running it by hand (the server ignores stdout)
+            let partial = mesh
+                .faces
+                .map(|(shown, total)| format!(", partial preview: {shown} of {total} faces"))
+                .unwrap_or_default();
+            println!(
+                "{} triangles, {} vertices, {} bodies{partial}",
+                mesh.triangle_count(),
+                mesh.vertex_count(),
+                mesh.parts.max(1)
+            );
+            ExitCode::SUCCESS
+        }
         Err(e) => {
             eprintln!("Error: {e}");
             ExitCode::FAILURE
@@ -358,9 +417,10 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
             let role = Role::parse(&role).context("role must be viewer, editor or admin")?;
             let mut project_ids = Vec::new();
             for code in &projects {
-                let project = services::projects::get_by_code(&pool, code)
-                    .await
-                    .with_context(|| format!("unknown project group '{code}'"))?;
+                let project =
+                    services::projects::get_by_code(&pool, &teamcraft::auth::Actor::system(), code)
+                        .await
+                        .with_context(|| format!("unknown project group '{code}'"))?;
                 project_ids.push(project.id);
             }
             let password = read_new_password()?;
@@ -448,8 +508,26 @@ fn read_new_password() -> Result<String> {
     }
 }
 
+async fn rescan_references(mut formats: Vec<String>) -> Result<ExitCode> {
+    if formats.is_empty() {
+        formats = vec!["solidworks-assembly".into(), "solidworks-drawing".into()];
+    }
+    if let Some(f) = formats.iter().find(|f| !teamcraft::cadrefs::scans(f)) {
+        bail!("'{f}' is not a format that is scanned for references");
+    }
+    let config = load_config()?;
+    let pool = db::connect(&config).await?;
+    let vault = teamcraft::vault::Vault::open(&config.vault_dir).await?;
+    let n = services::files::rescan_references(&pool, &vault, &formats).await?;
+    println!("rescanned {n} file version(s) ({})", formats.join(", "));
+    Ok(ExitCode::SUCCESS)
+}
+
 async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
-    let VaultCommand::Check { verify_hashes } = command;
+    let verify_hashes = match command {
+        VaultCommand::Check { verify_hashes } => verify_hashes,
+        VaultCommand::Signatures { convert, jobs } => return shape_signatures(convert, jobs).await,
+    };
     let config = load_config()?;
     let pool = db::connect(&config).await?;
     let vault = teamcraft::vault::Vault::open(&config.vault_dir).await?;
@@ -478,6 +556,80 @@ async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// `teamcraft vault signatures`: walks the 3D files without a shape
+/// signature in pages, at most `jobs` at a time.
+async fn shape_signatures(convert: bool, jobs: usize) -> Result<ExitCode> {
+    use teamcraft::preview::PreviewFormat;
+    let config = load_config()?;
+    let pool = db::connect(&config).await?;
+    let state = AppState::new(config, pool).await?;
+    // more would only queue for the preview slots
+    let jobs = jobs.clamp(1, teamcraft::preview::MAX_PARALLEL);
+    let (mut stored, mut skipped, mut failed) = (0usize, 0usize, 0usize);
+    let mut after = String::new();
+    loop {
+        let page = services::similar::missing(&state.db, &after, 500).await?;
+        let Some((last, _)) = page.last() else {
+            break;
+        };
+        after = last.clone();
+        let mut running = tokio::task::JoinSet::new();
+        for (sha256, format) in page {
+            let Some(format) = PreviewFormat::of_format(&format) else {
+                continue;
+            };
+            if !convert && !state.previews.has_mesh(&sha256).await {
+                skipped += 1;
+                continue;
+            }
+            while running.len() >= jobs {
+                tally(running.join_next().await, &mut stored, &mut failed);
+            }
+            let st = state.clone();
+            running.spawn(async move {
+                let result = services::similar::ensure(&st, &sha256, format).await;
+                (sha256, result)
+            });
+        }
+        while let Some(done) = running.join_next().await {
+            tally(Some(done), &mut stored, &mut failed);
+        }
+    }
+    println!(
+        "shape signatures: {stored} computed, {failed} without signature, {skipped} without cached preview{}",
+        if convert || skipped == 0 {
+            ""
+        } else {
+            " (use --convert to convert them)"
+        }
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+type SignatureJob = (
+    String,
+    teamcraft::error::AppResult<teamcraft::shape::Signature>,
+);
+
+fn tally(
+    done: Option<std::result::Result<SignatureJob, tokio::task::JoinError>>,
+    stored: &mut usize,
+    failed: &mut usize,
+) {
+    match done {
+        Some(Ok((_, Ok(_)))) => *stored += 1,
+        Some(Ok((sha256, Err(e)))) => {
+            *failed += 1;
+            println!("NO SIGNATURE  {sha256}  {}", e.public_message());
+        }
+        Some(Err(e)) => {
+            *failed += 1;
+            println!("FAILED  {e}");
+        }
+        None => {}
+    }
 }
 
 /// Minimal HTTP/1.0 probe without extra dependencies (the runtime image has no curl).

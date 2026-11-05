@@ -123,12 +123,15 @@
   } catch (e) {
     fmt = null;
   }
+  // <time data-date>: the date alone, for narrow columns (the title keeps the time).
+  var dateFmt = null;
+  try { dateFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "2-digit", day: "2-digit" }); } catch (e) { dateFmt = null; }
   if (fmt) {
     document.querySelectorAll("time[datetime]").forEach(function (el) {
       var d = new Date(el.getAttribute("datetime"));
       if (!isNaN(d.getTime())) {
-        el.title = el.textContent;
-        el.textContent = fmt.format(d);
+        el.title = fmt.format(d);
+        el.textContent = el.hasAttribute("data-date") && dateFmt ? dateFmt.format(d) : fmt.format(d);
       }
     });
   }
@@ -172,6 +175,7 @@
       var target = document.getElementById(btn.getAttribute("data-toggle"));
       if (target) {
         target.classList.toggle("hidden");
+        if (btn.hasAttribute("aria-expanded")) btn.setAttribute("aria-expanded", String(!target.classList.contains("hidden")));
         var focus = target.querySelector("input:not([type=hidden]), textarea, select");
         if (focus && !target.classList.contains("hidden")) focus.focus();
       }
@@ -185,7 +189,9 @@
   document.querySelectorAll("input[type=file][data-fill-name]").forEach(function (input) {
     var name = document.getElementById(input.getAttribute("data-fill-name"));
     var type = document.getElementById(input.getAttribute("data-fill-type"));
-    var typeChosen = false;
+    // A type other than the default came with the page (/items/new?type=simulation,
+    // a form shown again after an error): keep it instead of guessing.
+    var typeChosen = !!(type && type.value && type.value !== "part");
     if (type) type.addEventListener("change", function () { typeChosen = true; });
     input.addEventListener("change", function () {
       var file = input.files && input.files[0];
@@ -208,6 +214,116 @@
     function hide() { (img.closest("a.thumb-link") || img).classList.add("hidden"); }
     if (img.complete && img.naturalWidth === 0 && img.getAttribute("loading") !== "lazy") hide();
     img.addEventListener("error", hide);
+  });
+
+  // Navigation: the active entry is the current page for screen readers.
+  document.querySelectorAll(".nav a.active, .nav-admin a.active").forEach(function (a) {
+    a.setAttribute("aria-current", "page");
+  });
+
+  // Forms that return to this page (the Appearance choice in the user menu).
+  document.querySelectorAll("input[data-here]").forEach(function (input) {
+    input.value = location.pathname + location.search;
+  });
+
+  // "/" focuses the search field (the page's own filter first), unless the
+  // user is typing somewhere; Ctrl+K / ⌘K does the same. The single-key "/"
+  // can be switched off on the account page (WCAG 2.1.4), per browser.
+  function slashShortcutOn() {
+    try { return window.localStorage.getItem("tc-slash-shortcut") !== "off"; } catch (e) { return true; }
+  }
+  if (!slashShortcutOn()) document.documentElement.setAttribute("data-slash", "off");
+  document.addEventListener("keydown", function (event) {
+    var slash = event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey;
+    var ctrlK = (event.key === "k" || event.key === "K") && (event.ctrlKey || event.metaKey) && !event.altKey;
+    if (!slash && !ctrlK) return;
+    if (slash && !slashShortcutOn()) return;
+    var t = event.target;
+    if (slash && t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    var field = document.querySelector("[data-filter]") || document.querySelector(".quicksearch input");
+    if (field) { event.preventDefault(); field.focus(); field.select(); }
+  });
+  document.querySelectorAll("input[data-slash-pref]").forEach(function (box) {
+    var wrap = box.closest(".hidden");
+    if (wrap) wrap.classList.remove("hidden");
+    box.checked = slashShortcutOn();
+    box.addEventListener("change", function () {
+      try { window.localStorage.setItem("tc-slash-shortcut", box.checked ? "on" : "off"); } catch (e) { /* storage blocked */ }
+      if (box.checked) document.documentElement.removeAttribute("data-slash");
+      else document.documentElement.setAttribute("data-slash", "off");
+    });
+  });
+
+  // Menus (<details class="menu">): one open at a time, Esc closes and
+  // returns focus to the trigger, a click outside closes, ↑/↓ move.
+  var menus = document.querySelectorAll("details.menu");
+  function closeMenus(except) {
+    menus.forEach(function (d) { if (d !== except) d.removeAttribute("open"); });
+  }
+  menus.forEach(function (menu) {
+    menu.addEventListener("toggle", function () { if (menu.open) closeMenus(menu); });
+    menu.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && menu.open) {
+        menu.removeAttribute("open");
+        menu.querySelector("summary").focus();
+        return;
+      }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      var items = Array.prototype.slice.call(menu.querySelectorAll(".menu-pop a, .menu-pop button"));
+      if (!items.length) return;
+      if (!menu.open) menu.setAttribute("open", "");
+      event.preventDefault();
+      var i = items.indexOf(document.activeElement);
+      i = event.key === "ArrowDown" ? (i + 1) % items.length : (i <= 0 ? items.length - 1 : i - 1);
+      items[i].focus();
+    });
+  });
+  document.addEventListener("click", function (event) {
+    if (!event.target.closest || !event.target.closest("details.menu")) closeMenus(null);
+  });
+
+  // Selects that apply at once (<select data-autosubmit>); the Apply button
+  // stays for pages without JavaScript (<noscript>). Only a choice made with
+  // the pointer submits at once: ↑/↓ on a closed select fire "change" on
+  // every step (WCAG 3.2.2), so the keyboard applies with Enter or on leaving.
+  document.querySelectorAll("select[data-autosubmit]").forEach(function (select) {
+    var initial = select.value, pointer = false, sent = false;
+    function apply() {
+      if (sent || select.value === initial || !select.form) return;
+      sent = true;
+      if (select.form.requestSubmit) select.form.requestSubmit();
+      else select.form.submit();
+    }
+    select.addEventListener("pointerdown", function () { pointer = true; });
+    select.addEventListener("keydown", function (event) {
+      pointer = false;
+      if (event.key === "Enter") { event.preventDefault(); apply(); }
+    });
+    select.addEventListener("change", function () { if (pointer) apply(); });
+    select.addEventListener("blur", apply);
+  });
+
+  // Flash messages can be dismissed.
+  document.querySelectorAll("main > .flash").forEach(function (flash) {
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "dismiss";
+    close.setAttribute("aria-label", "Dismiss");
+    close.textContent = "×";
+    close.addEventListener("click", function () { flash.remove(); });
+    flash.appendChild(close);
+  });
+
+  // Tabs (<nav class="tabs">): ←/→ move between them.
+  document.querySelectorAll(".tabs").forEach(function (tabs) {
+    tabs.addEventListener("keydown", function (event) {
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      var links = Array.prototype.slice.call(tabs.querySelectorAll("a"));
+      var i = links.indexOf(document.activeElement);
+      if (i < 0) return;
+      event.preventDefault();
+      links[(i + (event.key === "ArrowRight" ? 1 : links.length - 1)) % links.length].focus();
+    });
   });
 
   // Copy buttons: <button data-copy="id">.

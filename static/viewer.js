@@ -2,7 +2,9 @@
 //
 // The server converts every supported file (meshes, point clouds, STEP) into
 // one compact binary mesh ("TCMESH01", see src/mesh.rs); this viewer only
-// draws it – nothing is parsed or tessellated in the browser.
+// draws it – nothing is parsed or tessellated in the browser. Simulation
+// results carry scalar fields; the viewer colours them with a colour map and
+// shows a legend (with a field selector) right above the canvas.
 //
 // Web pages mount the viewer through data attributes on #viewer-canvas; the
 // desktop app calls TeamCraftViewer.mount(canvas, options) with its own loader.
@@ -52,7 +54,119 @@
       var index = indices ? new Uint32Array(buffer, at, indices) : null;
       at += indices * 4;
       var colors = flags & 1 ? new Uint8Array(buffer, at, vertices * 3) : null;
-      return { positions: positions, indices: index, colors: colors, parts: parts, bounds: bounds };
+      if (colors) at += vertices * 3;
+      // flag 2: scalar result fields (simulation results), see Mesh::encode
+      var fields = [];
+      if (flags & 2) {
+        at = Math.ceil(at / 4) * 4;
+        var text = function () {
+          var n = dv.getUint32(at, true);
+          var s = new TextDecoder().decode(new Uint8Array(buffer, at + 4, n));
+          at += 4 + n;
+          return s;
+        };
+        var count = dv.getUint32(at, true);
+        at += 4;
+        for (var f = 0; f < count && f < 8; f++) {
+          var name = text(), unit = text();
+          at = Math.ceil(at / 4) * 4;
+          var min = dv.getFloat32(at, true), max = dv.getFloat32(at + 4, true);
+          at += 8;
+          fields.push({ name: name, unit: unit, min: min, max: max, values: new Float32Array(buffer, at, vertices) });
+          at += vertices * 4;
+        }
+      }
+      // flag 4: partial preview, face counts in the last 8 bytes (after the fields)
+      var faces = flags & 4 && buffer.byteLength >= 56
+        ? { shown: dv.getUint32(buffer.byteLength - 8, true), total: dv.getUint32(buffer.byteLength - 4, true) }
+        : null;
+      return { positions: positions, indices: index, colors: colors, parts: parts, bounds: bounds, fields: fields, faces: faces };
+    }
+
+    // ---------------------------------------------------------------- colour map
+
+    // Perceptually uniform (after matplotlib's "viridis", CC0); the same
+    // stops as COLOR_MAP in src/mesh.rs. 256-entry lookup table.
+    var STOPS = [[68, 1, 84], [71, 45, 123], [59, 82, 139], [44, 114, 142], [33, 145, 140],
+      [40, 174, 128], [94, 201, 98], [173, 220, 48], [253, 231, 37]];
+    var LUT = new Uint8Array(256 * 3);
+    for (var li = 0; li < 256; li++) {
+      var x = li / 255 * (STOPS.length - 1), si = Math.min(Math.floor(x), STOPS.length - 2), sf = x - si;
+      for (var lc = 0; lc < 3; lc++) LUT[li * 3 + lc] = Math.round(STOPS[si][lc] + (STOPS[si + 1][lc] - STOPS[si][lc]) * sf);
+    }
+    var NO_VALUE = [176, 188, 200];
+
+    function fieldColors(field, out) {
+      var v = field.values, lo = field.min, span = field.max > field.min ? field.max - field.min : 1;
+      for (var i = 0; i < v.length; i++) {
+        var o = i * 3, val = v[i];
+        if (val !== val || val === Infinity || val === -Infinity) {
+          out[o] = NO_VALUE[0]; out[o + 1] = NO_VALUE[1]; out[o + 2] = NO_VALUE[2];
+          continue;
+        }
+        var k = Math.max(0, Math.min(255, Math.round((val - lo) / span * 255))) * 3;
+        out[o] = LUT[k]; out[o + 1] = LUT[k + 1]; out[o + 2] = LUT[k + 2];
+      }
+      return out;
+    }
+
+    function formatValue(v) {
+      if (v === 0) return "0";
+      var a = Math.abs(v);
+      if (a >= 1e5 || a < 1e-3) return v.toExponential(3);
+      return Number(v.toPrecision(4)).toLocaleString();
+    }
+
+    // Legend above the canvas: field (selector when there are several), min, bar, max.
+    function legend(mesh, onSelect) {
+      var el = document.createElement("div");
+      el.className = "viewer-legend";
+      // a named group: a plain div's aria-label is not announced
+      el.setAttribute("role", "group");
+      var label;
+      if (mesh.fields.length > 1) {
+        label = document.createElement("select");
+        label.className = "small";
+        label.setAttribute("aria-label", "Result field");
+        mesh.fields.forEach(function (f, i) {
+          var opt = document.createElement("option");
+          opt.value = String(i);
+          opt.textContent = f.name + (f.unit ? " [" + f.unit + "]" : "");
+          label.appendChild(opt);
+        });
+        label.addEventListener("change", function () { onSelect(Number(label.value)); });
+      } else {
+        label = document.createElement("strong");
+        label.className = "viewer-legend-name";
+      }
+      var lo = document.createElement("span"), hi = document.createElement("span");
+      lo.className = hi.className = "viewer-legend-value";
+      var bar = document.createElement("canvas");
+      bar.className = "viewer-legend-bar";
+      bar.width = 256;
+      bar.height = 1;
+      bar.setAttribute("aria-hidden", "true");
+      var ctx = bar.getContext("2d");
+      if (ctx) {
+        var img = ctx.createImageData(256, 1);
+        for (var i = 0; i < 256; i++) {
+          img.data[i * 4] = LUT[i * 3]; img.data[i * 4 + 1] = LUT[i * 3 + 1];
+          img.data[i * 4 + 2] = LUT[i * 3 + 2]; img.data[i * 4 + 3] = 255;
+        }
+        ctx.putImageData(img, 0, 0);
+      }
+      el.appendChild(label);
+      el.appendChild(lo);
+      el.appendChild(bar);
+      el.appendChild(hi);
+      function show(f) {
+        if (label.tagName === "STRONG") label.textContent = f.name;
+        var unit = f.unit ? " " + f.unit : "";
+        lo.textContent = formatValue(f.min) + unit;
+        hi.textContent = formatValue(f.max) + unit;
+        el.setAttribute("aria-label", f.name + ": colour scale from " + lo.textContent + " to " + hi.textContent);
+      }
+      return { el: el, show: show };
     }
 
     // ---------------------------------------------------------------- math
@@ -91,7 +205,8 @@
     // ---------------------------------------------------------------- colours
 
     function cssColor(name, fallback) {
-      var raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      // From the canvas: an element with its own data-skin paints that skin.
+      var raw = getComputedStyle(canvas).getPropertyValue(name).trim();
       var m = /^#([0-9a-f]{6})$/i.exec(raw);
       if (!m) return fallback;
       var v = parseInt(m[1], 16);
@@ -143,8 +258,17 @@
     // zUp: CAD convention (NX, CATIA, FreeCAD, 3D printing); toggle for Y-up exports.
     var view = { yaw: -0.6, pitch: 0.45, dist: 1, center: [0, 0, 0], radius: 1, zUp: true };
     var home = null;
-    var baseColor = cssColor("--c3", [0.608, 0.855, 0.98]);
-    var clearColor = cssColor("--bg-raised", [0.03, 0.09, 0.14]);
+    // Model and canvas colours from the skin tokens (skins.css); read again
+    // when the system switches between light and dark (the System skin).
+    var baseColor, clearColor;
+    function readColors() {
+      baseColor = cssColor("--viewer-model", cssColor("--c3", [0.435, 0.529, 0.631]));
+      clearColor = cssColor("--viewer-bg", cssColor("--bg-raised", [0.925, 0.937, 0.953]));
+    }
+    readColors();
+    var scheme = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    function onScheme() { readColors(); redraw(); }
+    if (scheme && scheme.addEventListener) scheme.addEventListener("change", onScheme);
 
     function upload(mesh) {
       var vao = gl.createVertexArray();
@@ -154,10 +278,13 @@
       gl.bufferData(gl.ARRAY_BUFFER, mesh.positions, gl.STATIC_DRAW);
       gl.enableVertexAttribArray(loc.pos);
       gl.vertexAttribPointer(loc.pos, 3, gl.FLOAT, false, 0, 0);
-      if (mesh.colors) {
-        var cb = gl.createBuffer();
+      var cb = null;
+      // result fields are coloured here (the baked colours are for old viewers)
+      var colors = mesh.fields.length ? fieldColors(mesh.fields[0], new Uint8Array(mesh.positions.length)) : mesh.colors;
+      if (colors) {
+        cb = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, cb);
-        gl.bufferData(gl.ARRAY_BUFFER, mesh.colors, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, colors, mesh.fields.length ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW);
         gl.enableVertexAttribArray(loc.col);
         gl.vertexAttribPointer(loc.col, 3, gl.UNSIGNED_BYTE, true, 0, 0);
       } else {
@@ -171,8 +298,20 @@
         count = mesh.indices.length;
       }
       gl.bindVertexArray(null);
-      return { vao: vao, count: count, points: !mesh.indices, colored: !!mesh.colors };
+      return { vao: vao, count: count, points: !mesh.indices, colored: !!colors, colorBuffer: cb, colors: colors };
     }
+
+    // switches the shown result field (no animation: it is a frequent action)
+    function selectField(i) {
+      var f = loaded && loaded.fields[i];
+      if (!f || !drawable || !drawable.colorBuffer) return;
+      fieldColors(f, drawable.colors);
+      gl.bindBuffer(gl.ARRAY_BUFFER, drawable.colorBuffer);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, drawable.colors);
+      if (legendView) legendView.show(f);
+      redraw();
+    }
+    var legendView = null;
 
     function frame(mesh) {
       var b = mesh.bounds;
@@ -185,7 +324,10 @@
       var what = mesh.indices
         ? (mesh.indices.length / 3).toLocaleString() + " triangles · " + mesh.parts.toLocaleString() + (mesh.parts === 1 ? " body" : " bodies")
         : (mesh.positions.length / 3).toLocaleString() + " points";
-      setStatus(what + " · " + fmt(size[0]) + " × " + fmt(size[1]) + " × " + fmt(size[2]) + " (X × Y × Z, model units)");
+      var partial = mesh.faces
+        ? " · partial preview: " + mesh.faces.shown.toLocaleString() + " of " + mesh.faces.total.toLocaleString() + " faces"
+        : "";
+      setStatus(what + " · " + fmt(size[0]) + " × " + fmt(size[1]) + " × " + fmt(size[2]) + " (X × Y × Z, model units)" + partial);
     }
 
     function render() {
@@ -310,6 +452,11 @@
         frame(mesh);
         loaded = mesh;
         drawable = upload(mesh);
+        if (mesh.fields.length) {
+          legendView = legend(mesh, selectField);
+          legendView.show(mesh.fields[0]);
+          canvas.insertAdjacentElement("beforebegin", legendView.el);
+        }
         canvas.setAttribute("data-ready", "true");
         if (options.onReady) options.onReady();
         redraw();
@@ -352,6 +499,8 @@
       exportStl: exportStl,
       dispose: function () {
         disposed = true;
+        if (scheme && scheme.removeEventListener) scheme.removeEventListener("change", onScheme);
+        if (legendView) legendView.el.remove();
         windowListeners.forEach(function (l) { window.removeEventListener(l[0], l[1]); });
         var lose = gl.getExtension("WEBGL_lose_context");
         if (lose) lose.loseContext();

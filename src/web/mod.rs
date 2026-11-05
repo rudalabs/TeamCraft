@@ -22,13 +22,17 @@ mod items;
 mod notifications;
 mod personal;
 mod references;
+mod requests;
 mod revisions;
+mod simulations;
+mod webhooks;
 
 pub(crate) use bom::{package_response, package_rule};
 pub(crate) use imports::{options_from as import_options, receive as receive_import};
+pub(crate) use requests::{attachment_response, receive_attachment};
 pub(crate) use revisions::{
-    file_response, mesh_response, receive_uploads, thumbnail_response, upload_files,
-    version_response, warm_previews, Received,
+    file_response, mesh_response, receive_uploads, take_session_uploads, thumbnail_response,
+    upload_files, version_response, warm_previews, Received,
 };
 
 use axum::{
@@ -63,6 +67,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .unwrap_or(usize::MAX)
         .saturating_add(1024 * 1024);
     let import_limit = crate::services::imports::MAX_STEP_BYTES + 1024 * 1024;
+    let attachment_limit = crate::services::requests::MAX_ATTACHMENT_BYTES + 1024 * 1024;
 
     Router::new()
         .route("/", get(dashboard::show))
@@ -119,6 +124,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/files/{id}/download", get(revisions::download))
         .route("/files/{id}/thumbnail", get(revisions::thumbnail))
         .route("/files/{id}/delete", post(revisions::delete_file))
+        .route("/files/{id}/folder", post(revisions::set_file_folder))
         .route("/files/{id}/restore", post(revisions::restore_version))
         .route("/files/{id}/preview", get(revisions::preview))
         .route("/files/{id}/mesh", get(revisions::mesh))
@@ -164,6 +170,40 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/revisions/{id}/references", post(references::add))
         .route("/references/{id}/delete", post(references::delete))
         .route("/impacts/{id}/acknowledge", post(references::acknowledge))
+        .route(
+            "/revisions/{id}/impacts/acknowledge",
+            post(references::acknowledge_all),
+        )
+        // simulations: basis links, result values, comparison
+        .route(
+            "/revisions/{id}/simulation/bases",
+            post(simulations::add_basis),
+        )
+        .route(
+            "/simulation-bases/{id}/delete",
+            post(simulations::delete_basis),
+        )
+        .route(
+            "/revisions/{id}/simulation/results",
+            post(simulations::add_result),
+        )
+        .route(
+            "/revisions/{id}/simulation/results/import",
+            post(simulations::import_results).layer(DefaultBodyLimit::max(import_limit)),
+        )
+        .route(
+            "/revisions/{id}/simulation/results.csv",
+            get(simulations::results_csv),
+        )
+        .route(
+            "/revisions/{id}/simulation/compare",
+            get(simulations::compare),
+        )
+        .route("/simulation-results/{id}", post(simulations::update_result))
+        .route(
+            "/simulation-results/{id}/delete",
+            post(simulations::delete_result),
+        )
         .route("/notifications", get(notifications::page))
         .route("/notifications/read-all", post(notifications::read_all))
         .route("/notifications/{id}/open", get(notifications::open))
@@ -200,6 +240,39 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{id}/withdraw", post(changes::withdraw))
         .route("/changes/{id}/reopen", post(changes::reopen))
         .route("/changes/{id}/cancel", post(changes::cancel))
+        // change requests (ECR)
+        .route("/requests", get(requests::list).post(requests::create))
+        .route("/requests/new", get(requests::new_form))
+        .route("/requests/{id}", get(requests::show).post(requests::update))
+        .route("/requests/{id}/comments", post(requests::comment))
+        .route("/requests/{id}/triage", post(requests::triage))
+        .route("/requests/{id}/assign", post(requests::assign))
+        .route("/requests/{id}/decide", post(requests::decide))
+        .route("/requests/{id}/reopen", post(requests::reopen))
+        .route("/requests/{id}/withdraw", post(requests::withdraw))
+        .route(
+            "/requests/{id}/create-change",
+            post(requests::create_change),
+        )
+        .route("/requests/{id}/link-change", post(requests::link_change))
+        .route("/requests/{id}/items", post(requests::add_item))
+        .route(
+            "/requests/{id}/items/{item_id}/remove",
+            post(requests::remove_item),
+        )
+        .route(
+            "/requests/{id}/attachments",
+            post(requests::attach).layer(DefaultBodyLimit::max(attachment_limit)),
+        )
+        .route("/requests/{id}/watch", post(notifications::watch_request))
+        .route(
+            "/request-attachments/{id}",
+            get(requests::download_attachment),
+        )
+        .route(
+            "/request-attachments/{id}/delete",
+            post(requests::delete_attachment),
+        )
         // projects & administration
         .route(
             "/projects",
@@ -210,6 +283,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(admin::project_show).post(admin::update_project),
         )
         .route("/projects/{id}/numbering", post(admin::update_numbering))
+        .route("/projects/{id}/visibility", post(admin::update_visibility))
         .route("/projects/{id}/members", post(admin::add_member))
         .route(
             "/projects/{id}/members/{user_id}/remove",
@@ -222,6 +296,24 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/admin/audit", get(admin::audit))
+        .route(
+            "/admin/webhooks",
+            get(webhooks::list).post(webhooks::create),
+        )
+        .route(
+            "/admin/webhooks/{id}",
+            get(webhooks::show).post(webhooks::update),
+        )
+        .route("/admin/webhooks/{id}/delete", post(webhooks::delete))
+        .route(
+            "/admin/webhooks/{id}/rotate-secret",
+            post(webhooks::rotate_secret),
+        )
+        .route("/admin/webhooks/{id}/test", post(webhooks::test))
+        .route(
+            "/admin/webhooks/{id}/deliveries/{delivery_id}/retry",
+            post(webhooks::retry),
+        )
         // own account
         .route("/account", get(account::show))
         .route("/account/password", post(account::change_password))
@@ -322,6 +414,9 @@ pub struct WebCtx {
     pub me: Actor,
     pub flash: Option<Flash>,
     pub unread: i64,
+    /// Path and query of this request: the `back` target of the forms in the
+    /// header (appearance), so they return here without JavaScript too.
+    pub here: String,
 }
 
 impl FromRequestParts<AppState> for WebCtx {
@@ -332,11 +427,16 @@ impl FromRequestParts<AppState> for WebCtx {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let WebUser(me) = WebUser::from_request_parts(parts, state).await?;
-        let unread = crate::services::notifications::unread_count(&state.db, me.id).await?;
+        let unread = crate::services::notifications::unread_count(&state.db, &me).await?;
         Ok(WebCtx {
             me,
             flash: read_flash(&parts.headers),
             unread,
+            here: parts
+                .uri
+                .path_and_query()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_else(|| "/".to_string()),
         })
     }
 }
@@ -353,6 +453,8 @@ fn me_json(me: &Actor) -> Value {
         "id": me.id,
         "username": me.username,
         "display_name": me.display_name,
+        "initials": domain::initials(&me.display_name, &me.username),
+        "avatar": domain::avatar_tint(&me.username),
         "role": me.role,
         "skin": me.skin,
         "is_admin": me.is_admin(),
@@ -391,6 +493,7 @@ pub(crate) fn render(
         map.insert("me".into(), me_json(&ctx.me));
         map.insert("skin".into(), json!(ctx.me.skin));
         map.insert("unread_notifications".into(), json!(ctx.unread));
+        map.insert("here".into(), json!(ctx.here));
         map.insert(
             "assistant_enabled".into(),
             json!(crate::services::assistant::enabled(st)),
@@ -418,7 +521,10 @@ pub(crate) fn render_public(
             .map(domain::skin_or_default)
             .unwrap_or(domain::DEFAULT_SKIN);
         map.insert("skin".into(), json!(skin));
-        map.insert("skin_light".into(), json!(domain::skin_is_light(skin)));
+        map.insert(
+            "skin_scheme".into(),
+            json!(domain::skin_scheme(skin).as_str()),
+        );
     }
     let html = st.templates.get_template(template)?.render(&data)?;
     let mut response = Html(html).into_response();
