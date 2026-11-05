@@ -688,8 +688,10 @@ compare_with_readme() {
         return 0
     fi
     local expected made name missing=0
-    expected=$(grep -oE 'media/screenshots/[A-Za-z0-9._-]+\.png' "$README" | sed 's#.*/##' | sort -u)
-    made=$(find "$OUT_DIR" -maxdepth 1 -name '*.png' -printf '%f\n' | sort -u)
+    # "|| true": a README without screenshots must not end the run (grep
+    # exits 1, pipefail + set -e); basename instead of GNU find -printf
+    expected=$({ grep -oE 'media/screenshots/[A-Za-z0-9._-]+\.png' "$README" || true; } | sed 's#.*/##' | sort -u)
+    made=$(find "$OUT_DIR" -maxdepth 1 -name '*.png' -exec basename {} \; | sort -u)
     for name in $expected; do
         if ! grep -qxF "$name" <<<"$made"; then
             missing=$((missing + 1))
