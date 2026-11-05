@@ -142,7 +142,7 @@ mod tests {
     const TS: &str = "2026-11-03T14:05:59.123456Z";
 
     fn me() -> Value {
-        json!({ "id": ME, "username": "max", "display_name": "Max Muster", "role": "admin", "skin": "arch", "is_admin": true, "can_edit": true })
+        json!({ "id": ME, "username": "max", "display_name": "Max Muster", "initials": "MM", "avatar": 3, "role": "admin", "skin": "arch", "is_admin": true, "can_edit": true })
     }
 
     fn revision(state: &str, checked_out: bool) -> Value {
@@ -225,7 +225,7 @@ mod tests {
         );
         map.insert("local_login".into(), json!(true));
         map.insert("skin".into(), json!("arch"));
-        map.insert("skin_light".into(), json!(false));
+        map.insert("skin_scheme".into(), json!("dark"));
         data
     }
 

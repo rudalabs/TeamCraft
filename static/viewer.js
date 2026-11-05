@@ -95,7 +95,8 @@
     // ---------------------------------------------------------------- colours
 
     function cssColor(name, fallback) {
-      var raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      // From the canvas: an element with its own data-skin paints that skin.
+      var raw = getComputedStyle(canvas).getPropertyValue(name).trim();
       var m = /^#([0-9a-f]{6})$/i.exec(raw);
       if (!m) return fallback;
       var v = parseInt(m[1], 16);
@@ -147,8 +148,17 @@
     // zUp: CAD convention (NX, CATIA, FreeCAD, 3D printing); toggle for Y-up exports.
     var view = { yaw: -0.6, pitch: 0.45, dist: 1, center: [0, 0, 0], radius: 1, zUp: true };
     var home = null;
-    var baseColor = cssColor("--c3", [0.608, 0.855, 0.98]);
-    var clearColor = cssColor("--bg-raised", [0.03, 0.09, 0.14]);
+    // Model and canvas colours from the skin tokens (skins.css); read again
+    // when the system switches between light and dark (the System skin).
+    var baseColor, clearColor;
+    function readColors() {
+      baseColor = cssColor("--viewer-model", cssColor("--c3", [0.435, 0.529, 0.631]));
+      clearColor = cssColor("--viewer-bg", cssColor("--bg-raised", [0.925, 0.937, 0.953]));
+    }
+    readColors();
+    var scheme = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    function onScheme() { readColors(); redraw(); }
+    if (scheme && scheme.addEventListener) scheme.addEventListener("change", onScheme);
 
     function upload(mesh) {
       var vao = gl.createVertexArray();
@@ -359,6 +369,7 @@
       exportStl: exportStl,
       dispose: function () {
         disposed = true;
+        if (scheme && scheme.removeEventListener) scheme.removeEventListener("change", onScheme);
         windowListeners.forEach(function (l) { window.removeEventListener(l[0], l[1]); });
         var lose = gl.getExtension("WEBGL_lose_context");
         if (lose) lose.loseContext();

@@ -15,8 +15,9 @@
 
   // Keep in sync with SKINS in src/domain.rs (a server unit test checks it).
   var SKINS = [
-    { id: "teamcraft", name: "TeamCraft", logo: "logos/TeamCraft_Icon.svg", description: "House style, night" },
-    { id: "teamcraft-day", name: "TeamCraft Day", logo: "logos/TeamCraft_Icon.svg", description: "House style, light" },
+    { id: "teamcraft", name: "TeamCraft", logo: "logos/TeamCraft_Icon.svg", description: "Follows your system: light or dark" },
+    { id: "teamcraft-day", name: "TeamCraft Light", logo: "logos/TeamCraft_Icon.svg", description: "House style, light" },
+    { id: "teamcraft-night", name: "TeamCraft Dark", logo: "logos/TeamCraft_Icon.svg", description: "House style, dark" },
     { id: "arch", name: "Arch", logo: "logos/TeamCraft_Icon.svg", description: "Blueprint grid" },
     { id: "cachyos", name: "CachyOS", logo: "logos/TeamCraft_Icon.svg", description: "Teal dot matrix" },
     { id: "endeavouros", name: "EndeavourOS", logo: "logos/TeamCraft_Icon.svg", description: "Purple sunset" },
@@ -290,6 +291,17 @@
     var light = getComputedStyle(root).colorScheme.indexOf("light") !== -1;
     root.classList.toggle("skin-light", light);
     if (state.viewer) renderActive(); // the 3D view takes its colours from the skin
+  }
+
+  // The System skin follows the OS: re-apply it when the OS switches between
+  // light and dark (WebKitGTK, WebView2 and WKWebView all report it).
+  if (window.matchMedia) {
+    var schemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    if (schemeQuery.addEventListener) {
+      schemeQuery.addEventListener("change", function () {
+        applySkin(document.documentElement.getAttribute("data-skin"));
+      });
+    }
   }
 
   // ======================================================================

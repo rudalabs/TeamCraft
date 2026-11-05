@@ -444,6 +444,8 @@ fn me_json(me: &Actor) -> Value {
         "id": me.id,
         "username": me.username,
         "display_name": me.display_name,
+        "initials": domain::initials(&me.display_name, &me.username),
+        "avatar": domain::avatar_tint(&me.username),
         "role": me.role,
         "skin": me.skin,
         "is_admin": me.is_admin(),
@@ -509,7 +511,10 @@ pub(crate) fn render_public(
             .map(domain::skin_or_default)
             .unwrap_or(domain::DEFAULT_SKIN);
         map.insert("skin".into(), json!(skin));
-        map.insert("skin_light".into(), json!(domain::skin_is_light(skin)));
+        map.insert(
+            "skin_scheme".into(),
+            json!(domain::skin_scheme(skin).as_str()),
+        );
     }
     let html = st.templates.get_template(template)?.render(&data)?;
     let mut response = Html(html).into_response();
