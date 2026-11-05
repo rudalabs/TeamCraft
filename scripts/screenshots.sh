@@ -717,10 +717,15 @@ desktop_run() {
     local suffix=$1 skin=$2 settings=$WORK/xdg-config/io.github.rudalabs.teamcraft/settings.json
     log "capturing TeamCraft Desktop, skin $skin (1440x900, Xvfb)"
     jq -n --arg url "$BASE_URL" --arg skin "$skin" '{server_url: $url, skin: $skin}' >"$settings"
+    # The app asks GTK for the dark variant of the window chrome (the menu
+    # bar) with a dark skin; the bare Xvfb session does not follow that
+    # preference, so the dark run names the dark GTK theme itself.
+    local gtk_theme=
+    [[ $suffix == -dark ]] && gtk_theme=Adwaita:dark
     XDG_CONFIG_HOME=$WORK/xdg-config XDG_DATA_HOME=$WORK/xdg-data XDG_CACHE_HOME=$WORK/xdg-cache \
         GDK_BACKEND=x11 NO_AT_BRIDGE=1 \
         WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
-        "$DESKTOP_APP" >"$WORK/desktop.log" 2>&1 &
+        env ${gtk_theme:+GTK_THEME=$gtk_theme} "$DESKTOP_APP" >"$WORK/desktop.log" 2>&1 &
     APP_PID=$!
     local win
     win=$(timeout 90 xdotool search --sync --onlyvisible --name '^TeamCraft$' 2>/dev/null | head -n 1 || true)

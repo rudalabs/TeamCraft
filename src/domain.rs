@@ -2156,9 +2156,21 @@ mod tests {
             check("--text", "--selected", 4.5);
             check("--text-muted", "--selected", 4.5);
             check("--text-dim", "--selected", 4.5);
-            check("--link", "--surface", 4.5);
+            for bg in ["--bg", "--surface", "--surface-2", "--selected"] {
+                check("--link", bg, 4.5);
+            }
             check("--on-primary", "--primary", 4.5);
-            check("--control-border", "--surface", 3.0);
+            // a hovered or pressed primary button keeps its edge and its label
+            for state in ["--primary-hover", "--primary-active"] {
+                check(state, "--surface", 3.0);
+                check("--on-primary", state, 4.5);
+            }
+            for bg in ["--bg", "--surface", "--surface-2"] {
+                check("--focus", bg, 3.0);
+            }
+            for bg in ["--surface", "--surface-2", "--input-bg", "--sidebar"] {
+                check("--control-border", bg, 3.0);
+            }
             for state in ["wip", "review", "ok", "danger", "impact"] {
                 let fg = format!("--st-{state}-fg");
                 check(&fg, &format!("--st-{state}-bg"), 4.5);

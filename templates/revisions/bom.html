@@ -7,7 +7,7 @@
   <div>
     <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a><span>BOM</span></p>
     <div class="title-row">
-      <h1><a class="id" href="/revisions/{{ rev.id }}">{{ rev.item_number }}</a>{{ m.revbox(rev.code) }} {{ rev.name }}</h1>
+      <h1><a class="id title-link" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }}</h1>
     </div>
     <p class="meta">
       Total mass {{ tree.total_mass_kg|fixed(3) }} kg{% if not tree.mass_complete %} <span class="marker-impact" title="A mass is missing in the structure">△ incomplete</span>{% endif %}
@@ -45,7 +45,7 @@
   <table class="dense">
     <thead>
       <tr>
-        <th class="num">Find no.</th><th>Item</th><th>Rev</th><th>State</th><th>Name</th>
+        <th class="lvl-col" title="Level in the structure">Lvl</th><th class="num">Find no.</th><th class="bom-item">Item</th><th>Rev</th><th>State</th><th>Name</th>
         <th class="num">Qty</th><th class="num">Unit mass (kg)</th><th class="num">Total mass (kg)</th>
         <th class="num">Cost (€)</th><th>Notes</th>
       </tr>
@@ -54,9 +54,10 @@
     {% for row in rows %}
       {% set n = row.node %}
       <tr class="{% if not n.revision and not n.restricted %}unresolved{% endif %}">
+        <td class="lvl-col"><span class="lvl">{{ row.level }}</span></td>
         <td class="num dim">{{ n.find_number }}</td>
-        <td class="nowrap {% if row.level > 6 %}indent-deep{% elif row.level > 1 %}indent-{{ row.level }}{% endif %}">
-          <span class="lvl" title="Level {{ row.level }}">{{ row.level }}</span>
+        <td class="nowrap bom-item{% if row.level > 6 %} lvl-deep{% elif row.level > 1 %} lvl-{{ row.level }}{% endif %}">
+          {% if row.level > 1 %}<span class="tree-guide" aria-hidden="true">└</span>{% endif %}
           {% if n.restricted %}{{ m.restricted() }}{% elif n.revision %}<a class="mono" href="/revisions/{{ n.revision.id }}">{{ n.item_number }}</a>{% else %}<span class="mono">{{ n.item_number }}</span>{% endif %}
           {% if n.cycle %}<span class="badge badge-rejected">cycle</span>{% endif %}
         </td>
@@ -73,7 +74,7 @@
     </tbody>
     <tfoot>
       <tr>
-        <td colspan="7">Total</td>
+        <td colspan="8">Total</td>
         <td class="num">{{ tree.total_mass_kg|fixed(3) }}</td>
         <td class="num">{{ tree.total_cost|fixed(2) }}</td>
         <td></td>
