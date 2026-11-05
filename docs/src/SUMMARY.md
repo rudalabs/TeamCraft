@@ -40,3 +40,4 @@
     - [Importing existing CAD folder trees](research/cad-folder-import.md)
     - [Popular features of Teamcenter](research/teamcenter.md)
     - [Openly licensed CAD files for end-to-end tests](research/cad-test-files.md)
+    - [Read permissions for project groups](research/read-permissions.md)
