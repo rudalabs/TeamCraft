@@ -36,8 +36,8 @@ feature milestone – the features in *What works* are enough; what is missing i
 |---|---|---|
 | **0.2** | Proofing | Sections 1 and 2 of the to-do list mostly done: migration, backup, import and atomicity tests, fuzzing of every parser, `cargo deny`, coverage report, branch protection; the large modules split |
 | **0.3** | Real data | The CAD-program checks of section 3 with real files (Inventor, Solid Edge, SOLIDWORKS, NX, STEP exports); scale check (#47) with targets met; e-mail/Mattermost against real servers |
-| **0.5** | Beta – frozen interfaces | API, MCP tools, config variables and CLI reviewed and frozen (deprecations marked); upgrade path tested from 0.2 on; first outside test teams |
-| **0.9** | Release candidate | No known data-loss or security bug; docs complete; installers signed; one RC per fix round, two weeks without a blocker |
+| **0.5** | Beta – frozen interfaces | Assistant with OpenAI-compatible providers shipped (its config is part of the freeze); API, MCP tools, config variables and CLI reviewed and frozen (deprecations marked); upgrade path tested from 0.2 on; first outside test teams |
+| **0.9** | Release candidate | No known data-loss or security bug; docs complete; one RC per fix round, two weeks without a blocker |
 | **1.0.0** | General availability | Work-in-progress notices removed (README, docs, web footer, desktop *About*); support policy published |
 
 **GA criteria** (all must be ticked before 1.0.0)
@@ -64,6 +64,15 @@ feature milestone – the features in *What works* are enough; what is missing i
 - [ ] Desktop app ↔ server compatibility: version handshake, the desktop tells the user when the server is too old
   or too new; a supported-versions table
 
+*Assistant*
+
+- [ ] One provider-neutral LLM API layer (`src/llm/`) with the Anthropic Messages backend and an OpenAI-compatible
+  Chat Completions backend (OpenAI, Azure OpenAI, Mistral, OpenRouter, Groq, local Ollama/vLLM/LM Studio) – phases 1
+  and 2 of [agent-interface](src/research/agent-interface.md): provider, base URL, model and key (`_FILE`) in the
+  configuration, `teamcraft assistant check`, the loop tests run for every provider, recorded fixtures per server
+- [ ] Per-user daily budget and admin feature switches for the assistant (phase 4), so that an operator can enable
+  it with a bought key without surprises
+
 *Security*
 
 - [ ] Threat model in `docs/src/dev/` (vault, sessions, PATs, OIDC, uploads, file parsers, webhooks, MCP/assistant);
@@ -86,8 +95,10 @@ feature milestone – the features in *What works* are enough; what is missing i
 
 *Clients and packaging*
 
-- [ ] Windows installers and the macOS app code-signed (macOS notarised); Flatpak on Flathub with offline cargo
-  sources; AUR packages published; the desktop app's update notice (no silent auto-update)
+- [ ] Flatpak on Flathub with offline cargo sources; AUR packages published; the desktop app's update notice (no
+  silent auto-update). Binaries and installers stay **unsigned** (no code signing or notarisation): the checksums
+  in `SHA256SUMS.txt` and the build provenance are the verification, and the docs explain the first start past
+  SmartScreen and Gatekeeper
 - [ ] Desktop app run and tested on Windows x64/ARM64, macOS and Linux for each RC (a short manual test script in
   `docs/src/dev/release-checklist.md`)
 - [ ] Accessibility: keyboard use and screen-reader labels on the main web flows checked (WCAG 2.2 AA for contrast
@@ -104,8 +115,8 @@ feature milestone – the features in *What works* are enough; what is missing i
   `Cargo.toml` files, tag, verify assets and checksums, image tags, announcement
 - [ ] Governance basics: maintainers, review rule (one approving review, green checks), code of conduct
 
-**Not required for 1.0** – CAD add-ins, more 3D readers, the Jira connector, OpenAI-compatible assistant
-providers, the shared UI folder beyond what is already merged, i18n of the UI (English only in 1.0; the
+**Not required for 1.0** – CAD add-ins, more 3D readers, the Jira connector, code-signed binaries, the assistant
+features after the budget (threads, streaming, quick actions), the shared UI folder beyond what is already merged, i18n of the UI (English only in 1.0; the
 structure should not prevent translations later). They may land in 1.x minor releases.
 
 ## To-do
