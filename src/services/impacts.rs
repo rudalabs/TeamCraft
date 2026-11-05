@@ -648,8 +648,14 @@ pub async fn analysis(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Dep
     .map(|l| (l.item_id, l))
     .collect();
     let in_change: HashSet<Uuid> = roots.iter().map(|r| r.item_id).collect();
+    // The same dependent on the same level through the same item, reached
+    // from several revisions of the change, is listed once (the sort and
+    // dedup below would drop all but the first anyway) – before any text
+    // is copied for it.
+    let mut listed: HashSet<(i32, Uuid, Uuid)> = HashSet::new();
     let mut out: Vec<Dependent> = found
         .into_iter()
+        .filter(|f| listed.insert((f.level, f.item, f.via)))
         .filter_map(|f| {
             let item = latest.get(&f.item)?;
             let via = latest.get(&f.via)?;

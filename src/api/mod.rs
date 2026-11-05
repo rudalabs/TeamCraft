@@ -982,13 +982,15 @@ async fn get_bom(
     ApiUser(_me): ApiUser,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<BomQuery>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<Response> {
     let rev = revision_at(&st, &number, &code).await?;
     if q.expand.unwrap_or(false) {
         let rule = bom_rule(q.rule.as_deref())?;
-        Ok(Json(json!(bom::tree(&st.db, rev.id, rule).await?)))
+        // serialized straight from the tree: an expanded BOM can be tens of
+        // megabytes, an intermediate JSON value would double the work
+        Ok(Json(bom::tree(&st.db, rev.id, rule).await?).into_response())
     } else {
-        Ok(Json(json!(bom::lines(&st.db, rev.id).await?)))
+        Ok(Json(bom::lines(&st.db, rev.id).await?).into_response())
     }
 }
 
@@ -1292,14 +1294,14 @@ async fn change_impact(
     State(st): State<AppState>,
     ApiUser(_me): ApiUser,
     Path(number): Path<String>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<Json<Vec<impacts::Dependent>>> {
     let change = changes::get_by_number(&st.db, &number).await?;
     let ids: Vec<Uuid> = changes::items(&st.db, change.id)
         .await?
         .iter()
         .map(|i| i.revision_id)
         .collect();
-    Ok(Json(json!(impacts::analysis(&st.db, &ids).await?)))
+    Ok(Json(impacts::analysis(&st.db, &ids).await?))
 }
 
 // ---------------------------------------------------------------------------
