@@ -153,6 +153,9 @@ desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part 
 * **Docs to keep in sync:** `README.md`, `docs/src/**`, `platforms/*.md`,
   `desktop/README.md`, `docker-compose.yml`, `CONTRIBUTING.md` (repeats the
   conventions and commands for outside contributors), `SECURITY.md`.
+* **What to work on:** `docs/OPEN_WORK.md`, section *Direction* – proofing (tests,
+  fuzzing, CI gates) and structure (module splits, guard tests) before new features;
+  without a request from the user, pick the next task from its sections 1 and 2.
 * **Project status:** no release yet (version `0.1.0`). Keep the
   work-in-progress / no-warranty notices in the README, `docs/src/index.md`,
   the web footer and the desktop *About* dialog until the user asks for a release.
