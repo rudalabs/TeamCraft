@@ -87,7 +87,9 @@ The end-to-end tests in `tests/` create and drop their own temporary
 `TEAMCRAFT_TEST_DATABASE_URL` if it is set. When no database is reachable,
 they are skipped; with `TEAMCRAFT_REQUIRE_DB_TESTS=1` set, that counts as a
 failure instead. `cargo test --lib` runs only the unit tests and needs no
-database.
+database. `tests/backup_restore.rs` additionally runs `pg_dump` and
+`pg_restore` from `PATH` (major version at least the server's); without them
+it is skipped, with `TEAMCRAFT_REQUIRE_PG_TOOLS=1` (CI) that fails.
 
 | If you changed …  | also run                                                            |
 |-------------------|---------------------------------------------------------------------|

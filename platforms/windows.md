@@ -87,6 +87,11 @@ Invoke-RestMethod http://localhost:8080/readyz
 
 `/readyz` answers `{"database":"ok","status":"ok","vault":"ok","version":"…"}`.
 
+The backup/restore test uses `pg_dump` and `pg_restore`; with the native
+installer they are in `C:\Program Files\PostgreSQL\17\bin` – put that on
+`PATH` (`$env:Path += ';C:\Program Files\PostgreSQL\17\bin'`), otherwise the
+test is skipped. `teamcraft backup` / `restore` need them the same way.
+
 A guided tour through every feature is in the documentation:
 [Manual test tour](https://rudalabs.github.io/TeamCraft/guide/tour.html).
 
