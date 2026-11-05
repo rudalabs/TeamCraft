@@ -159,14 +159,14 @@
     <tbody>
     {% for i in items %}
       <tr>
-        <td class="mono nowrap"><a href="/revisions/{{ i.revision_id }}">{{ i.item_number }}/{{ i.code }}</a></td>
+        <td class="mono nowrap">{% if i.restricted %}{{ m.restricted() }}{% else %}<a href="/revisions/{{ i.revision_id }}">{{ i.item_number }}/{{ i.code }}</a>{% endif %}</td>
         <td>{{ i.name }}</td>
-        <td>{{ m.badge(i.state) }}{% if i.checked_out_by_name %} {{ m.lock(i.checked_out_by_name) }}{% endif %}</td>
+        <td>{% if not i.restricted %}{{ m.badge(i.state) }}{% endif %}{% if i.checked_out_by_name %} {{ m.lock(i.checked_out_by_name) }}{% endif %}</td>
         {% if can.modify %}
         <td class="right">
-          <form class="inline" method="post" action="/changes/{{ change.id }}/items/{{ i.revision_id }}/remove">
+          {% if not i.restricted %}<form class="inline" method="post" action="/changes/{{ change.id }}/items/{{ i.revision_id }}/remove">
             <button class="small danger" type="submit">Remove</button>
-          </form>
+          </form>{% endif %}
         </td>
         {% endif %}
       </tr>
@@ -212,11 +212,11 @@
     <tbody>
     {% for d in readiness_rows %}
       <tr>
-        <td class="mono nowrap"><a href="/revisions/{{ d.latest_revision_id }}">{{ d.item_number }}/{{ d.latest_code }}</a></td>
-        <td>{{ d.item_name }}</td>
+        <td class="mono nowrap">{% if d.restricted %}{{ m.restricted() }}{% else %}<a href="/revisions/{{ d.latest_revision_id }}">{{ d.item_number }}/{{ d.latest_code }}</a>{% endif %}</td>
+        <td>{% if d.restricted %}<span class="small muted">restricted dependency not released – ask a member of its group or an admin</span>{% else %}{{ d.item_name }}{% endif %}</td>
         <td class="small"><span class="mono">{{ d.revision_label }}</span> {{ m.relation(d.relation) }}</td>
         <td class="nowrap">
-          {{ m.badge(d.latest_state) }}
+          {% if not d.restricted %}{{ m.badge(d.latest_state) }}{% endif %}
           {% if d.other_change %}<span class="small muted">in {{ d.other_change }}</span>{% endif %}
           {% if d.problem == "obsolete" %}<span class="small muted">warning: obsolete, replace it</span>
           {% elif not d.blocking %}<span class="small muted">warning: found by the CAD file scan</span>{% endif %}
@@ -262,7 +262,8 @@
     </tbody>
   </table>
   </div>
-  {% else %}<p class="empty">No other item uses or references the revisions of this change.</p>{% endif %}
+  {% elif not hidden_dependents %}<p class="empty">No other item uses or references the revisions of this change.</p>{% endif %}
+  {{ m.hidden_count(hidden_dependents, "dependents") }}
 </section>
 
 <section class="card">

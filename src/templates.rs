@@ -534,6 +534,7 @@ mod tests {
                 "revisions/show.html",
                 with_common(json!({
                     "rev": revision(state, checked_out), "item": item(), "revisions": [revision(state, checked_out)],
+                    "hidden": { "parents": 2, "incoming": 1, "file_referrers": 0, "changes": 1, "simulations": 0 },
                     "is_latest": false, "latest_id": OTHER, "files": [file.clone(), native.clone(), unknown.clone()], "native_without_preview": state == "released", "lines": [bom_line.clone()],
                     "where_used": [{ "line_id": ME, "parent_revision_id": OTHER, "parent_item_id": ME,
                                      "parent_number": "ASM-000001", "parent_code": "A", "parent_name": "Assembly",
@@ -644,6 +645,7 @@ mod tests {
                 "revisions/show.html",
                 with_common(json!({
                     "rev": rev.clone(), "item": sim_item, "revisions": [rev.clone(), revision("released", false)],
+                    "hidden": { "parents": 0, "incoming": 0, "file_referrers": 0, "changes": 0, "simulations": 0 },
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
                     "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
                     "history": [], "projects": [], "units": units(), "references": references.clone(),
@@ -695,6 +697,7 @@ mod tests {
             "revisions/show.html",
             with_common(json!({
                 "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
+                "hidden": { "parents": 0, "incoming": 0, "file_referrers": 0, "changes": 0, "simulations": 1 },
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
                 "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
                 "history": [], "projects": [], "units": units(), "references": references.clone(),
@@ -801,7 +804,8 @@ mod tests {
             with_common(json!({
                 "rev": revision("released", false), "rule": "released",
                 "tree": { "total_mass_kg": 1.5, "total_cost": 10.0, "mass_complete": false, "cost_complete": true,
-                          "line_count": 2, "unresolved_count": 1 },
+                          "line_count": 2, "unresolved_count": 1, "restricted_lines": 1,
+                          "rollup_incomplete": true },
                 "rows": [
                     { "level": 2, "indent": "\u{2003}", "has_children": false, "node": node },
                     { "level": 9, "indent": "", "has_children": false, "node": unresolved }
@@ -836,6 +840,7 @@ mod tests {
                 "changes/show.html",
                 with_common(json!({
                     "change": change(status), "status_label": "Draft",
+                    "hidden_dependents": 1,
                     "implements": [request("accepted")],
                     "items": [{ "revision_id": OTHER, "item_id": ME, "item_number": "PRT-000001", "code": "A",
                                 "name": "Bracket", "state": "in_work", "checked_out_by_name": "Erika" }],
@@ -928,6 +933,7 @@ mod tests {
                 "requests/show.html",
                 with_common(json!({
                     "request": request(status), "status_label": "New", "reason_label": "Defect / error",
+                    "hidden_changes": 1,
                     "items": [request_item.clone()], "in_work": [request_item.clone()],
                     "comments": [{ "id": OTHER, "author_id": OTHER, "author_name": "Erika",
                                    "body": "Seen on <three> parts", "created_at": TS }],
@@ -1280,7 +1286,7 @@ mod tests {
 
         let mut data = with_common(json!({
             "change": change("in_review"), "status_label": "In review", "items": [], "reviews": [],
-            "candidates": [], "history": [], "priorities": ["low"], "impact": [],
+            "candidates": [], "history": [], "priorities": ["low"], "impact": [], "hidden_dependents": 0,
             "can": { "modify": false, "edit_text": false, "submit": false, "withdraw": false, "reopen": false,
                      "cancel": false, "review": true },
         }));

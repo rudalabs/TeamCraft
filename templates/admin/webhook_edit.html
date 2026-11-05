@@ -46,9 +46,10 @@
       </fieldset>
       <label>Project group
         <select name="project">
-          <option value="">All project groups</option>
-          {% for p in projects %}<option value="{{ p.id }}" {% if p.id == webhook.project_id %}selected{% endif %}>{{ p.code }} – {{ p.name }}</option>{% endfor %}
+          <option value="">All internal project groups</option>
+          {% for p in projects %}<option value="{{ p.id }}" {% if p.id == webhook.project_id %}selected{% endif %}>{{ p.code }} – {{ p.name }}{% if p.restricted %} (restricted){% endif %}</option>{% endfor %}
         </select>
+        {% if projects|selectattr("restricted")|list %}<span class="hint">A webhook for all groups receives no events of restricted groups; choose the group to get them.</span>{% endif %}
       </label>
       <label class="check"><input type="checkbox" name="active" {% if webhook.active %}checked{% endif %}> Active (switching it off gives up the deliveries that are still waiting)</label>
       <div class="actions"><button class="primary" type="submit">Save</button></div>

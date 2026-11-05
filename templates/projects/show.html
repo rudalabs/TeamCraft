@@ -9,6 +9,7 @@
     <h1><span class="mono">{{ project.code }}</span> · {{ project.name }}</h1>
     <p class="subtitle">
       {% if project.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">archived</span>{% endif %}
+      {% if project.visibility == "restricted" %}{{ m.restricted("Restricted") }}{% endif %}
       {% if is_member %}<span class="badge badge-member">you are a member</span>{% endif %}
       {% if can_edit %}· you can create and change items here{% else %}· read-only for you{% endif %}
     </p>
@@ -78,6 +79,7 @@
       <dt>Name</dt><dd>{{ project.name }}</dd>
       <dt>Area</dt><dd>{{ project.description or "—" }}</dd>
       <dt>IdP group</dt><dd class="mono">{{ project.oidc_group or "—" }}</dd>
+      <dt>Visibility</dt><dd>{% if project.visibility == "restricted" %}Restricted – only members and administrators see the group and its items{% else %}Internal – every signed-in user reads it, members edit{% endif %}</dd>
       <dt>Created</dt><dd>{{ m.time(project.created_at) }}</dd>
     </dl>
     {% if can_manage %}
@@ -91,6 +93,19 @@
       {% endif %}
       <label class="check"><input type="checkbox" name="active" {% if project.active %}checked{% endif %}> Active (archived groups accept no new items)</label>
       <div class="actions"><button class="primary" type="submit">Save</button></div>
+    </form>
+    <h3>Visibility</h3>
+    <form class="inline" method="post" action="/projects/{{ project.id }}/visibility"
+          data-confirm="{% if project.visibility == "restricted" %}Open {{ project.code }} to all signed-in users?{% else %}Restrict {{ project.code }} to its members?{% endif %}">
+      {% if project.visibility == "restricted" %}
+      <input type="hidden" name="visibility" value="internal">
+      <p class="hint">Only members (viewers included) and administrators can see this group, its items, files and changes. Everybody else gets "not found".</p>
+      <button type="submit">Open to all users</button>
+      {% else %}
+      <input type="hidden" name="visibility" value="restricted">
+      <p class="hint">Restrict the group to hide it, its items, files and changes from everybody who is not a member (administrators still see everything). Add viewers as members to give read-only access.</p>
+      <button type="submit">Restrict to members</button>
+      {% endif %}
     </form>
     {% endif %}
   </section>

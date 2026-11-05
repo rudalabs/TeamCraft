@@ -773,6 +773,7 @@ ul.file-refs { margin-bottom: 0.7rem; }
 .badge-fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-soft); }
 .badge-none { color: var(--text-dim); }
 .badge-out_of_date { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.badge-restricted { color: var(--text-dim); border-style: dashed; }
 .badge-up_to_date { color: var(--ok); }
 .fmt-result { color: var(--text-muted); border-style: dashed; border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
 tr.result-fail td.num.value { color: var(--danger); font-weight: 600; }

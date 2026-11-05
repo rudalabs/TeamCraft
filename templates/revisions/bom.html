@@ -53,14 +53,14 @@
     <tbody>
     {% for row in rows %}
       {% set n = row.node %}
-      <tr class="{% if not n.revision %}unresolved{% endif %}">
+      <tr class="{% if not n.revision and not n.restricted %}unresolved{% endif %}">
         <td><span class="lvl">{{ row.level }}</span></td>
         <td class="num">{{ n.find_number }}</td>
         <td class="mono nowrap {% if row.level > 6 %}indent-deep{% elif row.level > 1 %}indent-{{ row.level }}{% endif %}">
-          {% if n.revision %}<a href="/revisions/{{ n.revision.id }}">{{ n.item_number }}</a>{% else %}{{ n.item_number }}{% endif %}
+          {% if n.restricted %}{{ m.restricted() }}{% elif n.revision %}<a href="/revisions/{{ n.revision.id }}">{{ n.item_number }}</a>{% else %}{{ n.item_number }}{% endif %}
           {% if n.cycle %}<span class="badge badge-rejected">cycle</span>{% endif %}
         </td>
-        <td class="nowrap">{% if n.revision %}<span class="mono">{{ n.revision.code }}</span> {{ m.badge(n.revision.state) }}{% else %}<span class="badge badge-in_review">no {{ rule|replace("_", " ") }} revision</span>{% endif %}</td>
+        <td class="nowrap">{% if n.restricted %}{% elif n.revision %}<span class="mono">{{ n.revision.code }}</span> {{ m.badge(n.revision.state) }}{% else %}<span class="badge badge-in_review">no {{ rule|replace("_", " ") }} revision</span>{% endif %}</td>
         <td>{% if n.revision %}{{ n.revision.name }}{% endif %}</td>
         <td class="num">{{ n.quantity|num(6) }} {{ n.unit }}</td>
         <td class="num">{{ n.unit_mass_kg|num(4) }}{% if not n.mass_complete %} <span title="mass missing in this sub-tree">⚠</span>{% endif %}</td>
@@ -73,6 +73,7 @@
   </table>
   </div>
   <p class="hint">Unit mass = own mass of the revision + roll-up of its children. ⚠ marks sub-trees where a mass or cost is missing.</p>
+  {% if tree.restricted_lines %}<p class="hint">Mass and cost exclude {{ tree.restricted_lines }} restricted line{% if tree.restricted_lines != 1 %}s{% endif %} (items of project groups you are not a member of).</p>{% endif %}
   {% else %}
   <p class="empty">This revision has no BOM lines.</p>
   {% endif %}
