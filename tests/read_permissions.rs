@@ -768,7 +768,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
             let r = call(&app, method, &uri, token, &cookie).await;
             let what = format!("{method} {path}");
             assert_clean(who, &what, &r, &markers, &sent_of(&uri));
-            if method == "GET" {
+            if method == "GET" && targets_hidden(&uri, &h) {
                 assert!(
                     !(r.status.is_success() || r.status.is_redirection()),
                     "{who}: {what} answers {} for a hidden object: {}",
@@ -792,6 +792,8 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
             let r = call(&app, method, path, token, &cookie).await;
             assert_clean(who, &format!("{method} {path}"), &r, &markers, &[]);
         }
+        // (a fresh session: a route above may have ended the old one)
+        let cookie = app.login(who).await;
         // the internal items that use and are used by the hidden one
         for number in [&asm, &prt] {
             let rev_id = id_of(
@@ -928,6 +930,34 @@ fn clone_hidden(h: &Hidden) -> Hidden {
         attachment_id: h.attachment_id,
         caller: h.caller,
     }
+}
+
+/// Whether a filled route addresses one of the hidden objects (and not
+/// only a random id).
+fn targets_hidden(uri: &str, h: &Hidden) -> bool {
+    let ids = [
+        h.group_id,
+        h.item_id,
+        h.revision_id,
+        h.file_id,
+        h.version_id,
+        h.line_id,
+        h.reference_id,
+        h.change_id,
+        h.request_id,
+        h.attachment_id,
+    ];
+    let segments: Vec<&str> = uri.split('/').collect();
+    ids.iter()
+        .any(|id| segments.contains(&id.to_string().as_str()))
+        || [
+            &h.item_number,
+            &h.change_number,
+            &h.request_number,
+            &h.group_code,
+        ]
+        .iter()
+        .any(|n| segments.contains(&n.as_str()))
 }
 
 /// One call: the REST API with the token, the web UI with the session.
