@@ -95,8 +95,9 @@ promised.
 - **Change orders.** Collect revisions, assign reviewers, four-eyes approval,
   all revisions released atomically, impact analysis before approval.
 - **Structure.** Multi-level BOM with mass and cost roll-up, revision rules *latest*, *latest released* and *as
-  released*, where-used, comparison of two revisions over one or all levels,
-  CSV and Excel export and *Pack and Go* ZIP of a whole assembly.
+  released*, multi-level where-used, comparison of two revisions over one or all levels,
+  CSV and Excel export and *Pack and Go* ZIP of a whole assembly. Alternate parts, supersession and *Replace in
+  assemblies* with a preview of every affected assembly.
 - **BOM import.** Items and multi-level BOMs from the BOM tables of CAD
   programs (Inventor, SolidWorks, Solid Edge, Fusion, Creo, NX, hand-made
   lists) as CSV/TSV, Excel or OpenDocument – English and German columns,

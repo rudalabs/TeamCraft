@@ -37,8 +37,8 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [ ] Custom attributes per item type and file type, classification (standard/purchased parts), attribute search;
   then the BOM import can map further columns (e.g. Inventor *BOM Structure = Purchased*, vendor) to attributes
   (feature 5; in progress: branch `feature/custom-attributes`)
-- [ ] Supersede/replace, alternate parts, multi-level where-used in the web UI – API and MCP have it (`levels=N`)
-  (feature 6; in progress: branch `feature/item-supersede-alternates`)
+- [ ] Feature 6 leftovers: local substitutes per BOM line, a warning when a superseded item is added to a BOM in the
+  desktop app
 - [ ] Numbering schemes: a separate scheme per item type within a group, an instance-wide default other than
   `{TYPE}-{SEQ:6}` (feature 4)
 - [ ] Change requests: e-mail digest of new requests per project group
@@ -168,7 +168,9 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [x] 3D preview of real-world STEP files: own Part 21 pre-reader, face-by-face fallback, AP242 tessellated geometry,
   "partial preview: N of M faces"
 - [x] Configurable numbering schemes per project group with preview (feature 4)
-- [x] Item copy ("Save as" with files and BOM), multi-level where-used in the API and MCP (feature 6, part)
+- [x] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts and multi-level where-used in API, MCP
+  and web UI (feature 6) – alternates (two-way or one-way) and supersession per item, *Replace in assemblies* from the
+  where-used page with a preview (in-work parents changed, released ones listed for a new revision), migration 0030
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
 - [x] Engineering change requests before the change order (web, API, desktop, attachments, triage, *Create change
   order*); MCP tools `create_change_request`, `comment_change_request` and the `triage_requests` prompt
@@ -247,8 +249,13 @@ Documented in the UI, keep in mind:
    `{PROJECT}`, `{TYPE}`, `{YYYY}`, `{YY}`, `{MM}` and `{SEQ:n}`, preview of the next numbers on the group page and
    via `GET /api/v1/projects/{code}/numbering`; counters are named after the expansion without the sequence.
 5. **Custom attributes:** open (see *To-do*).
-6. **Item copy** ("Save as" with files and BOM) and multi-level where-used in the API and MCP (`levels=N`); open:
-   supersede/replace, alternate parts, where-used levels in the web UI.
+6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate parts, multi-level where-used: done.
+   Alternates (`item_alternates`, two-way by default) and supersession (`item_supersessions`, one successor, no
+   circles) are item-level relations (`services::interchange`); *Replace in assemblies* on `/items/{id}/where-used`
+   (and `GET/POST /api/v1/items/{number}/replace`, MCP `replace_preview`) changes the parents whose latest revision
+   is in work and not checked out by others, and lists the rest with the reason. Research:
+   [supersede-alternates](src/research/supersede-alternates.md). Open: local substitutes per BOM line, a warning
+   when a superseded item is added to a BOM in the desktop app.
 7. **BOM comparison** with Excel export (`rust_xlsxwriter`, MIT/Apache-2.0): direct lines, and over all levels with a
    revision rule (`depth=all`); the expanded BOM itself exports as Excel too.
 8. **Bulk import of a folder tree:** done in the desktop app (*Import CAD Folder…*).
