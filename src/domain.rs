@@ -1257,6 +1257,84 @@ impl NotificationKind {
 }
 
 // ---------------------------------------------------------------------------
+// Webhooks
+// ---------------------------------------------------------------------------
+
+/// An event an outgoing webhook can subscribe to (`webhooks.events`; the
+/// CHECK constraint in migration 0022 lists the same names).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WebhookEvent {
+    #[serde(rename = "revision.released")]
+    RevisionReleased,
+    #[serde(rename = "revision.obsoleted")]
+    RevisionObsoleted,
+    #[serde(rename = "change.submitted")]
+    ChangeSubmitted,
+    #[serde(rename = "change.approved")]
+    ChangeApproved,
+    #[serde(rename = "change.rejected")]
+    ChangeRejected,
+    #[serde(rename = "change.released")]
+    ChangeReleased,
+    #[serde(rename = "change_request.created")]
+    ChangeRequestCreated,
+    #[serde(rename = "change_request.decided")]
+    ChangeRequestDecided,
+    #[serde(rename = "simulation.result_added")]
+    SimulationResultAdded,
+}
+
+impl WebhookEvent {
+    pub const ALL: [WebhookEvent; 9] = [
+        WebhookEvent::RevisionReleased,
+        WebhookEvent::RevisionObsoleted,
+        WebhookEvent::ChangeSubmitted,
+        WebhookEvent::ChangeApproved,
+        WebhookEvent::ChangeRejected,
+        WebhookEvent::ChangeReleased,
+        WebhookEvent::ChangeRequestCreated,
+        WebhookEvent::ChangeRequestDecided,
+        WebhookEvent::SimulationResultAdded,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WebhookEvent::RevisionReleased => "revision.released",
+            WebhookEvent::RevisionObsoleted => "revision.obsoleted",
+            WebhookEvent::ChangeSubmitted => "change.submitted",
+            WebhookEvent::ChangeApproved => "change.approved",
+            WebhookEvent::ChangeRejected => "change.rejected",
+            WebhookEvent::ChangeReleased => "change.released",
+            WebhookEvent::ChangeRequestCreated => "change_request.created",
+            WebhookEvent::ChangeRequestDecided => "change_request.decided",
+            WebhookEvent::SimulationResultAdded => "simulation.result_added",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WebhookEvent::RevisionReleased => "A revision was released",
+            WebhookEvent::RevisionObsoleted => "A revision was made obsolete",
+            WebhookEvent::ChangeSubmitted => "A change was submitted for review",
+            WebhookEvent::ChangeApproved => "A reviewer approved a change",
+            WebhookEvent::ChangeRejected => "A change was rejected",
+            WebhookEvent::ChangeReleased => "A change was released",
+            WebhookEvent::ChangeRequestCreated => "A change request was raised",
+            WebhookEvent::ChangeRequestDecided => {
+                "A change request was accepted, rejected or deferred"
+            }
+            WebhookEvent::SimulationResultAdded => "Simulation result values were added",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<WebhookEvent> {
+        WebhookEvent::ALL
+            .into_iter()
+            .find(|e| e.as_str() == s.trim())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Validation helpers
 // ---------------------------------------------------------------------------
 

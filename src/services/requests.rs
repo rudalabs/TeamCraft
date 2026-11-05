@@ -29,13 +29,14 @@ use crate::{
     auth::Actor,
     domain::{
         self, NotificationKind, Priority, RequestDecision, RequestReason, RequestStatus, Role,
+        WebhookEvent,
     },
     error::{AppError, AppResult},
     models::{Change, ChangeRequest, RequestAttachment, RequestComment, RequestItem},
     services::{
         audit, changes, next_counter,
         notifications::{self, Notice},
-        users, Page,
+        users, webhooks, Page,
     },
     vault::Vault,
 };
@@ -590,6 +591,15 @@ pub async fn create(
         ),
     )
     .await?;
+    let projects = project_ids(&mut tx, id).await?;
+    webhooks::emit(
+        &mut tx,
+        Some(actor),
+        WebhookEvent::ChangeRequestCreated,
+        &projects,
+        json!({ "change_request": webhooks::request_object(&request), "items": labels }),
+    )
+    .await?;
     tx.commit().await?;
     get(pool, id).await
 }
@@ -988,6 +998,16 @@ pub async fn decide(
         } else {
             format!("{} – {comment}", request.title)
         },
+    )
+    .await?;
+    let decided = lock(&mut tx, id).await?;
+    webhooks::emit(
+        &mut tx,
+        Some(actor),
+        WebhookEvent::ChangeRequestDecided,
+        &projects,
+        json!({ "change_request": webhooks::request_object(&decided),
+                "decision": { "decision": verb, "comment": comment, "decided_by": actor.username } }),
     )
     .await?;
     tx.commit().await?;

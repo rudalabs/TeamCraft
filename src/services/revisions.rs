@@ -6,13 +6,13 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::{self, LifecycleState, NotificationKind, Role},
+    domain::{self, LifecycleState, NotificationKind, Role, WebhookEvent},
     error::{AppError, AppResult},
     models::Revision,
     services::{
         audit, impacts,
         notifications::{self, Notice},
-        references, simulations,
+        references, simulations, webhooks,
     },
 };
 
@@ -460,6 +460,14 @@ pub async fn obsolete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
         &rev,
         format!("{} is obsolete", label(&rev)),
         format!("{} marked {} as obsolete.", actor.display_name, rev.name),
+    )
+    .await?;
+    webhooks::emit(
+        &mut tx,
+        Some(actor),
+        WebhookEvent::RevisionObsoleted,
+        &[rev.project_id],
+        json!({ "revision": webhooks::revision_object(&rev, LifecycleState::Obsolete.as_str()) }),
     )
     .await?;
     tx.commit().await?;
