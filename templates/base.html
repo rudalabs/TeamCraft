@@ -29,6 +29,7 @@
       <a href="/projects" class="{% block nav_projects %}{% endblock %}">Projects</a>
       {% if me.is_admin %}
       <a href="/admin/users" class="{% block nav_users %}{% endblock %}">Users</a>
+      <a href="/admin/webhooks" class="{% block nav_webhooks %}{% endblock %}" title="Send events to CI, ERP or chat">Webhooks</a>
       <a href="/admin/audit" class="{% block nav_audit %}{% endblock %}">Audit log</a>
       {% endif %}
     </nav>

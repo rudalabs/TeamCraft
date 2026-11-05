@@ -102,6 +102,71 @@ pub struct Config {
     pub mattermost: Option<MattermostConfig>,
     /// The built-in assistant (Claude via the Anthropic API). `None` = disabled.
     pub assistant: Option<AssistantConfig>,
+    /// Which targets outgoing event webhooks may reach.
+    pub webhooks: WebhookConfig,
+}
+
+/// Default for how long finished webhook deliveries are kept.
+pub const DEFAULT_WEBHOOK_RETENTION_DAYS: u32 = 30;
+
+/// Target rules of outgoing event webhooks (the SSRF guard in
+/// `crate::webhooks`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WebhookConfig {
+    /// `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS`: when not empty, webhooks may only
+    /// target these hosts (exact names, IP addresses or `*.example.org`), and
+    /// these hosts may resolve to private addresses (an on-premises ERP).
+    pub allowed_hosts: Vec<String>,
+    /// `TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE`: every host may resolve to private,
+    /// loopback and link-local addresses.
+    pub allow_private: bool,
+    /// Days after which sent and failed deliveries are removed.
+    pub retention_days: u32,
+}
+
+impl Default for WebhookConfig {
+    fn default() -> Self {
+        WebhookConfig {
+            allowed_hosts: Vec::new(),
+            allow_private: false,
+            retention_days: DEFAULT_WEBHOOK_RETENTION_DAYS,
+        }
+    }
+}
+
+/// Parses `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS` (comma or space separated).
+fn parse_allowed_hosts(raw: &str) -> Result<Vec<String>> {
+    let mut hosts = Vec::new();
+    for entry in raw.split([',', ' ', '\n', '\t']).map(str::trim) {
+        if entry.is_empty() {
+            continue;
+        }
+        let host = entry
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
+        let name = host.strip_prefix("*.").unwrap_or(&host);
+        if name.is_empty()
+            || name.contains('*')
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':'))
+        {
+            bail!(
+                "TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS: '{entry}' is not a host name, an IP address or *.domain"
+            );
+        }
+        // IP addresses in the form the URL parser prints them.
+        let host = host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.to_string())
+            .unwrap_or(host);
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+    Ok(hosts)
 }
 
 /// Default model of the assistant.
@@ -347,6 +412,25 @@ impl Config {
             None => None,
         };
 
+        let webhooks = WebhookConfig {
+            allowed_hosts: match env.get("TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS")? {
+                Some(raw) => parse_allowed_hosts(&raw)?,
+                None => Vec::new(),
+            },
+            allow_private: match env.get("TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE")? {
+                Some(v) => parse_bool(&v)
+                    .context("TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE must be true or false")?,
+                None => false,
+            },
+            retention_days: env.parse_or(
+                "TEAMCRAFT_WEBHOOK_RETENTION_DAYS",
+                DEFAULT_WEBHOOK_RETENTION_DAYS,
+            )?,
+        };
+        if !(1..=3650).contains(&webhooks.retention_days) {
+            bail!("TEAMCRAFT_WEBHOOK_RETENTION_DAYS must be between 1 and 3650");
+        }
+
         Ok(Config {
             bind_addr,
             public_url,
@@ -368,13 +452,14 @@ impl Config {
             smtp,
             mattermost,
             assistant,
+            webhooks,
         })
     }
 
     /// Password-free summary for the startup log.
     pub fn summary(&self) -> String {
         format!(
-            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} mattermost_notifications={} assistant={}",
+            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} mattermost_notifications={} assistant={} webhook_targets={}",
             self.bind_addr,
             self.public_url,
             self.database_display,
@@ -391,6 +476,15 @@ impl Config {
                 .as_ref()
                 .map_or("off", |m| if m.direct { "direct" } else { "channel" }),
             self.assistant.as_ref().map_or("off", |a| a.model.as_str()),
+            match (
+                self.webhooks.allowed_hosts.is_empty(),
+                self.webhooks.allow_private
+            ) {
+                (true, false) => "public",
+                (true, true) => "any",
+                (false, false) => "allow-list",
+                (false, true) => "allow-list+private",
+            },
         )
     }
 }
@@ -640,6 +734,42 @@ mod tests {
             ("TEAMCRAFT_MATTERMOST_DIRECT", "maybe"),
         ])
         .is_err());
+    }
+
+    #[test]
+    fn webhook_targets() {
+        let cfg = config_from(&[]).unwrap();
+        assert_eq!(cfg.webhooks, WebhookConfig::default());
+        assert!(cfg.summary().contains("webhook_targets=public"));
+        let cfg = config_from(&[
+            (
+                "TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS",
+                "ERP.internal.example.org., *.ci.example.org [fd00::1] 10.0.0.5,erp.internal.example.org",
+            ),
+            ("TEAMCRAFT_WEBHOOK_RETENTION_DAYS", "7"),
+        ])
+        .unwrap();
+        assert_eq!(
+            cfg.webhooks.allowed_hosts,
+            [
+                "erp.internal.example.org",
+                "*.ci.example.org",
+                "fd00::1",
+                "10.0.0.5"
+            ]
+        );
+        assert_eq!(cfg.webhooks.retention_days, 7);
+        assert!(cfg.summary().contains("webhook_targets=allow-list"));
+        let cfg = config_from(&[("TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE", "yes")]).unwrap();
+        assert!(cfg.webhooks.allow_private);
+        for (key, value) in [
+            ("TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS", "a.*.example.org"),
+            ("TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS", "http://erp/x"),
+            ("TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE", "sometimes"),
+            ("TEAMCRAFT_WEBHOOK_RETENTION_DAYS", "0"),
+        ] {
+            assert!(config_from(&[(key, value)]).is_err(), "{key}={value}");
+        }
     }
 
     /// Without any configuration TeamCraft uses the local development
