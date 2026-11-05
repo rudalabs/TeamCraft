@@ -721,6 +721,155 @@ async fn failed_deliveries_back_off_and_give_up() {
     app.teardown().await;
 }
 
+/// A webhook limited to a project group sees only that group's revisions of
+/// a change that spans several groups; unlimited webhooks see all.
+#[tokio::test]
+async fn project_webhooks_see_only_their_revisions() {
+    let app = app_or_skip!();
+    let (admin_actor, admin) = app.user("ada", Role::Admin).await;
+    let (rover_hook, _) = create_webhook(
+        &app,
+        &admin,
+        "http://127.0.0.1:9/rover",
+        &["change.submitted"],
+        Some("ROVER"),
+    )
+    .await;
+    let (all_hook, _) = create_webhook(
+        &app,
+        &admin,
+        "http://127.0.0.1:9/all",
+        &["change.submitted"],
+        None,
+    )
+    .await;
+    let ids: Vec<(String, Uuid)> =
+        sqlx::query_as("SELECT code, id FROM projects WHERE code IN ('ROVER', 'ROCKET')")
+            .fetch_all(&app.pool)
+            .await
+            .unwrap();
+    let id_of = |code: &str| ids.iter().find(|(c, _)| c == code).map(|(_, id)| *id);
+    let mut tx = app.pool.begin().await.unwrap();
+    let queued = hooks::emit(
+        &mut tx,
+        Some(&admin_actor),
+        WebhookEvent::ChangeSubmitted,
+        &[id_of("ROCKET"), id_of("ROVER"), None],
+        json!({
+            "change": { "number": "CHG-000001" },
+            "revisions": [
+                { "label": "PRT-1/A", "project": "ROCKET" },
+                { "label": "PRT-2/A", "project": "ROVER" },
+                { "label": "PRT-3/A", "project": null },
+                { "label": "PRT-4/A", "project": "ROVER" },
+            ],
+        }),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(queued, 2);
+    let payload_of = |hook: Uuid| {
+        let pool = app.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, Value>(
+                "SELECT payload FROM webhook_deliveries WHERE webhook_id = $1",
+            )
+            .bind(hook)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let labels = |p: &Value| -> Vec<String> {
+        p["revisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["label"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let rover = payload_of(rover_hook).await;
+    assert_eq!(
+        labels(&rover),
+        ["PRT-2/A", "PRT-4/A"],
+        "own group, in order"
+    );
+    assert_eq!(rover["change"]["number"], "CHG-000001");
+    assert_eq!(labels(&payload_of(all_hook).await).len(), 4);
+    app.teardown().await;
+}
+
+/// A leased delivery (another sender's attempt may still be running) is not
+/// sent again at once; "Retry" makes it due; the cleanup gives up rows that
+/// are still pending for an inactive webhook.
+#[tokio::test]
+async fn leased_deliveries_are_not_sent_twice() {
+    let app = app_or_skip!();
+    let (admin_actor, admin) = app.user("ada", Role::Admin).await;
+    let (receiver, url) = Receiver::start().await;
+    create_webhook(&app, &admin, &url, &["change.released"], None).await;
+    let mut tx = app.pool.begin().await.unwrap();
+    hooks::emit(
+        &mut tx,
+        Some(&admin_actor),
+        WebhookEvent::ChangeReleased,
+        &[],
+        json!({}),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM webhook_deliveries")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    // another sender claimed it (attempt 1, leased) and is still waiting for
+    // the answer
+    sqlx::query(
+        "UPDATE webhook_deliveries
+         SET attempts = 1, next_attempt_at = now() + interval '2 minutes'",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let d = dispatcher();
+    assert_eq!(
+        d.deliver_now(&app.pool, id).await.unwrap(),
+        None,
+        "a leased delivery is not sent twice"
+    );
+    assert!(receiver.hits().is_empty());
+
+    // "Retry" resets it; the new attempt is again number 1
+    receiver.set_status(503);
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/webhook-deliveries/{id}/retry"),
+            &admin,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["attempts"], 1);
+    assert_eq!(r.json()["last_status_code"], 503);
+    assert_eq!(receiver.hits().len(), 1);
+
+    // pending rows of a deactivated webhook are given up by the cleanup
+    sqlx::query("UPDATE webhooks SET active = FALSE")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    webhooks::purge_finished(&app.pool, 30).await.unwrap();
+    let status: String = sqlx::query_scalar("SELECT status FROM webhook_deliveries")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "failed");
+    app.teardown().await;
+}
+
 /// Several senders never send the same delivery: rows are claimed with
 /// `FOR UPDATE SKIP LOCKED`.
 #[tokio::test]
