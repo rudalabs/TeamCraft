@@ -21,8 +21,6 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
   the file dialog and sends the file to `POST /api/v1/items/{number}/revisions/{code}/bom/import` (or
   `POST /api/v1/bom-imports`) with `dry_run=true`, the UI shows counts, notes and the first rows, a second call
   imports; desktop tests and the row in `desktop/README.md` (in progress: branch `feature/desktop-bom-import`)
-- [ ] Cancel long operations (check-in upload, Pack and Go) half-way – today the browser sign-in, Get and the chunked
-  upload of large files can be cancelled (in progress: branch `feature/desktop-cancel-operations`)
 - [ ] Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI)
 - [ ] Screenshots and short GIFs of the desktop app for the README, and screenshots in the book (the web pages are
@@ -152,6 +150,10 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [x] Desktop: project groups load again on *Home*, *Refresh* and in the dialogs; the import log is kept per project
   group, so the same folder can be imported into a second group (#58)
 - [x] Bulk action "Check in all my check-outs" (desktop and web) – `POST /api/v1/worklist/checkin-all`
+- [x] Desktop: cancel long operations (check-in upload, Pack and Go) half-way – *Cancel* in the check-in dialog stops
+  before the next STEP export, between two chunks (upload sessions discarded, not resumable after a cancel) or
+  half-way through the streamed multipart request: nothing stored, still checked out; Pack and Go has a progress
+  dialog with *Cancel* (also while the server packs) and never leaves a half ZIP (`desktop/src/abortable.rs`)
 - [x] SOLIDWORKS 2015+ files: preview image and component tree from the compressed sections (`src/swpart.rs`);
   `teamcraft rescan-references` updates assemblies stored before
 - [x] NX `.prt` detection and the reference scan of an assembly verified with the NIST NX 1980 files
