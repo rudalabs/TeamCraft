@@ -129,12 +129,6 @@ structure should not prevent translations later). They may land in 1.x minor rel
 The feature list is covered broadly since #65 (and #67); the weak spots are the processes that must never leave
 half a state behind. Prefer tests that fail on a real regression over tests that restate the code.
 
-- [ ] **Migrations** – today only `db::supported_postgres_versions` is unit-tested. Add: every migration applies in
-  order on an empty database and the schema matches a fresh `migrate` (no drift between numbered files); a database
-  with data from the previous release (seeded fixture, e.g. v0.1.0) upgrades without loss (row counts, foreign keys,
-  CHECK constraints of the enum columns); applying twice is a no-op; a changed checksum of an applied migration is
-  refused unless the version is in `db::EDITED_BEFORE_RELEASE`; numbering of `migrations/` has no duplicates and the
-  gaps are known (0015)
 - [ ] **Backup / restore** – beyond `tests/backup_restore.rs` and the argument/manifest tests in `src/backup.rs`:
   restore of a backup from an older schema version (then migrate), a vault object missing or corrupt during
   backup (refused, nothing written), interrupted backup leaves no directory that `verify` accepts, restore into a
@@ -339,6 +333,14 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
+- [x] **Migrations** proofed (`tests/migrations.rs`): numbering without duplicates and only the known gap (0015);
+  every migration applied one at a time on an empty database, each step a version to upgrade from, ending at the
+  schema of a fresh `migrate` (columns with type, nullability and default, constraints, indexes, triggers,
+  functions); twice is a no-op; a changed checksum is refused unless in `db::EDITED_BEFORE_RELEASE`; a failed
+  migration blocks the upgrade; a v0.1.0 database with data (`tests/fixtures/migrations/v0.1.0-seed.sql`: every
+  v0.1.0 table, every enum value of v0.1.0) upgrades without loss – same row counts, same values in the old columns,
+  every constraint validated and every CHECK true for every row, the API reads the old data; 0021 (not in v0.1.0)
+  is applied after 0022
 - [x] Tests across the feature list: functional and semantic unit and integration tests per feature (#65, two audit
   test expectations fixed in #67)
 - [x] Release pipeline: Flatpak bundles (x86_64, aarch64), desktop installers for Windows ARM64, portable Windows
