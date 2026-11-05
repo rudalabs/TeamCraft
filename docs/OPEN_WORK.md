@@ -1,15 +1,133 @@
 # Open work
 
-The to-do list of TeamCraft: the open entries grouped by area, then what is done, then details on the open features.
+The to-do list of TeamCraft, in order of priority, then what is done, then details on the open features.
 Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-11-05.
 
+## Direction
+
+TeamCraft has more features than proof that they hold up. The next effort – of contributors and of AI agents alike –
+goes into **proofing and structure, not new features**:
+
+1. **Proofing** – tests that catch real regressions, above all in the processes that must never leave half a state
+   behind (migrations, backup/restore, imports, multi-row mutations), fuzzing of every file parser, CI gates.
+2. **Structure** – smaller modules with one job each, guard tests for the architecture rules, less duplication
+   between web UI, REST API and MCP.
+3. **Fixes and verification** – known bugs, checks with real CAD data and real servers.
+4. **Parked features** – only finish what is already in progress (custom attributes #60, scale check #47) and fix
+   bugs in existing features. A new feature needs an issue with a reason first.
+
+Rules for every change, features included:
+
+- Tests for the failure paths, not only the happy path: refused permission, conflict (409), rollback on error.
+- Merge only with every check green – never "fix the tests later" (#65 was merged red, fixed in #67).
+- Refactorings keep behaviour: no feature work and no behaviour change in the same PR as a move or split.
+- AI agents pick their next task from sections 1 and 2 unless the maintainer asks for something else.
+
 ## To-do
+
+### 1. Proofing
+
+**Tests** (priority: more unit tests)
+
+The feature list is covered broadly since #65 (and #67); the weak spots are the processes that must never leave
+half a state behind. Prefer tests that fail on a real regression over tests that restate the code.
+
+- [ ] **Migrations** – today only `db::supported_postgres_versions` is unit-tested. Add: every migration applies in
+  order on an empty database and the schema matches a fresh `migrate` (no drift between numbered files); a database
+  with data from the previous release (seeded fixture, e.g. v0.1.0) upgrades without loss (row counts, foreign keys,
+  CHECK constraints of the enum columns); applying twice is a no-op; a changed checksum of an applied migration is
+  refused unless the version is in `db::EDITED_BEFORE_RELEASE`; numbering of `migrations/` has no duplicates and the
+  gaps are known (0015)
+- [ ] **Backup / restore** – beyond `tests/backup_restore.rs` and the argument/manifest tests in `src/backup.rs`:
+  restore of a backup from an older schema version (then migrate), a vault object missing or corrupt during
+  backup (refused, nothing written), interrupted backup leaves no directory that `verify` accepts, restore into a
+  non-empty target without `--force` is refused, `--force` failure leaves database *and* vault untouched (vault side
+  not covered yet), percent-encoded and `_FILE` credentials, large-object and preview-cache handling
+- [ ] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): the dry-run plan equals what the
+  import writes (property test over generated tables), an error in row *n* rolls back rows 1…*n*-1, re-import of the
+  same table is idempotent (no duplicate items or BOM lines), cycles and self-references refused, quantity/unit
+  parsing edge cases (decimal comma, `1.1.2` positions with gaps, empty levels), malformed STEP (truncated, unknown
+  entities, `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`) never panics (fuzz-style corpus); desktop folder import resumes
+  after an interrupted run without duplicates
+- [ ] **Atomic processes** – each multi-row mutation is all-or-nothing under an injected failure (a failing
+  statement or a closed connection between steps): check-in (file versions + lock release), change order release
+  (all revisions or none, impact flags, notifications and webhooks in the same transaction), *Replace in assemblies*,
+  Save As with files and BOM, chunked upload `finish`, folder import per item, restricted-group visibility switch;
+  concurrent runs of the same mutation (two check-ins, two releases, two numbering requests) give one winner and a
+  clean 409, never a duplicate or a lost update
+- [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
+  make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
+  with two failing integration tests; merge only with green checks
+
+**Parsers and CI gates**
+
+- [ ] Fuzz targets (`cargo fuzz`, own `fuzz/` crate outside the server build) for every reader of untrusted files:
+  `mesh` (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, point clouds), `simmesh` (VTK, VTU/VTP, FRD), `stepbom`, `swpart`,
+  `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex`; crashes found become regression unit tests with the
+  minimised input; a short fuzz run per parser in a scheduled CI job
+- [ ] No `unwrap`/`expect`/indexing panics on file input outside tests: audit `swpart`, `mesh`, `simmesh`, `config`,
+  then enable `clippy::unwrap_used`/`expect_used` for the parser modules
+- [ ] Property tests (`proptest`) for the pure rules in `domain.rs`: revision letter sequence, lifecycle transition
+  table, numbering scheme expansion and counters, skin contrast
+- [ ] Coverage measured per PR (`cargo llvm-cov`, report only at first, then a floor that may not drop)
+- [ ] `cargo deny` in CI: licences compatible with MPL-2.0 (see *Rules for all of them* below), security advisories,
+  duplicate major versions
+- [ ] Branch protection on `main`: required checks (fmt/clippy, tests on PostgreSQL 16 and 18, builds, docs links)
+
+### 2. Structure
+
+- [ ] Split the largest modules by area, without behaviour changes, one PR each: `src/mcp/tools.rs` (~3000 lines →
+  one file per area like `services/`), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
+  skins,validation}.rs`), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`),
+  `src/services/requests.rs` (~1900), `desktop/ui/app.js` (~4700 → ES modules per view, no bundler)
+- [ ] Guard tests for the architecture rules, like `tests/no_unchecked_in_handlers.rs`: no `sqlx` in `src/web`,
+  `src/api`, `src/mcp` (holds today – keep it that way); every mutation in `services::*` writes an audit entry (list
+  of audit actions checked against the mutating functions); every template in `TEMPLATES` and in
+  `every_template_renders`; every config variable in `docs/src/admin/configuration.md`
+- [ ] One request/response contract for web, REST and MCP where they do the same thing (e.g. BOM, where-used,
+  change requests): shared view structs in `services::*` instead of three hand-built JSON/HTML shapes
+- [ ] Typed ids (`ItemId`, `RevisionId`, `ChangeId`, … as newtypes over `Uuid`) at the service boundary, so that ids
+  cannot be swapped – start with the services that take several ids
+- [ ] Document the invariants per service function (permission check, rows locked, audit action, notifications and
+  webhooks emitted) in its doc comment; `cargo doc` then is the reference for reviewers
+- [ ] Architecture decision records in `docs/src/dev/` for the decisions that keep coming back: access model (deny
+  list on the actor, 404 for hidden), outbox for notifications and webhooks, content-addressed vault, no Node.js
+
+### 3. Fixes and verification
 
 **Fixes**
 
 - [ ] Reference scan: false references in real files – NX parts fixed (stream container, `src/nxpart.rs`); open: noise
   in JT files (gap test in `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is ignored; the scan
   (`src/cadrefs.rs`) is a heuristic that was not tested with real files of the CAD programs yet (see the CAD sections)
+
+**Tests with real data**
+
+- [ ] Solid Edge test files: none openly licensed found – create a part, a sheet metal part and an assembly with Solid
+  Edge (Community Edition) and publish them under CC0
+- [ ] End-to-end test against the server with the fixtures: folder import of `tests/fixtures/cad/nist/mtc-assembly/nx`
+  and `…/solidworks` → items, files, references, BOM lines, check-ins, preview images, STEP preview (so far only the
+  request order of the import is tested, in `tests/concurrency.rs`)
+- [ ] One real project with hundreds of files each from Inventor, Solid Edge, SOLIDWORKS and NX: folder import, preview
+  images, STEP export, BOMs – including the heuristics (CAD reference scan, BOM table columns, embedded previews)
+
+**Operations and repository**
+
+- [ ] Test e-mail (SMTP) and Mattermost notifications against real servers (so far only against fakes)
+- [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
+  `SECURITY.md` points to
+- [ ] Run the desktop app once on macOS – CI runs the tests on Linux only, macOS and Windows are build checks (the
+  server is no longer shipped for macOS); Windows 11 ARM64 was run by hand (Parallels VM, 2026-11-05, setup in
+  [platforms/windows.md](../platforms/windows.md))
+- [ ] Install and start the release Flatpak bundles (x86_64, aarch64) and the portable Windows zips (x64, arm64) once –
+  built and checked as files only (#66); GNOME runtime 49 may be end of life on Flathub, move to the current one
+- [ ] Release v0.1.0 again from the current `main` (re-tag), when asked – the published v0.1.0 is from `6f68f9a` and
+  has no Flatpak, Windows ARM64 or portable builds
+
+### 4. Parked features
+
+Only finish what is in progress and fix bugs here; see *Direction*. The CAD-program entries are mostly checks with
+real files and belong to section 3 once such files are at hand.
 
 **Desktop app**
 
@@ -19,12 +137,6 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
   items per file with different numbers, while CAD references are matched by file name (import tutorial, user guide)
 - [ ] Check the desktop *Import BOM…* in the real app (native file dialog; so far checked in Chromium with a stubbed
   Tauri against a real server)
-- [ ] Cancel long operations (check-in upload, Pack and Go) half-way – today the browser sign-in, Get and the chunked
-  upload of large files can be cancelled (in progress: branch `feature/desktop-cancel-operations`)
-- [ ] *Import BOM…* (CSV/Excel) on a checked-out assembly revision and for a new assembly – plan: a Rust command opens
-  the file dialog and sends the file to `POST /api/v1/items/{number}/revisions/{code}/bom/import` (or
-  `POST /api/v1/bom-imports`) with `dry_run=true`, the UI shows counts, notes and the first rows, a second call
-  imports; desktop tests and the row in `desktop/README.md` (in progress: branch `feature/desktop-bom-import`)
 - [ ] Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI)
 - [ ] Screenshots and short GIFs of the desktop app for the README, and screenshots in the book (the web pages are
@@ -128,26 +240,16 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 - [ ] STEP export through the local NX (NX Open / journal), on Windows and Linux
 - [ ] NX load options for the workspace only on request, in the workspace wizard; NX part of the tutorial
 
-**Tests with real data**
-
-- [ ] Solid Edge test files: none openly licensed found – create a part, a sheet metal part and an assembly with Solid
-  Edge (Community Edition) and publish them under CC0
-- [ ] End-to-end test against the server with the fixtures: folder import of `tests/fixtures/cad/nist/mtc-assembly/nx`
-  and `…/solidworks` → items, files, references, BOM lines, check-ins, preview images, STEP preview (so far only the
-  request order of the import is tested, in `tests/concurrency.rs`)
-- [ ] One real project with hundreds of files each from Inventor, Solid Edge, SOLIDWORKS and NX: folder import, preview
-  images, STEP export, BOMs – including the heuristics (CAD reference scan, BOM table columns, embedded previews)
-
-**Operations and repository**
-
-- [ ] Test e-mail (SMTP) and Mattermost notifications against real servers (so far only against fakes)
-- [ ] Enable private vulnerability reporting (*Settings → Code security → Private vulnerability reporting*), which
-  `SECURITY.md` points to
-- [ ] Run server and desktop app once on macOS – CI runs the tests on Linux only, macOS and Windows are build checks;
-  Windows 11 ARM64 was run by hand (Parallels VM, 2026-11-05, setup in [platforms/windows.md](../platforms/windows.md))
-
 ## Done
 
+- [x] Tests across the feature list: functional and semantic unit and integration tests per feature (#65, two audit
+  test expectations fixed in #67)
+- [x] Release pipeline: Flatpak bundles (x86_64, aarch64), desktop installers for Windows ARM64, portable Windows
+  zips (x64, arm64), no macOS server binary (#66); first pre-release v0.1.0 with explicit file modes (#49)
+- [x] README *What works* as a concise feature list (#64)
+- [x] Light and dark web and desktop design (#51, review fixes #53)
+- [x] Read access control: restricted project groups on every read path (#52, review fixes #55)
+- [x] Event webhooks: signed JSON with outbox, retries and SSRF guard (#46)
 - [x] Folder import: items no longer stay in "My check-outs" – every item is checked in right after its files,
   assemblies are checked out once more for their BOM lines and always checked in again, and a run releases the
   check-outs an earlier, interrupted run of the same folder left behind
@@ -225,6 +327,12 @@ The history up to the open-source release is squashed into the first commit
 | –  | Read access control: restricted project groups                                                                                                                        | `97423bd`, `11127fd` |
 | 9  | Backup/restore end to end with the real PostgreSQL client tools                                                                                                       | `995c597`            |
 | –  | Desktop: project groups load again; import log per project group                                                                                                      | `8a4b4ca`            |
+| 6  | Supersede, replace and alternate parts; multi-level where-used in the web UI                                                                                          | `1274148`            |
+| –  | Desktop: cancel the check-in upload and Pack and Go half-way                                                                                                          | `9ba6e52`            |
+| 9  | Web UI: chunked, resumable uploads of large files                                                                                                                     | `671f277`            |
+| 3b | Desktop: *Import BOM…* from CSV/Excel or a STEP assembly                                                                                                              | `c7a2592`            |
+| –  | README feature list; release: Flatpak, Windows ARM64, portable Windows, no macOS server                                                                              | `bb649bf`, `a873920` |
+| –  | Tests: functional and semantic coverage across the feature list                                                                                                       | `f8f5322`            |
 
 ## Details on the open features
 

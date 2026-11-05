@@ -39,6 +39,7 @@
 
 - [Research notes](research/index.md)
     - [One provider interface for the assistant](research/agent-interface.md)
+    - [Sharing UI code between web and desktop](research/shared-ui.md)
     - [Supersede, replace and alternate parts](research/supersede-alternates.md)
     - [Jira connector for change requests and change orders](research/jira-connector.md)
     - [Previews of native CAD files](research/cad-previews.md)
