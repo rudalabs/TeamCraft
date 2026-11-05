@@ -390,7 +390,7 @@ real files and belong to section 3 once such files are at hand.
   order*); MCP tools `create_change_request`, `comment_change_request` and the `triage_requests` prompt
 - [x] Change requests: e-mail digest of the new requests waiting for triage per project group – to its CAD editors
   every `TEAMCRAFT_REQUEST_DIGEST_HOURS` (default 24), muted per user like every kind (`request_digest`), only when
-  something new came in, no second digest of a period after a restart (`request_digests`, migration 0031), checked
+  something new came in, no second digest of a period after a restart (`request_digests`, migration 0035), checked
   again at sending time (restricted groups); tested in `tests/request_digests.rs` with a recording mailer
 - [x] Simulation management v1 (item type `simulation`, basis links, out-of-date detection, result values, import,
   comparison, result file formats) and the 3D preview of VTK and CalculiX results (#43)
