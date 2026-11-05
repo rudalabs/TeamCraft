@@ -58,7 +58,12 @@ used by CI, the app has no build step). Nothing is packaged or published.
 
 ## Run from source
 
-Installers are not published yet; build and run the app locally. Linux needs
+There is no release yet. The release workflow already builds the installers
+(Linux AppImage/`.deb`/`.rpm` and a Flatpak bundle for x86_64 and aarch64,
+macOS `.dmg`, Windows x64 and ARM64 `.msi`/`-setup.exe` plus a portable
+`.zip` with `TeamCraft.exe`, which needs the WebView2 runtime of Windows
+10/11) – see *Download* in the [main README](../README.md#download). Until the
+first release, build and run the app locally. Linux needs
 the WebKitGTK development files:
 
 ```sh
