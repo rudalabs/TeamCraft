@@ -38,6 +38,9 @@ async fn every_modification_of_an_item_is_audited() {
     let rev_a: uuid::Uuid = r.json()["id"].as_str().unwrap().parse().unwrap();
 
     let base = format!("/api/v1/items/{number}/revisions/A");
+    // A new item is checked out to its author; checking out again changes
+    // nothing and is not audited.
+    assert_eq!(r.json()["checked_out_by"], json!(erika.id));
     assert_eq!(
         app.api(Method::POST, &format!("{base}/checkout"), &token, None)
             .await
@@ -80,7 +83,6 @@ async fn every_modification_of_an_item_is_audited() {
     assert_eq!(
         app.audit_actions(rev_a).await,
         [
-            "revision.checkout",
             "revision.update",
             "file.upload",
             "file.version",
@@ -141,7 +143,7 @@ async fn every_modification_of_an_item_is_audited() {
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     let history = r.json().as_array().unwrap().clone();
-    assert_eq!(history.len(), 8, "{history:?}");
+    assert_eq!(history.len(), 7, "{history:?}");
     assert_eq!(history[0]["action"], "revision.obsolete");
     assert_eq!(history.last().unwrap()["action"], "item.create");
     assert!(history.iter().all(|e| e["username"] == "erika"));
@@ -173,11 +175,22 @@ async fn refused_modifications_are_not_audited() {
             json!({ "item_type": "part", "name": "Arm", "project": "DRONE" }),
         )
         .await;
+    let base = format!("/api/v1/items/{number}/revisions/A");
+    // A new item is checked out to its author: release the lock first so
+    // that the author's edit below is refused.
+    let r = app
+        .api(
+            Method::POST,
+            &format!("{base}/cancel-checkout"),
+            &token,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
         .fetch_one(&app.pool)
         .await
         .unwrap();
-    let base = format!("/api/v1/items/{number}/revisions/A");
     for (method, uri, body) in [
         (Method::POST, format!("{base}/checkout"), None),
         (Method::PATCH, base.clone(), Some(json!({ "name": "x" }))),
