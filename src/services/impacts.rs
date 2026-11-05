@@ -406,7 +406,15 @@ async fn flag_dependents(
          JOIN file_versions dv ON dv.id = fr.file_version_id
          JOIN files df ON df.id = dv.file_id AND dv.version = df.current_version
          JOIN revisions pr ON pr.id = df.revision_id
+         JOIN items di ON di.id = pr.item_id
          WHERE sf.revision_id = $2 AND pr.item_id <> $1 AND {LATEST} AND NOT (pr.item_id = ANY($5))
+           -- a file-name match alone never crosses the boundary of a
+           -- restricted project group (it would tell one side about the other)
+           AND (di.project_id IS NOT DISTINCT FROM (SELECT si.project_id FROM items si WHERE si.id = $1)
+                OR NOT EXISTS (SELECT 1 FROM projects xp
+                               WHERE xp.visibility = 'restricted'
+                                 AND (xp.id = di.project_id
+                                      OR xp.id = (SELECT si.project_id FROM items si WHERE si.id = $1))))
          ORDER BY pr.item_id, df.filename
          {UPSERT}"
     );

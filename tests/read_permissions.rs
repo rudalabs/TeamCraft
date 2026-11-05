@@ -534,7 +534,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         );
     }
 
-    // --- restrict the group (a manager may; an outsider gets "not found") ----
+    // --- restrict the group (managers may, other users may not) --------------
     let r = app
         .api(
             Method::PUT,
@@ -543,7 +543,8 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
             Some(json!({ "visibility": "restricted" })),
         )
         .await;
-    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text());
+    // still internal: the outsider sees the group, but is no manager
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
     let r = app
         .api(
             Method::PUT,
