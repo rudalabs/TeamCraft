@@ -737,6 +737,7 @@ input.find, form.inline input.find { width: 5em; text-align: right; }
 form.inline input.item-no { width: 26ch; min-width: 18ch; max-width: 100%; }
 /* An inline form with short labels above its fields (Add component). */
 form.inline.fields { align-items: flex-end; gap: var(--space-2); }
+:is(.empty, .table-wrap) + form.inline.fields { margin-top: var(--space-3); }
 form.inline.fields > label { gap: 2px; font-size: 12px; line-height: 16px; }
 form.inline.fields > label.grow { flex: 1 1 12rem; }
 form.inline.fields > label.grow input { width: 100%; }
@@ -1220,7 +1221,7 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
   .titleblock dd, .titleblock .tb-value { white-space: normal; overflow-wrap: anywhere; }
   /* secondary table columns give way, so the title and the row action fit */
   .hide-narrow { display: none; }
-  td.ellipsis { white-space: normal; overflow-wrap: anywhere; }
+  td.ellipsis, .impact-source { white-space: normal; overflow-wrap: anywhere; }
   .page-head > .actions { width: 100%; }
   dl.props { grid-template-columns: 1fr; gap: 0; }
   dl.props dd + dt { margin-top: var(--space-2); }
