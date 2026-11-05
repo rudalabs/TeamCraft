@@ -839,7 +839,7 @@ capture_simulation() {
 
     # CFD: flow around the mast fairing, coloured by velocity magnitude (the
     # README image). The viewer has no camera presets: the arrow keys turn
-    # the model, here to a view onto the flow plane.
+    # the model (view onto the flow plane, zoomed) and the selector picks the field.
     log "adding a simulation with a CFD result"
     item cfd simulation "Mast fairing CFD"
     result_cfd_vtu "$WORK/mast-fairing-cfd.vtu"
@@ -852,7 +852,9 @@ capture_simulation() {
         die "the CFD result has no colour legend: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
     js 'var c = document.getElementById("viewer-canvas"); c.focus();
         function key(k, n) { for (var i = 0; i < n; i++) c.dispatchEvent(new KeyboardEvent("keydown", {key: k, bubbles: true})); }
-        key("ArrowRight", 5); key("ArrowDown", 9); return true;' >/dev/null
+        key("ArrowRight", 5); key("ArrowDown", 9); key("+", 2);
+        var f = document.querySelector(".viewer-legend select"), o = Array.prototype.filter.call(f.options, function (x) { return x.textContent.indexOf("velocity") === 0; })[0];
+        f.value = o.value; f.dispatchEvent(new Event("change")); return true;' >/dev/null
     snap simulation-cfd-3d
 }
 
