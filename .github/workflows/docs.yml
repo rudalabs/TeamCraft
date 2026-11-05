@@ -1,21 +1,43 @@
 # Documentation site on GitHub Pages: the mdBook in docs/ (Doxygen-style
 # theme) plus the rustdoc API reference under /api/.
 # Enable it once under Settings → Pages → Source: GitHub Actions.
+# The "links" job checks that every local image and link target in README.md,
+# the other top-level Markdown files and the book exists
+# (scripts/check-doc-links.sh), also for README-only pull requests.
 name: Docs
 
 on:
   push:
     branches: [main]
-    paths: ["docs/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/docs.yml"]
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "*.md"
+      - "platforms/**"
+      - "desktop/README.md"
+      - "media/**"
+      - "scripts/check-doc-links.sh"
+      - ".github/workflows/docs.yml"
   pull_request:
-    paths: ["docs/**", ".github/workflows/docs.yml"]
+    paths:
+      - "docs/**"
+      - "*.md"
+      - "platforms/**"
+      - "desktop/README.md"
+      - "media/**"
+      - "scripts/check-doc-links.sh"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# One deployment at a time; pull requests get their own group so that a
+# pending run of one pull request never replaces the pending run of another.
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('docs-{0}', github.ref) || 'pages' }}
   cancel-in-progress: false
 
 env:
@@ -23,6 +45,14 @@ env:
   MDBOOK_VERSION: "0.5.4"
 
 jobs:
+  links:
+    name: local links and images
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check that every local link and image target exists
+        run: scripts/check-doc-links.sh
+
   build:
     runs-on: ubuntu-24.04
     steps:
