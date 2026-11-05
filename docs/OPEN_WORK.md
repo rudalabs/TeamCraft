@@ -165,7 +165,7 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   then enable `clippy::unwrap_used`/`expect_used` for the parser modules
 - [ ] Property tests (`proptest`) for the pure rules in `domain.rs`: revision letter sequence, lifecycle transition
   table, numbering scheme expansion and counters, skin contrast
-- [ ] Coverage measured per PR (`cargo llvm-cov`, report only at first, then a floor that may not drop)
+- [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*, report only: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) – open: a floor that may not drop, once the numbers of a few PRs are known
 - [ ] `cargo deny` in CI: licences compatible with MPL-2.0 (see *Rules for all of them* below), security advisories,
   duplicate major versions
 - [ ] Branch protection on `main`: required checks (fmt/clippy, tests on PostgreSQL 16 and 18, builds, docs links)
