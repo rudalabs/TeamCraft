@@ -217,6 +217,47 @@ bom_line() {
             '{child: $c, quantity: $q, find_number: $f, notes: $n}')" >/dev/null
 }
 
+# result_vtu FILE – writes a small self-made FE result (ASCII VTU): a
+# cantilever of 24 × 4 × 4 hexahedra, clamped at x = 0, with a bending
+# stress and a displacement field (made-up numbers for the screenshot).
+result_vtu() {
+    awk -v nx=24 -v ny=4 -v nz=4 -v L=240 -v H=20 '
+    function id(i, j, k) { return i + (nx + 1) * (j + (ny + 1) * k) }
+    BEGIN {
+        n = (nx + 1) * (ny + 1) * (nz + 1); c = nx * ny * nz
+        print "<?xml version=\"1.0\"?>"
+        print "<!-- TeamCraft screenshot demo: cantilever FE result (self-made, made-up values) -->"
+        print "<VTKFile type=\"UnstructuredGrid\" version=\"1.0\" byte_order=\"LittleEndian\">"
+        printf "<UnstructuredGrid><Piece NumberOfPoints=\"%d\" NumberOfCells=\"%d\">\n", n, c
+        print "<PointData Scalars=\"von Mises stress\">"
+        print "<DataArray type=\"Float32\" Name=\"von Mises stress\" format=\"ascii\">"
+        for (k = 0; k <= nz; k++) for (j = 0; j <= ny; j++) for (i = 0; i <= nx; i++) {
+            x = i * L / nx; z = (k / nz - 0.5) * 2
+            s = 180 * (1 - x / L) * z; t = 14 * (1 - z * z)
+            printf "%.3f ", sqrt(s * s + 3 * t * t)
+        }
+        print "</DataArray>"
+        print "<DataArray type=\"Float32\" Name=\"displacement\" NumberOfComponents=\"3\" format=\"ascii\">"
+        for (k = 0; k <= nz; k++) for (j = 0; j <= ny; j++) for (i = 0; i <= nx; i++) {
+            r = i / nx; printf "0 0 %.5f ", -0.8 * r * r * (3 - r) / 2
+        }
+        print "</DataArray></PointData>"
+        print "<Points><DataArray type=\"Float32\" NumberOfComponents=\"3\" format=\"ascii\">"
+        for (k = 0; k <= nz; k++) for (j = 0; j <= ny; j++) for (i = 0; i <= nx; i++)
+            printf "%g %g %g ", i * L / nx, j * H / ny, k * H / nz
+        print "</DataArray></Points>"
+        print "<Cells><DataArray type=\"Int32\" Name=\"connectivity\" format=\"ascii\">"
+        for (k = 0; k < nz; k++) for (j = 0; j < ny; j++) for (i = 0; i < nx; i++)
+            printf "%d %d %d %d %d %d %d %d\n", id(i, j, k), id(i + 1, j, k), id(i + 1, j + 1, k), id(i, j + 1, k),
+                id(i, j, k + 1), id(i + 1, j, k + 1), id(i + 1, j + 1, k + 1), id(i, j + 1, k + 1)
+        print "</DataArray><DataArray type=\"Int32\" Name=\"offsets\" format=\"ascii\">"
+        for (e = 1; e <= c; e++) printf "%d ", 8 * e
+        print "</DataArray><DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">"
+        for (e = 1; e <= c; e++) printf "12 "
+        print "</DataArray></Cells></Piece></UnstructuredGrid></VTKFile>"
+    }' >"$1"
+}
+
 checkin() { api "${2:-admin}" POST "/items/${NUM[$1]}/revisions/latest/checkin" >/dev/null; }
 checkout() { api "${2:-admin}" POST "/items/${NUM[$1]}/revisions/latest/checkout" >/dev/null; }
 
@@ -272,6 +313,8 @@ seed() {
     item nut part "Hex nut 90591A141" '{"material":"Zinc-plated steel","mass_kg":0.002,"unit_cost":0.05}'
     item bracket part "Mounting bracket" '{"material":"Aluminium 7075-T6","mass_kg":0.38,"unit_cost":64.0,"description":"Machined bracket that holds the enclosure on the mast tube (NIST CTC-01)."}'
     item clamp part "Cable clamp" '{"material":"Stainless steel 1.4301","mass_kg":0.05,"unit_cost":3.4,"description":"Clamp for the sensor cable harness (NIST FTC-11)."}'
+    # the same geometry in a second item: a hit of the similar part search
+    item bracket_copy part "Mast bracket (supplier copy)" '{"material":"Aluminium 7075-T6","description":"Bracket model received from the supplier."}'
 
     log "uploading CAD files"
     attach mast "$mtc/nx/NIST mtc crada assembly.prt" >/dev/null
@@ -298,6 +341,7 @@ seed() {
     attach clamp "$FIXTURES/ftc-11/step/nist_ftc_11_asme1_rb.stp" cable_clamp.stp >/dev/null
     attach clamp "$FIXTURES/ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt" >/dev/null
     attach clamp "$FIXTURES/ftc-11/solidworks-2018/nist_ftc_11_asme1_rb_sw1802.SLDPRT" >/dev/null
+    attach bracket_copy "$FIXTURES/ctc-01/step/nist_ctc_01_asme1_rd.stp" supplier_bracket.stp >/dev/null
 
     log "building the multi-level BOM"
     bom_line mast enclosure 1 10
@@ -314,7 +358,7 @@ seed() {
 
     log "checking everything in"
     local key
-    for key in mast enclosure box cover plate window shcs_s shcs_l fhcs nut bracket clamp; do
+    for key in mast enclosure box cover plate window shcs_s shcs_l fhcs nut bracket clamp bracket_copy; do
         checkin "$key"
     done
 
@@ -440,7 +484,13 @@ viewport() {
     cdp Emulation.setDeviceMetricsOverride \
         "$(jq -nc --argjson w "$1" --argjson h "$2" --argjson s "$3" --argjson m "$4" \
             '{width: $w, height: $h, deviceScaleFactor: $s, mobile: $m}')"
-    cdp Emulation.setEmulatedMedia '{"features":[{"name":"prefers-color-scheme","value":"light"}]}'
+}
+
+# scheme light|dark – the OS colour scheme the pages see. The seeded user
+# keeps the default skin "teamcraft", which follows prefers-color-scheme.
+scheme() {
+    cdp Emulation.setEmulatedMedia \
+        "$(jq -nc --arg v "$1" '{features: [{name: "prefers-color-scheme", value: $v}]}')"
 }
 
 # wait_js EXPRESSION SECONDS WHAT – polls a JS expression until it is true.
@@ -522,17 +572,15 @@ check_png() {
     log "  $file ($(($(wc -c <"$file") / 1024)) KiB)"
 }
 
-capture() {
-    mkdir -p "$OUT_DIR"
-    start_browser
+# capture_pages SUFFIX – the main pages at 1440x900 and the phone dashboard,
+# saved as NAME$SUFFIX.png in the scheme set before.
+capture_pages() {
+    local suffix=$1
     viewport 1440 900 "$SCALE" false
-    sign_in_browser
-
-    log "capturing desktop screenshots (1440x900)"
-    shot dashboard /
-    shot vault-explorer "/vault?folder=$PROJECT_ID&rev=$ENCLOSURE_REV"
-    shot revision "/revisions/$BRACKET_REV"
-    shot revision-files "/revisions/$BRACKET_REV" '#files'
+    shot "dashboard$suffix" /
+    shot "vault-explorer$suffix" "/vault?folder=$PROJECT_ID&rev=$ENCLOSURE_REV"
+    shot "revision$suffix" "/revisions/$BRACKET_REV"
+    shot "revision-files$suffix" "/revisions/$BRACKET_REV" '#files'
 
     log "waiting for the 3D preview of the STEP file"
     open_page "/files/$STEP_FILE/preview"
@@ -541,14 +589,34 @@ capture() {
     if [[ $(js 'return document.getElementById("viewer-canvas").getAttribute("data-ready");') != true ]]; then
         die "the 3D viewer reported: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
     fi
-    snap viewer-3d
-    shot bom "/revisions/$TOP_REV/bom"
-    shot change-review "/changes/$CHANGE_ID"
-    shot notifications /notifications
+    snap "viewer-3d$suffix"
+    # not in the README: the similar part search (signature from the conversion above)
+    shot "revision-similar$suffix" "/revisions/$BRACKET_REV" '#similar'
+    shot "bom$suffix" "/revisions/$TOP_REV/bom"
+    shot "change-review$suffix" "/changes/$CHANGE_ID"
+    shot "notifications$suffix" /notifications
+    shot "account$suffix" /account '#appearance'
 
     log "capturing the mobile screenshot (390x844)"
     viewport 390 844 2 true
-    shot mobile-dashboard /
+    shot "mobile-dashboard$suffix" /
+}
+
+capture() {
+    mkdir -p "$OUT_DIR"
+    start_browser
+    viewport 1440 900 "$SCALE" false
+    scheme light
+    sign_in_browser
+
+    # The README shows the light default under the plain names; every page
+    # is captured in the dark scheme as well (NAME-dark.png).
+    log "capturing the web screenshots, light (1440x900)"
+    capture_pages ""
+    log "capturing the web screenshots, dark (1440x900)"
+    scheme dark
+    capture_pages -dark
+    scheme light
 }
 
 # ---------------------------------------------------------------------------
@@ -633,10 +701,22 @@ desktop_key() {
 }
 
 capture_desktop() {
-    log "capturing TeamCraft Desktop (1440x900, Xvfb)"
     export DISPLAY=$DESKTOP_DISPLAY
     desktop_profile
     start_xvfb
+    # The README shows the light house skin under the plain names, the dark
+    # one as NAME-dark.png. The forced skins (not the System default) make
+    # the result independent of the Xvfb session's colour scheme.
+    desktop_run "" teamcraft-day
+    desktop_run -dark teamcraft-night
+}
+
+# desktop_run SUFFIX SKIN – starts the app with SKIN, captures the four
+# screens as desktop-*SUFFIX.png and quits the app again.
+desktop_run() {
+    local suffix=$1 skin=$2 settings=$WORK/xdg-config/io.github.rudalabs.teamcraft/settings.json
+    log "capturing TeamCraft Desktop, skin $skin (1440x900, Xvfb)"
+    jq -n --arg url "$BASE_URL" --arg skin "$skin" '{server_url: $url, skin: $skin}' >"$settings"
     XDG_CONFIG_HOME=$WORK/xdg-config XDG_DATA_HOME=$WORK/xdg-data XDG_CACHE_HOME=$WORK/xdg-cache \
         GDK_BACKEND=x11 NO_AT_BRIDGE=1 \
         WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
@@ -657,18 +737,21 @@ capture_desktop() {
     settle 8 "the start screen"
     # The rows of the navigator sit at fixed places for the demo data
     # (1440x900, default zoom); check the images when the layout changes.
-    desktop_click 140 151 # project group ROVER: expand
+    desktop_click 140 145 # project group ROVER: expand
     settle 2 "the items of ROVER"
-    desktop_snap desktop-home
+    desktop_snap "desktop-home$suffix"
     desktop_key ctrl+2
     settle 2 "the worklist"
-    desktop_snap desktop-worklist
-    desktop_click 217 151 # "Checked out by me": the mounting bracket
+    desktop_snap "desktop-worklist$suffix"
+    desktop_click 217 145 # "Checked out by me": the mounting bracket
     settle 2 "the revision tab"
-    desktop_snap desktop-revision
-    desktop_click 210 207 # "Waiting for my review": the enclosure change
+    desktop_snap "desktop-revision$suffix"
+    desktop_click 210 203 # "Waiting for my review": the enclosure change
     settle 2 "the change order tab"
-    desktop_snap desktop-change
+    desktop_snap "desktop-change$suffix"
+    kill "$APP_PID" 2>/dev/null || true
+    wait "$APP_PID" 2>/dev/null || true
+    APP_PID=
 }
 
 # desktop_click X Y – left click at screen position X,Y, then the pointer
@@ -676,6 +759,25 @@ capture_desktop() {
 desktop_click() {
     xdotool mousemove "$1" "$2" click 1 mousemove 1430 895 ||
         die "xdotool could not click at $1,$2"
+}
+
+# Simulation result in the 3D viewer with its colour legend – extra images,
+# not used in the README. Seeded last, so the README images stay as they are.
+capture_simulation() {
+    log "adding a simulation with a 3D result"
+    item sim simulation "Mast arm static analysis"
+    result_vtu "$WORK/mast-arm-static.vtu"
+    local result
+    result=$(attach sim "$WORK/mast-arm-static.vtu" mast-arm-static.vtu)
+    checkin sim
+    viewport 1440 900 "$SCALE" false
+    open_page "/files/$result/preview"
+    wait_js 'document.getElementById("viewer-canvas").getAttribute("data-ready") !== null' 120 \
+        "the 3D view of the simulation result"
+    [[ $(js 'return document.querySelector(".viewer-legend") !== null;') == true ]] ||
+        die "the simulation result has no colour legend: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
+    snap simulation-result-3d
+    shot simulation-results "/revisions/${REV[sim]}" '#simulation-results'
 }
 
 # compare_with_readme – warns (never fails) about screenshots the README
@@ -718,6 +820,7 @@ main() {
     if [[ -n $DESKTOP_APP ]]; then
         capture_desktop
     fi
+    capture_simulation
     log "done: $(find "$OUT_DIR" -maxdepth 1 -name '*.png' | wc -l) screenshots in $OUT_DIR"
     compare_with_readme
 }

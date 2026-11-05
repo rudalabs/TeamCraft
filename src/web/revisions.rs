@@ -22,7 +22,7 @@ use crate::{
     preview::PreviewFormat,
     services::{
         audit, bom, changes, files, impacts, items, notifications, projects, references, requests,
-        revisions, simulations, uploads,
+        revisions, similar, simulations, uploads,
     },
     thumbnail, util, AppState,
 };
@@ -81,6 +81,37 @@ pub async fn show(
         references::incoming_hidden(&st.db, me, item.id),
     )?;
     let favorite = crate::services::personal::is_favorite(&st.db, ctx.me.id, item.id).await?;
+    // Similar parts by the shape of its 3D model: one indexed query; a
+    // missing signature is computed in the background – waited for briefly
+    // only when the conversion is done (a quick job from the cached mesh,
+    // or its cached failure), never for a conversion, so the page is not
+    // held up.
+    let wait = match similar::pick_file(&file_list, None) {
+        Ok(Some((f, _))) if st.previews.is_converted(&f.sha256).await => {
+            std::time::Duration::from_millis(1500)
+        }
+        _ => std::time::Duration::ZERO,
+    };
+    let similar_parts = match similar::for_files(
+        &st,
+        &ctx.me,
+        &rev,
+        &file_list,
+        None,
+        similar::Options {
+            limit: 6,
+            ignore_scale: false,
+        },
+        wait,
+    )
+    .await
+    {
+        Ok(report) => Some(report),
+        Err(e) => {
+            tracing::warn!(revision = %rev.id, error = %e, "similar part search failed");
+            None
+        }
+    };
     // Native CAD files can only be viewed in 3D through a neutral export.
     let native_without_preview = !file_list.iter().any(|f| preview_of(f).is_some())
         && file_list.iter().any(|f| {
@@ -91,6 +122,14 @@ pub async fn show(
                 )
             })
         });
+    // Result files the browser can show in 3D (VTK, VTU, VTP, FRD); a few
+    // on the Results card (time series have dozens), all in the file list.
+    let result_views: Vec<serde_json::Value> = file_list
+        .iter()
+        .filter(|f| preview_of(f).is_some_and(PreviewFormat::is_result))
+        .take(3)
+        .map(|f| json!({ "id": f.id, "filename": f.filename, "version": f.version }))
+        .collect();
     // The versions this page shows: uploads from its forms are based on them,
     // so a file that changed meanwhile is refused instead of overwritten.
     let file_bases = serde_json::Value::Object(
@@ -190,6 +229,7 @@ pub async fn show(
             "results": results,
             "out_of_date": out_of_date,
             "roles": roles,
+            "views": result_views,
         })
     } else {
         serde_json::Value::Null
@@ -212,6 +252,7 @@ pub async fn show(
             "files": attachments,
             "file_bases": file_bases,
             "native_without_preview": native_without_preview,
+            "similar": similar_parts,
             "lines": lines,
             "where_used": where_used,
             "hidden": {
@@ -574,11 +615,18 @@ pub(crate) async fn take_session_uploads(
 }
 
 /// Starts the 3D preview conversion of freshly stored files in the
-/// background, so the first viewer gets the model at once.
+/// background, so the first viewer gets the model at once – together with
+/// the shape signature for the similar part search.
 pub(crate) fn warm_previews(st: &AppState, uploads: &[files::Upload]) {
     for upload in uploads {
-        if let Some(format) = PreviewFormat::of(&upload.filename) {
-            st.previews.warm(&st.vault, &upload.blob.sha256, format);
+        match PreviewFormat::of(&upload.filename) {
+            Some(format) if format.is_point_cloud() => {
+                st.previews.warm(&st.vault, &upload.blob.sha256, format)
+            }
+            Some(format) => {
+                similar::spawn_ensure(st, &upload.blob.sha256, format);
+            }
+            None => {}
         }
     }
 }
@@ -739,7 +787,8 @@ pub async fn preview_version(
 fn no_preview() -> AppError {
     AppError::BadRequest(
         "There is no 3D preview for this file type – meshes (STL, OBJ, PLY, 3MF, glTF, …), \
-         point clouds and STEP are supported; attach a STEP export of native CAD files."
+         point clouds, STEP and simulation results (VTK, VTU, VTP, CalculiX FRD) are \
+         supported; attach a STEP export of native CAD files."
             .into(),
     )
 }
@@ -760,8 +809,13 @@ async fn preview_page(
         .find(|v| v.version == version)
         .cloned()
         .ok_or_else(|| AppError::not_found("File version not found."))?;
-    // start the conversion while the browser loads the page
-    st.previews.warm(&st.vault, &shown.sha256, format);
+    // start the conversion while the browser loads the page (with the
+    // shape signature, unless it is a point cloud)
+    if format.is_point_cloud() {
+        st.previews.warm(&st.vault, &shown.sha256, format);
+    } else {
+        similar::spawn_ensure(st, &shown.sha256, format);
+    }
     render(
         st,
         ctx,
@@ -775,6 +829,7 @@ async fn preview_page(
             "format": format.as_str(),
             "is_brep": format.is_brep(),
             "is_points": format.is_point_cloud(),
+            "is_result": format.is_result(),
         }),
     )
 }

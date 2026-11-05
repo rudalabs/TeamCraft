@@ -56,6 +56,7 @@ pub fn environment(instance_name: &str) -> Result<Environment<'static>, minijinj
     }
     env.add_filter("dt", filter_dt);
     env.add_filter("num", filter_num);
+    env.add_filter("fixed", filter_fixed);
     env.add_filter("filesize", filter_filesize);
     env.add_filter("label", filter_label);
     env.add_filter("urlencode", |value: String| util::pct_encode(&value));
@@ -104,6 +105,15 @@ fn filter_num(value: Option<f64>, decimals: Option<usize>) -> String {
     }
 }
 
+/// A number with exactly `decimals` places (default 2), so a column of
+/// costs or masses lines up at the decimal point; `—` when missing.
+fn filter_fixed(value: Option<f64>, decimals: Option<usize>) -> String {
+    match value {
+        Some(v) => format!("{v:.prec$}", prec = decimals.unwrap_or(2)),
+        None => "—".to_string(),
+    }
+}
+
 fn filter_filesize(value: i64) -> String {
     util::format_bytes(value)
 }
@@ -142,7 +152,7 @@ mod tests {
     const TS: &str = "2026-11-03T14:05:59.123456Z";
 
     fn me() -> Value {
-        json!({ "id": ME, "username": "max", "display_name": "Max Muster", "role": "admin", "skin": "arch", "is_admin": true, "can_edit": true })
+        json!({ "id": ME, "username": "max", "display_name": "Max Muster", "initials": "MM", "avatar": 3, "role": "admin", "skin": "arch", "is_admin": true, "can_edit": true })
     }
 
     fn revision(state: &str, checked_out: bool) -> Value {
@@ -225,7 +235,7 @@ mod tests {
         );
         map.insert("local_login".into(), json!(true));
         map.insert("skin".into(), json!("arch"));
-        map.insert("skin_light".into(), json!(false));
+        map.insert("skin_scheme".into(), json!("dark"));
         data
     }
 
@@ -529,6 +539,22 @@ mod tests {
         );
 
         for (state, checked_out) in [("in_work", true), ("in_work", false), ("released", false)] {
+            let source = json!({ "file_id": OTHER, "filename": "nozzle.step", "sha256": "cd".repeat(32), "format": "step" });
+            let similar = if checked_out {
+                json!({ "status": "pending", "message": "computing", "source": source,
+                        "signature": null, "ignore_scale": false, "candidates": [] })
+            } else {
+                json!({ "status": "ready", "message": null, "source": source, "ignore_scale": false,
+                        "signature": { "extents": [120.0, 40.0, 8.0], "area": 1.0, "volume": null, "closed": false, "triangles": 12 },
+                        "candidates": [{
+                            "item_id": ME, "item_number": "PRT-000007", "item_type": "part", "project_code": "ROCKET",
+                            "revision_id": OTHER, "revision_code": "B", "state": "released", "name": "Nozzle <i>",
+                            "file_id": OTHER, "filename": "old-nozzle.stl", "identical": false,
+                            "score": 91, "shape": 94, "size": 97, "extents": [118.0, 40.0, 8.0],
+                            "explanation": "extents 118 × 40 × 8 vs 120 × 40 × 8, shape distribution 94 % similar",
+                            "thumbnail_file_id": if state == "released" { json!(ME) } else { json!(null) },
+                        }] })
+            };
             let html = render(
                 &env,
                 "revisions/show.html",
@@ -543,7 +569,7 @@ mod tests {
                     "history": [audit_entry()], "projects": [project()], "units": units(),
                     "references": references.clone(), "impact_groups": [impact_group()],
                     "resolved_impacts": [impact(Some("acknowledged"))],
-                    "open_requests": [request("in_triage")],
+                    "open_requests": [request("in_triage")], "similar": similar,
                     "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
                     "lifecycle": {
                         "states": crate::domain::LifecycleState::ALL,
@@ -557,6 +583,20 @@ mod tests {
                 "current lifecycle state is marked"
             );
             assert!(html.contains("four-eyes principle"), "rules are listed");
+            if checked_out {
+                assert!(
+                    html.contains("Comparing the shape of nozzle.step"),
+                    "similar parts pending"
+                );
+            } else {
+                assert!(
+                    html.contains("PRT-000007/B")
+                        && html.contains("Nozzle &lt;i&gt;")
+                        && html.contains("shape distribution 94 % similar")
+                        && html.contains("value=\"91\""),
+                    "similar parts listed"
+                );
+            }
             assert!(html.contains("Bracket &lt;b&gt;"), "names are escaped");
             assert!(
                 html.contains("/files/") && html.contains("/restore"),
@@ -657,6 +697,7 @@ mod tests {
                                     sim_result("Mass", "none", None)],
                         "summary": { "total": 3, "pass": 1, "fail": 1, "without_limits": 1 },
                         "out_of_date": 1, "roles": basis_roles.clone(),
+                        "views": [{ "id": ME, "filename": "beam <load>.vtu", "version": 2 }],
                     },
                     "based_simulations": [],
                     "can": if editable { can_all.clone() } else { json!({}) }, "max_upload_mb": 512,
@@ -681,6 +722,8 @@ mod tests {
                 "no limit",
                 "/simulation/compare",
                 "/simulation/results.csv",
+                "View result in 3D",
+                "beam &lt;load&gt;.vtu v2",
             ] {
                 assert!(html.contains(expected), "simulation page shows {expected}");
             }
@@ -756,8 +799,15 @@ mod tests {
                 "versions": [version(2, "wall 2.5 mm"), version(1, "first <draft>")],
                 "rev": revision("released", false),
                 "format": format, "is_brep": format == "step", "is_points": format == "las",
+                "is_result": format == "vtk-unstructured",
             }))
         };
+        let html = render(
+            &env,
+            "files/preview.html",
+            preview("vtk-unstructured", true),
+        );
+        assert!(html.contains("coloured by a result field"), "result hint");
         let html = render(&env, "files/preview.html", preview("stl", true));
         assert!(html.contains(&format!("data-src=\"/file-versions/{ME}/mesh\"")));
         assert!(!html.contains("viewer-stl"), "no STL export of an STL file");
@@ -1367,6 +1417,9 @@ mod tests {
         assert_eq!(filter_num(Some(1.23456), None), "1.235");
         assert_eq!(filter_num(Some(2.0), Some(2)), "2");
         assert_eq!(filter_num(None, None), "—");
+        assert_eq!(filter_fixed(Some(41.0), None), "41.00");
+        assert_eq!(filter_fixed(Some(0.2), Some(3)), "0.200");
+        assert_eq!(filter_fixed(None, Some(3)), "—");
         assert_eq!(filter_label(Some("in_work".into())), "WIP");
         assert_eq!(filter_label(Some("in_review".into())), "In Review");
         assert_eq!(filter_label(Some("released".into())), "Released");

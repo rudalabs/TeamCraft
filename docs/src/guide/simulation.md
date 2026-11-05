@@ -92,6 +92,46 @@ Solver scripts write their results through the REST API
 (`PUT …/simulation/results` replaces the set in one transaction; see the
 [REST API](../reference/api.md#simulations)).
 
+## Results in 3D
+
+Result files in open formats open in the browser's 3D viewer like CAD
+previews – no ParaView needed. *View result in 3D* on the Results card (or
+*3D* next to the file) shows the outer surface of the mesh coloured by a
+result field, with the field's minimum and maximum above the canvas.
+
+| Format                          | Read                                                                                     |
+|---------------------------------|------------------------------------------------------------------------------------------|
+| Legacy VTK (`.vtk`)             | ASCII and BINARY, `UNSTRUCTURED_GRID` and `POLYDATA`, file versions up to 5.1            |
+| VTK XML (`.vtu`, `.vtp`)        | `ascii`, inline `binary` and appended (`raw`/`base64`) data, zlib compression, all pieces |
+| CalculiX (`.frd`)               | ASCII files: nodes, elements and every nodal result block (`DISP`, `STRESS`, `NDTEMP`, …) |
+
+How the preview is made:
+
+* **Surface.** Volume elements (tetrahedra, hexahedra, wedges, pyramids,
+  quadratic ones by their corner nodes) contribute only the faces no other
+  element shares; shells and polygons are drawn as they are, beams and lines
+  are not. Interior nodes are dropped.
+* **Fields.** Point data is shown as it is: one-component values directly,
+  vectors as magnitude, six- or nine-component tensors as von Mises
+  equivalent. Cell data is averaged to the nodes (shown as *name (cells)*).
+  Up to eight fields are carried; the viewer offers them in a selector, the
+  active scalars of a VTK file (or `STRESS` for `.frd`) first. A CalculiX
+  block that occurs for several increments shows the **last** increment.
+  Nodes without a value are grey. Units are shown when the file names them –
+  VTK and FRD files usually do not.
+* **Limits.** Up to 20 million nodes and cells; surfaces with more than two
+  million triangles are thinned out evenly (gaps are visible), surfaces with
+  more than eight million are refused. Collapsed elements (a hexahedron
+  written as a wedge, …) are matched by their distinct corner nodes. Structured
+  grids (`.vts`, `.vtr`, image data), time-step collections (`.pvd`,
+  `.vtm`), binary `.frd`, Exodus II and CGNS are not previewed – export the
+  step you want to show as `.vtu` (ParaView: *Save Data*, OpenFOAM:
+  `foamToVTK`, CalculiX: `*NODE FILE, OUTPUT=ASCII` or ccx2paraview).
+
+Like all previews, the conversion runs once per file version in a separate
+process with a time limit and is cached; damaged files show an error message
+instead of a model.
+
 ## Comparing results
 
 *Compare with another revision* on the Results card puts the values of two
@@ -100,8 +140,9 @@ with the difference, the relative change and the pass/fail status of both.
 
 ## Limits of version 1
 
-* Result files are stored and recognised, not parsed: no field preview of
-  VTK or `.frd` files yet, no automatic extraction of result values.
+* Result values are not extracted from result files automatically; VTK,
+  VTU/VTP and `.frd` files are previewed in 3D (see above), the other result
+  formats are stored and recognised, not parsed.
 * Large result files go through the normal upload (`TEAMCRAFT_MAX_UPLOAD_MB`);
   chunked, resumable uploads and a retention rule for intermediate results
   are open work.

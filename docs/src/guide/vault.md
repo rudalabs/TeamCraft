@@ -132,12 +132,12 @@ cancels one at once.
 
 ## Favorites, saved searches, Save As
 
-* **☆ Favorite** on a revision page keeps the item in **Vault → ★ Favorites**
+* The **star** next to the title of a revision page keeps the item in **Vault → Favorites**
   (like Teamcenter's Favorites). Favorites are personal.
 * **Saved searches:** filter the item list, then *Save this search* – the
   named search appears above the list for one-click reuse (like Teamcenter's
   Saved Queries).
-* **Save as…** on a revision page creates a new item from it: the attributes
+* **More → Save as…** on a revision page creates a new item from it: the attributes
   and, optionally, the current files and the BOM. The new item starts with
   revision A, checked out to you; the source does not change.
 

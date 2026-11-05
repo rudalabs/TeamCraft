@@ -52,6 +52,7 @@ A visible item can point to a restricted one, and the other way round:
 | Mass and cost roll-ups | leave restricted lines out; the BOM says "mass and cost exclude N restricted lines" (`restricted_lines`, `rollup_incomplete` in the API) |
 | Where-used, referenced-by, simulations based on an item, impact analysis | restricted entries are left out and counted: "+N … in groups you cannot see" |
 | CAD file-name matches (file references, suggestions, working sets) | matches in restricted groups are left out without a count; the name shows as not in TeamCraft |
+| Similar parts (shape search) | restricted items are left out without a count, also when their file content is identical |
 | Release readiness of a change | a restricted unreleased dependency still **blocks** the release and shows as "restricted dependency not released – ask a member of its group or an admin" |
 | Pack and Go, desktop Get | restricted items contribute no files; the manifest and the report only count them |
 | Change propagation (impacts) | a check on a visible item caused by a restricted release says "a restricted item this depends on was released" |

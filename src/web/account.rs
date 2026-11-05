@@ -58,6 +58,9 @@ async fn render_account(
 pub struct SkinForm {
     #[serde(default)]
     skin: String,
+    /// Where to go afterwards (the Appearance choice in the user menu
+    /// returns to the page it was used on); default: the account page.
+    back: Option<String>,
 }
 
 pub async fn set_skin(
@@ -65,6 +68,11 @@ pub async fn set_skin(
     ctx: WebCtx,
     Form(form): Form<SkinForm>,
 ) -> AppResult<Response> {
+    let back = form
+        .back
+        .as_deref()
+        .map(|b| crate::util::safe_redirect_target(Some(b)))
+        .unwrap_or_else(|| "/account#appearance".to_string());
     match users::set_skin(&st.db, &ctx.me, &form.skin).await {
         Ok(()) => {
             let name = domain::SKINS
@@ -74,19 +82,17 @@ pub async fn set_skin(
                 .unwrap_or("default");
             let mut response = redirect_flash(
                 &st,
-                "/account#skins",
-                Flash::success(format!("Skin changed to {name}")),
+                &back,
+                Flash::success(format!("Appearance changed to {name}")),
             );
             if let Some(cookie) = skin_cookie(&st, &form.skin) {
                 response.headers_mut().append(header::SET_COOKIE, cookie);
             }
             Ok(response)
         }
-        Err(e) if super::is_user_error(&e) => Ok(redirect_flash(
-            &st,
-            "/account#skins",
-            Flash::error(e.public_message()),
-        )),
+        Err(e) if super::is_user_error(&e) => {
+            Ok(redirect_flash(&st, &back, Flash::error(e.public_message())))
+        }
         Err(e) => Err(e),
     }
 }
