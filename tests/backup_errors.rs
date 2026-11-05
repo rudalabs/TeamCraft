@@ -73,7 +73,11 @@ async fn refused(dir: &Path, needle: &str) {
 #[tokio::test]
 async fn a_missing_or_unreadable_backup_is_refused() {
     refused(&scratch("empty"), "manifest.json").await;
-    refused(&std::env::temp_dir().join("tc-no-such-backup"), "manifest.json").await;
+    refused(
+        &std::env::temp_dir().join("tc-no-such-backup"),
+        "manifest.json",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -98,8 +102,14 @@ async fn a_damaged_manifest_is_refused() {
             good.replace("teamcraft-backup/1", "teamcraft-backup/2"),
             "unsupported backup format",
         ),
-        (good.replace("\"app_version\":\"0.1.0\",", ""), "app_version"),
-        (good.replace("\"created_at_unix\":1,", ""), "created_at_unix"),
+        (
+            good.replace("\"app_version\":\"0.1.0\",", ""),
+            "app_version",
+        ),
+        (
+            good.replace("\"created_at_unix\":1,", ""),
+            "created_at_unix",
+        ),
         (
             good.replace(&sha(b"PGDMP"), "ABC"),
             "'db_dump_sha256' is invalid",

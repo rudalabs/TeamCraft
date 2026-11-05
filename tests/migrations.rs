@@ -121,7 +121,11 @@ async fn a_changed_checksum_is_refused_unless_the_edit_was_before_the_release() 
     assert!(db::migrate(&app.pool).await.is_err(), "31 is still wrong");
     let after = applied(&app.pool).await;
     let v2 = |rows: &[(i64, bool, Vec<u8>)]| rows.iter().find(|r| r.0 == 2).unwrap().2.clone();
-    assert_eq!(v2(&after), v2(&before), "the edited migration 2 is accepted");
+    assert_eq!(
+        v2(&after),
+        v2(&before),
+        "the edited migration 2 is accepted"
+    );
 
     // restore 31 so that the database is consistent again
     let original = before.iter().find(|r| r.0 == 31).unwrap().2.clone();
