@@ -142,8 +142,8 @@
     --text-dim: #98a2af;
     --link: #6cb2f5;
     --primary: #1f6fc5;
-    --primary-hover: #1a64b4;
-    --primary-active: #165799;
+    --primary-hover: #2574cc;
+    --primary-active: #2676ce;
     --on-primary: #ffffff;
     --focus: #6cb2f5;
     --count-bg: var(--primary);
@@ -211,8 +211,9 @@
   --text-dim: #98a2af;
   --link: #6cb2f5;
   --primary: #1f6fc5;
-  --primary-hover: #1a64b4;
-  --primary-active: #165799;
+  /* dark skins: hover and press get lighter, so the button never sinks into the page */
+  --primary-hover: #2574cc;
+  --primary-active: #2676ce;
   --on-primary: #ffffff;
   --focus: #6cb2f5;
   --count-bg: var(--primary);
@@ -316,8 +317,8 @@
   --link: #40bfde;
   --focus: #40bfde;
   --primary: #0f6fa3;
-  --primary-hover: #0f4c6e;
-  --primary-active: #0f4c6e;
+  --primary-hover: #1376ab;
+  --primary-active: #157cb3;
   --on-primary: #ffffff;
   --glow:
     radial-gradient(65% 55% at 85% -10%, rgb(23 147 209 / 18%), transparent 70%),
@@ -349,8 +350,8 @@
   --link: #00ccff;
   --focus: #00c9a7;
   --primary: #007a63;
-  --primary-hover: #004d3d;
-  --primary-active: #004d3d;
+  --primary-hover: #00836a;
+  --primary-active: #00856c;
   --on-primary: #ffffff;
   --glow:
     radial-gradient(60% 50% at 10% -10%, rgb(0 170 136 / 20%), transparent 70%),
@@ -380,8 +381,8 @@
   --link: #a9a9ff;
   --focus: #a9a9ff;
   --primary: #7f3fbf;
-  --primary-hover: #3b1d63;
-  --primary-active: #3b1d63;
+  --primary-hover: #8a4ccb;
+  --primary-active: #9255d2;
   --on-primary: #ffffff;
   --glow:
     radial-gradient(65% 55% at 20% -10%, rgb(127 63 191 / 22%), transparent 70%),
@@ -406,12 +407,16 @@
   --bar: #1b1e20;
   --sidebar: #272a2e;
   --selected: #1d3a52;
+  /* Breeze greys: the hairlines of the dark base vanish on these surfaces */
+  --border: #383c41;
+  --border-strong: #4a4f55;
+  --control-border: #737d89;
   --accent: #3daee9;
   --link: #3daee9;
   --focus: #3daee9;
   --primary: #1574c4;
-  --primary-hover: #0b4f80;
-  --primary-active: #0b4f80;
+  --primary-hover: #1777c6;
+  --primary-active: #1878c7;
   --on-primary: #ffffff;
   /* Breeze: calm and flat */
   --glow: radial-gradient(60% 50% at 50% -15%, rgb(29 153 243 / 12%), transparent 70%);
@@ -438,8 +443,8 @@
   --link: #6ea4ff;
   --focus: #6ea4ff;
   --primary: #0064ff;
-  --primary-hover: #00307a;
-  --primary-active: #00307a;
+  --primary-hover: #0a6bff;
+  --primary-active: #086aff;
   --on-primary: #ffffff;
   --glow:
     radial-gradient(70% 55% at 80% -10%, rgb(0 100 255 / 20%), transparent 70%),
@@ -464,6 +469,7 @@
   --bar: #07130f;
   --sidebar: #132a22;
   --selected: #1b3a1c;
+  --border: #22382f;
   --accent: #8fd14f;
   --link: #8fd14f;
   --focus: #8fd14f;
@@ -501,8 +507,8 @@
   --link: #ff9a57;
   --focus: #ff9a57;
   --primary: #c2410c;
-  --primary-hover: #5e2750;
-  --primary-active: #5e2750;
+  --primary-hover: #cc4610;
+  --primary-active: #ce4711;
   --on-primary: #ffffff;
   --glow:
     radial-gradient(65% 55% at 85% -10%, rgb(233 84 32 / 16%), transparent 70%),

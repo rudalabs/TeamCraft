@@ -96,7 +96,7 @@
       <li>
         <a href="/files/{{ f.id }}/download" title="Download v{{ f.version }}">{{ f.filename }}</a>
         <span class="muted small">v{{ f.version }} · {{ f.size_bytes|filesize }}{% if f.format_info %} · {{ f.format_info.label }}{% endif %}</span>
-        {% if f.preview %}<a class="button xs" href="/files/{{ f.id }}/preview">3D</a>{% endif %}
+        {% if f.preview %}<a class="view-3d" href="/files/{{ f.id }}/preview">3D view</a>{% endif %}
       </li>
       {% endfor %}
     </ul>

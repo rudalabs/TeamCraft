@@ -176,10 +176,12 @@ kbd {
 }
 .bell svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .bell.has-unread { color: var(--text); }
+/* the count sits on the bell's corner, never over the glyph */
+.bell:has(.bell-count) { margin-right: 6px; }
 .bell-count {
   position: absolute;
-  top: 1px;
-  right: -2px;
+  top: -3px;
+  right: -8px;
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
@@ -549,6 +551,19 @@ dl.props.cols-2 { grid-template-columns: 140px minmax(0, 1fr) 140px minmax(0, 1f
 .indent-5 { padding-left: calc(var(--space-4) + 64px) !important; }
 .indent-6 { padding-left: calc(var(--space-4) + 80px) !important; }
 .indent-deep { padding-left: calc(var(--space-4) + 96px) !important; }
+/* BOM page: the level in its own narrow column; the item number indents
+   24 px per level after a tree guide, at least 24 px from the find number */
+th.lvl-col, td.lvl-col { width: 1%; white-space: nowrap; }
+table.dense td.bom-item, table.dense th.bom-item { padding-left: 24px; }
+table.dense td.bom-item.lvl-2 { padding-left: 48px; }
+table.dense td.bom-item.lvl-3 { padding-left: 72px; }
+table.dense td.bom-item.lvl-4 { padding-left: 96px; }
+table.dense td.bom-item.lvl-5 { padding-left: 120px; }
+table.dense td.bom-item.lvl-6 { padding-left: 144px; }
+table.dense td.bom-item.lvl-deep { padding-left: 168px; }
+.tree-guide { display: inline-block; width: 14px; margin-left: -18px; margin-right: 4px; color: var(--text-dim); text-align: right; }
+/* a page title that links keeps the ink colour; the link shows on hover */
+h1 a.title-link { color: var(--text); }
 td.tree { position: relative; }
 td.tree .guide { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid var(--border); }
 .marker-impact { color: var(--st-impact-fg); font-size: 12px; }
@@ -593,19 +608,26 @@ td.tree .guide { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1
 :is(.badge-in_work, .badge-draft, .badge-new) .glyph::before,
 .state-glyph:is(.st-in_work, .st-draft, .st-new)::before { box-shadow: inset 3px 0 0 currentColor; }
 .badge img { width: 12px; height: 12px; }
-.badge-in_review, .badge-pending, .badge-retrying, .badge-in_triage, .badge-out_of_date, .badge-high {
+.badge-in_review, .badge-retrying, .badge-in_triage, .badge-out_of_date {
   color: var(--st-review-fg); background: var(--st-review-bg); border-color: var(--st-review-bd);
 }
+/* a reviewer who has not decided yet: waiting, not a warning */
+.badge-pending { color: var(--text-muted); background: transparent; border-color: var(--border-strong); }
 .badge-released, .badge-approved, .badge-sent, .badge-accepted, .badge-implemented, .badge-pass, .badge-up_to_date {
   color: var(--st-ok-fg); background: var(--st-ok-bg); border-color: var(--st-ok-bd);
 }
-.badge-rejected, .badge-failed, .badge-fail, .badge-critical {
+.badge-rejected, .badge-failed, .badge-fail {
   color: var(--st-danger-fg); background: var(--st-danger-bg); border-color: var(--st-danger-bd);
 }
 .badge-obsolete, .badge-cancelled, .badge-withdrawn, .badge-deferred {
   color: var(--text-dim); background: transparent; border: 1px dashed var(--border-strong); text-decoration: line-through;
 }
-.badge-low, .badge-normal { height: auto; padding: 0; color: var(--text-muted); background: none; border: none; font-size: 13px; font-weight: 400; }
+/* Priorities are plain text, never a state pill: low and normal muted,
+   high and critical with their own glyph (▲, ▲▲) in the impact and danger ink. */
+.badge-low, .badge-normal, .badge-high, .badge-critical { height: auto; padding: 0; color: var(--text-muted); background: none; border: none; font-size: 13px; font-weight: 400; }
+.badge-high { color: var(--st-impact-fg); font-weight: 500; }
+.badge-critical { color: var(--st-danger-fg); font-weight: 600; }
+.badge-high .glyph, .badge-critical .glyph { font-size: 10px; letter-spacing: -1px; }
 .badge-count { height: 18px; margin-left: 4px; padding: 0 6px; border-radius: 999px; }
 
 /* glyph-only state in dense lists */
@@ -670,6 +692,14 @@ input[type=checkbox], input[type=radio] { accent-color: var(--primary); width: 1
 p.hint { margin: 0 0 var(--space-3); }
 fieldset { margin: 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); }
 legend { padding: 0 4px; font-weight: 600; font-size: 13px; }
+/* A card subsection: no frame, the legend as a sub-heading (like "Keyboard"),
+   28px check rows and a gap before the hints. */
+fieldset.plain { padding: 0; border: none; border-radius: 0; min-width: 0; }
+fieldset.plain > legend { padding: 0; margin-bottom: var(--space-2); font-size: 13px; line-height: 18px; color: var(--text); }
+fieldset.plain > label.check { min-height: 28px; }
+fieldset.plain > .hint { margin: var(--space-2) 0 0; }
+fieldset.plain > label.field { margin-top: var(--space-2); }
+fieldset.plain > label.field > .hint { margin-top: 2px; }
 
 input[type=text], input[type=password], input[type=email], input[type=number], input[type=search], input[type=date], input[type=url],
 select, textarea {
@@ -796,6 +826,7 @@ button.xs, .button.xs { height: var(--ctl-h-xs); padding: 0 8px; font-size: 12px
   button.primary:where(:enabled):hover, .button.primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
   button.danger:where(:enabled):hover, .button.danger:hover { background: var(--st-danger-bg); border-color: var(--st-danger-fg); }
   button.ghost:where(:enabled):hover, .button.ghost:hover { color: var(--text); background: var(--surface-hover); border-color: transparent; }
+  ul.impact-rows button.ghost:where(:enabled):hover, .impact-group-head .ghost:hover { color: var(--link); border-color: var(--control-border); }
   button.link:where(:enabled):hover { background: none; text-decoration: underline; }
   .card-head a:hover, .crumbs a:hover { text-decoration: underline; }
 }
@@ -1097,6 +1128,12 @@ ul.impact-rows form.impact-ack { grid-column: 1 / -1; padding: 4px 0 8px; }
 form.impact-ack input[name=note] { flex: 0 1 34rem; min-width: min(12rem, 100%); width: auto; height: var(--ctl-h-sm); }
 .impact-group > .hint { margin: 0; padding: 6px 12px 8px 16px; border-top: 1px solid var(--border); }
 ul.impact-rows button.small, .impact-group-head .small { height: var(--ctl-h-xs); padding: 0 8px; font-size: 12px; }
+/* the row actions stay quiet (a border on hover and focus only); the change
+   that released the source is a plain link, not a second loud column */
+ul.impact-rows button.ghost, .impact-group-head .ghost { color: var(--link); }
+ul.impact-rows button.ghost:focus-visible, .impact-group-head .ghost:focus-visible { border-color: var(--control-border); }
+.impact-event a.mono { font-weight: 400; }
+.decided-at { margin-top: 2px; }
 @media (hover: hover) {
   ul.impact-rows > li:hover { background: var(--surface-hover); }
 }
@@ -1125,7 +1162,8 @@ input.unit { width: 4.5em; }
 ul.notification-list { list-style: none; margin: 0; padding: 0; }
 ul.notification-list > li { position: relative; padding: 8px 0 8px 20px; border-bottom: 1px solid var(--border); }
 ul.notification-list > li:last-child { border-bottom: none; }
-ul.notification-list a { display: block; color: var(--text-muted); }
+ul.notification-list a { display: block; max-width: 80ch; color: var(--text-muted); }
+ul.notification-list .n-meta { display: block; max-width: 80ch; }
 .n-title { display: block; font-weight: 400; }
 /* the body shows two lines, so the gist is always readable */
 .n-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 13px; color: var(--text-dim); }
@@ -1174,8 +1212,15 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
   .bell, .usermenu { order: 2; }
   /* phones: the sections wrap onto a second row instead of scrolling out of sight */
   .nav { order: 3; flex: 1 0 calc(100% - 96px); flex-wrap: wrap; overflow: visible; padding-bottom: 4px; }
-  .nav-admin { order: 4; }
+  /* Admin closes the second nav row on the same baseline, not centred across both */
+  .nav-admin { order: 4; align-self: flex-end; margin-bottom: 4px; }
   .page-head { align-items: flex-start; }
+  .page-head :is(.subtitle, .meta) a { white-space: nowrap; }
+  /* phones: long titleblock values wrap instead of being cut */
+  .titleblock dd, .titleblock .tb-value { white-space: normal; overflow-wrap: anywhere; }
+  /* secondary table columns give way, so the title and the row action fit */
+  .hide-narrow { display: none; }
+  td.ellipsis { white-space: normal; overflow-wrap: anywhere; }
   .page-head > .actions { width: 100%; }
   dl.props { grid-template-columns: 1fr; gap: 0; }
   dl.props dd + dt { margin-top: var(--space-2); }
@@ -1183,6 +1228,9 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
 }
 @media (pointer: coarse) {
   :root { --row-h: 40px; --row-h-dense: 40px; }
+  /* no hover tooltip on touch: cut cells wrap instead */
+  td.ellipsis { white-space: normal; overflow-wrap: anywhere; }
+  .impact-source, .impact-relation { white-space: normal; }
 }
 
 /* Forced colours (Windows High Contrast): box-shadow edges and backgrounds
@@ -1192,6 +1240,8 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
   .skin-card.selected, .menu-scheme button[aria-pressed="true"] { outline: 2px solid Highlight; }
   .flash, .notice, .readiness, .impact-group { border-left: 3px solid CanvasText; }
   .nav a.active { outline: 1px solid CanvasText; }
+  /* the unread dot survives: a system colour, not a dropped background */
+  ul.notification-list li.unread::before { forced-color-adjust: none; background: Highlight; }
 }
 
 /* ===========================================================================
@@ -1227,9 +1277,15 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
     --st-ok-bg: transparent;
     --st-danger-bg: transparent;
     --st-impact-bg: transparent;
+    --st-wip-bd: #bbb;
+    --st-review-bd: #bbb;
+    --st-ok-bd: #bbb;
+    --st-danger-bd: #bbb;
+    --control-border: #888;
     color-scheme: light;
   }
-  .topbar, footer, .actions, form, .app-glow, .flash, .viewer-canvas, .viewer-bar { display: none !important; }
+  .topbar, footer, .actions, form, .app-glow, .flash, .viewer-canvas, .viewer-bar,
+  td.row-actions, details.menu, a.button, button, a.view-3d, .file-icon { display: none !important; }
   body { background: #fff; color: #000; font-size: 10.5pt; }
   main { width: auto; padding: 0; }
   .card { border: none; padding: 0; margin-bottom: 1.2rem; }
@@ -1259,6 +1315,16 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
 .files-table .file-cell > * { margin: 0; }
 .files-table .thumb-link { margin: 0; }
 .files-table .file-thumb { width: 24px; height: 24px; }
+/* files without a stored preview keep the thumbnail slot, so every name starts at one edge */
+.file-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 24px; height: 24px; color: var(--text-dim); border: 1px solid var(--border); border-radius: var(--radius-xs); }
+.file-icon .icon { width: 14px; height: 14px; stroke-width: 1.5; }
+/* the 3D viewer is a link in the link colour, not a third chip style */
+a.view-3d { font-size: 12px; font-weight: 500; white-space: nowrap; }
+/* the side Revisions list marks the shown revision by weight only */
+tbody tr.this-rev > td { font-weight: 600; }
+tbody tr.this-rev .revbox { color: var(--text); border-color: var(--border-strong); font-weight: 600; }
+/* one gap between the cards of a stack: the last card of a column adds none */
+.with-rail > * > .card:last-child { margin-bottom: 0; }
 td.row-actions details.menu { display: inline-block; text-align: left; }
 @media (min-width: 1101px) {
   /* wide screens: wrappers do not clip the row menus */

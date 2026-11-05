@@ -60,7 +60,7 @@
 {% if change.status == "draft" %}
 <div class="notice">Draft: add the revisions to release and at least one reviewer, then submit.{% if not can.submit and can.modify %} Submitting needs at least one revision, one reviewer and released dependencies (see <a href="#readiness">Release readiness</a>).{% endif %}</div>
 {% elif change.status == "in_review" %}
-<div class="notice">In review since {{ m.time(change.submitted_at) }}. All reviewers must approve; a single rejection sends the revisions back to In Work.</div>
+<div class="notice">In review since {{ m.time(change.submitted_at) }}. All reviewers must approve; a single rejection sends the revisions back to WIP.</div>
 {% elif change.status == "rejected" %}
 <div class="notice">Rejected. Fix the revisions, then reopen and resubmit the change – or cancel it.</div>
 {% elif change.status == "released" %}
@@ -91,8 +91,6 @@
     </div>
     <dl class="props">
       <dt>Description</dt><dd class="pre">{{ change.description or "—" }}</dd>
-      <dt>Priority</dt><dd>{{ change.priority|label }}</dd>
-      <dt>Submitted</dt><dd>{{ m.time(change.submitted_at) }}</dd>
       <dt>Closed</dt><dd>{{ m.time(change.closed_at) }}</dd>
       <dt>Last update</dt><dd>{{ m.time(change.updated_at) }}</dd>
     </dl>
@@ -118,8 +116,8 @@
       <tbody>
       {% for r in reviews %}
         <tr>
-          <td class="nowrap">{{ r.reviewer_name }} <span class="muted small">{{ r.reviewer_username }}</span></td>
-          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %} <span class="small muted">{{ m.time(r.decided_at) }}</span>{% endif %}</td>
+          <td class="nowrap" title="{{ r.reviewer_username }}">{{ r.reviewer_name }}</td>
+          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}</td>
           <td class="pre">{{ r.comment }}</td>
           {% if can.modify %}
           <td class="right">
@@ -188,8 +186,8 @@
   </div>
   {% else %}<p class="empty">No revisions yet.</p>{% endif %}
   {% if can.modify %}
-  <form class="inline" method="post" action="/changes/{{ change.id }}/items">
-    <input class="item-no" type="text" name="item_number" placeholder="Item number, e.g. PRT-000012" required aria-label="Item number">
+  <form class="inline fields" method="post" action="/changes/{{ change.id }}/items">
+    <label>Item <input class="item-no" type="text" name="item_number" placeholder="e.g. PRT-000012" required></label>
     <button type="submit">Add its in-work revision</button>
   </form>
   {% endif %}

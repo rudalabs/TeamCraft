@@ -109,12 +109,17 @@ button.link { border: none; background: none; color: var(--link); padding: 0; he
 button.big { height: 36px; padding: 0 16px; font-size: 14px; justify-content: center; }
 button.icon { width: var(--d-ctl); padding: 0; justify-content: center; border-color: transparent; background: none; color: var(--text-muted); }
 button.small { height: var(--d-ctl-sm); padding: 0 8px; font-size: 12px; }
+/* quiet row actions: link colour, a border on hover and focus only */
+button.ghost { color: var(--link); background: none; border-color: transparent; }
+button.ghost:focus-visible { border-color: var(--control-border); }
+button.link.plain-weight { font-weight: 400; }
 @media (hover: hover) {
   button:where(:enabled):hover { background: var(--surface-hover); border-color: var(--text-muted); }
   button.primary:where(:enabled):hover { background: var(--primary-hover); border-color: var(--primary-hover); }
   button.danger:where(:enabled):hover { background: var(--st-danger-bg); border-color: var(--st-danger-fg); }
   button.icon:where(:enabled):hover { background: var(--surface-hover); border-color: transparent; color: var(--text); }
   button.link:where(:enabled):hover { background: none; text-decoration: underline; }
+  button.ghost:where(:enabled):hover { background: var(--surface-hover); border-color: var(--control-border); }
 }
 button.primary:where(:enabled):active { background: var(--primary-active); }
 button svg, .rail svg, .global-search svg, .tool svg {
@@ -177,9 +182,17 @@ label.check input { width: auto; accent-color: var(--primary); }
   border: 1.5px solid currentColor; border-radius: 50%;
 }
 .badge-in_work::before, .badge-draft::before, .badge-new::before { box-shadow: inset 3px 0 0 currentColor; }
-.badge-in_review, .badge-pending, .badge-in_triage, .badge-modified, .badge-outdated, .badge-deferred {
+.badge-in_review, .badge-in_triage, .badge-modified, .badge-outdated, .badge-deferred {
   color: var(--st-review-fg); background: var(--st-review-bg); border-color: var(--st-review-bd);
 }
+/* a reviewer who has not decided yet: waiting, not a warning */
+.badge-pending { color: var(--text-muted); background: transparent; border-color: var(--border-strong); }
+/* priorities: plain text like the web titleblock; ▲ high, ▲▲ critical */
+.prio { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.prio-high { color: var(--st-impact-fg); font-weight: 500; }
+.prio-critical { color: var(--st-danger-fg); font-weight: 600; }
+.prio-high::before { content: "▲ "; font-size: 10px; }
+.prio-critical::before { content: "▲▲ "; font-size: 10px; letter-spacing: -1px; }
 .badge-released, .badge-approved, .badge-accepted, .badge-implemented, .badge-unchanged, .badge-up_to_date {
   color: var(--st-ok-fg); background: var(--st-ok-bg); border-color: var(--st-ok-bd);
 }
@@ -418,6 +431,7 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
   color: var(--text-muted);
 }
 .navigator > .section-title:first-of-type { margin-top: 6px; }
+.section-title .count { color: var(--text-dim); font-weight: 500; }
 .navigator > .hint, .navigator > .small { margin: 0 8px 8px; }
 
 /* ---------------------------------------------------------------- toolbar & tabs */
@@ -441,9 +455,9 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 }
 .toolbar .tool { padding: 0 8px; }
 .toolbar .tool.icon { padding: 0; }
-/* rare tools with an unmistakable icon (Open folder, Browser) are icons; the
-   title names them and the text stays as their accessible name */
-.toolbar .tool-folder:not(.primary), .toolbar .tool-web:not(.primary) { width: var(--d-ctl); padding: 0; gap: 0; justify-content: center; font-size: 0; }
+/* Open folder is an icon (the title names it, the text stays as its
+   accessible name); Open in browser keeps its label like every other tool */
+.toolbar .tool-folder:not(.primary) { width: var(--d-ctl); padding: 0; gap: 0; justify-content: center; font-size: 0; }
 /* Ghost tools; the state-aware primary is the one filled button. Actions that
    are not available now are hidden – the toolbar shows what can be done. */
 .toolbar .tool:not(.primary) { border-color: transparent; background: none; color: var(--text); }
@@ -559,7 +573,10 @@ details.tool-menu[open] > summary { background: var(--surface-2); }
   min-width: 0;
 }
 .panel > h2 { margin-bottom: 10px; }
+/* one height with and without actions, so side-by-side tables line up */
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; margin-bottom: 8px; flex-wrap: wrap; }
+.panel-head > h2 { margin: 0; }
+.panel-head button { height: var(--d-ctl-sm); }
 .panel > .table-wrap { margin: 0 -12px -12px; }
 .panel > .table-wrap:not(:last-child) { margin-bottom: 8px; }
 .panel > .table-wrap table.grid th:first-child, .panel > .table-wrap table.grid td:first-child { padding-left: 12px; }

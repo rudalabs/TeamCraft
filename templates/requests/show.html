@@ -190,9 +190,9 @@
     </div>
     {% else %}<p class="empty">No items named yet.</p>{% endif %}
     {% if can.edit %}
-    <form class="inline" method="post" action="/requests/{{ request.id }}/items">
-      <input class="item-no" type="text" name="item_number" placeholder="Item number, e.g. PRT-000012" required aria-label="Item number">
-      <input type="text" name="note" placeholder="Note (optional)" maxlength="2000" aria-label="Note">
+    <form class="inline fields" method="post" action="/requests/{{ request.id }}/items">
+      <label>Item <input class="item-no" type="text" name="item_number" placeholder="e.g. PRT-000012" required></label>
+      <label class="grow">Note <input type="text" name="note" placeholder="optional" maxlength="2000"></label>
       <button type="submit">Add item</button>
     </form>
     {% endif %}

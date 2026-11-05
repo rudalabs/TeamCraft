@@ -216,6 +216,13 @@
     ]);
   }
 
+  // A priority as the web titleblock shows it: plain text, high and critical
+  // with their own glyph (▲, ▲▲) in the impact and danger ink – never a state pill.
+  function priorityBadge(p) {
+    if (!p) return null;
+    return h("span.prio.prio-" + p, { title: "Priority " + label(p) }, label(p));
+  }
+
   // The lock holder with the line lock icon (the web UI's lock macro):
   // muted for your own lock, amber for someone else's.
   function lockIcon(mine) {
@@ -330,6 +337,13 @@
     root.setAttribute("data-skin", id || "teamcraft");
     var light = getComputedStyle(root).colorScheme.indexOf("light") !== -1;
     root.classList.toggle("skin-light", light);
+    // The native window chrome (the GTK menu bar on Linux) follows the skin:
+    // a dark skin gets the dark variant; the System skin leaves it to the OS.
+    var win = TAURI && TAURI.window && TAURI.window.getCurrentWindow ? TAURI.window.getCurrentWindow() : null;
+    if (win && win.setTheme) {
+      var system = !id || id === "teamcraft";
+      win.setTheme(system ? null : (light ? "light" : "dark")).catch(function () {});
+    }
     if (state.viewer) renderActive(); // the 3D view takes its colours from the skin
   }
 
@@ -508,7 +522,12 @@
       var el = $("bell-count");
       el.textContent = r.unread > 99 ? "99+" : String(r.unread);
       el.classList.toggle("hidden", !r.unread);
-      $("open-notifications").classList.toggle("has-unread", r.unread > 0);
+      var bell = $("open-notifications");
+      bell.classList.toggle("has-unread", r.unread > 0);
+      // aria-label replaces the content, so it carries the count itself
+      var bellText = r.unread ? "Notifications, " + r.unread + " unread" : "Notifications";
+      bell.setAttribute("aria-label", bellText);
+      bell.setAttribute("title", bellText);
       var seen = state.seenNotifications || {};
       var fresh = r.notifications.filter(function (n) { return !seen[n.id]; });
       r.notifications.forEach(function (n) { seen[n.id] = true; });
@@ -641,6 +660,10 @@
       var el = $("worklist-count");
       el.textContent = String(n);
       el.classList.toggle("hidden", n === 0);
+      var rail = el.closest("button");
+      if (rail) {
+        rail.setAttribute("aria-label", n ? "Worklist, " + n + " open" : "Worklist");
+      }
       return w;
     });
   }
@@ -743,6 +766,12 @@
     });
   }
 
+  /** A worklist heading with its count as a muted trailing number (.count),
+   *  the same pattern as the card titles in both apps. */
+  function sectionTitle(text, n) {
+    return h("p.section-title", null, [text + " ", h("span.count", { text: String(n) })]);
+  }
+
   function renderWorklist() {
     return refreshWorklistCount().then(function (w) {
       var nav = $("navigator");
@@ -752,7 +781,7 @@
           on: { click: function () { checkInAll(); } } }, [svgIcon(ICONS.checkin), " Check in all"]) : null,
         h("button.small", { type: "button", title: "Refresh", on: { click: function () { selectView("worklist"); } } }, svgIcon(ICONS.refresh))
       ]));
-      nav.appendChild(h("p.section-title", { text: "Checked out by me (" + w.checkouts.length + ")" }));
+      nav.appendChild(sectionTitle("Checked out by me", w.checkouts.length));
       nav.appendChild(w.checkouts.length ? h("ul.tree", null, w.checkouts.map(function (r) {
         return h("li", null, h("div.node", { title: "Checked out " + fmtDate(r.checked_out_at), on: { click: function () { openRevision(r.item_number, r.code); } } }, [
           h("span.twisty"), h("span.ico", null, lockIcon(true)),
@@ -760,18 +789,18 @@
           h("span.meta.small.dim", { text: lockAge(r.checked_out_at) })
         ]));
       })) : h("p.empty", { text: "Nothing checked out." }));
-      nav.appendChild(h("p.section-title", { text: "Waiting for my review (" + w.reviews.length + ")" }));
+      nav.appendChild(sectionTitle("Waiting for my review", w.reviews.length));
       nav.appendChild(w.reviews.length ? h("ul.tree", null, w.reviews.map(changeNode)) : h("p.empty", { text: "Nothing to review." }));
       var groups = impactGroups(w);
-      nav.appendChild(h("p.section-title", { text: "Dependents to check (" + groups.length + ")" }));
+      nav.appendChild(sectionTitle("Dependents to check", groups.length));
       nav.appendChild(groups.length ? h("ul.tree", null, groups.map(dependentNode)) : h("p.empty", { text: "Nothing to check." }));
-      nav.appendChild(h("p.section-title", { text: "My open changes (" + w.my_changes.length + ")" }));
+      nav.appendChild(sectionTitle("My open changes", w.my_changes.length));
       nav.appendChild(w.my_changes.length ? h("ul.tree", null, w.my_changes.map(changeNode)) : h("p.empty", { text: "No open changes." }));
       // change requests (older servers: none)
       var assigned = w.requests_assigned || [], mine = w.my_requests || [];
-      nav.appendChild(h("p.section-title", { text: "Requests assigned to me (" + assigned.length + ")" }));
+      nav.appendChild(sectionTitle("Requests assigned to me", assigned.length));
       nav.appendChild(assigned.length ? h("ul.tree", null, assigned.map(requestNode)) : h("p.empty", { text: "No change requests assigned to you." }));
-      nav.appendChild(h("p.section-title", { text: "My open requests (" + mine.length + ")" }));
+      nav.appendChild(sectionTitle("My open requests", mine.length));
       nav.appendChild(mine.length ? h("ul.tree", null, mine.map(requestNode)) : h("p.empty", { text: "Found a problem? Use “Request change…” on a revision or a workspace file." }));
     });
   }
@@ -996,7 +1025,7 @@
       if (!wl) return;
       var s = wl.stats;
       append(welcome, h("div.stats", null, [
-        stat(s.items, "Items"), stat(s.revisions_in_work, "In work"), stat(s.revisions_in_review, "In review"),
+        stat(s.items, "Items"), stat(s.revisions_in_work, "WIP"), stat(s.revisions_in_review, "In Review"),
         stat(s.revisions_released, "Released"), stat(s.open_changes, "Open changes"), stat(fmtSize(s.stored_bytes), s.files + " files in the vault")
       ]));
       var groups = impactGroups(wl);
@@ -1008,20 +1037,29 @@
       if (wl.checkouts.length || wl.reviews.length) {
         append(welcome, h("div.grid-2", null, [
           h("section.panel", null, [h("div.panel-head", null, [h("h2", { text: "Checked out by me" }),
-            wl.checkouts.length ? tool("Check in all", "checkin", function () { checkInAll(); }, { title: "Check in every check-out without local changes (releases the locks)" }) : null]),
+            wl.checkouts.length ? h("button.small", { type: "button", title: "Check in every check-out without local changes (releases the locks)",
+              on: { click: function () { checkInAll(); } } }, [svgIcon(ICONS.checkin), " Check in all"]) : null]),
             wl.checkouts.length ? table(["Revision", "Name", "Since"], wl.checkouts.map(function (r) {
-              return { cells: [h("span.mono", { text: r.item_number + "/" + r.code }), r.name,
-                h("span", { title: fmtDate(r.checked_out_at), text: lockAge(r.checked_out_at) })], open: function () { openRevision(r.item_number, r.code); } };
+              var open = function () { openRevision(r.item_number, r.code); };
+              return { cells: [recordLink(r.item_number + "/" + r.code, open), r.name,
+                h("span", { title: fmtDate(r.checked_out_at), text: lockAge(r.checked_out_at) })], open: open };
             })) : h("p.empty", { text: "Nothing checked out." })]),
-          h("section.panel", null, [h("h2", { text: "Waiting for my review" }),
+          h("section.panel", null, [h("div.panel-head", null, [h("h2", { text: "Waiting for my review" })]),
             wl.reviews.length ? table(["Change", "Title", "Submitted"], wl.reviews.map(function (c) {
-              return { cells: [h("span.mono", { text: c.number }), c.title, fmtDate(c.submitted_at)], open: function () { openChange(c.number); } };
+              var open = function () { openChange(c.number); };
+              return { cells: [recordLink(c.number, open), c.title, fmtDate(c.submitted_at)], open: open };
             })) : h("p.empty", { text: "Nothing to review." })])
         ]));
       }
     };
     if (w) fill(w);
     else refreshWorklistCount().then(fill, function () {});
+  }
+
+  /** A record number in a table: a link like in the web UI and the dependents
+   *  rows, so every number that opens something looks the same. */
+  function recordLink(text, open) {
+    return h("button.link.mono", { type: "button", on: { click: function (e) { e.stopPropagation(); open(); } } }, text);
   }
 
   function stat(value, text) {
@@ -2219,9 +2257,9 @@
              h("span.impact-group-name", { text: g.item_name })]),
         h("span.impact-count", { text: n + " change" + (n === 1 ? "" : "s") + " to check" }),
         h("div.actions", null, [
-          inRevision ? null : h("button.small", { type: "button", on: { click: openIt } }, "Open"),
+          inRevision ? null : h("button.small.ghost", { type: "button", on: { click: openIt } }, "Open"),
           !inRevision && can && g.revision_state === "released"
-            ? h("button.small", { type: "button", on: { click: function () { reviseRevision(g.item_number, g.revision_code); } } }, "Revise") : null,
+            ? h("button.small.ghost", { type: "button", on: { click: function () { reviseRevision(g.item_number, g.revision_code); } } }, "Revise") : null,
           can && n > 1 ? h("button.small", { type: "button", on: { click: function () { acknowledgeAllDialog(g); } } }, "Acknowledge all…") : null
         ])
       ]),
@@ -2232,9 +2270,9 @@
             " ", h("span.impact-source-name", { text: i.source_name })]),
           h("span.impact-event", null, [i.event === "released" ? "released" : badge("obsolete"),
             i.change_number ? " via " : null,
-            i.change_number ? h("button.link.mono", { type: "button", on: { click: function () { openChange(i.change_number); } } }, i.change_number) : null]),
+            i.change_number ? h("button.link.mono.plain-weight", { type: "button", on: { click: function () { openChange(i.change_number); } } }, i.change_number) : null]),
           h("span.impact-relation", null, [relationShort(i.relation), i.detail ? h("span.impact-detail", { text: " · " + i.detail }) : null]),
-          can ? h("button.small", { type: "button", on: { click: function () { acknowledgeDialog(i); } } }, "Acknowledge…") : null
+          can ? h("button.small.ghost", { type: "button", on: { click: function () { acknowledgeDialog(i); } } }, "Acknowledge…") : null
         ]);
       })),
       h("p.hint", { text: "Revising and releasing " + g.item_number + " resolves " + (n === 1 ? "it" : "all " + n) + " as well." })
@@ -3010,17 +3048,16 @@
         assistantDialog({ change: c.number }, c.number, [["review_brief", "Brief me for this review"]]);
       }, { title: "Ask TeamCraft: a briefing for the review – what changes, impact, risks, open questions" }) : null,
       agentButton(tab),
-      tool("Browser", "web", function () { call("open_web", { path: "/changes/" + c.id }).catch(function (e) { toast(errorText(e), "error"); }); }, { title: "Open this change in the web UI (reviewers, items, cancel …)" }),
+      tool("Open in browser", "web", function () { call("open_web", { path: "/changes/" + c.id }).catch(function (e) { toast(errorText(e), "error"); }); }, { title: "Open this change in the web UI (reviewers, items, cancel …)" }),
       tool("Refresh", "refresh", reloadActive)
     ]);
     body.appendChild(h("div.object-head", null, [h("div", null, [
-      h("p.kicker", { text: "Change order · priority " + label(c.priority) }),
       h("h1", null, [h("span.mono", { text: c.number }), " · " + c.title]),
-      h("div.meta", null, [badge(c.status), h("span", { text: "created " + fmtDate(c.created_at) + " by " + c.created_by_name })])
+      h("div.meta", null, [badge(c.status), priorityBadge(c.priority), h("span", { text: "created " + fmtDate(c.created_at) + " by " + c.created_by_name })])
     ])]));
     var hints = {
       draft: "Draft: add the revisions to release and at least one reviewer, then submit.",
-      in_review: "In review: all reviewers must approve; a single rejection sends the revisions back to WIP.",
+      in_review: "In Review: all reviewers must approve; a single rejection sends the revisions back to WIP.",
       rejected: "Rejected: fix the revisions, then reopen and resubmit in the web UI – or cancel the change.",
       released: "Released: all revisions of this change are released."
     };
@@ -3046,7 +3083,6 @@
     append(body, h("div.grid-2", null, [
       h("section.panel", null, [h("h2", { text: "Details" }), h("dl.props", null, [
         dt("Description"), dd(h("span.pre", { text: c.description || "—" })),
-        dt("Priority"), dd(label(c.priority)),
         dt("Submitted"), dd(fmtDate(c.submitted_at)),
         dt("Closed"), dd(fmtDate(c.closed_at)),
         dt("Last update"), dd(fmtDate(c.updated_at))
@@ -3059,7 +3095,8 @@
     ]));
     body.appendChild(h("section.panel", null, [h("h2", { text: "Affected revisions" }),
       tab.data.items.length ? table(["Revision", "Name", "State"], tab.data.items.map(function (i) {
-        return { cells: [h("span.mono", { text: i.item_number + "/" + i.code }), i.name, h("span", null, [badge(i.state), i.checked_out_by_name ? lockBadge(i.checked_out_by_name, i.checked_out_by === state.me.id) : null])], open: function () { openRevision(i.item_number, i.code); } };
+        var open = function () { openRevision(i.item_number, i.code); };
+        return { cells: [recordLink(i.item_number + "/" + i.code, open), i.name, h("span", null, [badge(i.state), i.checked_out_by_name ? lockBadge(i.checked_out_by_name, i.checked_out_by === state.me.id) : null])], open: open };
       })) : h("p.empty", { text: "No revisions yet." })]));
     // Release readiness: unreleased dependencies block the submit.
     if ((c.status === "draft" || c.status === "rejected") && tab.data.items.length) {
@@ -3259,14 +3296,13 @@
       tool("Attach…", "plus", function () { attachToRequest(r); }, { disabled: !can.attach || !TAURI.dialog, title: "Attach a screenshot, mark-up or PDF" }),
       h("span.sep"),
       watchTool(tab, "change-requests", r.number, !!d.watching),
-      tool("Browser", "web", function () { call("open_web", { path: "/requests/" + r.id }).catch(function (e) { toast(errorText(e), "error"); }); },
+      tool("Open in browser", "web", function () { call("open_web", { path: "/requests/" + r.id }).catch(function (e) { toast(errorText(e), "error"); }); },
         { title: "Open this change request in the web UI (assign, link a change order, edit …)" }),
       tool("Refresh", "refresh", reloadActive)
     ]);
     body.appendChild(h("div.object-head", null, [h("div", null, [
-      h("p.kicker", { text: "Change request · " + reasonLabel(r.reason) + " · priority " + label(r.priority) }),
       h("h1", null, [h("span.mono", { text: r.number }), " · " + r.title]),
-      h("div.meta", null, [badge(r.status), h("span", { text: "requested " + fmtDate(r.created_at) + " by " + r.requested_by_name })])
+      h("div.meta", null, [badge(r.status), priorityBadge(r.priority), h("span", { text: "requested " + fmtDate(r.created_at) + " by " + r.requested_by_name })])
     ])]));
     var hints = {
       "new": "New: waiting for the CAD editors of the affected project groups to triage it.",
@@ -3296,7 +3332,6 @@
       h("section.panel", null, [h("h2", { text: "Details" }), h("dl.props", null, [
         dt("Problem and proposed solution"), dd(h("span.pre", { text: r.description || "—" })),
         dt("Reason"), dd(reasonLabel(r.reason)),
-        dt("Priority"), dd(label(r.priority)),
         dt("Needed by"), dd(r.due_date || "—"),
         dt("Assignee"), dd(r.assignee_name || "—"),
         dt("Decision"), dd(r.decided_at ? r.decided_by_name + " · " + fmtDate(r.decided_at) + (r.decision_comment ? " – " + r.decision_comment : "") : "—")

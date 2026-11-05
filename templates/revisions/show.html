@@ -9,7 +9,7 @@
   <div>
     <p class="crumbs"><a href="/items">Items</a>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% endif %}<span>{{ rev.item_number }}</span></p>
     <div class="title-row">
-      <h1><span class="id">{{ rev.item_number }}</span>{{ m.revbox(rev.code) }} {{ rev.name }}</h1>
+      <h1><span class="id">{{ rev.item_number }}</span> {{ rev.name }}</h1>
       <form method="post" action="/items/{{ item.id }}/favorite">
         <input type="hidden" name="favorite" value="{% if favorite %}0{% else %}1{% endif %}">
         <input type="hidden" name="back" value="{{ back }}">
@@ -85,7 +85,7 @@
   <div><dt>State</dt><dd>{{ m.badge(rev.state) }}</dd></div>
   <div><dt>Lock</dt><dd>{% if rev.checked_out_by_name %}{{ m.lock(rev.checked_out_by_name, rev.checked_out_by == me.id) }} <span class="dim" title="Checked out {{ rev.checked_out_at|dt }}">for {{ rev.checked_out_at|age }}</span>{% else %}<span class="dim">Not checked out</span>{% endif %}</dd></div>
   <div><dt>Project</dt><dd>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% else %}<span class="dim">—</span>{% endif %}</dd></div>
-  <div><dt>Modified</dt><dd>{{ m.time(rev.updated_at) }}</dd></div>
+  <div><dt>Modified</dt><dd title="Created {{ rev.created_at|dt }} by {{ rev.created_by_name }}">{{ m.time(rev.updated_at) }}</dd></div>
   <div><dt>Released</dt><dd>{{ m.time(rev.released_at) }}</dd></div>
 </dl>
 {% if assistant_enabled %}
@@ -137,9 +137,6 @@
       <dt>Material</dt><dd>{{ rev.material or "—" }}</dd>
       <dt>Mass per unit</dt><dd>{% if rev.mass_kg is not none %}{{ rev.mass_kg|num(4) }} kg{% else %}—{% endif %}</dd>
       <dt>Unit cost</dt><dd>{% if rev.unit_cost is not none %}{{ rev.unit_cost|num(2) }} €{% else %}—{% endif %}</dd>
-      <dt>Created</dt><dd>{{ m.time(rev.created_at) }} by {{ rev.created_by_name }}</dd>
-      <dt>Last modified</dt><dd>{{ m.time(rev.updated_at) }}</dd>
-      <dt>Released</dt><dd>{{ m.time(rev.released_at) }}</dd>
     </dl>
   </section>
 
@@ -222,14 +219,13 @@
   <h2>Revisions</h2>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Rev</th><th>State</th><th>Created</th><th>Released</th></tr></thead>
+    <thead><tr><th>Rev</th><th>State</th><th>Created</th></tr></thead>
     <tbody>
     {% for r in revisions %}
-      <tr class="{% if r.id == rev.id %}current{% endif %}">
+      <tr{% if r.id == rev.id %} class="this-rev" aria-current="page"{% endif %}>
         <td title="{{ r.name }}"><a class="revbox" href="/revisions/{{ r.id }}">{{ r.code }}</a></td>
-        <td>{{ m.badge(r.state) }}{% if r.checked_out_by_name %} {{ m.lock(r.checked_out_by_name) }}{% endif %}</td>
-        <td class="small nowrap">{{ m.date(r.created_at) }}<span class="muted block">{{ r.created_by_name }}</span></td>
-        <td class="small nowrap">{{ m.date(r.released_at) }}</td>
+        <td{% if r.checked_out_by_name %} title="Checked out by {{ r.checked_out_by_name }}"{% endif %}>{{ m.badge(r.state) }}</td>
+        <td class="small nowrap" title="{{ r.created_by_name }}{% if r.released_at %} · released {{ r.released_at|dt }}{% endif %}">{{ m.date(r.created_at) }}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -252,10 +248,10 @@
     {% for f in files %}
       <tr>
         <td><div class="file-cell">
-          {% if f.format_info and f.format_info.thumbnail %}<a class="thumb-link" href="/files/{{ f.id }}/thumbnail" title="Preview image stored in the file"><img class="file-thumb" src="/files/{{ f.id }}/thumbnail?v={{ f.sha256 }}" alt="" loading="lazy" data-hide-broken></a>{% endif %}
+          {% if f.format_info and f.format_info.thumbnail %}<a class="thumb-link" href="/files/{{ f.id }}/thumbnail" title="Preview image stored in the file"><img class="file-thumb" src="/files/{{ f.id }}/thumbnail?v={{ f.sha256 }}" alt="" loading="lazy" data-hide-broken></a>{% else %}<span class="file-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 16 16"><path d="M4 1.75h5.25L12.5 5v9.25h-8.5z"/><path d="M9 1.75V5.25h3.5"/></svg></span>{% endif %}
           <a href="/files/{{ f.id }}/download">{{ f.filename }}</a>
           {% if f.format_info %}<span class="fmt fmt-{{ f.format_info.kind }}" title="{{ f.format_info.system_name }} · {{ f.format_info.kind_label }} · {{ f.content_type }}">{{ f.format_info.label }}</span>{% else %}<span class="muted small">{{ f.content_type }}</span>{% endif %}
-          {% if f.preview %}<a class="button xs" href="/files/{{ f.id }}/preview" title="3D preview in the browser">3D</a>{% endif %}
+          {% if f.preview %}<a class="view-3d" href="/files/{{ f.id }}/preview" title="3D preview in the browser">3D view</a>{% endif %}
         </div></td>
         <td>
           {% if f.folder %}<span class="mono" title="{{ rev.project_code or '' }}/{{ f.folder }}/{{ f.filename }} in the desktop working folder">{{ f.folder }}/</span>
@@ -303,7 +299,7 @@
             {% for v in f.versions %}
               <tr class="{% if v.version == f.version %}current{% endif %}">
                 <td class="nowrap"><a href="/file-versions/{{ v.id }}/download">v{{ v.version }}</a>{% if v.version == f.version %} <span class="badge badge-released">current</span>{% endif %}
-                  {% if f.preview %}<a class="button small" href="/file-versions/{{ v.id }}/preview" title="3D preview of v{{ v.version }}">3D</a>{% endif %}</td>
+                  {% if f.preview %}<a class="view-3d" href="/file-versions/{{ v.id }}/preview" title="3D preview of v{{ v.version }}">3D view</a>{% endif %}</td>
                 <td class="small">{{ v.comment }}</td>
                 <td class="num">{{ v.size_bytes|filesize }}</td>
                 <td class="small nowrap">{{ m.time(v.uploaded_at) }} · {{ v.uploaded_by_name }}</td>
@@ -381,14 +377,14 @@
   {% else %}<p class="empty">No basis yet – add the part or assembly revision that was analysed.</p>{% endif %}
   {% if can.edit %}
   <h3>Add basis</h3>
-  <form class="inline" method="post" action="/revisions/{{ rev.id }}/simulation/bases">
-    <select name="role" aria-label="Role of the basis">
+  <form class="inline fields" method="post" action="/revisions/{{ rev.id }}/simulation/bases">
+    <label>Role <select name="role">
       {% for r in simulation.roles %}<option value="{{ r.value }}">{{ r.label }}</option>{% endfor %}
-    </select>
-    <input class="item-no" type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Basis item">
-    <input class="find" type="text" name="revision" placeholder="latest" aria-label="Revision code">
-    <input type="text" name="file" placeholder="File name (optional, pins its current version)" aria-label="Simulated file">
-    <input type="text" name="note" placeholder="Note (optional)" maxlength="500" aria-label="Note">
+    </select></label>
+    <label>Item <input class="item-no" type="text" name="item" placeholder="e.g. PRT-000012" required></label>
+    <label>Revision <input class="find" type="text" name="revision" placeholder="latest"></label>
+    <label class="grow">File <input type="text" name="file" placeholder="optional, pins its current version"></label>
+    <label class="grow">Note <input type="text" name="note" placeholder="optional" maxlength="500"></label>
     <button type="submit">Add</button>
   </form>
   {% endif %}
@@ -574,12 +570,12 @@
       </div>
       {% else %}<p class="empty">No references besides the BOM.</p>{% endif %}
       {% if can.edit %}
-      <form class="inline" method="post" action="/revisions/{{ rev.id }}/references">
-        <select name="kind" aria-label="Kind of reference">
+      <form class="inline fields" method="post" action="/revisions/{{ rev.id }}/references">
+        <label>Kind <select name="kind">
           {% for k in references.kinds %}<option value="{{ k.value }}">{{ k.label }}</option>{% endfor %}
-        </select>
-        <input class="item-no" type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Referenced item">
-        <input type="text" name="note" placeholder="Note (optional)" maxlength="500" aria-label="Note">
+        </select></label>
+        <label>Item <input class="item-no" type="text" name="item" placeholder="e.g. PRT-000012" required></label>
+        <label class="grow">Note <input type="text" name="note" placeholder="optional" maxlength="500"></label>
         <button type="submit">Add</button>
       </form>
       {% endif %}

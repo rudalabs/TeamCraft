@@ -4,10 +4,11 @@
 {% macro glyph_char(value) -%}
 {%- if value in ["released", "approved", "accepted", "implemented", "pass", "sent", "up_to_date"] %}✓
 {%- elif value in ["in_review", "pending", "in_triage", "retrying", "out_of_date"] %}○
-{%- elif value in ["rejected", "fail", "failed", "critical"] %}×
+{%- elif value in ["rejected", "fail", "failed"] %}×
 {%- elif value in ["obsolete", "cancelled", "withdrawn", "deferred"] %}–
 {%- elif value in ["in_work", "draft", "new"] %}◐
 {%- elif value == "high" %}▲
+{%- elif value == "critical" %}▲▲
 {%- endif -%}
 {%- endmacro %}
 
@@ -55,11 +56,11 @@
     <span class="impact-count">{{ n }} change{% if n != 1 %}s{% endif %} to check</span>
     <div class="actions">
       {% if not on_revision %}
-      <a class="button small" href="/revisions/{{ g.revision_id }}#references">Open</a>
+      <a class="button small ghost" href="/revisions/{{ g.revision_id }}#references">Open</a>
       {% if can_ack and g.revision_state == "released" %}
       <form method="post" action="/revisions/{{ g.revision_id }}/revise"
             data-confirm="Create a new revision of {{ g.item_number }} based on {{ g.revision_code }}?">
-        <button class="small" type="submit">Revise</button>
+        <button class="small ghost" type="submit">Revise</button>
       </form>
       {% endif %}
       {% endif %}
@@ -87,7 +88,7 @@
       <span class="impact-relation">{{ relation_short(i.relation) }}{% if i.detail %} <span class="impact-detail">· {{ i.detail }}</span>{% endif %}</span>
       <span class="impact-when">{{ time(i.created_at) }}</span>
       {% if can_ack %}
-      <button class="small" type="button" data-toggle="ack-{{ i.id }}" aria-controls="ack-{{ i.id }}" aria-expanded="false">Acknowledge…</button>
+      <button class="small ghost" type="button" data-toggle="ack-{{ i.id }}" aria-controls="ack-{{ i.id }}" aria-expanded="false">Acknowledge…</button>
       <form class="impact-ack hidden" id="ack-{{ i.id }}" method="post" action="/impacts/{{ i.id }}/acknowledge">
         <input type="hidden" name="back" value="{{ back }}">
         <input type="text" name="note" maxlength="2000" required aria-label="Why no change is needed for {{ i.source_number }}/{{ i.source_code }}"
