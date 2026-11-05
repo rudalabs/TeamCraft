@@ -35,6 +35,10 @@
 - [Evaluation of other PLM systems](reference/evaluation.md)
 - [Rust API (rustdoc)](reference/rustdoc.md)
 
+# Development
+
+- [Test coverage map](dev/coverage.md)
+
 # Research
 
 - [Research notes](research/index.md)
