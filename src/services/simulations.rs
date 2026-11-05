@@ -332,6 +332,7 @@ pub async fn add_basis(
     };
     let mut tx = pool.begin().await?;
     let rev = revisions::lock(&mut tx, revision_id).await?;
+    access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
     ensure_simulation(&rev)?;
     revisions::ensure_editable(&rev, actor)?;
     if basis.item_id == rev.item_id {
@@ -682,6 +683,7 @@ async fn lock_editable(
     revision_id: Uuid,
 ) -> AppResult<Revision> {
     let rev = revisions::lock(conn, revision_id).await?;
+    access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
     ensure_simulation(&rev)?;
     revisions::ensure_editable(&rev, actor)?;
     Ok(rev)

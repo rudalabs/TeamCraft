@@ -265,6 +265,7 @@ pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResul
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
     let rev = lock(&mut tx, id).await?;
+    access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
     let Some(owner) = rev.checked_out_by else {
         return Ok(rev);
     };

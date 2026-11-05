@@ -872,6 +872,7 @@ pub async fn check_in(
     let comment = validate_comment(comment)?;
     let mut tx = pool.begin().await?;
     let rev = revisions::lock(&mut tx, revision_id).await?;
+    access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
     if rev.checked_out_by != Some(actor.id) {
         return Err(AppError::Conflict(format!(
             "You have not checked out {}.",
