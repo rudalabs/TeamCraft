@@ -894,6 +894,8 @@ mod tests {
             material: String::new(),
             mass_kg: None,
             unit_cost: None,
+            attributes: serde_json::json!({}),
+            classification: "make".into(),
             checked_out_by: None,
             checked_out_by_name: None,
             checked_out_at: None,

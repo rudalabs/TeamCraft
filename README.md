@@ -109,6 +109,7 @@ end-to-end tests against a real PostgreSQL.
 - **Roles and read permissions** – viewer, editor and admin roles; restricted project groups visible only to their members.
 - **Single sign-on** – any OpenID Connect provider, with group synchronisation.
 - **Numbering schemes** – generated item numbers per project group from `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`.
+- **Custom attributes** – vendor, order number, RoHS … as text, number, yes/no or choice list per item type, versioned with each revision; in-house, purchased and standard parts; search by attribute value.
 - **Notifications** – in-app, e-mail and Mattermost; watch items, changes and change requests.
 - **Event webhooks** – signed JSON for releases, changes and simulation results, retried with backoff.
 - **Audit log** – every modification with user, time and details.

@@ -71,6 +71,12 @@ pub struct SaveSearchForm {
     state: String,
     #[serde(default)]
     system: String,
+    #[serde(default)]
+    class: String,
+    #[serde(default)]
+    attr: String,
+    #[serde(default)]
+    value: String,
 }
 
 pub async fn save_search(
@@ -84,6 +90,9 @@ pub async fn save_search(
         ("project", form.project.as_str()),
         ("state", form.state.as_str()),
         ("system", form.system.as_str()),
+        ("class", form.class.as_str()),
+        ("attr", form.attr.as_str()),
+        ("value", form.value.as_str()),
     ];
     let back = format!("/items?{}", personal::normalize_query(&pairs));
     let result = personal::save_search(&st.db, &ctx.me, &form.name, &pairs).await;

@@ -30,6 +30,34 @@
                value="{% if cost_raw is defined %}{{ cost_raw }}{% elif rev.unit_cost is not none %}{{ rev.unit_cost }}{% endif %}">
       </label>
     </div>
+    {% if attribute_fields %}
+    <fieldset>
+      <legend>Attributes</legend>
+      <div class="form-row">
+      {% for f in attribute_fields %}
+        <label>{{ f.label }}{% if f.unit %} [{{ f.unit }}]{% endif %}
+          {% if f.data_type == "boolean" %}
+          <select name="attr.{{ f.key }}">
+            <option value="" {% if not f.value %}selected{% endif %}>—</option>
+            <option value="yes" {% if f.value == "yes" %}selected{% endif %}>Yes</option>
+            <option value="no" {% if f.value == "no" %}selected{% endif %}>No</option>
+          </select>
+          {% elif f.data_type == "choice" %}
+          <select name="attr.{{ f.key }}">
+            <option value="">—</option>
+            {% for c in f.choices %}<option value="{{ c }}" {% if f.value|lower == c|lower %}selected{% endif %}>{{ c }}</option>{% endfor %}
+            {% if f.value and f.value not in f.choices %}<option value="{{ f.value }}" selected>{{ f.value }} (no longer a choice)</option>{% endif %}
+          </select>
+          {% elif f.data_type == "number" %}
+          <input type="text" name="attr.{{ f.key }}" value="{{ f.value }}" inputmode="decimal">
+          {% else %}
+          <input type="text" name="attr.{{ f.key }}" value="{{ f.value }}" maxlength="500">
+          {% endif %}
+        </label>
+      {% endfor %}
+      </div>
+    </fieldset>
+    {% endif %}
     <div class="actions">
       <button class="primary" type="submit">Save</button>
       <a class="button" href="/revisions/{{ rev.id }}">Cancel</a>
