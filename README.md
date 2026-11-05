@@ -136,8 +136,9 @@ promised.
   the operating system; *Light* or *Dark* can be fixed per user, and there are
   dark distribution skins (Arch, KDE, Ubuntu, …). Dense tables, one primary
   action per page, and states shown by colour and a glyph.
-- **Teams.** Viewer, CAD editor and admin roles; self-service project groups
-  managed by their creators; single sign-on with any OpenID Connect
+- **Teams and read permissions.** Viewer, CAD editor and admin roles; self-service project groups
+  managed by their creators, optionally **restricted** so that only their members
+  (and admins) see the group and its items, files and changes; single sign-on with any OpenID Connect
   provider and group synchronisation.
 - **Numbering schemes.** Generated item numbers per project group from
   `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`, with a preview of the next

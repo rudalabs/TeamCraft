@@ -7,7 +7,7 @@
   <div>
 
     <h1>Project groups</h1>
-    <p class="subtitle">Every item belongs to a project group. Everybody can read all groups; CAD editors change the items of the groups they are members of – and can start their own group.</p>
+    <p class="subtitle">Every item belongs to a project group. Everybody reads internal groups; a restricted group is visible only to its members and administrators. CAD editors change the items of the groups they are members of – and can start their own group.</p>
   </div>
 </div>
 
@@ -20,7 +20,7 @@
     {% for p in projects %}
       <tr>
         <td class="mono nowrap"><a href="/projects/{{ p.id }}">{{ p.code }}</a></td>
-        <td>{{ p.name }}{% if p.id in my_projects %} <span class="badge badge-member">member</span>{% endif %}</td>
+        <td>{{ p.name }}{% if p.visibility == "restricted" %} {{ m.restricted("Restricted") }}{% endif %}{% if p.id in my_projects %} <span class="badge badge-member">member</span>{% endif %}</td>
         <td class="small muted">{{ p.description }}</td>
         <td class="num">{{ p.member_count }}</td>
         <td>{% if p.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">archived</span>{% endif %}</td>
@@ -50,6 +50,7 @@
       {% endif %}
     </div>
     <label>Area / description <textarea name="description" maxlength="4000"></textarea></label>
+    <label class="check"><input type="checkbox" name="restricted" value="1"> Restricted – only members and administrators can see the group and its items</label>
     <div class="actions"><button class="primary" type="submit">Create project group</button></div>
   </form>
 </div>

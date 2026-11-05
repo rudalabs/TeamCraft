@@ -1059,6 +1059,7 @@ mod tests {
             role,
             skin: "teamcraft".into(),
             projects: vec![],
+            hidden_projects: vec![],
         }
     }
 

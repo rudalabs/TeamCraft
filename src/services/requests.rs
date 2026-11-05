@@ -34,7 +34,7 @@ use crate::{
     error::{AppError, AppResult},
     models::{Change, ChangeRequest, RequestAttachment, RequestComment, RequestItem},
     services::{
-        audit, changes, next_counter,
+        access, audit, changes, next_counter,
         notifications::{self, Notice},
         users, webhooks, Page,
     },
@@ -89,14 +89,19 @@ const LIST_WHERE: &str = "
       AND ($5::uuid IS NULL OR EXISTS (SELECT 1 FROM change_request_items f
                                        WHERE f.request_id = cr.id AND f.item_id = $5))";
 
+/// Change requests the actor may see (see `access::request_visible`); the
+/// total counts the same rows.
 pub async fn list(
     pool: &PgPool,
+    actor: &Actor,
     filter: &RequestFilter,
     page: Page,
 ) -> AppResult<(Vec<ChangeRequest>, i64)> {
     let status = filter.status.map(RequestStatus::as_str);
     let rows = sqlx::query_as::<_, ChangeRequest>(&format!(
-        "{REQUEST_SELECT} {LIST_WHERE} ORDER BY cr.created_at DESC LIMIT $6 OFFSET $7"
+        "{REQUEST_SELECT} {LIST_WHERE} AND {}
+         ORDER BY cr.created_at DESC LIMIT $6 OFFSET $7",
+        access::request_visible("cr", 8, 9)
     ))
     .bind(status)
     .bind(filter.open_only)
@@ -105,22 +110,73 @@ pub async fn list(
     .bind(filter.item_id)
     .bind(page.limit)
     .bind(page.offset)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?;
     let total = sqlx::query_scalar::<_, i64>(&format!(
-        "SELECT COUNT(*) FROM change_requests cr {LIST_WHERE}"
+        "SELECT COUNT(*) FROM change_requests cr {LIST_WHERE} AND {}",
+        access::request_visible("cr", 6, 7)
     ))
     .bind(status)
     .bind(filter.open_only)
     .bind(filter.requested_by)
     .bind(filter.assignee)
     .bind(filter.item_id)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
     .fetch_one(pool)
     .await?;
     Ok((rows, total))
 }
 
-pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<ChangeRequest> {
+/// Whether the actor may see the request (`access::request_visible`).
+pub(crate) async fn is_visible(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    request_id: Uuid,
+) -> AppResult<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(&format!(
+        "SELECT EXISTS(SELECT 1 FROM change_requests cr WHERE cr.id = $1 AND {})",
+        access::request_visible("cr", 2, 3)
+    ))
+    .bind(request_id)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
+/// Of the given requests, those the actor may see.
+async fn visible_ids(pool: &PgPool, actor: &Actor, ids: &[Uuid]) -> AppResult<Vec<Uuid>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_scalar::<_, Uuid>(&format!(
+        "SELECT cr.id FROM change_requests cr WHERE cr.id = ANY($1) AND {}",
+        access::request_visible("cr", 2, 3)
+    ))
+    .bind(ids)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
+    .fetch_all(pool)
+    .await?)
+}
+
+async fn only_visible(
+    pool: &PgPool,
+    actor: &Actor,
+    rows: Vec<ChangeRequest>,
+) -> AppResult<Vec<ChangeRequest>> {
+    let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+    let visible = visible_ids(pool, actor, &ids).await?;
+    Ok(rows
+        .into_iter()
+        .filter(|r| visible.contains(&r.id))
+        .collect())
+}
+
+pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<ChangeRequest> {
     sqlx::query_as::<_, ChangeRequest>(&format!("{REQUEST_SELECT} WHERE cr.id = $1"))
         .bind(id)
         .fetch_optional(pool)
@@ -128,17 +184,44 @@ pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<ChangeRequest> {
         .ok_or_else(|| AppError::not_found("Change request not found."))
 }
 
-pub async fn get_by_number(pool: &PgPool, number: &str) -> AppResult<ChangeRequest> {
+/// A request the actor may see; hidden requests answer like missing ones.
+pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ChangeRequest> {
+    let request = get_unchecked(pool, id).await?;
+    let mut conn = pool.acquire().await?;
+    if !is_visible(&mut conn, actor, id).await? {
+        return Err(AppError::not_found("Change request not found."));
+    }
+    Ok(request)
+}
+
+/// A request by number, if the actor may see it.
+pub async fn get_by_number(pool: &PgPool, actor: &Actor, number: &str) -> AppResult<ChangeRequest> {
     let number = number.trim().to_ascii_uppercase();
-    sqlx::query_as::<_, ChangeRequest>(&format!("{REQUEST_SELECT} WHERE cr.number = $1"))
-        .bind(&number)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AppError::not_found(format!("Change request '{number}' not found.")))
+    let missing = || AppError::not_found(format!("Change request '{number}' not found."));
+    let request =
+        sqlx::query_as::<_, ChangeRequest>(&format!("{REQUEST_SELECT} WHERE cr.number = $1"))
+            .bind(&number)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(missing)?;
+    let mut conn = pool.acquire().await?;
+    if !is_visible(&mut conn, actor, request.id).await? {
+        return Err(missing());
+    }
+    Ok(request)
+}
+
+/// Locks a request the actor may see (hidden ones answer "not found").
+async fn lock(conn: &mut PgConnection, actor: &Actor, id: Uuid) -> AppResult<ChangeRequest> {
+    let request = lock_unchecked(conn, id).await?;
+    if !is_visible(conn, actor, id).await? {
+        return Err(AppError::not_found("Change request not found."));
+    }
+    Ok(request)
 }
 
 /// Locks the request row until the transaction ends and loads it.
-async fn lock(conn: &mut PgConnection, id: Uuid) -> AppResult<ChangeRequest> {
+async fn lock_unchecked(conn: &mut PgConnection, id: Uuid) -> AppResult<ChangeRequest> {
     // the row lock first: the full select has outer joins and a count
     sqlx::query_scalar::<_, Uuid>("SELECT id FROM change_requests WHERE id = $1 FOR UPDATE")
         .bind(id)
@@ -165,8 +248,22 @@ const ITEM_SELECT: &str = "
     CROSS JOIN LATERAL (SELECT r2.id, r2.code, r2.name, r2.state FROM revisions r2
                         WHERE r2.item_id = i.id ORDER BY r2.seq DESC LIMIT 1) lr";
 
-/// The affected items.
-pub async fn items(pool: &PgPool, request_id: Uuid) -> AppResult<Vec<RequestItem>> {
+/// The affected items; items the actor may not see are placeholder rows
+/// (the note, written about the request, stays).
+pub async fn items(pool: &PgPool, actor: &Actor, request_id: Uuid) -> AppResult<Vec<RequestItem>> {
+    let mut rows = items_unchecked(pool, request_id).await?;
+    for row in &mut rows {
+        if !actor.can_see_project(row.project_id) {
+            row.mask();
+        }
+    }
+    Ok(rows)
+}
+
+pub(crate) async fn items_unchecked(
+    pool: &PgPool,
+    request_id: Uuid,
+) -> AppResult<Vec<RequestItem>> {
     Ok(sqlx::query_as::<_, RequestItem>(&format!(
         "{ITEM_SELECT} WHERE cri.request_id = $1 ORDER BY i.number"
     ))
@@ -201,7 +298,7 @@ pub async fn attachments(pool: &PgPool, request_id: Uuid) -> AppResult<Vec<Reque
     .await?)
 }
 
-pub async fn attachment(pool: &PgPool, id: Uuid) -> AppResult<RequestAttachment> {
+pub(crate) async fn attachment_unchecked(pool: &PgPool, id: Uuid) -> AppResult<RequestAttachment> {
     sqlx::query_as::<_, RequestAttachment>(&format!("{ATTACHMENT_SELECT} WHERE a.id = $1"))
         .bind(id)
         .fetch_optional(pool)
@@ -209,59 +306,93 @@ pub async fn attachment(pool: &PgPool, id: Uuid) -> AppResult<RequestAttachment>
         .ok_or_else(|| AppError::not_found("Attachment not found."))
 }
 
-/// The change orders that implement a request.
-pub async fn linked_changes(pool: &PgPool, request_id: Uuid) -> AppResult<Vec<Change>> {
-    Ok(sqlx::query_as::<_, Change>(&format!(
+/// An attachment of a request the actor may see.
+pub async fn attachment(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<RequestAttachment> {
+    let att = attachment_unchecked(pool, id).await?;
+    let mut conn = pool.acquire().await?;
+    if !is_visible(&mut conn, actor, att.request_id).await? {
+        return Err(AppError::not_found("Attachment not found."));
+    }
+    Ok(att)
+}
+
+/// The change orders that implement a request and that the actor may see,
+/// plus the number of those it may not see.
+pub async fn linked_changes(
+    pool: &PgPool,
+    actor: &Actor,
+    request_id: Uuid,
+) -> AppResult<(Vec<Change>, i64)> {
+    let all = sqlx::query_as::<_, Change>(&format!(
         "{} JOIN change_request_changes x ON x.change_id = c.id
          WHERE x.request_id = $1 ORDER BY c.created_at",
         changes::CHANGE_SELECT
     ))
     .bind(request_id)
     .fetch_all(pool)
-    .await?)
+    .await?;
+    let ids: Vec<Uuid> = all.iter().map(|c| c.id).collect();
+    let visible = changes::visible_ids(pool, actor, &ids).await?;
+    let hidden = (all.len() - visible.len()) as i64;
+    Ok((
+        all.into_iter()
+            .filter(|c| visible.contains(&c.id))
+            .collect(),
+        hidden,
+    ))
 }
 
-/// The requests a change order implements.
-pub async fn for_change(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeRequest>> {
-    Ok(sqlx::query_as::<_, ChangeRequest>(&format!(
+/// The requests a change order implements (those the actor may see).
+pub async fn for_change(
+    pool: &PgPool,
+    actor: &Actor,
+    change_id: Uuid,
+) -> AppResult<Vec<ChangeRequest>> {
+    let rows = sqlx::query_as::<_, ChangeRequest>(&format!(
         "{REQUEST_SELECT} JOIN change_request_changes x ON x.request_id = cr.id
          WHERE x.change_id = $1 ORDER BY cr.number"
     ))
     .bind(change_id)
     .fetch_all(pool)
-    .await?)
+    .await?;
+    only_visible(pool, actor, rows).await
 }
 
-/// Open requests on an item (revision page, desktop app).
-pub async fn open_for_item(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<ChangeRequest>> {
-    Ok(sqlx::query_as::<_, ChangeRequest>(&format!(
+/// Open requests on an item the actor may see (revision page, desktop app).
+pub async fn open_for_item(
+    pool: &PgPool,
+    actor: &Actor,
+    item_id: Uuid,
+) -> AppResult<Vec<ChangeRequest>> {
+    let rows = sqlx::query_as::<_, ChangeRequest>(&format!(
         "{REQUEST_SELECT} JOIN change_request_items f ON f.request_id = cr.id
          WHERE f.item_id = $1 AND cr.status IN {OPEN_STATES}
          ORDER BY cr.created_at DESC"
     ))
     .bind(item_id)
     .fetch_all(pool)
-    .await?)
+    .await?;
+    only_visible(pool, actor, rows).await
 }
 
-/// Open requests assigned to a user (worklist).
-pub async fn assigned_to(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<ChangeRequest>> {
+/// Open requests assigned to the actor (worklist).
+pub async fn assigned_to(pool: &PgPool, actor: &Actor) -> AppResult<Vec<ChangeRequest>> {
     Ok(sqlx::query_as::<_, ChangeRequest>(&format!(
         "{REQUEST_SELECT} WHERE cr.assignee = $1 AND cr.status IN {OPEN_STATES}
          ORDER BY cr.due_date NULLS LAST, cr.created_at"
     ))
-    .bind(user_id)
+    .bind(actor.id)
     .fetch_all(pool)
     .await?)
 }
 
-/// Open requests raised by a user (worklist).
-pub async fn open_by(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<ChangeRequest>> {
+/// Open requests raised by the actor (worklist).
+pub async fn open_by(pool: &PgPool, actor: &Actor) -> AppResult<Vec<ChangeRequest>> {
     Ok(sqlx::query_as::<_, ChangeRequest>(&format!(
         "{REQUEST_SELECT} WHERE cr.requested_by = $1 AND cr.status IN {OPEN_STATES}
          ORDER BY cr.updated_at DESC"
     ))
-    .bind(user_id)
+    .bind(actor.id)
     .fetch_all(pool)
     .await?)
 }
@@ -423,6 +554,30 @@ async fn tell_people(
     tell(conn, actor, request, &people, title, body).await
 }
 
+/// [`tell_people`] with a text that names a change order (or items):
+/// people who may see the request but not all of `named` get the
+/// `redacted` title and body.
+async fn tell_people_naming(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    request: &ChangeRequest,
+    (title, body): (String, String),
+    named: audit::Mentions,
+    (redacted_title, redacted_body): (String, String),
+) -> AppResult<()> {
+    let people = people(conn, request.id).await?;
+    let notice = Notice::request(
+        NotificationKind::ChangeRequest,
+        request.id,
+        &request.number,
+        title,
+        body,
+    )
+    .naming(named, redacted_title, redacted_body);
+    notifications::notify(conn, Some(actor), &people, &notice).await?;
+    Ok(())
+}
+
 async fn touch(conn: &mut PgConnection, request_id: Uuid) -> AppResult<()> {
     sqlx::query("UPDATE change_requests SET updated_at = now() WHERE id = $1")
         .bind(request_id)
@@ -479,15 +634,19 @@ pub fn parse_due_date(raw: Option<&str>) -> AppResult<Option<NaiveDate>> {
 /// or `None` if it was already listed.
 async fn insert_item(
     conn: &mut PgConnection,
+    actor: &Actor,
     request_id: Uuid,
     item: &AffectedItem,
 ) -> AppResult<Option<String>> {
     let note = domain::limit_text("Note", &item.note, 2000)?;
-    let number = sqlx::query_scalar::<_, String>("SELECT number FROM items WHERE id = $1")
-        .bind(item.item_id)
-        .fetch_optional(&mut *conn)
-        .await?
-        .ok_or_else(|| AppError::not_found("Item not found."))?;
+    let (number, project_id) = sqlx::query_as::<_, (String, Option<Uuid>)>(
+        "SELECT number, project_id FROM items WHERE id = $1",
+    )
+    .bind(item.item_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(access::not_found_item)?;
+    access::ensure_visible(actor, project_id, access::not_found_item())?;
     let mut label = number.clone();
     if let Some(rev_id) = item.revision_id {
         let code = sqlx::query_scalar::<_, String>(
@@ -555,23 +714,29 @@ pub async fn create(
     .execute(&mut *tx)
     .await?;
     let mut labels = Vec::new();
+    let mut named = Vec::new();
     for item in &affected {
-        if let Some(label) = insert_item(&mut tx, id, item).await? {
+        if let Some(label) = insert_item(&mut tx, actor, id, item).await? {
             labels.push(label);
+            named.push(item.item_id);
         }
     }
     notifications::add_watch(&mut tx, actor.id, "change_request", id).await?;
-    audit::record(
+    // The details name the items: readers who later see the request (an
+    // item was removed, or as requester or assignee) but not all of them get
+    // a redacted entry.
+    audit::record_mentioning(
         &mut tx,
         Some(actor),
         "change_request.create",
         "change_request",
         Some(id),
+        &audit::Mentions::items(named),
         format!("Raised change request {number} – {}", text.title),
         json!({ "reason": input.reason.as_str(), "priority": input.priority.as_str(), "items": labels }),
     )
     .await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     let recipients = triagers(&mut tx, id).await?;
     tell(
         &mut tx,
@@ -601,7 +766,7 @@ pub async fn create(
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 pub async fn update(
@@ -612,7 +777,7 @@ pub async fn update(
 ) -> AppResult<ChangeRequest> {
     let text = clean(&input)?;
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     let projects = project_ids(&mut tx, id).await?;
     if !abilities(actor, &request, &projects).edit {
         return Err(if status_of(&request).is_open() {
@@ -647,7 +812,7 @@ pub async fn update(
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 pub async fn add_item(
@@ -657,7 +822,7 @@ pub async fn add_item(
     item: AffectedItem,
 ) -> AppResult<String> {
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     let projects = project_ids(&mut tx, id).await?;
     if !abilities(actor, &request, &projects).edit {
         return Err(if status_of(&request).is_open() {
@@ -666,38 +831,58 @@ pub async fn add_item(
             not_now(&request)
         });
     }
+    // A hidden item answers like a missing one, whatever the status.
+    let project =
+        sqlx::query_scalar::<_, Option<Uuid>>("SELECT project_id FROM items WHERE id = $1")
+            .bind(item.item_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(access::not_found_item)?;
+    access::ensure_visible(actor, project, access::not_found_item())?;
+    // The assignee must be able to see every affected item (as in `assign`).
+    if let Some(assignee) = request.assignee {
+        let blind = sqlx::query_scalar::<_, String>(&format!(
+            "SELECT u.display_name FROM users u WHERE u.id = $1 AND NOT {}",
+            access::user_sees_project("u", "$2::uuid")
+        ))
+        .bind(assignee)
+        .bind(project)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(name) = blind {
+            return Err(AppError::Conflict(format!(
+                "The assignee {name} cannot see this item (not a member of its restricted project group); assign somebody else first."
+            )));
+        }
+    }
     // After the decision only members of the item's project group (or admins)
     // add items: otherwise a CAD editor could accept a request while no item
     // is named (any CAD editor may triage then) and attach items of foreign
     // groups to the accepted request afterwards.
-    if !matches!(
+    let decided = !matches!(
         status_of(&request),
         RequestStatus::New | RequestStatus::InTriage
-    ) {
-        let project =
-            sqlx::query_scalar::<_, Option<Uuid>>("SELECT project_id FROM items WHERE id = $1")
-                .bind(item.item_id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or_else(|| AppError::not_found("Item not found."))?;
-        if !actor.can_edit_project(project) {
-            return Err(AppError::Forbidden(format!(
-                "{} is {}: only members of the item's project group or an administrator can add it now.",
-                request.number,
-                status_of(&request).label()
-            )));
-        }
+    );
+    if decided && !actor.can_edit_project(project) {
+        return Err(AppError::Forbidden(format!(
+            "{} is {}: only members of the item's project group or an administrator can add it now.",
+            request.number,
+            status_of(&request).label()
+        )));
     }
-    let label = insert_item(&mut tx, id, &item).await?.ok_or_else(|| {
-        AppError::Conflict(format!("The item is already part of {}.", request.number))
-    })?;
+    let label = insert_item(&mut tx, actor, id, &item)
+        .await?
+        .ok_or_else(|| {
+            AppError::Conflict(format!("The item is already part of {}.", request.number))
+        })?;
     touch(&mut tx, id).await?;
-    audit::record(
+    audit::record_related(
         &mut tx,
         Some(actor),
         "change_request.add_item",
         "change_request",
         Some(id),
+        Some(item.item_id),
         format!("Added {label} to {}", request.number),
         json!({ "item_id": item.item_id, "revision_id": item.revision_id }),
     )
@@ -708,7 +893,7 @@ pub async fn add_item(
 
 pub async fn remove_item(pool: &PgPool, actor: &Actor, id: Uuid, item_id: Uuid) -> AppResult<()> {
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     let projects = project_ids(&mut tx, id).await?;
     if !abilities(actor, &request, &projects).edit {
         return Err(if status_of(&request).is_open() {
@@ -728,12 +913,13 @@ pub async fn remove_item(pool: &PgPool, actor: &Actor, id: Uuid, item_id: Uuid) 
     .await?
     .ok_or_else(|| AppError::not_found("The item is not part of this change request."))?;
     touch(&mut tx, id).await?;
-    audit::record(
+    audit::record_related(
         &mut tx,
         Some(actor),
         "change_request.remove_item",
         "change_request",
         Some(id),
+        Some(item_id),
         format!("Removed {number} from {}", request.number),
         json!({ "item_id": item_id }),
     )
@@ -751,7 +937,7 @@ pub async fn comment(
 ) -> AppResult<RequestComment> {
     let body = domain::require_text("Comment", body, 10_000)?;
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     let comment_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO change_request_comments (id, request_id, author_id, body) VALUES ($1, $2, $3, $4)",
@@ -823,7 +1009,7 @@ async fn set_status(
 /// the triaging user.
 pub async fn start_triage(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ChangeRequest> {
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     let projects = project_ids(&mut tx, id).await?;
     if !may_triage(actor, &projects) {
         return Err(forbidden(&request, "triage"));
@@ -855,7 +1041,7 @@ pub async fn start_triage(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<C
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Assigns the request to a CAD editor or admin (`None` = nobody).
@@ -887,13 +1073,32 @@ pub async fn assign(
         }
     };
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     let projects = project_ids(&mut tx, id).await?;
     if !may_triage(actor, &projects) {
         return Err(forbidden(&request, "assign"));
     }
     if !status_of(&request).is_open() {
         return Err(not_now(&request));
+    }
+    if let Some(user) = &assignee {
+        let blind = sqlx::query_scalar::<_, bool>(&format!(
+            "SELECT EXISTS(SELECT 1 FROM change_request_items cri
+                           JOIN items i ON i.id = cri.item_id
+                           JOIN users u ON u.id = $2
+                           WHERE cri.request_id = $1 AND NOT {})",
+            access::user_sees_project("u", "i.project_id")
+        ))
+        .bind(id)
+        .bind(user.id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if blind {
+            return Err(AppError::Conflict(format!(
+                "{} cannot see every affected item of {} (not a member of a restricted project group).",
+                user.display_name, request.number
+            )));
+        }
     }
     sqlx::query("UPDATE change_requests SET assignee = $2, updated_at = now() WHERE id = $1")
         .bind(id)
@@ -926,7 +1131,7 @@ pub async fn assign(
         .await?;
     }
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Accepts, rejects or defers a request. Rejecting and deferring need a reason.
@@ -944,7 +1149,7 @@ pub async fn decide(
         ));
     }
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     let projects = project_ids(&mut tx, id).await?;
     if !may_triage(actor, &projects) {
         return Err(forbidden(&request, "decide on"));
@@ -1000,7 +1205,7 @@ pub async fn decide(
         },
     )
     .await?;
-    let decided = lock(&mut tx, id).await?;
+    let decided = lock(&mut tx, actor, id).await?;
     webhooks::emit(
         &mut tx,
         Some(actor),
@@ -1011,13 +1216,13 @@ pub async fn decide(
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// Takes a deferred request up again (deferred → in triage).
 pub async fn reopen(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ChangeRequest> {
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     let projects = project_ids(&mut tx, id).await?;
     if !may_triage(actor, &projects) {
         return Err(forbidden(&request, "reopen"));
@@ -1042,13 +1247,13 @@ pub async fn reopen(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ChangeR
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// The requester (or an admin) takes the request back before the decision.
 pub async fn withdraw(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ChangeRequest> {
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     if request.requested_by != actor.id && !actor.is_admin() {
         return Err(AppError::Forbidden(format!(
             "Only the requester or an administrator can withdraw {}.",
@@ -1075,7 +1280,7 @@ pub async fn withdraw(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Chang
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1142,7 +1347,7 @@ pub async fn create_change(
     priority: Option<Priority>,
 ) -> AppResult<CreatedChange> {
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     ensure_implementable(&mut tx, actor, &request).await?;
     let title = match title.map(str::trim).filter(|s| !s.is_empty()) {
         Some(t) => t.to_string(),
@@ -1169,8 +1374,8 @@ pub async fn create_change(
     )
     .await?;
     link(&mut tx, actor, id, change_id).await?;
-    let affected = sqlx::query_as::<_, (Uuid, String, Option<Uuid>)>(
-        "SELECT i.id, i.number,
+    let affected = sqlx::query_as::<_, (Uuid, String, Option<Uuid>, Option<Uuid>)>(
+        "SELECT i.id, i.number, i.project_id,
                 (SELECT r.id FROM revisions r WHERE r.item_id = i.id AND r.state = 'in_work')
          FROM change_request_items cri JOIN items i ON i.id = cri.item_id
          WHERE cri.request_id = $1 ORDER BY i.number",
@@ -1179,8 +1384,18 @@ pub async fn create_change(
     .fetch_all(&mut *tx)
     .await?;
     let mut added = Vec::new();
+    let mut added_items = Vec::new();
     let mut skipped = Vec::new();
-    for (_, number, in_work) in affected {
+    for (item_id, number, project_id, in_work) in affected {
+        // An assignee (or triager) may see the request without seeing every
+        // item: a hidden item is skipped without being named.
+        if !actor.can_see_project(project_id) {
+            skipped.push(format!(
+                "{}: not visible to you – ask a member of its group",
+                access::RESTRICTED_LABEL
+            ));
+            continue;
+        }
         let Some(rev_id) = in_work else {
             skipped.push(format!(
                 "{number}: no revision in work – revise it, then add it to the change"
@@ -1189,7 +1404,10 @@ pub async fn create_change(
         };
         // User errors are raised before anything is written; skip and go on.
         match changes::add_item_in(&mut tx, actor, change_id, rev_id).await {
-            Ok(label) => added.push(label),
+            Ok(label) => {
+                added.push(label);
+                added_items.push(item_id);
+            }
             Err(
                 e @ (AppError::Conflict(_)
                 | AppError::Forbidden(_)
@@ -1204,30 +1422,43 @@ pub async fn create_change(
         .fetch_one(&mut *tx)
         .await?;
     touch(&mut tx, id).await?;
-    audit::record(
+    // Names the new change and its items: redacted for readers of the
+    // request who may not see them.
+    audit::record_mentioning(
         &mut tx,
         Some(actor),
         "change_request.create_change",
         "change_request",
         Some(id),
+        &audit::Mentions::items(added_items).with_change(change_id),
         format!("Created change {change_number} for {}", request.number),
         json!({ "change_id": change_id, "added": added, "skipped": skipped }),
     )
     .await?;
-    tell_people(
+    tell_people_naming(
         &mut tx,
         actor,
         &request,
-        format!("{change_number} implements {}", request.number),
-        format!(
-            "{} created the change order {change_number} for {}.",
-            actor.display_name, request.title
+        (
+            format!("{change_number} implements {}", request.number),
+            format!(
+                "{} created the change order {change_number} for {}.",
+                actor.display_name, request.title
+            ),
+        ),
+        audit::Mentions::change(change_id),
+        (
+            format!("{} has a change order", request.number),
+            format!(
+                "{} created a change order for {}.",
+                actor.display_name, request.title
+            ),
         ),
     )
     .await?;
     tx.commit().await?;
     Ok(CreatedChange {
-        change: changes::get(pool, change_id).await?,
+        change: changes::get(pool, actor, change_id).await?,
         added,
         skipped,
     })
@@ -1250,7 +1481,12 @@ pub async fn link_change(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found("Change not found."))?;
-    let request = lock(&mut tx, id).await?;
+    // A change the actor may not see answers like a missing one, before
+    // anything about it is said or written.
+    if !changes::is_visible(&mut tx, actor, change_id).await? {
+        return Err(AppError::not_found("Change not found."));
+    }
+    let request = lock(&mut tx, actor, id).await?;
     ensure_implementable(&mut tx, actor, &request).await?;
     let open = domain::ChangeStatus::parse(&change_status).is_some_and(|s| s.is_open());
     if !open {
@@ -1265,29 +1501,40 @@ pub async fn link_change(
         )));
     }
     touch(&mut tx, id).await?;
-    audit::record(
+    audit::record_mentioning(
         &mut tx,
         Some(actor),
         "change_request.link_change",
         "change_request",
         Some(id),
+        &audit::Mentions::change(change_id),
         format!("Linked {change_number} to {}", request.number),
         json!({ "change_id": change_id }),
     )
     .await?;
-    tell_people(
+    tell_people_naming(
         &mut tx,
         actor,
         &request,
-        format!("{change_number} implements {}", request.number),
-        format!(
-            "{} linked the change order {change_number} to {}.",
-            actor.display_name, request.title
+        (
+            format!("{change_number} implements {}", request.number),
+            format!(
+                "{} linked the change order {change_number} to {}.",
+                actor.display_name, request.title
+            ),
+        ),
+        audit::Mentions::change(change_id),
+        (
+            format!("{} has a change order", request.number),
+            format!(
+                "{} linked a change order to {}.",
+                actor.display_name, request.title
+            ),
         ),
     )
     .await?;
     tx.commit().await?;
-    changes::get(pool, change_id).await
+    changes::get(pool, actor, change_id).await
 }
 
 /// Called inside the transaction that releases `change`: every accepted
@@ -1307,14 +1554,17 @@ pub(crate) async fn on_change_released(
     .fetch_all(&mut *conn)
     .await?;
     for id in ids {
-        let request = lock(conn, id).await?;
+        let request = lock_unchecked(conn, id).await?;
         set_status(conn, &request, RequestStatus::Implemented).await?;
-        audit::record(
+        // Readers of the request who may not see the change learn only that
+        // the request is implemented.
+        audit::record_mentioning(
             conn,
             Some(actor),
             "change_request.implemented",
             "change_request",
             Some(id),
+            &audit::Mentions::change(change.id),
             format!(
                 "{} is implemented – {} was released",
                 request.number, change.number
@@ -1322,14 +1572,21 @@ pub(crate) async fn on_change_released(
             json!({ "change_id": change.id }),
         )
         .await?;
-        tell_people(
+        tell_people_naming(
             conn,
             actor,
             &request,
-            format!("{} is implemented", request.number),
-            format!(
-                "{} – released with {} ({}).",
-                request.title, change.number, change.title
+            (
+                format!("{} is implemented", request.number),
+                format!(
+                    "{} – released with {} ({}).",
+                    request.title, change.number, change.title
+                ),
+            ),
+            audit::Mentions::change(change.id),
+            (
+                format!("{} is implemented", request.number),
+                format!("{} – the change order was released.", request.title),
             ),
         )
         .await?;
@@ -1401,14 +1658,14 @@ pub async fn add_attachment(
     })?;
     let filename = clean_filename(filename);
     // check before the bytes go into the vault …
-    let request = get(pool, id).await?;
+    let request = get(pool, actor, id).await?;
     if !status_of(&request).is_open() {
         return Err(not_now(&request));
     }
     let blob = vault.store_bytes(bytes).await?;
     // … and again under the lock
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, id).await?;
+    let request = lock(&mut tx, actor, id).await?;
     if !status_of(&request).is_open() {
         return Err(not_now(&request));
     }
@@ -1451,7 +1708,7 @@ pub async fn add_attachment(
     )
     .await?;
     tx.commit().await?;
-    attachment(pool, attachment_id).await
+    attachment(pool, actor, attachment_id).await
 }
 
 /// Removes an attachment (its uploader or an admin, while the request is open).
@@ -1460,9 +1717,9 @@ pub async fn delete_attachment(
     actor: &Actor,
     attachment_id: Uuid,
 ) -> AppResult<RequestAttachment> {
-    let att = attachment(pool, attachment_id).await?;
+    let att = attachment(pool, actor, attachment_id).await?;
     let mut tx = pool.begin().await?;
-    let request = lock(&mut tx, att.request_id).await?;
+    let request = lock(&mut tx, actor, att.request_id).await?;
     if att.uploaded_by != actor.id && !actor.is_admin() {
         return Err(AppError::Forbidden(
             "Only the uploader or an administrator can remove an attachment.".into(),
@@ -1502,6 +1759,7 @@ mod tests {
             role,
             skin: String::new(),
             projects,
+            hidden_projects: Vec::new(),
         }
     }
 

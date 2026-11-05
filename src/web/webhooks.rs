@@ -32,11 +32,11 @@ fn event_choices(selected: &[String]) -> Value {
         .collect::<Vec<_>>())
 }
 
-async fn project_choices(st: &AppState) -> AppResult<Value> {
-    Ok(json!(projects::list(&st.db, false)
+async fn project_choices(st: &AppState, me: &crate::auth::Actor) -> AppResult<Value> {
+    Ok(json!(projects::list(&st.db, me, false)
         .await?
         .into_iter()
-        .map(|p| json!({ "id": p.id, "code": p.code, "name": p.name }))
+        .map(|p| json!({ "id": p.id, "code": p.code, "name": p.name, "restricted": p.is_restricted() }))
         .collect::<Vec<_>>()))
 }
 
@@ -72,7 +72,7 @@ pub async fn list(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response
         json!({
             "webhooks": hooks,
             "events": event_choices(&[]),
-            "projects": project_choices(&st).await?,
+            "projects": project_choices(&st, &ctx.me).await?,
             "targets": targets_note(&st),
         }),
     )
@@ -104,7 +104,7 @@ async fn render_webhook(
             "host": host(&webhook.url),
             "secret": secret,
             "events": event_choices(&webhook.events),
-            "projects": project_choices(st).await?,
+            "projects": project_choices(st, &ctx.me).await?,
             "deliveries": deliveries,
             "max_attempts": crate::webhooks::MAX_ATTEMPTS,
             "retention_days": st.config.webhooks.retention_days,

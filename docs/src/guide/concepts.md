@@ -31,7 +31,7 @@ data never changes – further work happens in a new revision (*Revise*).
 ## Project groups and roles
 
 | Role       | May                                                                                                 |
-|------------|-----------------------------------------------------------------------------------------------------|
+| Viewer     | read internal project groups and the restricted groups they belong to, raise and discuss change requests |
 | Viewer     | read everything, raise and discuss change requests                                                  |
 | CAD editor | create and change items of the project groups they belong to, create project groups, review changes, triage and decide change requests on their groups |
 | Admin      | everything, plus users, all project groups and lock overrides                                       |
@@ -41,6 +41,13 @@ machine, a customer project, a building, a vehicle or a rover. CAD editors start
 managers edit the group and add or remove members. A group can also be bound
 to a group of the identity provider (administrators only); its members are
 then synchronised at every single sign-on.
+
+A group is **internal** (everybody reads it) or **restricted**: then only its
+members – viewers included – and administrators see the group, its items,
+files and the changes about them; for everybody else it does not exist.
+Links from other groups show a *Restricted item* placeholder. Managers switch
+this on the group's page; see
+[Read permissions and restricted groups](../admin/permissions.md).
 
 ## Item numbers
 

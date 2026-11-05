@@ -774,7 +774,7 @@
     var open = !!state.expanded[p.code];
     var children = h("ul.tree" + (open ? "" : ".hidden"));
     var node = h("div.node.group", {
-      title: p.name,
+      title: p.name + (p.visibility === "restricted" ? " – restricted: only its members and administrators see it" : ""),
       on: {
         click: function () {
           state.expanded[p.code] = !state.expanded[p.code];
@@ -2315,7 +2315,8 @@
           rows.push({
             cells: [
               h("span", null, [indent, twisty, h("span.mono", { text: String(n.find_number) + "  " }), h("span.mono", { text: n.item_number + (r ? "/" + r.code : "") })]),
-              r ? r.name : h("span.warn-text", { text: "no " + (rule === "released" ? "released " : "") + "revision" }),
+              n.restricted ? h("span.muted", { text: "Restricted item – in a project group you are not a member of" })
+                : r ? r.name : h("span.warn-text", { text: "no " + (rule === "released" ? "released " : "") + "revision" }),
               r ? badge(r.state) : "",
               fmtNum(n.quantity, 6) + " " + n.unit,
               n.notes || "",
@@ -2329,7 +2330,9 @@
       }
       walk(tree.children, 1);
       panel.appendChild(table(["Find no. / item", "Name", "State", "Qty", "Notes", "Mass", "Cost"], rows, { numeric: [3, 5, 6] }));
-      panel.appendChild(h("p.hint", { text: tree.line_count + " lines" + (tree.unresolved_count ? " · " + tree.unresolved_count + " without a matching revision" : "") + " · double-click a line to open it · ⚠ = incomplete mass or cost" }));
+      panel.appendChild(h("p.hint", { text: tree.line_count + " lines" + (tree.unresolved_count ? " · " + tree.unresolved_count + " without a matching revision" : "") +
+        (tree.restricted_lines ? " · mass and cost exclude " + tree.restricted_lines + " restricted line" + (tree.restricted_lines === 1 ? "" : "s") : "") +
+        " · double-click a line to open it · ⚠ = incomplete mass or cost" }));
     });
   }
 
@@ -2788,6 +2791,7 @@
     if (r.kept.length) parts.push(r.kept.length + " locally modified file(s) kept");
     if (r.clashes.length) parts.push(r.clashes.length + " name clash(es)");
     if (r.failed.length) parts.push(r.failed.length + " failed");
+    if (r.restricted_lines) parts.push(r.restricted_lines + " restricted line(s) skipped – items of project groups you are not a member of");
     var problems = r.clashes.length || r.failed.length || r.unresolved.length || r.missing_references.length;
     if (!problems) {
       toast((parts.length ? parts.join(" · ") : "The working folder is up to date.") + (r.kept.length ? ": " + r.kept.join(", ") : ""), r.kept.length ? "info" : null);
@@ -2818,7 +2822,9 @@
   /** Labels of the sync states of working-folder files. */
   var SYNC_LABEL = {
     up_to_date: "Up to date", unchanged: "Up to date", modified: "Modified", outdated: "Outdated", conflict: "Conflict",
-    "new": "New", missing: "Not in working folder", clash: "Name clash"
+    "new": "New", missing: "Not in working folder", clash: "Name clash",
+    // the server answers "not found": a restricted project group the user left
+    inaccessible: "No longer accessible – local copy only"
   };
 
   /** Offers to move a workspace of the old layout <group>/<item>/<revision>/

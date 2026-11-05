@@ -20,7 +20,7 @@ use crate::{
     domain::RevisionRule,
     error::{AppError, AppResult},
     models::Revision,
-    services::{bom, files, revisions},
+    services::{access, bom, files, revisions},
 };
 
 /// More revisions than this are refused (a "Get" of half the vault is a
@@ -74,6 +74,8 @@ pub struct Workset {
     pub unresolved: Vec<String>,
     /// File names referenced inside CAD files that are not in the vault.
     pub missing_references: Vec<String>,
+    /// BOM lines to items the reader may not see (skipped, no identity).
+    pub restricted_lines: usize,
     pub file_count: usize,
     pub total_bytes: i64,
     /// Database queries the resolution took (for the performance tests).
@@ -94,10 +96,11 @@ pub async fn resolve(
     rule: RevisionRule,
     with_references: bool,
 ) -> AppResult<Workset> {
-    let root = revisions::get(pool, root_revision_id).await?;
-    let (lines_by_rev, mut queries) = bom::load_structure(pool, root.id, rule).await?;
+    let root = revisions::get(pool, actor, root_revision_id).await?;
+    let (lines_by_rev, mut queries) = bom::load_structure(pool, actor, root.id, rule).await?;
     queries += 1;
     let structure = bom::structure_revisions(root.id, &lines_by_rev);
+    let structure_restricted = structure.restricted_lines;
     drop(lines_by_rev);
     let mut order: Vec<(Uuid, Via)> = vec![(root.id, Via::Root)];
     let mut seen: HashSet<Uuid> = HashSet::from([root.id]);
@@ -130,7 +133,7 @@ pub async fn resolve(
             if names.is_empty() {
                 break;
             }
-            let holders = holders_of(pool, &names, root.project_id).await?;
+            let holders = holders_of(pool, actor, &names, root.project_id).await?;
             queries += 1;
             let found: HashSet<&str> = holders.iter().map(|(_, k)| k.as_str()).collect();
             for name in &names {
@@ -232,6 +235,7 @@ pub async fn resolve(
         revisions: out,
         unresolved,
         missing_references,
+        restricted_lines: structure_restricted,
         file_count,
         total_bytes,
         // + the revisions and their files
@@ -262,6 +266,7 @@ async fn referenced_names(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec
 /// group, items of other groups with the same file name are ignored.
 async fn holders_of(
     pool: &PgPool,
+    actor: &Actor,
     names: &[String],
     project_id: Option<Uuid>,
 ) -> AppResult<Vec<(Uuid, String)>> {
@@ -271,17 +276,19 @@ async fn holders_of(
         key: String,
         same_project: bool,
     }
-    let rows = sqlx::query_as::<_, Row>(
+    let rows = sqlx::query_as::<_, Row>(&format!(
         "SELECT DISTINCT i.id AS item_id, lower(f.filename) AS key,
                 i.project_id IS NOT DISTINCT FROM $2 AS same_project
          FROM files f
          JOIN revisions r ON r.id = f.revision_id
          JOIN items i ON i.id = r.item_id
-         WHERE lower(f.filename) = ANY($1)
+         WHERE lower(f.filename) = ANY($1) AND {}
          ORDER BY 2, 1",
-    )
+        access::item_visible("i", 3)
+    ))
     .bind(names)
     .bind(project_id)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?;
     let in_project: HashSet<String> = rows

@@ -55,7 +55,9 @@ reported problems, check simulations and compare their results. Quote item, requ
 and revisions exactly as returned. You can draft change orders, raise change requests and comment on them, \
 but only when the user asks; you cannot submit, approve or release change orders or triage and decide change \
 requests – tell the user what is left for them to do. Prompts: release_notes, review_change, release_check, \
-worklist_triage, triage_requests, simulation_status.";
+worklist_triage, triage_requests, simulation_status.\n\n\
+Items of restricted project groups you are not a member of are reported as not found; masked rows show as \
+'restricted'. Do not guess or retry.";
 
 fn response(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })

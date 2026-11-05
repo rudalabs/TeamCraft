@@ -65,12 +65,13 @@ pub async fn list(
     let page_no = q.page.unwrap_or(1).max(1);
     let (rows, total) = items::search(
         &st.db,
+        &ctx.me,
         &filter,
         Page::from_page_number(Some(page_no), PER_PAGE),
     )
     .await?;
     let (projects, saved_searches) = tokio::try_join!(
-        projects::list(&st.db, false),
+        projects::list(&st.db, &ctx.me, false),
         crate::services::personal::saved_searches(&st.db, ctx.me.id),
     )?;
     // Query string without the page parameter, for the pagination links.
@@ -290,21 +291,21 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
 /// `/items/{id}` shows the latest revision.
 pub async fn show(
     State(st): State<AppState>,
-    _ctx: WebCtx,
+    ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let latest = items::latest_revision(&st.db, id).await?;
+    let latest = items::latest_revision(&st.db, &ctx.me, id).await?;
     Ok(redirect(&format!("/revisions/{}", latest.id)))
 }
 
 /// Short link by item number, e.g. for QR code labels: `/i/PRT-000042`.
 pub async fn by_number(
     State(st): State<AppState>,
-    _ctx: WebCtx,
+    ctx: WebCtx,
     Path(number): Path<String>,
 ) -> AppResult<Response> {
-    let item = items::get_by_number(&st.db, &number).await?;
-    let latest = items::latest_revision(&st.db, item.id).await?;
+    let item = items::get_by_number(&st.db, &ctx.me, &number).await?;
+    let latest = items::latest_revision(&st.db, &ctx.me, item.id).await?;
     Ok(redirect(&format!("/revisions/{}", latest.id)))
 }
 

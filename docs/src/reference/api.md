@@ -11,6 +11,41 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/me
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/items?q=bracket&system=solidworks"
 ```
 
+## Read permissions
+
+Every answer contains only what the token's user may read (see
+[Read permissions and restricted groups](../admin/permissions.md)):
+
+* An item, revision, file, file version, change order, change request,
+  attachment or project group the user may not read answers **404 with the
+  same message as an unknown one** (`{"error": {"code": "not_found", …}}`),
+  never 403. Lists and their `total` leave such objects out.
+* Rows that link a visible object to a hidden item are **placeholders**:
+  `"restricted": true`, the identity fields (number, name, type, revision,
+  state) empty and the ids the nil UUID; structural fields (find number,
+  quantity, notes of the line, kind and note of a reference, role and note
+  of a simulation basis) stay. This applies to BOM lines and trees, item
+  references, simulation bases, change order and change request items and
+  readiness blockers; impacts get `"source_restricted": true` with the
+  source and the releasing change removed.
+* Expanded BOMs (`?expand=true`) carry `restricted_lines` and
+  `rollup_incomplete`; a working set carries `restricted_lines`; the Pack and
+  Go `manifest.json` carries `restricted_lines`.
+* Lists that leave entries out say how many: `where-used`,
+  `/items/{number}/simulations` and `/changes/{number}/impact` return the
+  usual array plus the header `x-hidden-count`; the revision answer has
+  `hidden_changes`, references have `hidden_incoming`, a change request
+  has `hidden_changes`. CAD file-name matches (`file_referrers`) in groups
+  the user cannot see are left out without a count.
+* `GET /api/v1/me` lists the user's own memberships in `projects` and,
+  in `restricted_projects`, those of them that are restricted. It never
+  names groups the user is not a member of.
+* `GET /api/v1/projects` lists only the groups the user may see; projects
+  carry `visibility` (`internal` or `restricted`). `POST /api/v1/projects`
+  takes an optional `visibility`; `PUT /api/v1/projects/{code}/visibility`
+  `{"visibility": "restricted"}` restricts a group (managers of the group
+  and admins).
+
 ## The check-out / check-in cycle
 
 ```sh

@@ -283,6 +283,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(admin::project_show).post(admin::update_project),
         )
         .route("/projects/{id}/numbering", post(admin::update_numbering))
+        .route("/projects/{id}/visibility", post(admin::update_visibility))
         .route("/projects/{id}/members", post(admin::add_member))
         .route(
             "/projects/{id}/members/{user_id}/remove",
@@ -426,7 +427,7 @@ impl FromRequestParts<AppState> for WebCtx {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let WebUser(me) = WebUser::from_request_parts(parts, state).await?;
-        let unread = crate::services::notifications::unread_count(&state.db, me.id).await?;
+        let unread = crate::services::notifications::unread_count(&state.db, &me).await?;
         Ok(WebCtx {
             me,
             flash: read_flash(&parts.headers),

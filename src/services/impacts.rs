@@ -35,7 +35,7 @@ use crate::{
     error::{AppError, AppResult},
     models::{Impact, Revision},
     services::{
-        audit,
+        access, audit,
         notifications::{self, Notice},
         references, revisions,
     },
@@ -47,7 +47,7 @@ const IMPACT_SELECT: &str = "
            im.source_item_id, si.number AS source_number, sr.id AS source_revision_id,
            sr.code AS source_code, sr.name AS source_name, im.event, im.relation, im.detail,
            im.change_id, c.number AS change_number, im.created_at, im.resolved_at, im.resolution,
-           u.display_name AS resolved_by_name, im.note
+           u.display_name AS resolved_by_name, im.note, si.project_id AS source_project_id
     FROM impacts im
     JOIN items i ON i.id = im.item_id
     LEFT JOIN projects p ON p.id = i.project_id
@@ -61,17 +61,25 @@ const IMPACT_SELECT: &str = "
 const LATEST: &str = "pr.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = pr.item_id)
                       AND pr.state <> 'obsolete'";
 
-pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Impact> {
-    sqlx::query_as::<_, Impact>(&format!("{IMPACT_SELECT} WHERE im.id = $1"))
+/// An impact on an item the actor may read; a hidden source is redacted.
+pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Impact> {
+    let impact = sqlx::query_as::<_, Impact>(&format!("{IMPACT_SELECT} WHERE im.id = $1"))
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| AppError::not_found("Impact not found."))
+        .ok_or_else(|| AppError::not_found("Impact not found."))?;
+    access::ensure_visible(
+        actor,
+        impact.project_id,
+        AppError::not_found("Impact not found."),
+    )?;
+    Ok(impact.redact(actor))
 }
 
 /// Impacts on an item: open ones first, then the 20 most recently resolved.
-pub async fn for_item(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<Impact>> {
-    Ok(sqlx::query_as::<_, Impact>(&format!(
+/// Sources the actor may not see are redacted.
+pub async fn for_item(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<Vec<Impact>> {
+    let rows = sqlx::query_as::<_, Impact>(&format!(
         "({IMPACT_SELECT} WHERE im.item_id = $1 AND im.resolved_at IS NULL ORDER BY im.created_at DESC)
          UNION ALL
          ({IMPACT_SELECT} WHERE im.item_id = $1 AND im.resolved_at IS NOT NULL
@@ -79,7 +87,11 @@ pub async fn for_item(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<Impact>> {
     ))
     .bind(item_id)
     .fetch_all(pool)
-    .await?)
+    .await?;
+    if let Some(first) = rows.first() {
+        access::ensure_visible(actor, first.project_id, access::not_found_item())?;
+    }
+    Ok(rows.into_iter().map(|i| i.redact(actor)).collect())
 }
 
 /// Open impacts the actor can resolve: on items of their project groups
@@ -91,12 +103,18 @@ pub async fn open_for(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Impact>> {
     let projects: Vec<Uuid> = actor.projects.to_vec();
     Ok(sqlx::query_as::<_, Impact>(&format!(
         "{IMPACT_SELECT} WHERE im.resolved_at IS NULL AND ($1 OR i.project_id = ANY($2))
-         ORDER BY im.created_at DESC LIMIT 200"
+           AND {}
+         ORDER BY im.created_at DESC LIMIT 200",
+        access::item_visible("i", 3)
     ))
     .bind(actor.is_admin())
     .bind(&projects)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
-    .await?)
+    .await?
+    .into_iter()
+    .map(|i| i.redact(actor))
+    .collect())
 }
 
 /// Marks an open impact as checked: the dependent needs no change.
@@ -107,7 +125,7 @@ pub async fn acknowledge(pool: &PgPool, actor: &Actor, id: Uuid, note: &str) -> 
             "Say why the dependent needs no change (e.g. form, fit and function unchanged).".into(),
         )
     })?;
-    let impact = get(pool, id).await?;
+    let impact = get(pool, actor, id).await?;
     if impact.resolved_at.is_some() {
         return Err(AppError::Conflict(format!(
             "This impact on {} is already resolved.",
@@ -137,12 +155,13 @@ pub async fn acknowledge(pool: &PgPool, actor: &Actor, id: Uuid, note: &str) -> 
             "The impact was resolved in the meantime.".into(),
         ));
     }
-    audit::record(
+    audit::record_related(
         &mut tx,
         Some(actor),
         "impact.acknowledge",
         "item",
         Some(impact.item_id),
+        Some(impact.source_item_id),
         format!(
             "{} checked against {}/{} ({}): {note}",
             impact.item_number, impact.source_number, impact.source_code, impact.event
@@ -151,7 +170,7 @@ pub async fn acknowledge(pool: &PgPool, actor: &Actor, id: Uuid, note: &str) -> 
     )
     .await?;
     tx.commit().await?;
-    get(pool, id).await
+    get(pool, actor, id).await
 }
 
 /// The result of [`acknowledge_all`].
@@ -183,7 +202,7 @@ pub async fn acknowledge_all(
             "Say why the dependent needs no change (e.g. form, fit and function unchanged).".into(),
         )
     })?;
-    let rev = revisions::get(pool, revision_id).await?;
+    let rev = revisions::get(pool, actor, revision_id).await?;
     if !actor.can_edit_project(rev.project_id) {
         return Err(AppError::Forbidden(format!(
             "Only CAD editors of the project group {} (or admins) can acknowledge impacts on {}.",
@@ -255,12 +274,13 @@ pub async fn acknowledge_all(
     .fetch_all(&mut *tx)
     .await?;
     for impact in &acknowledged {
-        audit::record(
+        audit::record_related(
             &mut tx,
             Some(actor),
             "impact.acknowledge",
             "item",
             Some(impact.item_id),
+            Some(impact.source_item_id),
             format!(
                 "{} checked against {}/{} ({}): {note}",
                 impact.item_number, impact.source_number, impact.source_code, impact.event
@@ -386,7 +406,15 @@ async fn flag_dependents(
          JOIN file_versions dv ON dv.id = fr.file_version_id
          JOIN files df ON df.id = dv.file_id AND dv.version = df.current_version
          JOIN revisions pr ON pr.id = df.revision_id
+         JOIN items di ON di.id = pr.item_id
          WHERE sf.revision_id = $2 AND pr.item_id <> $1 AND {LATEST} AND NOT (pr.item_id = ANY($5))
+           -- a file-name match alone never crosses the boundary of a
+           -- restricted project group (it would tell one side about the other)
+           AND (di.project_id IS NOT DISTINCT FROM (SELECT si.project_id FROM items si WHERE si.id = $1)
+                OR NOT EXISTS (SELECT 1 FROM projects xp
+                               WHERE xp.visibility = 'restricted'
+                                 AND (xp.id = di.project_id
+                                      OR xp.id = (SELECT si.project_id FROM items si WHERE si.id = $1))))
          ORDER BY pr.item_id, df.filename
          {UPSERT}"
     );
@@ -465,26 +493,43 @@ async fn record_flags(
     if flagged.is_empty() {
         return Ok(());
     }
-    let numbers = sqlx::query_scalar::<_, String>(
-        "SELECT number FROM items WHERE id = ANY($1) ORDER BY number",
+    // One entry per project group of the dependents, each naming only its own
+    // items: a reader who may not see a restricted group's dependents still
+    // reads the entries about the others.
+    let rows = sqlx::query_as::<_, (Option<Uuid>, Uuid, String)>(
+        "SELECT project_id, id, number FROM items WHERE id = ANY($1)
+         ORDER BY project_id NULLS FIRST, number",
     )
     .bind(flagged)
     .fetch_all(&mut *conn)
     .await?;
-    audit::record(
-        conn,
-        Some(actor),
-        "impact.flag",
-        "revision",
-        Some(source.id),
-        format!(
-            "{} {event}: check {}",
-            revisions::label(source),
-            numbers.join(", ")
-        ),
-        json!({ "item_id": source.item_id, "dependents": flagged }),
-    )
-    .await?;
+    let mut groups: Vec<(Option<Uuid>, Vec<Uuid>, Vec<String>)> = Vec::new();
+    for (project, id, number) in rows {
+        match groups.last_mut() {
+            Some((p, ids, numbers)) if *p == project => {
+                ids.push(id);
+                numbers.push(number);
+            }
+            _ => groups.push((project, vec![id], vec![number])),
+        }
+    }
+    for (_, ids, numbers) in groups {
+        audit::record_mentioning(
+            conn,
+            Some(actor),
+            "impact.flag",
+            "revision",
+            Some(source.id),
+            &audit::Mentions::items(ids.iter().copied()),
+            format!(
+                "{} {event}: check {}",
+                revisions::label(source),
+                numbers.join(", ")
+            ),
+            json!({ "item_id": source.item_id, "dependents": ids }),
+        )
+        .await?;
+    }
     notify_flagged(conn, actor, source, flagged).await
 }
 
@@ -535,6 +580,7 @@ async fn notify_flagged(
         let notice = Notice::revision_ref(
             NotificationKind::Impact,
             row.revision_id,
+            row.item_id,
             &row.number,
             &row.code,
             format!(
@@ -555,6 +601,24 @@ async fn notify_flagged(
                 } else {
                     format!(" ({})", row.detail)
                 }
+            ),
+        )
+        // Recipients who may not see the source learn only that something
+        // restricted changed.
+        .redacted_for(
+            source.item_id,
+            format!(
+                "Check needed: {} – a restricted item this depends on {}",
+                row.number,
+                if row.event == "released" {
+                    "was released"
+                } else {
+                    "is obsolete"
+                }
+            ),
+            format!(
+                "{} {how}. Acknowledge with a note if it needs no change, or revise it.",
+                row.number
             ),
         );
         notifications::notify(conn, Some(actor), &recipients, &notice).await?;
@@ -672,14 +736,22 @@ pub struct Dependent {
     /// Released together in the same change (not flagged).
     #[sqlx(default)]
     pub in_change: bool,
+    /// Whether the reader may see the dependent (hidden ones are dropped).
+    #[sqlx(default)]
+    #[serde(skip)]
+    pub visible: bool,
 }
 
 /// The dependents of the given revisions: multi-level through BOMs and item
 /// references of the latest revisions, plus CAD files that reference their
 /// files.
-pub async fn analysis(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Dependent>> {
+pub async fn analysis(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_ids: &[Uuid],
+) -> AppResult<(Vec<Dependent>, i64)> {
     if revision_ids.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), 0));
     }
     let mut out = sqlx::query_as::<_, Dependent>(&format!(
         "WITH RECURSIVE edges AS (
@@ -697,18 +769,20 @@ pub async fn analysis(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Dep
              JOIN revisions pr ON pr.id = sb.revision_id
              WHERE {LATEST}
          ),
-         up(root, item_id, level, relation, via, path) AS (
-             SELECT r.item_id, r.item_id, 0, ''::text, r.item_id, ARRAY[r.item_id]
-             FROM revisions r WHERE r.id = ANY($1)
+         up(root, item_id, level, relation, via, path, visible) AS (
+             SELECT r.item_id, r.item_id, 0, ''::text, r.item_id, ARRAY[r.item_id], {root_vis}
+             FROM revisions r JOIN items ri ON ri.id = r.item_id WHERE r.id = ANY($1)
              UNION ALL
-             SELECT up.root, e.dependent, up.level + 1, e.relation, up.item_id, up.path || e.dependent
+             SELECT up.root, e.dependent, up.level + 1, e.relation, up.item_id, up.path || e.dependent,
+                    {vis}
              FROM up JOIN edges e ON e.target = up.item_id
-             WHERE NOT (e.dependent = ANY(up.path)) AND up.level < 12
+             JOIN items ui ON ui.id = e.dependent
+             WHERE up.visible AND NOT (e.dependent = ANY(up.path)) AND up.level < 12
          )
          SELECT DISTINCT ON (up.root, up.item_id)
                 up.root AS root_item_id, up.level, up.item_id, i.number AS item_number, lr.name AS item_name,
                 lr.id AS revision_id, lr.code AS revision_code, lr.state AS revision_state,
-                up.relation, vi.number AS via_number
+                up.relation, vi.number AS via_number, up.visible
          FROM up
          JOIN items i ON i.id = up.item_id
          JOIN items vi ON vi.id = up.via
@@ -717,15 +791,30 @@ pub async fn analysis(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Dep
              WHERE r.item_id = i.id ORDER BY r.seq DESC LIMIT 1
          ) lr
          WHERE up.level > 0
-         ORDER BY up.root, up.item_id, up.level"
+         ORDER BY up.root, up.item_id, up.level",
+        vis = access::item_visible("ui", 2),
+        root_vis = access::item_visible("ri", 2)
     ))
     .bind(revision_ids)
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?;
+    // Hidden dependents are dropped (the walk stopped at them) and counted.
+    let hidden_items: std::collections::HashSet<Uuid> = out
+        .iter()
+        .filter(|d| !d.visible)
+        .map(|d| d.item_id)
+        .collect();
+    out.retain(|d| d.visible);
     // CAD files of other items that reference the files (one level).
     for id in revision_ids {
-        let rev = revisions::get(pool, *id).await?;
-        for f in references::file_referrers(pool, *id).await? {
+        let rev = revisions::get_unchecked(pool, *id).await?;
+        if !actor.can_see_project(rev.project_id) {
+            continue;
+        }
+        // hidden file-name matches are left out without a count
+        let referrers = references::file_referrers(pool, actor, *id).await?;
+        for f in referrers {
             if out
                 .iter()
                 .any(|d| d.root_item_id == rev.item_id && d.item_id == f.item_id)
@@ -744,6 +833,7 @@ pub async fn analysis(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Dep
                 relation: "file".into(),
                 via_number: rev.item_number.clone(),
                 in_change: false,
+                visible: true,
             });
         }
     }
@@ -759,7 +849,7 @@ pub async fn analysis(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Dep
         (a.level, &a.item_number, &a.via_number).cmp(&(b.level, &b.item_number, &b.via_number))
     });
     out.dedup_by(|a, b| a.item_id == b.item_id && a.via_number == b.via_number);
-    Ok(out)
+    Ok((out, hidden_items.len() as i64))
 }
 
 #[cfg(test)]
@@ -793,6 +883,8 @@ mod tests {
             resolution: None,
             resolved_by_name: None,
             note: String::new(),
+            source_project_id: None,
+            source_restricted: false,
         }
     }
 

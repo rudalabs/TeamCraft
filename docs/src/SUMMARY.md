@@ -21,6 +21,7 @@
 - [Install with Docker](admin/docker.md)
 - [Configuration](admin/configuration.md)
 - [Users, roles and single sign-on](admin/users.md)
+- [Read permissions and restricted groups](admin/permissions.md)
 - [Event webhooks](admin/webhooks.md)
 - [Operations](admin/operations.md)
 
@@ -42,3 +43,4 @@
     - [Importing existing CAD folder trees](research/cad-folder-import.md)
     - [Popular features of Teamcenter](research/teamcenter.md)
     - [Openly licensed CAD files for end-to-end tests](research/cad-test-files.md)
+    - [Read permissions for project groups](research/read-permissions.md)

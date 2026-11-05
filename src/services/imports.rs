@@ -40,7 +40,7 @@ use crate::{
     domain::{self, ItemType, Role},
     error::{AppError, AppResult},
     services::{
-        audit, bom,
+        access, audit, bom,
         files::{self, Upload},
         items, revisions,
     },
@@ -329,7 +329,8 @@ pub async fn plan(
             .bind(project_id)
             .fetch_optional(&mut *conn)
             .await?
-            .ok_or_else(|| AppError::BadRequest("Unknown project.".into()))?;
+            .ok_or_else(access::unknown_project)?;
+    access::ensure_visible(actor, Some(project_id), access::unknown_project())?;
     if !active {
         return Err(AppError::BadRequest(format!(
             "The project group {project_code} is archived."
@@ -350,29 +351,39 @@ pub async fn plan(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    let existing: HashMap<String, Existing> = sqlx::query_as::<_, (Uuid, String, String, String)>(
+    let found = sqlx::query_as::<_, (Uuid, String, String, String, Option<Uuid>)>(
         "SELECT i.id, i.number, i.item_type,
                 COALESCE((SELECT r.code FROM revisions r WHERE r.item_id = i.id
-                          ORDER BY r.seq DESC LIMIT 1), '?')
+                          ORDER BY r.seq DESC LIMIT 1), '?'),
+                i.project_id
          FROM items i WHERE i.number = ANY($1)",
     )
     .bind(&numbers)
     .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .map(|(id, number, item_type, code)| {
-        let latest = format!("{number}/{code}");
-        let item_type = ItemType::parse(&item_type).unwrap_or(ItemType::Part);
-        (
-            number,
-            Existing {
-                id,
-                item_type,
-                latest,
-            },
-        )
-    })
-    .collect();
+    .await?;
+    // Numbers of items the actor may not see: taken, but never matched or
+    // linked, and neither type nor revision is shown.
+    let unavailable: HashSet<String> = found
+        .iter()
+        .filter(|f| !actor.can_see_project(f.4))
+        .map(|f| f.1.clone())
+        .collect();
+    let existing: HashMap<String, Existing> = found
+        .into_iter()
+        .filter(|f| actor.can_see_project(f.4))
+        .map(|(id, number, item_type, code, _)| {
+            let latest = format!("{number}/{code}");
+            let item_type = ItemType::parse(&item_type).unwrap_or(ItemType::Part);
+            (
+                number,
+                Existing {
+                    id,
+                    item_type,
+                    latest,
+                },
+            )
+        })
+        .collect();
 
     // The root: the target revision or a new top-level assembly.
     let (root_label, root_number, root_name, root_item_number) = match &target {
@@ -394,6 +405,12 @@ pub async fn plan(
             .unwrap_or("Imported assembly");
             let name = domain::truncate_chars(name, 200);
             let number = match row.and_then(|r| domain::normalize_item_number(&r.number).ok()) {
+                Some(n) if options.numbers == NumberSource::File && unavailable.contains(&n) => {
+                    warnings.push(format!(
+                        "{n} is not available: the new assembly gets a generated number."
+                    ));
+                    None
+                }
                 Some(n) if options.numbers == NumberSource::File && !existing.contains_key(&n) => {
                     Some(n)
                 }
@@ -511,9 +528,16 @@ pub async fn plan(
         let child = match known {
             Some(c) => c,
             None => {
-                let taken = normalized
-                    .as_ref()
-                    .is_some_and(|n| existing.contains_key(n));
+                // Why the number from the file cannot be used, if it cannot.
+                let taken = normalized.as_ref().and_then(|n| {
+                    if unavailable.contains(n) {
+                        Some("is not available")
+                    } else if existing.contains_key(n) {
+                        Some("exists already")
+                    } else {
+                        None
+                    }
+                });
                 items.push(planned_item(
                     row,
                     normalized,
@@ -622,7 +646,7 @@ fn planned_item(
     row: &BomRow,
     normalized: Option<String>,
     matched: Option<&Existing>,
-    taken: bool,
+    taken: Option<&'static str>,
     options: &ImportOptions,
     warnings: &mut Vec<String>,
 ) -> PlannedItem {
@@ -650,9 +674,9 @@ fn planned_item(
             item.number = Some(n);
         }
         (Some(n), None) if options.numbers == NumberSource::File => {
-            if taken {
+            if let Some(why) = taken {
                 warnings.push(format!(
-                    "Row {}: {n} exists already – the new item gets a generated number.",
+                    "Row {}: {n} {why} – the new item gets a generated number.",
                     row.line
                 ));
             } else {

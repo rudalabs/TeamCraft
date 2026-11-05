@@ -417,9 +417,10 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
             let role = Role::parse(&role).context("role must be viewer, editor or admin")?;
             let mut project_ids = Vec::new();
             for code in &projects {
-                let project = services::projects::get_by_code(&pool, code)
-                    .await
-                    .with_context(|| format!("unknown project group '{code}'"))?;
+                let project =
+                    services::projects::get_by_code(&pool, &teamcraft::auth::Actor::system(), code)
+                        .await
+                        .with_context(|| format!("unknown project group '{code}'"))?;
                 project_ids.push(project.id);
             }
             let password = read_new_password()?;
