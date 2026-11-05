@@ -2,7 +2,7 @@
 //!
 //! The server converts a file once into the compact mesh of [`crate::mesh`]
 //! and caches it next to the vault (`previews/ab/<sha256>.v<N>.tcm`); the
-//! browser (`static/viewer.js`) and the desktop app only draw it. Meshes,
+//! browser (`shared/js/viewer.js`) and the desktop app only draw it. Meshes,
 //! point clouds, STEP B-reps (tessellated with the `truck` kernel) and
 //! simulation results (VTK, VTU/VTP, CalculiX FRD with result fields, see
 //! [`crate::simmesh`]) are supported, see [`PreviewFormat`].

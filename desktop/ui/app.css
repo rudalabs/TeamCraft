@@ -2,7 +2,7 @@
  *
  * Global navigation rail, navigator tree, object tabs with sub-tabs, toolbar
  * and status bar. Every colour, radius and font comes from the shared skins
- * (static/skins.css, copied at build time); apart from the documented shadow
+ * (shared/css/skins.css, copied at build time); apart from the documented shadow
  * values this file uses no literal colours, no gradients, no glow and no
  * uppercase. Colour means state or the one primary action. Only transform and
  * opacity animate; navigation (tree, tabs, rail, keyboard) never animates.
@@ -11,15 +11,12 @@
 
 :root {
   font-family: var(--sans);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   --rail: 56px;
   --nav-width: 300px;
-  --d-ctl: 28px;
-  --d-ctl-sm: 24px;
-  --d-row: 28px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -84,7 +81,7 @@ button, .button {
   background: var(--surface);
   border: 1px solid var(--control-border);
   border-radius: var(--radius-sm);
-  height: var(--d-ctl);
+  height: var(--ctl-h);
   padding: 0 10px;
   cursor: pointer;
   white-space: nowrap;
@@ -107,8 +104,8 @@ button.primary {
 button.danger { color: var(--st-danger-fg); }
 button.link { border: none; background: none; color: var(--link); padding: 0; height: auto; font-weight: inherit; }
 button.big { height: 36px; padding: 0 16px; font-size: 14px; justify-content: center; }
-button.icon { width: var(--d-ctl); padding: 0; justify-content: center; border-color: transparent; background: none; color: var(--text-muted); }
-button.small { height: var(--d-ctl-sm); padding: 0 8px; font-size: 12px; }
+button.icon { width: var(--ctl-h); padding: 0; justify-content: center; border-color: transparent; background: none; color: var(--text-muted); }
+button.small { height: var(--ctl-h-sm); padding: 0 8px; font-size: 12px; }
 /* quiet row actions: link colour, a border on hover and focus only */
 button.ghost { color: var(--link); background: none; border-color: transparent; }
 button.ghost:focus-visible { border-color: var(--control-border); }
@@ -138,7 +135,7 @@ input, select, textarea {
   width: 100%;
   transition: border-color 120ms ease;
 }
-input, select { height: var(--d-ctl); }
+input, select { height: var(--ctl-h); }
 input[type="checkbox"], input[type="radio"] { height: auto; width: auto; accent-color: var(--primary); }
 select {
   appearance: none;
@@ -152,8 +149,8 @@ input::placeholder, textarea::placeholder { color: var(--text-dim); opacity: 1; 
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus); outline-offset: 0; border-color: var(--focus); }
 input:disabled, select:disabled, textarea:disabled { color: var(--text-dim); background-color: var(--surface-2); border-color: var(--border); }
 select option { background: var(--surface); color: var(--text); }
-textarea { min-height: 4.5rem; padding: 6px 8px; resize: vertical; line-height: 18px; }
-label { display: grid; gap: 4px; font-weight: 500; font-size: 13px; color: var(--text-muted); }
+textarea { min-height: 4.5rem; padding: 6px 8px; resize: vertical; line-height: var(--lh-body); }
+label { display: grid; gap: 4px; font-weight: 500; font-size: var(--fs-body); color: var(--text-muted); }
 label.check { display: flex; align-items: center; gap: 6px; color: var(--text); }
 label.check input { width: auto; accent-color: var(--primary); }
 .stack { display: grid; gap: 12px; }
@@ -379,7 +376,7 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .nav-head .row { gap: 4px; flex-wrap: nowrap; flex: none; }
 /* header buttons never truncate; the heading takes the ellipsis */
 .nav-head .row > button { flex: none; white-space: nowrap; }
-.nav-head .row > button.icon { width: var(--d-ctl-sm); height: var(--d-ctl-sm); }
+.nav-head .row > button.icon { width: var(--ctl-h-sm); height: var(--ctl-h-sm); }
 .nav-filter { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 4px 8px 8px; }
 .chip {
   height: 24px; font-size: 12px; padding: 0 8px; border-radius: var(--radius-sm);
@@ -461,7 +458,7 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .toolbar .tool.icon { padding: 0; }
 /* rare tools with an unmistakable icon (Open folder, Browser) are icons; the
    title names them and the text stays as their accessible name */
-.toolbar .tool-folder:not(.primary), .toolbar .tool-web:not(.primary) { width: var(--d-ctl); padding: 0; gap: 0; justify-content: center; font-size: 0; }
+.toolbar .tool-folder:not(.primary), .toolbar .tool-web:not(.primary) { width: var(--ctl-h); padding: 0; gap: 0; justify-content: center; font-size: 0; }
 /* Ghost tools; the next step is the one filled button. Actions that are not
    available now stay in their place, muted, with a tooltip saying why. */
 .toolbar .tool:not(.primary) { border-color: transparent; background: none; color: var(--text); }
@@ -596,7 +593,7 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 /* one height with and without actions, so side-by-side tables line up */
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; margin-bottom: 8px; flex-wrap: wrap; }
 .panel-head > h2 { margin: 0; }
-.panel-head button { height: var(--d-ctl-sm); }
+.panel-head button { height: var(--ctl-h-sm); }
 .panel > .table-wrap { margin: 0 -12px -12px; }
 .panel > .table-wrap:not(:last-child) { margin-bottom: 8px; }
 .panel > .table-wrap table.grid th:first-child, .panel > .table-wrap table.grid td:first-child { padding-left: 12px; }
@@ -669,7 +666,7 @@ textarea.review-comment { width: 100%; }
 .lifecycle-track li.current ~ li .badge::before { display: none; }
 
 table.grid { width: 100%; border-collapse: collapse; }
-table.grid th, table.grid td { height: var(--d-row); padding: 4px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
+table.grid th, table.grid td { height: var(--row-h); padding: 4px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
 table.grid th {
   position: sticky; top: 0; z-index: 1;
   font-size: 12px; line-height: 16px; font-weight: 500;
@@ -690,7 +687,7 @@ table.grid tbody tr.selected { background: var(--selected); }
 table.grid tbody tr.selected > td:first-child { box-shadow: inset 2px 0 0 var(--focus); }
 table.grid tbody tr.selected .dim, table.grid tbody tr.selected .hint { color: var(--text-muted); }
 table.grid td.actions { text-align: right; white-space: nowrap; }
-table.grid td.actions button { height: var(--d-ctl-sm); padding: 0 8px; font-size: 12px; }
+table.grid td.actions button { height: var(--ctl-h-sm); padding: 0 8px; font-size: 12px; }
 .indent { display: inline-block; }
 .twisty-btn { border: none; background: none; height: 20px; padding: 0; color: var(--text-dim); width: 16px; justify-content: center; font-size: 10px; }
 @media (hover: hover) {
@@ -878,7 +875,7 @@ ul.impact-rows > li {
   grid-template-columns: minmax(12rem, 2fr) auto minmax(0, 1.4fr) auto;
   align-items: center;
   gap: 4px 12px;
-  min-height: var(--d-row);
+  min-height: var(--row-h);
   padding: 2px 8px 2px 14px;
 }
 ul.impact-rows > li + li { border-top: 1px solid var(--border); }

@@ -34,6 +34,6 @@ Thumbs.db
 *.swp
 *~
 
-# Desktop app: assets copied from static/ and media/ by desktop/build.rs, generated schemas
+# Desktop app: assets copied from shared/ and media/ by desktop/build.rs, generated schemas
 desktop/ui/static/
 desktop/gen/

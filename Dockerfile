@@ -24,9 +24,11 @@ COPY src src
 COPY migrations migrations
 COPY templates templates
 COPY static static
+COPY shared shared
 COPY media media
-# `touch`: COPY keeps the file times, which can be older than the dummy build.
-RUN touch src/main.rs src/lib.rs \
+# `touch`: COPY keeps the file times, which can be older than the dummy build;
+# build.rs runs again and lists shared/ (empty in the dummy build).
+RUN touch build.rs src/main.rs src/lib.rs \
  && cargo build --release --locked --bin teamcraft \
  && mkdir -p /out/var/lib/teamcraft/vault \
  && cp target/release/teamcraft /out/teamcraft

@@ -4,7 +4,7 @@
 //! point-cloud formats, plus STEP B-rep tessellation with the `truck` CAD
 //! kernel (Apache-2.0). Every reader produces one [`Mesh`] in model
 //! coordinates; [`Mesh::encode`] writes the compact binary form that
-//! `static/viewer.js` draws (`TCMESH01`, little endian).
+//! `shared/js/viewer.js` draws (`TCMESH01`, little endian).
 //!
 //! Simulation results (VTK, VTU/VTP, CalculiX FRD, see [`crate::simmesh`])
 //! additionally carry per-vertex scalar [`Field`]s that the viewer colours
@@ -87,7 +87,7 @@ impl Field {
 }
 
 /// Stops of the colour map (perceptually uniform, after matplotlib's
-/// "viridis", CC0). `static/viewer.js` has the same table.
+/// "viridis", CC0). `shared/js/viewer.js` has the same table.
 const COLOR_MAP: [[u8; 3]; 9] = [
     [68, 1, 84],
     [71, 45, 123],
@@ -215,7 +215,7 @@ impl Mesh {
         b
     }
 
-    /// The binary form read by `static/viewer.js`:
+    /// The binary form read by `shared/js/viewer.js`:
     ///
     /// ```text
     /// 0   "TCMESH01"

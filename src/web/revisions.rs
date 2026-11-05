@@ -960,7 +960,7 @@ async fn preview_page(
     )
 }
 
-/// The preview mesh of a blob (`static/viewer.js` format). The content is
+/// The preview mesh of a blob (`shared/js/viewer.js` format). The content is
 /// addressed by its hash, so browsers may cache it for good. Shared with the
 /// REST API.
 pub(crate) async fn mesh_response(

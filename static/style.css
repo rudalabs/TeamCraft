@@ -17,8 +17,8 @@
   --gutter: 24px;
   --page-width: min(100% - 2 * var(--gutter), 1600px);
   font-family: var(--sans);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizelegibility;
@@ -712,7 +712,7 @@ fieldset.plain > label.field > .hint { margin-top: 2px; }
 input[type=text], input[type=password], input[type=email], input[type=number], input[type=search], input[type=date], input[type=url],
 select, textarea {
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-body);
   color: var(--text);
   background: var(--input-bg);
   border: 1px solid var(--control-border);
@@ -723,7 +723,7 @@ select, textarea {
   width: 100%;
   transition: border-color 120ms ease;
 }
-textarea { height: auto; min-height: 88px; padding: 6px 10px; resize: vertical; line-height: 20px; }
+textarea { height: auto; min-height: 88px; padding: 6px 10px; resize: vertical; line-height: var(--lh-body); }
 /* the review comment at reading width, the same as in the desktop app */
 #decision textarea { max-width: 72ch; }
 select {
@@ -759,7 +759,7 @@ input[type=file]::file-selector-button {
   padding: 0 12px;
   margin-right: 10px;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 500;
   color: var(--text);
   cursor: pointer;
@@ -781,9 +781,9 @@ input[type=file]::file-selector-button {
 
 button, .button {
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 500;
-  line-height: 20px;
+  line-height: var(--lh-body);
   display: inline-flex;
   align-items: center;
   justify-content: center;

@@ -20,7 +20,7 @@ const TOKEN_FILE: &str = "token";
 pub struct Settings {
     /// Base URL of the TeamCraft server, e.g. `https://plm.example.org`.
     pub server_url: Option<String>,
-    /// Skin id (see `static/skins.css`).
+    /// Skin id (see `shared/css/skins.css`).
     pub skin: Option<String>,
     /// Root of the local workspace (check-out folder).
     pub workspace_dir: Option<PathBuf>,

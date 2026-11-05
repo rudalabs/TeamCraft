@@ -1,11 +1,13 @@
+/* SPDX-License-Identifier: MPL-2.0 */
 /* TeamCraft skins – the TeamCraft house style (light and dark) and the distro skins.
- * Shared by the web UI (/static/skins.css) and the desktop app (copied at build time).
+ * Shared by the web UI (/static/shared/css/skins.css) and the desktop app
+ * (desktop/build.rs copies shared/ into the app).
  *
  * Everything visual hangs on the custom properties below; style.css and the
  * desktop app.css never use literal colours. The selectors are not limited to
  * <html>, so the skin picker can render each card in its own skin.
  * Self-contained (CSP `style-src 'self'`): Montserrat (page titles and the
- * wordmark) is served from /static/fonts, text uses the system UI face;
+ * wordmark) is served from /static/shared/fonts, text uses the system UI face;
  * Oswald is still declared but unused (an unused face is never downloaded).
  *
  * Skins (src/domain.rs SKINS):
@@ -526,7 +528,7 @@
    Fonts
    =========================================================================== */
 
-/* Fonts (SIL Open Font License, static/fonts/OFL-*.txt): Montserrat for the
+/* Fonts (SIL Open Font License, shared/fonts/OFL-*.txt): Montserrat for the
    wordmark and page titles only; text uses the system UI face. Oswald is
    declared but unused, so browsers never download it. Variable fonts, Latin
    + Latin Extended (names such as "Uścinowicz"). */
@@ -535,7 +537,7 @@
   font-style: normal;
   font-display: swap;
   font-weight: 100 900;
-  src: url(/static/fonts/montserrat-latin-ext-wght-normal.woff2) format('woff2-variations');
+  src: url(/static/shared/fonts/montserrat-latin-ext-wght-normal.woff2) format('woff2-variations');
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 @font-face {
@@ -543,7 +545,7 @@
   font-style: normal;
   font-display: swap;
   font-weight: 100 900;
-  src: url(/static/fonts/montserrat-latin-wght-normal.woff2) format('woff2-variations');
+  src: url(/static/shared/fonts/montserrat-latin-wght-normal.woff2) format('woff2-variations');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 @font-face {
@@ -551,7 +553,7 @@
   font-style: normal;
   font-display: swap;
   font-weight: 200 700;
-  src: url(/static/fonts/oswald-latin-ext-wght-normal.woff2) format('woff2-variations');
+  src: url(/static/shared/fonts/oswald-latin-ext-wght-normal.woff2) format('woff2-variations');
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 @font-face {
@@ -559,7 +561,7 @@
   font-style: normal;
   font-display: swap;
   font-weight: 200 700;
-  src: url(/static/fonts/oswald-latin-wght-normal.woff2) format('woff2-variations');
+  src: url(/static/shared/fonts/oswald-latin-wght-normal.woff2) format('woff2-variations');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
@@ -578,7 +580,10 @@
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 10px;
-  /* density: table rows, tree rows, controls, the top bar */
+  /* density: body text, table rows, tree rows, controls, the top bar.
+     The web UI uses these defaults, the desktop app the compact set below. */
+  --fs-body: 14px;
+  --lh-body: 20px;
   --row-h: 32px;
   --row-h-dense: 28px;
   --tree-row-h: 24px;
@@ -596,8 +601,12 @@
   --mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', consolas, monospace;
 }
 
-/* Compact density (optional): shorter rows and controls. */
+/* Compact density (the desktop app sets data-density="compact" on <html>):
+   smaller body text, shorter rows and controls. */
 :root[data-density="compact"] {
+  --fs-body: 13px;
+  --lh-body: 18px;
   --row-h: 28px;
   --ctl-h: 28px;
+  --ctl-h-sm: 24px;
 }
