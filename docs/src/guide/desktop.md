@@ -81,6 +81,10 @@ CHG-000002*). The **one highlighted button is the most likely next step**:
 | in review, obsolete, or checked out by somebody else | nothing |
 | released | *Revise* |
 
+The working folder of your check-out is looked at again whenever the tab is
+shown or the app window gets the focus back – save in the CAD program, switch
+back, and *Check in…* is highlighted.
+
 * revision tab: **Lock** (*Check out*, or *Check in…* and *Cancel check-out*
   / *Force unlock* while checked out) · **Work** (*Edit*, *Get…*, *Open
   folder*) · **Lifecycle** (*Release…*, *Revise*) · **Collaborate**

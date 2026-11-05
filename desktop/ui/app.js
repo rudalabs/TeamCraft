@@ -503,6 +503,11 @@
     // New notifications: bell count and a toast, every minute while signed in.
     setInterval(function () { if (state.me) pollNotifications(false); }, 60000);
     initSplitter();
+    // back from the CAD program: is the next step of my check-out still right?
+    window.addEventListener("focus", function () {
+      var t = activeTab();
+      if (t && t.data && t.recheckLocal) t.recheckLocal();
+    });
     document.addEventListener("keydown", function (e) {
       var mod = e.ctrlKey || e.metaKey;
       if (mod && e.key.toLowerCase() === "w" && state.active) {
@@ -1807,7 +1812,7 @@
       renderTabs();
       var data = tab.data;
       if (data.rev.checked_out_by !== state.me.id) return data;
-      return localChanges(data.rev).then(function (changed) { data.localChanges = changed; return data; });
+      return localChanges(data.rev).then(function (changed) { data.localChanges = changed; data.localChangesFresh = true; return data; });
     });
   }
 
@@ -1863,7 +1868,7 @@
         (rev.state === "released" ? "; Revise creates the next revision" : "") : null),
       checkin: other ? "Checked out by " + other + " – only they can check it in" : "Check out first",
       cancel: other ? "Checked out by " + other + " – only they or an administrator can cancel the check-out" : "Not checked out",
-      edit: other ? "Checked out by " + other : rev.state !== "in_work" ? "Only revisions in work can be edited – this one is " + stateName : "Check out first – the attributes change under your check-out",
+      edit: other ? "Checked out by " + other : notEditor ? notEditor : rev.state !== "in_work" ? "Only revisions in work can be edited – this one is " + stateName : "Check out first – the attributes change under your check-out",
       release: notEditor || (rev.state !== "in_work" ? "Only revisions in work can be released – this one is " + stateName :
         other ? "Checked out by " + other + " – they check it in first" :
         openChange ? "Already in change order " + openChange.number + " (" + label(openChange.status) + ")" : null),
@@ -1904,14 +1909,35 @@
     function act(id, text, icon, onClick, title) {
       return tool(text, icon, onClick, { primary: next === id, disabled: !can[id], title: can[id] ? title : why[id] });
     }
+    var checkinTitle = "Upload the changed files from your workspace and release the lock";
+    var noChanges = " (no local changes found)";
     var lock = rev.checked_out_by ? [
       act("checkin", "Check in…", "checkin", function () { checkinDialog(tab); },
-        "Upload the changed files from your workspace and release the lock" + (d.localChanges === false ? " (no local changes found)" : "")),
+        checkinTitle + (d.localChanges === false ? noChanges : "")),
       act("cancel", rev.checked_out_by !== state.me.id ? "Force unlock" : "Cancel check-out", "cancel", function () { doCancelCheckout(tab); },
         rev.checked_out_by !== state.me.id ? "Take the lock away from " + rev.checked_out_by_name + " (administrator)" : "Release the lock without uploading anything")
     ] : [
       act("checkout", "Check out", "checkout", function () { doCheckout(tab); }, "Take the lock and copy the files into your workspace")
     ];
+    var releaseButton = act("release", "Release…", "release", function () { releaseDialog(tab); }, "Create a change order with reviewers and submit it");
+    // The working copy changes while the tab stays open (the CAD program saves
+    // into it): look again when the tab is shown from its cache or the window
+    // gets the focus back, so "Release…" is not highlighted over unsaved work.
+    tab.recheckLocal = null;
+    if (rev.checked_out_by === state.me.id) {
+      tab.recheckLocal = function () {
+        localChanges(rev).then(function (changed) {
+          if (changed === null || changed === d.localChanges || tab.data !== d) return;
+          d.localChanges = changed;
+          var step = revisionNextStep(d, can);
+          lock[0].classList.toggle("primary", step === "checkin");
+          releaseButton.classList.toggle("primary", step === "release");
+          lock[0].title = checkinTitle + (changed === false ? noChanges : "");
+        });
+      };
+      if (!d.localChangesFresh) tab.recheckLocal();
+    }
+    d.localChangesFresh = false;
     append(toolbar, [
       toolGroup("Lock", lock),
       toolGroup("Work", [
@@ -1920,7 +1946,7 @@
         tool("Open folder", "folder", function () { openWorkspaceFolder(tab); }, { title: "Open the working folder of this revision" })
       ]),
       toolGroup("Lifecycle", [
-        act("release", "Release…", "release", function () { releaseDialog(tab); }, "Create a change order with reviewers and submit it"),
+        releaseButton,
         act("revise", "Revise", "revise", function () { doRevise(tab); }, "Create the next revision")
       ]),
       toolGroup("Collaborate", [
