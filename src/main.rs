@@ -96,6 +96,22 @@ enum Command {
         #[arg(long)]
         addr: Option<String>,
     },
+    /// Extract the text of a PDF (used by the server, which never parses a PDF
+    /// in its own process: time, size and memory limits).
+    #[command(hide = true)]
+    TextExtract {
+        #[arg(long)]
+        input: std::path::PathBuf,
+        /// The text file to write.
+        #[arg(long)]
+        output: std::path::PathBuf,
+        /// Refuse an input file larger than this before opening it.
+        #[arg(long, default_value_t = teamcraft::pdftext::MAX_PDF_BYTES)]
+        max_input_bytes: u64,
+        /// Limit the address space of this process (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        max_memory_bytes: u64,
+    },
     /// Convert a 3D file into the preview mesh (used by the server, which
     /// runs every conversion in its own process with a time limit).
     #[command(hide = true)]
@@ -198,6 +214,24 @@ fn main() -> ExitCode {
             *max_input_bytes,
         );
     }
+    if let Some(Command::TextExtract {
+        input,
+        output,
+        max_input_bytes,
+        max_memory_bytes,
+    }) = &cli.command
+    {
+        teamcraft::preview::limit_memory(*max_memory_bytes);
+        // the parser's panic messages are not meant for users
+        std::panic::set_hook(Box::new(|_| {}));
+        return match teamcraft::pdftext::run_job(input, output, *max_input_bytes) {
+            Ok(_) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -223,6 +257,7 @@ async fn run(cli: Cli) -> ExitCode {
     }
     let result = match cli.command.unwrap_or(Command::Serve { no_migrate: false }) {
         Command::PreviewMesh { .. } => unreachable!("handled above"),
+        Command::TextExtract { .. } => unreachable!("handled above"),
         Command::Healthcheck { addr } => return healthcheck(addr),
         Command::Mcp { server, token_file } => mcp_bridge(&server, token_file.as_deref()).await,
         Command::Serve { no_migrate } => serve(no_migrate).await,

@@ -45,6 +45,8 @@ minijinja = "2"
 gltf = { version = "1.4", default-features = false, features = ["utils"] }
 quick-xml = "0.37"
 truck-stepio = "0.3"
+# Text of PDF reports (MIT OR Apache-2.0), only in the isolated `text-extract` process
+pdf_oxide = { version = "0.3", default-features = false, features = ["legacy-crypto"] }
 truck-meshalgo = { version = "0.4", default-features = false, features = ["analyzers", "filters", "tessellation"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

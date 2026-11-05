@@ -152,3 +152,46 @@ fn the_conversion_process_stops_at_its_memory_limit() {
     assert!(!limited.status.success(), "stopped at the limit");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The PDF text process: size cap before opening, memory limit, bad input.
+#[test]
+fn the_pdf_text_process_is_bounded() {
+    let dir = temp_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |input: &std::path::Path, max_input: u64, memory: u64| {
+        Command::new(env!("CARGO_BIN_EXE_teamcraft"))
+            .args(["text-extract", "--input"])
+            .arg(input)
+            .arg("--output")
+            .arg(dir.join("out.txt"))
+            .args(["--max-input-bytes", &max_input.to_string()])
+            .args(["--max-memory-bytes", &memory.to_string()])
+            .output()
+            .unwrap()
+    };
+    // a huge (sparse) file is refused before it is opened
+    let big = dir.join("big.pdf");
+    std::fs::File::create(&big)
+        .unwrap()
+        .set_len(16 * 1024 * MIB)
+        .unwrap();
+    let out = run(&big, 32 * MIB, 0);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("too large to read"));
+    assert!(!dir.join("out.txt").exists());
+    // not a PDF: a clean error, no crash
+    let junk = dir.join("junk.pdf");
+    std::fs::write(&junk, b"this is not a pdf").unwrap();
+    let out = run(&junk, 32 * MIB, 0);
+    assert_eq!(out.status.code(), Some(1), "{:?}", out);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not a readable PDF"));
+    // a memory limit far below what the process maps stops it
+    #[cfg(target_os = "linux")]
+    {
+        let small = dir.join("small.pdf");
+        std::fs::write(&small, vec![b'%'; 2 * MIB as usize]).unwrap();
+        let out = run(&small, 32 * MIB, 1024 * 1024);
+        assert!(!out.status.success(), "stopped at the limit");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

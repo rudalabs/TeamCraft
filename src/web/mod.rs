@@ -231,6 +231,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/simulation-results/{id}/delete",
             post(simulations::delete_result),
         )
+        .route(
+            "/simulation-proposals/{id}/accept",
+            post(simulations::accept_proposal),
+        )
+        .route(
+            "/simulation-proposals/{id}/reject",
+            post(simulations::reject_proposal),
+        )
         .route("/notifications", get(notifications::page))
         .route("/notifications/read-all", post(notifications::read_all))
         .route("/notifications/{id}/open", get(notifications::open))

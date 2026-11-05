@@ -118,7 +118,10 @@ async fn the_exchange_file_sets_values_at_check_in_and_audits_it() {
 
 #[tokio::test]
 async fn a_malformed_exchange_file_refuses_the_whole_check_in() {
-    let app = app_or_skip!();
+    let app = match common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await {
+        Some(app) => app,
+        None => return,
+    };
     let (_, eng) = app.user_in("eng", Role::Editor, &["ROVER"]).await;
     let rev = simulation(&app, &eng, "ROVER").await;
     let before = results(&app, &eng, &rev).await.len();
@@ -165,7 +168,7 @@ async fn a_malformed_exchange_file_refuses_the_whole_check_in() {
     assert_eq!(files, 0, "the check-in was rolled back");
     let r = app.api(Method::GET, &rev, &eng, None).await;
     assert!(
-        !r.json()["checked_out_by"].is_null(),
+        !r.json()["revision"]["checked_out_by"].is_null(),
         "still checked out: {}",
         r.text()
     );
@@ -361,7 +364,10 @@ async fn templates_extract_values_per_group_and_show_their_source() {
 
 #[tokio::test]
 async fn csv_templates_and_the_scan_size_cap() {
-    let app = app_or_skip!();
+    let app = match common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await {
+        Some(app) => app,
+        None => return,
+    };
     let (_, boss) = app.user_in("boss", Role::Editor, &["ROVER"]).await;
     sqlx::query("UPDATE project_members SET manager = true")
         .execute(&app.pool)
