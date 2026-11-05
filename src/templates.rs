@@ -807,6 +807,9 @@ mod tests {
                     "reviews": [{ "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
                                   "decision": "approved", "comment": "ok", "decided_at": TS }],
                     "candidates": [user()], "history": [audit_entry()], "priorities": ["low", "normal"],
+                    "suggested": [{ "user_id": OTHER, "username": "max", "display_name": "Max <M>", "role": "editor",
+                                    "score": 7, "reasons": ["edited PRT-000001 3 times in the last 90 days",
+                                                            "manager of ROVER"] }],
                     "impact": [{ "root_item_id": ME, "level": 1, "item_id": OTHER, "item_number": "ASM-000001",
                                  "item_name": "Stage", "revision_id": OTHER, "revision_code": "A",
                                  "revision_state": "released", "relation": "bom", "via_number": "PRT-000001",
@@ -822,6 +825,15 @@ mod tests {
             assert!(
                 html.contains("Implements") && html.contains("ECR-000001"),
                 "the change page names the request it implements"
+            );
+            assert!(
+                html.contains("Suggested reviewers")
+                    && html.contains("Add Max &lt;M&gt;")
+                    && html.contains("name=\"username\" value=\"max\"")
+                    && html.contains(
+                        "edited PRT-000001 3 times in the last 90 days; manager of ROVER"
+                    ),
+                "suggested reviewers with their reasons"
             );
         }
 

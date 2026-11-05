@@ -30,7 +30,8 @@ use crate::{
     models::Revision,
     services::{
         audit, bom, changes, checkouts, desktop, files, impacts, imports, items, notifications,
-        package, projects, references, requests, revisions, stats, uploads, users, workset, Page,
+        package, projects, references, requests, reviewers, revisions, stats, uploads, users,
+        workset, Page,
     },
     web, AppState,
 };
@@ -216,6 +217,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{number}/items", post(add_change_item))
         .route("/changes/{number}/reviewers", post(add_change_reviewer))
         .route("/changes/{number}/readiness", get(change_readiness))
+        .route(
+            "/changes/{number}/suggested-reviewers",
+            get(change_suggested_reviewers),
+        )
         .route(
             "/changes/{number}/dependencies",
             post(add_change_dependencies),
@@ -411,6 +416,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/changes/{number}/impact                   impact analysis: items that depend on its revisions",
             "POST   /api/v1/changes/{number}/items                    {item, revision?}",
             "POST   /api/v1/changes/{number}/reviewers                {username}",
+            "GET    /api/v1/changes/{number}/suggested-reviewers?limit=  ranked reviewer suggestions with reasons (never assigns)",
             "GET    /api/v1/changes/{number}/readiness                release readiness: unreleased (blocking) and obsolete or file-scan (warning) dependencies",
             "POST   /api/v1/changes/{number}/dependencies             add the in-work revisions of all unreleased dependencies, level by level",
             "POST   /api/v1/changes/{number}/submit",
@@ -1706,6 +1712,29 @@ async fn change_readiness(
     let readiness = changes::readiness(&st.db, change.id).await?;
     Ok(Json(
         json!({ "ready": readiness.is_ready(), "blockers": readiness.blockers, "warnings": readiness.warnings }),
+    ))
+}
+
+#[derive(Deserialize)]
+struct SuggestQuery {
+    limit: Option<i64>,
+}
+
+/// Who should review the change: ranked users with the reasons.
+async fn change_suggested_reviewers(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Path(number): Path<String>,
+    Query(q): Query<SuggestQuery>,
+) -> AppResult<Json<Value>> {
+    let change = changes::get_by_number(&st.db, &number).await?;
+    let limit = q
+        .limit
+        .unwrap_or(reviewers::DEFAULT_LIMIT as i64)
+        .clamp(1, reviewers::MAX_LIMIT as i64) as usize;
+    let suggestions = reviewers::suggest(&st.db, change.id, limit).await?;
+    Ok(Json(
+        json!({ "change": change.number, "suggestions": suggestions }),
     ))
 }
 
