@@ -19,7 +19,7 @@
       <form method="post" action="/items/{{ item.id }}/watch">
         <input type="hidden" name="watch" value="{% if watching %}0{% else %}1{% endif %}">
         <input type="hidden" name="back" value="{{ back }}">
-        <button class="ghost small" type="submit" aria-pressed="{% if watching %}true{% else %}false{% endif %}" title="{% if watching %}Stop the notifications about {{ rev.item_number }}{% else %}Get notified about new revisions, releases and check-ins of {{ rev.item_number }}{% endif %}">{{ m.eye() }}{% if watching %}Unwatch{% else %}Watch{% endif %}</button>
+        <button class="ghost small" type="submit" title="{% if watching %}Stop the notifications about {{ rev.item_number }}{% else %}Get notified about new revisions, releases and check-ins of {{ rev.item_number }}{% endif %}">{{ m.eye() }}{% if watching %}Unwatch{% else %}Watch{% endif %}</button>
       </form>
     </div>
   </div>
@@ -186,26 +186,26 @@
     {%- set lc = namespace(passed=false) %}
     {%- for s in lifecycle.states %}
     {%- if s == rev.state %}<li class="current" aria-current="step">{{ m.badge(s) }}</li>{% set lc.passed = true %}
-    {%- elif not lc.passed and s != "obsolete" %}<li class="done"><span class="badge badge-released"><span class="glyph" aria-hidden="true">✓</span>{{ s|label }}</span></li>
-    {%- else %}<li class="future">{{ m.badge(s) }}</li>{% endif %}
+    {%- elif not lc.passed and s != "obsolete" %}<li class="done"><span class="badge badge-released"><span class="glyph" aria-hidden="true">✓</span>{{ s|label }}<span class="visually-hidden">, done</span></span></li>
+    {%- else %}<li class="future"><span class="badge">{{ s|label }}<span class="visually-hidden">, not reached</span></span></li>{% endif %}
     {%- endfor %}
   </ol>
+  <div class="lifecycle-text">
   {% if lifecycle.next %}
-  <dl class="props">
     {% for r in lifecycle.next %}
-    <dt>→ {{ r.to|label }}</dt><dd>{{ r.how }} <span class="muted">{{ r.who }}</span></dd>
+    <p>→ {{ r.to|label }}: {{ r.how }} <span class="muted">{{ r.who }}</span></p>
     {% endfor %}
-  </dl>
   {% else %}
-  <p class="small muted">Obsolete is the final state.</p>
+    <p>Obsolete is the final state.</p>
   {% endif %}
   {% if rev.state == "in_work" %}
-  <p class="small muted">Attributes, files and BOM change only while the revision is checked out – possible for CAD editors of
+    <p class="note">Attributes, files and BOM change only while the revision is checked out – possible for CAD editors of
     {{ item.project_code or "the project group" }} and admins.</p>
   {% elif rev.state in ["released", "obsolete"] %}
-  <p class="small muted">Released data never changes; further work happens in a new revision (<em>Revise</em>) by CAD editors of
+    <p class="note">Released data never changes; further work happens in a new revision (Revise) by CAD editors of
     {{ item.project_code or "the project group" }} and admins.</p>
   {% endif %}
+  </div>
   <div id="lifecycle-rules" class="table-wrap hidden">
     <table>
       <thead><tr><th>From</th><th>To</th><th>How</th><th>Who</th></tr></thead>
@@ -222,12 +222,13 @@
   <h2>Revisions</h2>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Rev</th><th>State</th><th>Released</th></tr></thead>
+    <thead><tr><th>Rev</th><th>State</th><th>Created</th><th>Released</th></tr></thead>
     <tbody>
     {% for r in revisions %}
       <tr class="{% if r.id == rev.id %}current{% endif %}">
-        <td title="{{ r.name }} · created {{ r.created_at|dt }} by {{ r.created_by_name }}"><a class="revbox" href="/revisions/{{ r.id }}">{{ r.code }}</a></td>
+        <td title="{{ r.name }}"><a class="revbox" href="/revisions/{{ r.id }}">{{ r.code }}</a></td>
         <td>{{ m.badge(r.state) }}{% if r.checked_out_by_name %} {{ m.lock(r.checked_out_by_name) }}{% endif %}</td>
+        <td class="small">{{ m.time(r.created_at) }}<span class="muted block">{{ r.created_by_name }}</span></td>
         <td class="small nowrap">{{ m.time(r.released_at) }}</td>
       </tr>
     {% endfor %}
@@ -384,7 +385,7 @@
     <select name="role" aria-label="Role of the basis">
       {% for r in simulation.roles %}<option value="{{ r.value }}">{{ r.label }}</option>{% endfor %}
     </select>
-    <input type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Basis item">
+    <input class="item-no" type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Basis item">
     <input class="find" type="text" name="revision" placeholder="latest" aria-label="Revision code">
     <input type="text" name="file" placeholder="File name (optional, pins its current version)" aria-label="Simulated file">
     <input type="text" name="note" placeholder="Note (optional)" maxlength="500" aria-label="Note">
@@ -531,11 +532,11 @@
   {% else %}<p class="empty">No BOM lines.</p>{% endif %}
   {% if can.edit %}
   <h3>Add component</h3>
-  <form class="inline" method="post" action="/revisions/{{ rev.id }}/bom/lines">
-    <input type="text" name="child" placeholder="Item number, e.g. PRT-000012" required aria-label="Child item number">
-    <input class="qty" type="text" name="quantity" value="1" inputmode="decimal" aria-label="Quantity" required>
-    <input class="find" type="text" name="find_number" placeholder="auto" inputmode="numeric" aria-label="Find number">
-    <input type="text" name="notes" placeholder="Notes (optional)" maxlength="500" aria-label="Notes">
+  <form class="inline fields" method="post" action="/revisions/{{ rev.id }}/bom/lines">
+    <label>Item <input class="item-no" type="text" name="child" placeholder="e.g. PRT-000012" required></label>
+    <label>Qty <input class="qty" type="text" name="quantity" value="1" inputmode="decimal" required></label>
+    <label>Find no. <input class="find" type="text" name="find_number" placeholder="auto" inputmode="numeric"></label>
+    <label class="grow">Notes <input type="text" name="notes" placeholder="optional" maxlength="500"></label>
     <button type="submit">Add</button>
   </form>
   {% endif %}
@@ -577,7 +578,7 @@
         <select name="kind" aria-label="Kind of reference">
           {% for k in references.kinds %}<option value="{{ k.value }}">{{ k.label }}</option>{% endfor %}
         </select>
-        <input type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Referenced item">
+        <input class="item-no" type="text" name="item" placeholder="Item number, e.g. PRT-000012" required aria-label="Referenced item">
         <input type="text" name="note" placeholder="Note (optional)" maxlength="500" aria-label="Note">
         <button type="submit">Add</button>
       </form>

@@ -107,7 +107,6 @@
   <section class="card">
     <div class="card-head">
       <h2>My open changes <span class="count">{{ my_changes|length }}</span></h2>
-      {% if me.can_edit %}<a class="button small ghost" href="/changes/new">New change</a>{% endif %}
     </div>
     {% if my_changes %}
     <div class="table-wrap">

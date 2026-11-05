@@ -56,6 +56,7 @@ pub fn environment(instance_name: &str) -> Result<Environment<'static>, minijinj
     }
     env.add_filter("dt", filter_dt);
     env.add_filter("num", filter_num);
+    env.add_filter("fixed", filter_fixed);
     env.add_filter("filesize", filter_filesize);
     env.add_filter("label", filter_label);
     env.add_filter("urlencode", |value: String| util::pct_encode(&value));
@@ -100,6 +101,15 @@ fn filter_age(value: Option<String>) -> String {
 fn filter_num(value: Option<f64>, decimals: Option<usize>) -> String {
     match value {
         Some(v) => util::format_number(v, decimals.unwrap_or(3)),
+        None => "—".to_string(),
+    }
+}
+
+/// A number with exactly `decimals` places (default 2), so a column of
+/// costs or masses lines up at the decimal point; `—` when missing.
+fn filter_fixed(value: Option<f64>, decimals: Option<usize>) -> String {
+    match value {
+        Some(v) => format!("{v:.prec$}", prec = decimals.unwrap_or(2)),
         None => "—".to_string(),
     }
 }
@@ -1361,6 +1371,9 @@ mod tests {
         assert_eq!(filter_num(Some(1.23456), None), "1.235");
         assert_eq!(filter_num(Some(2.0), Some(2)), "2");
         assert_eq!(filter_num(None, None), "—");
+        assert_eq!(filter_fixed(Some(41.0), None), "41.00");
+        assert_eq!(filter_fixed(Some(0.2), Some(3)), "0.200");
+        assert_eq!(filter_fixed(None, Some(3)), "—");
         assert_eq!(filter_label(Some("in_work".into())), "WIP");
         assert_eq!(filter_label(Some("in_review".into())), "In Review");
         assert_eq!(filter_label(Some("released".into())), "Released");

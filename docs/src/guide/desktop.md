@@ -9,12 +9,12 @@ check-outs and reviews, and a **local working folder**:
   CAD files first, name and type follow from the first one;
 * *Check out* takes the lock, copies the files into the working folder and
   makes them writable;
-* *Get…* on a revision copies the item **with everything it consists of** –
+* *More → Get structure…* on a revision copies the item **with everything it consists of** –
   its BOM resolved with a revision rule and the parts its CAD files
   reference – so the assembly opens in the CAD program (see below);
-* *Get…* (*Tools → Get Project Groups…*) copies the files of every item of
+* the download icon next to *Projects* in the navigator (*Tools → Get Project Groups…*) copies the files of every item of
   chosen project groups into the working folder – for new team members;
-* *Import…* (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
+* the folder icon next to it (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
   scan first (nothing is uploaded), then one item per part or assembly with
   its drawings and exports; every file keeps its folder, so the working
   folder later looks like the original tree. *Help → How to Import a CAD
@@ -71,8 +71,10 @@ and *TeamCraft Dark* stay fixed, the distribution skins are dark.
 The window is built for daily work: object tabs on top, under them the
 toolbar of the open object with its one main action filled (*Check out*,
 *Check in…* or *Revise*, depending on the state) and only the actions that
-are available now; *Refresh* is the arrow icon (`F5`). The navigator shows a
-state as its symbol (✓ released, ○ in review, ◐ in work, – obsolete, the
+are available now; the less frequent tools (*Get structure…*, *Pack and
+Go…*, *Open folder*, *Open in browser*) are under *More*, and *Refresh* is the
+arrow icon (`F5`). The navigator shows a state as its symbol (a check:
+released, a ring: in review, a half-filled ring: in work, – obsolete, the
 name in the tooltip); the search field is `Ctrl+F` (`⌘F`).
 
 ## How files appear on your computer
@@ -114,7 +116,7 @@ uploads the changed ones and makes them read-only again; *Cancel check-out*
 does the same without uploading. Files you changed are never made read-only
 or overwritten by TeamCraft.
 
-**Get.** *Get…* on a revision resolves its structure on the server – the
+**Get.** *Get structure…* on a revision resolves its structure on the server – the
 multi-level BOM with the revision rule you choose (*latest*: the newest
 revision of every part, also in work; *released*: the newest released
 revision) plus the items whose files its CAD files reference (an assembly

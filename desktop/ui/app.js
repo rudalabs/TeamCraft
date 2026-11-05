@@ -152,6 +152,32 @@
     }, [svgIcon(ICONS[icon] || ICONS.plus), iconOnly ? null : label]);
   }
 
+  // "More" in a toolbar: the less frequent tools in a menu, so the row never
+  // overflows. A click on a tool or outside closes it; Esc closes it too.
+  function moreMenu(items) {
+    items = items.filter(Boolean);
+    if (!items.length) return null;
+    var pop = h("div.tool-menu-pop", null, items);
+    var menu = h("details.tool-menu", null, [
+      h("summary.tool", { title: "More tools", "aria-label": "More tools" }, [h("span", { text: "More" }), h("span.chev", { "aria-hidden": "true" })]),
+      pop
+    ]);
+    function close() { menu.open = false; }
+    function outside(e) { if (!menu.contains(e.target)) close(); }
+    function esc(e) { if (e.key === "Escape") { close(); menu.querySelector("summary").focus(); } }
+    pop.addEventListener("click", function (e) { if (e.target.closest("button")) close(); });
+    menu.addEventListener("toggle", function () {
+      if (menu.open) {
+        document.addEventListener("mousedown", outside);
+        document.addEventListener("keydown", esc);
+      } else {
+        document.removeEventListener("mousedown", outside);
+        document.removeEventListener("keydown", esc);
+      }
+    });
+    return menu;
+  }
+
   function fmtDate(iso) {
     if (!iso) return "—";
     var d = new Date(iso);
@@ -188,6 +214,17 @@
       icon ? h("img", { src: "/static/media/icons/" + icon, alt: "" }) : null,
       text || label(value)
     ]);
+  }
+
+  // The lock holder with the line lock icon (the web UI's lock macro):
+  // muted for your own lock, amber for someone else's.
+  function lockIcon(mine) {
+    var svg = svgIcon(ICONS.checkout);
+    svg.setAttribute("class", "lock-icon" + (mine ? " lock-mine" : ""));
+    return svg;
+  }
+  function lockBadge(name, mine) {
+    return h("span.badge.badge-lock", { title: "Checked out by " + name }, [lockIcon(mine), name]);
   }
 
   function errorText(err) {
@@ -655,9 +692,9 @@
     var mine = state.projects.filter(function (p) { return p.active && state.me.projects.indexOf(p.id) !== -1; });
     var others = state.projects.filter(function (p) { return p.active && state.me.projects.indexOf(p.id) === -1; });
     clear(nav);
-    nav.appendChild(navHead("Project groups", [
-      h("button.small", { type: "button", title: "Copy the files of whole project groups into your workspace", on: { click: function () { getProjectsDialog(); } } }, "Get…"),
-      canEdit() ? h("button.small", { type: "button", title: "Import an existing CAD folder (Tools → Import CAD Folder…)", on: { click: function () { importFolderDialog(); } } }, "Import…") : null,
+    nav.appendChild(navHead("Projects", [
+      h("button.small.icon", { type: "button", title: "Get project groups: copy their files into your workspace", "aria-label": "Get project groups…", on: { click: function () { getProjectsDialog(); } } }, svgIcon(ICONS.download)),
+      canEdit() ? h("button.small.icon", { type: "button", title: "Import an existing CAD folder (Tools → Import CAD Folder…)", "aria-label": "Import CAD folder…", on: { click: function () { importFolderDialog(); } } }, svgIcon(ICONS.folder)) : null,
       canEdit() ? h("button.small", { type: "button", title: "New item (Ctrl+N)", on: { click: function () { newItemDialog(); } } }, [svgIcon(ICONS.plus), "New"]) : null
     ]));
     function group(title, list) {
@@ -718,7 +755,7 @@
       nav.appendChild(h("p.section-title", { text: "Checked out by me (" + w.checkouts.length + ")" }));
       nav.appendChild(w.checkouts.length ? h("ul.tree", null, w.checkouts.map(function (r) {
         return h("li", null, h("div.node", { title: "Checked out " + fmtDate(r.checked_out_at), on: { click: function () { openRevision(r.item_number, r.code); } } }, [
-          h("span.twisty"), h("span.ico", { text: "🔒" }),
+          h("span.twisty"), h("span.ico", null, lockIcon(true)),
           h("span.label", null, [h("span.mono", { text: r.item_number + "/" + r.code }), " ", r.name]),
           h("span.meta.small.dim", { text: lockAge(r.checked_out_at) })
         ]));
@@ -959,8 +996,8 @@
       if (!wl) return;
       var s = wl.stats;
       append(welcome, h("div.stats", null, [
-        stat(s.items, "Items"), stat(s.revisions_in_work, "Revisions in work"), stat(s.revisions_in_review, "In review"),
-        stat(s.revisions_released, "Released revisions"), stat(s.open_changes, "Open changes"), stat(fmtSize(s.stored_bytes), s.files + " files in the vault")
+        stat(s.items, "Items"), stat(s.revisions_in_work, "In work"), stat(s.revisions_in_review, "In review"),
+        stat(s.revisions_released, "Released"), stat(s.open_changes, "Open changes"), stat(fmtSize(s.stored_bytes), s.files + " files in the vault")
       ]));
       var groups = impactGroups(wl);
       if (groups.length) {
@@ -1003,7 +1040,8 @@
           on: r.open ? { dblclick: r.open, click: r.single ? r.open : null } : null,
           title: r.open ? "Double-click to open" : null
         }, r.cells.map(function (c, i) {
-          var td = h("td" + (opts.numeric && opts.numeric.indexOf(i) !== -1 ? ".num" : ""));
+          var td = h("td" + (opts.numeric && opts.numeric.indexOf(i) !== -1 ? ".num" : "") +
+            (opts.nowrap && opts.nowrap.indexOf(i) !== -1 ? ".nowrap" : ""));
           append(td, c);
           return td;
         }));
@@ -1791,18 +1829,19 @@
       tool("Request change…" + (d.requests.length ? " (" + d.requests.length + ")" : ""), "request", function () { requestChangeDialog(rev, null); },
         { title: "Report a problem or propose a change to " + rev.item_number + "/" + rev.code + " (change request)" }),
       watchTool(tab, "items", rev.item_number, d.watching),
-      tool("Get…", "download", function () { getStructureDialog(rev); }, { title: "Copy this item and everything it consists of (BOM, referenced CAD files) into your working folder" }),
       assistantEnabled() ? tool("Ask…", "ask", function () {
         assistantDialog({ item: rev.item_number, revision: rev.code }, rev.item_number + "/" + rev.code, [
           ["release_notes", "Draft release notes"], ["release_check", "Check before release"]
         ]);
       }, { title: "Ask TeamCraft: release notes, release check or any question about this revision" }) : null,
       agentButton(tab),
-      tool("Pack and Go…", "download", function () { savePackage(rev, null); }, { title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json) – for sending, not for working" }),
-      tool("Open folder", "folder", function () { openWorkspaceFolder(tab); }, { title: "Open the working folder of this revision" }),
-      tool("Browser", "web", function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, { title: "Open this revision in the web UI" }),
-      tool("Refresh", "refresh", reloadActive),
-      h("span.context", { text: rev.project_code ? "Project group " + rev.project_code : "" })
+      moreMenu([
+        tool("Get structure…", "download", function () { getStructureDialog(rev); }, { title: "Copy this item and everything it consists of (BOM, referenced CAD files) into your working folder" }),
+        tool("Pack and Go…", "download", function () { savePackage(rev, null); }, { title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json) – for sending, not for working" }),
+        tool("Open folder", "folder", function () { openWorkspaceFolder(tab); }, { title: "Open the working folder of this revision" }),
+        tool("Open in browser", "web", function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, { title: "Open this revision in the web UI" })
+      ]),
+      tool("Refresh", "refresh", reloadActive)
     ]);
 
     body.appendChild(h("div.object-head", null, [
@@ -1811,7 +1850,7 @@
         h("h1", null, [h("span.mono", { text: rev.item_number + "/" + rev.code }), " · " + rev.name]),
         h("div.meta", null, [
           badge(rev.state),
-          rev.checked_out_by_name ? h("span.badge.badge-lock", { text: "🔒 " + rev.checked_out_by_name }) : null,
+          rev.checked_out_by_name ? lockBadge(rev.checked_out_by_name, rev.checked_out_by === state.me.id) : null,
           h("span", { text: "created " + fmtDate(rev.created_at) + " by " + rev.created_by_name })
         ])
       ])
@@ -2442,7 +2481,7 @@
         ]),
         h("p.small.muted", null, ["Folder: ", h("span.mono", { text: ws.dir }),
           " · files you have not checked out are read-only; check out to change them."]),
-        rev.checked_out_by ? h("p.small", null, [badge("lock", "🔒 " + (lockedByOther ? rev.checked_out_by_name : "You")),
+        rev.checked_out_by ? h("p.small", null, [lockBadge(lockedByOther ? rev.checked_out_by_name : "You", !lockedByOther),
           " checked out " + fmtDate(rev.checked_out_at) + " (" + lockAge(rev.checked_out_at) + ")" +
           (lockedByOther ? " – locked by " + rev.checked_out_by_name + ": only they can check in right now; your local changes stay in the working folder." : "")]) : null,
         !ws.exists ? h("p.empty", { text: "Not in your working folder yet – check out (or “Get files”) to copy the files." }) :
@@ -3015,12 +3054,12 @@
       h("section.panel", null, [h("h2", { text: "Reviewers" }),
         tab.data.reviews.length ? table(["Reviewer", "Decision", "Comment"], tab.data.reviews.map(function (r) {
           return { cells: [r.reviewer_name, badge(r.decision), h("span.pre", { text: r.comment || "" })] };
-        })) : h("p.empty", { text: "No reviewers assigned yet." }),
+        }), { nowrap: [0, 1] }) : h("p.empty", { text: "No reviewers assigned yet." }),
         owner && c.status === "draft" ? suggestedReviewers(c.number) : null])
     ]));
     body.appendChild(h("section.panel", null, [h("h2", { text: "Affected revisions" }),
       tab.data.items.length ? table(["Revision", "Name", "State"], tab.data.items.map(function (i) {
-        return { cells: [h("span.mono", { text: i.item_number + "/" + i.code }), i.name, h("span", null, [badge(i.state), i.checked_out_by_name ? h("span.badge.badge-lock", { text: "🔒 " + i.checked_out_by_name }) : null])], open: function () { openRevision(i.item_number, i.code); } };
+        return { cells: [h("span.mono", { text: i.item_number + "/" + i.code }), i.name, h("span", null, [badge(i.state), i.checked_out_by_name ? lockBadge(i.checked_out_by_name, i.checked_out_by === state.me.id) : null])], open: function () { openRevision(i.item_number, i.code); } };
       })) : h("p.empty", { text: "No revisions yet." })]));
     // Release readiness: unreleased dependencies block the submit.
     if ((c.status === "draft" || c.status === "rejected") && tab.data.items.length) {
@@ -3855,7 +3894,7 @@
     }));
     var body = h("div.stack", null, [
       h("h3", { text: "Appearance" }),
-      h("p.hint", { text: "TeamCraft follows your system appearance. Choose TeamCraft Dark to keep the dark look; the distribution skins are dark." }),
+      h("p.hint", { text: "Choose how TeamCraft Desktop looks. The distribution skins are dark." }),
       skins,
       h("h3", { text: "Workspace" }),
       field("Folder for checked-out files", h("div.row", null, [ws,
