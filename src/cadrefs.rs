@@ -481,4 +481,149 @@ mod tests {
         }
         assert_eq!(find(&content, "big.iam").len(), MAX_REFERENCES);
     }
+
+    #[test]
+    fn paths_are_reduced_to_the_file_name() {
+        // POSIX, Windows, UNC and URL-like paths: only the last component.
+        let content = b"\x00/home/erika/rover/wheel.sldprt\x00\
+            \\\\server\\share\\cad\\hub.ipt\x00file:///C:/lib/axle.step\x00";
+        assert_eq!(
+            find(content, "rover.sldasm"),
+            vec!["wheel.sldprt", "hub.ipt", "axle.step"]
+        );
+    }
+
+    #[test]
+    fn the_file_itself_is_never_a_reference() {
+        // Own name in another case, with a path and as a Creo iteration.
+        let content = b"\x00C:\\work\\FRAME.ASM.4\x00frame.asm\x00bolt.prt.2\x00";
+        assert_eq!(find(content, "frame.asm.7"), vec!["bolt.prt"]);
+    }
+
+    #[test]
+    fn non_cad_files_are_not_references() {
+        // Documents, simulation decks and results, manufacturing data,
+        // templates: never component files of an assembly.
+        let content = b"\x00manual.pdf\x00job.inp\x00result.frd\x00mesh.vtu\x00\
+            nc.mfg\x00sheet.slddrt\x00project.ipj\x00real part.par\x00";
+        assert_eq!(find(content, "a.asm"), vec!["real part.par"]);
+    }
+
+    #[test]
+    fn names_end_at_separators_and_double_spaces() {
+        // A single space is part of a name, two spaces end it; quotes,
+        // `=` and `;` are separators.
+        let content =
+            b"text  Motor mount.ipt\x00name=\"Shaft 20.ipt\";ref='nut.ipt'\x00[plate.ipt]";
+        assert_eq!(
+            find(content, "x.iam"),
+            vec!["Motor mount.ipt", "Shaft 20.ipt", "nut.ipt", "plate.ipt"]
+        );
+    }
+
+    #[test]
+    fn the_longest_extension_wins() {
+        // `.kicad_sch` is not cut to some shorter extension, `.catproduct`
+        // not to `.cat…`; a name followed by letters is no match at all.
+        let content = b"\x00power.kicad_sch\x00Top.CATProduct\x00shaft.stpx\x00";
+        assert_eq!(
+            find(content, "main.kicad_pro"),
+            vec!["power.kicad_sch", "Top.CATProduct"]
+        );
+    }
+
+    #[test]
+    fn names_without_a_stem_or_too_long_are_dropped() {
+        let long = format!("\x00{}.ipt\x00", "x".repeat(MAX_NAME));
+        assert!(
+            find(long.as_bytes(), "a.iam").is_empty(),
+            "longer than MAX_NAME"
+        );
+        let fits = format!("\x00{}.ipt\x00", "x".repeat(MAX_NAME - 4));
+        assert_eq!(find(fits.as_bytes(), "a.iam").len(), 1);
+        // only punctuation before the extension
+        assert!(find(b"\x00___.ipt\x00--.stp\x00", "a.iam").is_empty());
+    }
+
+    #[test]
+    fn short_runs_are_ignored() {
+        // Printable runs shorter than five characters are binary noise.
+        assert!(find(b"\x00a.st\x00", "x.asm").is_empty());
+        assert_eq!(find(b"\x00ab.stp\x00", "x.asm"), vec!["ab.stp"]);
+    }
+
+    #[test]
+    fn step_header_name_is_only_skipped_inside_the_header() {
+        // A FILE_NAME-like string in the DATA section is not the header entity.
+        let step = b"ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\nENDSEC;\nDATA;\n\
+            #1=FILE_NAME('wheel.stp');\nENDSEC;\n";
+        assert_eq!(find(step, "rover.stp"), vec!["wheel.stp"]);
+        // Parentheses and escaped quotes inside the header name are handled.
+        let step = b"ISO-10303-21;\nHEADER;\n\
+            FILE_NAME('it''s (v2).stp','2026',('a(b)'),(''),'','','');\nENDSEC;\nDATA;\n\
+            #5=DOCUMENT_FILE('rim.stp','',$,#6,'','');\nENDSEC;\n";
+        assert_eq!(find(step, "rover.stp"), vec!["rim.stp"]);
+        // Without the ISO header the same text is an ordinary string.
+        let not_step = b"FILE_NAME('export.stp','2026');";
+        assert_eq!(find(not_step, "x.stp"), vec!["export.stp"]);
+    }
+
+    #[test]
+    fn solidworks_sections_reduce_component_paths() {
+        let data = crate::swpart::ReferenceData {
+            components: Some(vec![
+                "C:\\p\\Bolt.SLDPRT".into(),
+                "D:/lib/Nut.SLDPRT".into(),
+                "C:\\p\\bolt.sldprt".into(),
+                "C:\\p\\Top.SLDASM".into(),
+            ]),
+            content_manager: Some(b"\x00ignored.SLDPRT\x00".to_vec()),
+        };
+        assert_eq!(
+            from_sw_sections(data, "top.sldasm"),
+            vec!["Bolt.SLDPRT", "Nut.SLDPRT"],
+            "the component tree wins over the document manager"
+        );
+        let drawing = crate::swpart::ReferenceData {
+            components: None,
+            content_manager: Some(b"\x00C:\\p\\Bracket.SLDPRT\x00".to_vec()),
+        };
+        assert_eq!(
+            from_sw_sections(drawing, "b.slddrw"),
+            vec!["Bracket.SLDPRT"]
+        );
+        let empty = crate::swpart::ReferenceData {
+            components: None,
+            content_manager: None,
+        };
+        assert!(from_sw_sections(empty, "b.slddrw").is_empty());
+    }
+
+    #[test]
+    fn nx_streams_skip_the_name_the_part_was_saved_with() {
+        // Each stream starts with the part itself (here under an old name).
+        let streams = vec![
+            b"\x00old_name.prt\x00wheel.prt\x00hub.prt\x00".to_vec(),
+            b"\x00old_name.prt\x00HUB.prt\x00axle.prt\x00".to_vec(),
+        ];
+        assert_eq!(
+            from_nx_streams(&streams, "new_name.prt"),
+            vec!["wheel.prt", "hub.prt", "axle.prt"]
+        );
+    }
+
+    #[tokio::test]
+    async fn scan_file_reads_stored_files() {
+        let path = std::env::temp_dir().join(format!("teamcraft-cadrefs-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&path, b"\x00bracket.SLDPRT\x00frame.SLDASM\x00").unwrap();
+        assert_eq!(
+            scan_file(&path, "frame.sldasm").await,
+            vec!["bracket.SLDPRT"]
+        );
+        std::fs::remove_file(&path).ok();
+        assert!(
+            scan_file(&path, "frame.sldasm").await.is_empty(),
+            "missing file"
+        );
+    }
 }

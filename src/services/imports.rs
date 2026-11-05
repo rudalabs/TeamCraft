@@ -1116,6 +1116,74 @@ mod tests {
     }
 
     #[test]
+    fn size_limits_per_file_kind() {
+        assert_eq!(max_bytes("pump.STEP"), MAX_STEP_BYTES);
+        assert_eq!(max_bytes("pump.p21"), MAX_STEP_BYTES);
+        assert_eq!(max_bytes("bom.xlsx"), MAX_TABLE_BYTES);
+        assert_eq!(
+            too_large("a.stp").to_string(),
+            AppError::PayloadTooLarge("STEP files can be at most 200 MiB.".into()).to_string()
+        );
+        assert!(matches!(
+            too_large("a.csv"),
+            AppError::PayloadTooLarge(m) if m == "Tables (BOM, result values) can be at most 20 MiB."
+        ));
+        let big = vec![b'a'; MAX_TABLE_BYTES + 1];
+        assert!(matches!(
+            read_table("bom.csv", &big),
+            Err(AppError::PayloadTooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn tables_and_step_assemblies_are_routed_by_name() {
+        // A STEP name goes to the STEP reader, whatever the content.
+        let err = read_table("bom.stp", b"Part Number,Name\nA,B\n").unwrap_err();
+        assert!(
+            matches!(&err, AppError::BadRequest(m) if m.contains("Not a STEP")),
+            "{err:?}"
+        );
+        // Table names go to the table reader.
+        let t = read_table("bom.TSV", b"Part Number\tName\nA\tB\n").unwrap();
+        assert_eq!(t.rows[0].number, "A");
+        // Unsupported names are refused with the list of formats.
+        let err = read_table("bom.docx", b"").unwrap_err();
+        assert!(matches!(&err, AppError::BadRequest(m) if m.contains("STEP assemblies")));
+    }
+
+    #[test]
+    fn keys_and_labels_of_rows() {
+        let t = read_table(
+            "a.csv",
+            b"Part Number,Name\n  ab-1 ,One\nAB-1,Same item\n,  Screw M6 \n",
+        )
+        .unwrap();
+        assert_eq!(
+            item_key(&t.rows[0]),
+            item_key(&t.rows[1]),
+            "case-insensitive"
+        );
+        assert_eq!(item_key(&t.rows[2]), "name:screw m6");
+        assert_eq!(shown(&t.rows[1]), "AB-1");
+        assert_eq!(shown(&t.rows[2]), "Screw M6", "the name without a number");
+        assert_eq!(file_stem(" no extension "), "no extension");
+        assert_eq!(file_stem("a.b.csv"), "a.b");
+        assert_eq!(NumberSource::parse(" file ").unwrap(), NumberSource::File);
+        assert_eq!(
+            serde_json::to_value(NumberSource::Generate).unwrap(),
+            serde_json::json!("generate")
+        );
+    }
+
+    #[test]
+    fn reachability_terminates_on_cycles() {
+        let children = HashMap::from([(0, vec![1]), (1, vec![0, 2]), (2, vec![1])]);
+        assert!(reaches(&children, 0, 2));
+        assert!(!reaches(&children, 0, 5));
+        assert!(reaches(&children, 4, 4), "a node reaches itself");
+    }
+
+    #[test]
     fn reachability() {
         let children = HashMap::from([(0, vec![1]), (1, vec![2]), (3, vec![0])]);
         assert!(reaches(&children, 0, 2));
