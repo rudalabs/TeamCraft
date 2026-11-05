@@ -1954,6 +1954,33 @@ async fn impacts_are_grouped_and_acknowledged_together() {
     )
     .await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "a note is required");
+    let note = "Form, fit and function unchanged";
+    let r = call(
+        Method::POST,
+        ack_all.clone(),
+        eng.clone(),
+        Some(json!({ "note": note, "impacts": [] })),
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::BAD_REQUEST,
+        "an empty list is refused"
+    );
+    let mut foreign = ids.clone();
+    foreign.push(uuid::Uuid::new_v4().to_string());
+    let r = call(
+        Method::POST,
+        ack_all.clone(),
+        eng.clone(),
+        Some(json!({ "note": note, "impacts": foreign })),
+    )
+    .await;
+    assert_eq!(
+        r.status,
+        StatusCode::BAD_REQUEST,
+        "ids that are not impacts on this revision are refused, nothing is acknowledged"
+    );
     let open = call(Method::GET, "/api/v1/impacts".into(), eng.clone(), None)
         .await
         .json();

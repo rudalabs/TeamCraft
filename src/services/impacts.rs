@@ -191,7 +191,37 @@ pub async fn acknowledge_all(
             rev.item_number
         )));
     }
+    // The requested ids, without duplicates; an empty list is a mistake of
+    // the caller, not "resolved in the meantime".
+    let wanted = only.map(|o| {
+        let mut wanted = o.to_vec();
+        wanted.sort_unstable();
+        wanted.dedup();
+        wanted
+    });
+    if wanted.as_ref().is_some_and(Vec::is_empty) {
+        return Err(AppError::BadRequest(
+            "List the impacts to acknowledge (or leave the list out for all).".into(),
+        ));
+    }
     let mut tx = pool.begin().await?;
+    if let Some(wanted) = &wanted {
+        // Every listed impact has to be one on this revision; otherwise the
+        // answer would count foreign or unknown ids as "resolved meanwhile".
+        let known = sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM impacts WHERE revision_id = $1 AND id = ANY($2)",
+        )
+        .bind(revision_id)
+        .bind(wanted)
+        .fetch_one(&mut *tx)
+        .await?;
+        if known != wanted.len() as i64 {
+            return Err(AppError::BadRequest(format!(
+                "Only impacts on {} can be acknowledged here.",
+                revisions::label(&rev)
+            )));
+        }
+    }
     let ids = sqlx::query_scalar::<_, Uuid>(
         "SELECT id FROM impacts
          WHERE revision_id = $1 AND resolved_at IS NULL AND ($2::uuid[] IS NULL OR id = ANY($2))
@@ -199,7 +229,7 @@ pub async fn acknowledge_all(
          FOR UPDATE",
     )
     .bind(revision_id)
-    .bind(only)
+    .bind(wanted.as_deref())
     .fetch_all(&mut *tx)
     .await?;
     if ids.is_empty() {
@@ -208,12 +238,7 @@ pub async fn acknowledge_all(
             revisions::label(&rev)
         )));
     }
-    let skipped = only.map_or(0, |o| {
-        let mut wanted = o.to_vec();
-        wanted.sort_unstable();
-        wanted.dedup();
-        wanted.len().saturating_sub(ids.len())
-    });
+    let skipped = wanted.map_or(0, |w| w.len().saturating_sub(ids.len()));
     sqlx::query(
         "UPDATE impacts SET resolved_at = now(), resolved_by = $2, resolution = 'acknowledged', note = $3
          WHERE id = ANY($1) AND resolved_at IS NULL",
