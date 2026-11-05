@@ -11,6 +11,49 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/me
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/items?q=bracket&system=solidworks"
 ```
 
+## Read permissions
+
+Every answer contains only what the token's user may read (see
+[Read permissions and restricted groups](../admin/permissions.md)):
+
+* An item, revision, file, file version, change order, change request,
+  attachment or project group the user may not read answers **404 with the
+  same message as an unknown one** (`{"error": {"code": "not_found", …}}`),
+  never 403. Lists and their `total` leave such objects out.
+* Rows that link a visible object to a hidden item are **placeholders**:
+  `"restricted": true`, the identity fields (number, name, type, revision,
+  state) empty and the ids the nil UUID; structural fields (find number,
+  quantity, kind of a reference, role of a simulation basis) stay. Notes
+  are emptied (they describe the hidden item), a hidden simulation basis
+  has `out_of_date: null`, and placeholders come after the visible rows of
+  their kind. This applies to BOM lines and trees, item references,
+  simulation bases, change order and change request items and readiness
+  blockers and warnings; impacts get `"source_restricted": true` with the
+  source removed. The releasing change order of an impact
+  (`change_id`, `change_number`) is left out, and another open change in
+  readiness (`other_change`) reads "another open change order", when the
+  user may not see that change.
+* Creating an item whose generated number is already held by an item the
+  user cannot see answers 409 ("already in use; change the scheme or enter
+  a number") instead of skipping to the next number.
+* Expanded BOMs (`?expand=true`) carry `restricted_lines` and
+  `rollup_incomplete`; a working set carries `restricted_lines`; the Pack and
+  Go `manifest.json` carries `restricted_lines`.
+* Lists that leave entries out say how many: `where-used`,
+  `/items/{number}/simulations` and `/changes/{number}/impact` return the
+  usual array plus the header `x-hidden-count`; the revision answer has
+  `hidden_changes`, references have `hidden_incoming`, a change request
+  has `hidden_changes`. CAD file-name matches (`file_referrers`) in groups
+  the user cannot see are left out without a count.
+* `GET /api/v1/me` lists the user's own memberships in `projects` and,
+  in `restricted_projects`, those of them that are restricted. It never
+  names groups the user is not a member of.
+* `GET /api/v1/projects` lists only the groups the user may see; projects
+  carry `visibility` (`internal` or `restricted`). `POST /api/v1/projects`
+  takes an optional `visibility`; `PUT /api/v1/projects/{code}/visibility`
+  `{"visibility": "restricted"}` restricts a group (managers of the group
+  and admins).
+
 ## The check-out / check-in cycle
 
 ```sh
@@ -163,11 +206,28 @@ parents – and every row also carries `level` (1 = direct parent) and
 `child_number` (the item used on that line). Each item is reported on the
 lowest level it is reached on. Both reports stop at 2000 rows.
 
+### Alternates, supersession and replace in assemblies
+
+| Request                                            | Body / answer                                                                                     |
+|----------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| `GET /items/{number}/interchange`                  | `alternates` (with `two_way`), `alternate_for` (one-way), `successor` (or `null`), `predecessors` |
+| `POST /items/{number}/alternates`                  | `{item, note?, two_way? = true}` → `201` with the interchange data                                |
+| `DELETE /items/{number}/alternates/{alternate}`    | `204`; both directions when you may edit the alternate's group                                    |
+| `PUT /items/{number}/supersession`                 | `{item, note?}` – superseded by `item` (replaces an earlier successor; `409` for a circle)        |
+| `DELETE /items/{number}/supersession`              | `204`                                                                                             |
+| `GET /items/{number}/replace?with=NUMBER`          | preview: `rows` (one per BOM line of the latest parent revisions, with `action`), `replaced`, `hidden` |
+| `POST /items/{number}/replace`                     | `{with}` – applies the rows with `action = replace` in one transaction; `409` if there are none   |
+
+`action` is `replace`, `checked_out` (by somebody else), `no_permission`,
+`in_review`, `needs_revision` (released) or `cycle`. Linked items in groups
+the caller cannot read are left out; a successor there is a placeholder with
+`restricted: true`. The preview and the replacement carry `X-Hidden-Count`.
+
 ## Main resources
 
 | Resource         | Endpoints                                                                                                                             |
 |------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| Items            | `GET/POST /items`, `GET /items/{number}`, `where-used` (`levels=1…25` for parents of parents), history, impacts, watch               |
+| Items            | `GET/POST /items`, `GET /items/{number}`, `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch |
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
 | Worklist         | `GET /worklist` (check-outs, reviews, impacts and `impact_groups`, statistics), `POST /worklist/checkin-all`                          |
 | Files            | `POST …/files` (multipart, `folder`/`folders`), `GET/PATCH /files/{id}` (metadata, folder), `/content`, `/versions`, `/restore`, `/mesh`, `/thumbnail`, `…/workset` |
@@ -190,7 +250,9 @@ lowest level it is reached on. Both reports stop at 2000 rows.
 The BOM comparison is also available as an Excel workbook of the same lines
 (same `with` query): `GET …/revisions/{code}/bom/compare.xlsx?with={code}`.
 Both compare the direct lines; `depth=all` compares every level, with the
-children resolved by `rule=latest|released|as_released` (each line then has
+children resolved by `rule=latest|released|as_released` (default
+`as_released` when one of the revisions is released, else `latest`; each
+line then has
 its `level` and the resolved `revision` on both sides). The expanded BOM
 itself downloads as Excel workbook: `GET …/revisions/{code}/bom.xlsx?rule=`.
 

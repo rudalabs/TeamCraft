@@ -19,7 +19,7 @@ use axum::{
     http::{header, Method, Request, StatusCode},
     Router,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
     Connection, PgConnection, PgPool,
@@ -39,10 +39,15 @@ pub const PASSWORD: &str = "integration-test-password";
 
 pub struct TestApp {
     pub router: Router,
+    /// The state behind the router (for services that take it).
+    #[allow(dead_code)]
+    pub state: AppState,
     pub pool: PgPool,
     admin_options: PgConnectOptions,
-    db_name: String,
-    vault_dir: PathBuf,
+    /// Password of the test role, for the PostgreSQL client tools.
+    admin_password: Option<String>,
+    pub db_name: String,
+    pub vault_dir: PathBuf,
 }
 
 /// Project groups every test database starts with: (code, name, IdP group).
@@ -84,16 +89,23 @@ impl Response {
     }
 }
 
-/// Connection to the server on which the temporary databases are created.
-fn admin_options() -> Option<PgConnectOptions> {
+/// Connection to the server on which the temporary databases are created,
+/// and the password of its role (for `pg_dump`/`pg_restore`).
+fn admin_options() -> Option<(PgConnectOptions, Option<String>)> {
     if let Err(e) = config::load_local_env_file() {
         panic!("{} could not be parsed: {e}", config::LOCAL_ENV_FILE);
     }
     if let Ok(url) = std::env::var("TEAMCRAFT_TEST_DATABASE_URL") {
-        return Some(url.parse().expect("valid TEAMCRAFT_TEST_DATABASE_URL"));
+        let parsed = Config::from_lookup(|key| match key {
+            "TEAMCRAFT_DATABASE_URL" => Some(url.clone()),
+            "TEAMCRAFT_LOCAL_LOGIN" => Some("true".into()),
+            _ => None,
+        })
+        .expect("valid TEAMCRAFT_TEST_DATABASE_URL");
+        return Some((parsed.database, parsed.database_password));
     }
     match Config::from_env() {
-        Ok(config) => Some(config.database),
+        Ok(config) => Some((config.database, config.database_password)),
         Err(e) => {
             if require_db() {
                 panic!("TEAMCRAFT_REQUIRE_DB_TESTS is set but no database is configured: {e:#}");
@@ -111,7 +123,7 @@ pub async fn setup() -> Option<TestApp> {
 
 /// Like [`setup`], with additional configuration variables.
 pub async fn setup_with(extra: &'static [(&'static str, &'static str)]) -> Option<TestApp> {
-    let admin_options = admin_options()?;
+    let (admin_options, admin_password) = admin_options()?;
     let db_name = format!("teamcraft_test_{}", Uuid::new_v4().simple());
     let mut admin = match PgConnection::connect_with(&admin_options).await {
         Ok(conn) => conn,
@@ -166,15 +178,80 @@ pub async fn setup_with(extra: &'static [(&'static str, &'static str)]) -> Optio
         .await
         .expect("app state");
     Some(TestApp {
-        router: teamcraft::router(state),
+        router: teamcraft::router(state.clone()),
+        state,
         pool,
         admin_options,
+        admin_password,
         db_name,
         vault_dir,
     })
 }
 
 impl TestApp {
+    /// Configuration of database `database` on the test server with vault
+    /// `vault_dir` – what `teamcraft backup`/`restore` would read.
+    pub fn client_config(&self, database: &str, vault_dir: &std::path::Path) -> Config {
+        let o = &self.admin_options;
+        let vars: Vec<(&str, String)> = vec![
+            ("TEAMCRAFT_DB_HOST", o.get_host().to_string()),
+            ("TEAMCRAFT_DB_PORT", o.get_port().to_string()),
+            ("TEAMCRAFT_DB_USER", o.get_username().to_string()),
+            ("TEAMCRAFT_DB_NAME", database.to_string()),
+            (
+                "TEAMCRAFT_VAULT_DIR",
+                vault_dir.to_string_lossy().to_string(),
+            ),
+            ("TEAMCRAFT_LOCAL_LOGIN", "true".to_string()),
+        ];
+        let password = self.admin_password.clone();
+        Config::from_lookup(move |key| {
+            if key == "TEAMCRAFT_DB_PASSWORD" {
+                return password.clone();
+            }
+            vars.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone())
+        })
+        .expect("client configuration")
+    }
+
+    /// Creates an empty database next to the test database (dropped by
+    /// `teardown` of the app returned by [`TestApp::open`]).
+    pub async fn create_empty_database(&self, suffix: &str) -> String {
+        let name = format!("{}_{suffix}", self.db_name);
+        let mut admin = PgConnection::connect_with(&self.admin_options)
+            .await
+            .expect("connect to the test database server");
+        sqlx::query(&format!("CREATE DATABASE {name}"))
+            .execute(&mut admin)
+            .await
+            .expect("CREATE DATABASE");
+        admin.close().await.ok();
+        name
+    }
+
+    /// A second application on another database and vault of the same
+    /// server (e.g. a restored backup), without migrating or seeding it.
+    pub async fn open(&self, database: &str, vault_dir: PathBuf) -> TestApp {
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect_with(self.admin_options.clone().database(database))
+            .await
+            .expect("connect to the other database");
+        let config = self.client_config(database, &vault_dir);
+        let state = AppState::new(config, pool.clone())
+            .await
+            .expect("app state");
+        TestApp {
+            router: teamcraft::router(state.clone()),
+            state,
+            pool,
+            admin_options: self.admin_options.clone(),
+            admin_password: self.admin_password.clone(),
+            db_name: database.to_string(),
+            vault_dir,
+        }
+    }
+
     /// Drops the temporary database and vault.
     pub async fn teardown(self) {
         self.pool.close().await;
@@ -418,5 +495,114 @@ impl TestApp {
             .find(|c| c.starts_with("tc_session="))
             .expect("session cookie");
         cookie.split(';').next().unwrap().to_string()
+    }
+}
+
+/// Shorthands for the steps many functional tests repeat.
+impl TestApp {
+    /// Creates an item through the API (`body` as for `POST /api/v1/items`)
+    /// and returns its number.
+    pub async fn create_item(&self, token: &str, body: Value) -> String {
+        let r = self
+            .api(Method::POST, "/api/v1/items", token, Some(body))
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "create item: {}", r.text());
+        r.json()["item_number"].as_str().unwrap().to_string()
+    }
+
+    /// Creates a change order with the in-work revisions of `items` and the
+    /// given reviewers (usernames), submits it and returns its number.
+    pub async fn submit_change(
+        &self,
+        author: &str,
+        title: &str,
+        items: &[&str],
+        reviewers: &[&str],
+    ) -> String {
+        let r = self
+            .api(
+                Method::POST,
+                "/api/v1/changes",
+                author,
+                Some(json!({ "title": title })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "create change: {}", r.text());
+        let number = r.json()["number"].as_str().unwrap().to_string();
+        for item in items {
+            let r = self
+                .api(
+                    Method::POST,
+                    &format!("/api/v1/changes/{number}/items"),
+                    author,
+                    Some(json!({ "item": item })),
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::OK, "add {item}: {}", r.text());
+        }
+        for reviewer in reviewers {
+            let r = self
+                .api(
+                    Method::POST,
+                    &format!("/api/v1/changes/{number}/reviewers"),
+                    author,
+                    Some(json!({ "username": reviewer })),
+                )
+                .await;
+            assert_eq!(
+                r.status,
+                StatusCode::OK,
+                "reviewer {reviewer}: {}",
+                r.text()
+            );
+        }
+        let r = self
+            .api(
+                Method::POST,
+                &format!("/api/v1/changes/{number}/submit"),
+                author,
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "submit {number}: {}", r.text());
+        number
+    }
+
+    /// A reviewer's decision on a change.
+    pub async fn review(
+        &self,
+        change: &str,
+        token: &str,
+        decision: &str,
+        comment: &str,
+    ) -> Response {
+        self.api(
+            Method::POST,
+            &format!("/api/v1/changes/{change}/review"),
+            token,
+            Some(json!({ "decision": decision, "comment": comment })),
+        )
+        .await
+    }
+
+    /// Releases the in-work revisions of `items` through a change order that
+    /// `reviewer` (username, token) approves; returns the change number.
+    pub async fn release(&self, author: &str, reviewer: (&str, &str), items: &[&str]) -> String {
+        let number = self
+            .submit_change(author, "Release", items, &[reviewer.0])
+            .await;
+        let r = self.review(&number, reviewer.1, "approve", "").await;
+        assert_eq!(r.status, StatusCode::OK, "approve {number}: {}", r.text());
+        assert_eq!(r.json()["change"]["status"], "released", "{}", r.text());
+        number
+    }
+
+    /// Actions of the audit log entries about one entity, oldest first.
+    pub async fn audit_actions(&self, entity_id: Uuid) -> Vec<String> {
+        sqlx::query_scalar("SELECT action FROM audit_log WHERE entity_id = $1 ORDER BY id")
+            .bind(entity_id)
+            .fetch_all(&self.pool)
+            .await
+            .expect("read the audit log")
     }
 }

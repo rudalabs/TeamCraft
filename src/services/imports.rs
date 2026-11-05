@@ -18,7 +18,9 @@
 //! * `numbers` [`file`]: new items get the part number of the file when it is
 //!   a valid, unused item number, otherwise a generated one (the CAD number
 //!   is then kept in the description); `generate` always generates numbers,
-//! * a sub-assembly takes its children from its first occurrence,
+//! * a sub-assembly takes its children from its first occurrence; when the
+//!   rows below it are skipped there (e.g. below an existing item) or come
+//!   later, they are read at the occurrence that creates the sub-assembly,
 //! * components already in the BOM of the target revision are not added
 //!   again, so importing the same table twice does not duplicate lines.
 //!
@@ -27,7 +29,7 @@
 //! until the user confirms the preview – tables in the row, STEP files in the
 //! vault.
 
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -40,7 +42,7 @@ use crate::{
     domain::{self, ItemType, Role},
     error::{AppError, AppResult},
     services::{
-        audit, bom,
+        access, audit, bom,
         files::{self, Upload},
         items, revisions,
     },
@@ -329,7 +331,8 @@ pub async fn plan(
             .bind(project_id)
             .fetch_optional(&mut *conn)
             .await?
-            .ok_or_else(|| AppError::BadRequest("Unknown project.".into()))?;
+            .ok_or_else(access::unknown_project)?;
+    access::ensure_visible(actor, Some(project_id), access::unknown_project())?;
     if !active {
         return Err(AppError::BadRequest(format!(
             "The project group {project_code} is archived."
@@ -350,29 +353,39 @@ pub async fn plan(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect();
-    let existing: HashMap<String, Existing> = sqlx::query_as::<_, (Uuid, String, String, String)>(
+    let found = sqlx::query_as::<_, (Uuid, String, String, String, Option<Uuid>)>(
         "SELECT i.id, i.number, i.item_type,
                 COALESCE((SELECT r.code FROM revisions r WHERE r.item_id = i.id
-                          ORDER BY r.seq DESC LIMIT 1), '?')
+                          ORDER BY r.seq DESC LIMIT 1), '?'),
+                i.project_id
          FROM items i WHERE i.number = ANY($1)",
     )
     .bind(&numbers)
     .fetch_all(&mut *conn)
-    .await?
-    .into_iter()
-    .map(|(id, number, item_type, code)| {
-        let latest = format!("{number}/{code}");
-        let item_type = ItemType::parse(&item_type).unwrap_or(ItemType::Part);
-        (
-            number,
-            Existing {
-                id,
-                item_type,
-                latest,
-            },
-        )
-    })
-    .collect();
+    .await?;
+    // Numbers of items the actor may not see: taken, but never matched or
+    // linked, and neither type nor revision is shown.
+    let unavailable: HashSet<String> = found
+        .iter()
+        .filter(|f| !actor.can_see_project(f.4))
+        .map(|f| f.1.clone())
+        .collect();
+    let existing: HashMap<String, Existing> = found
+        .into_iter()
+        .filter(|f| actor.can_see_project(f.4))
+        .map(|(id, number, item_type, code, _)| {
+            let latest = format!("{number}/{code}");
+            let item_type = ItemType::parse(&item_type).unwrap_or(ItemType::Part);
+            (
+                number,
+                Existing {
+                    id,
+                    item_type,
+                    latest,
+                },
+            )
+        })
+        .collect();
 
     // The root: the target revision or a new top-level assembly.
     let (root_label, root_number, root_name, root_item_number) = match &target {
@@ -394,6 +407,12 @@ pub async fn plan(
             .unwrap_or("Imported assembly");
             let name = domain::truncate_chars(name, 200);
             let number = match row.and_then(|r| domain::normalize_item_number(&r.number).ok()) {
+                Some(n) if options.numbers == NumberSource::File && unavailable.contains(&n) => {
+                    warnings.push(format!(
+                        "{n} is not available: the new assembly gets a generated number."
+                    ));
+                    None
+                }
                 Some(n) if options.numbers == NumberSource::File && !existing.contains_key(&n) => {
                     Some(n)
                 }
@@ -437,7 +456,19 @@ pub async fn plan(
     let mut stack: Vec<(usize, Option<usize>)> = vec![(0, None)];
     let mut skip_below: Option<usize> = None;
     let rows = &table.rows;
+    // The rows below the first occurrence of each sub-assembly (index of its
+    // row): tables that list a BOM only once (STEP files) need them again
+    // when that occurrence is skipped, e.g. below an existing item.
+    let mut bom_rows: HashMap<String, usize> = HashMap::new();
     for (i, row) in rows.iter().enumerate() {
+        if rows.get(i + 1).is_some_and(|n| n.level > row.level) {
+            bom_rows.entry(item_key(row)).or_insert(i);
+        }
+    }
+    let mut queue: VecDeque<BomRow> = rows.iter().cloned().collect();
+    let mut copied = 0;
+    while let Some(row) = queue.pop_front() {
+        let row = &row;
         if let Some(l) = skip_below {
             if row.level > l {
                 continue;
@@ -448,7 +479,7 @@ pub async fn plan(
             stack.pop();
         }
         let parent = stack.last().and_then(|(_, p)| *p);
-        let has_children = rows.get(i + 1).is_some_and(|n| n.level > row.level);
+        let mut has_children = queue.front().is_some_and(|n| n.level > row.level);
         let skip = |reason: String, warnings: &mut Vec<String>, skip_below: &mut Option<usize>| {
             warnings.push(format!("Row {}: {reason}", row.line));
             if has_children {
@@ -511,9 +542,16 @@ pub async fn plan(
         let child = match known {
             Some(c) => c,
             None => {
-                let taken = normalized
-                    .as_ref()
-                    .is_some_and(|n| existing.contains_key(n));
+                // Why the number from the file cannot be used, if it cannot.
+                let taken = normalized.as_ref().and_then(|n| {
+                    if unavailable.contains(n) {
+                        Some("is not available")
+                    } else if existing.contains_key(n) {
+                        Some("exists already")
+                    } else {
+                        None
+                    }
+                });
                 items.push(planned_item(
                     row,
                     normalized,
@@ -549,6 +587,31 @@ pub async fn plan(
                     find_number: 0,
                 });
                 requested.push(row.find_number);
+            }
+        }
+        // A new sub-assembly whose BOM rows were skipped (or come later) at
+        // another occurrence: read them here.
+        if !has_children && items[child].existing.is_none() && !expanded.contains(&child) {
+            if let Some(&j) = bom_rows.get(&item_key(row)) {
+                let below: Vec<BomRow> = rows[j + 1..]
+                    .iter()
+                    .take_while(|r| r.level > rows[j].level)
+                    .map(|r| BomRow {
+                        level: r.level - rows[j].level + row.level,
+                        ..r.clone()
+                    })
+                    .collect();
+                copied += below.len();
+                if copied > bomtable::MAX_ROWS {
+                    return Err(AppError::BadRequest(format!(
+                        "The BOM has more than {} rows.",
+                        bomtable::MAX_ROWS
+                    )));
+                }
+                for r in below.into_iter().rev() {
+                    queue.push_front(r);
+                }
+                has_children = true;
             }
         }
         if has_children {
@@ -622,7 +685,7 @@ fn planned_item(
     row: &BomRow,
     normalized: Option<String>,
     matched: Option<&Existing>,
-    taken: bool,
+    taken: Option<&'static str>,
     options: &ImportOptions,
     warnings: &mut Vec<String>,
 ) -> PlannedItem {
@@ -650,9 +713,9 @@ fn planned_item(
             item.number = Some(n);
         }
         (Some(n), None) if options.numbers == NumberSource::File => {
-            if taken {
+            if let Some(why) = taken {
                 warnings.push(format!(
-                    "Row {}: {n} exists already – the new item gets a generated number.",
+                    "Row {}: {n} {why} – the new item gets a generated number.",
                     row.line
                 ));
             } else {
@@ -1050,6 +1113,74 @@ mod tests {
         assert_eq!(item_key(&t.rows[1]), "name:screw m6");
         assert_eq!(file_stem("Pump BOM.xlsx"), "Pump BOM");
         assert!(read_table("a.pdf", b"x").is_err());
+    }
+
+    #[test]
+    fn size_limits_per_file_kind() {
+        assert_eq!(max_bytes("pump.STEP"), MAX_STEP_BYTES);
+        assert_eq!(max_bytes("pump.p21"), MAX_STEP_BYTES);
+        assert_eq!(max_bytes("bom.xlsx"), MAX_TABLE_BYTES);
+        assert_eq!(
+            too_large("a.stp").to_string(),
+            AppError::PayloadTooLarge("STEP files can be at most 200 MiB.".into()).to_string()
+        );
+        assert!(matches!(
+            too_large("a.csv"),
+            AppError::PayloadTooLarge(m) if m == "Tables (BOM, result values) can be at most 20 MiB."
+        ));
+        let big = vec![b'a'; MAX_TABLE_BYTES + 1];
+        assert!(matches!(
+            read_table("bom.csv", &big),
+            Err(AppError::PayloadTooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn tables_and_step_assemblies_are_routed_by_name() {
+        // A STEP name goes to the STEP reader, whatever the content.
+        let err = read_table("bom.stp", b"Part Number,Name\nA,B\n").unwrap_err();
+        assert!(
+            matches!(&err, AppError::BadRequest(m) if m.contains("Not a STEP")),
+            "{err:?}"
+        );
+        // Table names go to the table reader.
+        let t = read_table("bom.TSV", b"Part Number\tName\nA\tB\n").unwrap();
+        assert_eq!(t.rows[0].number, "A");
+        // Unsupported names are refused with the list of formats.
+        let err = read_table("bom.docx", b"").unwrap_err();
+        assert!(matches!(&err, AppError::BadRequest(m) if m.contains("STEP assemblies")));
+    }
+
+    #[test]
+    fn keys_and_labels_of_rows() {
+        let t = read_table(
+            "a.csv",
+            b"Part Number,Name\n  ab-1 ,One\nAB-1,Same item\n,  Screw M6 \n",
+        )
+        .unwrap();
+        assert_eq!(
+            item_key(&t.rows[0]),
+            item_key(&t.rows[1]),
+            "case-insensitive"
+        );
+        assert_eq!(item_key(&t.rows[2]), "name:screw m6");
+        assert_eq!(shown(&t.rows[1]), "AB-1");
+        assert_eq!(shown(&t.rows[2]), "Screw M6", "the name without a number");
+        assert_eq!(file_stem(" no extension "), "no extension");
+        assert_eq!(file_stem("a.b.csv"), "a.b");
+        assert_eq!(NumberSource::parse(" file ").unwrap(), NumberSource::File);
+        assert_eq!(
+            serde_json::to_value(NumberSource::Generate).unwrap(),
+            serde_json::json!("generate")
+        );
+    }
+
+    #[test]
+    fn reachability_terminates_on_cycles() {
+        let children = HashMap::from([(0, vec![1]), (1, vec![0, 2]), (2, vec![1])]);
+        assert!(reaches(&children, 0, 2));
+        assert!(!reaches(&children, 0, 5));
+        assert!(reaches(&children, 4, 4), "a node reaches itself");
     }
 
     #[test]

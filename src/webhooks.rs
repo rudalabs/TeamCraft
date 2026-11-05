@@ -401,7 +401,7 @@ pub struct Dispatcher {
 const CLAIM: &str = "
     WITH due AS (
         SELECT d.id FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
-        WHERE d.status = 'pending' AND w.active AND {filter}
+        WHERE d.status = 'pending' AND w.active AND {filter} AND NOT {withheld}
         ORDER BY d.next_attempt_at
         LIMIT $1
         FOR UPDATE OF d SKIP LOCKED
@@ -413,6 +413,39 @@ const CLAIM: &str = "
     WHERE d.id = due.id AND w.id = d.webhook_id
     RETURNING d.id, d.event, d.payload, d.attempts, d.next_attempt_at AS lease_until,
               w.url, w.secret";
+
+/// SQL condition on a delivery `d` of webhook `w`: one of the event's
+/// project groups is restricted now and is not the webhook's own group. The
+/// webhook may no longer read the event (the group was restricted after the
+/// delivery was queued), so it is not sent.
+const WITHHELD: &str = "EXISTS (SELECT 1 FROM projects rp
+                                 WHERE rp.id = ANY(d.projects) AND rp.visibility = 'restricted'
+                                   AND rp.id IS DISTINCT FROM w.project_id)";
+
+/// The text recorded on a withheld delivery.
+pub const WITHHELD_ERROR: &str =
+    "Not sent: a project group of the event was restricted after it was queued.";
+
+fn claim_sql(filter: &str) -> String {
+    CLAIM
+        .replace("{filter}", filter)
+        .replace("{withheld}", WITHHELD)
+}
+
+/// Marks the pending deliveries the webhook may no longer read as failed
+/// (see [`WITHHELD`]); returns how many.
+async fn withhold(pool: &PgPool) -> AppResult<u64> {
+    Ok(sqlx::query(&format!(
+        "UPDATE webhook_deliveries d
+         SET status = 'failed', last_error = $1, updated_at = now()
+         FROM webhooks w
+         WHERE w.id = d.webhook_id AND d.status = 'pending' AND {WITHHELD}"
+    ))
+    .bind(WITHHELD_ERROR)
+    .execute(pool)
+    .await?
+    .rows_affected())
+}
 
 impl Dispatcher {
     pub fn from_config(config: &Config) -> anyhow::Result<Dispatcher> {
@@ -445,7 +478,7 @@ impl Dispatcher {
     /// Claims up to `limit` due deliveries (`FOR UPDATE SKIP LOCKED`).
     async fn claim(&self, pool: &PgPool, limit: i64) -> AppResult<Vec<Claimed>> {
         Ok(
-            sqlx::query_as::<_, Claimed>(&CLAIM.replace("{filter}", "d.next_attempt_at <= now()"))
+            sqlx::query_as::<_, Claimed>(&claim_sql("d.next_attempt_at <= now()"))
                 .bind(limit)
                 .bind(LEASE.as_secs_f64())
                 .fetch_all(pool)
@@ -455,8 +488,11 @@ impl Dispatcher {
 
     /// Sends the due deliveries (up to [`BATCH`] at once).
     pub async fn run_once(&self, pool: &PgPool) -> AppResult<Report> {
+        let mut report = Report {
+            failed: withhold(pool).await?,
+            ..Report::default()
+        };
         let claimed = self.claim(pool, BATCH).await?;
-        let mut report = Report::default();
         let mut tasks = tokio::task::JoinSet::new();
         for c in claimed {
             let (me, pool) = (self.clone(), pool.clone());
@@ -485,14 +521,14 @@ impl Dispatcher {
         pool: &PgPool,
         delivery_id: Uuid,
     ) -> AppResult<Option<Outcome>> {
-        let claimed = sqlx::query_as::<_, Claimed>(
-            &CLAIM.replace("{filter}", "d.id = $3 AND d.next_attempt_at <= now()"),
-        )
-        .bind(1i64)
-        .bind(LEASE.as_secs_f64())
-        .bind(delivery_id)
-        .fetch_optional(pool)
-        .await?;
+        withhold(pool).await?;
+        let claimed =
+            sqlx::query_as::<_, Claimed>(&claim_sql("d.id = $3 AND d.next_attempt_at <= now()"))
+                .bind(1i64)
+                .bind(LEASE.as_secs_f64())
+                .bind(delivery_id)
+                .fetch_optional(pool)
+                .await?;
         match claimed {
             Some(c) => Ok(Some(self.attempt(pool, c).await?)),
             None => Ok(None),

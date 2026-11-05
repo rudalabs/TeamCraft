@@ -1,6 +1,7 @@
 //! Similar part search: shape signatures of uploaded meshes, ranking,
-//! visibility (the item search's: every signed-in user, one hit per item,
-//! its latest revision), REST endpoint, MCP tool and revision page.
+//! visibility (the item search's: every signed-in user, no items of
+//! restricted groups for non-members, one hit per item, its latest
+//! revision), REST endpoint, MCP tool and revision page.
 
 mod common;
 
@@ -335,6 +336,92 @@ async fn similar_parts_by_shape() {
     assert!(html.contains("Similar existing parts"), "new part wording");
     assert!(html.contains(&format!("{copy}/A")), "hit listed");
     assert!(html.contains("identical file content"));
+
+    app.teardown().await;
+}
+
+/// An item of a restricted group is never a similar part for non-members –
+/// not even with identical file content – in REST, MCP and the revision
+/// page; its members still find it.
+#[tokio::test]
+async fn restricted_groups_stay_out_of_similar_parts() {
+    let app = app_or_skip!();
+    let (_, admin) = app.user("admin", Role::Admin).await;
+    let (_, member) = app.user_in("mira", Role::Editor, &["ROVER"]).await;
+    let (_, outsider) = app.user_in("otto", Role::Editor, &["ROCKET"]).await;
+
+    let shape = box_stl(60.0, 30.0, 5.0, 0.0);
+    let visible = part(&app, &outsider, "ROCKET", "Bracket").await;
+    upload(&app, &outsider, &visible, "bracket.stl", &shape).await;
+    let hidden = part(&app, &member, "ROVER", "Secret bracket").await;
+    upload(&app, &member, &hidden, "secret-bracket.stl", &shape).await;
+    let r = app
+        .api(
+            Method::PUT,
+            "/api/v1/projects/ROVER/visibility",
+            &admin,
+            Some(json!({ "visibility": "restricted" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+
+    // the member sees the identical copy in the restricted group
+    let report = similar(&app, &member, &visible, "").await;
+    assert_eq!(report["status"], "ready", "{report}");
+    assert!(numbers(&report).contains(&hidden), "member: {report}");
+
+    // the outsider does not: neither the item nor its file
+    let report = similar(&app, &outsider, &visible, "").await;
+    assert_eq!(report["status"], "ready", "{report}");
+    let text = report.to_string();
+    for marker in [hidden.as_str(), "Secret bracket", "secret-bracket.stl"] {
+        assert!(!text.contains(marker), "REST shows {marker}: {text}");
+    }
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/mcp",
+            &outsider,
+            Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                         "params": { "name": "find_similar_parts", "arguments": { "item": visible } } })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    for marker in [hidden.as_str(), "Secret bracket", "secret-bracket.stl"] {
+        assert!(
+            !r.text().contains(marker),
+            "MCP shows {marker}: {}",
+            r.text()
+        );
+    }
+    let cookie = app.login("otto").await;
+    let rev_id: Uuid = sqlx::query_scalar(
+        "SELECT r.id FROM revisions r JOIN items i ON i.id = r.item_id WHERE i.number = $1",
+    )
+    .bind(&visible)
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    let page = app
+        .get_page(&format!("/revisions/{rev_id}"), Some(&cookie))
+        .await;
+    assert_eq!(page.status, StatusCode::OK);
+    for marker in [hidden.as_str(), "Secret bracket", "secret-bracket.stl"] {
+        assert!(
+            !page.text().contains(marker),
+            "revision page shows {marker}"
+        );
+    }
+    // and the hidden item itself is not found
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{hidden}/revisions/latest/similar?wait=0"),
+            &outsider,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text());
 
     app.teardown().await;
 }

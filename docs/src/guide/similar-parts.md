@@ -54,7 +54,10 @@ the proportions (middle and smallest extent relative to the largest) instead
 of the extents, so scaled variants – M6 and M8 versions of a part – score
 like copies.
 
-Everyone who can sign in sees the hits, exactly like the item search.
+Everyone who can sign in sees the hits, exactly like the item search: items
+of a [restricted project group](../admin/permissions.md) appear only for its
+members and administrators – for everybody else they are neither shown nor
+counted, even with identical file content.
 
 ## Limits
 

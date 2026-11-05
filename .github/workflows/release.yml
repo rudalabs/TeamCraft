@@ -1,7 +1,9 @@
 # Builds and publishes TeamCraft:
 #
 # * a tag `v<version>` (e.g. `v0.2.0`) → GitHub Release with the server
-#   binaries, the desktop installers and SHA256SUMS.txt; 0.x versions and
+#   binaries (Linux x86_64/aarch64, Windows x64), the desktop installers
+#   (Linux deb/rpm/AppImage and Flatpak bundles, macOS dmg/app, Windows x64
+#   and arm64 msi/setup.exe plus portable zips) and SHA256SUMS.txt; 0.x versions and
 #   versions with a suffix (`v1.0.0-rc.1`) are marked as pre-release;
 # * a push to main, a pull request that changes this file, or "Run workflow"
 #   → the same files as workflow artifacts (kept 14 days), no release.
@@ -116,7 +118,6 @@ jobs:
         include:
           - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
-          - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     steps:
       - uses: actions/checkout@v4
@@ -170,7 +171,8 @@ jobs:
           - { os: ubuntu-24.04, bundles: "deb,rpm,appimage" }
           - { os: ubuntu-24.04-arm, bundles: "deb,rpm" }
           - { os: macos-latest, bundles: "app,dmg" }
-          - { os: windows-latest, bundles: "msi,nsis" }
+          - { os: windows-latest, bundles: "msi,nsis", arch: x64 }
+          - { os: windows-11-arm, bundles: "msi,nsis", arch: arm64 }
     steps:
       - uses: actions/checkout@v4
       - name: Linux build dependencies
@@ -206,9 +208,81 @@ jobs:
             done
           fi
           ls -l dist
+      # Windows: the same executable without an installer. `cargo tauri build`
+      # compiles it with the custom-protocol feature, so the user interface is
+      # embedded; it needs the WebView2 runtime, which Windows 10 and 11 have.
+      - name: Portable zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "TeamCraft_${{ needs.version.outputs.version }}_${{ matrix.arch }}_portable"
+          $dir = "dist-portable\$name"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item desktop\target\release\teamcraft-desktop.exe "$dir\TeamCraft.exe"
+          Copy-Item LICENSE "$dir\LICENSE.txt"
+          @(
+            "TeamCraft Desktop ${{ needs.version.outputs.version }} (${{ matrix.arch }}) - portable",
+            "",
+            "Unpack the folder anywhere and start TeamCraft.exe; nothing is installed.",
+            "The app needs the Microsoft Edge WebView2 runtime, which is part of",
+            "Windows 10 and 11. If it is missing, install it from",
+            "https://developer.microsoft.com/microsoft-edge/webview2/",
+            "",
+            "Settings are stored in your user profile like with the installers.",
+            "Source code and documentation: https://github.com/rudalabs/TeamCraft",
+            "Licensed under the Mozilla Public License 2.0 (LICENSE.txt)."
+          ) | Set-Content -Encoding utf8 "$dir\README.txt"
+          Compress-Archive -Path $dir -DestinationPath "dist\$name.zip"
+          Get-ChildItem dist
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.os }}
+          path: dist/*
+          retention-days: 14
+          if-no-files-found: error
+
+  # TeamCraft Desktop as a single-file Flatpak bundle from
+  # packaging/flatpak/io.github.rudalabs.teamcraft.yml (GNOME 49 runtime,
+  # installed from Flathub on the user's machine). Built natively on an x86_64
+  # and an aarch64 runner in the Flathub build container.
+  flatpak:
+    name: flatpak (${{ matrix.arch }})
+    needs: version
+    if: needs.version.outputs.artifacts == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
+      options: --privileged
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, arch: x86_64 }
+          - { os: ubuntu-24.04-arm, arch: aarch64 }
+    env:
+      BUNDLE: TeamCraft_${{ needs.version.outputs.version }}_${{ matrix.arch }}.flatpak
+    steps:
+      - uses: actions/checkout@v4
+      # v6.8; the action moved back from flathub-infra to flatpak, the build
+      # image stays at ghcr.io/flathub-infra.
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3
+        with:
+          manifest-path: packaging/flatpak/io.github.rudalabs.teamcraft.yml
+          bundle: ${{ env.BUNDLE }}
+          arch: ${{ matrix.arch }}
+          cache-key: release-flatpak
+          upload-artifact: false
+      - name: Collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          mv "$BUNDLE" dist/
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-flatpak-${{ matrix.arch }}
           path: dist/*
           retention-days: 14
           if-no-files-found: error
@@ -218,7 +292,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     # After the image: install.sh installs the newest release, whose image
     # must already be on ghcr.io.
-    needs: [version, server, desktop, image-manifest]
+    needs: [version, server, desktop, flatpak, image-manifest]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

@@ -71,7 +71,7 @@ pub async fn list(
     let item_id = if item_number.is_empty() {
         None
     } else {
-        match items::get_by_number(&st.db, &item_number).await {
+        match items::get_by_number(&st.db, &ctx.me, &item_number).await {
             Ok(item) => Some(item.id),
             Err(AppError::NotFound(_)) => Some(Uuid::nil()),
             Err(e) => return Err(e),
@@ -87,6 +87,7 @@ pub async fn list(
     let page_no = q.page.unwrap_or(1).max(1);
     let (rows, total) = requests::list(
         &st.db,
+        &ctx.me,
         &filter,
         Page::from_page_number(Some(page_no), PER_PAGE),
     )
@@ -146,7 +147,7 @@ async fn render_new(
     error: Option<String>,
 ) -> AppResult<Response> {
     let revision = match parse_opt_uuid("Revision", Some(&form.revision_id)).unwrap_or(None) {
-        Some(id) => Some(revisions::get(&st.db, id).await?),
+        Some(id) => Some(revisions::get(&st.db, &ctx.me, id).await?),
         None => None,
     };
     render(
@@ -193,9 +194,13 @@ fn request_input(form: &RequestForm) -> AppResult<RequestInput> {
 }
 
 /// The affected item of the form: the given revision, or the item number.
-async fn affected_of(st: &AppState, form: &RequestForm) -> AppResult<Option<AffectedItem>> {
+async fn affected_of(
+    st: &AppState,
+    me: &crate::auth::Actor,
+    form: &RequestForm,
+) -> AppResult<Option<AffectedItem>> {
     if let Some(rev_id) = parse_opt_uuid("Revision", Some(&form.revision_id))? {
-        let rev = revisions::get(&st.db, rev_id).await?;
+        let rev = revisions::get(&st.db, me, rev_id).await?;
         return Ok(Some(AffectedItem {
             item_id: rev.item_id,
             revision_id: Some(rev.id),
@@ -206,7 +211,7 @@ async fn affected_of(st: &AppState, form: &RequestForm) -> AppResult<Option<Affe
     if number.is_empty() {
         return Ok(None);
     }
-    let item = items::get_by_number(&st.db, number).await?;
+    let item = items::get_by_number(&st.db, me, number).await?;
     Ok(Some(AffectedItem {
         item_id: item.id,
         revision_id: None,
@@ -221,7 +226,7 @@ pub async fn create(
 ) -> AppResult<Response> {
     let created = async {
         let input = request_input(&form)?;
-        let affected = affected_of(&st, &form).await?;
+        let affected = affected_of(&st, &ctx.me, &form).await?;
         requests::create(&st.db, &ctx.me, input, affected.into_iter().collect()).await
     }
     .await;
@@ -244,14 +249,14 @@ pub async fn show(
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let request = requests::get(&st.db, id).await?;
+    let request = requests::get(&st.db, &ctx.me, id).await?;
     let ids = [id];
-    let (affected, comments, attachments, linked, history, watching, can) = tokio::try_join!(
-        requests::items(&st.db, id),
+    let (affected, comments, attachments, (linked, hidden_changes), history, watching, can) = tokio::try_join!(
+        requests::items(&st.db, &ctx.me, id),
         requests::comments(&st.db, id),
         requests::attachments(&st.db, id),
-        requests::linked_changes(&st.db, id),
-        audit::for_entities(&st.db, &ids, 100),
+        requests::linked_changes(&st.db, &ctx.me, id),
+        audit::for_entities(&st.db, &ctx.me, &ids, 100),
         notifications::is_watching(&st.db, ctx.me.id, "change_request", id),
         requests::abilities_of(&st.db, &ctx.me, &request),
     )?;
@@ -262,7 +267,7 @@ pub async fn show(
     };
     // Open change orders an accepted request can be linked to.
     let open_changes: Vec<_> = if can.implement {
-        changes::drafts(&st.db)
+        changes::drafts(&st.db, &ctx.me)
             .await?
             .into_iter()
             .filter(|c| !linked.iter().any(|l| l.id == c.id))
@@ -293,6 +298,7 @@ pub async fn show(
             "attachments": attachments,
             "images": images,
             "changes": linked,
+            "hidden_changes": hidden_changes,
             "open_changes": open_changes,
             "candidates": candidates,
             "history": history,
@@ -491,7 +497,11 @@ pub async fn link_change(
             Ok(Some(id)) => id,
             Ok(None) => return Err(AppError::BadRequest("Choose a change order.".into())),
             // a change number such as CHG-000004
-            Err(_) => changes::get_by_number(&st.db, &form.change).await?.id,
+            Err(_) => {
+                changes::get_by_number(&st.db, &ctx.me, &form.change)
+                    .await?
+                    .id
+            }
         };
         requests::link_change(&st.db, &ctx.me, id, change_id).await
     }
@@ -517,7 +527,7 @@ pub async fn add_item(
 ) -> AppResult<Response> {
     let back = back_to(id);
     let result = async {
-        let item = items::get_by_number(&st.db, &form.item_number).await?;
+        let item = items::get_by_number(&st.db, &ctx.me, &form.item_number).await?;
         requests::add_item(
             &st.db,
             &ctx.me,
@@ -602,11 +612,12 @@ pub struct AttachmentQuery {
 /// The bytes of an attachment; images are shown inline when asked for
 /// (`?inline=1`), everything else downloads. Shared with the REST API.
 pub(crate) async fn attachment_response(
+    me: &crate::auth::Actor,
     st: &AppState,
     id: Uuid,
     inline: bool,
 ) -> AppResult<Response> {
-    let a = requests::attachment(&st.db, id).await?;
+    let a = requests::attachment(&st.db, me, id).await?;
     let file = st.vault.open_blob(&a.sha256).await?;
     let mut disposition = util::content_disposition(&a.filename);
     if inline && a.content_type.starts_with("image/") {
@@ -632,11 +643,11 @@ pub(crate) async fn attachment_response(
 
 pub async fn download_attachment(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
     Query(q): Query<AttachmentQuery>,
 ) -> AppResult<Response> {
-    attachment_response(&st, id, q.inline.as_deref() == Some("1")).await
+    attachment_response(&me, &st, id, q.inline.as_deref() == Some("1")).await
 }
 
 pub async fn delete_attachment(
@@ -647,7 +658,7 @@ pub async fn delete_attachment(
     let result = requests::delete_attachment(&st.db, &ctx.me, id).await;
     let back = match &result {
         Ok(a) => back_to(a.request_id),
-        Err(_) => match requests::attachment(&st.db, id).await {
+        Err(_) => match requests::attachment(&st.db, &ctx.me, id).await {
             Ok(a) => back_to(a.request_id),
             Err(_) => "/requests".into(),
         },

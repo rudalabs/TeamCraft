@@ -115,7 +115,9 @@ async fn large_bom_expands_level_by_level() {
         (RevisionRule::AsReleased, 0.01),
     ] {
         let started = Instant::now();
-        let tree = bom::tree(&app.pool, root, rule).await.expect("expand");
+        let tree = bom::tree(&app.pool, &teamcraft::auth::Actor::system(), root, rule)
+            .await
+            .expect("expand");
         let elapsed = started.elapsed();
         eprintln!(
             "{}: {} lines in {elapsed:?} with {} queries",
@@ -207,6 +209,7 @@ async fn large_bom_expands_level_by_level() {
     // the shared bolt: 1024 uses on level 1, 1024 on level 2 – capped
     let used = teamcraft::services::items::where_used_levels(
         &app.pool,
+        &teamcraft::auth::Actor::system(),
         sqlx::query_scalar("SELECT id FROM items WHERE number = 'PRT-BOLT'")
             .fetch_one(&app.pool)
             .await
@@ -251,7 +254,9 @@ async fn large_workset_follows_the_expanded_bom() {
             ws.queries
         );
         // the former derivation: every revision of the flattened tree once
-        let tree = bom::tree(&app.pool, root, rule).await.expect("expand");
+        let tree = bom::tree(&app.pool, &teamcraft::auth::Actor::system(), root, rule)
+            .await
+            .expect("expand");
         let mut expected = vec![(tree.root.id, Via::Root)];
         for row in bom::flatten(&tree.children) {
             let id = row.node.revision.as_ref().unwrap().id;
@@ -532,7 +537,9 @@ async fn expansion_resolves_rules_unresolved_lines_and_cycles() {
         (RevisionRule::Released, "B", 3, 2, false),
         (RevisionRule::AsReleased, "A", 4, 2, true),
     ] {
-        let tree = bom::tree(pool, root, rule).await.expect("expand");
+        let tree = bom::tree(pool, &teamcraft::auth::Actor::system(), root, rule)
+            .await
+            .expect("expand");
         let name = rule.as_str();
         assert_eq!(tree.line_count, lines, "{name}");
         assert_eq!(tree.unresolved_count, unresolved, "{name}");

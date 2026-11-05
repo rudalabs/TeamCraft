@@ -44,7 +44,7 @@ pub async fn upload_form(
 ) -> AppResult<Response> {
     ctx.me.require(Role::Editor)?;
     let target = match q.into {
-        Some(id) => Some(revisions::get(&st.db, id).await?),
+        Some(id) => Some(revisions::get(&st.db, &ctx.me, id).await?),
         None => None,
     };
     let projects = projects::editable_by(&st.db, &ctx.me).await?;

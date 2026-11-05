@@ -722,9 +722,13 @@ async fn obsolete_and_delete_rules() {
     assert_eq!(r.status, StatusCode::CONFLICT);
 
     // Deleting is limited to the creator (or admins) via the service layer
-    let item = teamcraft::services::items::get_by_number(&app.pool, &number)
-        .await
-        .unwrap();
+    let item = teamcraft::services::items::get_by_number(
+        &app.pool,
+        &teamcraft::auth::Actor::system(),
+        &number,
+    )
+    .await
+    .unwrap();
     let other_actor = app.actor("other").await;
     let err = teamcraft::services::items::delete(&app.pool, &other_actor, item.id)
         .await
@@ -1818,6 +1822,16 @@ async fn assembly_references_and_change_propagation() {
     assert_eq!(get("/api/v1/impacts".into()).await, json!([]));
     let lines = get(format!("{asm}/B/bom")).await;
     assert_eq!(lines[0]["released_child_code"], "B");
+
+    // Comparing A and B over all levels shows the new part revision: the
+    // default rule uses the revisions each assembly was released with.
+    let cmp = get(format!("{asm}/B/bom/compare?with=A&depth=all")).await;
+    assert_eq!(cmp["lines"][0]["change"], "changed", "{cmp}");
+    assert_eq!(cmp["lines"][0]["before"]["revision"], "A", "{cmp}");
+    assert_eq!(cmp["lines"][0]["after"]["revision"], "B", "{cmp}");
+    // "Latest" resolves the part by its item alone: the same revision on both sides.
+    let cmp = get(format!("{asm}/B/bom/compare?with=A&depth=all&rule=latest")).await;
+    assert_eq!(cmp["lines"][0]["change"], "unchanged", "{cmp}");
 
     // The drawing references survive Revise.
     let r = app
@@ -3344,6 +3358,73 @@ async fn bom_import_from_step_assemblies() {
         )
         .await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+
+    // A shared sub-assembly whose only BOM rows sit below an existing item
+    // (skipped by the import) still gets its BOM at its other occurrence.
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &eng,
+            Some(json!({ "item_type": "assembly", "name": "Module", "project": "ROCKET", "number": "MODULE-1" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let mut data = String::new();
+    for (n, id, name) in [
+        (1, "TOP-1", "Top"),
+        (2, "MODULE-1", "Module"),
+        (3, "BEARING-1", "Bearing unit"),
+        (4, "BALL-1", "Ball"),
+    ] {
+        data += &format!(
+            "#{n}1=PRODUCT('{id}','{name}','',(#9));\n\
+             #{n}2=PRODUCT_DEFINITION_FORMATION('','',#{n}1);\n\
+             #{n}3=PRODUCT_DEFINITION('design','',#{n}2,#8);\n"
+        );
+    }
+    for (id, parent, child) in [(101, 1, 2), (102, 2, 3), (103, 3, 4), (104, 1, 3)] {
+        data += &format!(
+            "#{id}=NEXT_ASSEMBLY_USAGE_OCCURRENCE('{id}','','',#{parent}3,#{child}3,$);\n"
+        );
+    }
+    let step = format!(
+        "ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\nDATA;\n{data}ENDSEC;\n\
+         END-ISO-10303-21;\n"
+    );
+    let done = app
+        .api_multipart(
+            "/api/v1/bom-imports",
+            &eng,
+            &[("top.step", step.as_bytes())],
+            &[("project", "ROCKET")],
+        )
+        .await;
+    assert_eq!(done.status, StatusCode::CREATED, "{}", done.text());
+    let bearing = app
+        .api(
+            Method::GET,
+            "/api/v1/items/BEARING-1/revisions/A",
+            &eng,
+            None,
+        )
+        .await
+        .json();
+    assert_eq!(bearing["revision"]["item_type"], "assembly", "{bearing}");
+    assert_eq!(bearing["bom"][0]["child_number"], "BALL-1", "{bearing}");
+    let module = app
+        .api(
+            Method::GET,
+            "/api/v1/items/MODULE-1/revisions/A",
+            &eng,
+            None,
+        )
+        .await
+        .json();
+    assert!(
+        module["bom"].as_array().unwrap().is_empty(),
+        "the existing item's BOM is not changed"
+    );
     app.teardown().await;
 }
 
@@ -3882,6 +3963,31 @@ async fn numbering_schemes_per_project_group() {
         r.json()["next"][0]["number"],
         format!("PUMP-PRT-{year}-0005")
     );
+
+    // when the next number is taken, the counter continues after the highest
+    // number of the pattern at once (an existing convention with many items
+    // must not exhaust the attempts)
+    for n in ["0005", "0040", "39X", "12345678901234567890"] {
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/items",
+                &eng,
+                Some(create("part", Some(&format!("PUMP-PRT-{year}-{n}")))),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &eng,
+            Some(create("part", None)),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(r.json()["item_number"], format!("PUMP-PRT-{year}-0041"));
 
     // other project groups keep the built-in scheme, and its counter
     let r = app

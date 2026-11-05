@@ -7,10 +7,10 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::{self, ItemType, LifecycleState, Role},
+    domain::{self, ItemType, LifecycleState, ProjectVisibility, Role},
     error::{AppError, AppResult},
     models::{Item, ItemSummary, Revision, WhereUsed, WhereUsedLevel},
-    services::{audit, files, next_counter, notifications, revisions, Page},
+    services::{access, audit, files, notifications, projects, revisions, Page},
 };
 
 const ITEM_SELECT: &str = "
@@ -33,7 +33,7 @@ pub struct ItemFilter {
     pub system: Option<String>,
 }
 
-/// Searches items; every row carries its latest revision.
+/// Searches items the actor may read; every row carries its latest revision.
 ///
 /// The latest revision of an item is looked up per item, so the query never
 /// does that for the whole vault: a search text, a state or a CAD program
@@ -44,11 +44,13 @@ pub struct ItemFilter {
 /// items (by number) is looked up, and the total is a plain count.
 pub async fn search(
     pool: &PgPool,
+    actor: &Actor,
     filter: &ItemFilter,
     page: Page,
 ) -> AppResult<(Vec<ItemSummary>, i64)> {
     // $1 = LIKE pattern, $5 = prefix tsquery, $6 = formats the query names
-    // ("SolidWorks", "NX", "STEP"), $7 = formats of the CAD program filter.
+    // ("SolidWorks", "NX", "STEP"), $7 = formats of the CAD program filter,
+    // $8/$9 = limit/offset, $10 = the actor's hidden project groups.
     // A match is any of: item number, name/description/material (substring or
     // full-text), a file name, the extracted text of the current version of a
     // file of the latest revision, or a file of a format the query names.
@@ -69,6 +71,7 @@ pub async fn search(
           AND (f.filename ILIKE $1
                OR ($5::text IS NOT NULL AND fv.content_vector @@ to_tsquery('simple', $5))
                OR f.format = ANY($6::text[]))";
+    let visible = access::item_visible("i", 10);
     let where_ = format!(
         "($1::text IS NULL
                OR i.number ILIKE $1 OR lr.name ILIKE $1 OR lr.description ILIKE $1 OR lr.material ILIKE $1
@@ -78,7 +81,8 @@ pub async fn search(
           AND ($3::uuid IS NULL OR i.project_id = $3)
           AND ($4::text IS NULL OR lr.state = $4)
           AND ($7::text[] IS NULL OR EXISTS (
-                SELECT 1 FROM files sf WHERE sf.revision_id = lr.id AND sf.format = ANY($7::text[])))"
+                SELECT 1 FROM files sf WHERE sf.revision_id = lr.id AND sf.format = ANY($7::text[])))
+          AND {visible}"
     );
     let columns = format!(
         "i.id, i.number, i.item_type, i.unit, p.code AS project_code, i.created_at,
@@ -150,13 +154,14 @@ pub async fn search(
         total: i64,
     }
     let rows_sql = if narrow.is_empty() {
-        // Only the page of items is looked up; every item has at least one
-        // revision (created together, revisions are never deleted alone),
-        // so the latest-revision conditions cannot drop any item here.
+        // Only the page of (visible) items is looked up; every item has at
+        // least one revision (created together, revisions are never deleted
+        // alone), so the latest-revision conditions cannot drop any item here.
         format!(
             "WITH page AS (
                  SELECT i.id FROM items i
                  WHERE ($2::text IS NULL OR i.item_type = $2) AND ($3::uuid IS NULL OR i.project_id = $3)
+                   AND {visible}
                  ORDER BY i.number LIMIT $8 OFFSET $9
              )
              SELECT {columns}, 0::bigint AS total
@@ -183,42 +188,51 @@ pub async fn search(
         .bind(&system_formats)
         .bind(page.limit)
         .bind(page.offset)
+        .bind(&actor.hidden_projects)
         .fetch_all(pool)
         .await?;
     // The window total is there whenever the page has rows; a page behind
     // the last one (and the unfiltered listing) needs the count query.
     let total = match rows.first() {
         _ if narrow.is_empty() => {
-            sqlx::query_scalar::<_, i64>(
+            sqlx::query_scalar::<_, i64>(&format!(
                 "SELECT COUNT(*) FROM items i
-                 WHERE ($1::text IS NULL OR i.item_type = $1) AND ($2::uuid IS NULL OR i.project_id = $2)",
-            )
+                 WHERE ($1::text IS NULL OR i.item_type = $1) AND ($2::uuid IS NULL OR i.project_id = $2)
+                   AND {}",
+                access::item_visible("i", 3)
+            ))
             .bind(item_type)
             .bind(filter.project_id)
+            .bind(&actor.hidden_projects)
             .fetch_one(pool)
             .await?
         }
         Some(row) => row.total,
         None if page.offset == 0 => 0,
         None => {
+            // same parameter positions as the page query ($8/$9 unused)
             sqlx::query_scalar::<_, i64>(&format!(
-                "SELECT COUNT(*) FROM items i {JOINS} WHERE {where_} {candidates}"
+                "SELECT COUNT(*) FROM items i {JOINS} WHERE {where_} {candidates}
+                   AND $8::bigint IS NOT NULL AND $9::bigint IS NOT NULL"
             ))
-                .bind(&pattern)
-                .bind(item_type)
-                .bind(filter.project_id)
-                .bind(state)
-                .bind(&tsquery)
-                .bind(&named_formats)
-                .bind(&system_formats)
-                .fetch_one(pool)
-                .await?
+            .bind(&pattern)
+            .bind(item_type)
+            .bind(filter.project_id)
+            .bind(state)
+            .bind(&tsquery)
+            .bind(&named_formats)
+            .bind(&system_formats)
+            .bind(page.limit)
+            .bind(page.offset)
+            .bind(&actor.hidden_projects)
+            .fetch_one(pool)
+            .await?
         }
     };
     Ok((rows.into_iter().map(|r| r.item).collect(), total))
 }
 
-pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Item> {
+pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<Item> {
     sqlx::query_as::<_, Item>(&format!("{ITEM_SELECT} WHERE i.id = $1"))
         .bind(id)
         .fetch_optional(pool)
@@ -226,7 +240,7 @@ pub async fn get(pool: &PgPool, id: Uuid) -> AppResult<Item> {
         .ok_or_else(|| AppError::not_found("Item not found."))
 }
 
-pub async fn get_by_number(pool: &PgPool, number: &str) -> AppResult<Item> {
+pub(crate) async fn get_by_number_unchecked(pool: &PgPool, number: &str) -> AppResult<Item> {
     let number = number.trim().to_ascii_uppercase();
     sqlx::query_as::<_, Item>(&format!("{ITEM_SELECT} WHERE i.number = $1"))
         .bind(&number)
@@ -236,7 +250,7 @@ pub async fn get_by_number(pool: &PgPool, number: &str) -> AppResult<Item> {
 }
 
 /// All revisions of an item, newest first.
-pub async fn revisions(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<Revision>> {
+pub(crate) async fn revisions_unchecked(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<Revision>> {
     Ok(sqlx::query_as::<_, Revision>(&format!(
         "{} WHERE r.item_id = $1 ORDER BY r.seq DESC",
         revisions::REVISION_SELECT
@@ -246,7 +260,7 @@ pub async fn revisions(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<Revision>>
     .await?)
 }
 
-pub async fn latest_revision(pool: &PgPool, item_id: Uuid) -> AppResult<Revision> {
+pub(crate) async fn latest_revision_unchecked(pool: &PgPool, item_id: Uuid) -> AppResult<Revision> {
     sqlx::query_as::<_, Revision>(&format!(
         "{} WHERE r.item_id = $1 ORDER BY r.seq DESC LIMIT 1",
         revisions::REVISION_SELECT
@@ -254,11 +268,16 @@ pub async fn latest_revision(pool: &PgPool, item_id: Uuid) -> AppResult<Revision
     .bind(item_id)
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| AppError::not_found("Item has no revisions."))
+    // every item has a revision: none means no item, and the message must
+    // be the one of a hidden item (`latest_revision`)
+    .ok_or_else(access::not_found_item)
 }
 
 /// The in-work or in-review revision of an item, if any.
-pub async fn open_revision(pool: &PgPool, item_id: Uuid) -> AppResult<Option<Revision>> {
+pub(crate) async fn open_revision_unchecked(
+    pool: &PgPool,
+    item_id: Uuid,
+) -> AppResult<Option<Revision>> {
     Ok(sqlx::query_as::<_, Revision>(&format!(
         "{} WHERE r.item_id = $1 AND r.state IN ('in_work', 'in_review')",
         revisions::REVISION_SELECT
@@ -266,6 +285,57 @@ pub async fn open_revision(pool: &PgPool, item_id: Uuid) -> AppResult<Option<Rev
     .bind(item_id)
     .fetch_optional(pool)
     .await?)
+}
+
+/// An item the actor may read; hidden items answer like missing ones.
+pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Item> {
+    let item = get_unchecked(pool, id).await?;
+    access::ensure_visible(actor, item.project_id, access::not_found_item())?;
+    Ok(item)
+}
+
+/// An item by number, if the actor may read it. A hidden item gives exactly
+/// the message of an unknown number.
+pub async fn get_by_number(pool: &PgPool, actor: &Actor, number: &str) -> AppResult<Item> {
+    let item = get_by_number_unchecked(pool, number).await?;
+    access::ensure_visible(
+        actor,
+        item.project_id,
+        AppError::not_found(format!(
+            "Item '{}' not found.",
+            number.trim().to_ascii_uppercase()
+        )),
+    )?;
+    Ok(item)
+}
+
+/// All revisions of an item the actor may read, newest first.
+pub async fn revisions(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<Vec<Revision>> {
+    let revs = revisions_unchecked(pool, item_id).await?;
+    if let Some(first) = revs.first() {
+        access::ensure_visible(actor, first.project_id, access::not_found_item())?;
+    }
+    Ok(revs)
+}
+
+/// The latest revision of an item the actor may read.
+pub async fn latest_revision(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<Revision> {
+    let rev = latest_revision_unchecked(pool, item_id).await?;
+    access::ensure_visible(actor, rev.project_id, access::not_found_item())?;
+    Ok(rev)
+}
+
+/// The in-work or in-review revision of an item the actor may read.
+pub async fn open_revision(
+    pool: &PgPool,
+    actor: &Actor,
+    item_id: Uuid,
+) -> AppResult<Option<Revision>> {
+    let rev = open_revision_unchecked(pool, item_id).await?;
+    if let Some(rev) = &rev {
+        access::ensure_visible(actor, rev.project_id, access::not_found_item())?;
+    }
+    Ok(rev)
 }
 
 #[derive(Clone, Debug)]
@@ -296,7 +366,7 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<R
     let mut tx = pool.begin().await?;
     let created = create_tx(&mut tx, actor, input).await?;
     tx.commit().await?;
-    revisions::get(pool, created.revision_id).await
+    revisions::get(pool, actor, created.revision_id).await
 }
 
 /// Creates an item and stores its first files in the new revision – one
@@ -315,7 +385,7 @@ pub async fn create_with_files(
         files::store_uploads(&mut tx, actor, &rev, uploads, "").await?;
     }
     tx.commit().await?;
-    revisions::get(pool, created.revision_id).await
+    revisions::get(pool, actor, created.revision_id).await
 }
 
 /// What [`create_tx`] created.
@@ -353,13 +423,16 @@ pub(crate) async fn create_tx(
         AppError::BadRequest("Choose the project group the item belongs to.".into())
     })?;
     let tx = conn;
-    let (code, active, scheme) = sqlx::query_as::<_, (String, bool, Option<String>)>(
-        "SELECT code, active, number_scheme FROM projects WHERE id = $1",
-    )
-    .bind(project_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::BadRequest("Unknown project.".into()))?;
+    let (code, active, scheme, visibility) =
+        sqlx::query_as::<_, (String, bool, Option<String>, String)>(
+            // FOR SHARE: a visibility change moves the counters (number_counter)
+            "SELECT code, active, number_scheme, visibility FROM projects WHERE id = $1 FOR SHARE",
+        )
+        .bind(project_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(access::unknown_project)?;
+    access::ensure_visible(actor, Some(project_id), access::unknown_project())?;
     if !active {
         return Err(AppError::BadRequest(format!(
             "The project group {code} is archived."
@@ -378,23 +451,78 @@ pub(crate) async fn create_tx(
             // entered manually (or by another scheme) are skipped.
             let scheme = domain::NumberScheme::of_project(scheme.as_deref())?;
             let ctx = domain::number_context(&code, input.item_type, Utc::now());
-            let counter = scheme.counter_key(&ctx);
+            let (counter, seed) = projects::number_counter(project_id, &visibility, &scheme, &ctx);
+            let own_scheme = scheme != domain::NumberScheme::default_scheme();
             let mut attempts = 0;
+            let mut jumped = false;
             loop {
-                let generated = scheme.format(&ctx, next_counter(tx, &counter).await?);
+                let next = projects::next_number(tx, &counter, seed.as_deref()).await?;
+                let generated = scheme.format(&ctx, next);
                 let candidate = domain::normalize_item_number(&generated).map_err(|_| {
                     AppError::BadRequest(format!(
                         "The numbering scheme of the project group {code} gives the invalid item number '{generated}'; enter a number or change the scheme."
                     ))
                 })?;
-                let taken = sqlx::query_scalar::<_, bool>(
-                    "SELECT EXISTS(SELECT 1 FROM items WHERE number = $1)",
+                // the group of the item that holds the number already
+                let taken = sqlx::query_scalar::<_, Option<Uuid>>(
+                    "SELECT project_id FROM items WHERE number = $1",
                 )
                 .bind(&candidate)
-                .fetch_one(&mut *tx)
+                .fetch_optional(&mut *tx)
                 .await?;
-                if !taken {
+                let Some(holder) = taken else {
                     break candidate;
+                };
+                // A scheme of the group's own that runs into the numbers of a
+                // group the actor may not see (e.g. one copying a restricted
+                // group's prefix) stops instead of skipping: skipping would
+                // count the hidden items in one call, follow every new one
+                // and use up the hidden group's next numbers. The error says
+                // no more than typing that one number in (and the counter
+                // stays where it was). The built-in shared counter has
+                // counted past every generated number already, so it only
+                // meets typed-in numbers and keeps skipping them.
+                if own_scheme && !actor.can_see_project(holder) {
+                    return Err(AppError::Conflict(format!(
+                        "The numbering scheme of the project group {code} gives the item number '{candidate}', which is already in use; change the scheme or enter a number."
+                    )));
+                }
+                if !jumped {
+                    // Numbers of this pattern exist already (entered by hand,
+                    // imported, or a scheme that continues an old
+                    // convention): continue after the highest one at once.
+                    // Only items the actor can see count, so the jump tells
+                    // nothing about hidden groups (their numbers are met
+                    // one by one as above).
+                    jumped = true;
+                    let (prefix, _) = scheme.around_seq(&ctx);
+                    let pattern = format!(
+                        "{}%",
+                        prefix
+                            .replace('\\', "\\\\")
+                            .replace('%', "\\%")
+                            .replace('_', "\\_")
+                    );
+                    let highest = sqlx::query_as::<_, (String, Option<Uuid>)>(
+                        "SELECT number, project_id FROM items WHERE number LIKE $1 ESCAPE '\\'",
+                    )
+                    .bind(&pattern)
+                    .fetch_all(&mut *tx)
+                    .await?
+                    .iter()
+                    .filter(|(_, project)| actor.can_see_project(*project))
+                    .filter_map(|(n, _)| scheme.seq_of(&ctx, n))
+                    .max();
+                    if let Some(highest) = highest {
+                        sqlx::query(
+                            "UPDATE counters SET value = GREATEST(value, $2) WHERE name = $1",
+                        )
+                        .bind(&counter)
+                        .bind(highest)
+                        .execute(&mut *tx)
+                        .await?;
+                    }
+                    continue;
                 }
                 attempts += 1;
                 if attempts > 1000 {
@@ -483,6 +611,7 @@ pub async fn update_master(
             .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(|| AppError::not_found("Item not found."))?;
+    access::ensure_visible(actor, current.project_id, access::not_found_item())?;
     // Moving an item requires membership in the old and the new project group.
     if !actor.can_edit_project(current.project_id) {
         return Err(AppError::Forbidden(format!(
@@ -500,12 +629,20 @@ pub async fn update_master(
             .fetch_one(&mut *tx)
             .await?;
     if !exists {
-        return Err(AppError::BadRequest("Unknown project.".into()));
+        return Err(access::unknown_project());
     }
+    access::ensure_visible(actor, Some(pid), access::unknown_project())?;
     if !actor.can_edit_project(Some(pid)) {
         return Err(AppError::Forbidden(
             "You can only move items into project groups you are a member of.".into(),
         ));
+    }
+    // Moving out of a restricted group declassifies the item: only a manager
+    // of that group (or an admin) may do it.
+    if current.project_id != Some(pid) {
+        if let Some(source) = current.project_id {
+            ensure_may_take_out(&mut tx, actor, source, "Moving").await?;
+        }
     }
     if unit != current.unit {
         let released = sqlx::query_scalar::<_, bool>(
@@ -537,11 +674,37 @@ pub async fn update_master(
     )
     .await?;
     tx.commit().await?;
-    get(pool, item_id).await
+    get(pool, actor, item_id).await
+}
+
+/// Fails unless the actor may move or copy data out of the project group
+/// `source`: always allowed for internal groups; for restricted groups only
+/// for administrators and managers of the group. `what` = "Moving" or
+/// "Copying".
+pub(crate) async fn ensure_may_take_out(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    source: Uuid,
+    what: &str,
+) -> AppResult<()> {
+    let restricted = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1 AND visibility = 'restricted')",
+    )
+    .bind(source)
+    .fetch_one(&mut *conn)
+    .await?;
+    if restricted && !crate::services::projects::can_manage(conn, actor, source).await? {
+        return Err(AppError::Forbidden(format!(
+            "{what} out of a restricted group requires a manager of that group."
+        )));
+    }
+    Ok(())
 }
 
 /// Deletes an item created by mistake. Only allowed while it has a single
-/// in-work revision, is not used in any BOM and not part of any change.
+/// in-work revision, is not used in any BOM, not part of any change, no
+/// simulation basis and – in a restricted group – no affected item of a
+/// change request.
 pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<String> {
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
@@ -550,6 +713,7 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
         .fetch_optional(&mut *tx)
         .await?
         .ok_or_else(|| AppError::not_found("Item not found."))?;
+    access::ensure_visible(actor, item.project_id, access::not_found_item())?;
     if (item.created_by != actor.id || !actor.can_edit_project(item.project_id))
         && !actor.is_admin()
     {
@@ -596,6 +760,39 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
                 .into(),
         ));
     }
+    // A request is hidden while it names a hidden item; deleting an item of
+    // a restricted group (the row would cascade) would silently declassify
+    // the request. Items of internal groups hide no request, so their rows
+    // simply go: refusing would tell the creator of a public item about a
+    // request they cannot see (and cannot edit).
+    let restricted = match item.project_id {
+        Some(p) => sqlx::query_scalar::<_, String>(
+            "SELECT visibility FROM projects WHERE id = $1 FOR SHARE",
+        )
+        .bind(p)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_some_and(|v| v == ProjectVisibility::Restricted.as_str()),
+        None => false,
+    };
+    let in_request = restricted
+        && sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM change_request_items WHERE item_id = $1)",
+        )
+        .bind(item_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if in_request {
+        return Err(AppError::Conflict(
+            "The item is an affected item of a change request; remove it from the request first."
+                .into(),
+        ));
+    }
+    if !restricted {
+        // the rows go with the item: every request records it in its
+        // history and tells its people (only readers of the request see it)
+        crate::services::requests::item_deleted(&mut tx, actor, item_id, &item.number).await?;
+    }
     sqlx::query("DELETE FROM items WHERE id = $1")
         .bind(item_id)
         .execute(&mut *tx)
@@ -615,9 +812,15 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
 }
 
 /// Parent revisions whose BOM contains the item, at most `limit` (a
-/// standard part can be used in tens of thousands of BOMs).
-pub async fn where_used(pool: &PgPool, item_id: Uuid, limit: i64) -> AppResult<Vec<WhereUsed>> {
-    Ok(sqlx::query_as::<_, WhereUsed>(
+/// standard part can be used in tens of thousands of BOMs) – only parents
+/// the actor may read (see [`hidden_parents`] for the rest).
+pub async fn where_used(
+    pool: &PgPool,
+    actor: &Actor,
+    item_id: Uuid,
+    limit: i64,
+) -> AppResult<Vec<WhereUsed>> {
+    Ok(sqlx::query_as::<_, WhereUsed>(&format!(
         "SELECT bl.id AS line_id, r.id AS parent_revision_id, i.id AS parent_item_id,
                 i.number AS parent_number, r.code AS parent_code, r.name AS parent_name,
                 r.state AS parent_state, bl.find_number, bl.quantity, rc.code AS released_child_code
@@ -625,13 +828,35 @@ pub async fn where_used(pool: &PgPool, item_id: Uuid, limit: i64) -> AppResult<V
          JOIN revisions r ON r.id = bl.parent_revision_id
          JOIN items i ON i.id = r.item_id
          LEFT JOIN revisions rc ON rc.id = bl.released_child_revision_id
-         WHERE bl.child_item_id = $1
+         WHERE bl.child_item_id = $1 AND {}
          ORDER BY i.number, r.seq DESC
-         LIMIT $2",
-    )
+         LIMIT $3",
+        access::item_visible("i", 2)
+    ))
     .bind(item_id)
+    .bind(&actor.hidden_projects)
     .bind(limit.max(1))
     .fetch_all(pool)
+    .await?)
+}
+
+/// Number of distinct parent items that use the item but that the actor may
+/// not read ("+N assemblies in groups you cannot see").
+pub async fn hidden_parents(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<i64> {
+    if actor.hidden_projects.is_empty() {
+        return Ok(0);
+    }
+    Ok(sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(DISTINCT i.id)
+         FROM bom_lines bl
+         JOIN revisions r ON r.id = bl.parent_revision_id
+         JOIN items i ON i.id = r.item_id
+         WHERE bl.child_item_id = $1 AND NOT {}",
+        access::item_visible("i", 2)
+    ))
+    .bind(item_id)
+    .bind(&actor.hidden_projects)
+    .fetch_one(pool)
     .await?)
 }
 
@@ -649,6 +874,7 @@ pub const MAX_WHERE_USED_ROWS: i64 = 2000;
 /// of every path. The report stops at [`MAX_WHERE_USED_ROWS`] rows.
 pub async fn where_used_levels(
     pool: &PgPool,
+    actor: &Actor,
     item_id: Uuid,
     levels: i32,
 ) -> AppResult<Vec<WhereUsedLevel>> {
@@ -656,30 +882,35 @@ pub async fn where_used_levels(
     let mut out: Vec<WhereUsedLevel> = Vec::new();
     let mut seen = std::collections::HashSet::from([item_id]);
     let mut frontier = vec![item_id];
+    // Only parents the actor may read are reported, and the walk goes up
+    // only through them.
+    let sql = format!(
+        "SELECT $2::int AS level, ci.number AS child_number,
+                bl.id AS line_id, r.id AS parent_revision_id, i.id AS parent_item_id,
+                i.number AS parent_number, r.code AS parent_code, r.name AS parent_name,
+                r.state AS parent_state, bl.find_number, bl.quantity, rc.code AS released_child_code
+         FROM bom_lines bl
+         JOIN items ci ON ci.id = bl.child_item_id
+         JOIN revisions r ON r.id = bl.parent_revision_id
+         JOIN items i ON i.id = r.item_id
+         LEFT JOIN revisions rc ON rc.id = bl.released_child_revision_id
+         WHERE bl.child_item_id = ANY($1) AND {}
+         ORDER BY i.number, r.seq DESC, ci.number
+         LIMIT $3",
+        access::item_visible("i", 4)
+    );
     for level in 1..=levels {
         let remaining = MAX_WHERE_USED_ROWS - out.len() as i64;
         if frontier.is_empty() || remaining <= 0 {
             break;
         }
-        let rows = sqlx::query_as::<_, WhereUsedLevel>(
-            "SELECT $2::int AS level, ci.number AS child_number,
-                    bl.id AS line_id, r.id AS parent_revision_id, i.id AS parent_item_id,
-                    i.number AS parent_number, r.code AS parent_code, r.name AS parent_name,
-                    r.state AS parent_state, bl.find_number, bl.quantity, rc.code AS released_child_code
-             FROM bom_lines bl
-             JOIN items ci ON ci.id = bl.child_item_id
-             JOIN revisions r ON r.id = bl.parent_revision_id
-             JOIN items i ON i.id = r.item_id
-             LEFT JOIN revisions rc ON rc.id = bl.released_child_revision_id
-             WHERE bl.child_item_id = ANY($1)
-             ORDER BY i.number, r.seq DESC, ci.number
-             LIMIT $3",
-        )
-        .bind(&frontier)
-        .bind(level)
-        .bind(remaining)
-        .fetch_all(pool)
-        .await?;
+        let rows = sqlx::query_as::<_, WhereUsedLevel>(&sql)
+            .bind(&frontier)
+            .bind(level)
+            .bind(remaining)
+            .bind(&actor.hidden_projects)
+            .fetch_all(pool)
+            .await?;
         // A truncated level ends the report, so the next frontier is only
         // needed when every row of this level was read.
         frontier = rows

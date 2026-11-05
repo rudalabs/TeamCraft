@@ -56,8 +56,15 @@ jobs:
     env:
       TEAMCRAFT_TEST_DATABASE_URL: postgres://teamcraft@localhost:5432/teamcraft
       TEAMCRAFT_REQUIRE_DB_TESTS: "1"
+      # tests/backup_restore.rs runs pg_dump/pg_restore against the server
+      TEAMCRAFT_REQUIRE_PG_TOOLS: "1"
     steps:
       - uses: actions/checkout@v4
+      - name: PostgreSQL ${{ matrix.postgres }} client tools (pg_dump, pg_restore)
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends postgresql-client-${{ matrix.postgres }}
+          echo "/usr/lib/postgresql/${{ matrix.postgres }}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
@@ -69,6 +76,11 @@ jobs:
           cargo run --locked --quiet -- vault check
           cargo run --locked --quiet -- preview-mesh --format step --input tests/fixtures/cube.step --output cube.tcm
           test -s cube.tcm
+          cargo run --locked --quiet -- backup "$RUNNER_TEMP/backup"
+          createdb -h localhost -U teamcraft teamcraft_restored
+          TEAMCRAFT_DATABASE_URL=postgres://teamcraft@localhost:5432/teamcraft_restored \
+          TEAMCRAFT_VAULT_DIR="$RUNNER_TEMP/vault-restored" \
+            cargo run --locked --quiet -- restore "$RUNNER_TEMP/backup"
 
   build:
     name: build (${{ matrix.os }})

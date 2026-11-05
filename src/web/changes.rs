@@ -16,9 +16,7 @@ use super::{
 use crate::{
     domain::{ChangeStatus, Decision, LifecycleState, Priority, Role},
     error::{AppError, AppResult},
-    services::{
-        audit, changes, impacts, items, notifications, requests, reviewers, revisions, users, Page,
-    },
+    services::{audit, changes, items, notifications, requests, reviewers, revisions, users, Page},
     AppState,
 };
 
@@ -48,6 +46,7 @@ pub async fn list(
     let page_no = q.page.unwrap_or(1).max(1);
     let (rows, total) = changes::list(
         &st.db,
+        &ctx.me,
         status,
         Page::from_page_number(Some(page_no), PER_PAGE),
     )
@@ -89,7 +88,7 @@ async fn render_new(
     error: Option<String>,
 ) -> AppResult<Response> {
     let revision = match parse_opt_uuid("Revision", Some(&form.revision_id)).unwrap_or(None) {
-        Some(id) => Some(revisions::get(&st.db, id).await?),
+        Some(id) => Some(revisions::get(&st.db, &ctx.me, id).await?),
         None => None,
     };
     render(
@@ -172,28 +171,27 @@ pub async fn show(
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let change = changes::get(&st.db, id).await?;
-    let affected = changes::items(&st.db, id).await?;
+    let me = &ctx.me;
+    let change = changes::get(&st.db, me, id).await?;
+    let affected = changes::items(&st.db, me, id).await?;
     let reviews = changes::reviews(&st.db, id).await?;
-    let history = audit::for_entities(&st.db, &[id], 100).await?;
+    let history = audit::for_entities(&st.db, me, &[id], 100).await?;
     // Impact analysis: the items that depend on the revisions of this change.
-    let revision_ids: Vec<Uuid> = affected.iter().map(|i| i.revision_id).collect();
-    let mut impact = impacts::analysis(&st.db, &revision_ids).await?;
+    let (mut impact, hidden_dependents) = changes::impact(&st.db, me, id).await?;
     // A change of many widely used parts has tens of thousands of
     // dependents; the page lists the nearest ones (the API has all).
     let impact_total = impact.len();
     impact.truncate(IMPACT_SHOWN);
     let watching = notifications::is_watching(&st.db, ctx.me.id, "change", id).await?;
-    let implements = requests::for_change(&st.db, id).await?;
+    let implements = requests::for_change(&st.db, me, id).await?;
     let status = changes::status_of(&change);
     // Release readiness: only meaningful before the change goes into review.
     let readiness = if matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected) {
-        Some(changes::readiness(&st.db, id).await?)
+        Some(changes::readiness(&st.db, me, id).await?)
     } else {
         None
     };
     let ready = readiness.as_ref().is_none_or(|r| r.is_ready());
-    let me = &ctx.me;
     let is_owner = me.can_edit() && (change.created_by == me.id || me.is_admin());
     let modifiable = is_owner && status.is_modifiable();
     let candidates: Vec<_> = if modifiable {
@@ -207,7 +205,7 @@ pub async fn show(
     };
     // Who knows the affected items: one-click suggestions next to the picker.
     let suggested = if modifiable && !candidates.is_empty() {
-        reviewers::suggest(&st.db, id, reviewers::DEFAULT_LIMIT).await?
+        reviewers::suggest(&st.db, me, id, reviewers::DEFAULT_LIMIT).await?
     } else {
         Vec::new()
     };
@@ -236,6 +234,7 @@ pub async fn show(
             "status_label": status.label(),
             "impact": impact,
             "impact_total": impact_total,
+            "hidden_dependents": hidden_dependents,
             "readiness_rows": readiness.as_ref().map(|r| r.blockers.iter().chain(&r.warnings).cloned().collect::<Vec<_>>()).unwrap_or_default(),
             "readiness": readiness,
             "watching": watching,
@@ -281,8 +280,9 @@ pub async fn add_item(
 ) -> AppResult<Response> {
     let back = format!("/changes/{id}");
     let result = async {
-        let item = items::get_by_number(&st.db, &form.item_number).await?;
-        let rev = items::open_revision(&st.db, item.id)
+        changes::get(&st.db, &ctx.me, id).await?;
+        let item = items::get_by_number(&st.db, &ctx.me, &form.item_number).await?;
+        let rev = items::open_revision(&st.db, &ctx.me, item.id)
             .await?
             .ok_or_else(|| {
                 AppError::Conflict(format!(
@@ -344,7 +344,7 @@ pub async fn add_from_revision(
         let change_id = parse_opt_uuid("Change", Some(&form.change_id))?
             .ok_or_else(|| AppError::BadRequest("Choose a change.".into()))?;
         changes::add_item(&st.db, &ctx.me, change_id, rev_id).await?;
-        changes::get(&st.db, change_id).await
+        changes::get(&st.db, &ctx.me, change_id).await
     }
     .await;
     finish(&st, result, &back, |c| {

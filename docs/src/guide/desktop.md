@@ -12,14 +12,25 @@ check-outs and reviews, and a **local working folder**:
 * *Get…* on a revision copies the item **with everything it consists of** –
   its BOM resolved with a revision rule and the parts its CAD files
   reference – so the assembly opens in the CAD program (see below);
-* *Get…* (*Tools → Get Project Groups…*) copies the files of every item of
+* the download icon next to *Projects* in the navigator (*Tools → Get Project Groups…*) copies the files of every item of
   chosen project groups into the working folder – for new team members;
-* *Import…* (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
+* the folder icon next to it (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
   scan first (nothing is uploaded), then one item per part or assembly with
   its drawings and exports; every file keeps its folder, so the working
-  folder later looks like the original tree. *Help → How to Import a CAD
-  Folder* is the step-by-step tutorial (Pack and Go, unique file names,
-  check and release);
+  folder later looks like the original tree. An interrupted import continues
+  where it stopped; the app remembers per project group what it imported, so
+  the same folder can also be imported into another group. *Help → How to
+  Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file
+  names, check and release);
+* *Import BOM…* (in the *Structure* tab and the *More* menu of a revision you
+  have checked out, or *Tools → Import BOM as New Assembly…*) reads a BOM
+  exported by the CAD program – CSV, Excel, ODS or a STEP assembly – with the
+  same column recognition as the web import: the preview shows the lines,
+  how many items are new or existing and the notes (for example a quantity
+  that is not a number); *Import* adds the lines in one step, creating the
+  missing items. *Part numbers from the file* or *New numbers* (the group's
+  numbering scheme), and whether items with the same number are reused, are
+  chosen in the dialog;
 * the *Workspace* tab shows per file where it is, whether it is up to date,
   modified, outdated, in conflict, new, missing or a name clash, whether it
   is read-only, and who holds the lock for how long; opening an outdated
@@ -29,9 +40,16 @@ check-outs and reviews, and a **local working folder**:
   else checked in meanwhile is never overwritten (see
   [Concurrency](vault.md#concurrency-nothing-is-overwritten-silently)) –
   and makes the files read-only again; files above 32 MiB are sent in
-  resumable chunks with progress in the status bar – a dropped connection
-  resumes where it stopped, *Cancel* stops the upload and nothing is stored
-  (see [Large files](vault.md#large-files-chunked-resumable-uploads));
+  resumable chunks – a dropped connection resumes where it stopped (see
+  [Large files](vault.md#large-files-chunked-resumable-uploads)). The dialog
+  stays open with the progress while the check-in runs, and **Cancel** stops
+  it at any point until the last byte is sent: before the next STEP export,
+  between two chunks of a large file (the chunks on the server are
+  discarded – a cancelled upload starts over next time) or half-way through
+  the request with the small files. Nothing is stored then, the revision
+  stays checked out to you and your local files are untouched. Once every
+  byte is sent the server finishes the check-in on its own; the dialog says
+  so (*too late to cancel*);
 * *Check in all* in the worklist checks in every check-out without local
   changes and lists those that still have changes;
 * *Dependents to check* (worklist and home) shows one line per dependent
@@ -64,6 +82,15 @@ check-outs and reviews, and a **local working folder**:
 Sign-in runs through the browser (single sign-on or password, confirmed on a
 TeamCraft page) or with a personal access token. The app uses the same skins
 and 3D viewer as the web interface; the models are converted by the server.
+*Settings → Appearance*: *TeamCraft* (the default) follows the light or dark
+appearance of the operating system and switches with it, *TeamCraft Light*
+and *TeamCraft Dark* stay fixed, the distribution skins are dark.
+
+The window is built for daily work: object tabs on top, under them the
+toolbar of the open object with its one next step filled (see
+[The toolbar](#the-toolbar)) and the rare tools under *More*. The navigator shows a state as its symbol (a check:
+released, a ring: in review, a half-filled ring: in work, – obsolete, the
+name in the tooltip); the search field is `Ctrl+F` (`⌘F`).
 
 ## The toolbar
 
@@ -89,7 +116,7 @@ back, and *Check in…* is highlighted.
   / *Force unlock* while checked out) · **Work** (*Edit*, *Get…*, *Open
   folder*) · **Lifecycle** (*Release…*, *Revise*) · **Collaborate**
   (*Request change…*, *Watch*, *Ask…*, *Agent*);
-* change tab: **Review** (*Approve* highlighted, *Reject* – the comment field
+* change tab: **Review** (*Approve change* highlighted, *Reject* – the comment field
   of *Your review* goes with it, required for a rejection) while your review
   is pending · **Lifecycle** (*Submit for review*, highlighted on your draft,
   *Withdraw*) · **Collaborate**;
@@ -108,6 +135,11 @@ the preview image stored in an Inventor, Solid Edge, SolidWorks or NX file
 (with the way into the 3D viewer) and the number of files, BOM lines, where
 used, references, change orders and open change requests – a click opens the
 matching sub-tab.
+
+*Home*, *Refresh* and the dialogs that offer project groups (*New*, *Get
+Project Groups…*, *Import CAD Folder…*) load the groups and your memberships
+from the server again, so a group created or joined in the web UI shows
+without restarting the app.
 
 Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
 `Ctrl/Cmd+1/2/3/4` Home, Worklist, Changes, Agent, `Ctrl/Cmd+W` close the tab,
@@ -179,7 +211,11 @@ parts of an assembly; no record of which version a file is, so changes
 cannot be checked in safely; and no read-only protection. Browser downloads
 are fine for one file or for looking at something – CAD work goes through
 the desktop working folder. *Pack and Go* (ZIP) is for sending a structure
-to someone outside TeamCraft.
+to someone outside TeamCraft: after the save dialog a progress dialog shows
+how much has arrived, and **Cancel** stops it – also while the server is
+still packing. The ZIP is written under a temporary name next to the target
+and renamed only when it is complete, so a cancelled or failed Pack and Go
+never leaves a half ZIP behind.
 
 **Moving an older workspace.** Earlier versions of the app kept one folder
 per revision, `<group>/<item>/<revision>/` (and before that

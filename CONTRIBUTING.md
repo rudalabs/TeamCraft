@@ -87,7 +87,9 @@ The end-to-end tests in `tests/` create and drop their own temporary
 `TEAMCRAFT_TEST_DATABASE_URL` if it is set. When no database is reachable,
 they are skipped; with `TEAMCRAFT_REQUIRE_DB_TESTS=1` set, that counts as a
 failure instead. `cargo test --lib` runs only the unit tests and needs no
-database.
+database. `tests/backup_restore.rs` additionally runs `pg_dump` and
+`pg_restore` from `PATH` (major version at least the server's); without them
+it is skipped, with `TEAMCRAFT_REQUIRE_PG_TOOLS=1` (CI) that fails.
 
 | If you changed …  | also run                                                            |
 |-------------------|---------------------------------------------------------------------|
@@ -131,11 +133,15 @@ and assemblies with the NIST files from `tests/fixtures/cad`, a multi-level
 BOM, a released and a pending change order, check-outs and notifications. It
 then drives headless Chrome through chromedriver's WebDriver API (with `curl`
 and `jq`, no Node or Python) and saves the pages as PNGs: 1440 × 900 for the
-desktop and 390 pixels wide for the phone. The passwords and API tokens are
-generated for each run and never printed.
+desktop and 390 pixels wide for the phone, each in the light scheme
+(`NAME.png`, the names the README uses) and again in the dark scheme
+(`NAME-dark.png`; Chrome emulates `prefers-color-scheme`, the demo user keeps
+the System skin). The passwords and API tokens are generated for each run
+and never printed.
 
 With `DESKTOP_APP` set to a built TeamCraft Desktop binary (Linux), the script
-also captures the desktop app (`desktop-*.png`): it pre-seeds a fresh profile
+also captures the desktop app, once with *TeamCraft Light* (`desktop-*.png`)
+and once with *TeamCraft Dark* (`desktop-*-dark.png`): it pre-seeds a fresh profile
 in a temporary `XDG_CONFIG_HOME` (server address and a personal access token
 of the demo administrator, see `desktop/src/settings.rs`), starts the app on
 an Xvfb display of 1440 × 900 without a window manager and captures the
@@ -144,7 +150,7 @@ a user: the Ctrl+2 shortcut (worklist) and clicks on navigator rows at fixed
 screen positions (the ROVER group, the checked-out bracket, the change order
 waiting for review). When the desktop layout or the demo data changes, check
 that the `desktop-*.png` images still show what their names say and adjust the
-coordinates in `capture_desktop`.
+coordinates in `desktop_run`.
 
 1. Run the **Screenshots** workflow (`.github/workflows/screenshots.yml`):
    *Actions → Screenshots → Run workflow*, or open a pull request that changes
@@ -196,6 +202,16 @@ code base. These are the most important rules:
 
   The web handlers (`src/web/`), API handlers (`src/api/`) and MCP tools
   (`src/mcp/`) stay thin and call the same service functions.
+* **Reads take the actor.** [Restricted project groups](docs/src/admin/permissions.md)
+  hide their data from non-members, so every read service takes `&Actor`
+  and answers "not found" for hidden objects. Only `services::access` writes
+  the SQL guards (`access::item_visible` and friends); lists put the guard
+  into the query that the `COUNT(*)` shares. The `*_unchecked` getters are
+  for background and system code – `tests/no_unchecked_in_handlers.rs` fails
+  if one is called from `src/web`, `src/api` or `src/mcp`.
+* **New routes and MCP tools** are exercised by the leak test
+  (`tests/read_permissions.rs`), which reads the router sources: a route with
+  a new kind of path parameter needs a placeholder rule in its `fill()`.
 * **SQL** uses runtime queries (`sqlx::query_as::<_, T>` with `FromRow`), not
   the `query!` macros, so building needs no database.
 * **Schema changes** go into a new numbered file in `migrations/`. Never edit
@@ -211,6 +227,21 @@ code base. These are the most important rules:
     the `every_template_renders` test.
   * No inline JavaScript or styles: the Content Security Policy blocks them.
   * Cancel buttons take effect immediately, without a confirmation.
+  * **Design tokens:** no literal colours outside `static/skins.css`; every
+    component reads the tokens (`--surface`, `--text-muted`, `--primary`,
+    `--st-<state>-fg/-bg/-bd`, …). Tokens are opaque `#rrggbb`; the unit tests
+    `skins_meet_contrast` and `dark_token_blocks_identical` (`src/domain.rs`)
+    check the WCAG contrast and that the two dark blocks match.
+  * No gradients, glow, texture, glass or uppercase labels in components
+    (`grep -n gradient static/style.css` stays empty;
+    only the distro skins' `--glow` / `--pattern` behind the page use them).
+  * One filled (primary) button per view; the rest is secondary, ghost or in
+    a *More* menu.
+  * State is colour **and** a glyph (✓ released, ○ in review, ◐ in work,
+    × rejected, – obsolete, △ check needed), never colour alone.
+  * Check both schemes: the screenshot workflow captures every web page in
+    light (`NAME.png`) and dark (`NAME-dark.png`), the desktop app as well
+    (`desktop-*.png`, `desktop-*-dark.png`).
 * **Pure Rust:** everything builds with `cargo` alone. No Node.js, no
   downloaded engines and no C/C++ CAD kernels; 3D conversion stays in
   `src/mesh.rs`.
@@ -276,8 +307,9 @@ release may contain breaking changes.
 
 **Build artifacts.** Every push to `main` runs
 `.github/workflows/release.yml`, which builds the server binaries (Linux
-x86_64/ARM64, macOS ARM64, Windows x86_64) and the desktop installers
-(AppImage, `.deb`, `.rpm`, `.dmg`, `.msi`, NSIS `-setup.exe`) and keeps them
+x86_64/ARM64, Windows x64) and the desktop installers (AppImage, `.deb`,
+`.rpm` and Flatpak bundles for x86_64/aarch64, `.dmg`, and for Windows x64
+and ARM64 `.msi`, NSIS `-setup.exe` and a portable `.zip`) and keeps them
 as workflow artifacts for 14 days. *Run workflow* on the Actions page builds
 any branch the same way.
 

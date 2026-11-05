@@ -52,7 +52,7 @@ pub(super) async fn list(
     };
     let scope = q.scope.as_deref().unwrap_or("").trim();
     let item_id = match q.item.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(number) => Some(items::get_by_number(&st.db, number).await?.id),
+        Some(number) => Some(items::get_by_number(&st.db, &me, number).await?.id),
         None => None,
     };
     let filter = RequestFilter {
@@ -74,7 +74,7 @@ pub(super) async fn list(
         ));
     }
     let page = Page::new(q.limit, q.offset);
-    let (rows, total) = requests::list(&st.db, &filter, page).await?;
+    let (rows, total) = requests::list(&st.db, &me, &filter, page).await?;
     Ok(Json(json!({
         "change_requests": rows, "total": total, "limit": page.limit, "offset": page.offset,
     })))
@@ -89,7 +89,7 @@ pub(super) struct ItemRef {
     note: String,
 }
 
-async fn affected(st: &AppState, r: &ItemRef) -> AppResult<AffectedItem> {
+async fn affected(st: &AppState, me: &Actor, r: &ItemRef) -> AppResult<AffectedItem> {
     match r
         .revision
         .as_deref()
@@ -97,7 +97,7 @@ async fn affected(st: &AppState, r: &ItemRef) -> AppResult<AffectedItem> {
         .filter(|s| !s.is_empty())
     {
         Some(code) => {
-            let rev = revision_at(st, &r.item, code).await?;
+            let rev = revision_at(st, me, &r.item, code).await?;
             Ok(AffectedItem {
                 item_id: rev.item_id,
                 revision_id: Some(rev.id),
@@ -105,7 +105,7 @@ async fn affected(st: &AppState, r: &ItemRef) -> AppResult<AffectedItem> {
             })
         }
         None => Ok(AffectedItem {
-            item_id: items::get_by_number(&st.db, &r.item).await?.id,
+            item_id: items::get_by_number(&st.db, me, &r.item).await?.id,
             revision_id: None,
             note: r.note.clone(),
         }),
@@ -153,7 +153,7 @@ pub(super) async fn create(
     };
     let mut list = Vec::with_capacity(body.items.len());
     for r in &body.items {
-        list.push(affected(&st, r).await?);
+        list.push(affected(&st, &me, r).await?);
     }
     let request = requests::create(&st.db, &me, input, list).await?;
     Ok((
@@ -168,18 +168,19 @@ pub(super) async fn create(
 async fn request_json(st: &AppState, me: &Actor, request: ChangeRequest) -> AppResult<Value> {
     let id = request.id;
     let ids = [id];
-    let (items, comments, attachments, linked, history, watching, can) = tokio::try_join!(
-        requests::items(&st.db, id),
+    let (items, comments, attachments, (linked, hidden_changes), history, watching, can) = tokio::try_join!(
+        requests::items(&st.db, me, id),
         requests::comments(&st.db, id),
         requests::attachments(&st.db, id),
-        requests::linked_changes(&st.db, id),
-        audit::for_entities(&st.db, &ids, 100),
+        requests::linked_changes(&st.db, me, id),
+        audit::for_entities(&st.db, me, &ids, 100),
         notifications::is_watching(&st.db, me.id, "change_request", id),
         requests::abilities_of(&st.db, me, &request),
     )?;
     Ok(json!({
         "change_request": request, "items": items, "comments": comments,
-        "attachments": attachments, "changes": linked, "history": history,
+        "attachments": attachments, "changes": linked, "hidden_changes": hidden_changes,
+        "history": history,
         "watching": watching, "can": can,
     }))
 }
@@ -189,7 +190,7 @@ pub(super) async fn get(
     ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let request = requests::get_by_number(&st.db, &number).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
     Ok(Json(request_json(&st, &me, request).await?))
 }
 
@@ -210,7 +211,7 @@ pub(super) async fn update(
     Path(number): Path<String>,
     ApiJson(body): ApiJson<UpdateRequest>,
 ) -> AppResult<Json<Value>> {
-    let current = requests::get_by_number(&st.db, &number).await?;
+    let current = requests::get_by_number(&st.db, &me, &number).await?;
     let input = RequestInput {
         title: body.title.unwrap_or(current.title),
         description: body.description.unwrap_or(current.description),
@@ -236,7 +237,7 @@ pub(super) async fn comment(
     Path(number): Path<String>,
     ApiJson(body): ApiJson<CommentBody>,
 ) -> AppResult<Response> {
-    let request = requests::get_by_number(&st.db, &number).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
     let comment = requests::comment(&st.db, &me, request.id, &body.body).await?;
     Ok((StatusCode::CREATED, Json(json!(comment))).into_response())
 }
@@ -247,11 +248,11 @@ pub(super) async fn add_item(
     Path(number): Path<String>,
     ApiJson(body): ApiJson<ItemRef>,
 ) -> AppResult<Json<Value>> {
-    let request = requests::get_by_number(&st.db, &number).await?;
-    let item = affected(&st, &body).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
+    let item = affected(&st, &me, &body).await?;
     requests::add_item(&st.db, &me, request.id, item).await?;
     // reload: the item count and the update time changed
-    let request = requests::get(&st.db, request.id).await?;
+    let request = requests::get(&st.db, &me, request.id).await?;
     Ok(Json(request_json(&st, &me, request).await?))
 }
 
@@ -264,7 +265,7 @@ pub(super) async fn triage(
     ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let request = requests::get_by_number(&st.db, &number).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
     let request = requests::start_triage(&st.db, &me, request.id).await?;
     reply(&st, &me, request).await
 }
@@ -280,7 +281,7 @@ pub(super) async fn assign(
     Path(number): Path<String>,
     ApiJson(body): ApiJson<AssignBody>,
 ) -> AppResult<Json<Value>> {
-    let request = requests::get_by_number(&st.db, &number).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
     if let Some(name) = body.username.as_deref().filter(|s| !s.trim().is_empty()) {
         if users::find_by_username(&st.db, name).await?.is_none() {
             return Err(AppError::NotFound(format!(
@@ -306,7 +307,7 @@ pub(super) async fn decide(
     Path(number): Path<String>,
     ApiJson(body): ApiJson<DecideBody>,
 ) -> AppResult<Json<Value>> {
-    let request = requests::get_by_number(&st.db, &number).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
     let decision = RequestDecision::parse(&body.decision)
         .ok_or_else(|| AppError::BadRequest("decision must be accept, reject or defer.".into()))?;
     let request = requests::decide(&st.db, &me, request.id, decision, &body.comment).await?;
@@ -318,7 +319,7 @@ pub(super) async fn reopen(
     ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let request = requests::get_by_number(&st.db, &number).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
     let request = requests::reopen(&st.db, &me, request.id).await?;
     reply(&st, &me, request).await
 }
@@ -328,7 +329,7 @@ pub(super) async fn withdraw(
     ApiUser(me): ApiUser,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let request = requests::get_by_number(&st.db, &number).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
     let request = requests::withdraw(&st.db, &me, request.id).await?;
     reply(&st, &me, request).await
 }
@@ -356,7 +357,7 @@ pub(super) async fn create_change(
         Some(p) => Some(priority_of(Some(p))?),
         None => None,
     };
-    let request = requests::get_by_number(&st.db, &number).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
     let created =
         requests::create_change(&st.db, &me, request.id, body.title.as_deref(), priority).await?;
     Ok((StatusCode::CREATED, Json(json!(created))).into_response())
@@ -374,10 +375,10 @@ pub(super) async fn link_change(
     Path(number): Path<String>,
     ApiJson(body): ApiJson<LinkBody>,
 ) -> AppResult<Json<Value>> {
-    let request = requests::get_by_number(&st.db, &number).await?;
-    let change = changes::get_by_number(&st.db, &body.change).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
+    let change = changes::get_by_number(&st.db, &me, &body.change).await?;
     requests::link_change(&st.db, &me, request.id, change.id).await?;
-    let request = requests::get(&st.db, request.id).await?;
+    let request = requests::get(&st.db, &me, request.id).await?;
     reply(&st, &me, request).await
 }
 
@@ -387,7 +388,7 @@ pub(super) async fn attach(
     Path(number): Path<String>,
     mut multipart: Multipart,
 ) -> AppResult<Response> {
-    let request = requests::get_by_number(&st.db, &number).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
     let (filename, bytes) = web::receive_attachment(&mut multipart).await?;
     let attachment =
         requests::add_attachment(&st.db, &st.vault, &me, request.id, &filename, &bytes).await?;
@@ -396,10 +397,10 @@ pub(super) async fn attach(
 
 pub(super) async fn attachment_content(
     State(st): State<AppState>,
-    ApiUser(_me): ApiUser,
+    ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    web::attachment_response(&st, id, false).await
+    web::attachment_response(&me, &st, id, false).await
 }
 
 /// `POST` starts, `DELETE` stops watching a request.
@@ -409,7 +410,7 @@ pub(super) async fn watch(
     method: Method,
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let request = requests::get_by_number(&st.db, &number).await?;
+    let request = requests::get_by_number(&st.db, &me, &number).await?;
     let watching = notifications::set_watch(
         &st.db,
         &me,

@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use super::{revision_at, ApiJson};
 use crate::{
-    auth::ApiUser,
+    auth::{Actor, ApiUser},
     domain::BaseVersion,
     error::{AppError, AppResult},
     services::uploads::{self, NewSession, UploadSession},
@@ -92,14 +92,13 @@ pub(super) async fn create(
     ApiUser(me): ApiUser,
     ApiJson(body): ApiJson<CreateBody>,
 ) -> AppResult<Response> {
-    let rev = revision_at(&st, &body.item, &body.revision).await?;
+    let rev = revision_at(&st, &me, &body.item, &body.revision).await?;
     let base = match body.base.as_ref().filter(|v| !v.is_null()) {
         Some(v) => Some(BaseVersion::from_json(v)?),
         None => None,
     };
-    let session = uploads::create(
-        &st.db,
-        &st.vault,
+    start(
+        &st,
         &me,
         NewSession {
             revision_id: rev.id,
@@ -110,10 +109,15 @@ pub(super) async fn create(
             base,
             folder: body.folder,
         },
-        st.config.max_upload_bytes,
     )
-    .await?;
-    Ok(with_offset(&st, StatusCode::CREATED, &session))
+    .await
+}
+
+/// Starts an upload session (`201` with the offset headers). Shared with the
+/// web UI (`web::uploads`).
+pub(crate) async fn start(st: &AppState, me: &Actor, new: NewSession) -> AppResult<Response> {
+    let session = uploads::create(&st.db, &st.vault, me, new, st.config.max_upload_bytes).await?;
+    Ok(with_offset(st, StatusCode::CREATED, &session))
 }
 
 /// `GET` (and `HEAD`): where to resume.
@@ -122,8 +126,13 @@ pub(super) async fn status(
     ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let session = uploads::get(&st.db, &me, id).await?;
-    Ok(with_offset(&st, StatusCode::OK, &session))
+    state_of(&st, &me, id).await
+}
+
+/// The session with its offset headers. Shared with the web UI.
+pub(crate) async fn state_of(st: &AppState, me: &Actor, id: Uuid) -> AppResult<Response> {
+    let session = uploads::get(&st.db, me, id).await?;
+    Ok(with_offset(st, StatusCode::OK, &session))
 }
 
 /// Appends the request body at the `Upload-Offset`. A 409 carries the
@@ -132,6 +141,16 @@ pub(super) async fn append(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
+    req: Request,
+) -> AppResult<Response> {
+    append_chunk(&st, &me, id, req).await
+}
+
+/// Appends the body of `req` at its `Upload-Offset`. Shared with the web UI.
+pub(crate) async fn append_chunk(
+    st: &AppState,
+    me: &Actor,
+    id: Uuid,
     req: Request,
 ) -> AppResult<Response> {
     let offset = req
@@ -169,7 +188,7 @@ pub(super) async fn append(
     match uploads::append(
         &st.db,
         &st.vault,
-        &me,
+        me,
         id,
         offset,
         &chunk,
@@ -177,10 +196,10 @@ pub(super) async fn append(
     )
     .await
     {
-        Ok(session) => Ok(with_offset(&st, StatusCode::OK, &session)),
+        Ok(session) => Ok(with_offset(st, StatusCode::OK, &session)),
         Err(e @ AppError::Conflict(_)) => {
             let mut response = e.into_response();
-            if let Ok(session) = uploads::get(&st.db, &me, id).await {
+            if let Ok(session) = uploads::get(&st.db, me, id).await {
                 offset_headers(response.headers_mut(), &session);
             }
             Ok(response)

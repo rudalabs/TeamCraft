@@ -165,3 +165,5 @@ desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part 
 * The integration tests use `TEAMCRAFT_TEST_DATABASE_URL` or the regular
   configuration and create/drop their own `teamcraft_test_*` databases; without a
   reachable server they are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1` makes that fail).
+  `tests/backup_restore.rs` also needs `pg_dump`/`pg_restore` on `PATH`
+  (`TEAMCRAFT_REQUIRE_PG_TOOLS=1` makes their absence fail).

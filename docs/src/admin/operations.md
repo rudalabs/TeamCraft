@@ -25,7 +25,9 @@ or be empty:
 | `manifest.json`   | Unix timestamp, TeamCraft version, object count, SHA-256 of `db.dump` |
 
 The PostgreSQL client tools (`pg_dump`, `pg_restore`) must be installed on
-the machine that runs the command. The database password is handed to the
+the machine that runs the command, in the server's major version or newer
+(Debian/Ubuntu: `postgresql-client-17`; Windows: the `bin` folder of the
+PostgreSQL installation on `PATH`). The database password is handed to the
 child process in `PGPASSWORD` only. The database is dumped first and the
 vault afterwards; blobs are append-only, so every file that the dump
 references is included. Stop the server for a consistent point in time. If
@@ -40,13 +42,27 @@ sudo -u teamcraft teamcraft restore <dir> --force    # replace an existing datab
 
 The command first verifies the manifest, the SHA-256 of `db.dump`, the
 object count and the SHA-256 of every vault object, then runs
-`pg_restore --clean --if-exists --no-owner` against the configured database
+`pg_restore --clean --if-exists --no-owner --single-transaction` against the configured database
 and copies the vault back without overwriting blobs that are already
 present. Start the server afterwards; it applies newer migrations.
 
-* The target database must exist; TeamCraft does not create it.
+* The target database must exist; TeamCraft does not create it
+  (`createdb -O teamcraft teamcraft` as the PostgreSQL superuser).
+* `pg_restore` runs in a single transaction: if it fails, the database is
+  unchanged.
 * `--force` replaces the objects contained in the backup; other objects in
-  the database stay, so a fresh, empty database is preferable.
+  the database stay, so a fresh, empty database is preferable. **To roll
+  back an upgrade**, restore into a fresh database and start the old
+  version; the next start of the new version migrates it again. Over the
+  upgraded database, the restore fails (tables of the newer version depend
+  on the ones it would replace) – and even where it did not, those tables
+  would remain and the next upgrade would stop with “relation already
+  exists”.
+* The database password comes from the configuration – `TEAMCRAFT_DB_PASSWORD`
+  (or `_FILE`) or the password in `TEAMCRAFT_DATABASE_URL`, where special
+  characters are percent-encoded (`p%40ss` for `p@ss`).
+* Sessions and API tokens are part of the database: after a restore,
+  everyone stays signed in and tokens keep working.
 * Configuration and secrets (`.env`, the system `teamcraft.env`, TLS keys)
   are not part of the backup; back them up separately.
 

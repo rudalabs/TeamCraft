@@ -15,8 +15,9 @@
 
   // Keep in sync with SKINS in src/domain.rs (a server unit test checks it).
   var SKINS = [
-    { id: "teamcraft", name: "TeamCraft", logo: "logos/TeamCraft_Icon.svg", description: "House style, night" },
-    { id: "teamcraft-day", name: "TeamCraft Day", logo: "logos/TeamCraft_Icon.svg", description: "House style, light" },
+    { id: "teamcraft", name: "TeamCraft", logo: "logos/TeamCraft_Icon.svg", description: "Follows your system: light or dark" },
+    { id: "teamcraft-day", name: "TeamCraft Light", logo: "logos/TeamCraft_Icon.svg", description: "House style, light" },
+    { id: "teamcraft-night", name: "TeamCraft Dark", logo: "logos/TeamCraft_Icon.svg", description: "House style, dark" },
     { id: "arch", name: "Arch", logo: "logos/TeamCraft_Icon.svg", description: "Blueprint grid" },
     { id: "cachyos", name: "CachyOS", logo: "logos/TeamCraft_Icon.svg", description: "Teal dot matrix" },
     { id: "endeavouros", name: "EndeavourOS", logo: "logos/TeamCraft_Icon.svg", description: "Purple sunset" },
@@ -147,9 +148,12 @@
 
   function tool(label, icon, onClick, opts) {
     opts = opts || {};
-    return h("button.tool" + (opts.primary ? ".primary" : "") + (opts.danger ? ".danger" : ""), {
-      type: "button", title: opts.title || label, disabled: opts.disabled, on: { click: onClick }
-    }, [svgIcon(ICONS[icon] || ICONS.plus), label]);
+    // Refresh is an icon button (F5 in the View menu does the same)
+    var iconOnly = icon === "refresh" && label === "Refresh";
+    return h("button.tool" + (opts.primary ? ".primary" : "") + (opts.danger ? ".danger" : "") + (iconOnly ? ".icon" : "") + ".tool-" + icon, {
+      type: "button", title: opts.title || (iconOnly ? "Refresh (F5)" : label), "aria-label": iconOnly ? label : null,
+      disabled: opts.disabled, on: { click: onClick }
+    }, [svgIcon(ICONS[icon] || ICONS.plus), iconOnly ? null : label]);
   }
 
   /** A labelled segment of related toolbar buttons (Lock, Work, Lifecycle …). */
@@ -272,6 +276,24 @@
     ]);
   }
 
+  // A priority as the web titleblock shows it: plain text, high and critical
+  // with their own glyph (▲, ▲▲) in the impact and danger ink – never a state pill.
+  function priorityBadge(p) {
+    if (!p) return null;
+    return h("span.prio.prio-" + p, { title: "Priority " + label(p) }, label(p));
+  }
+
+  // The lock holder with the line lock icon (the web UI's lock macro):
+  // muted for your own lock, amber for someone else's.
+  function lockIcon(mine) {
+    var svg = svgIcon(ICONS.checkout);
+    svg.setAttribute("class", "lock-icon" + (mine ? " lock-mine" : ""));
+    return svg;
+  }
+  function lockBadge(name, mine) {
+    return h("span.badge.badge-lock", { title: "Checked out by " + (mine ? "you" : name) }, [lockIcon(mine), name, mine ? h("span.dim", { text: " (you)" }) : null]);
+  }
+
   function errorText(err) {
     if (!err) return "Unknown error";
     if (typeof err === "string") return err;
@@ -375,7 +397,25 @@
     root.setAttribute("data-skin", id || "teamcraft");
     var light = getComputedStyle(root).colorScheme.indexOf("light") !== -1;
     root.classList.toggle("skin-light", light);
+    // The native window chrome (the GTK menu bar on Linux) follows the skin:
+    // a dark skin gets the dark variant; the System skin leaves it to the OS.
+    var win = TAURI && TAURI.window && TAURI.window.getCurrentWindow ? TAURI.window.getCurrentWindow() : null;
+    if (win && win.setTheme) {
+      var system = !id || id === "teamcraft";
+      win.setTheme(system ? null : (light ? "light" : "dark")).catch(function () {});
+    }
     if (state.viewer) renderActive(); // the 3D view takes its colours from the skin
+  }
+
+  // The System skin follows the OS: re-apply it when the OS switches between
+  // light and dark (WebKitGTK, WebView2 and WKWebView all report it).
+  if (window.matchMedia) {
+    var schemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    if (schemeQuery.addEventListener) {
+      schemeQuery.addEventListener("change", function () {
+        applySkin(document.documentElement.getAttribute("data-skin"));
+      });
+    }
   }
 
   // ======================================================================
@@ -458,16 +498,29 @@
     return state.projects.filter(function (p) { return p.id === id; })[0];
   }
 
-  function enterShell() {
+  /** Fetches the project groups and my account (role, memberships) again, so
+   * a group created or joined in the web UI shows without restarting the app. */
+  function reloadProjects() {
     return Promise.all([api("GET", "/me"), api("GET", "/projects")]).then(function (r) {
       state.me = r[0];
       state.projects = r[1] || [];
-      $("connect").classList.add("hidden");
-      $("shell").classList.remove("hidden");
       $("user-name").textContent = state.me.display_name;
       var role = $("user-role");
       role.className = "badge badge-" + state.me.role;
       role.textContent = label(state.me.role);
+    });
+  }
+
+  /** For the dialogs that offer the project groups: fresh lists, the cached
+   * ones when the server cannot be reached (the dialog's request then fails). */
+  function freshProjects() {
+    return reloadProjects().catch(function () {});
+  }
+
+  function enterShell() {
+    return reloadProjects().then(function () {
+      $("connect").classList.add("hidden");
+      $("shell").classList.remove("hidden");
       $("status-server").textContent = state.session.server_url;
       $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
       selectView(state.view);
@@ -486,6 +539,7 @@
   }
 
   function initShell() {
+    if (/Mac/.test(navigator.platform)) $("search-kbd").textContent = "⌘F"; // the View → Search shortcut
     document.querySelectorAll(".rail button[data-view]").forEach(function (btn) {
       btn.addEventListener("click", function () {
         var view = btn.getAttribute("data-view");
@@ -546,7 +600,12 @@
       var el = $("bell-count");
       el.textContent = r.unread > 99 ? "99+" : String(r.unread);
       el.classList.toggle("hidden", !r.unread);
-      $("open-notifications").classList.toggle("has-unread", r.unread > 0);
+      var bell = $("open-notifications");
+      bell.classList.toggle("has-unread", r.unread > 0);
+      // aria-label replaces the content, so it carries the count itself
+      var bellText = r.unread ? "Notifications, " + r.unread + " unread" : "Notifications";
+      bell.setAttribute("aria-label", bellText);
+      bell.setAttribute("title", bellText);
       var seen = state.seenNotifications || {};
       var fresh = r.notifications.filter(function (n) { return !seen[n.id]; });
       r.notifications.forEach(function (n) { seen[n.id] = true; });
@@ -604,11 +663,74 @@
     });
   }
 
-  /** "Pack and Go": ZIP of a revision and its structure, saved where the user chooses. */
+  /** "Pack and Go": ZIP of a revision and its structure, saved where the user
+   * chooses. After the save dialog a progress dialog follows the download; its
+   * Cancel stops it (also while the server is still packing) – the partial ZIP
+   * is removed, nothing is written. */
   function savePackage(rev, rule) {
-    run("Packing " + rev.item_number + "/" + rev.code, function () {
-      return call("save_package", { item: rev.item_number, code: rev.code, rule: rule });
-    }).then(function (path) { if (path) toast("Saved " + path); }, function () {});
+    if (packing) { toast("Pack and Go of " + packing.label + " is still running.", "info"); return; }
+    packing = { label: rev.item_number + "/" + rev.code, dialog: null };
+    function done() { if (packing && packing.dialog) packing.dialog.close(); packing = null; }
+    call("save_package", { item: rev.item_number, code: rev.code, rule: rule }).then(function (path) {
+      done();
+      if (path) toast("Saved " + path);
+    }, function (err) {
+      done();
+      toast(errorText(err), isCancelled(err) ? "info" : "error");
+    });
+  }
+
+  // ------------------------------------------------ stopping long operations
+
+  /** An operation the user cancelled (status 499 from the Rust side) – a note, not an error. */
+  function isCancelled(err) { return !!err && err.status === 499; }
+
+  /** The running Pack and Go: its label and progress dialog (opened by the
+   * first `package-progress` event, i.e. after the save dialog). */
+  var packing = null;
+
+  /** Follows the check-in upload of the open check-in dialog (`upload-progress`). */
+  var uploadWatcher = null;
+
+  /** A progress dialog with a bar and Cancel, which asks the Rust side to stop
+   * (`cancelCommand`); Escape and the backdrop do not close it. The caller
+   * closes it when the operation has ended. */
+  function progressDialog(title, cancelCommand) {
+    var bar = h("progress", { max: "1", value: "0" });
+    var text = h("p.small", { role: "status", text: "Starting …" });
+    var stopping = false;
+    var d = dialog(title, h("div.stack", null, [text, bar]), [
+      { label: "Cancel", onClick: function () {
+        if (stopping) return;
+        stopping = true;
+        text.textContent = "Stopping …";
+        call(cancelCommand).catch(function () {});
+      } }
+    ], { modal: true });
+    return {
+      close: d.close,
+      update: function (done, total, line) {
+        if (stopping) return;
+        if (total) { bar.max = total; bar.value = Math.min(done, total); } else { bar.removeAttribute("value"); }
+        text.textContent = line;
+      }
+    };
+  }
+
+  function onPackageProgress(p) {
+    if (!packing) return;
+    if (!packing.dialog) packing.dialog = progressDialog("Pack and Go " + packing.label, "cancel_package");
+    var received = p.received || 0;
+    packing.dialog.update(received, p.total || 0, received
+      ? "Received " + fmtSize(received) + (p.total ? " of " + fmtSize(p.total) : "") + " …"
+      : "The server is packing the files of the structure …");
+  }
+
+  /** The progress line of a check-in: bytes sent, then waiting for the server. */
+  function uploadLine(p) {
+    if (p.total && p.sent >= p.total) return "Sent " + p.file + " – the server is storing it (too late to cancel) …";
+    var pct = p.total ? Math.floor(100 * p.sent / p.total) : 0;
+    return "Uploading " + p.file + " – " + fmtSize(p.sent) + " of " + fmtSize(p.total) + " (" + pct + " %) …";
   }
 
   /** Watch / Unwatch button for the toolbar of a revision or change tab. */
@@ -679,6 +801,10 @@
       var el = $("worklist-count");
       el.textContent = String(n);
       el.classList.toggle("hidden", n === 0);
+      var rail = el.closest("button");
+      if (rail) {
+        rail.setAttribute("aria-label", n ? "Worklist, " + n + " open" : "Worklist");
+      }
       return w;
     });
   }
@@ -726,13 +852,19 @@
   }
 
   function renderHome() {
+    // fetched again each time (Home, Refresh, after an import): groups created or joined meanwhile show up
+    return reloadProjects().then(drawHome);
+  }
+
+  function drawHome() {
+    if (state.view !== "home") return; // switched to another view while loading
     var nav = $("navigator");
     var mine = state.projects.filter(function (p) { return p.active && state.me.projects.indexOf(p.id) !== -1; });
     var others = state.projects.filter(function (p) { return p.active && state.me.projects.indexOf(p.id) === -1; });
     clear(nav);
-    nav.appendChild(navHead("Project groups", [
-      h("button.small", { type: "button", title: "Copy the files of whole project groups into your workspace", on: { click: function () { getProjectsDialog(); } } }, "Get…"),
-      canEdit() ? h("button.small", { type: "button", title: "Import an existing CAD folder (Tools → Import CAD Folder…)", on: { click: function () { importFolderDialog(); } } }, "Import…") : null,
+    nav.appendChild(navHead("Projects", [
+      h("button.small.icon", { type: "button", title: "Get project groups: copy their files into your workspace", "aria-label": "Get project groups…", on: { click: function () { getProjectsDialog(); } } }, svgIcon(ICONS.download)),
+      canEdit() ? h("button.small.icon", { type: "button", title: "Import an existing CAD folder (Tools → Import CAD Folder…)", "aria-label": "Import CAD folder…", on: { click: function () { importFolderDialog(); } } }, svgIcon(ICONS.folder)) : null,
       canEdit() ? h("button.small", { type: "button", title: "New item (Ctrl+N)", on: { click: function () { newItemDialog(); } } }, [svgIcon(ICONS.plus), "New"]) : null
     ]));
     function group(title, list) {
@@ -747,7 +879,7 @@
     var open = !!state.expanded[p.code];
     var children = h("ul.tree" + (open ? "" : ".hidden"));
     var node = h("div.node.group", {
-      title: p.name,
+      title: p.name + (p.visibility === "restricted" ? " – restricted: only its members and administrators see it" : ""),
       on: {
         click: function () {
           state.expanded[p.code] = !state.expanded[p.code];
@@ -781,6 +913,12 @@
     });
   }
 
+  /** A worklist heading with its count as a muted trailing number (.count),
+   *  the same pattern as the card titles in both apps. */
+  function sectionTitle(text, n) {
+    return h("p.section-title", null, [text + " ", h("span.count", { text: String(n) })]);
+  }
+
   function renderWorklist() {
     return refreshWorklistCount().then(function (w) {
       var nav = $("navigator");
@@ -788,28 +926,28 @@
       nav.appendChild(navHead("My worklist", [
         w.checkouts.length ? h("button.small", { type: "button", title: "Check in every check-out without local changes (releases the locks)",
           on: { click: function () { checkInAll(); } } }, [svgIcon(ICONS.checkin), " Check in all"]) : null,
-        h("button.small", { type: "button", title: "Refresh", on: { click: function () { selectView("worklist"); } } }, svgIcon(ICONS.refresh))
+        h("button.icon", { type: "button", title: "Refresh", "aria-label": "Refresh", on: { click: function () { selectView("worklist"); } } }, svgIcon(ICONS.refresh))
       ]));
-      nav.appendChild(h("p.section-title", { text: "Checked out by me (" + w.checkouts.length + ")" }));
+      nav.appendChild(sectionTitle("Checked out by me", w.checkouts.length));
       nav.appendChild(w.checkouts.length ? h("ul.tree", null, w.checkouts.map(function (r) {
         return h("li", null, h("div.node", { title: "Checked out " + fmtDate(r.checked_out_at), on: { click: function () { openRevision(r.item_number, r.code); } } }, [
-          h("span.twisty"), h("span.ico", { text: "🔒" }),
+          h("span.twisty"), h("span.ico", null, lockIcon(true)),
           h("span.label", null, [h("span.mono", { text: r.item_number + "/" + r.code }), " ", r.name]),
           h("span.meta.small.dim", { text: lockAge(r.checked_out_at) })
         ]));
       })) : h("p.empty", { text: "Nothing checked out." }));
-      nav.appendChild(h("p.section-title", { text: "Waiting for my review (" + w.reviews.length + ")" }));
+      nav.appendChild(sectionTitle("Waiting for my review", w.reviews.length));
       nav.appendChild(w.reviews.length ? h("ul.tree", null, w.reviews.map(changeNode)) : h("p.empty", { text: "Nothing to review." }));
       var groups = impactGroups(w);
-      nav.appendChild(h("p.section-title", { text: "Dependents to check (" + groups.length + ")" }));
+      nav.appendChild(sectionTitle("Dependents to check", groups.length));
       nav.appendChild(groups.length ? h("ul.tree", null, groups.map(dependentNode)) : h("p.empty", { text: "Nothing to check." }));
-      nav.appendChild(h("p.section-title", { text: "My open changes (" + w.my_changes.length + ")" }));
+      nav.appendChild(sectionTitle("My open changes", w.my_changes.length));
       nav.appendChild(w.my_changes.length ? h("ul.tree", null, w.my_changes.map(changeNode)) : h("p.empty", { text: "No open changes." }));
       // change requests (older servers: none)
       var assigned = w.requests_assigned || [], mine = w.my_requests || [];
-      nav.appendChild(h("p.section-title", { text: "Requests assigned to me (" + assigned.length + ")" }));
+      nav.appendChild(sectionTitle("Requests assigned to me", assigned.length));
       nav.appendChild(assigned.length ? h("ul.tree", null, assigned.map(requestNode)) : h("p.empty", { text: "No change requests assigned to you." }));
-      nav.appendChild(h("p.section-title", { text: "My open requests (" + mine.length + ")" }));
+      nav.appendChild(sectionTitle("My open requests", mine.length));
       nav.appendChild(mine.length ? h("ul.tree", null, mine.map(requestNode)) : h("p.empty", { text: "Found a problem? Use “Request change…” on a revision or a workspace file." }));
     });
   }
@@ -847,7 +985,7 @@
       title: g.item_number + "/" + g.revision_code + " " + g.item_name + " – " + n + " change" + (n === 1 ? "" : "s") + " to check",
       on: { click: function () { openRevision(g.item_number, g.revision_code, "references"); } }
     }, [
-      twisty, h("span.ico.warn", { text: "⚠" }),
+      twisty, h("span.ico.warn", { text: "△" }),
       h("span.label", null, [h("span.mono", { text: g.item_number + "/" + g.revision_code }), " ", g.item_name]),
       h("span.meta", null, h("span.count-badge", { text: String(n) }))
     ]);
@@ -1026,40 +1164,53 @@
     ]);
     var w = state.worklist;
     var welcome = h("div.welcome", null, [
-      h("h1", { text: "Hello, " + (state.me ? state.me.display_name : "") }),
-      h("p.muted", { text: "Open a project group in the navigator, search above or pick something from your worklist." })
+      h("h1", { text: "Home" }),
+      h("p.muted", { text: "Open an item from the navigator, or press " + (/Mac/.test(navigator.platform) ? "⌘F" : "Ctrl+F") + " to search." })
     ]);
     body.appendChild(welcome);
     var fill = function (wl) {
       if (!wl) return;
       var s = wl.stats;
       append(welcome, h("div.stats", null, [
-        stat(s.items, "Items"), stat(s.revisions_in_work, "Revisions in work"), stat(s.revisions_in_review, "In review"),
-        stat(s.revisions_released, "Released revisions"), stat(s.open_changes, "Open changes"), stat(fmtSize(s.stored_bytes), s.files + " files in the vault")
+        stat(s.items, "Items"), stat(s.revisions_in_work, "WIP"), stat(s.revisions_in_review, "In Review"),
+        stat(s.revisions_released, "Released"), stat(s.open_changes, "Open changes"), stat(fmtSize(s.stored_bytes), s.files + " files in the vault")
       ]));
+      // the same cards in the same order as the web dashboard: the review
+      // queue, the dependents to check, then the own check-outs
+      append(welcome, h("section.panel", null, [h("div.panel-head", null, [panelTitle("Waiting for my review", wl.reviews.length)]),
+        wl.reviews.length ? table(["Change", "Title", "Submitted"], wl.reviews.map(function (c) {
+          var open = function () { openChange(c.number); };
+          return { cells: [recordLink(c.number, open), c.title, fmtDate(c.submitted_at)], open: open };
+        })) : h("p.empty", { text: "Nothing to review." })]));
       var groups = impactGroups(wl);
       if (groups.length) {
-        append(welcome, h("section.panel", null, [h("h2", { text: "Dependents to check" }),
+        append(welcome, h("section.panel", null, [h("div.panel-head", null, [panelTitle("Dependents to check", groups.length)]),
           h("p.hint", { text: "Something these items use or reference was released in a new revision or made obsolete. Acknowledge what needs no change, or revise the item." })
         ].concat(groups.map(function (g) { return impactGroup(g, false); }))));
       }
-      if (wl.checkouts.length || wl.reviews.length) {
-        append(welcome, h("div.grid-2", null, [
-          h("section.panel", null, [h("div.panel-head", null, [h("h2", { text: "Checked out by me" }),
-            wl.checkouts.length ? tool("Check in all", "checkin", function () { checkInAll(); }, { title: "Check in every check-out without local changes (releases the locks)" }) : null]),
-            wl.checkouts.length ? table(["Revision", "Name", "Since"], wl.checkouts.map(function (r) {
-              return { cells: [h("span.mono", { text: r.item_number + "/" + r.code }), r.name,
-                h("span", { title: fmtDate(r.checked_out_at), text: lockAge(r.checked_out_at) })], open: function () { openRevision(r.item_number, r.code); } };
-            })) : h("p.empty", { text: "Nothing checked out." })]),
-          h("section.panel", null, [h("h2", { text: "Waiting for my review" }),
-            wl.reviews.length ? table(["Change", "Title", "Submitted"], wl.reviews.map(function (c) {
-              return { cells: [h("span.mono", { text: c.number }), c.title, fmtDate(c.submitted_at)], open: function () { openChange(c.number); } };
-            })) : h("p.empty", { text: "Nothing to review." })])
-        ]));
-      }
+      append(welcome, h("section.panel", null, [h("div.panel-head", null, [panelTitle("Checked out by me", wl.checkouts.length),
+        wl.checkouts.length ? h("button.small", { type: "button", title: "Check in every check-out without local changes (releases the locks)",
+          on: { click: function () { checkInAll(); } } }, [svgIcon(ICONS.checkin), " Check in all"]) : null]),
+        wl.checkouts.length ? table(["Revision", "Name", "Since"], wl.checkouts.map(function (r) {
+          var open = function () { openRevision(r.item_number, r.code); };
+          return { cells: [recordLink(r.item_number + "/" + r.code, open), r.name,
+            h("span", { title: fmtDate(r.checked_out_at), text: lockAge(r.checked_out_at) })], open: open };
+        })) : h("p.empty", { text: "Nothing checked out." })]));
     };
     if (w) fill(w);
     else refreshWorklistCount().then(fill, function () {});
+  }
+
+  /** A Home card title with its count as a muted trailing number, like the
+   *  web dashboard's card titles and the worklist navigator. */
+  function panelTitle(text, n) {
+    return h("h2", null, [text + " ", h("span.count", { text: String(n) })]);
+  }
+
+  /** A record number in a table: a link like in the web UI and the dependents
+   *  rows, so every number that opens something looks the same. */
+  function recordLink(text, open) {
+    return h("button.link.mono", { type: "button", on: { click: function (e) { e.stopPropagation(); open(); } } }, text);
   }
 
   function stat(value, text) {
@@ -1078,7 +1229,8 @@
           on: r.open ? { dblclick: r.open, click: r.single ? r.open : null } : null,
           title: r.open ? "Double-click to open" : null
         }, r.cells.map(function (c, i) {
-          var td = h("td" + (opts.numeric && opts.numeric.indexOf(i) !== -1 ? ".num" : ""));
+          var td = h("td" + (opts.numeric && opts.numeric.indexOf(i) !== -1 ? ".num" : "") +
+            (opts.nowrap && opts.nowrap.indexOf(i) !== -1 ? ".nowrap" : ""));
           append(td, c);
           return td;
         }));
@@ -1962,6 +2114,7 @@
       ]),
       moreMenu([
         { label: "Pack and Go…", icon: "package", run: function () { savePackage(rev, null); }, title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json) – for sending, not for working" },
+        { label: "Import BOM…", icon: "download", run: function () { importBomDialog(rev); }, disabled: !can.edit, title: can.edit ? "Add the lines of a BOM exported by the CAD program (CSV, Excel, STEP assembly)" : why.edit },
         { label: "Open in browser", icon: "web", run: function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, title: "Open this revision in the web UI" },
         { label: "Refresh", icon: "refresh", run: reloadActive, shortcut: "F5", title: "Load this revision again" },
         { label: "Mark obsolete…", icon: "obsolete", run: function () { doObsolete(tab); }, disabled: !can.obsolete, danger: true, separated: true, title: can.obsolete ? "Retire this released revision – cannot be undone" : why.obsolete }
@@ -1974,7 +2127,7 @@
         h("h1", null, [h("span.mono", { text: rev.item_number + "/" + rev.code }), " · " + rev.name]),
         h("div.meta", null, [
           badge(rev.state),
-          rev.checked_out_by_name ? h("span.badge.badge-lock", { text: "🔒 " + rev.checked_out_by_name }) : null,
+          rev.checked_out_by_name ? lockBadge(rev.checked_out_by_name, rev.checked_out_by === state.me.id) : null,
           h("span", { text: "created " + fmtDate(rev.created_at) + " by " + rev.created_by_name })
         ])
       ])
@@ -2254,6 +2407,12 @@
           type: "button", title: "Save the structure with this revision rule and all its files as ZIP",
           on: { click: function () { savePackage(rev, rule); } }
         }, "Pack and Go…"),
+        canEdit() ? h("button.small", {
+          type: "button", disabled: rev.checked_out_by !== state.me.id,
+          title: rev.checked_out_by === state.me.id ? "Add the lines of a BOM exported by the CAD program (CSV, Excel, STEP assembly)"
+            : rev.checked_out_by ? "Checked out by " + rev.checked_out_by_name : "Check out first – the BOM is imported under your check-out",
+          on: { click: function () { importBomDialog(rev); } }
+        }, "Import BOM…") : null,
         h("button.small", { type: "button", on: { click: function () { setExpandAll(tab, true); renderActive(); } } }, "Expand all"),
         h("button.small", { type: "button", on: { click: function () { setExpandAll(tab, false); renderActive(); } } }, "Collapse all")
       ])
@@ -2287,7 +2446,8 @@
           rows.push({
             cells: [
               h("span", null, [indent, twisty, h("span.mono", { text: String(n.find_number) + "  " }), h("span.mono", { text: n.item_number + (r ? "/" + r.code : "") })]),
-              r ? r.name : h("span.warn-text", { text: "no " + (rule === "released" ? "released " : "") + "revision" }),
+              n.restricted ? h("span.muted", { text: "Restricted item – in a project group you are not a member of" })
+                : r ? r.name : h("span.warn-text", { text: "no " + (rule === "released" ? "released " : "") + "revision" }),
               r ? badge(r.state) : "",
               fmtNum(n.quantity, 6) + " " + n.unit,
               n.notes || "",
@@ -2301,7 +2461,9 @@
       }
       walk(tree.children, 1);
       panel.appendChild(table(["Find no. / item", "Name", "State", "Qty", "Notes", "Mass", "Cost"], rows, { numeric: [3, 5, 6] }));
-      panel.appendChild(h("p.hint", { text: tree.line_count + " lines" + (tree.unresolved_count ? " · " + tree.unresolved_count + " without a matching revision" : "") + " · double-click a line to open it · ⚠ = incomplete mass or cost" }));
+      panel.appendChild(h("p.hint", { text: tree.line_count + " lines" + (tree.unresolved_count ? " · " + tree.unresolved_count + " without a matching revision" : "") +
+        (tree.restricted_lines ? " · mass and cost exclude " + tree.restricted_lines + " restricted line" + (tree.restricted_lines === 1 ? "" : "s") : "") +
+        " · double-click a line to open it · ⚠ = incomplete mass or cost" }));
     });
   }
 
@@ -2407,9 +2569,9 @@
              h("span.impact-group-name", { text: g.item_name })]),
         h("span.impact-count", { text: n + " change" + (n === 1 ? "" : "s") + " to check" }),
         h("div.actions", null, [
-          inRevision ? null : h("button.small", { type: "button", on: { click: openIt } }, "Open"),
+          inRevision ? null : h("button.small.ghost", { type: "button", on: { click: openIt } }, "Open"),
           !inRevision && can && g.revision_state === "released"
-            ? h("button.small", { type: "button", on: { click: function () { reviseRevision(g.item_number, g.revision_code); } } }, "Revise") : null,
+            ? h("button.small.ghost", { type: "button", on: { click: function () { reviseRevision(g.item_number, g.revision_code); } } }, "Revise") : null,
           can && n > 1 ? h("button.small", { type: "button", on: { click: function () { acknowledgeAllDialog(g); } } }, "Acknowledge all…") : null
         ])
       ]),
@@ -2420,9 +2582,11 @@
             " ", h("span.impact-source-name", { text: i.source_name })]),
           h("span.impact-event", null, [i.event === "released" ? "released" : badge("obsolete"),
             i.change_number ? " via " : null,
-            i.change_number ? h("button.link.mono", { type: "button", on: { click: function () { openChange(i.change_number); } } }, i.change_number) : null]),
-          h("span.impact-relation", null, [relationShort(i.relation), i.detail ? h("span.impact-detail", { text: " · " + i.detail }) : null]),
-          can ? h("button.small", { type: "button", on: { click: function () { acknowledgeDialog(i); } } }, "Acknowledge…") : null
+            i.change_number ? h("button.link.mono.plain-weight", { type: "button", on: { click: function () { openChange(i.change_number); } } }, i.change_number) : null]),
+          // a BOM line keeps its short detail (find no.); a referencing file name sits in the tooltip
+          h("span.impact-relation", { title: i.detail ? relationText(i.relation) + " · " + i.detail : null },
+            [relationShort(i.relation), i.detail && i.relation === "bom" ? h("span.impact-detail", { text: " · " + i.detail }) : null]),
+          can ? h("button.small.ghost", { type: "button", on: { click: function () { acknowledgeDialog(i); } } }, "Acknowledge…") : null
         ]);
       })),
       h("p.hint", { text: "Revising and releasing " + g.item_number + " resolves " + (n === 1 ? "it" : "all " + n) + " as well." })
@@ -2669,7 +2833,7 @@
         ]),
         h("p.small.muted", null, ["Folder: ", h("span.mono", { text: ws.dir }),
           " · files you have not checked out are read-only; check out to change them."]),
-        rev.checked_out_by ? h("p.small", null, [badge("lock", "🔒 " + (lockedByOther ? rev.checked_out_by_name : "You")),
+        rev.checked_out_by ? h("p.small", null, [lockBadge(lockedByOther ? rev.checked_out_by_name : "You", !lockedByOther),
           " checked out " + fmtDate(rev.checked_out_at) + " (" + lockAge(rev.checked_out_at) + ")" +
           (lockedByOther ? " – locked by " + rev.checked_out_by_name + ": only they can check in right now; your local changes stay in the working folder." : "")]) : null,
         !ws.exists ? h("p.empty", { text: "Not in your working folder yet – check out (or “Get files”) to copy the files." }) :
@@ -2760,6 +2924,7 @@
     if (r.kept.length) parts.push(r.kept.length + " locally modified file(s) kept");
     if (r.clashes.length) parts.push(r.clashes.length + " name clash(es)");
     if (r.failed.length) parts.push(r.failed.length + " failed");
+    if (r.restricted_lines) parts.push(r.restricted_lines + " restricted line(s) skipped – items of project groups you are not a member of");
     var problems = r.clashes.length || r.failed.length || r.unresolved.length || r.missing_references.length;
     if (!problems) {
       toast((parts.length ? parts.join(" · ") : "The working folder is up to date.") + (r.kept.length ? ": " + r.kept.join(", ") : ""), r.kept.length ? "info" : null);
@@ -2790,7 +2955,9 @@
   /** Labels of the sync states of working-folder files. */
   var SYNC_LABEL = {
     up_to_date: "Up to date", unchanged: "Up to date", modified: "Modified", outdated: "Outdated", conflict: "Conflict",
-    "new": "New", missing: "Not in working folder", clash: "Name clash"
+    "new": "New", missing: "Not in working folder", clash: "Name clash",
+    // the server answers "not found": a restricted project group the user left
+    inaccessible: "No longer accessible – local copy only"
   };
 
   /** Offers to move a workspace of the old layout <group>/<item>/<revision>/
@@ -2943,6 +3110,7 @@
         return { name: f.name, input: h("input", { type: "checkbox", checked: f.state !== "conflict" }), state: f.state };
       });
       var comment = h("input", { type: "text", maxlength: "2000", placeholder: "What changed, e.g. wall thickness 2 → 2.5 mm" });
+      var progressLine = h("p.small.muted.hidden", { role: "status" });
       // Like the Vault add-in or the Teamcenter integration: viewables at check-in.
       var exportable = boxes.filter(function (b) { return exportProgram(b.name, programs); });
       var withStep = h("input", { type: "checkbox", checked: true });
@@ -2958,35 +3126,69 @@
         boxes.some(function (b) { return b.state === "conflict"; }) ? h("p.notice.error", { text: "Conflict: these files changed on the server since you got them. " +
           "The server refuses to overwrite the newer version (nothing is stored) – save your copy under another name, get the current files and merge." }) : null,
         stepNote,
-        field("Comment", comment, "stored with every new version")
+        field("Comment", comment, "stored with every new version"),
+        progressLine
       ]);
+      // While the check-in runs the dialog stays open (no Escape, no backdrop):
+      // Cancel stops it before the next STEP export, between two chunks of a
+      // large file or half-way through the request with the small files –
+      // nothing is stored, the revision stays checked out. Once every byte is
+      // sent the server finishes the check-in; the dialog then says so.
+      var running = false, cancelled = false;
+      var opts = { wide: true };
+      function stopped() { return { status: 499, message: "Cancelled." }; }
       dialog("Check in " + rev.item_number + "/" + rev.code, body, [
-        // also stops a running chunked upload – nothing is stored then
-        { label: "Cancel", onClick: function (d) { call("cancel_upload").catch(function () {}); setStatus(""); d.close(); } },
+        { label: "Cancel", onClick: function (d) {
+          if (!running) { d.close(); return; }
+          if (cancelled) return;
+          cancelled = true;
+          progressLine.textContent = "Stopping …";
+          progressLine.classList.remove("hidden");
+          call("cancel_upload").catch(function () {});
+        } },
         {
           label: "Check in and release", primary: true, submit: true, onClick: function (d) {
+            if (running) return;
+            running = true; cancelled = false; opts.modal = true;
             var files = boxes.filter(function (b) { return b.input.checked; }).map(function (b) { return b.name; });
             var toExport = stepNote && withStep.checked ? files.filter(function (n) { return exportProgram(n, programs); }) : [];
+            function show(text) { if (!cancelled) { progressLine.textContent = text; progressLine.classList.remove("hidden"); } }
             // one export after the other: the CAD program handles one document at a time
             var exported = toExport.reduce(function (chain, name) {
               return chain.then(function () {
-                setStatus("Exporting " + name + " to STEP with " + PROGRAM_LABEL[exportProgram(name, programs)] + " …");
+                if (cancelled) throw stopped();
+                show("Exporting " + name + " to STEP with " + PROGRAM_LABEL[exportProgram(name, programs)] + " …");
                 return exportStep(rev, name).then(function (step) { if (files.indexOf(step) < 0) files.push(step); });
               });
             }, Promise.resolve());
             exported.then(function () {
-              setStatus("Checking in …");
+              if (cancelled) throw stopped();
+              show("Checking in …");
+              uploadWatcher = function (p) { show(uploadLine(p)); };
               return call("workspace_checkin", { project: rev.project_code, item: rev.item_number, code: rev.code, files: files, comment: comment.value });
             }).then(function () {
+              running = false; uploadWatcher = null;
               setStatus("");
               d.close();
-              toast("Checked in " + rev.item_number + "/" + rev.code + (files.length ? " with " + files.join(", ") : ""));
+              toast("Checked in " + rev.item_number + "/" + rev.code + (files.length ? " with " + files.join(", ") : "") +
+                (cancelled ? " – the server already had every file when you cancelled" : ""), cancelled ? "info" : null);
               reloadActive();
               refreshWorklistCount();
-            }, function (err) { setStatus(""); d.fail(err); });
+            }, function (err) {
+              running = false; uploadWatcher = null; opts.modal = false;
+              setStatus("");
+              if (cancelled || isCancelled(err)) {
+                d.close();
+                toast("Check-in of " + rev.item_number + "/" + rev.code + " cancelled – nothing was stored; the revision is still checked out to you.", "info");
+                reloadActive();
+                return;
+              }
+              progressLine.classList.add("hidden");
+              d.fail(err);
+            });
           }
         }
-      ], { wide: true });
+      ], opts);
     }, function (err) { toast(errorText(err), "error"); });
   }
 
@@ -3191,7 +3393,8 @@
     var notOwner = owner ? null : "Only " + c.created_by_name + " (who created it) or an administrator can do this";
     var canSubmit = owner && c.status === "draft", canWithdraw = owner && c.status === "in_review";
     // The review decision lives in the toolbar – the comment field below goes with it.
-    var comment = canReview ? h("textarea", { maxlength: "4000", placeholder: "Comment – required when rejecting", "aria-label": "Review comment" }) : null;
+    // A visible label and hint as in the web review form (a placeholder would vanish once you type).
+    var comment = canReview ? h("textarea.review-comment", { id: "review-comment", maxlength: "4000", "aria-describedby": "review-comment-hint" }) : null;
     function decide(decision) {
       if (decision === "reject" && !comment.value.trim()) {
         toast("Write in the comment why you reject " + c.number, "error");
@@ -3207,7 +3410,7 @@
     }
     append(toolbar, [
       canReview ? toolGroup("Review", [
-        tool("Approve", "approve", function () { decide("approve"); }, { primary: true, title: "Approve " + c.number + " (with the comment below, if any)" }),
+        tool("Approve change", "approve", function () { decide("approve"); }, { primary: true, title: "Approve " + c.number + " (with the comment below, if any)" }),
         tool("Reject", "cancel", function () { decide("reject"); }, { danger: true, title: "Reject " + c.number + " – the comment below says why; the revisions go back to WIP" })
       ]) : null,
       toolGroup("Lifecycle", [
@@ -3233,27 +3436,26 @@
       ])
     ]);
     body.appendChild(h("div.object-head", null, [h("div", null, [
-      h("p.kicker", { text: "Change order · priority " + label(c.priority) }),
       h("h1", null, [h("span.mono", { text: c.number }), " · " + c.title]),
-      h("div.meta", null, [badge(c.status), h("span", { text: "created " + fmtDate(c.created_at) + " by " + c.created_by_name })])
+      h("div.meta", null, [badge(c.status), priorityBadge(c.priority), h("span", { text: "created " + fmtDate(c.created_at) + " by " + c.created_by_name })])
     ])]));
     var hints = {
       draft: "Draft: add the revisions to release and at least one reviewer, then submit.",
-      in_review: "In review: all reviewers must approve; a single rejection sends the revisions back to WIP.",
+      in_review: "In Review: all reviewers must approve; a single rejection sends the revisions back to WIP.",
       rejected: "Rejected: fix the revisions, then reopen and resubmit in the web UI – or cancel the change.",
       released: "Released: all revisions of this change are released."
     };
     if (hints[c.status]) body.appendChild(h("p.notice.info", { text: hints[c.status] }));
 
     if (canReview) {
-      body.appendChild(h("section.panel", null, [h("h2", { text: "Your review" }), comment,
-        h("p.small.muted.review-hint", { text: "Approve or Reject in the toolbar above. A comment is optional when approving and required when rejecting." })]));
+      body.appendChild(h("section.panel", null, [h("h2", { text: "Your review" }),
+        h("label", { for: "review-comment" }, ["Comment", comment]),
+        h("p.hint.review-hint", { id: "review-comment-hint", text: "A rejection needs a comment: what has to change. Approve change and Reject are in the toolbar above." })]));
     }
 
     append(body, h("div.grid-2", null, [
       h("section.panel", null, [h("h2", { text: "Details" }), h("dl.props", null, [
         dt("Description"), dd(h("span.pre", { text: c.description || "—" })),
-        dt("Priority"), dd(label(c.priority)),
         dt("Submitted"), dd(fmtDate(c.submitted_at)),
         dt("Closed"), dd(fmtDate(c.closed_at)),
         dt("Last update"), dd(fmtDate(c.updated_at))
@@ -3261,12 +3463,13 @@
       h("section.panel", null, [h("h2", { text: "Reviewers" }),
         tab.data.reviews.length ? table(["Reviewer", "Decision", "Comment"], tab.data.reviews.map(function (r) {
           return { cells: [r.reviewer_name, badge(r.decision), h("span.pre", { text: r.comment || "" })] };
-        })) : h("p.empty", { text: "No reviewers assigned yet." }),
+        }), { nowrap: [0, 1] }) : h("p.empty", { text: "No reviewers assigned yet." }),
         owner && c.status === "draft" ? suggestedReviewers(c.number) : null])
     ]));
     body.appendChild(h("section.panel", null, [h("h2", { text: "Affected revisions" }),
       tab.data.items.length ? table(["Revision", "Name", "State"], tab.data.items.map(function (i) {
-        return { cells: [h("span.mono", { text: i.item_number + "/" + i.code }), i.name, h("span", null, [badge(i.state), i.checked_out_by_name ? h("span.badge.badge-lock", { text: "🔒 " + i.checked_out_by_name }) : null])], open: function () { openRevision(i.item_number, i.code); } };
+        var open = function () { openRevision(i.item_number, i.code); };
+        return { cells: [recordLink(i.item_number + "/" + i.code, open), i.name, h("span", null, [badge(i.state), i.checked_out_by_name ? lockBadge(i.checked_out_by_name, i.checked_out_by === state.me.id) : null])], open: open };
       })) : h("p.empty", { text: "No revisions yet." })]));
     // Release readiness: unreleased dependencies block the submit.
     if ((c.status === "draft" || c.status === "rejected") && tab.data.items.length) {
@@ -3490,9 +3693,8 @@
       ])
     ]);
     body.appendChild(h("div.object-head", null, [h("div", null, [
-      h("p.kicker", { text: "Change request · " + reasonLabel(r.reason) + " · priority " + label(r.priority) }),
       h("h1", null, [h("span.mono", { text: r.number }), " · " + r.title]),
-      h("div.meta", null, [badge(r.status), h("span", { text: "requested " + fmtDate(r.created_at) + " by " + r.requested_by_name })])
+      h("div.meta", null, [badge(r.status), priorityBadge(r.priority), h("span", { text: "requested " + fmtDate(r.created_at) + " by " + r.requested_by_name })])
     ])]));
     var hints = {
       "new": "New: waiting for the CAD editors of the affected project groups to triage it.",
@@ -3506,11 +3708,18 @@
     if (hints[r.status]) body.appendChild(h("p.notice.info", { text: hints[r.status] }));
 
     if (can.decide) {
-      var comment = h("textarea", { maxlength: "4000", placeholder: "Comment – required when deferring or rejecting" });
+      var comment = h("textarea.review-comment", { id: "decision-comment", maxlength: "4000", "aria-describedby": "decision-comment-hint" });
       var decide = function (decision) {
+        if (decision !== "accept" && !comment.value.trim()) {
+          toast("Write in the comment why you " + decision + " " + r.number, "error");
+          comment.focus();
+          return;
+        }
         action("decide", { accept: "Accepting ", defer: "Deferring ", reject: "Rejecting " }[decision] + r.number, { decision: decision, comment: comment.value });
       };
-      body.appendChild(h("section.panel", null, [h("h2", { text: "Decision" }), comment,
+      body.appendChild(h("section.panel", null, [h("h2", { text: "Decision" }),
+        h("label", { for: "decision-comment" }, ["Comment", comment]),
+        h("p.hint.review-hint", { id: "decision-comment-hint", text: "Deferring or rejecting needs a comment: why, and what would change the decision." }),
         h("div.row", null, [
           h("button.primary", { type: "button", on: { click: function () { decide("accept"); } } }, "Accept"),
           r.status === "deferred" ? null : h("button", { type: "button", on: { click: function () { decide("defer"); } } }, "Defer"),
@@ -3522,7 +3731,6 @@
       h("section.panel", null, [h("h2", { text: "Details" }), h("dl.props", null, [
         dt("Problem and proposed solution"), dd(h("span.pre", { text: r.description || "—" })),
         dt("Reason"), dd(reasonLabel(r.reason)),
-        dt("Priority"), dd(label(r.priority)),
         dt("Needed by"), dd(r.due_date || "—"),
         dt("Assignee"), dd(r.assignee_name || "—"),
         dt("Decision"), dd(r.decided_at ? r.decided_by_name + " · " + fmtDate(r.decided_at) + (r.decision_comment ? " – " + r.decision_comment : "") : "—")
@@ -3598,7 +3806,9 @@
     };
   }
 
-  function newItemDialog() {
+  function newItemDialog() { freshProjects().then(openNewItemDialog); }
+
+  function openNewItemDialog() {
     if (!canEdit()) { toast("Viewers cannot create items.", "error"); return; }
     var projects = state.projects.filter(function (p) { return p.active && canEditProject(p.id); });
     if (!projects.length) { toast("You are not a member of any project group – ask an admin to add you.", "error"); return; }
@@ -3672,6 +3882,164 @@
     ], { wide: true });
   }
 
+  // ------------------------------------------------------------ Import BOM
+
+  /** Lines of the plan shown in the preview (the server imports all). */
+  var BOM_PREVIEW_LINES = 15;
+
+  /**
+   * Import BOM…: a BOM table (CSV/Excel) or STEP assembly exported by the CAD
+   * program, below a checked-out revision (`rev`) or – without `rev` – as a
+   * new assembly. The server reads the columns: the first call is a dry run
+   * whose plan (counts, notes, first lines) the dialog shows, Import sends the
+   * same file again and the server creates everything in one transaction.
+   */
+  function importBomDialog(rev) { freshProjects().then(function () { openImportBomDialog(rev || null); }); }
+
+  function openImportBomDialog(rev) {
+    if (!canEdit()) { toast("Viewers cannot import BOMs.", "error"); return; }
+    if (rev && rev.checked_out_by !== state.me.id) { toast("Check out " + rev.item_number + "/" + rev.code + " first – the BOM is imported under your check-out.", "error"); return; }
+    var projects = rev ? [] : state.projects.filter(function (p) { return p.active && canEditProject(p.id); });
+    if (!rev && !projects.length) { toast("You are not a member of any project group – ask an admin to add you.", "error"); return; }
+    var path = null;
+    var plan = null;
+    var fileName = h("span.mono", { text: "no file chosen" });
+    var project = rev ? null : h("select", null, projects.map(function (p) { return h("option", { value: p.code, text: p.code + " – " + p.name }); }));
+    var name = rev ? null : h("input", { type: "text", maxlength: "200", placeholder: "from the assembly row or the file name" });
+    var numbers = h("select", null, [
+      h("option", { value: "file", text: "Part numbers from the file" }),
+      h("option", { value: "generate", text: "New numbers (numbering scheme of the group)" })
+    ]);
+    var match = h("input", { type: "checkbox", checked: true });
+    var result = h("div.stack.bom-plan");
+    var handle = null;
+    var importButton = null;
+
+    function request() {
+      var r = { numbers: numbers.value, match_existing: match.checked };
+      if (rev) { r.item = rev.item_number; r.code = rev.code; } else { r.project = project.value; r.name = name.value; }
+      return r;
+    }
+    // Every change of the options needs a new preview before Import.
+    function invalidate() {
+      plan = null;
+      if (importButton) importButton.disabled = true;
+      clear(result);
+      if (path) result.appendChild(h("p.hint", { text: "Options changed – Preview again." }));
+    }
+    [project, name, numbers, match].forEach(function (el) {
+      if (el) el.addEventListener(el.tagName === "INPUT" && el.type === "text" ? "input" : "change", invalidate);
+    });
+
+    function showPlan(p) {
+      clear(result);
+      var target = p.target ? "Into " + p.root_label : "New assembly " + (p.root_number || "(number generated)") + " · " + p.root_name;
+      result.appendChild(h("p", null, [h("strong", { text: target }), " · project group " + p.project_code]));
+      result.appendChild(h("div.stats", null, [
+        stat(p.lines.length, p.lines.length === 1 ? "BOM line" : "BOM lines"),
+        stat(p.new_items, p.new_items === 1 ? "new item" : "new items"),
+        stat(p.existing_items, p.existing_items === 1 ? "existing item" : "existing items")
+      ]));
+      if (p.warnings.length) {
+        result.appendChild(h("div.notice", null, [h("strong", { text: p.warnings.length + (p.warnings.length === 1 ? " note" : " notes") }),
+          h("ul", null, p.warnings.map(function (w) { return h("li", { text: w }); }))]));
+      }
+      if (!p.lines.length) {
+        result.appendChild(h("p.notice.error", { text: "No BOM lines found in " + p.filename + " – check the columns (part number, quantity, level)." }));
+        return;
+      }
+      var rows = p.lines.slice(0, BOM_PREVIEW_LINES).map(function (l) {
+        var it = p.items[l.child];
+        var indent = h("span.indent");
+        indent.style.width = ((l.level - 1) * 1.2) + "rem";
+        var number = it.number || "(generated)";
+        return {
+          cells: [
+            h("span", null, [indent, h("span.mono", { text: String(l.find_number) })]),
+            h("span.mono", { text: number + (it.number && it.file_number && it.file_number !== it.number ? " ← " + it.file_number : "") }),
+            it.name,
+            fmtNum(l.quantity, 6) + " " + (it.unit || ""),
+            it.existing ? h("span.dim", { text: "existing " + (it.existing_label || "") }) : badge("new", "new " + label(it.item_type))
+          ]
+        };
+      });
+      result.appendChild(table(["Find no.", "Number", "Name", "Qty", "Item"], rows, { numeric: [3] }));
+      if (p.lines.length > BOM_PREVIEW_LINES) {
+        result.appendChild(h("p.hint", { text: "… and " + (p.lines.length - BOM_PREVIEW_LINES) + " more lines." }));
+      }
+    }
+
+    function preview() {
+      if (!path) { handle.fail("Choose the BOM file first."); return; }
+      plan = null;
+      importButton.disabled = true;
+      clear(result);
+      result.appendChild(h("p.loading", { text: "Reading " + baseName(path) }));
+      call("import_bom", { path: path, request: request(), dryRun: true }).then(function (p) {
+        plan = p;
+        showPlan(p);
+        importButton.disabled = !p.lines.length;
+      }, function (err) {
+        clear(result);
+        handle.fail(err);
+      });
+    }
+
+    var pick = h("button", { type: "button", on: { click: function () {
+      call("pick_bom_file").then(function (chosen) {
+        if (!chosen) return;
+        path = chosen;
+        fileName.textContent = baseName(chosen);
+        preview();
+      }, function (err) { handle.fail(err); });
+    } } }, "Choose file…");
+
+    var title = rev ? "Import BOM into " + rev.item_number + "/" + rev.code : "Import BOM as a new assembly";
+    handle = dialog(title, h("div.stack", null, [
+      field("BOM file", h("div.row", null, [pick, fileName]),
+        "CSV, Excel or ODS export of the CAD program's BOM, or a STEP assembly"),
+      rev ? h("p.hint", { text: "The lines are added to the structure of " + rev.item_number + "/" + rev.code + "; missing items are created in " + (rev.project_code || "its project group") + "." }) : null,
+      rev ? null : h("div.grid-2", null, [field("Project group", project), field("Name", name, "optional")]),
+      h("div.grid-2", null, [field("Numbers", numbers), h("label.check", null, [match, "Use existing items with the same number"])]),
+      result,
+      h("p.hint", { text: "The column recognition is a heuristic – check the preview. CATIA V5 Bill of Material reports are not understood; use a flat or indented export." })
+    ]), [
+      { label: "Cancel", onClick: function (d) { d.close(); } },
+      { label: "Preview", onClick: function () { preview(); } },
+      {
+        label: "Import", primary: true, submit: true, onClick: function (d) {
+          if (!plan) { preview(); return; }
+          importButton.disabled = true;
+          setStatus("Importing " + baseName(path) + " …");
+          call("import_bom", { path: path, request: request(), dryRun: false }).then(function (r) {
+            setStatus("");
+            d.close();
+            var created = r.created.length;
+            toast("Imported " + r.lines + (r.lines === 1 ? " line" : " lines") + " into " + r.root +
+              (created ? " · " + created + (created === 1 ? " new item" : " new items") : "") +
+              (r.warnings.length ? " · " + r.warnings.length + (r.warnings.length === 1 ? " note" : " notes") : ""));
+            var parts = String(r.root).split("/");
+            var tab = rev ? activeTab() : null;
+            if (rev && tab && tab.kind === "revision" && tab.number === rev.item_number && tab.code === rev.code) {
+              tab.sub = "structure";
+              reloadActive();
+            } else if (parts.length === 2) {
+              openRevision(parts[0], parts[1], "structure");
+            }
+            if (!rev && state.view === "home") selectView("home");
+            refreshWorklistCount();
+          }, function (err) {
+            setStatus("");
+            importButton.disabled = false;
+            d.fail(err);
+          });
+        }
+      }
+    ], { wide: true });
+    importButton = handle.form.querySelector(".dialog-actions button.primary");
+    importButton.disabled = true;
+  }
+
   // ------------------------------------------- whole project groups locally
 
   /** Every item of a project group (all pages of the item list). */
@@ -3688,7 +4056,9 @@
 
   /** For new team members or a fresh computer: copies the files of every item
    * of the chosen project groups into the workspace, one folder per group. */
-  function getProjectsDialog() {
+  function getProjectsDialog() { freshProjects().then(openGetProjectsDialog); }
+
+  function openGetProjectsDialog() {
     function member(p) { return state.me.projects.indexOf(p.id) !== -1; }
     var groups = state.projects.filter(function (p) { return p.active; }).sort(function (a, b) {
       return (member(b) - member(a)) || a.code.localeCompare(b.code);
@@ -3847,14 +4217,40 @@
     return { items: items, duplicates: duplicates, extras: extras.length, ignored: scan.ignored, files: scan.files.length };
   }
 
-  /** Items already imported from a folder (to continue an interrupted import). */
-  function importLog(folder) {
-    try { return JSON.parse(window.localStorage.getItem("teamcraft.import:" + state.session.server_url + ":" + folder)) || {}; }
+  /** Items already imported from a folder into a project group (to continue an
+   * interrupted import) – per group, so the same folder can go into another group. */
+  function importLogKey(project, folder) {
+    return "teamcraft.import-log:" + JSON.stringify([state.session.server_url, project, folder]);
+  }
+  function importLog(project, folder) {
+    try { return JSON.parse(window.localStorage.getItem(importLogKey(project, folder))) || {}; }
     catch (e) { return {}; }
   }
-  function saveImportLog(folder, log) {
-    try { window.localStorage.setItem("teamcraft.import:" + state.session.server_url + ":" + folder, JSON.stringify(log)); }
+  function saveImportLog(project, folder, log) {
+    try { window.localStorage.setItem(importLogKey(project, folder), JSON.stringify(log)); }
     catch (e) { /* the import still works, it just cannot be continued */ }
+  }
+
+  /** Earlier versions kept one log per folder, without the project group. Such
+   * a log is moved to the group of the items it lists (asked for its first
+   * item), so an interrupted import still continues instead of creating the
+   * items twice; it is kept as it is while that item cannot be read. */
+  function adoptFolderImportLog(folder) {
+    var oldKey = "teamcraft.import:" + state.session.server_url + ":" + folder, old = null;
+    try { old = JSON.parse(window.localStorage.getItem(oldKey)); } catch (e) { /* unreadable: ignored */ }
+    var keys = old ? Object.keys(old) : [];
+    if (!keys.length) return Promise.resolve();
+    return api("GET", "/items/" + enc(old[keys[0]])).then(function (r) {
+      var project = r.item && r.item.project_code;
+      if (!project) return;
+      var log = importLog(project, folder);
+      keys.forEach(function (k) { if (!log[k]) log[k] = old[k]; });
+      saveImportLog(project, folder, log);
+      var saved = importLog(project, folder);
+      if (keys.every(function (k) { return saved[k]; })) {
+        try { window.localStorage.removeItem(oldKey); } catch (e) { /* tried again at the next scan */ }
+      }
+    }, function () { /* deleted or not visible: the old log stays unused */ });
   }
 
   /** BOM lines for the parts the new assemblies reference (quantity 1). */
@@ -3917,13 +4313,18 @@
     }).catch(function (err) { failed.push("Releasing the check-outs: " + errorText(err)); });
   }
 
-  function importFolderDialog() {
+  function importFolderDialog() { freshProjects().then(openImportFolderDialog); }
+
+  function openImportFolderDialog() {
     if (!canEdit()) { toast("Viewers cannot import.", "error"); return; }
     var projects = state.projects.filter(function (p) { return p.active && canEditProject(p.id); });
     if (!projects.length) { toast("You are not a member of any project group – ask an admin to add you.", "error"); return; }
     var folder = h("input", { type: "text", spellcheck: "false", placeholder: "Folder with the CAD files" });
+    // another folder: scan again before Import (the plan and the log belong to the scanned folder)
+    function forgetScan() { if (!running) { scanned = null; plan = null; scannedPath = ""; report.textContent = ""; } }
+    folder.addEventListener("input", forgetScan);
     var pick = TAURI.dialog ? h("button", { type: "button", on: { click: function () {
-      TAURI.dialog.open({ directory: true, title: "CAD folder to import" }).then(function (dir) { if (dir) { folder.value = dir; scanned = null; report.textContent = ""; } });
+      TAURI.dialog.open({ directory: true, title: "CAD folder to import" }).then(function (dir) { if (dir && !running) { folder.value = dir; forgetScan(); } });
     } } }, "Choose…") : null;
     var project = h("select", null, projects.map(function (p) { return h("option", { value: p.code, text: p.code + " – " + p.name }); }));
     var fromNames = h("input", { type: "checkbox" });
@@ -3932,14 +4333,14 @@
     var report = h("div.stack");
     var bar = h("progress.hidden", { max: "1", value: "0" });
     var status = h("p.small", { role: "status" });
-    var scanned = null, kinds = null, plan = null, running = false, stop = false;
+    var scanned = null, scannedPath = "", kinds = null, plan = null, running = false, stop = false;
 
     function options() { return { numbersFromNames: fromNames.checked, extras: extras.checked }; }
     function progress(done, total, text) { bar.classList.remove("hidden"); bar.max = Math.max(total, 1); bar.value = done; status.textContent = text; }
 
     function showPlan() {
       plan = planImport(scanned, kinds, options());
-      var log = importLog(folder.value.trim());
+      var log = importLog(project.value, scannedPath);
       var open = plan.items.filter(function (it) { return !log[it.key]; });
       report.textContent = "";
       append(report, [
@@ -3964,18 +4365,20 @@
       var path = folder.value.trim();
       if (!path) { d.fail("Choose the folder first."); return; }
       status.textContent = "Scanning …";
-      Promise.all([call("scan_folder", { path: path }), formatKinds()]).then(function (r) {
-        scanned = r[0]; kinds = r[1];
+      Promise.all([call("scan_folder", { path: path }), formatKinds(), adoptFolderImportLog(path)]).then(function (r) {
+        if (folder.value.trim() !== path) { status.textContent = ""; return; } // changed while scanning
+        scanned = r[0]; kinds = r[1]; scannedPath = path;
         status.textContent = "Scanned – nothing is uploaded yet. Check the list, then Import.";
         showPlan();
       }, function (err) { status.textContent = ""; d.fail(err); });
     }
-    [fromNames, extras].forEach(function (box) { box.addEventListener("change", function () { if (scanned && !running) showPlan(); }); });
+    // the project group too: what counts as "already imported" is kept per group
+    [fromNames, extras, project].forEach(function (box) { box.addEventListener("change", function () { if (scanned && !running) showPlan(); }); });
 
     function importNow(d) {
       if (running) return;
       if (!plan) { d.fail("Scan the folder first."); return; }
-      var path = folder.value.trim(), log = importLog(path);
+      var path = scannedPath, group = project.value, log = importLog(group, path);
       var todo = plan.items.filter(function (it) { return !log[it.key]; });
       var created = [], failed = [], files = 0, checkedIn = 0;
       running = true; stop = false;
@@ -3983,9 +4386,9 @@
         return chain.then(function () {
           if (stop) return;
           progress(i + 1, todo.length, "Item " + (i + 1) + " of " + todo.length + ": " + it.name);
-          return api("POST", "/items", { item_type: it.type, name: it.name, project: project.value, number: it.number }).then(function (rev) {
+          return api("POST", "/items", { item_type: it.type, name: it.name, project: group, number: it.number }).then(function (rev) {
             // remembered at once, so a second run never creates it twice
-            log[it.key] = rev.item_number; saveImportLog(path, log);
+            log[it.key] = rev.item_number; saveImportLog(group, path, log);
             created.push({ rev: rev, item: it });
             return call("upload_files", { item: rev.item_number, code: rev.code, paths: it.files.map(function (f) { return f.path; }),
               comment: "Imported from " + scanned.folder_name, folders: importFolders(it.files, scanned.folder_name) })
@@ -4012,12 +4415,12 @@
         running = false;
         bar.classList.add("hidden");
         status.textContent = "";
-        if (created.length) { delete state.expanded[project.value]; if (state.view === "home") selectView("home"); refreshWorklistCount(); }
+        if (created.length) { delete state.expanded[group]; if (state.view === "home") selectView("home"); refreshWorklistCount(); }
         d.close();
         importFinishedDialog({
           stopped: stop, created: created, files: files, skipped: plan.items.length - todo.length,
           bom: bom.checked, lines: lines, checkedIn: checkedIn, failed: failed,
-          folder: scanned.folder_name, project: project.value
+          folder: scanned.folder_name, project: group
         });
       });
     }
@@ -4090,7 +4493,7 @@
       ]),
       step("3 · Import", [
         "Import creates the items and uploads the files, item by item, with progress. The source folder is only read.",
-        "Stop finishes the current item. The app remembers what was imported: scan and import again to continue.",
+        "Stop finishes the current item. The app remembers what was imported into each project group: scan and import again to continue. The same folder can also be imported into another project group.",
         "At the end every new item is checked in, so nothing stays locked.",
         "When it is done, a report shows the new items and files, the BOM lines and any problems – with a button that opens the top assembly."
       ]),
@@ -4119,7 +4522,9 @@
         h("span.skin-swatch", { "aria-hidden": "true" }, [h("span"), h("span"), h("span"), h("span")])]);
     }));
     var body = h("div.stack", null, [
-      h("h3", { text: "Skin" }), skins,
+      h("h3", { text: "Appearance" }),
+      h("p.hint", { text: "Choose how TeamCraft Desktop looks. The distribution skins are dark." }),
+      skins,
       h("h3", { text: "Workspace" }),
       field("Folder for checked-out files", h("div.row", null, [ws,
         TAURI.dialog ? h("button", { type: "button", on: { click: function () {
@@ -4173,7 +4578,7 @@
       h("img.connect-logo.skin-logo-light", { src: "/static/media/logos/TeamCraft_Logo_Blue.svg", alt: "TeamCraft" }),
       h("p", { text: "TeamCraft Desktop " + state.session.version + " – the rich client of TeamCraft, the open-source product lifecycle management." }),
       h("p.small", { text: "Pre-release: TeamCraft is a work in progress and has no official release yet. It is provided as is, without warranty of any kind (MPL-2.0, sections 6 and 7). Keep backups of your data." }),
-      h("p.small.muted", { text: "TeamCraft is open source under the Mozilla Public License 2.0. Fonts: Montserrat and Oswald (SIL Open Font License 1.1)." }),
+      h("p.small.muted", { text: "TeamCraft is open source under the Mozilla Public License 2.0. Font: Montserrat (SIL Open Font License 1.1), text in the system UI face." }),
       h("p.small.muted", { text: "Server: " + (state.session.server_url || "—") })
     ]), [{ label: "Close", primary: true, onClick: function (d) { d.close(); } }]);
   }
@@ -4236,6 +4641,7 @@
       case "new-item": newItemDialog(); break;
       case "get-projects": getProjectsDialog(); break;
       case "import-folder": importFolderDialog(); break;
+      case "import-bom": importBomDialog(null); break;
       case "import-help": importTutorial(); break;
       case "settings": case "settings-app": openSettings(); break;
       case "sign-out": signOut(); break;
@@ -4268,9 +4674,11 @@
     // large files are sent in resumable chunks: show how far they are
     TAURI.event.listen("upload-progress", function (e) {
       var p = e.payload || {};
-      var pct = p.total ? Math.floor(100 * p.sent / p.total) : 100;
-      setStatus("Uploading " + p.file + " – " + fmtSize(p.sent) + " of " + fmtSize(p.total) + " (" + pct + " %) …");
+      setStatus(uploadLine(p));
+      if (uploadWatcher) uploadWatcher(p);
     });
+    // Pack and Go: progress dialog with Cancel
+    TAURI.event.listen("package-progress", function (e) { onPackageProgress(e.payload || {}); });
     TAURI.event.listen("agent", function (e) { onAgentEvent(e.payload); });
     TAURI.event.listen("workspace-progress", function (e) { onGetProgress(e.payload); });
     $("status-get-cancel").addEventListener("click", function () {

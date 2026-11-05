@@ -44,6 +44,20 @@ Publishing: `snapcraft login`, `snapcraft register teamcraft`,
 
 ## Flatpak
 
+Every release ships the desktop client as a single-file bundle for x86_64 and
+aarch64 (`TeamCraft_<version>_<arch>.flatpak`, built by
+`.github/workflows/release.yml` from this manifest). Install it per user; the
+GNOME 49 runtime comes from Flathub:
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user TeamCraft_*.flatpak
+flatpak run io.github.rudalabs.teamcraft
+```
+
+The bundle is not on Flathub, so it gets no automatic updates: install the
+next release's bundle the same way. Build and install it locally instead:
+
 ```sh
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 flatpak-builder --user --install --install-deps-from=flathub --force-clean \

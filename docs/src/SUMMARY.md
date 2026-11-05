@@ -21,6 +21,7 @@
 - [Install with Docker](admin/docker.md)
 - [Configuration](admin/configuration.md)
 - [Users, roles and single sign-on](admin/users.md)
+- [Read permissions and restricted groups](admin/permissions.md)
 - [Event webhooks](admin/webhooks.md)
 - [Operations](admin/operations.md)
 
@@ -37,8 +38,10 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [Supersede, replace and alternate parts](research/supersede-alternates.md)
     - [Jira connector for change requests and change orders](research/jira-connector.md)
     - [Previews of native CAD files](research/cad-previews.md)
     - [Importing existing CAD folder trees](research/cad-folder-import.md)
     - [Popular features of Teamcenter](research/teamcenter.md)
     - [Openly licensed CAD files for end-to-end tests](research/cad-test-files.md)
+    - [Read permissions for project groups](research/read-permissions.md)

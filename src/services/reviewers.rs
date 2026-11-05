@@ -27,7 +27,11 @@ use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{error::AppResult, services::changes};
+use crate::{
+    auth::Actor,
+    error::AppResult,
+    services::{access, changes},
+};
 
 /// Most suggestions in one answer.
 pub const MAX_LIMIT: usize = 20;
@@ -98,15 +102,29 @@ const LATEST: &str = "pr.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_
 
 /// Ranked reviewer suggestions for a change order (at most `limit`, 1–20).
 /// Read-only; it never assigns anybody.
-pub async fn suggest(pool: &PgPool, change_id: Uuid, limit: usize) -> AppResult<Vec<Suggestion>> {
-    let change = changes::get(pool, change_id).await?;
+pub async fn suggest(
+    pool: &PgPool,
+    actor: &Actor,
+    change_id: Uuid,
+    limit: usize,
+) -> AppResult<Vec<Suggestion>> {
+    let change = changes::get(pool, actor, change_id).await?;
+    // Who may review depends on every item; with items the actor cannot see
+    // the list would tell who belongs to their groups (and adding a
+    // reviewer is refused anyway, see `changes::add_reviewer`).
+    {
+        let mut conn = pool.acquire().await?;
+        if !changes::sees_all_items(&mut conn, actor, change_id).await? {
+            return Ok(Vec::new());
+        }
+    }
     let sql = format!(
         "WITH ci AS MATERIALIZED (
              SELECT r.id AS revision_id, r.item_id, i.number, i.project_id
              FROM change_items ci
              JOIN revisions r ON r.id = ci.revision_id
              JOIN items i ON i.id = r.item_id
-             WHERE ci.change_id = $1
+             WHERE ci.change_id = $1 AND {vis_i}
              ORDER BY i.number LIMIT $3
          ),
          ci_revs AS MATERIALIZED (
@@ -117,7 +135,7 @@ pub async fn suggest(pool: &PgPool, change_id: Uuid, limit: usize) -> AppResult<
              FROM change_items oci
              JOIN ci_revs cr ON cr.id = oci.revision_id
              JOIN changes c ON c.id = oci.change_id
-             WHERE c.id <> $1 AND c.status <> 'cancelled'
+             WHERE c.id <> $1 AND c.status <> 'cancelled' AND {vis_c}
              ORDER BY c.created_at DESC LIMIT $4
          ),
          dep_edges AS (
@@ -148,7 +166,7 @@ pub async fn suggest(pool: &PgPool, change_id: Uuid, limit: usize) -> AppResult<
                         di.created_by
                  FROM dep_edges e
                  JOIN items di ON di.id = e.item_id
-                 WHERE NOT EXISTS (SELECT 1 FROM ci WHERE ci.item_id = e.item_id)
+                 WHERE NOT EXISTS (SELECT 1 FROM ci WHERE ci.item_id = e.item_id) AND {vis_di}
                  ORDER BY e.item_id, e.rank, e.via
              ) d
              ORDER BY d.number LIMIT $5
@@ -181,7 +199,7 @@ pub async fn suggest(pool: &PgPool, change_id: Uuid, limit: usize) -> AppResult<
              UNION ALL
              SELECT rq.requested_by, 'request'::text, rq.number, ''::text, ''::text, 1::bigint
              FROM change_request_changes crc JOIN change_requests rq ON rq.id = crc.request_id
-             WHERE crc.change_id = $1
+             WHERE crc.change_id = $1 AND {vis_rq}
          ),
          -- points as in weigh(); only the strongest rows per user and source
          -- can count (cap()), and a cut by $8 drops the weakest rows, not
@@ -198,6 +216,10 @@ pub async fn suggest(pool: &PgPool, change_id: Uuid, limit: usize) -> AppResult<
              WHERE u.active AND u.role IN ('editor', 'admin') AND u.id <> $2
                AND NOT EXISTS (SELECT 1 FROM change_reviews x
                                WHERE x.change_id = $1 AND x.reviewer_id = u.id)
+               AND NOT EXISTS (SELECT 1 FROM change_items sci
+                               JOIN revisions sr ON sr.id = sci.revision_id
+                               JOIN items si ON si.id = sr.item_id
+                               WHERE sci.change_id = $1 AND NOT {sees})
          ),
          ranked AS (
              SELECT e.*, ROW_NUMBER() OVER (PARTITION BY e.user_id, e.kind
@@ -208,7 +230,12 @@ pub async fn suggest(pool: &PgPool, change_id: Uuid, limit: usize) -> AppResult<
          FROM ranked
          WHERE pos <= $9
          ORDER BY points DESC, username, kind, subject, via
-         LIMIT $8"
+         LIMIT $8",
+        vis_i = access::item_visible("i", 10),
+        vis_di = access::item_visible("di", 10),
+        vis_c = access::change_visible("c", 11, 10),
+        vis_rq = access::request_visible("rq", 11, 10),
+        sees = access::user_sees_project("u", "si.project_id"),
     );
     let signals = sqlx::query_as::<_, Signal>(&sql)
         .bind(change_id)
@@ -220,6 +247,8 @@ pub async fn suggest(pool: &PgPool, change_id: Uuid, limit: usize) -> AppResult<
         .bind(EDIT_DAYS)
         .bind(MAX_ROWS)
         .bind(MAX_PER_SOURCE)
+        .bind(&actor.hidden_projects)
+        .bind(actor.id)
         .fetch_all(pool)
         .await?;
     Ok(rank(signals, limit))

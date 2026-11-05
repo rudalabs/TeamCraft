@@ -88,10 +88,11 @@ at 2000 rows, other lists at 500 entries, and the whole result at 1 MiB.
 | Tool                   | What it does                                                                                                          |
 |------------------------|-----------------------------------------------------------------------------------------------------------------------|
 | `search_items`         | Full-text search (`q`, `type`, `project`, `state`, `system` = CAD program, `limit`)                                   |
-| `get_item`             | Master data, all revisions, open change requests and the simulations based on the item                               |
+| `get_item`             | Master data, all revisions, open change requests, the simulations based on the item, alternates, `superseded_by` and `supersedes` |
 | `get_revision`         | Attributes, files (format, version, size, uploader, SHA-256), BOM lines, item references, CAD file references matched to items, referrers, change orders, open change requests; for a simulation its bases and results, otherwise the simulations based on the item |
 | `get_bom`              | Expanded multi-level BOM as flat rows with mass and cost roll-ups; `rule` = `latest`, `released`, `as_released`       |
 | `where_used`           | Parents that use an item; `levels` (1–25) walks further up, each row with its `level` and the item used (`via`)      |
+| `replace_preview`      | What replacing `item` by `with` in the assemblies would do, per BOM line (`replace`, `checked_out`, `no_permission`, `in_review`, `needs_revision`, `cycle`); read only – the replacement itself is done on the where-used page |
 | `item_history`         | Audit log of the item and its revisions                                                                               |
 | `list_changes`         | Change orders, optionally by status                                                                                   |
 | `get_change`           | Revisions, reviews, release readiness (blockers, warnings) and impact analysis                                        |
@@ -143,6 +144,22 @@ will ask before `create_change_draft`, `add_to_change`,
   checks that user's role and project groups, exactly like the REST API.
   A viewer's assistant can only read, raise change requests and comment on
   them – the same as a viewer in the web interface.
+* **Restricted groups.** Every tool result is filtered by the user's read
+  permissions ([restricted project groups](../admin/permissions.md)): an
+  item, change or request of a restricted group the user is not a member of
+  is reported as not found, with the same message as an unknown number;
+  BOM lines and other links to such items come back as placeholders with
+  `"restricted": true` and no number or name, and lists report how many
+  entries they left out (`hidden_parents`, `hidden_dependents`,
+  `hidden_changes`). The server instructions tell the model not to guess or
+  retry. Rights are read on every HTTP request; the messages of one
+  JSON-RPC batch share that snapshot.
+* **Copying out of restricted groups.** Text other users typed can try to
+  make a model copy restricted content into a comment or draft that those
+  users can read. The built-in assistant refuses its text-writing tools for
+  the rest of a run once it has read such content; an external MCP client
+  gets no such check and acts with the full rights of the token's user
+  (see [Notifications, e-mail, chat, webhooks, assistant](../admin/permissions.md#notifications-e-mail-chat-webhooks-assistant)).
 * **No decisions.** There are no tools to check out, upload, edit BOMs,
   submit, review, release or make anything obsolete, and none to triage,
   assign, accept, defer, reject or withdraw a change request. The assistant

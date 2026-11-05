@@ -563,6 +563,11 @@ pub fn payload(event: WebhookEvent, id: Uuid, actor: Option<&Actor>, objects: Va
 /// top-level `revisions` list that belong to its group (a change can hold
 /// revisions of several groups; the other groups' items are none of that
 /// receiver's business).
+///
+/// Read access: each webhook is a reader that sees its own project group
+/// and the internal groups (a global webhook: the internal groups only), so
+/// an event that touches a restricted group reaches only webhooks scoped to
+/// that group.
 pub async fn emit(
     conn: &mut PgConnection,
     actor: Option<&Actor>,
@@ -574,8 +579,8 @@ pub async fn emit(
     let event_id = Uuid::new_v4();
     let body = payload(event, event_id, actor, objects);
     Ok(sqlx::query(
-        "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event, payload)
-         SELECT gen_random_uuid(), w.id, $1, $2,
+        "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event, projects, payload)
+         SELECT gen_random_uuid(), w.id, $1, $2, $4,
                 CASE WHEN p.code IS NULL OR jsonb_typeof($3::jsonb -> 'revisions') IS DISTINCT FROM 'array'
                      THEN $3::jsonb
                      ELSE jsonb_set($3::jsonb, '{revisions}', COALESCE(
@@ -587,7 +592,11 @@ pub async fn emit(
          FROM webhooks w
          LEFT JOIN projects p ON p.id = w.project_id
          WHERE w.active AND $2 = ANY(w.events)
-           AND (w.project_id IS NULL OR w.project_id = ANY($4))",
+           AND (w.project_id IS NULL OR w.project_id = ANY($4))
+           -- the webhook as a reader: its own group and the internal groups
+           AND NOT EXISTS (SELECT 1 FROM projects rp
+                           WHERE rp.id = ANY($4) AND rp.visibility = 'restricted'
+                             AND rp.id IS DISTINCT FROM w.project_id)",
     )
     .bind(event_id)
     .bind(event.as_str())
@@ -601,15 +610,22 @@ pub async fn emit(
 /// One event per entry of `each` (e.g. `revision.released` for every
 /// revision of a change) in a single statement: each entry is
 /// `(project group, objects)`. Returns the number of deliveries queued.
+///
+/// `change_projects` are the project groups of the change order that the
+/// objects carry as `change` (empty: none). A receiver that may not read
+/// all of them (the change also touches another restricted group, see
+/// [`emit`]) gets the event without the `change` object.
 pub(crate) async fn emit_each(
     conn: &mut PgConnection,
     actor: Option<&Actor>,
     event: WebhookEvent,
     each: Vec<(Option<Uuid>, Value)>,
+    change_projects: &[Option<Uuid>],
 ) -> AppResult<u64> {
     if each.is_empty() {
         return Ok(0);
     }
+    let change_projects: Vec<Uuid> = change_projects.iter().flatten().copied().collect();
     let mut ids = Vec::with_capacity(each.len());
     let mut projects = Vec::with_capacity(each.len());
     let mut bodies = Vec::with_capacity(each.len());
@@ -620,16 +636,28 @@ pub(crate) async fn emit_each(
         bodies.push(payload(event, id, actor, objects));
     }
     Ok(sqlx::query(
-        "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event, payload)
-         SELECT gen_random_uuid(), w.id, e.event_id, $1, e.payload
+        "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event, projects, payload)
+         SELECT gen_random_uuid(), w.id, e.event_id, $1,
+                array_remove(ARRAY[e.project_id], NULL)
+                  || CASE WHEN s.strip THEN '{}'::uuid[] ELSE $5::uuid[] END,
+                CASE WHEN s.strip THEN e.payload - 'change' ELSE e.payload END
          FROM unnest($2::uuid[], $3::uuid[], $4::jsonb[]) AS e (event_id, project_id, payload)
          JOIN webhooks w ON w.active AND $1 = ANY(w.events)
-                        AND (w.project_id IS NULL OR w.project_id = e.project_id)",
+                        AND (w.project_id IS NULL OR w.project_id = e.project_id)
+         CROSS JOIN LATERAL (
+             SELECT EXISTS (SELECT 1 FROM projects cp
+                            WHERE cp.id = ANY($5) AND cp.visibility = 'restricted'
+                              AND cp.id IS DISTINCT FROM w.project_id) AS strip
+         ) s
+         WHERE NOT EXISTS (SELECT 1 FROM projects rp
+                           WHERE rp.id = e.project_id AND rp.visibility = 'restricted'
+                             AND rp.id IS DISTINCT FROM w.project_id)",
     )
     .bind(event.as_str())
     .bind(&ids)
     .bind(&projects)
     .bind(&bodies)
+    .bind(&change_projects)
     .execute(&mut *conn)
     .await?
     .rows_affected())
@@ -761,6 +789,7 @@ mod tests {
             role: Role::Editor,
             skin: String::new(),
             projects: Vec::new(),
+            hidden_projects: Vec::new(),
         }
     }
 

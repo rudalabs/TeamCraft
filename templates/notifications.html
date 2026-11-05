@@ -5,7 +5,6 @@
 <div class="page-head">
   <div>
     <h1>Notifications</h1>
-    <p class="subtitle">Review requests, decisions, releases, checks needed on your items and news about what you watch.</p>
   </div>
   <div class="actions">
     {% if unread_notifications %}
@@ -24,7 +23,7 @@
     {% for n in notifications %}
     <li class="{% if not n.read_at %}unread{% endif %}">
       <a href="/notifications/{{ n.id }}/open">
-        <span class="n-title">{{ n.title }}</span>
+        <span class="n-title">{% if not n.read_at %}<span class="visually-hidden">Unread: </span>{% endif %}{{ n.title }}</span>
         {% if n.body %}<span class="n-body">{{ n.body }}</span>{% endif %}
       </a>
       <span class="n-meta small muted">{{ n.actor_name }} · {{ m.time(n.created_at) }}

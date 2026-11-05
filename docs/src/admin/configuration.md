@@ -42,13 +42,14 @@ Migrations run automatically (`teamcraft serve --no-migrate` skips them).
 |-----------------------------|----------------|-------------------------------------------------------------------------|
 | `TEAMCRAFT_VAULT_DIR`       | `./data/vault` | file vault and cached 3D previews – back it up                          |
 | `TEAMCRAFT_MAX_UPLOAD_MB`   | `512`          | largest file per upload, also for chunked uploads                       |
-| `TEAMCRAFT_UPLOAD_CHUNK_MB` | `16`           | largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/…`), 1–1024 |
+| `TEAMCRAFT_UPLOAD_CHUNK_MB` | `16`           | largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/…`, `PATCH /uploads/…` of the web UI), 1–1024 |
 
 Chunked uploads ([Large files](../guide/vault.md#large-files-chunked-resumable-uploads))
 hold one chunk in memory and write it to `uploads/` in the vault directory,
 so `TEAMCRAFT_MAX_UPLOAD_MB` can be raised for multi-gigabyte CAD or
 simulation files (e.g. `20480`) without more memory; a single multipart
-request (web UI, small files) still has to fit this limit as a whole, and a
+request (small files, the web UI's *New item* form) still has to fit this
+limit as a whole, and a
 reverse proxy in front must allow request bodies of one chunk
 (`client_max_body_size` ≥ `TEAMCRAFT_UPLOAD_CHUNK_MB`) – or of the largest
 multipart upload. Make sure the vault's disk has room for the unfinished
@@ -71,7 +72,7 @@ uploads too: each user may hold 16 of them for 24 hours.
 | `TEAMCRAFT_SMTP_URL`           | SMTP server in lettre syntax: `smtps://user:password@host:465`, `smtp://host:587?tls=required`, `smtp://localhost:25` |
 | `TEAMCRAFT_MAIL_FROM`          | sender, `Name <address>` (required with SMTP)                                                                         |
 | `TEAMCRAFT_MATTERMOST_WEBHOOK` | incoming webhook for notifications                                                                                    |
-| `TEAMCRAFT_MATTERMOST_DIRECT`  | `true`: direct messages, `false` (default): mention in the webhook's channel                                          |
+| `TEAMCRAFT_MATTERMOST_DIRECT`  | `true`: direct messages, `false` (default): mention in the webhook's channel – notifications about [restricted project groups](permissions.md) then show only a generic text and the link |
 | `MATTERMOST_ERROR_WEBHOOK`     | incoming webhook that receives internal server errors (rate limited)                                                  |
 
 ## Event webhooks
@@ -114,6 +115,7 @@ before the answer – never the question or the answer).
 |-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
 | `TEAMCRAFT_TEST_DATABASE_URL` | server for the integration tests (default: the configuration above); each test creates and drops its own `teamcraft_test_*` database |
 | `TEAMCRAFT_REQUIRE_DB_TESTS`  | fail instead of skipping when no database is reachable (CI)                                                                          |
+| `TEAMCRAFT_REQUIRE_PG_TOOLS`  | fail instead of skipping the backup/restore test when `pg_dump`/`pg_restore` are missing or older than the server (CI)              |
 
 ## MCP stdio bridge (client side)
 

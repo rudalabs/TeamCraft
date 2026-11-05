@@ -11,16 +11,16 @@ Use two browsers (or a private window) for the two-person steps.
 3. Sign in as **erika**. *Projects → New project group* `ROVER` – erika is its
    manager. Add `rolf` as member. (The tour builds a rover with wheel hubs;
    any product works the same way – a pump, a gearbox, a conveyor, a machine.)
-4. *Account*: pick a skin; it is remembered for the login page as well.
+4. *Account → Appearance* (or the menu under your name): *System* follows the light or dark appearance of your operating system, *Light* and *Dark* stay fixed; the distribution skins (Arch, KDE, Ubuntu, …) are dark. The choice is remembered for the login page as well.
 
 ## 2. Items, check-out and check-in
 
 1. *Items → New item*: choose `hub.step` and `hub.stl` as files – the name *hub* and the type *part* are filled in;
    change the name to *Wheel hub*,
    project group `ROVER`. The item is created with both files; revision A is
-   in work and checked out to erika (🔒 badge).
-2. Open **3D** for each file. The STEP model is
-   tessellated on the server – try *Download STL*.
+   in work and checked out to erika (lock badge).
+2. Open **3D view** for each file. The STEP model is
+   tessellated on the server – try *Export STL*.
 3. *Vault → My check-outs*: the item is listed; select it, **Check in** a
    changed `hub.step` with a comment. The upload shows a progress bar; try **Cancel upload** on a large file – nothing
    changes.

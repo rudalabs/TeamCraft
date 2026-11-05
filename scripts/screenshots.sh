@@ -484,7 +484,13 @@ viewport() {
     cdp Emulation.setDeviceMetricsOverride \
         "$(jq -nc --argjson w "$1" --argjson h "$2" --argjson s "$3" --argjson m "$4" \
             '{width: $w, height: $h, deviceScaleFactor: $s, mobile: $m}')"
-    cdp Emulation.setEmulatedMedia '{"features":[{"name":"prefers-color-scheme","value":"light"}]}'
+}
+
+# scheme light|dark – the OS colour scheme the pages see. The seeded user
+# keeps the default skin "teamcraft", which follows prefers-color-scheme.
+scheme() {
+    cdp Emulation.setEmulatedMedia \
+        "$(jq -nc --arg v "$1" '{features: [{name: "prefers-color-scheme", value: $v}]}')"
 }
 
 # wait_js EXPRESSION SECONDS WHAT – polls a JS expression until it is true.
@@ -517,16 +523,18 @@ element() {
         jq -r '.value["element-6066-11e4-a52e-4f735466cecf"]'
 }
 
+# sign_in_browser [WHO] – signs the browser in as WHO (default admin).
 sign_in_browser() {
-    log "signing in through the login form"
+    local who=${1:-admin}
+    log "signing in through the login form ($who)"
     open_page /login
     local user pass button
     user=$(element 'form[action="/login"] input[name="username"]')
     pass=$(element 'form[action="/login"] input[name="password"]')
     button=$(element 'form[action="/login"] button[type="submit"]')
-    wd POST "/session/$SESSION/element/$user/value" '{"text":"admin"}' >/dev/null
+    wd POST "/session/$SESSION/element/$user/value" "$(jq -nc --arg u "$who" '{text: $u}')" >/dev/null
     wd POST "/session/$SESSION/element/$pass/value" \
-        "$(jq -nc --rawfile p "$WORK/pw-admin" '{text: $p}')" >/dev/null
+        "$(jq -nc --rawfile p "$WORK/pw-$who" '{text: $p}')" >/dev/null
     wd POST "/session/$SESSION/element/$button/click" '{}' >/dev/null
     wait_js 'location.pathname !== "/login" && document.readyState === "complete"' 30 "the sign-in"
 }
@@ -566,17 +574,15 @@ check_png() {
     log "  $file ($(($(wc -c <"$file") / 1024)) KiB)"
 }
 
-capture() {
-    mkdir -p "$OUT_DIR"
-    start_browser
+# capture_pages SUFFIX – the main pages at 1440x900 and the phone dashboard,
+# saved as NAME$SUFFIX.png in the scheme set before.
+capture_pages() {
+    local suffix=$1
     viewport 1440 900 "$SCALE" false
-    sign_in_browser
-
-    log "capturing desktop screenshots (1440x900)"
-    shot dashboard /
-    shot vault-explorer "/vault?folder=$PROJECT_ID&rev=$ENCLOSURE_REV"
-    shot revision "/revisions/$BRACKET_REV"
-    shot revision-files "/revisions/$BRACKET_REV" '#files'
+    shot "dashboard$suffix" /
+    shot "vault-explorer$suffix" "/vault?folder=$PROJECT_ID&rev=$ENCLOSURE_REV"
+    shot "revision$suffix" "/revisions/$BRACKET_REV"
+    shot "revision-files$suffix" "/revisions/$BRACKET_REV" '#files'
 
     log "waiting for the 3D preview of the STEP file"
     open_page "/files/$STEP_FILE/preview"
@@ -585,16 +591,34 @@ capture() {
     if [[ $(js 'return document.getElementById("viewer-canvas").getAttribute("data-ready");') != true ]]; then
         die "the 3D viewer reported: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
     fi
-    snap viewer-3d
+    snap "viewer-3d$suffix"
     # not in the README: the similar part search (signature from the conversion above)
-    shot revision-similar "/revisions/$BRACKET_REV" '#similar'
-    shot bom "/revisions/$TOP_REV/bom"
-    shot change-review "/changes/$CHANGE_ID"
-    shot notifications /notifications
+    shot "revision-similar$suffix" "/revisions/$BRACKET_REV" '#similar'
+    shot "bom$suffix" "/revisions/$TOP_REV/bom"
+    shot "change-review$suffix" "/changes/$CHANGE_ID"
+    shot "notifications$suffix" /notifications
+    shot "account$suffix" /account '#appearance'
 
     log "capturing the mobile screenshot (390x844)"
     viewport 390 844 2 true
-    shot mobile-dashboard /
+    shot "mobile-dashboard$suffix" /
+}
+
+capture() {
+    mkdir -p "$OUT_DIR"
+    start_browser
+    viewport 1440 900 "$SCALE" false
+    scheme light
+    sign_in_browser
+
+    # The README shows the light default under the plain names; every page
+    # is captured in the dark scheme as well (NAME-dark.png).
+    log "capturing the web screenshots, light (1440x900)"
+    capture_pages ""
+    log "capturing the web screenshots, dark (1440x900)"
+    scheme dark
+    capture_pages -dark
+    scheme light
 }
 
 # ---------------------------------------------------------------------------
@@ -679,14 +703,31 @@ desktop_key() {
 }
 
 capture_desktop() {
-    log "capturing TeamCraft Desktop (1440x900, Xvfb)"
     export DISPLAY=$DESKTOP_DISPLAY
     desktop_profile
     start_xvfb
+    # The README shows the light house skin under the plain names, the dark
+    # one as NAME-dark.png. The forced skins (not the System default) make
+    # the result independent of the Xvfb session's colour scheme.
+    desktop_run "" teamcraft-day
+    desktop_run -dark teamcraft-night
+}
+
+# desktop_run SUFFIX SKIN – starts the app with SKIN, captures the four
+# screens as desktop-*SUFFIX.png and quits the app again.
+desktop_run() {
+    local suffix=$1 skin=$2 settings=$WORK/xdg-config/io.github.rudalabs.teamcraft/settings.json
+    log "capturing TeamCraft Desktop, skin $skin (1440x900, Xvfb)"
+    jq -n --arg url "$BASE_URL" --arg skin "$skin" '{server_url: $url, skin: $skin}' >"$settings"
+    # The app asks GTK for the dark variant of the window chrome (the menu
+    # bar) with a dark skin; the bare Xvfb session does not follow that
+    # preference, so the dark run names the dark GTK theme itself.
+    local gtk_theme=
+    [[ $suffix == -dark ]] && gtk_theme=Adwaita:dark
     XDG_CONFIG_HOME=$WORK/xdg-config XDG_DATA_HOME=$WORK/xdg-data XDG_CACHE_HOME=$WORK/xdg-cache \
         GDK_BACKEND=x11 NO_AT_BRIDGE=1 \
         WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
-        "$DESKTOP_APP" >"$WORK/desktop.log" 2>&1 &
+        env ${gtk_theme:+GTK_THEME=$gtk_theme} "$DESKTOP_APP" >"$WORK/desktop.log" 2>&1 &
     APP_PID=$!
     local win
     win=$(timeout 90 xdotool search --sync --onlyvisible --name '^TeamCraft$' 2>/dev/null | head -n 1 || true)
@@ -703,18 +744,21 @@ capture_desktop() {
     settle 8 "the start screen"
     # The rows of the navigator sit at fixed places for the demo data
     # (1440x900, default zoom); check the images when the layout changes.
-    desktop_click 140 151 # project group ROVER: expand
+    desktop_click 140 145 # project group ROVER: expand
     settle 2 "the items of ROVER"
-    desktop_snap desktop-home
+    desktop_snap "desktop-home$suffix"
     desktop_key ctrl+2
     settle 2 "the worklist"
-    desktop_snap desktop-worklist
-    desktop_click 217 151 # "Checked out by me": the mounting bracket
+    desktop_snap "desktop-worklist$suffix"
+    desktop_click 217 145 # "Checked out by me": the mounting bracket
     settle 2 "the revision tab"
-    desktop_snap desktop-revision
-    desktop_click 210 207 # "Waiting for my review": the enclosure change
+    desktop_snap "desktop-revision$suffix"
+    desktop_click 210 203 # "Waiting for my review": the enclosure change
     settle 2 "the change order tab"
-    desktop_snap desktop-change
+    desktop_snap "desktop-change$suffix"
+    kill "$APP_PID" 2>/dev/null || true
+    wait "$APP_PID" 2>/dev/null || true
+    APP_PID=
 }
 
 # desktop_click X Y – left click at screen position X,Y, then the pointer
@@ -741,6 +785,40 @@ capture_simulation() {
         die "the simulation result has no colour legend: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
     snap simulation-result-3d
     shot simulation-results "/revisions/${REV[sim]}" '#simulation-results'
+}
+
+# Read permissions – extra images, not used in the README: the settings of a
+# restricted group (as admin) and what a non-member sees of a link into it.
+# Seeded last, so the README images stay as they are; signs the browser out.
+capture_restricted() {
+    log "adding the restricted project group LAB"
+    local lab_id out
+    lab_id=$(japi admin POST /projects \
+        '{"code":"LAB","name":"Sensor lab prototypes","description":"Prototype sensors that are not public yet.","visibility":"restricted"}' |
+        jq -r '.id')
+    japi admin POST /projects/LAB/members '{"username":"mchen","manager":true}' >/dev/null
+    out=$(japi admin POST /items '{"item_type":"part","name":"Lidar sensor head prototype","project":"LAB"}')
+    NUM[lidar]=$(jq -r '.item_number' <<<"$out")
+    REV[lidar]=$(jq -r '.id' <<<"$out")
+    item rig assembly "Sensor test rig" '{"description":"Test rig for the mast sensors."}'
+    bom_line rig clamp 2 10
+    bom_line rig lidar 1 20 "Prototype from the sensor lab"
+    checkin lidar
+    checkin rig
+
+    viewport 1440 900 "$SCALE" false
+    shot project-restricted "/projects/$lab_id" 'form[action$="/visibility"]'
+
+    log "switching the browser to jlopez (not a member of LAB)"
+    wd DELETE "/session/$SESSION/cookie" >/dev/null
+    sign_in_browser jlopez
+    shot restricted-bom "/revisions/${REV[rig]}/bom"
+    shot restricted-revision "/revisions/${REV[rig]}"
+    open_page "/revisions/${REV[lidar]}"
+    snap restricted-not-found
+    scheme dark
+    shot restricted-bom-dark "/revisions/${REV[rig]}/bom"
+    scheme light
 }
 
 # compare_with_readme – warns (never fails) about screenshots the README
@@ -784,6 +862,7 @@ main() {
         capture_desktop
     fi
     capture_simulation
+    capture_restricted
     log "done: $(find "$OUT_DIR" -maxdepth 1 -name '*.png' | wc -l) screenshots in $OUT_DIR"
     compare_with_readme
 }

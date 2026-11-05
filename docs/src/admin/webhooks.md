@@ -32,6 +32,18 @@ about items of that group (for a change: any of its revisions; for a change
 request: any affected item). The `revisions` list of a change event then
 holds only that group's revisions.
 
+[Restricted project groups](permissions.md): a webhook is treated as a
+reader that sees its own group and the internal groups. A webhook for **all
+groups receives no events of restricted groups**, and a webhook limited to
+one group receives no events that touch another restricted group (a change
+with revisions of two restricted groups goes to neither). To forward the
+events of a restricted group, limit a webhook to that group. The forms warn
+when restricted groups exist. `revision.released` of a revision the webhook
+may see, released by a change that also holds restricted items, comes
+without the `change` object. A queued delivery whose project group is
+restricted before it is sent is not sent: it is marked **failed** with "Not
+sent: a project group of the event was restricted after it was queued".
+
 ## Payload
 
 Every payload has the same envelope plus the objects of the event. Objects

@@ -14,7 +14,7 @@ use crate::{
     domain::{self, RevisionRule},
     error::{AppError, AppResult},
     models::{BomLine, Revision},
-    services::{audit, items, revisions},
+    services::{access, audit, items, revisions},
     util,
 };
 
@@ -28,7 +28,8 @@ const LINE_SELECT: &str = "
            i.item_type AS child_type, i.unit AS child_unit, bl.find_number, bl.quantity, bl.notes,
            lr.id AS child_latest_revision_id, lr.code AS child_latest_code,
            lr.state AS child_latest_state, lr.name AS child_name,
-           bl.released_child_revision_id, rc.code AS released_child_code
+           bl.released_child_revision_id, rc.code AS released_child_code,
+           i.project_id AS child_project_id
     FROM bom_lines bl
     JOIN items i ON i.id = bl.child_item_id
     CROSS JOIN LATERAL (
@@ -37,8 +38,27 @@ const LINE_SELECT: &str = "
     ) lr
     LEFT JOIN revisions rc ON rc.id = bl.released_child_revision_id";
 
-/// Single-level BOM of a revision, ordered by find number.
-pub async fn lines(pool: &PgPool, parent_revision_id: Uuid) -> AppResult<Vec<BomLine>> {
+/// Single-level BOM of a revision the actor may read, ordered by find
+/// number. Lines to children the actor may not see are placeholders.
+pub async fn lines(
+    pool: &PgPool,
+    actor: &Actor,
+    parent_revision_id: Uuid,
+) -> AppResult<Vec<BomLine>> {
+    revisions::get(pool, actor, parent_revision_id).await?;
+    let mut rows = lines_unchecked(pool, parent_revision_id).await?;
+    for l in &mut rows {
+        if !actor.can_see_project(l.child_project_id) {
+            l.mask();
+        }
+    }
+    Ok(rows)
+}
+
+pub(crate) async fn lines_unchecked(
+    pool: &PgPool,
+    parent_revision_id: Uuid,
+) -> AppResult<Vec<BomLine>> {
     Ok(sqlx::query_as::<_, BomLine>(&format!(
         "{LINE_SELECT} WHERE bl.parent_revision_id = $1 ORDER BY bl.find_number"
     ))
@@ -47,12 +67,31 @@ pub async fn lines(pool: &PgPool, parent_revision_id: Uuid) -> AppResult<Vec<Bom
     .await?)
 }
 
-pub async fn line(pool: &PgPool, id: Uuid) -> AppResult<BomLine> {
-    sqlx::query_as::<_, BomLine>(&format!("{LINE_SELECT} WHERE bl.id = $1"))
+/// A BOM line of a parent the actor may read (hidden child = placeholder).
+pub async fn line(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<BomLine> {
+    let l = line_unmasked(pool, actor, id).await?;
+    Ok(masked_for(actor, l))
+}
+
+/// [`line`] without the placeholder: the audit trail of a write names the
+/// real child (redacted when read by somebody who may not see it).
+async fn line_unmasked(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<BomLine> {
+    let l = sqlx::query_as::<_, BomLine>(&format!("{LINE_SELECT} WHERE bl.id = $1"))
         .bind(id)
         .fetch_optional(pool)
         .await?
-        .ok_or_else(|| AppError::not_found("BOM line not found."))
+        .ok_or_else(|| AppError::not_found("BOM line not found."))?;
+    revisions::get(pool, actor, l.parent_revision_id)
+        .await
+        .map_err(|_| AppError::not_found("BOM line not found."))?;
+    Ok(l)
+}
+
+fn masked_for(actor: &Actor, mut l: BomLine) -> BomLine {
+    if !actor.can_see_project(l.child_project_id) {
+        l.mask();
+    }
+    l
 }
 
 /// Would adding `child_item_id` below `parent_item_id` create a cycle?
@@ -109,7 +148,7 @@ pub async fn add(
             ));
         }
     }
-    let child = items::get_by_number(pool, &input.child_number).await?;
+    let child = items::get_by_number(pool, actor, &input.child_number).await?;
 
     let mut tx = pool.begin().await?;
     let parent = revisions::lock(&mut tx, parent_revision_id).await?;
@@ -125,7 +164,7 @@ pub async fn add(
     )
     .await?;
     tx.commit().await?;
-    line(pool, id).await
+    line(pool, actor, id).await
 }
 
 /// Adds a BOM line inside the caller's transaction; `parent` must be locked.
@@ -177,12 +216,13 @@ pub(crate) async fn add_tx(
     .await
     .map_err(|e| AppError::unique_violation(e, format!("Find number {find_number} is already used in this BOM.")))?;
     touch(tx, parent.id).await?;
-    audit::record(
+    audit::record_related(
         tx,
         Some(actor),
         "bom.add",
         "revision",
         Some(parent.id),
+        Some(child_id),
         format!(
             "Added {} × {} (find no. {find_number}) to {}",
             util::format_number(quantity, 4),
@@ -215,7 +255,14 @@ pub async fn update(
             "Find numbers must be positive.".into(),
         ));
     }
-    let existing = line(pool, line_id).await?;
+    let existing = line_unmasked(pool, actor, line_id).await?;
+    // The notes of a line to a hidden child are not shown to the actor
+    // (placeholder), so a form sends them back empty: they stay as stored.
+    let notes = if actor.can_see_project(existing.child_project_id) {
+        notes
+    } else {
+        existing.notes.clone()
+    };
     let mut tx = pool.begin().await?;
     let parent = revisions::lock(&mut tx, existing.parent_revision_id).await?;
     revisions::ensure_editable(&parent, actor)?;
@@ -236,12 +283,13 @@ pub async fn update(
             )
         })?;
     touch(&mut tx, parent.id).await?;
-    audit::record(
+    audit::record_related(
         &mut tx,
         Some(actor),
         "bom.update",
         "revision",
         Some(parent.id),
+        Some(existing.child_item_id),
         format!(
             "Changed BOM line {} of {}: {} × {} (find no. {})",
             existing.child_number,
@@ -254,11 +302,11 @@ pub async fn update(
     )
     .await?;
     tx.commit().await?;
-    line(pool, line_id).await
+    line(pool, actor, line_id).await
 }
 
 pub async fn remove(pool: &PgPool, actor: &Actor, line_id: Uuid) -> AppResult<BomLine> {
-    let existing = line(pool, line_id).await?;
+    let existing = line_unmasked(pool, actor, line_id).await?;
     let mut tx = pool.begin().await?;
     let parent = revisions::lock(&mut tx, existing.parent_revision_id).await?;
     revisions::ensure_editable(&parent, actor)?;
@@ -267,12 +315,13 @@ pub async fn remove(pool: &PgPool, actor: &Actor, line_id: Uuid) -> AppResult<Bo
         .execute(&mut *tx)
         .await?;
     touch(&mut tx, parent.id).await?;
-    audit::record(
+    audit::record_related(
         &mut tx,
         Some(actor),
         "bom.remove",
         "revision",
         Some(parent.id),
+        Some(existing.child_item_id),
         format!(
             "Removed {} from {}",
             existing.child_number,
@@ -282,7 +331,7 @@ pub async fn remove(pool: &PgPool, actor: &Actor, line_id: Uuid) -> AppResult<Bo
     )
     .await?;
     tx.commit().await?;
-    Ok(existing)
+    Ok(masked_for(actor, existing))
 }
 
 async fn touch(conn: &mut PgConnection, revision_id: Uuid) -> AppResult<()> {
@@ -359,6 +408,9 @@ pub struct BomNode {
     pub cost_complete: bool,
     /// Set when the structure loops back to an ancestor (should never happen).
     pub cycle: bool,
+    /// Placeholder for a child the reader may not see (no identity, not
+    /// expanded, left out of the roll-ups).
+    pub restricted: bool,
     pub children: Vec<BomNode>,
 }
 
@@ -383,6 +435,7 @@ impl BomNode {
             mass_complete: self.mass_complete,
             cost_complete: self.cost_complete,
             cycle: self.cycle,
+            restricted: self.restricted,
             children: Vec::new(),
         }
     }
@@ -402,6 +455,10 @@ pub struct BomTree {
     pub line_count: usize,
     /// Number of lines whose child could not be resolved with the rule.
     pub unresolved_count: usize,
+    /// Lines to children the reader may not see (placeholders).
+    pub restricted_lines: usize,
+    /// Mass and cost exclude restricted lines.
+    pub rollup_incomplete: bool,
     /// Database queries the expansion took (root + one per BOM level).
     #[serde(skip)]
     pub queries: usize,
@@ -435,6 +492,32 @@ pub(crate) struct StructureLine {
     pub child_name: Option<String>,
     pub child_mass_kg: Option<f64>,
     pub child_unit_cost: Option<f64>,
+    /// Project group of the child item.
+    #[sqlx(default)]
+    pub child_project_id: Option<Uuid>,
+    /// The child is hidden from the reader: the line is a placeholder that
+    /// is never expanded.
+    #[sqlx(default)]
+    pub restricted: bool,
+}
+
+impl StructureLine {
+    /// Turns the line into a placeholder for a hidden child.
+    fn mask(&mut self) {
+        self.child_item_id = Uuid::nil();
+        self.child_number = access::RESTRICTED_LABEL.into();
+        self.child_type = String::new();
+        self.child_unit = String::new();
+        self.child_revision_id = None;
+        self.child_code = None;
+        self.child_state = None;
+        self.child_name = None;
+        self.child_mass_kg = None;
+        self.child_unit_cost = None;
+        self.notes = String::new();
+        self.child_project_id = None;
+        self.restricted = true;
+    }
 }
 
 /// An item and the revision the rule picks for it (see [`resolve_items`]).
@@ -525,10 +608,12 @@ const LEVEL_SQL: &str = "
            CASE WHEN fr.id IS NULL THEN p.state ELSE fr.state END AS child_state,
            CASE WHEN fr.id IS NULL THEN p.name ELSE fr.name END AS child_name,
            CASE WHEN fr.id IS NULL THEN p.mass_kg ELSE fr.mass_kg END AS child_mass_kg,
-           CASE WHEN fr.id IS NULL THEN p.unit_cost ELSE fr.unit_cost END AS child_unit_cost
+           CASE WHEN fr.id IS NULL THEN p.unit_cost ELSE fr.unit_cost END AS child_unit_cost,
+           i.project_id AS child_project_id
     FROM l
     CROSS JOIN LATERAL (
-        SELECT it.number, it.item_type, it.unit FROM items it WHERE it.id = l.child_item_id LIMIT 1
+        SELECT it.number, it.item_type, it.unit, it.project_id
+        FROM items it WHERE it.id = l.child_item_id LIMIT 1
     ) i
     LEFT JOIN LATERAL (
         SELECT r.id, r.code, r.state, r.name, r.mass_kg, r.unit_cost
@@ -541,8 +626,13 @@ const LEVEL_SQL: &str = "
 /// parent revision (each group ordered by find number). One query per BOM
 /// level; a revision used in several places is loaded once. Returns the
 /// lines and the number of queries.
+///
+/// Lines whose child the actor may not see become placeholders
+/// ([`StructureLine::restricted`]) and the walk stops there, so nothing
+/// below a hidden sub-assembly is read.
 pub(crate) async fn load_structure(
     pool: &PgPool,
+    actor: &Actor,
     root_id: Uuid,
     rule: RevisionRule,
 ) -> AppResult<(HashMap<Uuid, Vec<StructureLine>>, usize)> {
@@ -568,7 +658,10 @@ pub(crate) async fn load_structure(
             .await?;
         queries += 1;
         let mut next = Vec::new();
-        for row in rows {
+        for mut row in rows {
+            if !actor.can_see_project(row.child_project_id) {
+                row.mask();
+            }
             if let Some(child) = row.child_revision_id {
                 if seen.insert(child) {
                     next.push(child);
@@ -584,10 +677,17 @@ pub(crate) async fn load_structure(
     Ok((lines_by_rev, queries))
 }
 
-/// Expands the full multi-level BOM below a revision.
-pub async fn tree(pool: &PgPool, root_revision_id: Uuid, rule: RevisionRule) -> AppResult<BomTree> {
-    let root = revisions::get(pool, root_revision_id).await?;
-    let (lines_by_rev, queries) = load_structure(pool, root.id, rule).await?;
+/// Expands the full multi-level BOM below a revision the actor may read.
+/// Hidden children are placeholder leaves; the roll-ups leave them out and
+/// say so (`restricted_lines`, `rollup_incomplete`).
+pub async fn tree(
+    pool: &PgPool,
+    actor: &Actor,
+    root_revision_id: Uuid,
+    rule: RevisionRule,
+) -> AppResult<BomTree> {
+    let root = revisions::get(pool, actor, root_revision_id).await?;
+    let (lines_by_rev, queries) = load_structure(pool, actor, root.id, rule).await?;
     let mut tree = assemble(
         rule,
         ResolvedRevision::from(&root),
@@ -608,6 +708,8 @@ pub(crate) struct StructureRevisions {
     pub revisions: Vec<(Uuid, Uuid)>,
     /// Item numbers of lines the rule could not resolve, first appearance first.
     pub unresolved: Vec<String>,
+    /// Lines to children the reader may not see (skipped).
+    pub restricted_lines: usize,
 }
 
 /// Lists the revisions and unresolved items of the structure below `root_id`
@@ -634,6 +736,10 @@ pub(crate) fn structure_revisions(
                 return;
             };
             for l in lines {
+                if l.restricted {
+                    self.out.restricted_lines += 1;
+                    continue;
+                }
                 let Some(child) = l.child_revision_id else {
                     if self.unresolved.insert(l.child_number.clone()) {
                         self.out.unresolved.push(l.child_number.clone());
@@ -688,6 +794,7 @@ pub(crate) fn assemble(
     let children = builder.build(root.id, 1, &mut path)?;
     let (mass, mass_ok, cost, cost_ok) = rollup(root.mass_kg, root.unit_cost, &children);
     let (line_count, unresolved_count) = count_lines(&children);
+    let restricted_lines = count_restricted(&children);
     Ok(BomTree {
         rule,
         root,
@@ -699,8 +806,17 @@ pub(crate) fn assemble(
         cost_complete: cost_ok,
         line_count,
         unresolved_count,
+        restricted_lines,
+        rollup_incomplete: restricted_lines > 0,
         queries: 0,
     })
+}
+
+fn count_restricted(nodes: &[BomNode]) -> usize {
+    nodes
+        .iter()
+        .map(|n| usize::from(n.restricted) + count_restricted(&n.children))
+        .sum()
 }
 
 struct Builder<'a> {
@@ -760,6 +876,7 @@ impl Builder<'_> {
                 mass_complete: mass_ok && !cycle,
                 cost_complete: cost_ok && !cycle,
                 cycle,
+                restricted: l.restricted,
                 children,
             });
         }
@@ -799,7 +916,7 @@ fn count_lines(nodes: &[BomNode]) -> (usize, usize) {
         let (cl, cu) = count_lines(&n.children);
         (
             lines + 1 + cl,
-            unresolved + usize::from(n.revision.is_none()) + cu,
+            unresolved + usize::from(n.revision.is_none() && !n.restricted) + cu,
         )
     })
 }
@@ -831,6 +948,7 @@ pub fn to_csv(tree: &BomTree) -> String {
         let n = &row.node;
         let (code, state, name) = match &n.revision {
             Some(r) => (r.code.as_str(), r.state.as_str(), r.name.as_str()),
+            None if n.restricted => ("", "restricted", ""),
             None => ("", "unresolved", ""),
         };
         out.push_str(&format!(
@@ -892,6 +1010,7 @@ pub fn to_xlsx(tree: &BomTree) -> AppResult<Vec<u8>> {
         let n = &row.node;
         let (code, state, name) = match &n.revision {
             Some(rev) => (rev.code.as_str(), rev.state.as_str(), rev.name.as_str()),
+            None if n.restricted => ("", "restricted", ""),
             None => ("", "unresolved", ""),
         };
         let indent = Format::new().set_indent(row.level.saturating_sub(1).min(15) as u8);
@@ -960,6 +1079,7 @@ mod tests {
             mass_complete: ok,
             cost_complete: cost_ok,
             cycle: false,
+            restricted: false,
             children,
         }
     }
@@ -1002,6 +1122,8 @@ mod tests {
             cost_complete: true,
             line_count: 2,
             unresolved_count: 0,
+            restricted_lines: 0,
+            rollup_incomplete: false,
             queries: 0,
         };
         let rows = flatten(&tree.children);
@@ -1055,6 +1177,8 @@ mod tests {
             child_name: child.map(|c| c.name.clone()),
             child_mass_kg: child.and_then(|c| c.mass_kg),
             child_unit_cost: child.and_then(|c| c.unit_cost),
+            child_project_id: None,
+            restricted: false,
         }
     }
 

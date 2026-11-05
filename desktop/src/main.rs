@@ -6,8 +6,10 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod abortable;
 mod acp;
 mod api;
+mod bomimport;
 mod cadexport;
 mod commands;
 mod folderimport;
@@ -39,6 +41,8 @@ pub struct AppState {
     pub sign_in_cancel: Mutex<Option<Arc<Notify>>>,
     /// Cancel switch of the running upload (one per upload).
     pub upload_cancel: Mutex<Arc<AtomicBool>>,
+    /// Cancel switch of the running Pack and Go download (one per download).
+    pub package_cancel: Mutex<Arc<AtomicBool>>,
     /// The running ACP agent session, if one was started.
     pub agent: Mutex<Option<commands::RunningAgent>>,
     /// Number of the last agent session (events carry it).
@@ -56,6 +60,16 @@ pub fn device_name() -> String {
         "this computer".into()
     } else {
         name
+    }
+}
+
+/// The window theme for a skin: the System skin follows the OS, TeamCraft
+/// Light is light, TeamCraft Dark and every distro skin are dark.
+fn window_theme(skin: Option<&str>) -> Option<tauri::Theme> {
+    match skin {
+        None | Some("") | Some("teamcraft") => None,
+        Some("teamcraft-day") => Some(tauri::Theme::Light),
+        Some(_) => Some(tauri::Theme::Dark),
     }
 }
 
@@ -115,6 +129,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&item("open-workspace", "Open Workspace Folder", None)?)
         .item(&item("get-projects", "Get Project Groups…", None)?)
         .item(&item("import-folder", "Import CAD Folder…", None)?)
+        .item(&item("import-bom", "Import BOM as New Assembly…", None)?)
         .item(&item("open-web", "Open in Browser", None)?)
         .build()?;
     let help = SubmenuBuilder::new(app, "Help")
@@ -137,19 +152,26 @@ fn main() {
             let config_dir = app.path().app_config_dir()?;
             let settings = settings::Settings::load(&config_dir);
             let zoom = settings.zoom.map(commands::clamp_zoom);
+            let theme = window_theme(settings.skin.as_deref());
             app.manage(AppState {
                 settings: Mutex::new(settings),
                 client: api::client(),
                 config_dir,
                 sign_in_cancel: Mutex::new(None),
                 upload_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
+                package_cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
                 agent: Mutex::new(None),
                 agent_seq: AtomicU64::new(0),
                 get_cancel: Arc::new(AtomicBool::new(false)),
             });
             build_menu(app)?;
-            if let (Some(zoom), Some(window)) = (zoom, app.get_webview_window("main")) {
-                let _ = window.set_zoom(zoom);
+            if let Some(window) = app.get_webview_window("main") {
+                if let Some(zoom) = zoom {
+                    let _ = window.set_zoom(zoom);
+                }
+                // the native chrome (the GTK menu bar) in the skin's scheme
+                // from the first frame; app.js keeps it in step on changes
+                let _ = window.set_theme(theme);
             }
             Ok(())
         })
@@ -180,10 +202,13 @@ fn main() {
             commands::open_web,
             commands::set_zoom,
             commands::save_package,
+            commands::cancel_package,
             commands::save_stl,
             commands::upload_files,
             commands::cancel_upload,
             commands::upload_request_attachment,
+            commands::pick_bom_file,
+            commands::import_bom,
             commands::cad_programs,
             commands::cad_export_step,
             commands::scan_folder,

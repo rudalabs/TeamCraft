@@ -15,7 +15,7 @@ use crate::{
     auth::WebUser,
     domain::{self, RevisionRule},
     error::AppResult,
-    services::{bom, package, revisions},
+    services::{bom, interchange, package, revisions},
     util, AppState,
 };
 
@@ -42,9 +42,10 @@ pub async fn show(
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, id).await?;
+    let me = &ctx.me;
+    let rev = revisions::get(&st.db, me, id).await?;
     let rule = rule_of(&q);
-    let tree = bom::tree(&st.db, id, rule).await?;
+    let tree = bom::tree(&st.db, me, id, rule).await?;
     let mut rows = bom::flatten(&tree.children);
     // The roll-ups cover the whole structure; the page lists its first
     // lines (depth first), the exports have all of them.
@@ -64,6 +65,8 @@ pub async fn show(
                 "cost_complete": tree.cost_complete,
                 "line_count": tree.line_count,
                 "unresolved_count": tree.unresolved_count,
+                "restricted_lines": tree.restricted_lines,
+                "rollup_incomplete": tree.rollup_incomplete,
             },
             "rows": rows,
             "rows_total": rows_total,
@@ -73,13 +76,13 @@ pub async fn show(
 
 pub async fn csv(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, id).await?;
+    let rev = revisions::get(&st.db, &me, id).await?;
     let rule = rule_of(&q);
-    let tree = bom::tree(&st.db, id, rule).await?;
+    let tree = bom::tree(&st.db, &me, id, rule).await?;
     let filename = format!("{}_{}_bom_{}.csv", rev.item_number, rev.code, rule.as_str());
     Ok((
         [
@@ -97,13 +100,13 @@ pub async fn csv(
 /// `GET /revisions/{id}/bom.xlsx` – the expanded BOM as Excel workbook.
 pub async fn xlsx(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, id).await?;
+    let rev = revisions::get(&st.db, &me, id).await?;
     let rule = rule_of(&q);
-    let tree = bom::tree(&st.db, id, rule).await?;
+    let tree = bom::tree(&st.db, &me, id, rule).await?;
     let filename = format!(
         "{}_{}_bom_{}.xlsx",
         rev.item_number,
@@ -153,14 +156,26 @@ pub async fn add_line(
             find_number: parse_find_number(&form.find_number)?,
             notes: form.notes.clone(),
         };
-        bom::add(&st.db, &ctx.me, id, input).await
+        let line = bom::add(&st.db, &ctx.me, id, input).await?;
+        // a superseded child may be added on purpose – with a hint
+        let superseded = interchange::superseded_among(&st.db, &ctx.me, &[line.child_item_id])
+            .await?
+            .remove(&line.child_item_id);
+        Ok::<_, crate::error::AppError>((line, superseded))
     }
     .await;
-    finish(&st, result, &back, |line| {
+    finish(&st, result, &back, |(line, superseded)| {
+        let hint = match superseded {
+            Some(Some(successor)) => {
+                format!(" – note: it is superseded by {successor}, use that for new designs")
+            }
+            Some(None) => " – note: it is superseded, do not use it for new designs".to_string(),
+            None => String::new(),
+        };
         (
             back.clone(),
             format!(
-                "Added {} (find no. {})",
+                "Added {} (find no. {}){hint}",
                 line.child_number, line.find_number
             ),
         )
@@ -261,11 +276,11 @@ pub(crate) fn package_response(p: package::Package) -> AppResult<Response> {
 /// "Pack and Go": the revision with its whole structure as a ZIP file.
 pub async fn package(
     State(st): State<AppState>,
-    WebUser(_me): WebUser,
+    WebUser(me): WebUser,
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, id).await?;
+    let rev = revisions::get(&st.db, &me, id).await?;
     let rule = package_rule(q.rule.as_deref(), &rev.state);
-    package_response(package::build(&st.db, &st.vault, id, rule).await?)
+    package_response(package::build(&st.db, &st.vault, &me, id, rule).await?)
 }

@@ -5,7 +5,7 @@
 {% import "macros.html" as m %}
 <div class="page-head">
   <div>
-    <p class="kicker">BOM comparison</p>
+    <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ rev.id }}/bom">BOM</a><span>Compare</span></p>
     <h1><a class="mono" href="/revisions/{{ before.id }}">{{ before.item_number }}/{{ before.code }}</a> → <a class="mono" href="/revisions/{{ after.id }}">{{ after.item_number }}/{{ after.code }}</a></h1>
     <p class="subtitle">{{ summary.added }} added · {{ summary.removed }} removed · {{ summary.changed }} changed · {{ summary.unchanged }} unchanged</p>
   </div>
@@ -67,7 +67,7 @@
   </div>
   {% if diffs_total is defined and diffs_total > diffs|length %}<p class="hint">Showing the first {{ diffs|length }} of {{ diffs_total }} lines; the counts above cover all of them. Download Excel for the complete comparison.</p>{% endif %}
   {% if depth == "all" %}
-  <p class="hint">Comparison over all levels, child revisions resolved with the rule “{{ rule|replace("_", " ") }}”. Lines are matched by child item (and find number) below each matched line; added and removed lines bring their whole sub-tree. A new child revision counts as a change.</p>
+  <p class="hint">Comparison over all levels, child revisions resolved with the rule “{{ rule|replace("_", " ") }}”. Lines are matched by child item (and find number) below each matched line; added and removed lines bring their whole sub-tree. {% if rule == "as_released" %}A new child revision counts as a change.{% else %}This rule resolves a child by its item alone, so both sides get the same child revision and the same sub-tree – choose “As released” to see changed child revisions.{% endif %}</p>
   {% else %}
   <p class="hint">Single-level comparison of the direct BOM lines. Lines are matched by child item (and find number). Choose <em>All levels</em> to compare the whole structure.</p>
   {% endif %}

@@ -12,7 +12,9 @@ roll-up and three **revision rules**:
 | Latest released | its newest released revision                                                      |
 | As released     | the exact revision the parent was released with (e.g. the as-built configuration) |
 
-Where-used shows the parents of an item. Cycles are rejected. The BOM
+Where-used shows the parents of an item; *All levels* on the revision page
+opens the where-used page, which walks up through the sub-assemblies (1, 2,
+3, 5 or all levels). Cycles are rejected. The BOM
 exports as CSV and as Excel workbook (which the BOM import reads back), and
 **Pack and Go** downloads a revision with the files of its whole structure
 as ZIP (`<item>_<revision>/`, `bom.csv`, `manifest.json` with SHA-256 per
@@ -29,10 +31,53 @@ chosen, and the API also compares by code (`GET …/revisions/B/bom/compare?with
 with the chosen revision rule, the children of two matched lines are
 compared the same way, and an added or removed sub-assembly brings its
 whole sub-tree. A child that now resolves to another revision counts as
-changed – with *As released*, comparing two released revisions shows
-exactly which parts went into the new one. In the API: `depth=all` and
-`rule=latest|released|as_released`. The Excel download contains the level
-and the revisions too.
+changed. When one of the two revisions is released, the default rule is
+*As released*: a released parent uses the child revisions it was released
+with, an in-work one the newest released children, so comparing two
+revisions shows exactly which parts went into the new one; otherwise the
+default is *Latest*. *Latest* and *Latest released* resolve a child by its
+item alone – both sides then get the same child revision and sub-tree, and
+only the direct lines can differ. In the API: `depth=all` and
+`rule=latest|released|as_released` (same default). The Excel
+download contains the level and the revisions too.
+
+## Alternates, supersession and replacing a part
+
+The card *Alternates and replacement* on the revision page holds two
+relations of the item itself (not of one revision – they stay true for old
+assemblies too). Changing them needs edit rights in the item's project group.
+
+- **Alternates** are items that may be built in instead of this one in every
+  assembly – same form, fit and function, e.g. a second source of a purchased
+  part. *Two-way* (the default) also makes this item an alternate of the other
+  one; that needs edit rights in the other item's group too, otherwise add it
+  one-way. The other item then lists it under *may be replaced by*.
+- **Supersession** says: do not use this item for new designs any more, use
+  its successor. An item has at most one successor, and a chain of successors
+  never leads back to the item. The revision page of a superseded item shows a
+  notice, BOM lines that use a superseded item are marked *Superseded by …*,
+  and adding one to a BOM still works but says so.
+  Superseding changes no BOM and no lifecycle state; making the old revisions
+  obsolete stays a change order's job.
+
+**Replace in assemblies** on the where-used page puts another item (by
+default the successor, otherwise an alternate) in place of this one. The
+preview lists every assembly whose *latest* revision uses the item directly
+and what will happen to it:
+
+| Latest revision of the assembly                      | Result                                                       |
+|------------------------------------------------------|--------------------------------------------------------------|
+| in work, not checked out or checked out by you       | the line is replaced (quantity, find number and notes stay)  |
+| in work, checked out by somebody else                | left alone – ask them, or replace it there yourself later     |
+| in work, in a group you cannot edit                  | left alone                                                   |
+| in review                                            | left alone until the review is finished or rejected          |
+| released                                             | needs a new revision – revise it (usually in a change order)  |
+| would contain itself through the replacement         | left alone (circular BOM)                                    |
+
+A revision that was not checked out is changed directly, like check out,
+edit, check in; one checked out by you stays checked out. Older revisions keep
+their BOM. Every replaced line is recorded in the history of the assembly
+(`bom.replace`). Assemblies in groups you cannot see are only counted.
 
 ## References
 

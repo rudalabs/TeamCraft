@@ -18,6 +18,7 @@ mod desktop;
 mod explorer;
 mod formats;
 mod imports;
+mod interchange;
 mod items;
 mod notifications;
 mod personal;
@@ -25,6 +26,7 @@ mod references;
 mod requests;
 mod revisions;
 mod simulations;
+mod uploads;
 mod webhooks;
 
 pub(crate) use bom::{package_response, package_rule};
@@ -90,10 +92,31 @@ pub fn router(state: &AppState) -> Router<AppState> {
                 .post(items::create)
                 .layer(DefaultBodyLimit::max(upload_limit)),
         )
+        // chunked, resumable uploads of large files (static/app.js)
+        .route("/uploads", post(uploads::create))
+        .route(
+            "/uploads/{id}",
+            get(uploads::status)
+                .patch(uploads::append)
+                .delete(uploads::abort),
+        )
         .route("/items/new", get(items::new_form))
         .route("/items/{id}", get(items::show))
         .route("/items/{id}/master", post(items::update_master))
         .route("/items/{id}/delete", post(items::delete))
+        // alternates, supersession, multi-level where-used, replace in assemblies
+        .route("/items/{id}/where-used", get(interchange::where_used))
+        .route("/items/{id}/replace", post(interchange::replace))
+        .route("/items/{id}/alternates", post(interchange::add_alternate))
+        .route(
+            "/items/{id}/alternates/{alternate}/delete",
+            post(interchange::delete_alternate),
+        )
+        .route("/items/{id}/supersede", post(interchange::supersede))
+        .route(
+            "/items/{id}/supersede/delete",
+            post(interchange::clear_supersession),
+        )
         .route("/i/{number}", get(items::by_number))
         .route("/formats", get(formats::show))
         // revisions & files
@@ -283,6 +306,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(admin::project_show).post(admin::update_project),
         )
         .route("/projects/{id}/numbering", post(admin::update_numbering))
+        .route("/projects/{id}/visibility", post(admin::update_visibility))
         .route("/projects/{id}/members", post(admin::add_member))
         .route(
             "/projects/{id}/members/{user_id}/remove",
@@ -413,6 +437,9 @@ pub struct WebCtx {
     pub me: Actor,
     pub flash: Option<Flash>,
     pub unread: i64,
+    /// Path and query of this request: the `back` target of the forms in the
+    /// header (appearance), so they return here without JavaScript too.
+    pub here: String,
 }
 
 impl FromRequestParts<AppState> for WebCtx {
@@ -423,11 +450,16 @@ impl FromRequestParts<AppState> for WebCtx {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let WebUser(me) = WebUser::from_request_parts(parts, state).await?;
-        let unread = crate::services::notifications::unread_count(&state.db, me.id).await?;
+        let unread = crate::services::notifications::unread_count(&state.db, &me).await?;
         Ok(WebCtx {
             me,
             flash: read_flash(&parts.headers),
             unread,
+            here: parts
+                .uri
+                .path_and_query()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_else(|| "/".to_string()),
         })
     }
 }
@@ -444,6 +476,8 @@ fn me_json(me: &Actor) -> Value {
         "id": me.id,
         "username": me.username,
         "display_name": me.display_name,
+        "initials": domain::initials(&me.display_name, &me.username),
+        "avatar": domain::avatar_tint(&me.username),
         "role": me.role,
         "skin": me.skin,
         "is_admin": me.is_admin(),
@@ -482,6 +516,7 @@ pub(crate) fn render(
         map.insert("me".into(), me_json(&ctx.me));
         map.insert("skin".into(), json!(ctx.me.skin));
         map.insert("unread_notifications".into(), json!(ctx.unread));
+        map.insert("here".into(), json!(ctx.here));
         map.insert(
             "assistant_enabled".into(),
             json!(crate::services::assistant::enabled(st)),
@@ -509,7 +544,10 @@ pub(crate) fn render_public(
             .map(domain::skin_or_default)
             .unwrap_or(domain::DEFAULT_SKIN);
         map.insert("skin".into(), json!(skin));
-        map.insert("skin_light".into(), json!(domain::skin_is_light(skin)));
+        map.insert(
+            "skin_scheme".into(),
+            json!(domain::skin_scheme(skin).as_str()),
+        );
     }
     let html = st.templates.get_template(template)?.render(&data)?;
     let mut response = Html(html).into_response();
@@ -646,7 +684,12 @@ async fn html_errors(State(st): State<AppState>, req: Request, next: Next) -> Re
     let skin = skin_from_cookie(req.headers());
     let response = next.run(req).await;
     // The viewer fetches preview meshes itself and shows the JSON error message.
-    if target.split('?').next().unwrap_or("").ends_with("/mesh") {
+    let path = target.split('?').next().unwrap_or("");
+    if path.ends_with("/mesh") {
+        return response;
+    }
+    // So does the chunked upload of app.js – a 401 too, it then asks to sign in.
+    if path == "/uploads" || path.starts_with("/uploads/") {
         return response;
     }
     let Some(info) = response.extensions().get::<ErrorInfo>().cloned() else {

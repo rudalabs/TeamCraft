@@ -31,7 +31,7 @@ data never changes – further work happens in a new revision (*Revise*).
 ## Project groups and roles
 
 | Role       | May                                                                                                 |
-|------------|-----------------------------------------------------------------------------------------------------|
+| Viewer     | read internal project groups and the restricted groups they belong to, raise and discuss change requests |
 | Viewer     | read everything, raise and discuss change requests                                                  |
 | CAD editor | create and change items of the project groups they belong to, create project groups, review changes, triage and decide change requests on their groups |
 | Admin      | everything, plus users, all project groups and lock overrides                                       |
@@ -41,6 +41,13 @@ machine, a customer project, a building, a vehicle or a rover. CAD editors start
 managers edit the group and add or remove members. A group can also be bound
 to a group of the identity provider (administrators only); its members are
 then synchronised at every single sign-on.
+
+A group is **internal** (everybody reads it) or **restricted**: then only its
+members – viewers included – and administrators see the group, its items,
+files and the changes about them; for everybody else it does not exist.
+Links from other groups show a *Restricted item* placeholder. Managers switch
+this on the group's page; see
+[Read permissions and restricted groups](../admin/permissions.md).
 
 ## Item numbers
 
@@ -61,8 +68,10 @@ Everything else is literal text from `A–Z 0–9 . _ -`. The built-in scheme is
 Every distinct expansion counts on its own: a scheme with `{YYYY}` starts at 1
 each year, one without `{TYPE}` shares the sequence between all item types,
 and groups with the built-in scheme share its counters. Changing the padding
-width keeps counting. Numbers that are already taken (typed in by hand) are
-skipped, and existing items never change their numbers.
+width keeps counting. When the next number is already taken (typed in by
+hand or imported), the counter continues after the highest existing number
+of the same pattern – so a new scheme can take over an existing numbering
+convention – and existing items never change their numbers.
 
 ## Audit log
 

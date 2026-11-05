@@ -11,6 +11,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
+    auth::Actor,
     domain::RevisionRule,
     error::{AppError, AppResult},
     models::BomLine,
@@ -64,6 +65,21 @@ impl Depth {
             Depth::Single => "1",
             Depth::All => "all",
         }
+    }
+}
+
+/// Default revision rule of a comparison over all levels (states of the two
+/// revisions). *Latest* and *Latest released* resolve a child by its item
+/// alone, so both sides always get the same child revision and sub-tree;
+/// only *As released* uses the child revisions a released parent was
+/// released with. Without a released side, *Latest* still shows children
+/// that were never released.
+pub fn default_rule(before_state: &str, after_state: &str) -> RevisionRule {
+    let released = |s: &str| matches!(s, "released" | "obsolete");
+    if released(before_state) || released(after_state) {
+        RevisionRule::AsReleased
+    } else {
+        RevisionRule::Latest
     }
 }
 
@@ -267,6 +283,7 @@ pub fn diff_trees(before: &[BomNode], after: &[BomNode]) -> Vec<LineDiff> {
 /// each child resolved by `rule`.
 pub async fn compare(
     pool: &PgPool,
+    actor: &Actor,
     before: Uuid,
     after: Uuid,
     depth: Depth,
@@ -274,12 +291,17 @@ pub async fn compare(
 ) -> AppResult<Vec<LineDiff>> {
     match depth {
         Depth::Single => {
-            let (a, b) = tokio::try_join!(bom::lines(pool, before), bom::lines(pool, after))?;
+            let (a, b) = tokio::try_join!(
+                bom::lines(pool, actor, before),
+                bom::lines(pool, actor, after)
+            )?;
             Ok(diff(&a, &b))
         }
         Depth::All => {
-            let (a, b) =
-                tokio::try_join!(bom::tree(pool, before, rule), bom::tree(pool, after, rule))?;
+            let (a, b) = tokio::try_join!(
+                bom::tree(pool, actor, before, rule),
+                bom::tree(pool, actor, after, rule)
+            )?;
             Ok(diff_trees(&a.children, &b.children))
         }
     }
@@ -385,6 +407,8 @@ mod tests {
             child_name: number.into(),
             released_child_revision_id: None,
             released_child_code: None,
+            child_project_id: None,
+            restricted: false,
         }
     }
 
@@ -453,8 +477,22 @@ mod tests {
             mass_complete: false,
             cost_complete: false,
             cycle: false,
+            restricted: false,
             children,
         }
+    }
+
+    #[test]
+    fn default_rules() {
+        assert_eq!(default_rule("in_work", "in_work"), RevisionRule::Latest);
+        assert_eq!(
+            default_rule("released", "in_work"),
+            RevisionRule::AsReleased
+        );
+        assert_eq!(
+            default_rule("obsolete", "released"),
+            RevisionRule::AsReleased
+        );
     }
 
     #[test]

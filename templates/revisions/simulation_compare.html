@@ -5,7 +5,7 @@
 {% import "macros.html" as m %}
 <div class="page-head">
   <div>
-    <p class="kicker">Result comparison</p>
+    <p class="crumbs"><a href="/items">Items</a><span>Result comparison</span></p>
     <h1><a class="mono" href="/revisions/{{ before.id }}">{{ before.item_number }}/{{ before.code }}</a> → <a class="mono" href="/revisions/{{ after.id }}">{{ after.item_number }}/{{ after.code }}</a></h1>
     <p class="subtitle">{{ summary.added }} added · {{ summary.removed }} removed · {{ summary.changed }} changed · {{ summary.unchanged }} unchanged</p>
   </div>

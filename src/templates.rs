@@ -20,6 +20,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "explorer.html",
     "items/list.html",
     "items/new.html",
+    "items/where_used.html",
     "revisions/show.html",
     "revisions/edit.html",
     "revisions/bom.html",
@@ -56,6 +57,7 @@ pub fn environment(instance_name: &str) -> Result<Environment<'static>, minijinj
     }
     env.add_filter("dt", filter_dt);
     env.add_filter("num", filter_num);
+    env.add_filter("fixed", filter_fixed);
     env.add_filter("filesize", filter_filesize);
     env.add_filter("label", filter_label);
     env.add_filter("urlencode", |value: String| util::pct_encode(&value));
@@ -104,6 +106,15 @@ fn filter_num(value: Option<f64>, decimals: Option<usize>) -> String {
     }
 }
 
+/// A number with exactly `decimals` places (default 2), so a column of
+/// costs or masses lines up at the decimal point; `—` when missing.
+fn filter_fixed(value: Option<f64>, decimals: Option<usize>) -> String {
+    match value {
+        Some(v) => format!("{v:.prec$}", prec = decimals.unwrap_or(2)),
+        None => "—".to_string(),
+    }
+}
+
 fn filter_filesize(value: i64) -> String {
     util::format_bytes(value)
 }
@@ -142,7 +153,7 @@ mod tests {
     const TS: &str = "2026-11-03T14:05:59.123456Z";
 
     fn me() -> Value {
-        json!({ "id": ME, "username": "max", "display_name": "Max Muster", "role": "admin", "skin": "arch", "is_admin": true, "can_edit": true })
+        json!({ "id": ME, "username": "max", "display_name": "Max Muster", "initials": "MM", "avatar": 3, "role": "admin", "skin": "arch", "is_admin": true, "can_edit": true })
     }
 
     fn revision(state: &str, checked_out: bool) -> Value {
@@ -225,7 +236,7 @@ mod tests {
         );
         map.insert("local_login".into(), json!(true));
         map.insert("skin".into(), json!("arch"));
-        map.insert("skin_light".into(), json!(false));
+        map.insert("skin_scheme".into(), json!("dark"));
         data
     }
 
@@ -528,6 +539,53 @@ mod tests {
             })),
         );
 
+        // alternates, supersession and replace in assemblies
+        let linked = |number: &str, restricted: bool| {
+            json!({ "item_id": OTHER, "number": number, "item_type": "part", "name": "Bolt <M6>",
+                    "latest_revision_id": OTHER, "latest_code": "B", "latest_state": "released",
+                    "note": "second <source>", "created_by_name": "Erika", "created_at": TS,
+                    "two_way": true, "restricted": restricted })
+        };
+        let usage = |level: i32, state: &str| {
+            json!({ "level": level, "child_number": "PRT-000001", "line_id": ME, "parent_revision_id": OTHER,
+                    "parent_item_id": ME, "parent_number": "ASM-000001", "parent_code": "A",
+                    "parent_name": "Stage <1>", "parent_state": state, "find_number": 10, "quantity": 2.0,
+                    "released_child_code": null })
+        };
+        let plan_row = |action: &str, label: &str| {
+            json!({ "line_id": ME, "find_number": 10, "quantity": 4.0, "parent_item_id": ME,
+                    "parent_number": "ASM-000003", "parent_revision_id": OTHER, "parent_code": "B",
+                    "parent_name": "Frame <2>", "parent_state": "in_work", "checked_out_by_name": "Max",
+                    "action": action, "action_label": label })
+        };
+        for (with_plan, restricted) in [(true, false), (false, true)] {
+            let html = render(
+                &env,
+                "items/where_used.html",
+                with_common(json!({
+                    "item": item(), "latest": revision("released", false), "levels": 25,
+                    "level_options": [{ "value": 1, "label": "1 level" }, { "value": 25, "label": "All levels" }],
+                    "rows": [usage(1, "released"), usage(2, "in_work")], "truncated": with_plan, "hidden": 2,
+                    "successor": linked("PRT-000002", restricted), "alternates": [linked("PRT-000003", false)],
+                    "with": "PRT-000002",
+                    "plan": if with_plan { json!({
+                        "old_item_id": ME, "old_number": "PRT-000001", "new_item_id": OTHER,
+                        "new_number": "PRT-000002", "replaced": 1, "hidden": 1,
+                        "rows": [plan_row("replace", "will be replaced"),
+                                 plan_row("checked_out", "checked out by somebody else")],
+                    }) } else { Value::Null },
+                    "plan_error": if with_plan { Value::Null } else { json!("Item 'X' not <found>.") },
+                    "can_replace": true,
+                })),
+            );
+            assert!(html.contains("Stage &lt;1&gt;"), "names are escaped");
+            assert!(html.contains("+2 assemblies"), "hidden count");
+            assert_eq!(html.contains("Replace in 1 BOM line"), with_plan);
+            assert_eq!(html.contains("(Max)"), with_plan, "who has it checked out");
+            assert_eq!(html.contains("not &lt;found&gt;"), !with_plan);
+            assert_eq!(html.contains("Restricted item"), restricted);
+        }
+
         for (state, checked_out) in [("in_work", true), ("in_work", false), ("released", false)] {
             let source = json!({ "file_id": OTHER, "filename": "nozzle.step", "sha256": "cd".repeat(32), "format": "step" });
             let similar = if checked_out {
@@ -550,6 +608,7 @@ mod tests {
                 "revisions/show.html",
                 with_common(json!({
                     "rev": revision(state, checked_out), "item": item(), "revisions": [revision(state, checked_out)],
+                    "hidden": { "parents": 2, "incoming": 1, "changes": 1, "simulations": 0 },
                     "is_latest": false, "latest_id": OTHER, "files": [file.clone(), native.clone(), unknown.clone()], "native_without_preview": state == "released", "lines": [bom_line.clone()],
                     "where_used": [{ "line_id": ME, "parent_revision_id": OTHER, "parent_item_id": ME,
                                      "parent_number": "ASM-000001", "parent_code": "A", "parent_name": "Assembly",
@@ -560,6 +619,14 @@ mod tests {
                     "resolved_impacts": [impact(Some("acknowledged"))],
                     "open_requests": [request("in_triage")], "similar": similar,
                     "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
+                    "interchange": {
+                        "alternates": [linked("PRT-000003", false)],
+                        "alternate_for": [linked("PRT-000004", false)],
+                        "successor": linked("PRT-000002", false),
+                        "predecessors": [linked("PRT-000006", false)],
+                        "superseded": { "88888888-8888-4888-8888-888888888888": "PRT-000005" },
+                        "can_edit": checked_out,
+                    },
                     "lifecycle": {
                         "states": crate::domain::LifecycleState::ALL,
                         "next": crate::domain::rules_from(crate::domain::LifecycleState::parse(state).unwrap()),
@@ -570,6 +637,23 @@ mod tests {
             assert!(
                 html.contains("aria-current=\"step\""),
                 "current lifecycle state is marked"
+            );
+            for expected in [
+                "is superseded by",
+                "Superseded by PRT-000005",
+                "id=\"interchange\"",
+                "PRT-000003",
+                "may be replaced by",
+                "supersedes",
+                "second &lt;source&gt;",
+                "/where-used",
+            ] {
+                assert!(html.contains(expected), "revision page shows {expected}");
+            }
+            assert_eq!(
+                html.contains("Add alternate"),
+                checked_out,
+                "forms only for editors of the group"
             );
             assert!(html.contains("four-eyes principle"), "rules are listed");
             if checked_out {
@@ -674,6 +758,7 @@ mod tests {
                 "revisions/show.html",
                 with_common(json!({
                     "rev": rev.clone(), "item": sim_item, "revisions": [rev.clone(), revision("released", false)],
+                    "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0 },
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
                     "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
                     "history": [], "projects": [], "units": units(), "references": references.clone(),
@@ -728,6 +813,7 @@ mod tests {
             "revisions/show.html",
             with_common(json!({
                 "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
+                "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 1 },
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
                 "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
                 "history": [], "projects": [], "units": units(), "references": references.clone(),
@@ -841,7 +927,8 @@ mod tests {
             with_common(json!({
                 "rev": revision("released", false), "rule": "released",
                 "tree": { "total_mass_kg": 1.5, "total_cost": 10.0, "mass_complete": false, "cost_complete": true,
-                          "line_count": 2, "unresolved_count": 1 },
+                          "line_count": 2, "unresolved_count": 1, "restricted_lines": 1,
+                          "rollup_incomplete": true },
                 "rows": [
                     { "level": 2, "indent": "\u{2003}", "has_children": false, "node": node },
                     { "level": 9, "indent": "", "has_children": false, "node": unresolved }
@@ -876,6 +963,7 @@ mod tests {
                 "changes/show.html",
                 with_common(json!({
                     "change": change(status), "status_label": "Draft",
+                    "hidden_dependents": 1,
                     "implements": [request("accepted")],
                     "items": [{ "revision_id": OTHER, "item_id": ME, "item_number": "PRT-000001", "code": "A",
                                 "name": "Bracket", "state": "in_work", "checked_out_by_name": "Erika" }],
@@ -968,6 +1056,7 @@ mod tests {
                 "requests/show.html",
                 with_common(json!({
                     "request": request(status), "status_label": "New", "reason_label": "Defect / error",
+                    "hidden_changes": 1,
                     "items": [request_item.clone()], "in_work": [request_item.clone()],
                     "comments": [{ "id": OTHER, "author_id": OTHER, "author_name": "Erika",
                                    "body": "Seen on <three> parts", "created_at": TS }],
@@ -1320,7 +1409,7 @@ mod tests {
 
         let mut data = with_common(json!({
             "change": change("in_review"), "status_label": "In review", "items": [], "reviews": [],
-            "candidates": [], "history": [], "priorities": ["low"], "impact": [],
+            "candidates": [], "history": [], "priorities": ["low"], "impact": [], "hidden_dependents": 0,
             "can": { "modify": false, "edit_text": false, "submit": false, "withdraw": false, "reopen": false,
                      "cancel": false, "review": true },
         }));
@@ -1401,6 +1490,9 @@ mod tests {
         assert_eq!(filter_num(Some(1.23456), None), "1.235");
         assert_eq!(filter_num(Some(2.0), Some(2)), "2");
         assert_eq!(filter_num(None, None), "—");
+        assert_eq!(filter_fixed(Some(41.0), None), "41.00");
+        assert_eq!(filter_fixed(Some(0.2), Some(3)), "0.200");
+        assert_eq!(filter_fixed(None, Some(3)), "—");
         assert_eq!(filter_label(Some("in_work".into())), "WIP");
         assert_eq!(filter_label(Some("in_review".into())), "In Review");
         assert_eq!(filter_label(Some("released".into())), "Released");

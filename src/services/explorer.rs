@@ -7,7 +7,12 @@ use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{domain, error::AppResult};
+use crate::{
+    auth::Actor,
+    domain,
+    error::{AppError, AppResult},
+    services::access,
+};
 
 /// Rows shown at most in one folder (the search narrows larger folders).
 pub const LIMIT: i64 = 500;
@@ -41,11 +46,11 @@ pub struct Folder {
     pub locked: i64,
 }
 
-/// The folders (active project groups) with counts, in one query. The
-/// check-outs are counted once for all groups (not per group: that read
-/// every checked-out revision once per group).
-pub async fn folders(pool: &PgPool) -> AppResult<Vec<Folder>> {
-    Ok(sqlx::query_as::<_, Folder>(
+/// The folders (active project groups the actor may see) with counts, in
+/// one query. The check-outs are counted once for all groups (not per
+/// group: that read every checked-out revision once per group).
+pub async fn folders(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Folder>> {
+    Ok(sqlx::query_as::<_, Folder>(&format!(
         "WITH locked AS (
              SELECT i.project_id, COUNT(*) AS locked
              FROM revisions r JOIN items i ON i.id = r.item_id
@@ -56,8 +61,10 @@ pub async fn folders(pool: &PgPool) -> AppResult<Vec<Folder>> {
                 (SELECT COUNT(*) FROM items i WHERE i.project_id = p.id) AS items,
                 COALESCE(l.locked, 0) AS locked
          FROM projects p LEFT JOIN locked l ON l.project_id = p.id
-         WHERE p.active ORDER BY p.code",
-    )
+         WHERE p.active AND {} ORDER BY p.code",
+        access::project_visible("p.id", 1)
+    ))
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?)
 }
@@ -86,8 +93,27 @@ const SELECT: &str =
     FROM items i
     LEFT JOIN projects p ON p.id = i.project_id";
 
-/// Entries of a folder, filtered by `query` (number or name, may be empty).
-pub async fn list(pool: &PgPool, listing: Listing<'_>, query: &str) -> AppResult<Vec<Entry>> {
+/// Entries of a folder the actor may see, filtered by `query` (number or
+/// name, may be empty). Every listing shows only items the actor may read;
+/// a hidden project group answers "not found".
+pub async fn list(
+    pool: &PgPool,
+    actor: &Actor,
+    listing: Listing<'_>,
+    query: &str,
+) -> AppResult<Vec<Entry>> {
+    if let Listing::Project(id) = listing {
+        // unknown and hidden groups answer alike (no existence oracle)
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM projects WHERE id = $1)")
+                .bind(id)
+                .fetch_one(pool)
+                .await?;
+        if !exists {
+            return Err(AppError::not_found("Folder not found."));
+        }
+        access::ensure_visible(actor, Some(id), AppError::not_found("Folder not found."))?;
+    }
     let pattern = if query.trim().is_empty() {
         String::new()
     } else {
@@ -125,12 +151,14 @@ pub async fn list(pool: &PgPool, listing: Listing<'_>, query: &str) -> AppResult
         ),
     };
     let sql = format!(
-        "{sql} AND ($2 = '' OR i.number ILIKE $2 OR r.name ILIKE $2)
-         ORDER BY i.number LIMIT {LIMIT}"
+        "{sql} AND ($2 = '' OR i.number ILIKE $2 OR r.name ILIKE $2) AND {}
+         ORDER BY i.number LIMIT {LIMIT}",
+        access::item_visible("i", 3)
     );
     Ok(sqlx::query_as::<_, Entry>(&sql)
         .bind(id)
         .bind(&pattern)
+        .bind(&actor.hidden_projects)
         .fetch_all(pool)
         .await?)
 }

@@ -191,7 +191,13 @@ pub async fn restore(config: &Config, dir: &Path, force: bool) -> Result<Restore
     ensure_database_empty(config, force).await?;
     let database = DatabaseArgs::from_config(config);
     let dump = dir.join(DUMP_FILE);
-    run(restore_command(&database, &dump), "pg_restore")?;
+    if let Err(error) = run(restore_command(&database, &dump), "pg_restore") {
+        bail!(
+            "{error:#} – the database is unchanged (the restore runs in one transaction); \
+             restore a backup that is older than the database (e.g. from before an upgrade) \
+             into a fresh, empty database"
+        );
+    }
 
     let target_objects = config.vault_dir.join("objects");
     fs::create_dir_all(&target_objects)
@@ -506,6 +512,10 @@ fn restore_args(database: &DatabaseArgs, dump: &Path) -> Vec<OsString> {
         OsString::from("--clean"),
         OsString::from("--if-exists"),
         OsString::from("--no-owner"),
+        // All or nothing: a failed restore (e.g. an older backup over a
+        // database with newer tables that depend on the dropped ones) must
+        // not leave a half-replaced database behind.
+        OsString::from("--single-transaction"),
         OsString::from("--no-password"),
     ];
     args.extend(connection_args(database));
@@ -677,6 +687,7 @@ mod tests {
             "--clean",
             "--if-exists",
             "--no-owner",
+            "--single-transaction",
             "--no-password",
             "--host",
             "db.example.org",

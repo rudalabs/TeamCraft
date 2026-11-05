@@ -24,6 +24,7 @@ use uuid::Uuid;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 use crate::{
+    auth::Actor,
     domain::RevisionRule,
     error::{AppError, AppResult},
     services::{bom, files, revisions},
@@ -48,11 +49,12 @@ struct Entry {
 pub async fn build(
     pool: &PgPool,
     vault: &Vault,
+    actor: &Actor,
     root_revision_id: Uuid,
     rule: RevisionRule,
 ) -> AppResult<Package> {
-    let root = revisions::get(pool, root_revision_id).await?;
-    let tree = bom::tree(pool, root_revision_id, rule).await?;
+    let root = revisions::get(pool, actor, root_revision_id).await?;
+    let tree = bom::tree(pool, actor, root_revision_id, rule).await?;
 
     // Every revision of the structure once: the root, then depth first.
     let mut revs = vec![(
@@ -75,6 +77,8 @@ pub async fn build(
                 r.state.clone(),
             )),
             Some(_) => {}
+            // hidden children contribute no files and no identity
+            None if n.restricted => {}
             None => unresolved.push(
                 json!({ "item": n.item_number, "find_number": n.find_number, "level": n.level }),
             ),
@@ -109,6 +113,7 @@ pub async fn build(
         "rule": rule.as_str(),
         "revisions": manifest_revisions,
         "unresolved": unresolved,
+        "restricted_lines": tree.restricted_lines,
     });
     let bom_csv = bom::to_csv(&tree);
 

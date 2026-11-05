@@ -29,6 +29,10 @@ use crate::bomtable::{field_label, BomRow, BomTable, Column, MAX_ROWS};
 /// Deeper structures are cut (protects the recursion).
 const MAX_DEPTH: usize = 64;
 
+/// Deeper nested parameter lists are skipped without recursion, so a hostile
+/// file cannot overflow the stack (real files nest a few levels at most).
+const MAX_NESTING: usize = 32;
+
 /// Whether the file name is a STEP file (`.step`, `.stp`, `.p21`).
 pub fn is_step(filename: &str) -> bool {
     filename
@@ -353,6 +357,7 @@ fn params(body: &str) -> Vec<Param> {
         text: body,
         bytes: body.as_bytes(),
         i: 0,
+        depth: 0,
     };
     parser.list()
 }
@@ -361,6 +366,8 @@ struct Parser<'a> {
     text: &'a str,
     bytes: &'a [u8],
     i: usize,
+    /// Nesting of the list being read.
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -407,9 +414,17 @@ impl Parser<'_> {
                         Err(_) => Param::Other,
                     });
                 }
+                Some(b'(') if self.depth >= MAX_NESTING => {
+                    // `other` skips the balanced list iteratively.
+                    self.other();
+                    out.push(Param::Other);
+                }
                 Some(b'(') => {
                     self.i += 1;
-                    out.push(Param::List(self.list()));
+                    self.depth += 1;
+                    let list = self.list();
+                    self.depth -= 1;
+                    out.push(Param::List(list));
                 }
                 Some(_) => {
                     self.other();
@@ -705,5 +720,146 @@ mod tests {
                 Param::Str("x(y".into()),
             ]
         );
+    }
+
+    #[test]
+    fn unresolved_occurrences_are_reported_and_ignored() {
+        let data = [
+            product(1, "TOP", "Top"),
+            product(2, "P", "Part"),
+            usage(101, 1, 2),
+            usage(102, 1, 7), // no definition #73
+            usage(103, 8, 2), // no definition #83
+        ]
+        .concat();
+        let t = read(&step(&data)).unwrap();
+        assert_eq!(flat(&t), vec![(1, "P", 1.0)]);
+        assert_eq!(t.warnings.len(), 1);
+        assert!(
+            t.warnings[0].starts_with("2 assembly occurrences"),
+            "{:?}",
+            t.warnings
+        );
+    }
+
+    #[test]
+    fn byte_order_mark_lower_case_keywords_and_plain_formations() {
+        // A UTF-8 BOM and blank lines before the magic, lower-case keywords,
+        // PRODUCT_DEFINITION_FORMATION without source and definitions with
+        // associated documents.
+        let data = "#11=product('ASM','Assembly','',(#9));\n\
+            #12=PRODUCT_DEFINITION_FORMATION('','',#11);\n\
+            #13=PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS('d','',#12,#8,());\n\
+            #21=PRODUCT('PRT','Part','',(#9));\n\
+            #22=product_definition_formation_with_specified_source('','',#21,.MADE.);\n\
+            #23=product_definition('design','',#22,#8);\n\
+            #31=next_assembly_usage_occurrence('1','','',#13,#23,$);\n";
+        let mut bytes = "\u{feff}\n\n".as_bytes().to_vec();
+        bytes.extend(step(data));
+        let t = read(&bytes).unwrap();
+        assert_eq!(t.root.as_ref().unwrap().number, "ASM");
+        assert_eq!(flat(&t), vec![(1, "PRT", 1.0)]);
+    }
+
+    #[test]
+    fn names_and_descriptions() {
+        let data = "#11=PRODUCT('ASM','','ASM',(#9));\n\
+            #12=PRODUCT_DEFINITION_FORMATION('','',#11);\n\
+            #13=PRODUCT_DEFINITION('design','',#12,#8);\n\
+            #21=PRODUCT(' P-1 ',' Plate ',' Plate ',(#9));\n\
+            #22=PRODUCT_DEFINITION_FORMATION('','',#21);\n\
+            #23=PRODUCT_DEFINITION('design','',#22,#8);\n\
+            #31=NEXT_ASSEMBLY_USAGE_OCCURRENCE('1','','',#13,#23,$);\n";
+        let t = read(&step(data)).unwrap();
+        let root = t.root.unwrap();
+        // Without a name the id is the name; a description that only
+        // repeats the name or the number is dropped; values are trimmed.
+        assert_eq!((root.name.as_str(), root.description.as_str()), ("ASM", ""));
+        let p = &t.rows[0];
+        assert_eq!(
+            (p.number.as_str(), p.name.as_str(), p.description.as_str()),
+            ("P-1", "Plate", "")
+        );
+        assert_eq!(
+            (p.find_number, p.unit.as_str(), p.mass_kg),
+            (None, "", None)
+        );
+    }
+
+    #[test]
+    fn a_component_that_contains_itself_is_skipped() {
+        // TOP → A → B → A: the inner A would contain itself.
+        let data = [
+            product(1, "TOP", "Top"),
+            product(2, "A", "A"),
+            product(3, "B", "B"),
+            usage(101, 1, 2),
+            usage(102, 2, 3),
+            usage(103, 3, 2),
+        ]
+        .concat();
+        let t = read(&step(&data)).unwrap();
+        assert_eq!(flat(&t), vec![(1, "A", 1.0), (2, "B", 1.0)]);
+        assert!(
+            t.warnings
+                .iter()
+                .any(|w| w.contains("A would contain itself")),
+            "{:?}",
+            t.warnings
+        );
+    }
+
+    #[test]
+    fn very_deep_structures_are_cut() {
+        // A chain of MAX_DEPTH + 5 nested assemblies.
+        let n = (MAX_DEPTH + 5) as u32;
+        let mut data = String::new();
+        for i in 1..=n + 1 {
+            data.push_str(&product(i, &format!("L{i}"), "Level"));
+        }
+        for i in 1..=n {
+            data.push_str(&usage(100_000 + i, i, i + 1));
+        }
+        let t = read(&step(&data)).unwrap();
+        assert_eq!(t.rows.len(), MAX_DEPTH);
+        assert_eq!(t.rows.last().unwrap().level, MAX_DEPTH);
+        assert!(t.warnings.iter().any(|w| w.contains("deeper than")));
+    }
+
+    #[test]
+    fn more_decoding() {
+        assert_eq!(decode("Gr\\S\\|n"), "Grün", "\\S\\ adds 128");
+        assert_eq!(decode("\\X\\C4rger"), "Ärger");
+        assert_eq!(decode("tab\\T\\end"), "tab\tend");
+        assert_eq!(decode("\\X2\\00E4"), "ä", "missing \\X0\\ terminator");
+        assert_eq!(decode("plain"), "plain");
+        assert_eq!(decode("trailing\\"), "trailing\\");
+        assert!(is_step("asm.P21") && !is_step("step") && !is_step("a.step.zip"));
+    }
+
+    #[test]
+    fn deeply_nested_parameters_do_not_overflow_the_stack() {
+        let n = 200_000;
+        let body = format!("'a',{}{},#7", "(".repeat(n), ")".repeat(n));
+        let p = params(&body);
+        assert_eq!(p.len(), 3);
+        assert_eq!(p[0], Param::Str("a".into()));
+        assert_eq!(p[2], Param::Ref(7));
+        // The outer levels are kept, the rest is skipped as one parameter.
+        let mut level = &p[1];
+        let mut depth = 0;
+        while let Param::List(inner) = level {
+            depth += 1;
+            level = &inner[0];
+        }
+        assert_eq!((depth, level), (MAX_NESTING, &Param::Other));
+
+        let file = format!(
+            "{}#1=PRODUCT({}{});\n",
+            product(1, "A", "A"),
+            "(".repeat(n),
+            ")".repeat(n)
+        );
+        assert!(read(&step(&file)).is_err());
     }
 }
