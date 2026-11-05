@@ -1,0 +1,5 @@
+{
+  "status": 400,
+  "headers": {},
+  "body": { "type": "error", "error": { "type": "invalid_request_error", "message": "bad model" }, "request_id": "req_03" }
+}

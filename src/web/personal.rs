@@ -71,6 +71,12 @@ pub struct SaveSearchForm {
     state: String,
     #[serde(default)]
     system: String,
+    #[serde(default)]
+    class: String,
+    #[serde(default)]
+    attr: String,
+    #[serde(default)]
+    value: String,
 }
 
 pub async fn save_search(
@@ -84,6 +90,9 @@ pub async fn save_search(
         ("project", form.project.as_str()),
         ("state", form.state.as_str()),
         ("system", form.system.as_str()),
+        ("class", form.class.as_str()),
+        ("attr", form.attr.as_str()),
+        ("value", form.value.as_str()),
     ];
     let back = format!("/items?{}", personal::normalize_query(&pairs));
     let result = personal::save_search(&st.db, &ctx.me, &form.name, &pairs).await;
@@ -278,8 +287,11 @@ pub async fn bom_compare(
     Path(id): Path<Uuid>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let cmp = comparison(&st, &ctx.me, id, &q).await?;
+    let mut cmp = comparison(&st, &ctx.me, id, &q).await?;
     let summary = bom_compare::summary(&cmp.diffs);
+    // like the BOM page: the first lines here, all in the Excel download
+    let diffs_total = cmp.diffs.len();
+    cmp.diffs.truncate(super::bom::ROWS_SHOWN);
     render(
         &st,
         &ctx,
@@ -292,6 +304,7 @@ pub async fn bom_compare(
             "depth": cmp.depth.as_str(),
             "rule": cmp.rule.as_str(),
             "diffs": cmp.diffs,
+            "diffs_total": diffs_total,
             "summary": summary,
         }),
     )

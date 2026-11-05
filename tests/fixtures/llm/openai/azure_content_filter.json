@@ -1,0 +1,14 @@
+{
+  "id": "chatcmpl-az2",
+  "object": "chat.completion",
+  "model": "gpt-5.4",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "content_filter",
+      "message": { "role": "assistant" },
+      "content_filter_results": { "violence": { "filtered": true, "severity": "high" } }
+    }
+  ],
+  "usage": { "prompt_tokens": 80, "completion_tokens": 0, "total_tokens": 80 }
+}

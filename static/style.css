@@ -17,8 +17,8 @@
   --gutter: 24px;
   --page-width: min(100% - 2 * var(--gutter), 1600px);
   font-family: var(--sans);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizelegibility;
@@ -712,7 +712,7 @@ fieldset.plain > label.field > .hint { margin-top: 2px; }
 input[type=text], input[type=password], input[type=email], input[type=number], input[type=search], input[type=date], input[type=url],
 select, textarea {
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-body);
   color: var(--text);
   background: var(--input-bg);
   border: 1px solid var(--control-border);
@@ -723,7 +723,7 @@ select, textarea {
   width: 100%;
   transition: border-color 120ms ease;
 }
-textarea { height: auto; min-height: 88px; padding: 6px 10px; resize: vertical; line-height: 20px; }
+textarea { height: auto; min-height: 88px; padding: 6px 10px; resize: vertical; line-height: var(--lh-body); }
 /* the review comment at reading width, the same as in the desktop app */
 #decision textarea { max-width: 72ch; }
 select {
@@ -759,7 +759,7 @@ input[type=file]::file-selector-button {
   padding: 0 12px;
   margin-right: 10px;
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 500;
   color: var(--text);
   cursor: pointer;
@@ -781,9 +781,9 @@ input[type=file]::file-selector-button {
 
 button, .button {
   font: inherit;
-  font-size: 14px;
+  font-size: var(--fs-body);
   font-weight: 500;
-  line-height: 20px;
+  line-height: var(--lh-body);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1391,3 +1391,40 @@ td.row-actions details.menu { display: inline-block; text-align: left; }
   /* wide screens: wrappers do not clip the row menus */
   .table-wrap:not(.rail .table-wrap) { overflow: visible; }
 }
+
+/* rendered pictures of a simulation's results */
+.sim-gallery { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
+.sim-gallery a { display: block; color: inherit; text-decoration: none; }
+.sim-gallery img { display: block; width: 100%; height: 8rem; object-fit: contain; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--surface); }
+.sim-gallery span { display: block; margin-top: 0.25rem; overflow-wrap: anywhere; }
+
+/* Assistant sidebar (shared/js/assistant.js, shared/css/assistant.css): fixed
+   on the right below the top bar; on wide screens the page makes room, on
+   narrower ones the drawer overlays it, on a phone it is a full-screen sheet. */
+.assistant-toggle { background: none; border: 0; padding: 0; cursor: pointer; }
+.assistant-toggle[aria-expanded="true"] { color: var(--text); background: var(--surface-2); }
+#assistant-drawer {
+  position: fixed;
+  z-index: 25;
+  top: var(--topbar-h);
+  right: 0;
+  bottom: 0;
+  max-width: 100vw;
+  box-shadow: var(--shadow-pop);
+}
+@media (min-width: 1101px) {
+  /* the page narrows; the top bar keeps the full width */
+  html.tc-assistant-open body { margin-right: var(--tc-assistant-w, 400px); }
+  html.tc-assistant-open .topbar { margin-right: calc(-1 * var(--tc-assistant-w, 400px)); }
+  html.tc-assistant-open #assistant-drawer { box-shadow: none; }
+}
+@media (max-width: 640px) {
+  #assistant-drawer { top: 0; left: 0; width: auto; }
+  #assistant-drawer .tc-a-handle { display: none; }
+  html.tc-assistant-open body { overflow: hidden; }
+}
+@media print { #assistant-drawer, .assistant-toggle { display: none; } }
+
+/* extraction templates of a project group */
+.template-fields { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+.template-fields > label { gap: 2px; }

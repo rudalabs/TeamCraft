@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Compare BOM {{ before.item_number }}/{{ before.code }} – {{ after.code }}{% endblock %}
 {% block nav_items %}active{% endblock %}
+{% block tc_context %}data-tc-kind="compare" data-tc-item="{{ after.item_number }}" data-tc-revision="{{ after.code }}" data-tc-view="bom-compare"{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">
@@ -65,6 +66,7 @@
     </tbody>
   </table>
   </div>
+  {% if diffs_total is defined and diffs_total > diffs|length %}<p class="hint">Showing the first {{ diffs|length }} of {{ diffs_total }} lines; the counts above cover all of them. Download Excel for the complete comparison.</p>{% endif %}
   {% if depth == "all" %}
   <p class="hint">Comparison over all levels, child revisions resolved with the rule “{{ rule|replace("_", " ") }}”. Lines are matched by child item (and find number) below each matched line; added and removed lines bring their whole sub-tree. {% if rule == "as_released" %}A new child revision counts as a change.{% else %}This rule resolves a child by its item alone, so both sides get the same child revision and the same sub-tree – choose “As released” to see changed child revisions.{% endif %}</p>
   {% else %}

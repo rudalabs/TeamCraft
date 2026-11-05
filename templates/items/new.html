@@ -43,6 +43,11 @@
         <input type="text" name="unit" value="{{ form.unit }}" list="units" maxlength="16">
         <datalist id="units">{% for u in units %}<option value="{{ u }}">{% endfor %}</datalist>
       </label>
+      <label>Classification <span class="hint">custom attributes: after creating, under Edit</span>
+        <select name="classification">
+          {% for c in classifications %}<option value="{{ c.value }}" {% if form.classification == c.value %}selected{% endif %}>{{ c.label }}</option>{% endfor %}
+        </select>
+      </label>
     </div>
     <div class="form-row">
       <label>Material

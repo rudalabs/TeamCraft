@@ -93,6 +93,55 @@ Solver scripts write their results through the REST API
 (`PUT …/simulation/results` replaces the set in one transaction; see the
 [REST API](../reference/api.md#simulations)).
 
+### Values from files at check-in
+
+Two bounded ways fill the table without typing – neither reads big result
+files:
+
+**The exchange file.** A file named `teamcraft-results.json` or
+`teamcraft-results.csv` (at most 1 MB) checked in with the simulation
+revision sets the values in the same transaction as the check-in, with an
+audit entry:
+
+```json
+{ "results": [
+  { "name": "Pressure drop", "value": 388.25, "unit": "Pa", "limit_max": 500, "load_case": "nominal" },
+  { "name": "Max. von Mises stress", "value": 182.5, "unit": "MPa", "limit_min": null, "limit_max": 250,
+    "solver": "CalculiX", "solver_version": "2.21", "note": "" }
+] }
+```
+
+A bare array works too. `name` and `value` (a number) are required;
+`unit`, `limit_min`, `limit_max`, `load_case`, `solver`, `solver_version` and
+`note` are optional; other keys are refused. The CSV has the columns
+`name,value,unit,limit_min,limit_max,load_case` (see above). A value with the
+same name and load case is updated. A malformed file **refuses the whole
+check-in** with the place of the problem (`results[1].value must be a number`,
+`Row 3: …`, JSON line and column) – nothing is half-written, the revision stays
+checked out.
+
+**Extraction templates.** Managers of a project group (and administrators)
+define templates on the group's page, or through the REST API. A template
+finds one number in a small *text* file (`.txt`, `.csv`, `.log`, `.out`,
+`.dat`, `.rpt`, `.html`, … – only the first 2 MB are read):
+
+| Field | Meaning |
+|---|---|
+| `name` | the result's name (with `load_case`: the key of the value) |
+| `file_pattern` | file names it applies to, `*` and `?`, case-insensitive, e.g. `*.log` |
+| `method` | `regex`: the first capture group of `pattern` on a line is the number; `csv`: the column `csv_column` (header name), optionally only the row where `csv_key_column` = `csv_key_value` |
+| `pick` | `last` (default) or `first` match – a solver log reports the final value last |
+| `unit`, `lower_limit`, `upper_limit`, `load_case`, `solver` | stored with the value; the limits decide pass or fail |
+| `enabled` | switch a template off without deleting it |
+
+Example: `Pressure drop:\s*([-+0-9.eE]+)\s*Pa` on `*.log`. Regular
+expressions run in linear time (no backtracking) and are limited in size, so a
+hostile pattern or file cannot hang the server. The value is shown with its
+source (`solver.log:412`) in the *Solver* column. A template that does not
+match does nothing; templates belong to one group and apply to simulations of
+that group only. Values typed in by hand are overwritten by a template or the
+exchange file with the same name and load case on the next check-in.
+
 ## Results in 3D
 
 Result files in open formats open in the browser's 3D viewer like CAD
@@ -133,6 +182,18 @@ Like all previews, the conversion runs once per file version in a separate
 process with a time limit and is cached; damaged files show an error message
 instead of a model.
 
+### Large results
+
+Result files can be huge, and TeamCraft does not read them fully. A file above
+`TEAMCRAFT_PREVIEW_MAX_RESULT_MB` (default 64 MB) is stored and downloadable
+but gets no 3D preview (the page says so); smaller ones are converted in an
+isolated process with a time and memory limit. Numbers are never extracted
+from solver output on their own. To get the key figures into the *Results*
+table, type them in, import a CSV/Excel table, or let a script or an agent
+fill them in from a report. For pictures, attach rendered images (PNG, JPEG
+or WebP, at most 8 MB each): they appear as a small gallery on the *Results*
+card of the revision.
+
 ## Comparing results
 
 *Compare with another revision* on the Results card puts the values of two
@@ -141,7 +202,9 @@ with the difference, the relative change and the pass/fail status of both.
 
 ## Limits of version 1
 
-* Result values are not extracted from result files automatically; VTK,
+* Result values are not extracted from solver result files (by design:
+  large results are never parsed fully) – use the exchange file, templates
+  on small text files, a CSV/Excel table or the REST API; VTK,
   VTU/VTP and `.frd` files are previewed in 3D (see above), the other result
   formats are stored and recognised, not parsed.
 * Large result files go through the normal upload (`TEAMCRAFT_MAX_UPLOAD_MB`);

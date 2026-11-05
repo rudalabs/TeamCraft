@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ change.number }} {{ change.title }}{% endblock %}
 {% block nav_changes %}active{% endblock %}
+{% block tc_context %}data-tc-kind="change" data-tc-change="{{ change.number }}"{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 <div class="page-head">
@@ -36,9 +37,6 @@
       <button class="danger" type="submit" title="Cancel {{ change.number }} at once (cannot be undone)">Cancel change</button>
     </form>
     {% endif %}
-    {% if assistant_enabled %}
-    <button class="ghost" type="button" data-toggle="assistant-panel" title="A briefing for the review: what changes, impact, risks, open questions">Ask TeamCraft…</button>
-    {% endif %}
   </div>
 </div>
 {% set approved = reviews|selectattr("decision", "eq", "approved")|list|length %}
@@ -50,9 +48,6 @@
   <div><dt>Submitted</dt><dd>{{ m.time(change.submitted_at) }}</dd></div>
   <div><dt>Reviewers</dt><dd>{% if reviews %}{{ approved }}/{{ reviews|length }} approved{% else %}<span class="dim">none yet</span>{% endif %}</dd></div>
 </dl>
-{% if assistant_enabled %}
-{{ m.assistant_panel([["review_brief", "Brief me for this review"]], "", "", change.number, "/changes/" ~ change.id) }}
-{% endif %}
 
 {% if implements %}
 <div class="notice">Implements {% for r in implements %}<a href="/requests/{{ r.id }}">{{ r.number }}</a> {{ r.title }} ({{ r.status|label }}){% if not loop.last %} · {% endif %}{% endfor %}{% if change.status != "released" %} – when this change is released, the accepted request{% if implements|length > 1 %}s become{% else %} becomes{% endif %} implemented{% endif %}.</div>
@@ -272,6 +267,7 @@
     </tbody>
   </table>
   </div>
+  {% if impact_total is defined and impact_total > impact|length %}<p class="hint">Showing the {{ impact|length }} nearest of {{ impact_total }} dependents. The impact analysis of the REST API lists all of them.</p>{% endif %}
   {% elif not hidden_dependents %}<p class="empty">No other item uses or references the revisions of this change.</p>{% endif %}
   {{ m.hidden_count(hidden_dependents, "dependents") }}
 </section>

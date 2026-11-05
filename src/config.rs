@@ -82,6 +82,8 @@ pub struct Config {
     /// Root directory of the file vault (and of the cached 3D previews).
     pub vault_dir: PathBuf,
     pub max_upload_bytes: u64,
+    /// Size and memory limits of the 3D preview (`TEAMCRAFT_PREVIEW_MAX_*`).
+    pub preview: crate::preview::PreviewLimits,
     /// Largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/{id}`).
     pub upload_chunk_bytes: u64,
     pub session_ttl: Duration,
@@ -103,7 +105,7 @@ pub struct Config {
     pub request_digest_hours: u64,
     /// Notifications to Mattermost. `None` = disabled.
     pub mattermost: Option<MattermostConfig>,
-    /// The built-in assistant (Claude via the Anthropic API). `None` = disabled.
+    /// The built-in assistant (Anthropic or an OpenAI-compatible API). `None` = disabled.
     pub assistant: Option<AssistantConfig>,
     /// Which targets outgoing event webhooks may reach.
     pub webhooks: WebhookConfig,
@@ -172,29 +174,274 @@ fn parse_allowed_hosts(raw: &str) -> Result<Vec<String>> {
     Ok(hosts)
 }
 
-/// Default model of the assistant.
+/// Default model of the `anthropic` provider.
 pub const DEFAULT_ASSISTANT_MODEL: &str = "claude-opus-5-5";
 /// Default for the most model calls of one assistant run.
 pub const DEFAULT_ASSISTANT_MAX_STEPS: u32 = 12;
+/// Default output tokens per model call.
+pub const DEFAULT_ASSISTANT_MAX_TOKENS: u32 = 16_000;
+/// Default time limit of one HTTP call to the AI service, in seconds.
+pub const DEFAULT_ASSISTANT_REQUEST_TIMEOUT: u64 = 180;
+/// Default time limit of a whole run, in seconds.
+pub const DEFAULT_ASSISTANT_RUN_TIMEOUT: u64 = 240;
+/// Default number of runs at the same time.
+pub const DEFAULT_ASSISTANT_MAX_CONCURRENT: usize = 4;
+/// Default for how long an idle assistant conversation is kept (days).
+pub const DEFAULT_ASSISTANT_RETENTION_DAYS: u32 = 30;
+
+/// Which wire format the assistant speaks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AssistantProvider {
+    /// Anthropic Messages API.
+    Anthropic,
+    /// OpenAI and Azure OpenAI (v1): Chat Completions, `max_completion_tokens`.
+    OpenAi,
+    /// Any other Chat Completions server (Ollama, vLLM, Mistral, OpenRouter,
+    /// Groq, LM Studio): `max_tokens`, key optional.
+    OpenAiCompatible,
+}
+
+impl AssistantProvider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AssistantProvider::Anthropic => "anthropic",
+            AssistantProvider::OpenAi => "openai",
+            AssistantProvider::OpenAiCompatible => "openai-compatible",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<AssistantProvider> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "anthropic" => Some(AssistantProvider::Anthropic),
+            "openai" => Some(AssistantProvider::OpenAi),
+            "openai-compatible" => Some(AssistantProvider::OpenAiCompatible),
+            _ => None,
+        }
+    }
+
+    /// The API base when `TEAMCRAFT_ASSISTANT_BASE_URL` is not set.
+    pub fn default_base_url(self) -> Option<&'static str> {
+        match self {
+            AssistantProvider::Anthropic => Some("https://api.anthropic.com/v1"),
+            AssistantProvider::OpenAi => Some("https://api.openai.com/v1"),
+            AssistantProvider::OpenAiCompatible => None,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct AssistantConfig {
-    /// Anthropic API key (secret – never log it).
-    pub api_key: String,
-    /// Claude model id, e.g. `claude-opus-5-5`.
+    pub provider: AssistantProvider,
+    /// API base without a trailing slash; no user name or password in it.
+    pub base_url: String,
+    /// API key (secret – never log it). Optional for `openai-compatible`.
+    pub api_key: Option<String>,
+    /// Model id (or Azure deployment name), e.g. `claude-opus-5-5`.
     pub model: String,
     /// Most model calls (tool-use rounds) of one run.
     pub max_steps: u32,
+    /// Output tokens per model call.
+    pub max_tokens: u32,
+    /// Time limit of one HTTP call.
+    pub request_timeout: Duration,
+    /// Time limit of a whole run.
+    pub run_timeout: Duration,
+    /// Runs at the same time on this server.
+    pub max_concurrent: usize,
+    /// Days an idle conversation (thread) is kept before it is deleted.
+    pub retention_days: u32,
 }
 
 impl std::fmt::Debug for AssistantConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AssistantConfig")
-            .field("api_key", &"<redacted>")
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .field("model", &self.model)
             .field("max_steps", &self.max_steps)
+            .field("max_tokens", &self.max_tokens)
+            .field("request_timeout", &self.request_timeout)
+            .field("run_timeout", &self.run_timeout)
+            .field("max_concurrent", &self.max_concurrent)
+            .field("retention_days", &self.retention_days)
             .finish()
     }
+}
+
+impl AssistantConfig {
+    /// The host of the API base (never the key or a path).
+    pub fn host(&self) -> String {
+        reqwest::Url::parse(&self.base_url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string))
+            .unwrap_or_default()
+    }
+
+    /// `provider:model@host` for logs and the startup summary.
+    pub fn label(&self) -> String {
+        format!("{}:{}@{}", self.provider.as_str(), self.model, self.host())
+    }
+
+    /// A warning when the key would travel over plain `http` to a host that
+    /// is not this computer.
+    pub fn insecure_key_warning(&self) -> Option<String> {
+        self.api_key.as_ref()?;
+        let url = reqwest::Url::parse(&self.base_url).ok()?;
+        if url.scheme() != "http" {
+            return None;
+        }
+        let host = url.host_str()?;
+        let bare = host.trim_start_matches('[').trim_end_matches(']');
+        let loopback = host.eq_ignore_ascii_case("localhost")
+            || host.to_ascii_lowercase().ends_with(".localhost")
+            || bare
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+        (!loopback).then(|| {
+            format!(
+                "the assistant API key is sent over plain http to {host}: use https, or a host on this computer"
+            )
+        })
+    }
+}
+
+/// Reads the assistant settings (see `docs/src/admin/configuration.md`).
+/// `None` = disabled.
+fn assistant_config<F: Fn(&str) -> Option<String>>(
+    env: &Env<F>,
+) -> Result<Option<AssistantConfig>> {
+    // A key file with only blanks counts as "not set", like an empty variable.
+    let read_key = |name: &str| -> Result<Option<String>> {
+        let key = env
+            .get(name)?
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+        if let Some(k) = &key {
+            if k.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                bail!("{name} must not contain spaces or line breaks");
+            }
+        }
+        Ok(key)
+    };
+    let primary = read_key("TEAMCRAFT_ASSISTANT_API_KEY")?;
+    let alias = read_key("TEAMCRAFT_ANTHROPIC_API_KEY")?;
+    let api_key = match (primary, alias) {
+        (Some(a), Some(b)) if a != b => bail!(
+            "TEAMCRAFT_ASSISTANT_API_KEY and TEAMCRAFT_ANTHROPIC_API_KEY are both set with \
+             different values: set only TEAMCRAFT_ASSISTANT_API_KEY"
+        ),
+        (a, b) => a.or(b),
+    };
+    let explicit = env
+        .get("TEAMCRAFT_ASSISTANT_PROVIDER")?
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty());
+    let provider = match &explicit {
+        Some(p) => AssistantProvider::parse(p).ok_or_else(|| {
+            anyhow!("TEAMCRAFT_ASSISTANT_PROVIDER must be anthropic, openai or openai-compatible")
+        })?,
+        None => AssistantProvider::Anthropic,
+    };
+    let base_url = env
+        .get("TEAMCRAFT_ASSISTANT_BASE_URL")?
+        .map(|u| u.trim().to_string())
+        .filter(|u| !u.is_empty());
+    // Enabled: a key, or `openai-compatible` with a base URL (local servers
+    // need no key).
+    let enabled = match provider {
+        AssistantProvider::OpenAiCompatible => api_key.is_some() || base_url.is_some(),
+        _ => api_key.is_some(),
+    };
+    if !enabled {
+        return Ok(None);
+    }
+    let base_url = match base_url.as_deref().or(provider.default_base_url()) {
+        Some(u) => u.to_string(),
+        None => bail!("TEAMCRAFT_ASSISTANT_BASE_URL is required for TEAMCRAFT_ASSISTANT_PROVIDER=openai-compatible"),
+    };
+    let parsed = reqwest::Url::parse(&base_url)
+        .map_err(|e| anyhow!("TEAMCRAFT_ASSISTANT_BASE_URL is not a valid URL: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        bail!("TEAMCRAFT_ASSISTANT_BASE_URL must be an http:// or https:// URL with a host");
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        bail!("TEAMCRAFT_ASSISTANT_BASE_URL must not contain a user name or password");
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        bail!("TEAMCRAFT_ASSISTANT_BASE_URL must not contain a query or fragment");
+    }
+    let base_url = base_url.trim_end_matches('/').to_string();
+
+    let model = env
+        .get("TEAMCRAFT_ASSISTANT_MODEL")?
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty());
+    let model = match (model, provider) {
+        (Some(m), _) => m,
+        (None, AssistantProvider::Anthropic) => DEFAULT_ASSISTANT_MODEL.to_string(),
+        (None, _) => bail!("TEAMCRAFT_ASSISTANT_MODEL is required for the openai providers"),
+    };
+    if !model
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | ':' | '@' | '/'))
+    {
+        bail!("TEAMCRAFT_ASSISTANT_MODEL must be a model id such as {DEFAULT_ASSISTANT_MODEL}");
+    }
+    let max_steps = env.parse_or("TEAMCRAFT_ASSISTANT_MAX_STEPS", DEFAULT_ASSISTANT_MAX_STEPS)?;
+    if !(1..=50).contains(&max_steps) {
+        bail!("TEAMCRAFT_ASSISTANT_MAX_STEPS must be between 1 and 50");
+    }
+    let max_tokens = env.parse_or(
+        "TEAMCRAFT_ASSISTANT_MAX_TOKENS",
+        DEFAULT_ASSISTANT_MAX_TOKENS,
+    )?;
+    if !(256..=200_000).contains(&max_tokens) {
+        bail!("TEAMCRAFT_ASSISTANT_MAX_TOKENS must be between 256 and 200000");
+    }
+    let request_timeout = env.parse_or(
+        "TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT",
+        DEFAULT_ASSISTANT_REQUEST_TIMEOUT,
+    )?;
+    let run_timeout = env.parse_or(
+        "TEAMCRAFT_ASSISTANT_RUN_TIMEOUT",
+        DEFAULT_ASSISTANT_RUN_TIMEOUT.max(request_timeout),
+    )?;
+    if !(5..=3600).contains(&request_timeout) {
+        bail!("TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT must be between 5 and 3600 seconds");
+    }
+    if !(5..=7200).contains(&run_timeout) || run_timeout < request_timeout {
+        bail!(
+            "TEAMCRAFT_ASSISTANT_RUN_TIMEOUT must be between 5 and 7200 seconds and at least \
+             TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT"
+        );
+    }
+    let max_concurrent = env.parse_or(
+        "TEAMCRAFT_ASSISTANT_MAX_CONCURRENT",
+        DEFAULT_ASSISTANT_MAX_CONCURRENT,
+    )?;
+    if !(1..=64).contains(&max_concurrent) {
+        bail!("TEAMCRAFT_ASSISTANT_MAX_CONCURRENT must be between 1 and 64");
+    }
+    let retention_days = env.parse_or(
+        "TEAMCRAFT_ASSISTANT_RETENTION_DAYS",
+        DEFAULT_ASSISTANT_RETENTION_DAYS,
+    )?;
+    if !(1..=365).contains(&retention_days) {
+        bail!("TEAMCRAFT_ASSISTANT_RETENTION_DAYS must be between 1 and 365");
+    }
+    Ok(Some(AssistantConfig {
+        provider,
+        base_url,
+        api_key,
+        model,
+        max_steps,
+        max_tokens,
+        request_timeout: Duration::from_secs(request_timeout),
+        run_timeout: Duration::from_secs(run_timeout),
+        max_concurrent,
+        retention_days,
+    }))
 }
 
 #[derive(Clone)]
@@ -299,6 +546,31 @@ impl Config {
         if max_upload_mb == 0 {
             bail!("TEAMCRAFT_MAX_UPLOAD_MB must be at least 1");
         }
+        let preview = {
+            let defaults = crate::preview::PreviewLimits::default();
+            let mb = |key: &str, default: u64, min: u64| -> Result<u64> {
+                let value = env.parse_or(key, default / (1024 * 1024))?;
+                if !(min..=1_048_576).contains(&value) {
+                    bail!("{key} must be between {min} and 1048576");
+                }
+                Ok(value * 1024 * 1024)
+            };
+            crate::preview::PreviewLimits {
+                max_result_bytes: mb(
+                    "TEAMCRAFT_PREVIEW_MAX_RESULT_MB",
+                    defaults.max_result_bytes,
+                    1,
+                )?,
+                max_mesh_bytes: mb("TEAMCRAFT_PREVIEW_MAX_MESH_MB", defaults.max_mesh_bytes, 1)?,
+                max_step_bytes: mb("TEAMCRAFT_PREVIEW_MAX_STEP_MB", defaults.max_step_bytes, 1)?,
+                // 0 = no limit
+                max_memory_bytes: mb(
+                    "TEAMCRAFT_PREVIEW_MAX_MEMORY_MB",
+                    defaults.max_memory_bytes,
+                    0,
+                )?,
+            }
+        };
         let upload_chunk_mb = env.parse_or("TEAMCRAFT_UPLOAD_CHUNK_MB", 16u64)?;
         if !(1..=1024).contains(&upload_chunk_mb) {
             bail!("TEAMCRAFT_UPLOAD_CHUNK_MB must be between 1 and 1024");
@@ -384,40 +656,7 @@ impl Config {
             }
             None => None,
         };
-        // A key file with only blanks counts as "not set", like an empty variable.
-        let api_key = env
-            .get("TEAMCRAFT_ANTHROPIC_API_KEY")?
-            .map(|k| k.trim().to_string())
-            .filter(|k| !k.is_empty());
-        let assistant = match api_key {
-            Some(api_key) => {
-                if api_key.chars().any(|c| c.is_whitespace() || c.is_control()) {
-                    bail!("TEAMCRAFT_ANTHROPIC_API_KEY must not contain spaces or line breaks");
-                }
-                let model = env
-                    .get("TEAMCRAFT_ASSISTANT_MODEL")?
-                    .map(|m| m.trim().to_string())
-                    .filter(|m| !m.is_empty())
-                    .unwrap_or_else(|| DEFAULT_ASSISTANT_MODEL.to_string());
-                if !model
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '_' | ':' | '@'))
-                {
-                    bail!("TEAMCRAFT_ASSISTANT_MODEL must be a model id such as {DEFAULT_ASSISTANT_MODEL}");
-                }
-                let max_steps =
-                    env.parse_or("TEAMCRAFT_ASSISTANT_MAX_STEPS", DEFAULT_ASSISTANT_MAX_STEPS)?;
-                if !(1..=50).contains(&max_steps) {
-                    bail!("TEAMCRAFT_ASSISTANT_MAX_STEPS must be between 1 and 50");
-                }
-                Some(AssistantConfig {
-                    api_key,
-                    model,
-                    max_steps,
-                })
-            }
-            None => None,
-        };
+        let assistant = assistant_config(&env)?;
 
         let webhooks = WebhookConfig {
             allowed_hosts: match env.get("TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS")? {
@@ -448,6 +687,7 @@ impl Config {
             db_max_connections,
             vault_dir,
             max_upload_bytes: max_upload_mb * 1024 * 1024,
+            preview,
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
             cookie_secure,
@@ -484,7 +724,7 @@ impl Config {
             self.mattermost
                 .as_ref()
                 .map_or("off", |m| if m.direct { "direct" } else { "channel" }),
-            self.assistant.as_ref().map_or("off", |a| a.model.as_str()),
+            self.assistant.as_ref().map_or_else(|| "off".to_string(), |a| a.label()),
             match (
                 self.webhooks.allowed_hosts.is_empty(),
                 self.webhooks.allow_private
@@ -1029,6 +1269,211 @@ mod tests {
     }
 
     #[test]
+    fn preview_limits_from_the_environment() {
+        let d = config_from(&[("TEAMCRAFT_DB_PASSWORD", "x")])
+            .unwrap()
+            .preview;
+        assert_eq!(d, crate::preview::PreviewLimits::default());
+        assert_eq!(d.max_result_bytes, 64 * 1024 * 1024);
+        assert_eq!(d.max_memory_bytes, 1024 * 1024 * 1024);
+        let c = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_PREVIEW_MAX_RESULT_MB", "8"),
+            ("TEAMCRAFT_PREVIEW_MAX_MEMORY_MB", "0"),
+        ])
+        .unwrap()
+        .preview;
+        assert_eq!(c.max_result_bytes, 8 * 1024 * 1024);
+        assert_eq!(c.max_memory_bytes, 0, "0 = no limit");
+        for bad in [
+            ("TEAMCRAFT_PREVIEW_MAX_RESULT_MB", "0"),
+            ("TEAMCRAFT_PREVIEW_MAX_MESH_MB", "x"),
+            ("TEAMCRAFT_PREVIEW_MAX_STEP_MB", "0"),
+        ] {
+            assert!(config_from(&[("TEAMCRAFT_DB_PASSWORD", "x"), bad]).is_err());
+        }
+    }
+
+    fn assistant_from(pairs: &[(&str, &str)]) -> Result<Option<AssistantConfig>> {
+        let mut all = vec![("TEAMCRAFT_DB_PASSWORD", "x")];
+        all.extend_from_slice(pairs);
+        config_from(&all).map(|c| c.assistant)
+    }
+
+    #[test]
+    fn assistant_providers() {
+        use AssistantProvider::*;
+        // the old variable alone: the Anthropic defaults, as before
+        let a = assistant_from(&[("TEAMCRAFT_ANTHROPIC_API_KEY", "k")])
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.provider, Anthropic);
+        assert_eq!(a.base_url, "https://api.anthropic.com/v1");
+        assert_eq!(a.api_key.as_deref(), Some("k"));
+        assert_eq!(a.model, DEFAULT_ASSISTANT_MODEL);
+        assert_eq!(a.max_tokens, 16_000);
+        assert_eq!(a.request_timeout, Duration::from_secs(180));
+        assert_eq!(a.run_timeout, Duration::from_secs(240));
+        assert_eq!(a.max_concurrent, 4);
+        assert_eq!(a.label(), "anthropic:claude-opus-5-5@api.anthropic.com");
+
+        // the new key variable, the alias with the same value, a conflict
+        let new = [("TEAMCRAFT_ASSISTANT_API_KEY", "k")];
+        assert_eq!(assistant_from(&new).unwrap().unwrap().provider, Anthropic);
+        assert!(assistant_from(&[
+            ("TEAMCRAFT_ASSISTANT_API_KEY", "k"),
+            ("TEAMCRAFT_ANTHROPIC_API_KEY", "k"),
+        ])
+        .unwrap()
+        .is_some());
+        let conflict = assistant_from(&[
+            ("TEAMCRAFT_ASSISTANT_API_KEY", "one"),
+            ("TEAMCRAFT_ANTHROPIC_API_KEY", "two"),
+        ])
+        .unwrap_err()
+        .to_string();
+        assert!(conflict.contains("different values"));
+        assert!(
+            !conflict.contains("one") && !conflict.contains("two"),
+            "no key in the error"
+        );
+
+        // OpenAI: model required, default base, key required
+        assert!(assistant_from(&[
+            ("TEAMCRAFT_ASSISTANT_PROVIDER", "openai"),
+            ("TEAMCRAFT_ASSISTANT_API_KEY", "k"),
+        ])
+        .is_err());
+        let a = assistant_from(&[
+            ("TEAMCRAFT_ASSISTANT_PROVIDER", "OpenAI"),
+            ("TEAMCRAFT_ASSISTANT_API_KEY", "k"),
+            ("TEAMCRAFT_ASSISTANT_MODEL", "gpt-5.4"),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            (a.provider, a.base_url.as_str()),
+            (OpenAi, "https://api.openai.com/v1")
+        );
+        assert!(
+            assistant_from(&[
+                ("TEAMCRAFT_ASSISTANT_PROVIDER", "openai"),
+                ("TEAMCRAFT_ASSISTANT_MODEL", "gpt-5.4"),
+            ])
+            .unwrap()
+            .is_none(),
+            "no key: disabled"
+        );
+
+        // openai-compatible: a base URL is enough, no key
+        let local = [
+            ("TEAMCRAFT_ASSISTANT_PROVIDER", "openai-compatible"),
+            (
+                "TEAMCRAFT_ASSISTANT_BASE_URL",
+                "http://ollama.internal:11434/v1/",
+            ),
+            ("TEAMCRAFT_ASSISTANT_MODEL", "llama3.1:8b"),
+        ];
+        let a = assistant_from(&local).unwrap().unwrap();
+        assert_eq!(a.provider, OpenAiCompatible);
+        assert_eq!(
+            a.base_url, "http://ollama.internal:11434/v1",
+            "trailing slash dropped"
+        );
+        assert!(a.api_key.is_none());
+        assert_eq!(a.label(), "openai-compatible:llama3.1:8b@ollama.internal");
+        assert!(
+            a.insecure_key_warning().is_none(),
+            "no key, nothing to leak"
+        );
+        assert!(
+            assistant_from(&[local[0], ("TEAMCRAFT_ASSISTANT_API_KEY", "k"), local[2]]).is_err(),
+            "base URL required"
+        );
+        assert!(assistant_from(&local[..2]).is_err(), "model required");
+        assert!(
+            assistant_from(&[
+                ("TEAMCRAFT_ASSISTANT_PROVIDER", "openai-compatible"),
+                ("TEAMCRAFT_ASSISTANT_MODEL", "m")
+            ])
+            .unwrap()
+            .is_none(),
+            "neither key nor URL: disabled"
+        );
+        assert!(assistant_from(&[("TEAMCRAFT_ASSISTANT_PROVIDER", "gemini")]).is_err());
+
+        // every setting; the run timeout follows the request timeout by default
+        let a = assistant_from(&[
+            ("TEAMCRAFT_ASSISTANT_API_KEY", "k"),
+            ("TEAMCRAFT_ASSISTANT_MAX_TOKENS", "4000"),
+            ("TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT", "600"),
+            ("TEAMCRAFT_ASSISTANT_MAX_CONCURRENT", "2"),
+            ("TEAMCRAFT_ASSISTANT_RETENTION_DAYS", "7"),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(a.max_tokens, 4000);
+        assert_eq!(a.request_timeout, Duration::from_secs(600));
+        assert_eq!(a.run_timeout, Duration::from_secs(600));
+        assert_eq!(a.max_concurrent, 2);
+        assert_eq!(a.retention_days, 7);
+        for (key, value) in [
+            ("TEAMCRAFT_ASSISTANT_MAX_TOKENS", "10"),
+            ("TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT", "1"),
+            ("TEAMCRAFT_ASSISTANT_RUN_TIMEOUT", "100"), // below the request timeout of 180
+            ("TEAMCRAFT_ASSISTANT_MAX_CONCURRENT", "0"),
+            ("TEAMCRAFT_ASSISTANT_RETENTION_DAYS", "0"),
+            ("TEAMCRAFT_ASSISTANT_RETENTION_DAYS", "366"),
+        ] {
+            assert!(
+                assistant_from(&[("TEAMCRAFT_ASSISTANT_API_KEY", "k"), (key, value)]).is_err(),
+                "{key}={value}"
+            );
+        }
+    }
+
+    #[test]
+    fn assistant_base_urls_are_checked() {
+        let with = |url: &str| {
+            assistant_from(&[
+                ("TEAMCRAFT_ASSISTANT_API_KEY", "k"),
+                ("TEAMCRAFT_ASSISTANT_BASE_URL", url),
+            ])
+        };
+        assert!(with("https://api.example.com/v1").is_ok());
+        for bad in [
+            "ftp://example.com",
+            "file:///etc/passwd",
+            "https://user:pass@example.com/v1",
+            "https://user@example.com/v1",
+            "https://example.com/v1?key=1",
+            "not a url",
+            "https://",
+        ] {
+            let e = with(bad);
+            assert!(e.is_err(), "{bad}");
+            assert!(
+                !e.unwrap_err().to_string().contains("pass@"),
+                "no credentials in the error"
+            );
+        }
+
+        // the key over plain http: a warning unless the host is this computer
+        let warn = |url: &str| with(url).unwrap().unwrap().insecure_key_warning();
+        assert!(warn("https://llm.example.com/v1").is_none());
+        assert!(warn("http://localhost:11434/v1").is_none());
+        assert!(warn("http://127.0.0.1:8000/v1").is_none());
+        assert!(warn("http://[::1]:8000/v1").is_none());
+        let w = warn("http://llm.example.com/v1").unwrap();
+        assert!(w.contains("plain http") && w.contains("llm.example.com"));
+        assert!(!w.contains("k "), "no key in the warning");
+        assert!(
+            warn("http://10.0.0.5:8000/v1").is_some(),
+            "private is not loopback"
+        );
+    }
+
+    #[test]
     fn assistant_settings() {
         let cfg = config_from(&[("TEAMCRAFT_DB_PASSWORD", "x")]).unwrap();
         assert!(cfg.assistant.is_none(), "disabled without a key");
@@ -1042,6 +1487,7 @@ mod tests {
         let a = cfg.assistant.as_ref().unwrap();
         assert_eq!(a.model, DEFAULT_ASSISTANT_MODEL);
         assert_eq!(a.max_steps, DEFAULT_ASSISTANT_MAX_STEPS);
+        assert_eq!(a.retention_days, DEFAULT_ASSISTANT_RETENTION_DAYS);
         assert!(
             !cfg.summary().contains("sk-test-key-123"),
             "no key in the log"
@@ -1083,6 +1529,8 @@ mod tests {
 
         for (key, value) in [
             ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "0"),
+            ("TEAMCRAFT_ASSISTANT_RETENTION_DAYS", "0"),
+            ("TEAMCRAFT_ASSISTANT_RETENTION_DAYS", "400"),
             ("TEAMCRAFT_ASSISTANT_MAX_STEPS", "500"),
             ("TEAMCRAFT_ASSISTANT_MODEL", "claude opus"),
         ] {

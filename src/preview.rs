@@ -2,7 +2,7 @@
 //!
 //! The server converts a file once into the compact mesh of [`crate::mesh`]
 //! and caches it next to the vault (`previews/ab/<sha256>.v<N>.tcm`); the
-//! browser (`static/viewer.js`) and the desktop app only draw it. Meshes,
+//! browser (`shared/js/viewer.js`) and the desktop app only draw it. Meshes,
 //! point clouds, STEP B-reps (tessellated with the `truck` kernel) and
 //! simulation results (VTK, VTU/VTP, CalculiX FRD with result fields, see
 //! [`crate::simmesh`]) are supported, see [`PreviewFormat`].
@@ -35,6 +35,115 @@ pub const CACHE_VERSION: u32 = 2;
 
 /// Conversions that run at the same time.
 pub const MAX_PARALLEL: usize = 2;
+
+/// Size and memory limits of the preview (`TEAMCRAFT_PREVIEW_MAX_*`).
+///
+/// A file above the cap of its kind is never opened: no conversion is
+/// started, the refusal is cached. Result files (VTK, VTU, VTP, FRD) are the
+/// ones that get huge and are not meant to be parsed fully – a preview of
+/// them is a courtesy, not a feature the server may die for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreviewLimits {
+    /// Simulation result files.
+    pub max_result_bytes: u64,
+    /// Meshes and point clouds.
+    pub max_mesh_bytes: u64,
+    /// STEP B-reps (tessellation needs a multiple of the file size).
+    pub max_step_bytes: u64,
+    /// Address space of the preview process (0 = unlimited; Linux/macOS).
+    pub max_memory_bytes: u64,
+}
+
+const MIB: u64 = 1024 * 1024;
+
+impl Default for PreviewLimits {
+    fn default() -> Self {
+        PreviewLimits {
+            max_result_bytes: 64 * MIB,
+            max_mesh_bytes: 256 * MIB,
+            max_step_bytes: crate::mesh::MAX_STEP_BYTES as u64,
+            max_memory_bytes: 1024 * MIB,
+        }
+    }
+}
+
+impl PreviewLimits {
+    /// The largest input of a format.
+    pub fn max_bytes(&self, format: PreviewFormat) -> u64 {
+        if format.is_result() {
+            self.max_result_bytes
+        } else if format.is_brep() {
+            self.max_step_bytes
+        } else {
+            self.max_mesh_bytes
+        }
+    }
+}
+
+/// Start of every refusal because of the file size (also what is cached).
+const TOO_LARGE: &str = "This file is too large for a 3D preview";
+
+/// Why a file of `size` bytes gets no preview.
+fn too_large_message(size: u64, limit: u64) -> String {
+    format!(
+        "{TOO_LARGE} ({} MB, at most {} MB) – attach a rendered picture or a report, \
+         or download the file.",
+        size.div_ceil(MIB),
+        limit / MIB
+    )
+}
+
+/// Refuses a file above `limit` before it is opened.
+fn check_size(input: &Path, limit: u64) -> anyhow::Result<()> {
+    let size = std::fs::metadata(input)?.len();
+    if size > limit {
+        anyhow::bail!("{}", too_large_message(size, limit));
+    }
+    Ok(())
+}
+
+/// Limits the address space of this process (the preview child), so a file
+/// that needs more memory fails cleanly instead of taking the server host
+/// down. Linux and macOS; elsewhere (Windows) the limit is not enforced.
+/// Returns whether a limit is in force.
+pub fn limit_memory(bytes: u64) -> bool {
+    if bytes == 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        rlimit::setrlimit(rlimit::Resource::AS, bytes, bytes).is_ok()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+/// The message for a preview process that stopped without an error message
+/// (`stderr` = what it printed last): memory exhausted or killed.
+fn describe_failure(aborted: bool, stderr: &str, memory_limit: u64) -> String {
+    let out_of_memory = aborted
+        || stderr.contains("memory allocation")
+        || stderr.contains("out of memory")
+        || stderr.contains("capacity overflow");
+    if out_of_memory && memory_limit > 0 {
+        return format!(
+            "The preview needs more memory than allowed ({} MB) – attach a rendered picture \
+             or a report, or download the file.",
+            memory_limit / MIB
+        );
+    }
+    stderr
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("the converter stopped unexpectedly")
+        .trim_start_matches("Error: ")
+        .chars()
+        .take(500)
+        .collect()
+}
 
 /// 3D formats the preview understands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,16 +262,16 @@ pub fn convert_file(format: PreviewFormat, input: &Path) -> anyhow::Result<Vec<u
 
 /// Reads the file at `input` as a preview mesh.
 pub fn convert(format: PreviewFormat, input: &Path) -> anyhow::Result<crate::mesh::Mesh> {
-    // a STEP file above the limit is not read into memory just to be refused
-    let size = std::fs::metadata(input)?.len();
-    let limit = crate::mesh::MAX_STEP_BYTES as u64;
-    if format == PreviewFormat::Step && size > limit {
-        anyhow::bail!(
-            "The STEP file is too large to preview ({} MB, at most {} MB) – download it instead.",
-            size / (1024 * 1024),
-            limit / (1024 * 1024)
-        );
-    }
+    convert_within(format, input, PreviewLimits::default().max_bytes(format))
+}
+
+/// Like [`convert`]; a file above `max_bytes` is refused before it is opened.
+pub fn convert_within(
+    format: PreviewFormat,
+    input: &Path,
+    max_bytes: u64,
+) -> anyhow::Result<crate::mesh::Mesh> {
+    check_size(input, max_bytes)?;
     let data = std::fs::read(input)?;
     crate::mesh::read(format.as_str(), &data)
 }
@@ -182,15 +291,17 @@ pub fn run_job(
     input: &Path,
     output: Option<&Path>,
     signature: Option<&Path>,
+    max_input_bytes: u64,
 ) -> anyhow::Result<crate::mesh::Mesh> {
     let mesh = if format == CACHED_MESH {
+        check_size(input, max_input_bytes)?;
         let mesh = crate::mesh::Mesh::decode(&std::fs::read(input)?)?;
         mesh.check()?;
         mesh
     } else {
         let format = PreviewFormat::of_format(format)
             .ok_or_else(|| anyhow::anyhow!("no 3D preview for the format '{format}'"))?;
-        convert(format, input)?
+        convert_within(format, input, max_input_bytes)?
     };
     if let Some(output) = output {
         std::fs::write(output, mesh.encode())?;
@@ -231,11 +342,12 @@ pub struct Previews {
     /// The `teamcraft` binary for isolated conversions; `None` = in-process.
     worker: Option<PathBuf>,
     slots: Semaphore,
+    limits: PreviewLimits,
     running: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Previews {
-    pub fn new(vault: &Vault) -> Previews {
+    pub fn new(vault: &Vault, limits: PreviewLimits) -> Previews {
         // Only the real server binary understands `preview-mesh`; test
         // binaries convert in-process.
         let worker = std::env::current_exe().ok().filter(|exe| {
@@ -247,6 +359,7 @@ impl Previews {
             dir: vault.root().join("previews"),
             worker,
             slots: Semaphore::new(MAX_PARALLEL),
+            limits,
             running: Mutex::new(HashMap::new()),
         }
     }
@@ -346,6 +459,8 @@ impl Previews {
                 output: None,
                 signature: Some(tmp.clone()),
                 time_limit: Duration::from_secs(60),
+                max_input_bytes: u64::MAX,
+                memory_bytes: self.limits.max_memory_bytes,
             };
             let outcome = match &self.worker {
                 Some(exe) => run_worker(exe, &job).await,
@@ -382,6 +497,7 @@ impl Previews {
         format: PreviewFormat,
     ) -> AppResult<PathBuf> {
         let (mesh_path, err_path) = self.paths(sha256)?;
+        self.check_size(vault, sha256, format, &err_path).await?;
         if let Some(found) = cached(&mesh_path, &err_path).await? {
             return Ok(found);
         }
@@ -405,6 +521,40 @@ impl Previews {
             .unwrap_or_else(|e| e.into_inner())
             .remove(sha256);
         result
+    }
+
+    /// A file above the size cap of its kind is refused before anything opens
+    /// it; the refusal is cached like a failed conversion. The cap is checked
+    /// on every call (one `stat`), so raising it takes effect at once.
+    async fn check_size(
+        &self,
+        vault: &Vault,
+        sha256: &str,
+        format: PreviewFormat,
+        err_path: &Path,
+    ) -> AppResult<()> {
+        let Ok(size) = tokio::fs::metadata(vault.object_path(sha256)?)
+            .await
+            .map(|m| m.len())
+        else {
+            return Ok(());
+        };
+        let limit = self.limits.max_bytes(format);
+        if size > limit {
+            let message = too_large_message(size, limit);
+            if let Some(dir) = err_path.parent() {
+                let _ = tokio::fs::create_dir_all(dir).await;
+            }
+            let _ = tokio::fs::write(err_path, &message).await;
+            return Err(AppError::BadRequest(message));
+        }
+        // a refusal from before the cap was raised
+        if let Ok(old) = tokio::fs::read_to_string(err_path).await {
+            if old.starts_with(TOO_LARGE) {
+                let _ = tokio::fs::remove_file(err_path).await;
+            }
+        }
+        Ok(())
     }
 
     /// Starts the conversion in the background (after an upload), so the
@@ -452,6 +602,8 @@ impl Previews {
             output: Some(tmp.clone()),
             signature: (!format.is_point_cloud()).then(|| sig_tmp.clone()),
             time_limit: format.time_limit(),
+            max_input_bytes: self.limits.max_bytes(format),
+            memory_bytes: self.limits.max_memory_bytes,
         };
         let started = std::time::Instant::now();
         let outcome = match &self.worker {
@@ -516,6 +668,10 @@ struct Job {
     output: Option<PathBuf>,
     signature: Option<PathBuf>,
     time_limit: Duration,
+    /// Largest input the process opens (the process checks it again).
+    max_input_bytes: u64,
+    /// Address space of the process, 0 = unlimited.
+    memory_bytes: u64,
 }
 
 /// `teamcraft preview-mesh` in a child process that is killed at the time limit.
@@ -526,7 +682,11 @@ async fn run_worker(exe: &Path, job: &Job) -> Result<(), String> {
         .arg("--format")
         .arg(job.format)
         .arg("--input")
-        .arg(&job.input);
+        .arg(&job.input)
+        .arg("--max-input-bytes")
+        .arg(job.max_input_bytes.to_string())
+        .arg("--max-memory-bytes")
+        .arg(job.memory_bytes.to_string());
     if let Some(output) = &job.output {
         command.arg("--output").arg(output);
     }
@@ -549,31 +709,35 @@ async fn run_worker(exe: &Path, job: &Job) -> Result<(), String> {
         Ok(Err(e)) => Err(format!("The preview converter failed: {e}")),
         Ok(Ok(out)) if out.status.success() => Ok(()),
         Ok(Ok(out)) => {
+            #[cfg(unix)]
+            let aborted = std::os::unix::process::ExitStatusExt::signal(&out.status) == Some(6);
+            #[cfg(not(unix))]
+            let aborted = false;
             let stderr = String::from_utf8_lossy(&out.stderr);
-            let message = stderr
-                .lines()
-                .rev()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("the converter stopped unexpectedly")
-                .trim_start_matches("Error: ")
-                .to_string();
-            Err(message.chars().take(500).collect())
+            Err(describe_failure(aborted, &stderr, job.memory_bytes))
         }
     }
 }
 
 /// The job on a blocking thread (tests and unusual installations).
 async fn run_in_process(job: &Job) -> Result<(), String> {
-    let (format, input, output, signature) = (
+    let (format, input, output, signature, max_input) = (
         job.format,
         job.input.clone(),
         job.output.clone(),
         job.signature.clone(),
+        job.max_input_bytes,
     );
     let task = tokio::task::spawn_blocking(move || -> Result<(), String> {
-        run_job(format, &input, output.as_deref(), signature.as_deref())
-            .map(drop)
-            .map_err(|e| e.to_string())
+        run_job(
+            format,
+            &input,
+            output.as_deref(),
+            signature.as_deref(),
+            max_input,
+        )
+        .map(drop)
+        .map_err(|e| e.to_string())
     });
     match tokio::time::timeout(job.time_limit, task).await {
         Err(_) => Err(format!(
@@ -605,6 +769,47 @@ mod tests {
             shape::Outcome::Error(message) => assert!(message.contains("5 of 6 faces")),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn failures_of_the_conversion_process_are_explained() {
+        let limit = 1024 * MIB;
+        let m = describe_failure(true, "", limit);
+        assert!(m.contains("more memory than allowed (1024 MB)"), "{m}");
+        let m = describe_failure(false, "memory allocation of 99 bytes failed", limit);
+        assert!(m.contains("more memory"), "{m}");
+        // without a limit an abort is not blamed on it
+        let m = describe_failure(true, "Error: broken file\n", 0);
+        assert_eq!(m, "broken file");
+        assert_eq!(
+            describe_failure(false, "x\nError: no triangles\n\n", limit),
+            "no triangles"
+        );
+        assert_eq!(
+            describe_failure(false, "", limit),
+            "the converter stopped unexpectedly"
+        );
+    }
+
+    #[test]
+    fn caps_by_kind() {
+        let l = PreviewLimits::default();
+        assert_eq!(l.max_bytes(PreviewFormat::Vtu), 64 * MIB);
+        assert_eq!(l.max_bytes(PreviewFormat::Frd), 64 * MIB);
+        assert_eq!(l.max_bytes(PreviewFormat::Stl), 256 * MIB);
+        assert_eq!(l.max_bytes(PreviewFormat::Las), 256 * MIB);
+        assert_eq!(l.max_bytes(PreviewFormat::Step), 256 * MIB);
+        let dir = std::env::temp_dir().join(format!("tc-cap-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("big.vtu");
+        std::fs::File::create(&file)
+            .unwrap()
+            .set_len(5 * MIB)
+            .unwrap();
+        let e = convert_within(PreviewFormat::Vtu, &file, MIB).unwrap_err();
+        assert!(e.to_string().contains("too large for a 3D preview"), "{e}");
+        assert!(e.to_string().contains("5 MB, at most 1 MB"), "{e}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -653,7 +858,7 @@ mod tests {
     async fn conversions_are_cached_including_failures() {
         let root = std::env::temp_dir().join(format!("teamcraft-preview-{}", uuid::Uuid::new_v4()));
         let vault = Vault::open(&root).await.unwrap();
-        let previews = Previews::new(&vault);
+        let previews = Previews::new(&vault, PreviewLimits::default());
         assert!(previews.worker.is_none(), "tests convert in-process");
         let ok = vault
             .store_bytes(b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid t\n")
@@ -716,7 +921,14 @@ mod tests {
         // A broken cached mesh is an error, not a panic.
         let broken = root.join("broken.tcm");
         std::fs::write(&broken, b"TCMESH01\xff\xff\xff\xff").unwrap();
-        assert!(run_job(CACHED_MESH, &broken, None, Some(&root.join("x.json"))).is_err());
+        assert!(run_job(
+            CACHED_MESH,
+            &broken,
+            None,
+            Some(&root.join("x.json")),
+            u64::MAX
+        )
+        .is_err());
         std::fs::remove_dir_all(&root).ok();
     }
 }

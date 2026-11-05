@@ -20,7 +20,7 @@ use tokio::sync::Notify;
 use crate::{
     acp,
     api::{self, Api, ApiError, Transfer},
-    cadexport, folderimport, layout,
+    bomimport, cadexport, folderimport, layout,
     settings::{self, Settings},
     signin, workspace, AppState,
 };
@@ -257,6 +257,40 @@ pub async fn api(
         .await
 }
 
+/// A question in the assistant sidebar (`POST /assistant`, in the user's
+/// conversation). Unlike [`api`] it can be cancelled with
+/// [`assistant_cancel`]: the request is dropped, so the server stops the run
+/// and stores nothing.
+#[tauri::command]
+pub async fn assistant_send(state: State<'_, AppState>, body: Value) -> CmdResult<Value> {
+    let api = signed_in_api(&state)?;
+    let cancel = Arc::new(Notify::new());
+    *state.assistant_cancel.lock().expect("assistant lock") = Some(cancel.clone());
+    let result = tokio::select! {
+        answer = api.json(Method::POST, "/assistant", Some(&body)) => answer,
+        _ = cancel.notified() => Err(crate::abortable::cancelled("Cancelled.")),
+    };
+    state
+        .assistant_cancel
+        .lock()
+        .expect("assistant lock")
+        .take();
+    result
+}
+
+/// Stops the running assistant question, if any.
+#[tauri::command]
+pub fn assistant_cancel(state: State<'_, AppState>) {
+    if let Some(cancel) = state
+        .assistant_cancel
+        .lock()
+        .expect("assistant lock")
+        .take()
+    {
+        cancel.notify_one();
+    }
+}
+
 /// Content of a file (`kind` = `file` for the current version or `version`)
 /// as raw bytes – for the 3D viewer.
 #[tauri::command]
@@ -341,8 +375,30 @@ pub async fn save_package(
     if let Some(r) = rule {
         path.push_str(&format!("?rule={r}"));
     }
-    api.download_to(&path, &target).await?;
+    // a fresh cancel switch for this download (`cancel_package` flips it);
+    // `package-progress` events follow it: {received, total?}
+    let cancel = Arc::new(AtomicBool::new(false));
+    *state.package_cancel.lock().expect("package lock") = cancel.clone();
+    let events = app.clone();
+    let on_bytes = move |received: u64, total: Option<u64>| {
+        let _ = events.emit(
+            "package-progress",
+            json!({ "received": received, "total": total }),
+        );
+    };
+    api.download_to(&path, &target, &cancel, &on_bytes).await?;
     Ok(Some(target))
+}
+
+/// Stops the running Pack and Go download (also while the server is still
+/// packing); the partial ZIP is removed and nothing is written.
+#[tauri::command]
+pub fn cancel_package(state: State<'_, AppState>) {
+    state
+        .package_cancel
+        .lock()
+        .expect("package lock")
+        .store(true, Ordering::Relaxed);
 }
 
 /// Saves bytes from the web view (the STL export of the 3D viewer) to a file
@@ -757,6 +813,37 @@ pub async fn upload_request_attachment(
         &[],
     )
     .await
+}
+
+/// *Import BOM…*: asks for the BOM table or STEP assembly with the native
+/// open dialog (from Rust, so the web view never chooses paths itself).
+/// `None` = cancelled.
+#[tauri::command]
+pub async fn pick_bom_file(app: AppHandle) -> CmdResult<Option<PathBuf>> {
+    use tauri_plugin_dialog::DialogExt;
+    tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("BOM to import")
+            .add_filter("BOM tables and STEP assemblies", bomimport::EXTENSIONS)
+            .blocking_pick_file()
+            .and_then(|p| p.into_path().ok())
+    })
+    .await
+    .map_err(|e| ApiError::local(format!("The file dialog failed: {e}")))
+}
+
+/// *Import BOM…*: sends the chosen file to the server's BOM import – with
+/// `dry_run` for the preview (the plan), then for real.
+#[tauri::command]
+pub async fn import_bom(
+    state: State<'_, AppState>,
+    path: PathBuf,
+    request: bomimport::Request,
+    dry_run: bool,
+) -> CmdResult<Value> {
+    let api = signed_in_api(&state)?;
+    bomimport::send(&api, &path, &request, dry_run).await
 }
 
 /// `(name on the server, local path)` for every path.

@@ -562,6 +562,8 @@ pub struct SimulationResult {
     pub solver: String,
     pub solver_version: String,
     pub note: String,
+    /// Where an automatic value came from (`file:line`), empty for typed ones.
+    pub source: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     /// `pass`, `fail` or `none` (no limits).
     #[sqlx(skip)]
@@ -585,7 +587,7 @@ impl SimulationResult {
 
 const RESULT_SELECT: &str = "
     SELECT id, revision_id, position, name, value, unit, lower_limit, upper_limit, load_case,
-           solver, solver_version, note, updated_at
+           solver, solver_version, note, source, updated_at
     FROM simulation_results";
 
 /// The result values of a revision the actor may read, in their order.
@@ -669,6 +671,10 @@ pub struct ResultInput {
     pub solver_version: String,
     #[serde(default)]
     pub note: String,
+    /// Where the value came from (`file:line`, set by exchange files and
+    /// templates; never read from a request).
+    #[serde(skip)]
+    pub source: String,
 }
 
 impl ResultInput {
@@ -709,9 +715,9 @@ async fn insert_result(
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO simulation_results (id, revision_id, position, name, value, unit, lower_limit,
-                                         upper_limit, load_case, solver, solver_version, note, created_by)
+                                         upper_limit, load_case, solver, solver_version, note, created_by, source)
          VALUES ($1, $2, (SELECT COALESCE(MAX(position), 0) + 1 FROM simulation_results WHERE revision_id = $2),
-                 $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+                 $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
     )
     .bind(id)
     .bind(rev.id)
@@ -725,6 +731,7 @@ async fn insert_result(
     .bind(&input.solver_version)
     .bind(&input.note)
     .bind(actor.id)
+    .bind(&input.source)
     .execute(&mut *conn)
     .await
     .map_err(|e| {
@@ -822,7 +829,7 @@ pub async fn update_result(
     let updated = sqlx::query(
         "UPDATE simulation_results SET name = $2, value = $3, unit = $4, lower_limit = $5,
                 upper_limit = $6, load_case = $7, solver = $8, solver_version = $9, note = $10,
-                updated_at = now()
+                source = '', updated_at = now()
          WHERE id = $1",
     )
     .bind(id)
@@ -947,6 +954,61 @@ pub async fn import_results(
     }
     let mut tx = pool.begin().await?;
     let rev = lock_editable(&mut tx, actor, revision_id).await?;
+    let summary = write_results(&mut tx, actor, &rev, &inputs, replace, &Origin::Import).await?;
+    tx.commit().await?;
+    Ok(summary)
+}
+
+/// Where a set of result values comes from (audit trail).
+pub(crate) enum Origin {
+    /// A table or the REST API.
+    Import,
+    /// The exchange file `teamcraft-results.json|csv` of a check-in.
+    Exchange(String),
+    /// Extraction templates of the project group.
+    Templates(Vec<String>),
+}
+
+impl Origin {
+    fn action(&self) -> &'static str {
+        match self {
+            Origin::Import => "simulation.result.import",
+            Origin::Exchange(_) => "simulation.result.exchange",
+            Origin::Templates(_) => "simulation.result.template",
+        }
+    }
+
+    fn what(&self) -> String {
+        match self {
+            Origin::Import => "imported result values".into(),
+            Origin::Exchange(file) => format!("result values from {file}"),
+            Origin::Templates(files) => {
+                format!("result values extracted from {}", files.join(", "))
+            }
+        }
+    }
+
+    fn details(&self) -> serde_json::Value {
+        match self {
+            Origin::Import => json!("import"),
+            Origin::Exchange(file) => json!({ "exchange_file": file }),
+            Origin::Templates(files) => json!({ "template_files": files }),
+        }
+    }
+}
+
+/// Writes validated, unique result values into a locked, editable simulation
+/// revision inside the caller's transaction: same name and load case =
+/// update, new = append; with `replace` the others are removed. One audit
+/// entry (and webhook) for the whole set.
+pub(crate) async fn write_results(
+    tx: &mut PgConnection,
+    actor: &Actor,
+    rev: &Revision,
+    inputs: &[ResultInput],
+    replace: bool,
+    origin: &Origin,
+) -> AppResult<ImportSummary> {
     // Read the current values under the revision lock: a value added
     // concurrently must be updated, not inserted a second time.
     #[derive(sqlx::FromRow)]
@@ -983,14 +1045,14 @@ pub async fn import_results(
         .await?
         .rows_affected() as usize;
     }
-    for input in &inputs {
+    for input in inputs {
         let key = (input.name.to_lowercase(), input.load_case.to_lowercase());
         match existing.get(&key) {
             Some(id) => {
                 sqlx::query(
                     "UPDATE simulation_results SET name = $2, value = $3, unit = $4, lower_limit = $5,
                             upper_limit = $6, load_case = $7, solver = $8, solver_version = $9,
-                            note = $10, updated_at = now()
+                            note = $10, source = $11, updated_at = now()
                      WHERE id = $1",
                 )
                 .bind(id)
@@ -1003,54 +1065,168 @@ pub async fn import_results(
                 .bind(&input.solver)
                 .bind(&input.solver_version)
                 .bind(&input.note)
+                .bind(&input.source)
                 .execute(&mut *tx)
                 .await?;
                 summary.updated += 1;
             }
             None => {
-                insert_result(&mut tx, actor, &rev, input).await?;
+                insert_result(tx, actor, rev, input).await?;
                 summary.added += 1;
             }
         }
     }
-    if count_results(&mut tx, rev.id).await? > MAX_RESULTS {
+    if count_results(tx, rev.id).await? > MAX_RESULTS {
         return Err(AppError::BadRequest(format!(
             "A simulation revision can hold at most {MAX_RESULTS} result values."
         )));
     }
     audit::record(
-        &mut tx,
+        tx,
         Some(actor),
-        "simulation.result.import",
+        origin.action(),
         "revision",
         Some(rev.id),
         format!(
-            "{}: imported result values ({} added, {} updated, {} removed)",
-            revisions::label(&rev),
+            "{}: {} ({} added, {} updated, {} removed)",
+            revisions::label(rev),
+            origin.what(),
             summary.added,
             summary.updated,
             summary.removed
         ),
         json!({ "item_id": rev.item_id, "added": summary.added, "updated": summary.updated,
-                "removed": summary.removed, "replace": replace }),
+                "removed": summary.removed, "replace": replace, "origin": origin.details() }),
     )
     .await?;
     if summary.added + summary.updated > 0 {
         webhooks::emit(
-            &mut tx,
+            tx,
             Some(actor),
             WebhookEvent::SimulationResultAdded,
             &[rev.project_id],
             json!({
-                "revision": webhooks::revision_object(&rev, &rev.state),
+                "revision": webhooks::revision_object(rev, &rev.state),
                 "import": { "added": summary.added, "updated": summary.updated,
                             "removed": summary.removed, "replace": replace },
             }),
         )
         .await?;
     }
-    tx.commit().await?;
     Ok(summary)
+}
+
+/// Result values from the files stored with a simulation revision: the
+/// exchange file `teamcraft-results.json|csv` (at most 1 MB, schema in
+/// [`crate::resultscan::parse_exchange`]) and the extraction templates of the
+/// project group applied to the small text files. Runs inside the
+/// transaction of the upload or check-in: a malformed exchange file refuses
+/// it as a whole, nothing is half-written. Other item types: nothing.
+pub(crate) async fn apply_file_values(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    rev: &Revision,
+    uploads: &[crate::services::files::Upload],
+) -> AppResult<()> {
+    use crate::{resultscan, services::result_templates};
+    if rev.item_type != ItemType::Simulation.as_str() {
+        return Ok(());
+    }
+    let named =
+        |u: &crate::services::files::Upload| crate::services::files::stored_name(&u.filename);
+    let exchange: Vec<_> = uploads
+        .iter()
+        .filter(|u| resultscan::is_exchange_name(&named(u)))
+        .collect();
+    if exchange.len() > 1 {
+        return Err(AppError::BadRequest(format!(
+            "Check in either {} or {}, not both.",
+            resultscan::EXCHANGE_JSON,
+            resultscan::EXCHANGE_CSV
+        )));
+    }
+    // templates of the group: small text files, never the exchange file
+    let mut found: Vec<ResultInput> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
+    if let Some(project_id) = rev.project_id {
+        let templates = result_templates::enabled_for(conn, project_id).await?;
+        if !templates.is_empty() {
+            for upload in uploads.iter().filter(|u| !u.scan_head.is_empty()) {
+                let name = named(upload);
+                if resultscan::is_exchange_name(&name) {
+                    continue;
+                }
+                let values = resultscan::extract(&name, &upload.scan_head, &templates);
+                if !values.is_empty() {
+                    files.push(name);
+                }
+                found.extend(values);
+            }
+        }
+    }
+    if !found.is_empty() {
+        let rows = unique_rows(found)?;
+        write_results(conn, actor, rev, &rows, false, &Origin::Templates(files)).await?;
+    }
+    if let Some(upload) = exchange.first() {
+        let name = named(upload);
+        if upload.blob.size > resultscan::EXCHANGE_MAX_BYTES {
+            return Err(AppError::BadRequest(format!(
+                "{name} is larger than {} MB – the exchange file holds key numbers, not result fields.",
+                resultscan::EXCHANGE_MAX_BYTES / (1024 * 1024)
+            )));
+        }
+        let rows =
+            resultscan::parse_exchange(&name, &upload.scan_head).map_err(AppError::BadRequest)?;
+        let rows: Vec<ResultInput> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut r)| {
+                r.source = format!("{name}:{}", i + 1);
+                r
+            })
+            .collect();
+        let rows = unique_rows_strict(rows, &name)?;
+        write_results(conn, actor, rev, &rows, false, &Origin::Exchange(name)).await?;
+    }
+    Ok(())
+}
+
+/// One value per name and load case; a later one replaces an earlier one
+/// (two templates, or the same template in two files).
+fn unique_rows(rows: Vec<ResultInput>) -> AppResult<Vec<ResultInput>> {
+    let mut out: Vec<ResultInput> = Vec::new();
+    for row in rows {
+        let row = row.validated()?;
+        let key = (row.name.to_lowercase(), row.load_case.to_lowercase());
+        match out
+            .iter_mut()
+            .find(|r| (r.name.to_lowercase(), r.load_case.to_lowercase()) == key)
+        {
+            Some(existing) => *existing = row,
+            None => out.push(row),
+        }
+    }
+    Ok(out)
+}
+
+/// Like an import: a result listed twice in the exchange file is an error.
+fn unique_rows_strict(rows: Vec<ResultInput>, filename: &str) -> AppResult<Vec<ResultInput>> {
+    let mut seen = std::collections::HashSet::new();
+    for row in &rows {
+        if !seen.insert((row.name.to_lowercase(), row.load_case.to_lowercase())) {
+            return Err(AppError::BadRequest(format!(
+                "{filename}: the result '{}'{} is listed twice.",
+                row.name,
+                if row.load_case.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (load case '{}')", row.load_case)
+                }
+            )));
+        }
+    }
+    Ok(rows)
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,11 +1244,10 @@ fn result_field(header: &str) -> Option<&'static str> {
         "name" | "result" | "quantity" | "parameter" | "kennwert" | "grosse" | "größe" => "name",
         "value" | "wert" | "resultvalue" => "value",
         "unit" | "units" | "einheit" => "unit",
-        "limitlow" | "lowerlimit" | "lower" | "min" | "minimum" | "lowlimit" | "untergrenze" => {
-            "lower_limit"
-        }
-        "limithigh" | "upperlimit" | "upper" | "max" | "maximum" | "highlimit" | "limit"
-        | "obergrenze" => "upper_limit",
+        "limitlow" | "limitmin" | "lowerlimit" | "lower" | "min" | "minimum" | "lowlimit"
+        | "untergrenze" => "lower_limit",
+        "limithigh" | "limitmax" | "upperlimit" | "upper" | "max" | "maximum" | "highlimit"
+        | "limit" | "obergrenze" => "upper_limit",
         "loadcase" | "case" | "lastfall" | "subcase" | "step" => "load_case",
         "solver" | "löser" | "loser" => "solver",
         "solverversion" | "version" => "solver_version",
@@ -1082,7 +1257,7 @@ fn result_field(header: &str) -> Option<&'static str> {
 }
 
 /// A number in a result table: `2.5e8`, `-0,35`, `1.234,5`, `125 MPa`.
-fn table_number(raw: &str) -> Option<f64> {
+pub(crate) fn table_number(raw: &str) -> Option<f64> {
     let s = raw.trim();
     if s.is_empty() {
         return None;
@@ -1163,6 +1338,7 @@ pub fn parse_results_table(filename: &str, bytes: &[u8]) -> Result<Vec<ResultInp
             solver: cell(row, "solver"),
             solver_version: cell(row, "solver_version"),
             note: cell(row, "note"),
+            source: String::new(),
             name,
         });
         if out.len() > MAX_RESULTS {
@@ -1322,9 +1498,38 @@ pub async fn compare(
     Ok(compare_results(&b, &a))
 }
 
+/// Largest picture shown on the simulation page (the browser loads each one).
+pub const GALLERY_MAX_BYTES: i64 = 8 * 1024 * 1024;
+
+/// Pictures shown on the simulation page at most.
+pub const GALLERY_MAX_IMAGES: usize = 12;
+
+/// Whether a file of a simulation revision is shown as a picture in the
+/// gallery: PNG, JPEG or WebP (by file name) of at most [`GALLERY_MAX_BYTES`].
+/// Rendered result pictures are the cheap way to show a CFD or FEA result –
+/// nothing is parsed, the browser draws the file.
+pub fn is_gallery_image(filename: &str, size_bytes: i64) -> bool {
+    let lower = filename.to_ascii_lowercase();
+    let ext = lower.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    matches!(ext, "png" | "jpg" | "jpeg" | "webp")
+        && size_bytes > 0
+        && size_bytes <= GALLERY_MAX_BYTES
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn gallery_takes_small_pictures_only() {
+        assert!(is_gallery_image("pressure.PNG", 1000));
+        assert!(is_gallery_image("v.v2.jpeg", GALLERY_MAX_BYTES));
+        assert!(is_gallery_image("streamlines.webp", 1));
+        assert!(!is_gallery_image("huge.png", GALLERY_MAX_BYTES + 1));
+        assert!(!is_gallery_image("empty.png", 0));
+        assert!(!is_gallery_image("logo.svg", 10), "SVG can carry scripts");
+        assert!(!is_gallery_image("result.vtu", 10));
+        assert!(!is_gallery_image("png", 10));
+    }
 
     fn result(name: &str, load_case: &str, value: f64, upper: Option<f64>) -> SimulationResult {
         SimulationResult {
@@ -1340,6 +1545,7 @@ mod tests {
             solver: String::new(),
             solver_version: String::new(),
             note: String::new(),
+            source: String::new(),
             updated_at: chrono::Utc::now(),
             status: None,
         }

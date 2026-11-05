@@ -28,7 +28,7 @@ async fn assistant_is_disabled_without_a_key() {
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(r.json()["enabled"], false);
     assert!(r.json()["model"].is_null());
-    assert_eq!(r.json()["actions"].as_array().unwrap().len(), 5);
+    assert_eq!(r.json()["actions"].as_array().unwrap().len(), 7);
 
     let r = app
         .api(
@@ -133,9 +133,9 @@ async fn assistant_requests_are_validated() {
     // are shown on the page with the form
     let cookie = app.login("vera").await;
     let page = app.get_page("/", Some(&cookie)).await;
-    assert!(page.text().contains("What needs my attention"));
+    assert!(page.text().contains("id=\"assistant-drawer\""));
     assert!(
-        !page.text().contains("Allow drafting change orders"),
+        page.text().contains("data-can-edit=\"0\""),
         "viewers cannot allow drafts"
     );
     let page = app.get_page("/assistant", Some(&cookie)).await;
@@ -161,5 +161,36 @@ async fn assistant_requests_are_validated() {
         )
         .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn assistant_with_a_local_openai_compatible_server_needs_no_key() {
+    // Nothing listens there: the requests below never reach the server.
+    let Some(app) = common::setup_with(&[
+        ("TEAMCRAFT_ASSISTANT_PROVIDER", "openai-compatible"),
+        ("TEAMCRAFT_ASSISTANT_BASE_URL", "http://127.0.0.1:9/v1"),
+        ("TEAMCRAFT_ASSISTANT_MODEL", "llama3.1:8b"),
+    ])
+    .await
+    else {
+        return;
+    };
+    let (_, token) = app.user("vera", Role::Viewer).await;
+    let r = app
+        .api(Method::GET, "/api/v1/assistant", &token, None)
+        .await;
+    assert_eq!(r.json()["enabled"], true);
+    assert_eq!(r.json()["provider"], "openai-compatible");
+    assert_eq!(r.json()["model"], "llama3.1:8b");
+    assert_eq!(r.json()["host"], "127.0.0.1");
+    // the page names where the data goes (host, never a key)
+    let cookie = app.login("vera").await;
+    let page = app.get_page("/assistant", Some(&cookie)).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(page.text().contains(
+        "the AI provider configured by your administrator (openai-compatible, 127.0.0.1)"
+    ));
+    assert!(!page.text().contains("sent to Anthropic"));
     app.teardown().await;
 }

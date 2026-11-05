@@ -6,6 +6,8 @@
 
 pub mod access;
 pub mod assistant;
+pub mod assistant_threads;
+pub mod attributes;
 pub mod audit;
 pub mod bom;
 pub mod bom_compare;
@@ -17,6 +19,7 @@ pub mod files;
 pub mod impacts;
 pub mod imports;
 pub mod insights;
+pub mod interchange;
 pub mod items;
 pub mod notifications;
 pub mod package;
@@ -26,6 +29,7 @@ pub mod readiness;
 pub mod references;
 pub mod request_digests;
 pub mod requests;
+pub mod result_templates;
 pub mod reviewers;
 pub mod revisions;
 pub mod save_as;

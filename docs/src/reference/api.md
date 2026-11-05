@@ -204,13 +204,52 @@ decision: the MCP server only reads impacts.
 the item. With `?levels=N` (1–25) it walks up further – parents of the
 parents – and every row also carries `level` (1 = direct parent) and
 `child_number` (the item used on that line). Each item is reported on the
-lowest level it is reached on; the report stops at 2000 rows.
+lowest level it is reached on. Both reports stop at 2000 rows.
+
+### Custom attributes and classification
+
+Administrators define attributes once; values are set per revision by key,
+as text, number, `true`/`false` or one of the choices (`null` or `""`
+removes a value, keys not sent keep theirs):
+
+```sh
+curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
+     -d '{"key": "length_mm", "data_type": "number", "label": "Length", "unit": "mm"}' $API/attributes
+curl -s -X PATCH -H "$H" -H 'Content-Type: application/json' \
+     -d '{"attributes": {"length_mm": 120.5, "vendor": null}}' $API/items/PRT-000001/revisions/A
+curl -s -X PATCH -H "$H" -H 'Content-Type: application/json' \
+     -d '{"classification": "purchased"}' $API/items/PRT-000001
+curl -s -H "$H" "$API/items?class=purchased&attr=length_mm&value=100..200"
+```
+
+`value` matches text and choices as a part (case-insensitive), yes/no
+attributes with `yes`/`no`, numbers with `12`, `>=10`, `<=20` or `10..20`; an
+empty `value` finds every item that has the attribute. Revisions and the
+item search return `attributes` (object by key) and `classification`.
+
+### Alternates, supersession and replace in assemblies
+
+| Request                                            | Body / answer                                                                                     |
+|----------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| `GET /items/{number}/interchange`                  | `alternates` (with `two_way`), `alternate_for` (one-way), `successor` (or `null`), `predecessors` |
+| `POST /items/{number}/alternates`                  | `{item, note?, two_way? = true}` → `201` with the interchange data                                |
+| `DELETE /items/{number}/alternates/{alternate}`    | `204`; both directions when you may edit the alternate's group                                    |
+| `PUT /items/{number}/supersession`                 | `{item, note?}` – superseded by `item` (replaces an earlier successor; `409` for a circle)        |
+| `DELETE /items/{number}/supersession`              | `204`                                                                                             |
+| `GET /items/{number}/replace?with=NUMBER`          | preview: `rows` (one per BOM line of the latest parent revisions, with `action`), `replaced`, `hidden` |
+| `POST /items/{number}/replace`                     | `{with}` – applies the rows with `action = replace` in one transaction; `409` if there are none   |
+
+`action` is `replace`, `checked_out` (by somebody else), `no_permission`,
+`in_review`, `needs_revision` (released) or `cycle`. Linked items in groups
+the caller cannot read are left out; a successor there is a placeholder with
+`restricted: true`. The preview and the replacement carry `X-Hidden-Count`.
 
 ## Main resources
 
 | Resource         | Endpoints                                                                                                                             |
 |------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| Items            | `GET/POST /items`, `GET /items/{number}`, `where-used` (`levels=1…25` for parents of parents), history, impacts, watch               |
+| Items            | `GET/POST /items` (`class=`, `attr=` + `value=` filters), `GET/PATCH /items/{number}` (classification, unit, project), `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch |
+| Attributes       | `GET /attributes` (`all=true`: also inactive), `POST /attributes`, `PATCH /attributes/{key}` (admins); values in `attributes` of a revision |
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
 | Worklist         | `GET /worklist` (check-outs, reviews, impacts and `impact_groups`, statistics), `POST /worklist/checkin-all`                          |
 | Files            | `POST …/files` (multipart, `folder`/`folders`), `GET/PATCH /files/{id}` (metadata, folder), `/content`, `/versions`, `/restore`, `/mesh`, `/thumbnail`, `…/workset` |
@@ -219,7 +258,7 @@ lowest level it is reached on; the report stops at 2000 rows.
 | BOM import       | `POST /bom-imports` (new assembly), `POST …/bom/import` (into a checked-out revision); multipart `file` = CSV/Excel table or STEP assembly, `dry_run=true` returns the plan |
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`, `POST /impacts/{id}/acknowledge`, `POST …/impacts/acknowledge`    |
 | Change requests  | `GET/POST /change-requests`, `GET/PATCH /change-requests/{number}`, `comments`, `items`, `triage`, `assign`, `decide`, `reopen`, `withdraw`, `create-change`, `link-change`, `attachments`, `watch` |
-| Simulations      | `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
+| Simulations      | `GET/POST /projects/{code}/result-templates`, `PUT/DELETE /result-templates/{id}`, `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
 | Changes          | `GET/POST /changes`, items, reviewers, `suggested-reviewers`, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact` |
 | Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                 |
 | Notifications    | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                   |
@@ -228,7 +267,7 @@ lowest level it is reached on; the report stops at 2000 rows.
 | Similar parts    | `GET …/revisions/{code}/similar` (`limit`, `ignore_scale`, `file`, `wait`) – parts of similar 3D shape, see below                    |
 | Formats          | `GET /formats` – the recognised CAD programs and formats                                                                              |
 | MCP              | `POST /mcp` – Model Context Protocol for AI assistants, see [MCP server](mcp.md)                                                      |
-| Assistant        | `GET/POST /assistant` – the built-in assistant (optional), see [Ask TeamCraft](../guide/assistant.md#api)                              |
+| Assistant        | `GET/POST /assistant` – the built-in assistant (optional), `context` = the page the caller is on, `thread: true` = ask in the caller's conversation; `GET/DELETE /assistant/thread` – the conversation. See [Ask TeamCraft](../guide/assistant.md#api) |
 
 The BOM comparison is also available as an Excel workbook of the same lines
 (same `with` query): `GET …/revisions/{code}/bom/compare.xlsx?with={code}`.
@@ -336,6 +375,8 @@ checked out by the caller.
 | `PATCH/DELETE /simulation-results/{id}`                       | change any field (`null` clears a limit) or remove                                                                             |
 | `GET …/revisions/{code}/simulation/compare?with={code}`       | `{before, after, summary, diffs}` – matched by name and load case, with `delta` and `delta_percent`                           |
 | `GET /items/{number}/simulations`                             | simulations whose latest revision is based on the item, with `out_of_date` and `open_impact_id`                               |
+| `GET/POST /projects/{code}/result-templates` | extraction templates of a group (read: whoever sees the group; write: its managers and admins): `{name, file_pattern, method: regex\|csv, pattern \| csv_column [csv_key_column, csv_key_value], pick?: first\|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?}` |
+| `PUT/DELETE /result-templates/{id}`                          | replace (same fields) or remove a template                                                                                     |
 
 A solver script after a run:
 

@@ -42,17 +42,40 @@ Migrations run automatically (`teamcraft serve --no-migrate` skips them).
 |-----------------------------|----------------|-------------------------------------------------------------------------|
 | `TEAMCRAFT_VAULT_DIR`       | `./data/vault` | file vault and cached 3D previews – back it up                          |
 | `TEAMCRAFT_MAX_UPLOAD_MB`   | `512`          | largest file per upload, also for chunked uploads                       |
-| `TEAMCRAFT_UPLOAD_CHUNK_MB` | `16`           | largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/…`), 1–1024 |
+| `TEAMCRAFT_UPLOAD_CHUNK_MB` | `16`           | largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/…`, `PATCH /uploads/…` of the web UI), 1–1024 |
 
 Chunked uploads ([Large files](../guide/vault.md#large-files-chunked-resumable-uploads))
 hold one chunk in memory and write it to `uploads/` in the vault directory,
 so `TEAMCRAFT_MAX_UPLOAD_MB` can be raised for multi-gigabyte CAD or
 simulation files (e.g. `20480`) without more memory; a single multipart
-request (web UI, small files) still has to fit this limit as a whole, and a
+request (small files, the web UI's *New item* form) still has to fit this
+limit as a whole, and a
 reverse proxy in front must allow request bodies of one chunk
 (`client_max_body_size` ≥ `TEAMCRAFT_UPLOAD_CHUNK_MB`) – or of the largest
 multipart upload. Make sure the vault's disk has room for the unfinished
 uploads too: each user may hold 16 of them for 24 hours.
+
+### 3D preview limits
+
+The 3D preview converts a file in a separate `teamcraft preview-mesh` process
+with a time limit (at most two at a time). A file above the size cap of its
+kind is **never opened**: no conversion starts, the page says it is too large
+for a 3D preview, and the refusal is cached (raising the cap takes effect at
+once). The process also runs with a memory limit; a file that needs more
+fails with a message instead of taking the host down. Large simulation
+results are stored as they are, never parsed fully – see
+[Simulations](../guide/simulation.md#results-in-3d).
+
+| Variable                          | Default | Meaning                                                                 |
+|-----------------------------------|---------|-------------------------------------------------------------------------|
+| `TEAMCRAFT_PREVIEW_MAX_RESULT_MB` | `64`    | largest simulation result file (VTK, VTU, VTP, FRD) that is previewed   |
+| `TEAMCRAFT_PREVIEW_MAX_MESH_MB`   | `256`   | largest mesh or point cloud (STL, OBJ, PLY, 3MF, glTF, LAS, …)          |
+| `TEAMCRAFT_PREVIEW_MAX_STEP_MB`   | `256`   | largest STEP file (tessellation needs a multiple of the file size)      |
+| `TEAMCRAFT_PREVIEW_MAX_MEMORY_MB` | `1024`  | address space of the preview process, `0` = unlimited                   |
+
+The memory limit (`RLIMIT_AS`) is enforced on Linux; on macOS the system may
+ignore it, and on Windows it is **not enforced** (the size caps and the time
+limit still are). Every variable also exists as `NAME_FILE`.
 
 ## Sign-in
 
@@ -102,21 +125,61 @@ server is internal, so list it: `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS=erp.corp.exampl
 ## Assistant (optional)
 
 The built-in assistant ([Ask TeamCraft](../guide/assistant.md)) is off
-until an Anthropic API key is configured. Without a key the buttons are
-hidden and `/assistant` and `POST /api/v1/assistant` answer `404`.
+until an API key is configured, or, for a local model server, until the
+provider `openai-compatible` and its base URL are set. While it is off the
+buttons are hidden and `/assistant` and `POST /api/v1/assistant` answer
+`404`. Every variable also works as `NAME_FILE` (the file's contents).
 
-| Variable                        | Default           | Meaning                                                                                       |
-|---------------------------------|-------------------|-----------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_ANTHROPIC_API_KEY`   | –                 | Anthropic API key; enables the assistant. A secret: prefer `_FILE`, it is never logged        |
-| `TEAMCRAFT_ASSISTANT_MODEL`     | `claude-opus-5-5` | Claude model id                                                                               |
-| `TEAMCRAFT_ASSISTANT_MAX_STEPS` | `12`              | most model calls (tool rounds) per question, 1–50                                             |
+| Variable                              | Default                                    | Meaning                                                                                                                                                  |
+|---------------------------------------|--------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_ASSISTANT_PROVIDER`        | `anthropic`                                | wire format: `anthropic` (Messages API), `openai` (OpenAI and Azure OpenAI v1, Chat Completions) or `openai-compatible` (Ollama, vLLM, LM Studio, Mistral, OpenRouter, Groq …) |
+| `TEAMCRAFT_ASSISTANT_BASE_URL`        | `https://api.anthropic.com/v1` / `https://api.openai.com/v1` | API base (`/messages` or `/chat/completions` is added). Required for `openai-compatible`, e.g. `http://ollama.internal:11434/v1`; Azure: `https://<resource>.openai.azure.com/openai/v1` |
+| `TEAMCRAFT_ASSISTANT_API_KEY`         | –                                          | the key. A secret: prefer `_FILE`, it is never logged. Optional for `openai-compatible` (local servers)                                                  |
+| `TEAMCRAFT_ANTHROPIC_API_KEY`         | –                                          | older name of `TEAMCRAFT_ASSISTANT_API_KEY`, still accepted. Setting both with different values is an error                                              |
+| `TEAMCRAFT_ASSISTANT_MODEL`           | `claude-opus-5-5` (`anthropic`)            | model id, or the Azure deployment name. Required for `openai` and `openai-compatible`                                                                    |
+| `TEAMCRAFT_ASSISTANT_MAX_STEPS`       | `12`                                       | most model calls (tool rounds) per question, 1–50                                                                                                        |
+| `TEAMCRAFT_ASSISTANT_MAX_TOKENS`      | `16000`                                    | output tokens per model call, 256–200000                                                                                                                 |
+| `TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT` | `180`                                      | seconds for one HTTP call, 5–3600 (a model on a CPU may need more)                                                                                       |
+| `TEAMCRAFT_ASSISTANT_RUN_TIMEOUT`     | `240` (at least the request timeout)       | seconds for a whole question, at least the request timeout                                                                                               |
+| `TEAMCRAFT_ASSISTANT_MAX_CONCURRENT`  | `4`                                        | questions running at the same time on the server, 1–64                                                                                                   |
+| `TEAMCRAFT_ASSISTANT_RETENTION_DAYS`  | `30`                                       | days an idle assistant conversation (one per user, text of questions and answers only) is kept before it is deleted, 1–365                                |
 
-Fixed limits per question: 16 000 output tokens per model call, 800 000
-tokens in total, 240 seconds, and at most 4 questions running at the same
-time on the server. Each question is recorded in the audit log
-(`assistant.run`: user, quick action, question length, tools used, token
-counts and the outcome – `cancelled` when the client closed the connection
-before the answer – never the question or the answer).
+With only `TEAMCRAFT_ANTHROPIC_API_KEY` (and optionally the model and the
+steps) everything works as it did before these variables existed. The
+startup log shows `assistant=<provider>:<model>@<host>`, never the key.
+
+Where the questions go, and what is done about the key:
+
+* The base URL comes **only from this configuration**, never from users,
+  the admin pages or anything a model or tool returns. Internal hosts are
+  allowed on purpose, so a model server inside the network works (the
+  webhook protection against internal addresses is for URLs that users
+  enter and is not used here).
+* **Redirects are not followed.** An answer that redirects is an error, so
+  the key is never sent to a second host. A user name or password in the
+  URL, a query and a non-`http(s)` scheme are rejected at startup.
+* A **warning** is logged at startup when a key would be sent over plain
+  `http` to a host that is not this computer (`localhost`, `127.0.0.0/8`,
+  `::1`). Use `https` for anything else.
+* The server honours `HTTPS_PROXY` / `NO_PROXY`. A firewall with an
+  egress allow-list must let the server reach the API host.
+
+**Check the setup** with `teamcraft assistant check` (run it with the
+same environment as the server; it needs no database). It sends one small
+request with one tool and reports whether the server is reachable, the key
+is accepted, the model exists, the model calls the tool and the server
+reports token counts. Many local models are served without tool support:
+this is how you find out before your users do. A server that reports no
+token counts still works, but the token limit of a run cannot count its
+calls (the step and time limits still apply, and the audit record says
+`usage_reported: false`). The check never prints the key.
+
+Fixed limits per question: 800 000 tokens in total. Each question is
+recorded in the audit log (`assistant.run`: user, quick action, question
+length, provider, model, tools used, token counts, `usage_reported`, the page
+kind and identifiers, whether it was asked in the conversation and
+the outcome – `cancelled` when the client closed the connection before the
+answer – never the question or the answer).
 
 ## Tests
 

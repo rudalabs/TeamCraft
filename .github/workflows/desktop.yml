@@ -1,6 +1,6 @@
 # TeamCraft Desktop: formatting, lints, tests and a start-up smoke test on
 # Linux (x86_64, ARM64), macOS (ARM64) and Windows (x86_64, ARM64 preview),
-# plus a syntax check of the user interface (desktop/ui/*.js).
+# plus a syntax check of the user interfaces (desktop/ui, static, shared).
 # Installers are not built or published.
 name: Desktop app
 
@@ -10,12 +10,14 @@ on:
     paths:
       - "desktop/**"
       - "static/**"
+      - "shared/**"
       - "media/**"
       - ".github/workflows/desktop.yml"
   pull_request:
     paths:
       - "desktop/**"
       - "static/**"
+      - "shared/**"
       - "media/**"
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
@@ -43,9 +45,16 @@ jobs:
       - name: Parse every script of the desktop and web UI
         run: |
           set -e
+          node --version
           for f in desktop/ui/*.js static/*.js; do
             echo "node --check $f"
             node --check "$f"
+          done
+          # shared/ holds (or will hold) ES modules: without a package.json
+          # Node reads .js as CommonJS, so parse them as modules from stdin.
+          find shared -name '*.js' -print | sort | while read -r f; do
+            echo "node --input-type=module --check < $f"
+            node --input-type=module --check < "$f"
           done
 
   test:

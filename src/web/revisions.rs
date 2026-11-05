@@ -18,20 +18,98 @@ use crate::{
     cadformat::FormatKind,
     domain::{self, BasisRole, ItemType, LifecycleState, ReferenceKind, COMMON_UNITS},
     error::{AppError, AppResult},
-    models::FileRecord,
+    models::{AttributeDef, FileRecord, Revision},
     preview::PreviewFormat,
     services::{
-        audit, bom, changes, files, impacts, items, notifications, projects, references, requests,
-        revisions, similar, simulations, uploads,
+        attributes, audit, bom, changes, files, impacts, interchange, items, notifications,
+        projects, references, requests, revisions, similar, simulations, uploads,
     },
     thumbnail, util, AppState,
 };
+
+/// A stored attribute value as text for display and form fields
+/// (`true` → `yes`, `12.0` → `12`).
+fn attribute_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Bool(true) => "yes".into(),
+        serde_json::Value::Bool(false) => "no".into(),
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => match n.as_f64() {
+            Some(f) if f.fract() == 0.0 && f.abs() < 1e15 => format!("{}", f as i64),
+            _ => n.to_string(),
+        },
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// A stored attribute value for the revision page (`Yes`/`No`).
+fn attribute_display(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Bool(true) => "Yes".into(),
+        serde_json::Value::Bool(false) => "No".into(),
+        other => attribute_text(other),
+    }
+}
+
+/// The custom attribute values of a revision for its page: every stored
+/// value with the label and unit of its definition, in definition order.
+fn attribute_rows(defs: &[AttributeDef], values: &serde_json::Value) -> Vec<serde_json::Value> {
+    let Some(values) = values.as_object() else {
+        return Vec::new();
+    };
+    let mut rows: Vec<serde_json::Value> = defs
+        .iter()
+        .filter_map(|d| {
+            values.get(&d.key).map(|v| {
+                json!({ "key": d.key, "label": d.label, "unit": d.unit,
+                        "value": attribute_display(v), "active": d.active })
+            })
+        })
+        .collect();
+    // values of keys without a definition (should not happen) stay visible
+    for (k, v) in values {
+        if !defs.iter().any(|d| &d.key == k) {
+            rows.push(json!({ "key": k, "label": k, "unit": "", "value": attribute_display(v), "active": false }));
+        }
+    }
+    rows
+}
+
+/// Form fields `attr.<key>`: the active attributes of the item type, with
+/// the stored (or submitted) value.
+async fn attribute_fields(
+    st: &AppState,
+    rev: &Revision,
+    submitted: Option<&std::collections::HashMap<String, String>>,
+) -> AppResult<Vec<serde_json::Value>> {
+    let defs = attributes::for_item_type(&st.db, &rev.item_type).await?;
+    Ok(defs
+        .iter()
+        .map(|d| {
+            let value = submitted
+                .and_then(|s| s.get(&format!("attr.{}", d.key)).cloned())
+                .unwrap_or_else(|| {
+                    rev.attributes
+                        .get(&d.key)
+                        .map(attribute_text)
+                        .unwrap_or_default()
+                });
+            json!({ "key": d.key, "label": d.label, "unit": d.unit, "data_type": d.data_type,
+                    "choices": d.choices, "value": value })
+        })
+        .collect())
+}
 
 /// The 3D preview of a file: by its stored format, or by its name while
 /// the format is not classified yet.
 fn preview_of(file: &FileRecord) -> Option<PreviewFormat> {
     PreviewFormat::of_format(&file.format).or_else(|| PreviewFormat::of(&file.filename))
 }
+
+/// Uses listed in the "Where used" card; a standard part can have tens of
+/// thousands (the REST API and MCP have the full reports).
+const WHERE_USED_SHOWN: usize = 200;
 
 pub async fn show(
     State(st): State<AppState>,
@@ -62,7 +140,7 @@ pub async fn show(
         files::versions_of_revision(&st.db, id),
         files::list(&st.db, me, id),
         bom::lines(&st.db, me, id),
-        items::where_used(&st.db, me, item.id),
+        items::where_used(&st.db, me, item.id, WHERE_USED_SHOWN as i64 + 1),
         // reference tracking and change propagation
         references::outgoing(&st.db, me, id),
         references::incoming(&st.db, me, item.id),
@@ -81,6 +159,31 @@ pub async fn show(
         references::incoming_hidden(&st.db, me, item.id),
     )?;
     let favorite = crate::services::personal::is_favorite(&st.db, ctx.me.id, item.id).await?;
+    // alternates and supersession of the item, superseded children of the BOM
+    let child_ids: Vec<Uuid> = lines
+        .iter()
+        .filter(|l| !l.restricted)
+        .map(|l| l.child_item_id)
+        .collect();
+    let (alternates, alternate_for, successor, predecessors, superseded) = tokio::try_join!(
+        interchange::alternates(&st.db, me, item.id),
+        interchange::alternate_for(&st.db, me, item.id),
+        interchange::successor(&st.db, me, item.id),
+        interchange::predecessors(&st.db, me, item.id),
+        interchange::superseded_among(&st.db, me, &child_ids),
+    )?;
+    let superseded: serde_json::Map<String, serde_json::Value> = superseded
+        .into_iter()
+        .map(|(id, number)| (id.to_string(), json!(number)))
+        .collect();
+    let interchange = json!({
+        "alternates": alternates,
+        "alternate_for": alternate_for,
+        "successor": successor,
+        "predecessors": predecessors,
+        "superseded": superseded,
+        "can_edit": me.can_edit() && me.can_edit_project(item.project_id),
+    });
     // Similar parts by the shape of its 3D model: one indexed query; a
     // missing signature is computed in the background – waited for briefly
     // only when the conversion is done (a quick job from the cached mesh,
@@ -130,6 +233,13 @@ pub async fn show(
         .take(3)
         .map(|f| json!({ "id": f.id, "filename": f.filename, "version": f.version }))
         .collect();
+    // Rendered pictures of a simulation (PNG, JPEG, WebP, size-capped).
+    let gallery: Vec<serde_json::Value> = file_list
+        .iter()
+        .filter(|f| simulations::is_gallery_image(&f.filename, f.size_bytes))
+        .take(simulations::GALLERY_MAX_IMAGES)
+        .map(|f| json!({ "id": f.id, "filename": f.filename, "version": f.version, "sha256": f.sha256 }))
+        .collect();
     // The versions this page shows: uploads from its forms are based on them,
     // so a file that changed meanwhile is refused instead of overwritten.
     let file_bases = serde_json::Value::Object(
@@ -154,6 +264,9 @@ pub async fn show(
     let mut entity_ids: Vec<Uuid> = all_revisions.iter().map(|r| r.id).collect();
     entity_ids.push(item.id);
     let history = audit::for_entities(&st.db, me, &entity_ids, 50).await?;
+    let mut where_used = where_used;
+    let where_used_more = where_used.len() > WHERE_USED_SHOWN;
+    where_used.truncate(WHERE_USED_SHOWN);
 
     let state = revisions::state_of(&rev);
     // editable = checked out by me; can_work = could check out / add to a change
@@ -228,6 +341,7 @@ pub async fn show(
             "out_of_date": out_of_date,
             "roles": roles,
             "views": result_views,
+            "images": gallery,
         })
     } else {
         serde_json::Value::Null
@@ -237,6 +351,7 @@ pub async fn show(
     } else {
         simulations::based_on_item(&st.db, me, item.id).await?
     };
+    let rev_attributes = rev.attributes.clone();
     render(
         &st,
         &ctx,
@@ -253,6 +368,7 @@ pub async fn show(
             "similar": similar_parts,
             "lines": lines,
             "where_used": where_used,
+            "interchange": interchange,
             "hidden": {
                 "parents": hidden_parents,
                 "incoming": hidden_incoming,
@@ -280,6 +396,12 @@ pub async fn show(
             "history": history,
             "projects": projects,
             "units": COMMON_UNITS,
+            "where_used_more": where_used_more,
+            "attribute_rows": attribute_rows(&attributes::list(&st.db, false).await?, &rev_attributes),
+            "classifications": domain::Classification::ALL
+                .iter()
+                .map(|c| json!({ "value": c.as_str(), "label": c.label() }))
+                .collect::<Vec<_>>(),
             "can": can,
             "max_upload_mb": st.config.max_upload_bytes / (1024 * 1024),
             "lifecycle": json!({
@@ -298,11 +420,12 @@ pub async fn edit_form(
 ) -> AppResult<Response> {
     let rev = revisions::get(&st.db, &ctx.me, id).await?;
     revisions::ensure_editable(&rev, &ctx.me)?;
+    let fields = attribute_fields(&st, &rev, None).await?;
     render(
         &st,
         &ctx,
         "revisions/edit.html",
-        json!({ "rev": rev, "error": null }),
+        json!({ "rev": rev, "error": null, "attribute_fields": fields }),
     )
 }
 
@@ -318,6 +441,21 @@ pub struct RevisionForm {
     mass_kg: String,
     #[serde(default)]
     unit_cost: String,
+    /// Custom attribute fields `attr.<key>`.
+    #[serde(flatten)]
+    extra: std::collections::HashMap<String, String>,
+}
+
+impl RevisionForm {
+    fn attribute_changes(&self) -> Vec<(String, String)> {
+        self.extra
+            .iter()
+            .filter_map(|(k, v)| {
+                k.strip_prefix("attr.")
+                    .map(|key| (key.to_string(), v.clone()))
+            })
+            .collect()
+    }
 }
 
 pub async fn update(
@@ -333,6 +471,7 @@ pub async fn update(
             material: form.material.clone(),
             mass_kg: domain::parse_decimal("Mass", Some(&form.mass_kg))?,
             unit_cost: domain::parse_decimal("Unit cost", Some(&form.unit_cost))?,
+            attributes: form.attribute_changes(),
         })
     })();
     let result = match parsed {
@@ -351,11 +490,13 @@ pub async fn update(
             rev.name = form.name;
             rev.description = form.description;
             rev.material = form.material;
+            let fields = attribute_fields(&st, &rev, Some(&form.extra)).await?;
             let mut page = render(
                 &st,
                 &ctx,
                 "revisions/edit.html",
-                json!({ "rev": rev, "error": e.public_message(), "mass_raw": form.mass_kg, "cost_raw": form.unit_cost }),
+                json!({ "rev": rev, "error": e.public_message(), "mass_raw": form.mass_kg,
+                        "cost_raw": form.unit_cost, "attribute_fields": fields }),
             )?;
             *page.status_mut() = e.status();
             Ok(page)
@@ -406,10 +547,13 @@ pub async fn checkin(
                 revisions::label(&rev)
             )));
         }
-        let received = receive_uploads(&st, &mut multipart).await?;
+        let mut received = receive_uploads(&st, &mut multipart).await?;
+        // Large files sent before in chunks by app.js (field `uploads`).
+        let sessions = take_session_uploads(&st, &ctx.me, id, &mut received).await?;
         let result =
             files::check_in(&st.db, &ctx.me, id, &received.uploads, &received.comment).await;
         if result.is_ok() {
+            uploads::forget(&st.db, &st.vault, &sessions).await;
             warm_previews(&st, &received.uploads);
         }
         result
@@ -832,7 +976,7 @@ async fn preview_page(
     )
 }
 
-/// The preview mesh of a blob (`static/viewer.js` format). The content is
+/// The preview mesh of a blob (`shared/js/viewer.js` format). The content is
 /// addressed by its hash, so browsers may cache it for good. Shared with the
 /// REST API.
 pub(crate) async fn mesh_response(

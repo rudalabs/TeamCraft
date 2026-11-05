@@ -1,0 +1,22 @@
+{
+  "id": "chatcmpl-9Bb",
+  "object": "chat.completion",
+  "created": 1767225601,
+  "model": "gpt-5.4-2026-03-05",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          { "id": "call_abc123", "type": "function", "function": { "name": "get_item", "arguments": "{\"item\":\"PRT-000001\"}" } },
+          { "id": "call_def456", "type": "function", "function": { "name": "get_item", "arguments": "{\"item\":\"PRT-000002\"}" } }
+        ],
+        "refusal": null
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": { "prompt_tokens": 300, "completion_tokens": 40, "total_tokens": 340 }
+}

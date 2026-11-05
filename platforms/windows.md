@@ -97,6 +97,10 @@ A guided tour through every feature is in the documentation:
 
 ## 4. Desktop app (optional)
 
+Without building: releases contain the app for x64 and ARM64 as `.msi`, NSIS
+`-setup.exe` and a portable `_portable.zip` (`TeamCraft.exe`, no
+installation; the file names say `x64` or `arm64`).
+
 WebView2 is part of Windows 10/11, nothing else to install:
 
 ```powershell

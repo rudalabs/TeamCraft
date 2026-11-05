@@ -6,34 +6,35 @@
 //! newest revision.
 
 mod change_requests;
+mod interchange_api;
 mod personal;
 mod simulations;
-mod uploads_api;
+pub(crate) mod uploads_api;
 mod webhooks;
 
 use axum::{
     extract::{DefaultBodyLimit, FromRequest, Multipart, Path, Query, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{get, patch, post, put},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
-use serde::{de::DeserializeOwned, Deserialize, Deserializer};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::{
     auth::{Actor, ApiUser},
     domain::{
-        ChangeStatus, Decision, ItemType, LifecycleState, Priority, ProjectVisibility,
+        self, ChangeStatus, Decision, ItemType, LifecycleState, Priority, ProjectVisibility,
         ReferenceKind, RevisionRule,
     },
     error::{AppError, AppResult},
     models::Revision,
     services::{
-        audit, bom, changes, checkouts, desktop, files, impacts, imports, items, notifications,
-        package, projects, references, requests, reviewers, revisions, similar, stats, uploads,
-        users, workset, Page,
+        attributes, audit, bom, changes, checkouts, desktop, files, impacts, imports, items,
+        notifications, package, projects, references, requests, reviewers, revisions, similar,
+        stats, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -52,6 +53,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/worklist/checkin-all", post(checkin_all))
         .route("/mcp", post(crate::mcp::http).get(crate::mcp::http_get))
         .route("/assistant", get(assistant_info).post(assistant_ask))
+        .route(
+            "/assistant/thread",
+            get(assistant_thread).delete(assistant_thread_reset),
+        )
         .route("/formats", get(formats))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{code}/visibility", put(set_project_visibility))
@@ -64,8 +69,27 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(project_numbering).put(set_project_numbering),
         )
         .route("/items", get(list_items).post(create_item))
-        .route("/items/{number}", get(get_item))
+        .route("/items/{number}", get(get_item).patch(update_item))
+        .route("/attributes", get(list_attributes).post(create_attribute))
+        .route("/attributes/{key}", patch(update_attribute))
         .route("/items/{number}/where-used", get(where_used))
+        .route("/items/{number}/interchange", get(interchange_api::show))
+        .route(
+            "/items/{number}/alternates",
+            post(interchange_api::add_alternate),
+        )
+        .route(
+            "/items/{number}/alternates/{alternate}",
+            delete(interchange_api::delete_alternate),
+        )
+        .route(
+            "/items/{number}/supersession",
+            put(interchange_api::supersede).delete(interchange_api::clear_supersession),
+        )
+        .route(
+            "/items/{number}/replace",
+            get(interchange_api::plan_replace).post(interchange_api::replace),
+        )
         .route("/items/{number}/history", get(item_history))
         .route("/items/{number}/impacts", get(item_impacts))
         .route(
@@ -107,6 +131,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route(
             "/items/{number}/simulations",
             get(simulations::item_simulations),
+        )
+        .route(
+            "/projects/{code}/result-templates",
+            get(simulations::list_templates).post(simulations::create_template),
+        )
+        .route(
+            "/result-templates/{id}",
+            put(simulations::put_template).delete(simulations::delete_template),
         )
         .route("/impacts", get(list_impacts))
         .route("/notifications", get(list_notifications))
@@ -359,16 +391,29 @@ async fn index() -> Json<Value> {
             "PUT    /api/v1/projects/{code}/numbering                 {scheme} e.g. {PROJECT}-{TYPE}-{YYYY}-{SEQ:4}, empty = {TYPE}-{SEQ:6} – managers and admins",
             "POST   /api/v1/mcp                                       Model Context Protocol (JSON-RPC 2.0) for AI assistants, see the MCP reference",
             "GET    /api/v1/assistant                                 whether the built-in assistant is enabled, and its quick actions",
-            "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention, context: {item?, revision?, change?}, allow_drafts?}",
+            "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention|impact|simulation_status, context: {kind?, item?, revision?, change?, request?, project?, view?, rule?, query?, filters?, selected?, shown?}, allow_drafts?, thread?}",
+            "GET    /api/v1/assistant/thread                          the caller's conversation (thread: true questions), newest message last",
+            "DELETE /api/v1/assistant/thread                          new conversation: deletes the caller's thread",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
-            "GET    /api/v1/items?q=&type=&project=&state=&system=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo",
-            "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?}",
+            "GET    /api/v1/items?q=&type=&project=&state=&system=&class=&attr=&value=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo; class = make|purchased|standard; attr + value = custom attribute (value: text contains, yes/no, 12, >=10, <=20, 10..20, empty = has a value)",
+            "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?, classification?, attributes?}",
             "GET    /api/v1/items/{number}",
-            "GET    /api/v1/items/{number}/where-used",
+            "PATCH  /api/v1/items/{number}                            {project?, unit?, classification?: make|purchased|standard} – master data",
+            "GET    /api/v1/attributes?all=                           custom attribute definitions (all=true: also deactivated ones)",
+            "POST   /api/v1/attributes                                {key, data_type: text|number|boolean|choice, label, unit?, choices?, item_types?, position?} – admins",
+            "PATCH  /api/v1/attributes/{key}                          {label?, unit?, choices?, item_types?, position?, active?} – admins",
+            "GET    /api/v1/items/{number}/where-used?levels=         levels = N walks N levels up (parents of parents)",
+            "GET    /api/v1/items/{number}/interchange                alternates, one-way 'alternate for', successor (superseded by), predecessors",
+            "POST   /api/v1/items/{number}/alternates                 {item, note?, two_way? = true} – item may be built in instead",
+            "DELETE /api/v1/items/{number}/alternates/{alternate}     both directions if you may edit the alternate's group",
+            "PUT    /api/v1/items/{number}/supersession               {item, note?} – superseded by item (do not use for new designs)",
+            "DELETE /api/v1/items/{number}/supersession",
+            "GET    /api/v1/items/{number}/replace?with=              preview: BOM lines of the latest parent revisions and what replacing would do",
+            "POST   /api/v1/items/{number}/replace                    {with} – replace in every parent that is in work and not checked out by others",
             "GET    /api/v1/items/{number}/history?limit=             audit log of the item and its revisions",
             "GET    /api/v1/items/{number}/impacts                    impacts on the item (open first)",
             "GET    /api/v1/items/{number}/revisions/{code|latest}",
-            "PATCH  /api/v1/items/{number}/revisions/{code}           {name?, description?, material?, mass_kg?, unit_cost?}",
+            "PATCH  /api/v1/items/{number}/revisions/{code}           {name?, description?, material?, mass_kg?, unit_cost?, attributes?: {key: value|null}}",
             "POST   /api/v1/items/{number}/revisions/{code}/checkout",
             "POST   /api/v1/items/{number}/revisions/{code}/checkin   optional multipart: 'file' (new versions), 'comment', 'bases' = {\"name\": version | sha256} → 409 if a file moved on, 'folder' or 'folders' = {\"name\": \"folder\"}, 'uploads' = [upload id] (chunked uploads)",
             "POST   /api/v1/uploads                                   {item, revision, filename, size, sha256?, content_type?, base?, folder?} – start a chunked, resumable upload (checked-out revision)",
@@ -406,6 +451,10 @@ async fn index() -> Json<Value> {
             "DELETE /api/v1/simulation-results/{id}",
             "GET    /api/v1/items/{number}/revisions/{code}/simulation/compare?with=A   result values of two revisions",
             "GET    /api/v1/items/{number}/simulations                simulations based on the item (out of date?)",
+            "GET    /api/v1/projects/{code}/result-templates         extraction templates of the group (see the simulation guide)",
+            "POST   /api/v1/projects/{code}/result-templates         {name, file_pattern, method: regex|csv, pattern | csv_column [csv_key_column, csv_key_value], pick?: first|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?} – managers and admins",
+            "PUT    /api/v1/result-templates/{id}                    the same fields; replaces the template",
+            "DELETE /api/v1/result-templates/{id}",
             "GET    /api/v1/impacts                                   open impacts on items of my project groups",
             "GET    /api/v1/notifications?unread=true&limit=          my notifications and the unread count",
             "POST   /api/v1/notifications/read                        {ids?} – mark as read (all without a body)",
@@ -495,26 +544,27 @@ async fn assistant_info(State(st): State<AppState>, ApiUser(_me): ApiUser) -> Js
     Json(json!({
         "enabled": crate::services::assistant::enabled(&st),
         "model": st.assistant.as_ref().map(|a| a.model.clone()),
+        "provider": st.assistant.as_ref().map(|a| a.provider_name),
+        // where the questions go (host only, never the key or a path)
+        "host": st.assistant.as_ref().map(|a| a.host.clone()),
         "max_question_chars": crate::assistant::MAX_QUESTION_CHARS,
         "actions": actions,
     }))
-}
-
-#[derive(Deserialize, Default)]
-struct AssistantContext {
-    item: Option<String>,
-    revision: Option<String>,
-    change: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct AssistantBody {
     question: Option<String>,
     action: Option<String>,
+    /// The page the caller is on (`crate::pagecontext`): identifiers are
+    /// hints, resolved with the caller's rights.
     #[serde(default)]
-    context: AssistantContext,
+    context: Value,
     #[serde(default)]
     allow_drafts: bool,
+    /// Ask in the caller's conversation (stored, follow-ups see it).
+    #[serde(default)]
+    thread: bool,
 }
 
 /// `POST /api/v1/assistant`: runs the assistant with the caller's rights.
@@ -523,20 +573,42 @@ async fn assistant_ask(
     ApiUser(me): ApiUser,
     ApiJson(body): ApiJson<AssistantBody>,
 ) -> AppResult<Json<Value>> {
+    let run = crate::services::assistant::chat(
+        &st,
+        &me,
+        body.action.as_deref(),
+        body.question.as_deref(),
+        &body.context,
+        body.allow_drafts,
+        body.thread,
+    )
+    .await?;
+    Ok(Json(json!(run)))
+}
+
+/// `GET /api/v1/assistant/thread`: the caller's conversation.
+async fn assistant_thread(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+) -> AppResult<Json<Value>> {
+    let Some(client) = st.assistant.as_deref() else {
+        return Err(crate::assistant::AssistantError::Disabled.into_app_error());
+    };
+    let thread =
+        crate::services::assistant_threads::load(&st.db, &me, client.retention_days).await?;
+    Ok(Json(json!(thread)))
+}
+
+/// `DELETE /api/v1/assistant/thread`: a new conversation.
+async fn assistant_thread_reset(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+) -> AppResult<Json<Value>> {
     if !crate::services::assistant::enabled(&st) {
         return Err(crate::assistant::AssistantError::Disabled.into_app_error());
     }
-    let question = crate::assistant::Question::new(
-        body.action.as_deref(),
-        body.question.as_deref(),
-        body.context.item.as_deref(),
-        body.context.revision.as_deref(),
-        body.context.change.as_deref(),
-        body.allow_drafts,
-    )
-    .map_err(AppError::BadRequest)?;
-    let run = crate::services::assistant::ask(&st, &me, question).await?;
-    Ok(Json(json!(run)))
+    crate::services::assistant_threads::reset(&st.db, &me).await?;
+    Ok(Json(json!({ "deleted": true })))
 }
 
 #[derive(Deserialize)]
@@ -558,17 +630,27 @@ async fn desktop_token(
 
 /// The personal start page of the desktop app (and the web dashboard).
 async fn worklist(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
-    let open = impacts::open_for(&st.db, &me).await?;
+    // independent queries run concurrently (like the dashboard)
+    let (checkouts, reviews, open, unread, my_changes, assigned, my_requests, stats) = tokio::try_join!(
+        revisions::checked_out_by(&st.db, &me),
+        changes::pending_reviews(&st.db, &me),
+        impacts::open_for(&st.db, &me),
+        notifications::unread_count(&st.db, &me),
+        changes::open_by(&st.db, &me),
+        requests::assigned_to(&st.db, &me),
+        requests::open_by(&st.db, &me),
+        stats::load(&st.db, &me),
+    )?;
     Ok(Json(json!({
-        "checkouts": revisions::checked_out_by(&st.db, &me).await?,
-        "reviews": changes::pending_reviews(&st.db, &me).await?,
-        "impacts": open,
+        "checkouts": checkouts,
+        "reviews": reviews,
         "impact_groups": impacts::group_by_dependent(open.clone()),
-        "notifications_unread": notifications::unread_count(&st.db, &me).await?,
-        "my_changes": changes::open_by(&st.db, &me).await?,
-        "requests_assigned": requests::assigned_to(&st.db, &me).await?,
-        "my_requests": requests::open_by(&st.db, &me).await?,
-        "stats": stats::load(&st.db, &me).await?,
+        "impacts": open,
+        "notifications_unread": unread,
+        "my_changes": my_changes,
+        "requests_assigned": assigned,
+        "my_requests": my_requests,
+        "stats": stats,
     })))
 }
 
@@ -726,6 +808,12 @@ struct ItemQuery {
     state: Option<String>,
     /// CAD program, e.g. `solidworks`, `nx`, `creo` (see `GET /api/v1/formats`).
     system: Option<String>,
+    /// `make`, `purchased` or `standard`.
+    class: Option<String>,
+    /// Custom attribute key, with `value` (text contains, yes/no, `12`,
+    /// `>=10`, `<=20`, `10..20`; empty = has a value).
+    attr: Option<String>,
+    value: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -768,6 +856,9 @@ async fn list_items(
         project_id,
         state,
         system,
+        classification: domain::Classification::parse_field(q.class.as_deref())?,
+        attribute: q.attr,
+        attribute_value: q.value,
     };
     let page = Page::new(q.limit, q.offset);
     let (rows, total) = items::search(&st.db, &me, &filter, page).await?;
@@ -790,6 +881,19 @@ struct CreateItem {
     material: String,
     mass_kg: Option<f64>,
     unit_cost: Option<f64>,
+    /// `make` (default), `purchased` or `standard`.
+    classification: Option<String>,
+    /// Custom attribute values by key, e.g. `{"vendor": "Bosch", "length_mm": 120}`.
+    #[serde(default)]
+    attributes: serde_json::Map<String, Value>,
+}
+
+/// Custom attribute values of a request body as `key → text` changes.
+fn attribute_changes(values: &serde_json::Map<String, Value>) -> AppResult<Vec<(String, String)>> {
+    values
+        .iter()
+        .map(|(k, v)| Ok((k.clone(), domain::attribute_input_text(v)?)))
+        .collect()
 }
 
 async fn create_item(
@@ -819,10 +923,125 @@ async fn create_item(
             material: body.material,
             mass_kg: body.mass_kg,
             unit_cost: body.unit_cost,
+            classification: domain::Classification::parse_field(body.classification.as_deref())?
+                .unwrap_or_default(),
+            attributes: attribute_changes(&body.attributes)?,
         },
     )
     .await?;
     Ok((StatusCode::CREATED, Json(json!(rev))).into_response())
+}
+
+#[derive(Deserialize)]
+struct UpdateItem {
+    /// Project code to move the item to.
+    project: Option<String>,
+    unit: Option<String>,
+    classification: Option<String>,
+}
+
+/// Item master data: project group, unit (before the first release) and
+/// classification.
+async fn update_item(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(number): Path<String>,
+    ApiJson(body): ApiJson<UpdateItem>,
+) -> AppResult<Json<Value>> {
+    let item = items::get_by_number(&st.db, &me, &number).await?;
+    let project_id = match body.project.as_deref().filter(|p| !p.trim().is_empty()) {
+        Some(code) => Some(projects::get_by_code(&st.db, &me, code).await?.id),
+        None => item.project_id,
+    };
+    let updated = items::update_master(
+        &st.db,
+        &me,
+        item.id,
+        project_id,
+        body.unit.as_deref().unwrap_or(&item.unit),
+        domain::Classification::parse_field(body.classification.as_deref())?,
+    )
+    .await?;
+    Ok(Json(json!(updated)))
+}
+
+// ---------------------------------------------------------------------------
+// Custom attributes
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct AttributeQuery {
+    /// `true` also lists deactivated attributes.
+    #[serde(default)]
+    all: bool,
+}
+
+async fn list_attributes(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Query(q): Query<AttributeQuery>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(attributes::list(&st.db, !q.all).await?)))
+}
+
+#[derive(Deserialize)]
+struct AttributeBody {
+    key: Option<String>,
+    data_type: Option<String>,
+    label: Option<String>,
+    unit: Option<String>,
+    choices: Option<Vec<String>>,
+    item_types: Option<Vec<String>>,
+    position: Option<i32>,
+    active: Option<bool>,
+}
+
+async fn create_attribute(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    ApiJson(body): ApiJson<AttributeBody>,
+) -> AppResult<Response> {
+    let def = attributes::create(
+        &st.db,
+        &me,
+        body.key.as_deref().unwrap_or(""),
+        body.data_type.as_deref().unwrap_or("text"),
+        attributes::AttributeSettings {
+            label: body.label.unwrap_or_default(),
+            unit: body.unit.unwrap_or_default(),
+            choices: body.choices.unwrap_or_default().join("\n"),
+            item_types: body.item_types.unwrap_or_default(),
+            position: body.position.unwrap_or(0),
+            active: true,
+        },
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(json!(def))).into_response())
+}
+
+async fn update_attribute(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(key): Path<String>,
+    ApiJson(body): ApiJson<AttributeBody>,
+) -> AppResult<Json<Value>> {
+    me.require(domain::Role::Admin)?;
+    let current = attributes::get_by_key(&st.db, &key).await?;
+    let def = attributes::update(
+        &st.db,
+        &me,
+        current.id,
+        attributes::AttributeSettings {
+            label: body.label.unwrap_or(current.label),
+            unit: body.unit.unwrap_or(current.unit),
+            choices: body.choices.unwrap_or(current.choices).join("\n"),
+            item_types: body.item_types.unwrap_or(current.item_types),
+            position: body.position.unwrap_or(current.position),
+            active: body.active.unwrap_or(current.active),
+        },
+    )
+    .await?;
+    Ok(Json(json!(def)))
 }
 
 async fn get_item(
@@ -853,7 +1072,7 @@ async fn where_used(
 ) -> AppResult<Response> {
     let item = items::get_by_number(&st.db, &me, &number).await?;
     let body = Json(match q.levels {
-        None => json!(items::where_used(&st.db, &me, item.id).await?),
+        None => json!(items::where_used(&st.db, &me, item.id, items::MAX_WHERE_USED_ROWS).await?),
         Some(levels) => json!(items::where_used_levels(&st.db, &me, item.id, levels).await?),
     });
     let hidden = items::hidden_parents(&st.db, &me, item.id).await?;
@@ -922,6 +1141,10 @@ struct UpdateRevision {
     mass_kg: Option<Option<f64>>,
     #[serde(default, deserialize_with = "double_option")]
     unit_cost: Option<Option<f64>>,
+    /// Custom attribute changes by key; `null` or "" removes a value, keys not
+    /// listed keep theirs.
+    #[serde(default)]
+    attributes: serde_json::Map<String, Value>,
 }
 
 async fn update_revision(
@@ -941,6 +1164,7 @@ async fn update_revision(
             material: body.material.unwrap_or(rev.material),
             mass_kg: body.mass_kg.unwrap_or(rev.mass_kg),
             unit_cost: body.unit_cost.unwrap_or(rev.unit_cost),
+            attributes: attribute_changes(&body.attributes)?,
         },
     )
     .await?;
@@ -1044,13 +1268,15 @@ async fn get_bom(
     ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<BomQuery>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<Response> {
     let rev = revision_at(&st, &me, &number, &code).await?;
     if q.expand.unwrap_or(false) {
         let rule = bom_rule(q.rule.as_deref())?;
-        Ok(Json(json!(bom::tree(&st.db, &me, rev.id, rule).await?)))
+        // serialized straight from the tree: an expanded BOM can be tens of
+        // megabytes, an intermediate JSON value would double the work
+        Ok(Json(bom::tree(&st.db, &me, rev.id, rule).await?).into_response())
     } else {
-        Ok(Json(json!(bom::lines(&st.db, &me, rev.id).await?)))
+        Ok(Json(bom::lines(&st.db, &me, rev.id).await?).into_response())
     }
 }
 
@@ -1410,13 +1636,15 @@ async fn change_impact(
 ) -> AppResult<Response> {
     let change = changes::get_by_number(&st.db, &me, &number).await?;
     let (dependents, hidden) = changes::impact(&st.db, &me, change.id).await?;
-    Ok(with_hidden_count(Json(json!(dependents)), hidden))
+    // serialized straight from the list: a change of widely used parts has
+    // tens of thousands of dependents
+    Ok(with_hidden_count(Json(dependents), hidden))
 }
 
 /// A list answer plus `x-hidden-count`: how many entries were left out
 /// because they belong to restricted project groups the caller is not a
 /// member of (the list itself keeps its shape).
-pub(super) fn with_hidden_count(body: Json<Value>, hidden: i64) -> Response {
+pub(super) fn with_hidden_count<T: Serialize>(body: Json<T>, hidden: i64) -> Response {
     let mut response = body.into_response();
     response.headers_mut().insert(
         "x-hidden-count",

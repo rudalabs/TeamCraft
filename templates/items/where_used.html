@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Where used: {{ item.number }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block tc_context %}data-tc-kind="where_used" data-tc-item="{{ item.number }}" data-tc-view="where-used"{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ latest.id }}">{{ item.number }}/{{ latest.code }}</a><span>Where used</span></p>
+    <h1>Where used: <a class="mono" href="/revisions/{{ latest.id }}">{{ item.number }}</a> · {{ latest.name }}</h1>
+    <p class="subtitle">Every assembly that uses {{ item.number }}, directly or through sub-assemblies – over the BOMs of all revisions.</p>
+  </div>
+</div>
+
+{% if successor %}
+<div class="notice">{{ item.number }} is superseded by {% if successor.restricted %}{{ m.restricted() }}{% else %}<a class="mono" href="/revisions/{{ successor.latest_revision_id }}">{{ successor.number }}</a> {{ successor.name }}{% endif %}.</div>
+{% endif %}
+
+<section class="card" id="usages">
+  <form class="inline fields" method="get" action="/items/{{ item.id }}/where-used">
+    <label>Levels <select name="levels">
+      {% for o in level_options %}<option value="{{ o.value }}" {% if o.value == levels %}selected{% endif %}>{{ o.label }}</option>{% endfor %}
+    </select></label>
+    {% if with %}<input type="hidden" name="with" value="{{ with }}">{% endif %}
+    <button type="submit">Show</button>
+  </form>
+  {% if rows %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th class="num">Level</th><th>Uses</th><th>Parent</th><th>Name</th><th>State</th><th class="num">Find no.</th><th class="num">Qty</th></tr></thead>
+    <tbody>
+    {% for w in rows %}
+      <tr data-tc-row="{{ w.parent_number }}">
+        <td class="num">{{ w.level }}</td>
+        <td class="mono nowrap">{{ w.child_number }}</td>
+        <td class="mono nowrap"><a href="/revisions/{{ w.parent_revision_id }}">{{ w.parent_number }}/{{ w.parent_code }}</a></td>
+        <td>{{ w.parent_name }}{% if w.released_child_code %} <span class="small muted">· released with <span class="mono">{{ w.released_child_code }}</span></span>{% endif %}</td>
+        <td>{{ m.badge(w.parent_state) }}</td>
+        <td class="num">{{ w.find_number }}</td>
+        <td class="num">{{ w.quantity|num(6) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if truncated %}<p class="hint">Only the first {{ rows|length }} usages are shown.</p>{% endif %}
+  {% elif not hidden %}<p class="empty">{{ item.number }} is not used in any BOM.</p>{% endif %}
+  {{ m.hidden_count(hidden, "assemblies directly using it") }}
+</section>
+
+{% if can_replace %}
+<section class="card" id="replace">
+  <h2>Replace in assemblies</h2>
+  <p class="hint">Puts another item in place of {{ item.number }} in the BOMs of the assemblies that use it directly – quantity, find number and notes stay.
+    Only the latest revision of each assembly counts: one in work is changed right away (unless somebody else has it checked out),
+    a released one needs a new revision first. Older revisions keep their history.</p>
+  <form class="inline fields" method="get" action="/items/{{ item.id }}/where-used#replace">
+    <input type="hidden" name="levels" value="{{ levels }}">
+    <label>Replace by <input class="item-no" type="text" name="with" value="{{ with }}" placeholder="e.g. PRT-000012" list="replace-candidates" required></label>
+    <datalist id="replace-candidates">
+      {% if successor and not successor.restricted %}<option value="{{ successor.number }}">successor</option>{% endif %}
+      {% for a in alternates %}<option value="{{ a.number }}">alternate</option>{% endfor %}
+    </datalist>
+    <button type="submit">Preview</button>
+  </form>
+  {% if plan_error %}<div class="flash flash-error" role="alert">{{ plan_error }}</div>{% endif %}
+  {% if plan %}
+  {% if plan.rows %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Assembly</th><th>Name</th><th>State</th><th class="num">Find no.</th><th class="num">Qty</th><th>Result</th></tr></thead>
+    <tbody>
+    {% for r in plan.rows %}
+      <tr>
+        <td class="mono nowrap"><a href="/revisions/{{ r.parent_revision_id }}">{{ r.parent_number }}/{{ r.parent_code }}</a></td>
+        <td>{{ r.parent_name }}</td>
+        <td>{{ m.badge(r.parent_state) }}</td>
+        <td class="num">{{ r.find_number }}</td>
+        <td class="num">{{ r.quantity|num(6) }}</td>
+        <td class="small">{% if r.action == "replace" %}<strong>{{ plan.old_number }} → {{ plan.new_number }}</strong>{% else %}{{ r.action_label }}{% if r.action == "checked_out" and r.checked_out_by_name %} ({{ r.checked_out_by_name }}){% endif %}{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No assembly uses {{ item.number }} in its latest revision.</p>{% endif %}
+  {{ m.hidden_count(plan.hidden, "assemblies") }}
+  {% if plan.replaced %}
+  <form method="post" action="/items/{{ item.id }}/replace" data-confirm="Replace {{ plan.old_number }} by {{ plan.new_number }} in {{ plan.replaced }} BOM line{% if plan.replaced != 1 %}s{% endif %}?">
+    <input type="hidden" name="with" value="{{ plan.new_number }}">
+    <div class="actions">
+      <button class="primary" type="submit">Replace in {{ plan.replaced }} BOM line{% if plan.replaced != 1 %}s{% endif %}</button>
+    </div>
+  </form>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

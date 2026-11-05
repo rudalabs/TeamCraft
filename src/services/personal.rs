@@ -15,7 +15,9 @@ use crate::{
 };
 
 /// Keys of the item search that a saved search keeps, in this order.
-pub const SEARCH_KEYS: [&str; 5] = ["q", "type", "project", "state", "system"];
+pub const SEARCH_KEYS: [&str; 8] = [
+    "q", "type", "project", "state", "system", "class", "attr", "value",
+];
 
 /// Most saved searches per user.
 pub const MAX_SAVED_SEARCHES: i64 = 50;

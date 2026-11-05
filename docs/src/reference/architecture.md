@@ -43,14 +43,17 @@
 
 | Path                                 | Contents                                                                                             |
 |--------------------------------------|------------------------------------------------------------------------------------------------------|
-| `src/main.rs`                        | CLI: serve, migrate, user, vault check/signatures, rescan-references, healthcheck, mcp (stdio bridge) |
+| `src/main.rs`                        | CLI: serve, migrate, user, vault check/signatures, assistant check, rescan-references, healthcheck, mcp (stdio bridge) |
 | `src/lib.rs`                         | `AppState`, router, health endpoints, security headers                                               |
 | `src/domain.rs`                      | roles, lifecycle, revision letters, skins, validation                                                |
 | `src/services/`                      | items, revisions, files, chunked uploads, BOM, changes, references, impacts, simulations, projects, users, … |
 | `src/web/`, `templates/`, `static/`  | HTML interface                                                                                       |
+| `shared/`                            | UI files of both the web UI and the desktop app: skins and tokens, fonts, 3D viewer (`shared/README.md`) |
 | `src/api/`                           | REST API                                                                                             |
 | `src/mcp/`                           | MCP server for AI assistants (`POST /api/v1/mcp`): JSON-RPC, tools and prompts over the services     |
-| `src/assistant.rs`                   | built-in assistant: tool loop over the Anthropic Messages API with the MCP tools, markdown rendering |
+| `src/llm/`                           | provider-neutral LLM layer: conversation types, `Provider` (wire format, pure), `Transport`; `anthropic.rs` = Messages API, `openai.rs` = Chat Completions |
+| `src/assistant.rs`                   | built-in assistant: tool loop over `src/llm` with the MCP tools, markdown rendering |
+| `src/pagecontext.rs`                 | the page context the assistant sidebar sends (kind, identifiers, view, rule, query, rows shown): parsing and caps; the services resolve it with the user's rights |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs`: VTK/VTU/VTP/FRD simulation results with fields  |
@@ -93,8 +96,17 @@ PostgreSQL.
   used); larger structures are refused with a message instead of exhausting
   the server. The working set has no expansion limit, but at most 5000
   revisions.
-* **Where-used**: single level is one query; `levels=N` is one recursive
-  query (`WITH RECURSIVE`, depth-limited, each item on its lowest level).
+* **Where-used**: single level is one query; `levels=N` walks up one query
+  per level (the parents not seen before form the next level, so each item
+  is reported on its lowest level), and both stop at 2000 rows. The impact
+  analysis of a change walks up the same way for all its revisions at once.
+* **Item search** narrows the items set-based first (text, state or CAD
+  program, trigram indexes for substring matches when `pg_trgm` is
+  available) and looks up the latest revision only for those candidates;
+  the total comes from the same query (`COUNT(*) OVER ()`).
+* **Scale check**: `tests/scale.rs` (ignored) seeds ~100k items and ~1M BOM
+  lines and times these paths with their query plans – see
+  [Operations → Scale check](../admin/operations.md#scale-check).
 * **Pages** run their independent queries concurrently (`tokio::try_join!`)
   and load per-row data with `= ANY($1)` instead of one query per row
   (vault explorer, BOM health, Pack and Go file lists).

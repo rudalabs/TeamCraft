@@ -54,12 +54,14 @@ async fn anonymous_users_are_sent_to_login() {
         "montserrat-latin-wght-normal.woff2",
         "oswald-latin-ext-wght-normal.woff2",
     ] {
-        let r = app.get_page(&format!("/static/fonts/{font}"), None).await;
+        let r = app
+            .get_page(&format!("/static/shared/fonts/{font}"), None)
+            .await;
         assert_eq!(r.status, StatusCode::OK, "{font}");
         assert_eq!(r.header("content-type").as_deref(), Some("font/woff2"));
         assert_eq!(&r.body[..4], b"wOF2");
     }
-    let r = app.get_page("/static/fonts/../Cargo.toml", None).await;
+    let r = app.get_page("/static/shared/../../Cargo.toml", None).await;
     assert_ne!(r.status, StatusCode::OK);
 
     // Cache busting: pages link the current asset version, which may be
@@ -71,6 +73,17 @@ async fn anonymous_users_are_sent_to_login() {
         "stylesheet link carries the asset version"
     );
     assert!(html.contains(&format!("TeamCraft_Logo_White.svg?v={v}")));
+    assert!(html.contains(&format!("/static/shared/css/skins.css?v={v}")));
+    // shared scripts: versioned path, immutable for the current version
+    let r = app
+        .get_page(&format!("/static/shared/v/{v}/js/viewer.js"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.header("cache-control").unwrap().contains("immutable"));
+    let r = app
+        .get_page("/static/shared/v/000000000000/js/viewer.js", None)
+        .await;
+    assert_eq!(r.header("cache-control").as_deref(), Some("no-cache"));
     let r = app
         .get_page(&format!("/static/style.css?v={v}"), None)
         .await;
@@ -294,7 +307,15 @@ async fn three_d_preview_pages_and_meshes() {
         .await;
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(teamcraft::mesh::Mesh::decode(&r.body).unwrap(), cube);
-    let r = app.get_page("/static/viewer.js", None).await;
+    let r = app
+        .get_page(
+            &format!(
+                "/static/shared/v/{}/js/viewer.js",
+                teamcraft::assets::version()
+            ),
+            None,
+        )
+        .await;
     assert_eq!(r.status, StatusCode::OK);
     app.teardown().await;
 }

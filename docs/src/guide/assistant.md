@@ -1,7 +1,8 @@
 # Ask TeamCraft (assistant)
 
-*Ask TeamCraft* is an optional assistant built into the server. Claude
-answers questions about your PDM data. It looks things up with the same
+*Ask TeamCraft* is an optional assistant built into the server. An AI
+model (Claude, or an OpenAI-compatible or local model, as configured by
+your administrator) answers questions about your PDM data. It looks things up with the same
 tools that the [MCP server](../reference/mcp.md) offers to external AI
 clients, and it uses **your rights**. It answers on the server, so nothing
 has to be installed on your computer.
@@ -13,6 +14,8 @@ CAD generation:
 |-----------------------|------------------------------|--------------------------------------------------------------------------------------------------|
 | Revision page         | **Draft release notes**      | what changed compared with the previous revision: attributes, files, BOM, open points            |
 | Revision page         | **Check before release**     | a checklist: blocking items (unreleased BOM children and references, check-outs) and warnings     |
+| Revision page         | **What breaks if I change this?** | the assemblies that use the item (released ones first), open change orders and requests that already touch it, simulations that would go out of date, what to check first |
+| Revision page         | **Are the simulations still valid?** | the simulations based on the item: which are out of date and why, failed results, what to re-run |
 | Change order page     | **Brief me for this review** | what changes, the impact on dependents outside the change, risks, questions for the author       |
 | Dashboard             | **What needs my attention**  | an ordered to-do list from your worklist: reviews, impacts, old check-outs, your drafts           |
 | Everywhere            | **Ask**                      | any question, e.g. "Which assemblies use PRT-000012, and are they released?"                     |
@@ -27,15 +30,85 @@ CAD generation:
   PRT-000012?" – the simulations based on it and why they no longer match.
 - "Summarise the results of SIM-000003 rev B vs A" – changed, added and
   removed result values with delta and pass/fail.
+- "What does the spec of PRT-000012 say about the coating?" – the assistant
+  reads the text that TeamCraft extracted from the attached files for the
+  search (STEP and IGES strings, text, CSV, JSON, XML, KiCad and similar
+  formats; not PDFs, images or binary CAD files). It can read only files
+  that you may open.
 - "Draft a change request from my notes: …" – with drafts allowed (see
   below), the assistant raises the request; otherwise it shows what the
   request should contain.
 
-Open it with **Ask TeamCraft…** on the page (desktop app: **Ask…** in the
-toolbar of a revision or change tab). You can add your own words to a quick
-action, e.g. "focus on the weld seams". The answer shows the tools that the
-assistant used. Item numbers in the answer link to the item. Every
-question starts fresh: the assistant does not remember earlier questions.
+Open it with the sparkle icon in the top bar (desktop app: **Ask** in the
+rail). You can add your own words to a quick action, e.g. "focus on the weld
+seams". The answer shows the tools that the assistant used. Item numbers in
+the answer link to the item. The assistant remembers the conversation: see
+[The sidebar](#the-sidebar).
+
+## The sidebar
+
+*Ask TeamCraft* lives in a **sidebar** on every page. The **sparkle icon** in
+the top bar (desktop app: **Ask** in the navigation rail, `Ctrl/Cmd+5`)
+unfolds a drawer on the right. It stays open while you move around, **Esc**
+closes it, and your browser remembers whether it was open (a small
+`localStorage` entry, nothing is sent to the server for that). Drag the left
+edge or use the arrow keys on it to change its width. On a phone it is a
+full-screen sheet.
+
+The icon is only there when an administrator has configured the
+assistant.
+
+### It knows the page you are on
+
+Every page tells the drawer where you are. Above the question box a **context
+chip** shows it, for example `PRT-000009/A · bom (latest released)`:
+
+| You are on                       | The assistant knows                                                              |
+|----------------------------------|----------------------------------------------------------------------------------|
+| Dashboard                        | that you are on your start page                                                  |
+| Items list, search               | the search text and filters, and the items shown (at most 25)                    |
+| Revision page                    | item, revision and project group                                                 |
+| BOM page                         | item, revision, the revision rule, the items listed                              |
+| Where-used                       | the item and the assemblies listed                                               |
+| BOM or result comparison         | the item and the revision compared                                               |
+| Change order, change request     | its number                                                                       |
+| Project group                    | the group code                                                                   |
+| Vault explorer                   | the group or list, the search text, the selected row and the rows shown          |
+
+Click **×** on the chip to ask without sharing the page (**add it back**
+undoes that; moving to another page resets it). **Quick actions** under the
+chip fit the page: on a revision *Draft release notes*, *Check before
+release*, *What breaks if I change this?*, *Are the simulations still
+valid?*; on a change order *Brief me for this review*; on the dashboard *What
+needs my attention*. Words like "this" or "here" in your question mean the
+page you are on.
+
+The page context is only a **hint**. The server looks every identifier up
+with *your* rights before the assistant sees it. An item, change or group you
+may not read is dropped exactly as if it did not exist: it does not appear in
+the chip, the answer, an error message or the conversation.
+
+### One conversation that stays
+
+Your questions and the answers form **one conversation** that survives
+navigation, reloading and signing in again. Under each question the drawer
+shows **where you asked it** (`asked on PRT-000009/A · bom`). A follow-up such
+as "and which of those are released?" works. **New conversation** deletes it.
+
+- Only the **text** of your questions and of the answers is stored (with the
+  quick action and the page label) – never the data that the tools returned.
+  A follow-up looks things up again with **your rights of that moment**, so
+  nothing you lost access to comes back through a tool. (Your own earlier
+  answers are part of the conversation and stay visible to you.)
+- Only **you** can read it. Administrators see in the audit log that a
+  question was asked (who, which quick action, tools, token counts) but never
+  its text, and there is no administrative view of conversations.
+- An idle conversation is deleted after **30 days**
+  (`TEAMCRAFT_ASSISTANT_RETENTION_DAYS`); deleting a user deletes the
+  conversation.
+- While an answer is on its way the drawer shows that it is working and
+  offers **Cancel**; a cancelled question is not stored.
+- The answer does not stream in: it appears when it is complete.
 
 ## What it can and cannot do
 
@@ -56,41 +129,98 @@ question starts fresh: the assistant does not remember earlier questions.
 
 ## Privacy
 
-The assistant is **off** unless an administrator configures an Anthropic
-API key (`TEAMCRAFT_ANTHROPIC_API_KEY`, see
-[Configuration](../admin/configuration.md#assistant-optional)). Without a
-key no data leaves the server, and the buttons are hidden.
+The assistant is **off** unless an administrator configures an AI provider
+and an API key (see
+[Configuration](../admin/configuration.md#assistant-optional)). Without
+one no data leaves the server, and the buttons are hidden.
 
-When it is on, your question, the instruction of the quick action and the
-results of the tools it calls are sent to the Anthropic API. This includes
-item names, descriptions, BOM lines, change order and change request texts
-(with their comments) and simulation result values. Files and attachments are not
-uploaded; only their names and metadata are. The API key stays on the
-server. Browsers and the desktop app never see it. The audit log records
-each run (`assistant.run`): who asked, which quick action, the length of
-the question, the tools used and the token counts. The audit log never
-stores the question or the answer.
+When it is on, your question, the instruction of the quick action, **where
+you are** (the identifiers and search text of the page, only what you may
+read), the **earlier messages of your conversation** and the results of the
+tools it calls are sent to **the AI provider that your administrator
+configured**. The dialogs name it (provider and host). Which
+one receives the data depends on the setup:
+
+| Provider setting                          | Receives the data                                                    |
+|-------------------------------------------|----------------------------------------------------------------------|
+| `anthropic`                               | the Anthropic API                                                    |
+| `openai`                                  | OpenAI, or the Azure OpenAI resource of your organisation            |
+| `openai-compatible` with a hosted service | that service (Mistral, OpenRouter, Groq, …)                          |
+| `openai-compatible` with a local server   | only the model server that your administrator runs (Ollama, vLLM, LM Studio). With a server inside the organisation's network the data does not leave it |
+
+The data includes item names, descriptions, BOM lines, change order and
+change request texts (with their comments) and simulation result values.
+Files and attachments are not uploaded; only their names and metadata
+are. The API key stays on the server. Browsers and the desktop app never
+see it, and the server never sends it to another host than the configured
+one. The audit log records each run (`assistant.run`): who asked, which
+quick action, the length of the question, the provider and model, the
+tools used, the page kind and identifiers, and the token counts. The audit
+log never stores the question, the answer or the search text. The
+conversation itself (question and answer texts) is stored in the TeamCraft
+database, readable only by its owner, and deleted after the retention time
+or with *New conversation*. The terms of the provider (retention, training use) apply
+to what it receives: choose the provider and the plan accordingly.
 
 ## API
 
 ```http
-GET  /api/v1/assistant          → {enabled, model, actions: [{id, label, needs}]}
+GET  /api/v1/assistant          → {enabled, provider, model, host, actions: [{id, label, needs}]}
 POST /api/v1/assistant
      {"action": "release_check", "context": {"item": "ASM-000003", "revision": "B"}}
      {"question": "Where is PRT-000012 used?", "allow_drafts": false}
 ```
 
+### Page context and conversation
+
+`context` accepts the page context the sidebar sends; every field is
+optional and an unknown or invalid one is dropped (except `item`, `revision`
+and `change`, which answer `400` when malformed):
+
+```json
+{ "kind": "bom",                 // dashboard, items, item, revision, bom, where_used, compare,
+                                 // change, changes, request, requests, simulation, project,
+                                 // projects, search, vault, notifications, other
+  "item": "PRT-000009", "revision": "A",
+  "change": "CHG-000004", "request": "ECR-000002", "project": "ROVER",
+  "view": "bom",                 // section or tab: lowercase letters, digits, - and _
+  "rule": "released",            // revision rule of a BOM view
+  "query": "bracket", "filters": {"state": "released"},   // text typed on the page
+  "selected": "PRT-000010",      // the selected row
+  "shown": ["PRT-000010", "PRT-000011"] }                 // rows shown, at most 25 are kept
+```
+
+The identifiers are **hints**: the server resolves each with the caller's
+rights and drops what the caller may not read, exactly like an identifier
+that does not exist. The answer then carries `context: {kind, label}`, the
+resolved page (`PRT-000009/A · bom (released)`).
+
+With `"thread": true` the question joins the caller's conversation: the
+earlier messages are quoted to the model, and the question and the answer
+are stored (text only). Without it the call is stateless as before.
+
+```http
+GET    /api/v1/assistant/thread  → {messages: [{role, text, action, context_kind, context_label, created_at}], retention_days}
+DELETE /api/v1/assistant/thread  → {deleted: true}   # new conversation
+```
+
+A conversation belongs to the token's user. These endpoints take bearer
+tokens only; the web sidebar uses `GET /assistant/thread`,
+`POST /assistant/chat` and `POST /assistant/thread/reset` with the session
+cookie (same-origin only), which are not part of the REST API.
+
 `action` is one of `ask` (default, needs `question`), `release_notes` and
 `release_check` (need `context.item`, optional `context.revision`),
-`review_brief` (needs `context.change`) and `attention`. The answer contains
+`impact` and `simulation_status` (need `context.item`), `review_brief`
+(needs `context.change`) and `attention`. The answer contains
 `answer.text` (markdown), `answer.truncated`, `tools` (`[{name, ok}]`),
 `steps`, `model` and the token counts. `GET /api/v1/me` reports
-`capabilities.assistant`. Without a key the `POST` endpoint answers `404`.
+`capabilities.assistant`. While the assistant is off the `POST` endpoint answers `404`.
 When the AI service is overloaded or busy it answers `503`.
 
 ## ACP agents in the desktop app
 
-*Ask TeamCraft* runs on the server with the administrator's API key. The
+*Ask TeamCraft* runs on the server with the administrator's provider and key. The
 desktop app has a second option: it can work with an **agent on your own
 computer**. The [Agent Client Protocol](https://agentclientprotocol.com)
 (ACP) connects clients to such agents, for example Claude Code (through

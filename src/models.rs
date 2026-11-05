@@ -91,6 +91,10 @@ pub struct ItemSummary {
     pub released_code: Option<String>,
     /// When searching: a file whose name or content matched.
     pub matched_file: Option<String>,
+    /// `make`, `purchased` or `standard`.
+    pub classification: String,
+    /// Custom attribute values of the latest revision.
+    pub attributes: serde_json::Value,
 }
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
@@ -103,6 +107,25 @@ pub struct Item {
     pub project_code: Option<String>,
     pub created_by: Uuid,
     pub created_by_name: String,
+    pub created_at: DateTime<Utc>,
+    /// `make`, `purchased` or `standard` (`domain::Classification`).
+    pub classification: String,
+}
+
+/// Definition of a custom attribute (maintained by administrators).
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct AttributeDef {
+    pub id: Uuid,
+    pub key: String,
+    pub label: String,
+    /// `text`, `number`, `boolean` or `choice` (`domain::AttributeType`).
+    pub data_type: String,
+    pub unit: String,
+    pub choices: Vec<String>,
+    /// Item types it applies to; empty = all.
+    pub item_types: Vec<String>,
+    pub position: i32,
+    pub active: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -124,6 +147,10 @@ pub struct Revision {
     pub material: String,
     pub mass_kg: Option<f64>,
     pub unit_cost: Option<f64>,
+    /// Custom attribute values by key (see [`AttributeDef`]).
+    pub attributes: serde_json::Value,
+    /// Classification of the item (`make`, `purchased`, `standard`).
+    pub classification: String,
     pub checked_out_by: Option<Uuid>,
     pub checked_out_by_name: Option<String>,
     pub checked_out_at: Option<DateTime<Utc>>,

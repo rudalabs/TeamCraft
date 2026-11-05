@@ -23,7 +23,7 @@ TeamCraft server – it is a client, not an offline copy.
 | Navigator | Project groups (mine first) → items, loaded again on *Home* and *Refresh* (a group created in the web UI shows without a restart); *My Worklist* (check-outs, reviews, my open changes); change orders by status; full-text search |
 | Toolbar | Below the tab strip, acting on the active tab: grouped buttons that keep their place (revision: Lock · Work · Lifecycle · Collaborate; change: Review · Lifecycle · Collaborate; request: Triage · Requester · Collaborate), the **next step highlighted** (*Check out*, *Check in…* with local changes, *Release…* on a clean check-out, *Revise* when released, *Submit for review* / *Approve change* on a change), greyed-out buttons with a tooltip saying why, rare actions (*Pack and Go…*, *Open in browser*, *Refresh*, *Mark obsolete…*) in **More ▾** – keyboard: `Enter`/`Space`/`↓` open, arrows move, `Esc` closes |
 | Revision tabs | Overview (with *At a glance*: the preview image from the CAD file, files, BOM lines, where used, references, change orders, open requests – and a link to the similar parts in the browser), Files (versions, restore, open), Structure (multi-level BOM, revision rules, roll-up), Where used, Changes, History, **3D viewer** (STEP, meshes, point clouds – converted by the server), Workspace |
-| Working folder | One folder per project group that **mirrors the folder structure of the files** (`<workspace>/<group>/<folder>/<file>`, the folder is stored with every file on the server), one copy of each file – the revision is metadata in `<workspace>/.teamcraft/state.json` (item, revision, file id, version, SHA-256, checked out). Files you have not checked out are **read-only** on disk; *Check out* takes the lock and makes them writable; *Check in…* uploads the chosen files as new versions, releases the lock in one step and makes them read-only again (files above 32 MiB go first as chunked, resumable uploads with progress and *Cancel*, then join the same check-in transaction). Every check-in names the version each file is based on, so the server refuses (409) to overwrite a version somebody else checked in meanwhile. The Workspace tab shows *up to date* / *modified* / *outdated* / *conflict* / *new* / *missing* / *name clash* per file (from the server's file status) with its path, read-only flag and the lock owner. Two items with the same folder and file name are reported, never overwritten. Lock and backup files of the CAD programs are skipped; Creo iterations count as one file. A tracked revision the server no longer shows (you left a restricted project group) is listed as *No longer accessible*: its local copies stay untouched and are never synced again – delete them yourself if you must |
+| Working folder | One folder per project group that **mirrors the folder structure of the files** (`<workspace>/<group>/<folder>/<file>`, the folder is stored with every file on the server), one copy of each file – the revision is metadata in `<workspace>/.teamcraft/state.json` (item, revision, file id, version, SHA-256, checked out). Files you have not checked out are **read-only** on disk; *Check out* takes the lock and makes them writable; *Check in…* uploads the chosen files as new versions, releases the lock in one step and makes them read-only again (files above 32 MiB go first as chunked, resumable uploads, then join the same check-in transaction). The check-in dialog shows the progress, and **Cancel** stops the check-in until its last byte is sent – before the next STEP export, between two chunks (the upload sessions are discarded, `DELETE /uploads/{id}`) or half-way through the streamed request with the small files: nothing is stored, the revision stays checked out (`src/abortable.rs`). Every check-in names the version each file is based on, so the server refuses (409) to overwrite a version somebody else checked in meanwhile. The Workspace tab shows *up to date* / *modified* / *outdated* / *conflict* / *new* / *missing* / *name clash* per file (from the server's file status) with its path, read-only flag and the lock owner. Two items with the same folder and file name are reported, never overwritten. Lock and backup files of the CAD programs are skipped; Creo iterations count as one file. A tracked revision the server no longer shows (you left a restricted project group) is listed as *No longer accessible*: its local copies stay untouched and are never synced again – delete them yourself if you must |
 | Get | *Get…* on a revision: the item with its BOM (revision rule *latest* or *released*) and the parts its CAD files reference, resolved by the server (`…/workset`); only missing and outdated files are downloaded (SHA-256, checked after the download), recorded one by one so an interrupted Get continues where it stopped; progress and *Cancel* in the status bar. No browser downloads |
 | Old workspaces | Folders of the older layout `<group>/<item>/<revision>/` (and `<item>/<revision>/`) are found after the sign-in; the app offers to move the files into the new layout – never overwriting a file, keeping files whose place is taken and listing them, writing every step to `.teamcraft/migration.log` |
 | Check in all | *Check in all* in the worklist (navigator and home page): every check-out without local changes is checked in on the server (lock released, one revision at a time); revisions with modified, new or conflicting files stay checked out and are listed |
@@ -31,13 +31,14 @@ TeamCraft server – it is a client, not an offline copy.
 | Whole project groups locally | the download icon in the navigator (*Tools → Get Project Groups…*): copies the files of every item of the chosen groups – latest released or latest revision – into the working folder with their folder structure; unchanged files are skipped, locally modified files kept, name clashes reported. For new team members or a fresh computer |
 | Import a CAD folder | the folder icon in the navigator (*Tools → Import CAD Folder…*): scans an existing folder (dry run: items, duplicate file names, skipped lock/backup files), then creates one item per part or assembly with the drawings and exports of the same name, project files in one document item, optional BOM lines from the assembly references, and checks every item in right after its files (assemblies once more after their BOM lines), so an interrupted import never leaves items checked out – a new run of the same folder also releases the check-outs an earlier, interrupted run left behind; a final report lists the new items and files, BOM lines, check-ins and problems (with *Open* for the top assembly); interrupted imports continue where they stopped (remembered per project group, so the same folder can also be imported into another group). Tutorial: *Help → How to Import a CAD Folder* |
 | New item | *New* (`Ctrl/Cmd+N`): choose the CAD files first – name and type follow from the first file; they are uploaded right after the item is created |
+| Import BOM | *Import BOM…* in the *Structure* tab (and the *More* menu) of a revision you have checked out, *Tools → Import BOM as New Assembly…* for a new one: a BOM exported by the CAD program (CSV, TSV, Excel, ODS or a STEP assembly, chosen in the native dialog) goes to the server's BOM import as a dry run first – the dialog shows the counts of lines, new and existing items, the notes and the first lines – and *Import* creates the lines and missing items in one transaction (numbers from the file or the group's numbering scheme, reuse of existing items optional) |
 | Release and changes | *Release…* creates and submits a change order – with the unreleased dependencies (BOM children, drawings) by default; *Release readiness* panel with *Add all*; approve/reject from the worklist |
 | Change requests | *Request change…* on a revision tab and *Request…* on a file (Files and Workspace tabs) raise a change request prefilled with item, revision and file name, with an optional screenshot or PDF (native file dialog, uploaded by the Rust side); request tabs with discussion, decision (accept / defer / reject), *Create change order*, attachments; *Requests assigned to me* and *My open requests* in the worklist |
 | Change propagation | *Dependents to check* grouped by dependent revision (one worklist line with a count, expandable; on the home page **Open**, **Revise**, **Acknowledge all…** per dependent and **Acknowledge…** per change), *Check needed* on the revision tab, references, *As released* rule, impact analysis |
 | Notifications | Bell with unread count and toasts; **Watch** / **Unwatch** |
-| Ask TeamCraft | **Ask…** in revision and change tabs (only when the server has the assistant enabled): *Draft release notes*, *Check before release*, *Brief me for this review* or a free question; the server answers with Claude and the user's rights, read-only unless drafts are allowed |
+| Ask TeamCraft | **Ask** in the rail (`Ctrl/Cmd+5`, only when the server has the assistant enabled): a sidebar beside the tabs that knows the active tab (revision and section, BOM rule, change, request, search), offers matching quick actions (*Draft release notes*, *Check before release*, *Brief me for this review* …) and keeps one conversation on the server; the server answers with Claude and the user's rights, read-only unless drafts are allowed |
 | Agent (ACP) | **Agent** in the rail (`Ctrl/Cmd+4`): a local agent you configure under *Settings → Agents…* (Claude Code through its ACP adapter, Gemini CLI, any [Agent Client Protocol](https://agentclientprotocol.com) agent; none by default). The app starts it in the workspace folder and hands it TeamCraft's MCP server with your token. Streamed conversation, tool calls, plan, permission prompts (*Allow once* / *Reject*), *Cancel*, quick prompts from the server's MCP prompts, the open revision or change as context. Through the app the agent may only read text files in the workspace – no writing, no terminal. See [the guide](../docs/src/guide/assistant.md#acp-agents-in-the-desktop-app) |
-| Pack and Go, STL | ZIP of a revision and its structure; **Export STL…** from the 3D viewer |
+| Pack and Go, STL | ZIP of a revision and its structure, with a progress dialog and *Cancel* (also while the server packs); written as `<name>.teamcraft-download` and renamed when complete, removed on cancel or error; **Export STL…** from the 3D viewer |
 | Appearance | The same skins as the web UI: *TeamCraft* follows the light or dark appearance of the operating system (and switches with it), *TeamCraft Light* and *TeamCraft Dark* stay fixed, the distribution skins are dark. The window chrome (on Linux the GTK menu bar) asks the system for the matching light or dark variant; a GTK theme without a dark variant keeps its light menu bar (the screenshot job sets `GTK_THEME=Adwaita:dark` for its dark run) |
 
 Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
@@ -47,17 +48,22 @@ Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
 ## Continuous integration
 
 `.github/workflows/desktop.yml` runs on every change to `desktop/`,
-`static/` or `media/`: `cargo fmt`, `clippy` and the tests, a build, and a
+`static/`, `shared/` or `media/`: `cargo fmt`, `clippy` and the tests, a build, and a
 **start-up smoke test** (the app is started with a fresh profile – on Linux
 under a virtual display – and must still be running after 20 seconds) on
 Linux x86_64 (Ubuntu 24.04 and 26.04) and ARM64, macOS ARM64 and Windows
 x86_64; Windows ARM64 runs as a preview that never blocks. A separate job
-parses every script of `ui/` and the web UI (`node --check`; Node.js is only
+parses every script of `ui/`, the web UI and `shared/` (`node --check`; Node.js is only
 used by CI, the app has no build step). Nothing is packaged or published.
 
 ## Run from source
 
-Installers are not published yet; build and run the app locally. Linux needs
+There is no release yet. The release workflow already builds the installers
+(Linux AppImage/`.deb`/`.rpm` and a Flatpak bundle for x86_64 and aarch64,
+macOS `.dmg`, Windows x64 and ARM64 `.msi`/`-setup.exe` plus a portable
+`.zip` with `TeamCraft.exe`, which needs the WebView2 runtime of Windows
+10/11) – see *Download* in the [main README](../README.md#download). Until the
+first release, build and run the app locally. Linux needs
 the WebKitGTK development files:
 
 ```sh
@@ -94,13 +100,17 @@ Where the app keeps its data:
 ## Layout
 
 `build.rs` copies the assets the app shares with the web UI into `ui/static/`
-(git-ignored): `static/skins.css`, the fonts, the logos in `media/` and the 3D
-viewer.
+(git-ignored): the whole `shared/` tree (skins, fonts, the 3D viewer) to
+`ui/static/shared/` and the logos and icons from `media/`. The app loads them
+from the same URLs as the web UI (`/static/shared/…`, `/static/media/…`); the
+test `shared_ui_files_are_mirrored` checks the copy byte for byte. What belongs
+into `shared/` and its rules: [`shared/README.md`](../shared/README.md).
 
 ```text
 src/main.rs        Tauri setup, native menu, state
 src/commands.rs    the commands the UI calls (every network and file access)
 src/api.rs         REST client (/api/v1, bearer token) – the web view never talks to the server
+src/abortable.rs   Cancel of long operations: streamed check-in body that stops half-way, Pack and Go download dropped on cancel
 src/signin.rs      browser sign-in: PKCE, loopback listener on 127.0.0.1
 src/layout.rs      working-folder rules (pure): folder mapping, state.json, Get planning, migration planning
 src/workspace.rs   Get, status, read-only handling, check-in, migration of the old layout

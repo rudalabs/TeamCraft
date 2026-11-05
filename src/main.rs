@@ -61,6 +61,11 @@ enum Command {
         #[command(subcommand)]
         command: VaultCommand,
     },
+    /// The built-in assistant ("Ask TeamCraft").
+    Assistant {
+        #[command(subcommand)]
+        command: AssistantCommand,
+    },
     /// Read the referenced CAD files of the stored files again (current
     /// versions) and replace the stored references – after an update that
     /// reads a format better, e.g. SOLIDWORKS 2015+ assemblies.
@@ -107,6 +112,12 @@ enum Command {
         /// Also write the shape signature (JSON) for the similar part search.
         #[arg(long)]
         signature: Option<std::path::PathBuf>,
+        /// Refuse an input file larger than this before opening it.
+        #[arg(long, default_value_t = u64::MAX)]
+        max_input_bytes: u64,
+        /// Limit the address space of this process (0 = unlimited).
+        #[arg(long, default_value_t = 0)]
+        max_memory_bytes: u64,
     },
 }
 
@@ -137,6 +148,14 @@ enum UserCommand {
 }
 
 #[derive(Subcommand)]
+enum AssistantCommand {
+    /// Send one small request with one tool to the configured AI service and
+    /// report reachability, the API key, the model, tool support and token
+    /// counts. Never prints the key.
+    Check,
+}
+
+#[derive(Subcommand)]
 enum VaultCommand {
     /// Check that every file referenced in the database exists in the vault.
     Check {
@@ -157,18 +176,41 @@ enum VaultCommand {
     },
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let cli = Cli::parse();
+    // The preview process runs before any runtime exists: its address space
+    // limit then counts only what the conversion itself allocates.
     if let Some(Command::PreviewMesh {
         format,
         input,
         output,
         signature,
+        max_input_bytes,
+        max_memory_bytes,
     }) = &cli.command
     {
-        return preview_mesh(format, input, output.as_deref(), signature.as_deref());
+        teamcraft::preview::limit_memory(*max_memory_bytes);
+        return preview_mesh(
+            format,
+            input,
+            output.as_deref(),
+            signature.as_deref(),
+            *max_input_bytes,
+        );
     }
+    match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime.block_on(run(cli)),
+        Err(e) => {
+            eprintln!("Error: the async runtime could not be started: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run(cli: Cli) -> ExitCode {
     // Optional configuration files (see the `config` module).
     for (path, e) in teamcraft::config::load_env_files() {
         eprintln!("warning: {path} could not be loaded completely: {e}");
@@ -189,6 +231,7 @@ async fn main() -> ExitCode {
         Command::Restore { dir, force } => restore_command(dir, force).await,
         Command::User { command } => user_command(command).await,
         Command::Vault { command } => vault_command(command).await,
+        Command::Assistant { command } => assistant_command(command).await,
         Command::RescanReferences { formats } => rescan_references(formats).await,
     };
     match result {
@@ -248,6 +291,7 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     }
     teamcraft::delivery::spawn(pool.clone(), delivery);
     let webhook_retention_days = config.webhooks.retention_days;
+    let thread_retention_days = config.assistant.as_ref().map(|a| a.retention_days);
     let state = AppState::new(config, pool.clone()).await?;
     // Outgoing event webhooks (the outbox `webhook_deliveries`).
     teamcraft::webhooks::spawn(pool.clone(), state.webhooks.clone());
@@ -299,6 +343,17 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "webhook delivery cleanup failed"),
             }
+            // idle assistant conversations (also while the assistant is off:
+            // a thread must not outlive its retention because of a setting)
+            let days = thread_retention_days
+                .unwrap_or(teamcraft::config::DEFAULT_ASSISTANT_RETENTION_DAYS);
+            match services::assistant_threads::purge_expired(&pool, days).await {
+                Ok(n) if n > 0 => {
+                    tracing::info!(removed = n, "removed idle assistant conversations")
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "assistant conversation cleanup failed"),
+            }
         }
     });
 
@@ -321,6 +376,7 @@ fn preview_mesh(
     input: &std::path::Path,
     output: Option<&std::path::Path>,
     signature: Option<&std::path::Path>,
+    max_input_bytes: u64,
 ) -> ExitCode {
     if output.is_none() && signature.is_none() {
         eprintln!("Error: give --output and/or --signature");
@@ -328,7 +384,7 @@ fn preview_mesh(
     }
     // the kernel's panic messages are not meant for users
     std::panic::set_hook(Box::new(|_| {}));
-    match teamcraft::preview::run_job(format, input, output, signature) {
+    match teamcraft::preview::run_job(format, input, output, signature, max_input_bytes) {
         Ok(mesh) => {
             // for people running it by hand (the server ignores stdout)
             let partial = mesh
@@ -525,6 +581,47 @@ async fn rescan_references(mut formats: Vec<String>) -> Result<ExitCode> {
     let n = services::files::rescan_references(&pool, &vault, &formats).await?;
     println!("rescanned {n} file version(s) ({})", formats.join(", "));
     Ok(ExitCode::SUCCESS)
+}
+
+/// `teamcraft assistant check`: needs no database.
+async fn assistant_command(command: AssistantCommand) -> Result<ExitCode> {
+    let AssistantCommand::Check = command;
+    let config = load_config()?;
+    let Some(cfg) = &config.assistant else {
+        println!(
+            "The assistant is not configured: set TEAMCRAFT_ASSISTANT_API_KEY (or, for a local \
+             server, TEAMCRAFT_ASSISTANT_PROVIDER=openai-compatible and TEAMCRAFT_ASSISTANT_BASE_URL)."
+        );
+        return Ok(ExitCode::FAILURE);
+    };
+    println!("assistant: {}", cfg.label());
+    if let Some(warning) = cfg.insecure_key_warning() {
+        println!("warning: {warning}");
+    }
+    let client = teamcraft::assistant::Assistant::new(cfg)?;
+    let lines = teamcraft::assistant::check(
+        client.provider.as_ref(),
+        &client.transport,
+        &client.model,
+        cfg.max_tokens,
+        cfg.api_key.is_some(),
+    )
+    .await;
+    let mut failed = false;
+    for l in &lines {
+        println!(
+            "{:<12} {:<4} {}",
+            l.what,
+            if l.ok { "ok" } else { "FAIL" },
+            l.detail
+        );
+        failed |= !l.ok;
+    }
+    Ok(if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 async fn vault_command(command: VaultCommand) -> Result<ExitCode> {

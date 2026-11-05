@@ -134,6 +134,7 @@ impl ResultForm {
             solver: self.solver.clone(),
             solver_version: self.solver_version.clone(),
             note: self.note.clone(),
+            source: String::new(),
         })
     }
 }

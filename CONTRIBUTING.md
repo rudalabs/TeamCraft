@@ -25,7 +25,9 @@ kind is not tolerated.
 * **Improve the documentation**, either the book in [`docs/`](docs) (mdBook)
   or the build guides in [`platforms/`](platforms).
 * **Write code.** Pick an entry from [docs/OPEN_WORK.md](docs/OPEN_WORK.md) or
-  an open issue. For anything bigger than a bug fix, open an issue first and
+  an open issue – preferably from its sections *Proofing* and *Structure*: tests,
+  fuzzing and refactoring come before new features for now (see *Direction*
+  there). For anything bigger than a bug fix, open an issue first and
   describe your plan. That way we can agree on the approach before you put
   time into it.
 
@@ -96,6 +98,31 @@ it is skipped, with `TEAMCRAFT_REQUIRE_PG_TOOLS=1` (CI) that fails.
 | the desktop app   | `cargo fmt/clippy/test --manifest-path desktop/Cargo.toml`          |
 | the documentation | `mdbook build docs` (mdBook 0.5) and `scripts/check-doc-links.sh`   |
 | the web UI        | check the changed pages in a browser (no CSP errors in the console) |
+
+### Scale check
+
+If you change queries, indexes or pages that list many rows, run the scale
+check: an ignored test that seeds a large synthetic vault (~100k items, ~1M
+BOM lines, 2M audit rows; see
+[Operations → Scale check](docs/src/admin/operations.md#scale-check)) and
+times the hot paths through the router.
+
+```sh
+docker compose up -d db
+cargo test --release --test scale -- --ignored --nocapture
+```
+
+The seed (a few minutes, ~1.6 GB) goes into the database `teamcraft_scale` on
+the test server and is kept, so the next run only applies new migrations and
+measures; `DROP DATABASE teamcraft_scale` starts over. The report lands in
+`target/scale-report/` (`report.md`, `plans.md` with the
+`EXPLAIN (ANALYZE, BUFFERS)` plan of every statement, `results.json`). Set
+`TEAMCRAFT_SCALE_BASELINE=<an earlier results.json>` for a before/after
+column and `TEAMCRAFT_SCALE_RUNS` for more timed calls per step. The plans
+need a superuser (as in the dev container), because they come from
+`auto_explain`. On GitHub, run the **Scale check** workflow by hand
+(`gh workflow run scale.yml --ref <branch>`) and download the `scale-report`
+artifact; it is not part of the pull request checks.
 
 ## Updating the README screenshots
 
@@ -202,11 +229,20 @@ code base. These are the most important rules:
     the `every_template_renders` test.
   * No inline JavaScript or styles: the Content Security Policy blocks them.
   * Cancel buttons take effect immediately, without a confirmation.
-  * **Design tokens:** no literal colours outside `static/skins.css`; every
+  * **Design tokens:** no literal colours outside `shared/css/skins.css`; every
     component reads the tokens (`--surface`, `--text-muted`, `--primary`,
     `--st-<state>-fg/-bg/-bd`, …). Tokens are opaque `#rrggbb`; the unit tests
     `skins_meet_contrast` and `dark_token_blocks_identical` (`src/domain.rs`)
     check the WCAG contrast and that the two dark blocks match.
+  * **Shared UI files** (`shared/`): what both the web UI and the desktop
+    app use – skins, fonts, the 3D viewer. The server embeds the folder
+    without a hand-written list (`build.rs`), the desktop build copies it;
+    every `.css`/`.js`/`.svg` starts with
+    `/* SPDX-License-Identifier: MPL-2.0 */`. Rules in `shared/README.md`.
+  * **Density by tokens:** sizes of controls, rows and body text come from
+    `--ctl-h`, `--ctl-h-sm`, `--row-h`, `--fs-body`, `--lh-body`; the web UI
+    uses the defaults, the desktop app `data-density="compact"`. No
+    app-specific copies of these tokens.
   * No gradients, glow, texture, glass or uppercase labels in components
     (`grep -n gradient static/style.css` stays empty;
     only the distro skins' `--glow` / `--pattern` behind the page use them).
@@ -282,8 +318,9 @@ release may contain breaking changes.
 
 **Build artifacts.** Every push to `main` runs
 `.github/workflows/release.yml`, which builds the server binaries (Linux
-x86_64/ARM64, macOS ARM64, Windows x86_64) and the desktop installers
-(AppImage, `.deb`, `.rpm`, `.dmg`, `.msi`, NSIS `-setup.exe`) and keeps them
+x86_64/ARM64, Windows x64) and the desktop installers (AppImage, `.deb`,
+`.rpm` and Flatpak bundles for x86_64/aarch64, `.dmg`, and for Windows x64
+and ARM64 `.msi`, NSIS `-setup.exe` and a portable `.zip`) and keeps them
 as workflow artifacts for 14 days. *Run workflow* on the Actions page builds
 any branch the same way.
 
