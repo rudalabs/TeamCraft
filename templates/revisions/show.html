@@ -228,8 +228,8 @@
       <tr class="{% if r.id == rev.id %}current{% endif %}">
         <td title="{{ r.name }}"><a class="revbox" href="/revisions/{{ r.id }}">{{ r.code }}</a></td>
         <td>{{ m.badge(r.state) }}{% if r.checked_out_by_name %} {{ m.lock(r.checked_out_by_name) }}{% endif %}</td>
-        <td class="small">{{ m.time(r.created_at) }}<span class="muted block">{{ r.created_by_name }}</span></td>
-        <td class="small nowrap">{{ m.time(r.released_at) }}</td>
+        <td class="small nowrap">{{ m.date(r.created_at) }}<span class="muted block">{{ r.created_by_name }}</span></td>
+        <td class="small nowrap">{{ m.date(r.released_at) }}</td>
       </tr>
     {% endfor %}
     </tbody>

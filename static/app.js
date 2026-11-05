@@ -123,12 +123,15 @@
   } catch (e) {
     fmt = null;
   }
+  // <time data-date>: the date alone, for narrow columns (the title keeps the time).
+  var dateFmt = null;
+  try { dateFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "2-digit", day: "2-digit" }); } catch (e) { dateFmt = null; }
   if (fmt) {
     document.querySelectorAll("time[datetime]").forEach(function (el) {
       var d = new Date(el.getAttribute("datetime"));
       if (!isNaN(d.getTime())) {
-        el.title = el.textContent;
-        el.textContent = fmt.format(d);
+        el.title = fmt.format(d);
+        el.textContent = el.hasAttribute("data-date") && dateFmt ? dateFmt.format(d) : fmt.format(d);
       }
     });
   }
