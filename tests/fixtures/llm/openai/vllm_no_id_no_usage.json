@@ -1,0 +1,19 @@
+{
+  "id": "chatcmpl-vllm1",
+  "object": "chat.completion",
+  "created": 1767225605,
+  "model": "Qwen/Qwen3-32B",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          { "type": "function", "function": { "name": "my_worklist", "arguments": "" } }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ]
+}

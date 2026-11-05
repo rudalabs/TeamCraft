@@ -93,21 +93,59 @@ server is internal, so list it: `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS=erp.corp.exampl
 ## Assistant (optional)
 
 The built-in assistant ([Ask TeamCraft](../guide/assistant.md)) is off
-until an Anthropic API key is configured. Without a key the buttons are
-hidden and `/assistant` and `POST /api/v1/assistant` answer `404`.
+until an API key is configured, or, for a local model server, until the
+provider `openai-compatible` and its base URL are set. While it is off the
+buttons are hidden and `/assistant` and `POST /api/v1/assistant` answer
+`404`. Every variable also works as `NAME_FILE` (the file's contents).
 
-| Variable                        | Default           | Meaning                                                                                       |
-|---------------------------------|-------------------|-----------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_ANTHROPIC_API_KEY`   | –                 | Anthropic API key; enables the assistant. A secret: prefer `_FILE`, it is never logged        |
-| `TEAMCRAFT_ASSISTANT_MODEL`     | `claude-opus-5-5` | Claude model id                                                                               |
-| `TEAMCRAFT_ASSISTANT_MAX_STEPS` | `12`              | most model calls (tool rounds) per question, 1–50                                             |
+| Variable                              | Default                                    | Meaning                                                                                                                                                  |
+|---------------------------------------|--------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_ASSISTANT_PROVIDER`        | `anthropic`                                | wire format: `anthropic` (Messages API), `openai` (OpenAI and Azure OpenAI v1, Chat Completions) or `openai-compatible` (Ollama, vLLM, LM Studio, Mistral, OpenRouter, Groq …) |
+| `TEAMCRAFT_ASSISTANT_BASE_URL`        | `https://api.anthropic.com/v1` / `https://api.openai.com/v1` | API base (`/messages` or `/chat/completions` is added). Required for `openai-compatible`, e.g. `http://ollama.internal:11434/v1`; Azure: `https://<resource>.openai.azure.com/openai/v1` |
+| `TEAMCRAFT_ASSISTANT_API_KEY`         | –                                          | the key. A secret: prefer `_FILE`, it is never logged. Optional for `openai-compatible` (local servers)                                                  |
+| `TEAMCRAFT_ANTHROPIC_API_KEY`         | –                                          | older name of `TEAMCRAFT_ASSISTANT_API_KEY`, still accepted. Setting both with different values is an error                                              |
+| `TEAMCRAFT_ASSISTANT_MODEL`           | `claude-opus-5-5` (`anthropic`)            | model id, or the Azure deployment name. Required for `openai` and `openai-compatible`                                                                    |
+| `TEAMCRAFT_ASSISTANT_MAX_STEPS`       | `12`                                       | most model calls (tool rounds) per question, 1–50                                                                                                        |
+| `TEAMCRAFT_ASSISTANT_MAX_TOKENS`      | `16000`                                    | output tokens per model call, 256–200000                                                                                                                 |
+| `TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT` | `180`                                      | seconds for one HTTP call, 5–3600 (a model on a CPU may need more)                                                                                       |
+| `TEAMCRAFT_ASSISTANT_RUN_TIMEOUT`     | `240` (at least the request timeout)       | seconds for a whole question, at least the request timeout                                                                                               |
+| `TEAMCRAFT_ASSISTANT_MAX_CONCURRENT`  | `4`                                        | questions running at the same time on the server, 1–64                                                                                                   |
 
-Fixed limits per question: 16 000 output tokens per model call, 800 000
-tokens in total, 240 seconds, and at most 4 questions running at the same
-time on the server. Each question is recorded in the audit log
-(`assistant.run`: user, quick action, question length, tools used, token
-counts and the outcome – `cancelled` when the client closed the connection
-before the answer – never the question or the answer).
+With only `TEAMCRAFT_ANTHROPIC_API_KEY` (and optionally the model and the
+steps) everything works as it did before these variables existed. The
+startup log shows `assistant=<provider>:<model>@<host>`, never the key.
+
+Where the questions go, and what is done about the key:
+
+* The base URL comes **only from this configuration**, never from users,
+  the admin pages or anything a model or tool returns. Internal hosts are
+  allowed on purpose, so a model server inside the network works (the
+  webhook protection against internal addresses is for URLs that users
+  enter and is not used here).
+* **Redirects are not followed.** An answer that redirects is an error, so
+  the key is never sent to a second host. A user name or password in the
+  URL, a query and a non-`http(s)` scheme are rejected at startup.
+* A **warning** is logged at startup when a key would be sent over plain
+  `http` to a host that is not this computer (`localhost`, `127.0.0.0/8`,
+  `::1`). Use `https` for anything else.
+* The server honours `HTTPS_PROXY` / `NO_PROXY`. A firewall with an
+  egress allow-list must let the server reach the API host.
+
+**Check the setup** with `teamcraft assistant check` (run it with the
+same environment as the server; it needs no database). It sends one small
+request with one tool and reports whether the server is reachable, the key
+is accepted, the model exists, the model calls the tool and the server
+reports token counts. Many local models are served without tool support:
+this is how you find out before your users do. A server that reports no
+token counts still works, but the token limit of a run cannot count its
+calls (the step and time limits still apply, and the audit record says
+`usage_reported: false`). The check never prints the key.
+
+Fixed limits per question: 800 000 tokens in total. Each question is
+recorded in the audit log (`assistant.run`: user, quick action, question
+length, provider, model, tools used, token counts, `usage_reported` and
+the outcome – `cancelled` when the client closed the connection before the
+answer – never the question or the answer).
 
 ## Tests
 

@@ -196,7 +196,7 @@
 <section class="card assistant-panel{% if hidden %} hidden{% endif %}" id="assistant-panel">
   <div class="card-head">
     <h2>Ask TeamCraft</h2>
-    <span class="hint">Claude reads the PDM data with your rights{% if item %} · {{ item }}{% if revision %}/{{ revision }}{% endif %}{% endif %}{% if change %} · {{ change }}{% endif %}</span>
+    <span class="hint">The assistant reads the PDM data with your rights{% if item %} · {{ item }}{% if revision %}/{{ revision }}{% endif %}{% endif %}{% if change %} · {{ change }}{% endif %}</span>
   </div>
   <form class="stack assistant-form" method="post" action="/assistant">
     <input type="hidden" name="item" value="{{ item }}">
@@ -217,7 +217,7 @@
       <span class="hint assistant-status" role="status"></span>
     </div>
     <p class="hint">Read-only unless you allow drafts; it never submits, approves or releases. The question and the data the
-      tools return are sent to Anthropic.</p>
+      tools return are sent to {{ assistant_destination | default("the AI provider configured by your administrator") }}.</p>
   </form>
 </section>
 {%- endmacro %}

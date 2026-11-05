@@ -1,7 +1,8 @@
 # Ask TeamCraft (assistant)
 
-*Ask TeamCraft* is an optional assistant built into the server. Claude
-answers questions about your PDM data. It looks things up with the same
+*Ask TeamCraft* is an optional assistant built into the server. An AI
+model (Claude, or an OpenAI-compatible or local model, as configured by
+your administrator) answers questions about your PDM data. It looks things up with the same
 tools that the [MCP server](../reference/mcp.md) offers to external AI
 clients, and it uses **your rights**. It answers on the server, so nothing
 has to be installed on your computer.
@@ -13,6 +14,8 @@ CAD generation:
 |-----------------------|------------------------------|--------------------------------------------------------------------------------------------------|
 | Revision page         | **Draft release notes**      | what changed compared with the previous revision: attributes, files, BOM, open points            |
 | Revision page         | **Check before release**     | a checklist: blocking items (unreleased BOM children and references, check-outs) and warnings     |
+| Revision page         | **What breaks if I change this?** | the assemblies that use the item (released ones first), open change orders and requests that already touch it, simulations that would go out of date, what to check first |
+| Revision page         | **Are the simulations still valid?** | the simulations based on the item: which are out of date and why, failed results, what to re-run |
 | Change order page     | **Brief me for this review** | what changes, the impact on dependents outside the change, risks, questions for the author       |
 | Dashboard             | **What needs my attention**  | an ordered to-do list from your worklist: reviews, impacts, old check-outs, your drafts           |
 | Everywhere            | **Ask**                      | any question, e.g. "Which assemblies use PRT-000012, and are they released?"                     |
@@ -27,6 +30,11 @@ CAD generation:
   PRT-000012?" – the simulations based on it and why they no longer match.
 - "Summarise the results of SIM-000003 rev B vs A" – changed, added and
   removed result values with delta and pass/fail.
+- "What does the spec of PRT-000012 say about the coating?" – the assistant
+  reads the text that TeamCraft extracted from the attached files for the
+  search (STEP and IGES strings, text, CSV, JSON, XML, KiCad and similar
+  formats; not PDFs, images or binary CAD files). It can read only files
+  that you may open.
 - "Draft a change request from my notes: …" – with drafts allowed (see
   below), the assistant raises the request; otherwise it shows what the
   request should contain.
@@ -56,25 +64,38 @@ question starts fresh: the assistant does not remember earlier questions.
 
 ## Privacy
 
-The assistant is **off** unless an administrator configures an Anthropic
-API key (`TEAMCRAFT_ANTHROPIC_API_KEY`, see
-[Configuration](../admin/configuration.md#assistant-optional)). Without a
-key no data leaves the server, and the buttons are hidden.
+The assistant is **off** unless an administrator configures an AI provider
+and an API key (see
+[Configuration](../admin/configuration.md#assistant-optional)). Without
+one no data leaves the server, and the buttons are hidden.
 
 When it is on, your question, the instruction of the quick action and the
-results of the tools it calls are sent to the Anthropic API. This includes
-item names, descriptions, BOM lines, change order and change request texts
-(with their comments) and simulation result values. Files and attachments are not
-uploaded; only their names and metadata are. The API key stays on the
-server. Browsers and the desktop app never see it. The audit log records
-each run (`assistant.run`): who asked, which quick action, the length of
-the question, the tools used and the token counts. The audit log never
-stores the question or the answer.
+results of the tools it calls are sent to **the AI provider that your
+administrator configured**. The dialogs name it (provider and host). Which
+one receives the data depends on the setup:
+
+| Provider setting                          | Receives the data                                                    |
+|-------------------------------------------|----------------------------------------------------------------------|
+| `anthropic`                               | the Anthropic API                                                    |
+| `openai`                                  | OpenAI, or the Azure OpenAI resource of your organisation            |
+| `openai-compatible` with a hosted service | that service (Mistral, OpenRouter, Groq, …)                          |
+| `openai-compatible` with a local server   | only the model server that your administrator runs (Ollama, vLLM, LM Studio). With a server inside the organisation's network the data does not leave it |
+
+The data includes item names, descriptions, BOM lines, change order and
+change request texts (with their comments) and simulation result values.
+Files and attachments are not uploaded; only their names and metadata
+are. The API key stays on the server. Browsers and the desktop app never
+see it, and the server never sends it to another host than the configured
+one. The audit log records each run (`assistant.run`): who asked, which
+quick action, the length of the question, the provider and model, the
+tools used and the token counts. The audit log never stores the question
+or the answer. The terms of the provider (retention, training use) apply
+to what it receives: choose the provider and the plan accordingly.
 
 ## API
 
 ```http
-GET  /api/v1/assistant          → {enabled, model, actions: [{id, label, needs}]}
+GET  /api/v1/assistant          → {enabled, provider, model, host, actions: [{id, label, needs}]}
 POST /api/v1/assistant
      {"action": "release_check", "context": {"item": "ASM-000003", "revision": "B"}}
      {"question": "Where is PRT-000012 used?", "allow_drafts": false}
@@ -82,15 +103,16 @@ POST /api/v1/assistant
 
 `action` is one of `ask` (default, needs `question`), `release_notes` and
 `release_check` (need `context.item`, optional `context.revision`),
-`review_brief` (needs `context.change`) and `attention`. The answer contains
+`impact` and `simulation_status` (need `context.item`), `review_brief`
+(needs `context.change`) and `attention`. The answer contains
 `answer.text` (markdown), `answer.truncated`, `tools` (`[{name, ok}]`),
 `steps`, `model` and the token counts. `GET /api/v1/me` reports
-`capabilities.assistant`. Without a key the `POST` endpoint answers `404`.
+`capabilities.assistant`. While the assistant is off the `POST` endpoint answers `404`.
 When the AI service is overloaded or busy it answers `503`.
 
 ## ACP agents in the desktop app
 
-*Ask TeamCraft* runs on the server with the administrator's API key. The
+*Ask TeamCraft* runs on the server with the administrator's provider and key. The
 desktop app has a second option: it can work with an **agent on your own
 computer**. The [Agent Client Protocol](https://agentclientprotocol.com)
 (ACP) connects clients to such agents, for example Claude Code (through

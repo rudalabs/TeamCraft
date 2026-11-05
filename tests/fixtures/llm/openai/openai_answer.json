@@ -1,0 +1,22 @@
+{
+  "id": "chatcmpl-9Aa",
+  "object": "chat.completion",
+  "created": 1767225600,
+  "model": "gpt-5.4-2026-03-05",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "PRT-000001 is released.", "refusal": null, "annotations": [] },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 120,
+    "completion_tokens": 12,
+    "total_tokens": 132,
+    "prompt_tokens_details": { "cached_tokens": 100, "audio_tokens": 0 },
+    "completion_tokens_details": { "reasoning_tokens": 0 }
+  },
+  "system_fingerprint": "fp_abc"
+}

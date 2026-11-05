@@ -20,6 +20,7 @@ pub struct Run {
     pub answer: Answer,
     pub tools: Vec<ToolUse>,
     pub steps: u32,
+    pub provider: &'static str,
     pub model: String,
     pub allow_drafts: bool,
     pub input_tokens: u64,
@@ -35,11 +36,14 @@ pub fn enabled(st: &AppState) -> bool {
 fn audit_details(
     question: &Question,
     allow_drafts: bool,
+    provider: &str,
     model: &str,
     trace: &Trace,
     outcome: &str,
 ) -> Value {
     json!({
+        "provider": provider,
+        "usage_reported": trace.unreported_steps == 0,
         "action": question.action.as_str(),
         "question_chars": question.text.chars().count(),
         "context": {
@@ -85,6 +89,7 @@ struct CancelGuard {
     me: Actor,
     question: Question,
     allow_drafts: bool,
+    provider: &'static str,
     model: String,
     trace: Trace,
     finished: bool,
@@ -102,6 +107,7 @@ impl Drop for CancelGuard {
         let details = audit_details(
             &self.question,
             self.allow_drafts,
+            self.provider,
             &self.model,
             &self.trace,
             "cancelled",
@@ -135,12 +141,13 @@ pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run
         me: me.clone(),
         question,
         allow_drafts,
+        provider: client.provider_name,
         model: client.model.clone(),
         trace: Trace::default(),
         finished: false,
     };
     let result = tokio::time::timeout(
-        assistant::RUN_TIMEOUT,
+        client.run_timeout,
         assistant::run_loop(
             client.provider.as_ref(),
             &client.transport,
@@ -170,6 +177,7 @@ pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run
     let details = audit_details(
         &guard.question,
         allow_drafts,
+        client.provider_name,
         &client.model,
         &guard.trace,
         outcome,
@@ -183,6 +191,7 @@ pub async fn ask(st: &AppState, me: &Actor, question: Question) -> AppResult<Run
         answer,
         tools: trace.tools,
         steps: trace.steps,
+        provider: client.provider_name,
         model: client.model.clone(),
         allow_drafts,
         input_tokens: trace.input_tokens,

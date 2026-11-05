@@ -1363,7 +1363,7 @@
       return h("button.chip", { type: "button", on: { click: function () { send(a[0]); } } }, a[1]);
     });
     var body = h("div.stack", null, [
-      h("p.hint", { text: "Claude reads the PDM data of " + subject + " with your rights. Read-only unless you allow drafts – it never submits, approves or releases. The question and the data the tools return are sent to Anthropic." }),
+      h("p.hint", { text: "The assistant reads the PDM data of " + subject + " with your rights. Read-only unless you allow drafts – it never submits, approves or releases. The question and the data the tools return are sent to the AI provider configured on the server (your administrator can tell you which)." }),
       h("div.assistant-quick", null, quick),
       field("Your question", question, "optional with a quick action"),
       drafts ? h("label.check", null, [drafts, "Allow drafting change orders, change requests and comments"]) : null,
@@ -2107,7 +2107,8 @@
         watchTool(tab, "items", rev.item_number, d.watching),
         assistantEnabled() ? tool("Ask…", "ask", function () {
           assistantDialog({ item: rev.item_number, revision: rev.code }, rev.item_number + "/" + rev.code, [
-            ["release_notes", "Draft release notes"], ["release_check", "Check before release"]
+            ["release_notes", "Draft release notes"], ["release_check", "Check before release"],
+            ["impact", "What breaks if I change this?"], ["simulation_status", "Are the simulations still valid?"]
           ]);
         }, { title: "Ask TeamCraft: release notes, release check or any question about this revision" }) : null,
         agentButton(tab)
