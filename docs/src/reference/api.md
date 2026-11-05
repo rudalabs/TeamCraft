@@ -148,7 +148,9 @@ impact.
 dependent revision – or only the listed ones, the ones the user saw – with
 one note, in one transaction, with an audit record per impact. Both need a
 CAD editor of the dependent's project group (or an admin) and a note.
-Listed impacts that were resolved in the meantime are skipped; the answer
+The list must not be empty and may only name impacts on that revision
+(`400` otherwise). Listed impacts that were resolved in the meantime are
+skipped; the answer
 has `acknowledged` (the resolved impacts) and `skipped`. If nothing is left
 to acknowledge the answer is `409 Conflict`. Acknowledging stays a human
 decision: the MCP server only reads impacts.
