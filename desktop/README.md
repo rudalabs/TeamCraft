@@ -37,7 +37,7 @@ TeamCraft server – it is a client, not an offline copy.
 | Ask TeamCraft | **Ask…** in revision and change tabs (only when the server has the assistant enabled): *Draft release notes*, *Check before release*, *Brief me for this review* or a free question; the server answers with Claude and the user's rights, read-only unless drafts are allowed |
 | Agent (ACP) | **Agent** in the rail (`Ctrl/Cmd+4`): a local agent you configure under *Settings → Agents…* (Claude Code through its ACP adapter, Gemini CLI, any [Agent Client Protocol](https://agentclientprotocol.com) agent; none by default). The app starts it in the workspace folder and hands it TeamCraft's MCP server with your token. Streamed conversation, tool calls, plan, permission prompts (*Allow once* / *Reject*), *Cancel*, quick prompts from the server's MCP prompts, the open revision or change as context. Through the app the agent may only read text files in the workspace – no writing, no terminal. See [the guide](../docs/src/guide/assistant.md#acp-agents-in-the-desktop-app) |
 | Pack and Go, STL | ZIP of a revision and its structure; **Export STL…** from the 3D viewer |
-| Skins | The same skins as the web UI |
+| Appearance | The same skins as the web UI: *TeamCraft* follows the light or dark appearance of the operating system (and switches with it), *TeamCraft Light* and *TeamCraft Dark* stay fixed, the distribution skins are dark |
 
 Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
 `Ctrl/Cmd+1/2/3/4` Home/Worklist/Changes/Agent, `Ctrl/Cmd+W` close tab; zoom with

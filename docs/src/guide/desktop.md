@@ -62,7 +62,7 @@ check-outs and reviews, and a **local working folder**:
   [ACP agents](assistant.md#acp-agents-in-the-desktop-app).
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a
-TeamCraft page) or with a personal access token. The app uses the same skins
+TeamCraft page) or with a personal access token. The app uses the same skins (the default follows the light or dark appearance of the operating system)
 and 3D viewer as the web interface; the models are converted by the server.
 
 ## How files appear on your computer

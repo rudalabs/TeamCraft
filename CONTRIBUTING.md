@@ -106,8 +106,11 @@ and assemblies with the NIST files from `tests/fixtures/cad`, a multi-level
 BOM, a released and a pending change order, check-outs and notifications. It
 then drives headless Chrome through chromedriver's WebDriver API (with `curl`
 and `jq`, no Node or Python) and saves the pages as PNGs: 1440 × 900 for the
-desktop and 390 pixels wide for the phone. The passwords and API tokens are
-generated for each run and never printed.
+desktop and 390 pixels wide for the phone, each in the light scheme
+(`NAME.png`, the names the README uses) and again in the dark scheme
+(`NAME-dark.png`; Chrome emulates `prefers-color-scheme`, the demo user keeps
+the System skin). The passwords and API tokens are generated for each run
+and never printed.
 
 With `DESKTOP_APP` set to a built TeamCraft Desktop binary (Linux), the script
 also captures the desktop app (`desktop-*.png`): it pre-seeds a fresh profile
@@ -186,6 +189,20 @@ code base. These are the most important rules:
     the `every_template_renders` test.
   * No inline JavaScript or styles: the Content Security Policy blocks them.
   * Cancel buttons take effect immediately, without a confirmation.
+  * **Design tokens:** no literal colours outside `static/skins.css`; every
+    component reads the tokens (`--surface`, `--text-muted`, `--primary`,
+    `--st-<state>-fg/-bg/-bd`, …). Tokens are opaque `#rrggbb`; the unit tests
+    `skins_meet_contrast` and `dark_token_blocks_identical` (`src/domain.rs`)
+    check the WCAG contrast and that the two dark blocks match.
+  * No gradients, glow, texture, glass or uppercase labels in components
+    (`grep -n gradient static/style.css` stays empty;
+    only the distro skins' `--glow` / `--pattern` behind the page use them).
+  * One filled (primary) button per view; the rest is secondary, ghost or in
+    a *More* menu.
+  * State is colour **and** a glyph (✓ released, ○ in review, ◐ in work,
+    × rejected, – obsolete, △ check needed), never colour alone.
+  * Check both schemes: the screenshot workflow captures every web page in
+    light (`NAME.png`) and dark (`NAME-dark.png`).
 * **Pure Rust:** everything builds with `cargo` alone. No Node.js, no
   downloaded engines and no C/C++ CAD kernels; 3D conversion stays in
   `src/mesh.rs`.

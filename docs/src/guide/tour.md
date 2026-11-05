@@ -11,7 +11,7 @@ Use two browsers (or a private window) for the two-person steps.
 3. Sign in as **erika**. *Projects → New project group* `ROVER` – erika is its
    manager. Add `rolf` as member. (The tour builds a rover with wheel hubs;
    any product works the same way – a pump, a gearbox, a conveyor, a machine.)
-4. *Account*: pick a skin; it is remembered for the login page as well.
+4. *Account → Appearance* (or the menu under your name): *System* follows the light or dark appearance of your operating system, *Light* and *Dark* stay fixed; the distribution skins (Arch, KDE, Ubuntu, …) are dark. The choice is remembered for the login page as well.
 
 ## 2. Items, check-out and check-in
 
