@@ -108,67 +108,71 @@ fn tidy(text: &str) -> String {
     out.trim().chars().take(MAX_CHARS).collect()
 }
 
-/// One job of the child process: the text of `input` into `output`. A file
-/// above `max_input_bytes` is refused before it is opened. Returns the number
-/// of characters.
-pub fn run_job(input: &Path, output: &Path, max_input_bytes: u64) -> anyhow::Result<usize> {
-    let size = std::fs::metadata(input)?.len();
-    if size > max_input_bytes {
+/// One job of the child process: the text of the PDF read from `input` (stdin)
+/// is written to `output` (stdout). At most `max_input_bytes` are read; more is
+/// refused. Returns the number of characters.
+pub fn run_job(
+    input: impl std::io::Read,
+    mut output: impl std::io::Write,
+    max_input_bytes: u64,
+) -> anyhow::Result<usize> {
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    input
+        .take(max_input_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > max_input_bytes {
         anyhow::bail!(
-            "This PDF is too large to read ({} MB, at most {} MB).",
-            size.div_ceil(1024 * 1024),
+            "This PDF is too large to read (more than {} MB).",
             max_input_bytes / (1024 * 1024)
         );
     }
-    let text = extract(&std::fs::read(input)?)?;
-    std::fs::write(output, text.as_bytes())?;
+    let text = extract(&bytes)?;
+    output.write_all(text.as_bytes())?;
+    output.flush()?;
     Ok(text.chars().count())
 }
 
 /// The text of a stored PDF; empty if it has none or cannot be read (a
-/// scanned or damaged file never fails an upload).
+/// scanned or damaged file never fails an upload). The file is handed to the
+/// child on its standard input and the text comes back on its standard
+/// output, so no path travels anywhere.
 pub async fn extract_file(path: &Path) -> String {
+    let Ok(file) = tokio::fs::File::open(path).await else {
+        return String::new();
+    };
+    // size before reading: a big PDF is a scan, not a report
+    match file.metadata().await {
+        Ok(meta) if meta.len() <= MAX_PDF_BYTES => {}
+        _ => return String::new(),
+    }
     let Ok(_slot) = SLOTS.acquire().await else {
         return String::new();
     };
-    let out = path.with_extension(format!("{}.txt.tmp", uuid::Uuid::new_v4().simple()));
+    let file = file.into_std().await;
     let outcome = match crate::preview::worker_exe() {
-        Some(exe) => run_worker(&exe, path, &out).await,
-        None => run_in_process(path, &out).await,
+        Some(exe) => run_worker(&exe, file).await,
+        None => run_in_process(file).await,
     };
-    let text = match outcome {
-        Ok(()) => tokio::fs::read(&out)
-            .await
-            .map(|b| {
-                String::from_utf8_lossy(&b)
-                    .chars()
-                    .take(MAX_CHARS)
-                    .collect()
-            })
-            .unwrap_or_default(),
+    match outcome {
+        Ok(text) => text.chars().take(MAX_CHARS).collect(),
         Err(message) => {
             tracing::debug!(%message, "no text from the PDF");
             String::new()
         }
-    };
-    let _ = tokio::fs::remove_file(&out).await;
-    text
+    }
 }
 
-async fn run_worker(exe: &Path, input: &Path, output: &Path) -> Result<(), String> {
+async fn run_worker(exe: &Path, input: std::fs::File) -> Result<String, String> {
     let child = tokio::process::Command::new(exe)
         .arg("text-extract")
-        .arg("--input")
-        .arg(input)
-        .arg("--output")
-        .arg(output)
         .arg("--max-input-bytes")
         .arg(MAX_PDF_BYTES.to_string())
         .arg("--max-memory-bytes")
         .arg(MEMORY_BYTES.load(Ordering::Relaxed).to_string())
         .env("RUST_LOG", "error")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
+        .stdin(std::process::Stdio::from(input))
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -176,7 +180,9 @@ async fn run_worker(exe: &Path, input: &Path, output: &Path) -> Result<(), Strin
     match tokio::time::timeout(TIME_LIMIT, child.wait_with_output()).await {
         Err(_) => Err(format!("no result within {} s", TIME_LIMIT.as_secs())),
         Ok(Err(e)) => Err(e.to_string()),
-        Ok(Ok(out)) if out.status.success() => Ok(()),
+        Ok(Ok(out)) if out.status.success() => {
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        }
         Ok(Ok(out)) => Err(String::from_utf8_lossy(&out.stderr)
             .lines()
             .rev()
@@ -186,11 +192,11 @@ async fn run_worker(exe: &Path, input: &Path, output: &Path) -> Result<(), Strin
     }
 }
 
-async fn run_in_process(input: &Path, output: &Path) -> Result<(), String> {
-    let (input, output) = (input.to_path_buf(), output.to_path_buf());
+async fn run_in_process(input: std::fs::File) -> Result<String, String> {
     let task = tokio::task::spawn_blocking(move || {
-        run_job(&input, &output, MAX_PDF_BYTES)
-            .map(drop)
+        let mut text = Vec::new();
+        run_job(input, &mut text, MAX_PDF_BYTES)
+            .map(|_| String::from_utf8_lossy(&text).into_owned())
             .map_err(|e| e.to_string())
     });
     match tokio::time::timeout(TIME_LIMIT, task).await {
@@ -292,9 +298,10 @@ mod tests {
             .unwrap()
             .set_len(5 * 1024 * 1024)
             .unwrap();
-        let e = run_job(&big, &dir.join("out.txt"), 1024 * 1024).unwrap_err();
+        let mut sink = Vec::new();
+        let e = run_job(std::fs::File::open(&big).unwrap(), &mut sink, 1024 * 1024).unwrap_err();
         assert!(e.to_string().contains("too large to read"), "{e}");
-        assert!(!dir.join("out.txt").exists(), "never opened");
+        assert!(sink.is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
 
