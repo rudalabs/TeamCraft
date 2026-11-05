@@ -233,6 +233,13 @@ pub async fn show(
         .take(3)
         .map(|f| json!({ "id": f.id, "filename": f.filename, "version": f.version }))
         .collect();
+    // Rendered pictures of a simulation (PNG, JPEG, WebP, size-capped).
+    let gallery: Vec<serde_json::Value> = file_list
+        .iter()
+        .filter(|f| simulations::is_gallery_image(&f.filename, f.size_bytes))
+        .take(simulations::GALLERY_MAX_IMAGES)
+        .map(|f| json!({ "id": f.id, "filename": f.filename, "version": f.version, "sha256": f.sha256 }))
+        .collect();
     // The versions this page shows: uploads from its forms are based on them,
     // so a file that changed meanwhile is refused instead of overwritten.
     let file_bases = serde_json::Value::Object(
@@ -334,6 +341,7 @@ pub async fn show(
             "out_of_date": out_of_date,
             "roles": roles,
             "views": result_views,
+            "images": gallery,
         })
     } else {
         serde_json::Value::Null
