@@ -141,6 +141,20 @@ storing fails after the content was verified (for example a 409 because the
 file moved on), the session keeps the verified content, so `finish` can be
 repeated without sending the bytes again.
 
+### Resumable downloads
+
+`GET /files/{id}/content` and `GET /file-versions/{id}/content` (and the
+web UI's downloads) answer every request with `Accept-Ranges: bytes` and the
+strong ETag `"<sha256>"` of the content. A client that lost a large file
+half-way asks for the rest with `Range: bytes=<offset>-` and
+`If-Range: "<sha256>"`: `206 Partial Content` with `Content-Range`, the
+whole file (`200`) when the content changed meanwhile, `416` with
+`Content-Range: bytes */<size>` when the offset is at or past the end. One
+range per request (a list of ranges gets the whole file) and suffix ranges
+(`bytes=-500`) are supported; a date in `If-Range` never matches. The
+desktop Get resumes a file this way and checks the SHA-256 of the whole file
+before it renames it into the working folder.
+
 ### Working folder: folders and the working set
 
 Every file has a `folder` inside its project group (`""` = the top), the

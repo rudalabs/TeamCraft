@@ -3,7 +3,7 @@
 use axum::{
     body::Body,
     extract::{multipart::MultipartError, Multipart, Path, Query, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::Response,
     Form,
 };
@@ -18,6 +18,7 @@ use crate::{
     cadformat::FormatKind,
     domain::{self, BasisRole, ItemType, LifecycleState, ReferenceKind, COMMON_UNITS},
     error::{AppError, AppResult},
+    httprange,
     models::FileRecord,
     preview::PreviewFormat,
     services::{
@@ -678,32 +679,121 @@ pub(crate) async fn blob_response(
         })
 }
 
-/// Current version of a file. Shared with the REST API.
-pub(crate) async fn file_response(st: &AppState, me: &Actor, file_id: Uuid) -> AppResult<Response> {
-    let f = files::get(&st.db, me, file_id).await?;
-    blob_response(st, &f.sha256, &f.filename, &f.content_type, f.size_bytes).await
+/// [`blob_response`] that answers `Range` / `If-Range` (a client resuming
+/// a download half-way, see `httprange`): `206` with the asked bytes, `416`
+/// past the end, otherwise the whole file. Every answer names
+/// `Accept-Ranges: bytes` and the ETag `"<sha256>"`.
+pub(crate) async fn blob_response_ranged(
+    st: &AppState,
+    sha256: &str,
+    filename: &str,
+    content_type: &str,
+    size: i64,
+    headers: &HeaderMap,
+) -> AppResult<Response> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let etag = httprange::etag_of(sha256);
+    let total = u64::try_from(size).unwrap_or(0);
+    let value = |name: header::HeaderName| headers.get(name).and_then(|v| v.to_str().ok());
+    let decision = httprange::decide(value(header::RANGE), value(header::IF_RANGE), &etag, total);
+    let built = match decision {
+        httprange::RangeDecision::Full => {
+            let mut response = blob_response(st, sha256, filename, content_type, size).await?;
+            let h = response.headers_mut();
+            h.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+            if let Ok(v) = HeaderValue::from_str(&etag) {
+                h.insert(header::ETAG, v);
+            }
+            return Ok(response);
+        }
+        httprange::RangeDecision::Unsatisfiable => Response::builder()
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::ETAG, &etag)
+            .header(header::CONTENT_RANGE, format!("bytes */{total}"))
+            .body(Body::empty()),
+        httprange::RangeDecision::Partial { start, end } => {
+            let mut file = st.vault.open_blob(sha256).await?;
+            file.seek(std::io::SeekFrom::Start(start))
+                .await
+                .map_err(AppError::Io)?;
+            let len = end - start + 1;
+            Response::builder()
+                .status(StatusCode::PARTIAL_CONTENT)
+                .header(header::CONTENT_TYPE, content_type)
+                .header(header::CONTENT_LENGTH, len)
+                .header(
+                    header::CONTENT_RANGE,
+                    format!("bytes {start}-{end}/{total}"),
+                )
+                .header(
+                    header::CONTENT_DISPOSITION,
+                    util::content_disposition(filename),
+                )
+                .header(header::ACCEPT_RANGES, "bytes")
+                .header(header::ETAG, &etag)
+                .header(header::CACHE_CONTROL, "private, no-cache")
+                .header("x-content-sha256", sha256)
+                .body(Body::from_stream(ReaderStream::new(file.take(len))))
+        }
+    };
+    built.map_err(|e| {
+        AppError::Other(anyhow::anyhow!(
+            "building the download response failed: {e}"
+        ))
+    })
 }
 
-/// A specific version of a file (`name.v2.ext`). Shared with the REST API.
+/// Current version of a file (resumable with `Range`). Shared with the REST API.
+pub(crate) async fn file_response(
+    st: &AppState,
+    me: &Actor,
+    file_id: Uuid,
+    headers: &HeaderMap,
+) -> AppResult<Response> {
+    let f = files::get(&st.db, me, file_id).await?;
+    blob_response_ranged(
+        st,
+        &f.sha256,
+        &f.filename,
+        &f.content_type,
+        f.size_bytes,
+        headers,
+    )
+    .await
+}
+
+/// A specific version of a file (`name.v2.ext`, resumable with `Range`).
+/// Shared with the REST API.
 pub(crate) async fn version_response(
     st: &AppState,
     me: &Actor,
     version_id: Uuid,
+    headers: &HeaderMap,
 ) -> AppResult<Response> {
     let (v, filename) = files::get_version(&st.db, me, version_id).await?;
     let versioned = match filename.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => format!("{stem}.v{}.{ext}", v.version),
         _ => format!("{filename}.v{}", v.version),
     };
-    blob_response(st, &v.sha256, &versioned, &v.content_type, v.size_bytes).await
+    blob_response_ranged(
+        st,
+        &v.sha256,
+        &versioned,
+        &v.content_type,
+        v.size_bytes,
+        headers,
+    )
+    .await
 }
 
 pub async fn download(
     State(st): State<AppState>,
     WebUser(me): WebUser,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> AppResult<Response> {
-    file_response(&st, &me, id).await
+    file_response(&st, &me, id, &headers).await
 }
 
 /// The preview image stored inside a CAD file (Inventor, Solid Edge,
@@ -756,8 +846,9 @@ pub async fn download_version(
     State(st): State<AppState>,
     WebUser(me): WebUser,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> AppResult<Response> {
-    version_response(&st, &me, id).await
+    version_response(&st, &me, id, &headers).await
 }
 
 /// 3D preview page of the current version of a file.

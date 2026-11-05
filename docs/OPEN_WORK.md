@@ -23,7 +23,6 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
   imports; desktop tests and the row in `desktop/README.md` (in progress: branch `feature/desktop-bom-import`)
 - [ ] Cancel long operations (check-in upload, Pack and Go) half-way – today the browser sign-in, Get and the chunked
   upload of large files can be cancelled (in progress: branch `feature/desktop-cancel-operations`)
-- [ ] Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI)
 - [ ] Screenshots and short GIFs of the desktop app for the README, and screenshots in the book (the web pages are
   captured in CI by `scripts/screenshots.sh`)
@@ -146,6 +145,10 @@ Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-1
 
 ## Done
 
+- [x] Desktop Get: resume a single large file half-way – the server answers `Range` / `If-Range` on file downloads
+  (ETag = SHA-256, 206 / 416, `src/httprange.rs`); the desktop keeps the bytes received in
+  `<name>.<sha>.teamcraft-download`, asks only for the rest and checks the SHA-256 of the whole file before the rename
+  (`desktop/src/resume.rs`)
 - [x] Folder import: items no longer stay in "My check-outs" – every item is checked in right after its files,
   assemblies are checked out once more for their BOM lines and always checked in again, and a run releases the
   check-outs an earlier, interrupted run of the same folder left behind
