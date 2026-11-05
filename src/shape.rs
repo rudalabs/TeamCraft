@@ -691,6 +691,7 @@ mod tests {
             indices,
             colors: Vec::new(),
             parts: 1,
+            fields: Vec::new(),
             faces: None,
         }
     }
@@ -714,6 +715,7 @@ mod tests {
             indices,
             colors: Vec::new(),
             parts: 1,
+            fields: Vec::new(),
             faces: None,
         }
     }
