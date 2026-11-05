@@ -34,26 +34,12 @@
 </div>
 
 <div class="grid grid-2">
-  {% if impacts %}
+  {% if impact_groups %}
   <section class="card span-all" id="impacts">
     <h2>Dependents to check</h2>
-    <p class="hint">These items use or reference something that was released in a new revision or made obsolete.
-      Open one, then acknowledge (no change needed) or revise it.</p>
-    <div class="table-wrap">
-    <table>
-      <tbody>
-      {% for i in impacts %}
-        <tr>
-          <td class="mono nowrap"><a href="/revisions/{{ i.revision_id }}">{{ i.item_number }}/{{ i.revision_code }}</a></td>
-          <td>{{ i.item_name }} <span class="small muted">· {{ m.relation(i.relation) }}</span></td>
-          <td class="nowrap"><a class="mono" href="/revisions/{{ i.source_revision_id }}">{{ i.source_number }}/{{ i.source_code }}</a>
-            {% if i.event == "released" %}released{% else %}<span class="badge badge-obsolete">obsolete</span>{% endif %}</td>
-          <td class="small muted nowrap">{{ i.project_code or "" }} · {{ m.time(i.created_at) }}</td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    </div>
+    <p class="hint">Something these items use or reference was released in a new revision or made obsolete.
+      Acknowledge what needs no change, or revise the item.</p>
+    {% for g in impact_groups %}{{ m.impact_group(g, "/#impacts", me.can_edit) }}{% endfor %}
   </section>
   {% endif %}
 

@@ -656,19 +656,68 @@ tr.bom-diff-removed td:not(:first-child) { text-decoration: line-through; color:
 .format-kind { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 0.25rem; }
 .format-kind .fmt { margin-left: 0; }
 
-/* Change propagation: a dependent has to be checked (src/services/impacts.rs). */
-.impact {
-  padding: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-4);
-  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
-  border-left: 4px solid var(--warn);
+/* Change propagation: the open impacts on one dependent revision
+   (src/services/impacts.rs, macro impact_group): a header with the group
+   actions, one dense row per source, the "revise resolves it" hint once. */
+.impact-group {
+  margin-bottom: var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
   border-radius: var(--radius);
-  background: var(--warn-soft);
+  background: var(--surface);
 }
-.impact p { margin: 0 0 0.35rem; }
-.impact form { margin: 0.25rem 0; }
-.impact form.inline { display: flex; }
-.impact input[name=note] { flex: 0 1 34rem; min-width: min(12rem, 100%); width: auto; }
+.impact-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+.impact-group-head h3 { margin: 0; font-size: 0.95rem; color: var(--text); min-width: 0; }
+.impact-group-name { font-weight: 600; }
+.impact-group-head .actions { margin-left: auto; gap: var(--space-1) var(--space-2); }
+.impact-group-head .actions form { margin: 0; }
+.impact-count {
+  padding: 0.05rem 0.55rem;
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  border-radius: 999px;
+}
+ul.impact-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+ul.impact-rows > li {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1.3fr) minmax(9rem, 0.9fr) minmax(0, 1.6fr) auto auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: 0.3rem var(--space-3);
+  font-size: 0.86rem;
+}
+ul.impact-rows > li + li { border-top: 1px solid var(--border); }
+.impact-source, .impact-relation { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.impact-source-name { color: var(--text-muted); }
+.impact-event { white-space: nowrap; }
+.impact-relation { color: var(--text-muted); }
+.impact-detail { color: var(--text-dim); }
+.impact-when { color: var(--text-dim); font-size: 0.78rem; white-space: nowrap; }
+form.impact-ack { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin: 0; }
+ul.impact-rows form.impact-ack { grid-column: 1 / -1; padding: var(--space-1) 0 var(--space-2); }
+.impact-group > form.impact-ack { padding: 0 var(--space-3) var(--space-2); }
+form.impact-ack input[name=note] { flex: 0 1 34rem; min-width: min(12rem, 100%); width: auto; }
+.impact-group > .hint { margin: 0; padding: var(--space-1) var(--space-3) var(--space-2); border-top: 1px solid var(--border); }
+@media (hover: hover) and (pointer: fine) {
+  ul.impact-rows > li:hover { background: var(--surface-hover); }
+}
+@media (max-width: 760px) {
+  ul.impact-rows > li { grid-template-columns: minmax(0, 1fr) auto; }
+  .impact-source { grid-column: 1; }
+  .impact-event, .impact-relation { grid-column: 1; font-size: 0.8rem; }
+  .impact-when { display: none; }
+  ul.impact-rows > li > button { grid-column: 2; grid-row: 1 / span 3; }
+}
 .grid.nested { margin: 0; }
 .grid.nested > div { min-width: 0; }
 ul.file-refs { margin-bottom: 0.7rem; }
@@ -753,7 +802,7 @@ input.unit { width: 4.5em; }
   .card::before { display: none; }
   .page-head { border-bottom-color: #000; }
   h2, h3 { break-after: avoid; }
-  tr, .impact, dl.props { break-inside: avoid; }
+  tr, .impact-group, dl.props { break-inside: avoid; }
   thead { display: table-header-group; }
   .badge, .fmt { color: #000; background: none; border-color: #888; }
   .badge img { filter: grayscale(1); }

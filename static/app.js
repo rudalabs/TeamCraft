@@ -172,6 +172,7 @@
       var target = document.getElementById(btn.getAttribute("data-toggle"));
       if (target) {
         target.classList.toggle("hidden");
+        if (btn.hasAttribute("aria-expanded")) btn.setAttribute("aria-expanded", String(!target.classList.contains("hidden")));
         var focus = target.querySelector("input:not([type=hidden]), textarea, select");
         if (focus && !target.classList.contains("hidden")) focus.focus();
       }

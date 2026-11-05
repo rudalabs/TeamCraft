@@ -169,6 +169,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/revisions/{id}/references", post(references::add))
         .route("/references/{id}/delete", post(references::delete))
         .route("/impacts/{id}/acknowledge", post(references::acknowledge))
+        .route(
+            "/revisions/{id}/impacts/acknowledge",
+            post(references::acknowledge_all),
+        )
         // simulations: basis links, result values, comparison
         .route(
             "/revisions/{id}/simulation/bases",

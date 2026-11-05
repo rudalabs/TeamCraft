@@ -902,6 +902,21 @@ async fn references_and_impacts_in_the_web_ui() {
     );
     let page = app.get_page("/", Some(&cookie)).await.text();
     assert!(!page.contains("Dependents to check"));
+    // "Acknowledge all" on a revision without open checks: back with an error.
+    let r = app
+        .post_form(
+            &format!("/revisions/{doc_a}/impacts/acknowledge"),
+            Some(&cookie),
+            origin,
+            &[
+                ("note", "Nothing changed"),
+                ("impacts", &impact_id),
+                ("back", &back),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    assert_eq!(r.header("location").as_deref(), Some(back.as_str()));
     let r = app
         .get_page(
             &format!(

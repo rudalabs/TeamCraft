@@ -216,7 +216,7 @@ pub async fn show(
                 "suggestions": suggestions,
                 "kinds": reference_kinds,
             },
-            "open_impacts": open_impacts,
+            "impact_groups": impacts::group_by_dependent(open_impacts),
             "simulation": simulation,
             "based_simulations": based_simulations,
             "watching": watching,

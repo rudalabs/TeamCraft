@@ -276,6 +276,21 @@ mod tests {
                     "resolved_by_name": resolution.map(|_| "Erika"),
                     "note": if resolution.is_some() { "fit unchanged <ok>" } else { "" } })
         };
+        // services::impacts::DependentGroup: two sources on one dependent
+        let impact_group = || {
+            let mut obsolete = impact(None);
+            obsolete["id"] = json!(OTHER);
+            obsolete["source_number"] = json!("PRT-000002");
+            obsolete["event"] = json!("obsolete");
+            obsolete["relation"] = json!("file");
+            obsolete["detail"] = json!("Stage.SLDASM references Nut.SLDPRT");
+            obsolete["change_id"] = json!(null);
+            obsolete["change_number"] = json!(null);
+            json!({ "item_id": ME, "item_number": "ASM-000001", "item_name": "Stage <1>", "project_id": ROCKET,
+                    "project_code": "ROCKET", "revision_id": OTHER, "revision_code": "A",
+                    "revision_state": "released", "latest_at": TS, "impact_ids": format!("{ME},{OTHER}"),
+                    "impacts": [impact(None), obsolete] })
+        };
         let references = json!({
             "outgoing": [{ "id": ME, "from_revision_id": ME, "to_item_id": OTHER, "to_number": "PRT-000009",
                            "to_type": "part", "kind": "drawing", "note": "sheet 2", "to_latest_revision_id": OTHER,
@@ -309,7 +324,7 @@ mod tests {
                 "stats": { "items": 3, "revisions_in_work": 1, "revisions_in_review": 0, "revisions_released": 2,
                            "open_changes": 1, "files": 4, "stored_bytes": 2048 },
                 "checkouts": [revision("in_work", true)], "reviews": [change("in_review")],
-                "my_changes": [change("draft")], "activity": [audit_entry()], "impacts": [impact(None)],
+                "my_changes": [change("draft")], "activity": [audit_entry()], "impact_groups": [impact_group()],
                 "assigned_requests": [request("in_triage")], "my_requests": [request("new")],
             })),
         );
@@ -324,6 +339,24 @@ mod tests {
                 && html.contains("uses it in its BOM")
                 && html.contains("Stage &lt;1&gt;"),
             "open impacts on the dashboard"
+        );
+        for expected in [
+            "2 changes to check",
+            "Acknowledge all…",
+            "/revisions/22222222-2222-4222-8222-222222222222/impacts/acknowledge",
+            "BOM line",
+            "CAD file reference",
+            "via <a class=\"mono\" href=\"/changes/",
+            "badge-obsolete",
+            "resolves all 2 as well",
+            "/revise",
+        ] {
+            assert!(html.contains(expected), "grouped impacts show {expected}");
+        }
+        assert_eq!(
+            html.matches("resolves all 2 as well").count(),
+            1,
+            "the revise hint once per group"
         );
 
         let entry = json!({ "item_id": ME, "number": "PRT-000001", "item_type": "part", "project_id": ROCKET,
@@ -505,7 +538,7 @@ mod tests {
                                      "parent_state": "released", "find_number": 10, "quantity": 2.0 }],
                     "changes": [change("draft")], "open_change": change("draft"), "drafts": [change("draft")],
                     "history": [audit_entry()], "projects": [project()], "units": units(),
-                    "references": references.clone(), "open_impacts": [impact(None)],
+                    "references": references.clone(), "impact_groups": [impact_group()],
                     "resolved_impacts": [impact(Some("acknowledged"))],
                     "open_requests": [request("in_triage")],
                     "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
@@ -612,7 +645,7 @@ mod tests {
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
                     "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
                     "history": [], "projects": [], "units": units(), "references": references.clone(),
-                    "open_impacts": [], "resolved_impacts": [],
+                    "impact_groups": [], "resolved_impacts": [],
                     "simulation": {
                         "bases": [basis(Some("PRT-000001/B was released (simulated: A)")), basis(None)],
                         "results": [sim_result("Max. stress <vM>", "pass", Some(250.0)),
@@ -663,7 +696,7 @@ mod tests {
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
                 "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
                 "history": [], "projects": [], "units": units(), "references": references.clone(),
-                "open_impacts": [], "resolved_impacts": [], "simulation": null,
+                "impact_groups": [], "resolved_impacts": [], "simulation": null,
                 "based_simulations": [{
                     "simulation_item_id": OTHER, "simulation_number": "SIM-000001", "simulation_code": "A",
                     "simulation_state": "in_work", "simulation_name": "Bracket – static <LC1>",
@@ -1142,7 +1175,7 @@ mod tests {
             let mut data = with_common(json!({
                 "stats": { "items": 0, "revisions_in_work": 0, "revisions_in_review": 0, "revisions_released": 0,
                            "open_changes": 0, "files": 0, "stored_bytes": 0 },
-                "checkouts": [], "reviews": [], "my_changes": [], "activity": [], "impacts": [],
+                "checkouts": [], "reviews": [], "my_changes": [], "activity": [], "impact_groups": [],
             }));
             data["assistant_enabled"] = json!(enabled);
             render(&env, "dashboard.html", data)

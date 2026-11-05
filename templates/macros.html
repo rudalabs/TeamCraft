@@ -13,6 +13,72 @@
 {% if r == "bom" %}uses {{ target }} in its BOM{% elif r == "drawing" %}is a drawing of {{ target }}{% elif r == "specification" %}is a specification for {{ target }}{% elif r == "reference" %}references {{ target }}{% elif r == "simulation" %}is a simulation based on {{ target }}{% elif r == "file" %}has a CAD file that references {% if target == "it" %}its files{% else %}files of {{ target }}{% endif %}{% else %}depends on {{ target }}{% endif %}
 {%- endmacro %}
 
+{#- The same, short: what links the dependent to the item that changed. -#}
+{% macro relation_short(r) -%}
+{% if r == "bom" %}BOM line{% elif r == "drawing" %}Drawing{% elif r == "specification" %}Specification{% elif r == "reference" %}Reference{% elif r == "simulation" %}Simulation basis{% elif r == "file" %}CAD file reference{% else %}Dependency{% endif %}
+{%- endmacro %}
+
+{#- Open impacts on one dependent revision (services::impacts::DependentGroup):
+    a compact header with the actions for the whole group, one dense row per
+    source. `on_revision`: shown on the dependent's own page (no Open/Revise). -#}
+{% macro impact_group(g, back, can_ack, on_revision=false) -%}
+{% set n = g.impacts|length %}
+<article class="impact-group" aria-labelledby="ig-{{ g.revision_id }}">
+  <header class="impact-group-head">
+    <h3 id="ig-{{ g.revision_id }}">
+      {%- if on_revision %}Check needed: <span class="mono">{{ g.item_number }}/{{ g.revision_code }}</span>
+      {%- else %}<a class="mono" href="/revisions/{{ g.revision_id }}">{{ g.item_number }}/{{ g.revision_code }}</a> <span class="impact-group-name">{{ g.item_name }}</span>{% endif -%}
+    </h3>
+    <span class="impact-count">{{ n }} change{% if n != 1 %}s{% endif %} to check</span>
+    <div class="actions">
+      {% if not on_revision %}
+      <a class="button small" href="/revisions/{{ g.revision_id }}#references">Open</a>
+      {% if can_ack and g.revision_state == "released" %}
+      <form method="post" action="/revisions/{{ g.revision_id }}/revise"
+            data-confirm="Create a new revision of {{ g.item_number }} based on {{ g.revision_code }}?">
+        <button class="small" type="submit">Revise</button>
+      </form>
+      {% endif %}
+      {% endif %}
+      {% if can_ack and n > 1 %}
+      <button class="small" type="button" data-toggle="ack-all-{{ g.revision_id }}" aria-controls="ack-all-{{ g.revision_id }}" aria-expanded="false">Acknowledge all…</button>
+      {% endif %}
+    </div>
+  </header>
+  {% if can_ack and n > 1 %}
+  <form class="impact-ack hidden" id="ack-all-{{ g.revision_id }}" method="post" action="/revisions/{{ g.revision_id }}/impacts/acknowledge">
+    <input type="hidden" name="back" value="{{ back }}">
+    <input type="hidden" name="impacts" value="{{ g.impact_ids }}">
+    <input type="text" name="note" maxlength="2000" required aria-label="Why {{ g.item_number }} needs no change for any of the {{ n }}"
+           placeholder="Why none of the {{ n }} needs a change, e.g. form, fit and function unchanged">
+    <button class="small primary" type="submit">Acknowledge {{ n }}</button>
+  </form>
+  {% endif %}
+  <ul class="impact-rows">
+    {% for i in g.impacts %}
+    <li title="{{ g.item_number }} {{ relation(i.relation) }}{% if i.detail %} ({{ i.detail }}){% endif %}">
+      <span class="impact-source"><a class="mono" href="/revisions/{{ i.source_revision_id }}">{{ i.source_number }}/{{ i.source_code }}</a>
+        <span class="impact-source-name">{{ i.source_name }}</span></span>
+      <span class="impact-event">{% if i.event == "released" %}released{% else %}<span class="badge badge-obsolete">obsolete</span>{% endif %}
+        {%- if i.change_number %} via <a class="mono" href="/changes/{{ i.change_id }}">{{ i.change_number }}</a>{% endif %}</span>
+      <span class="impact-relation">{{ relation_short(i.relation) }}{% if i.detail %} <span class="impact-detail">· {{ i.detail }}</span>{% endif %}</span>
+      <span class="impact-when">{{ time(i.created_at) }}</span>
+      {% if can_ack %}
+      <button class="small" type="button" data-toggle="ack-{{ i.id }}" aria-controls="ack-{{ i.id }}" aria-expanded="false">Acknowledge…</button>
+      <form class="impact-ack hidden" id="ack-{{ i.id }}" method="post" action="/impacts/{{ i.id }}/acknowledge">
+        <input type="hidden" name="back" value="{{ back }}">
+        <input type="text" name="note" maxlength="2000" required aria-label="Why no change is needed for {{ i.source_number }}/{{ i.source_code }}"
+               placeholder="Why no change is needed, e.g. form, fit and function unchanged">
+        <button class="small primary" type="submit">Acknowledge</button>
+      </form>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="hint">Revising and releasing {{ g.item_number }} resolves {% if n == 1 %}it{% else %}all {{ n }}{% endif %} as well.</p>
+</article>
+{%- endmacro %}
+
 {#- Primary "create" button with the plus icon. -#}
 {% macro new_button(href, text) -%}
 <a class="button primary" href="{{ href }}"><img src="/static/media/icons/White_plus.svg?v={{ assets }}" alt="">{{ text }}</a>
