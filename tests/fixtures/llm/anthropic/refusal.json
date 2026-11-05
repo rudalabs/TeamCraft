@@ -1,0 +1,8 @@
+{
+  "id": "msg_01Ee",
+  "type": "message",
+  "role": "assistant",
+  "content": [],
+  "stop_reason": "refusal",
+  "usage": { "input_tokens": 10, "output_tokens": 0 }
+}
