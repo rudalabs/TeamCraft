@@ -23,6 +23,7 @@ use tokio::sync::Semaphore;
 
 use crate::{
     error::{AppError, AppResult},
+    shape,
     vault::Vault,
 };
 
@@ -118,10 +119,49 @@ impl PreviewFormat {
     }
 }
 
-/// Converts the file at `input` (CLI `teamcraft preview-mesh` and tests).
+/// Converts the file at `input` (tests and tools).
 pub fn convert_file(format: PreviewFormat, input: &Path) -> anyhow::Result<Vec<u8>> {
     let data = std::fs::read(input)?;
     Ok(crate::mesh::read(format.as_str(), &data)?.encode())
+}
+
+/// `--format` of `teamcraft preview-mesh` for an already converted preview
+/// mesh (only its shape signature is computed).
+pub const CACHED_MESH: &str = "tcm";
+
+/// One job of the preview process (`teamcraft preview-mesh`): converts
+/// `input` into the preview mesh at `output` and/or writes the shape
+/// signature (a [`shape::Outcome`] as JSON) to `signature`. With
+/// [`CACHED_MESH`] as format, `input` is a cached preview mesh. A failed
+/// signature does not fail the conversion – the outcome records why.
+pub fn run_job(
+    format: &str,
+    input: &Path,
+    output: Option<&Path>,
+    signature: Option<&Path>,
+) -> anyhow::Result<()> {
+    let data = std::fs::read(input)?;
+    let mesh = if format == CACHED_MESH {
+        let mesh = crate::mesh::Mesh::decode(&data)?;
+        mesh.check()?;
+        mesh
+    } else {
+        let format = PreviewFormat::of_format(format)
+            .ok_or_else(|| anyhow::anyhow!("no 3D preview for the format '{format}'"))?;
+        crate::mesh::read(format.as_str(), &data)?
+    };
+    drop(data);
+    if let Some(output) = output {
+        std::fs::write(output, mesh.encode())?;
+    }
+    if let Some(path) = signature {
+        let outcome = match shape::compute(&mesh) {
+            Ok(s) => shape::Outcome::Signature(s),
+            Err(e) => shape::Outcome::Error(e.to_string()),
+        };
+        std::fs::write(path, serde_json::to_vec(&outcome)?)?;
+    }
+    Ok(())
 }
 
 /// Cached, isolated conversions (one per server, part of `AppState`).
@@ -159,6 +199,107 @@ impl Previews {
             base.join(format!("{sha256}.v{CACHE_VERSION}.tcm")),
             base.join(format!("{sha256}.v{CACHE_VERSION}.err")),
         ))
+    }
+
+    /// The cached shape signature (or the reason why there is none).
+    fn signature_path(&self, sha256: &str) -> AppResult<PathBuf> {
+        let (mesh, _) = self.paths(sha256)?;
+        Ok(mesh.with_extension(format!("s{}.json", shape::VERSION)))
+    }
+
+    /// Whether the preview mesh of a blob is already cached.
+    pub async fn has_mesh(&self, sha256: &str) -> bool {
+        match self.paths(sha256) {
+            Ok((mesh, _)) => tokio::fs::metadata(mesh).await.is_ok(),
+            Err(_) => false,
+        }
+    }
+
+    /// One conversion or signature per key at a time, however many wait.
+    async fn exclusive<T, F>(&self, key: String, job: F) -> T
+    where
+        F: std::future::Future<Output = T>,
+    {
+        let lock = {
+            let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+            running.entry(key.clone()).or_default().clone()
+        };
+        let guard = lock.lock().await;
+        let result = job.await;
+        drop(guard);
+        let mut running = self.running.lock().unwrap_or_else(|e| e.into_inner());
+        // only the last waiter removes the entry
+        if running.get(&key).is_some_and(|l| Arc::strong_count(l) <= 2) {
+            running.remove(&key);
+        }
+        result
+    }
+
+    /// The shape signature of a blob (see `shape`): from the cache, written
+    /// by the conversion, or computed from the cached preview mesh in the
+    /// isolated preview process. Failures are cached like failed previews.
+    pub async fn signature(
+        &self,
+        vault: &Vault,
+        sha256: &str,
+        format: PreviewFormat,
+    ) -> AppResult<shape::Signature> {
+        if format.is_point_cloud() {
+            return Err(AppError::BadRequest(
+                "Point clouds have no shape signature.".into(),
+            ));
+        }
+        let sig_path = self.signature_path(sha256)?;
+        if let Some(found) = read_signature(&sig_path).await {
+            return found;
+        }
+        let mesh_path = self.mesh(vault, sha256, format).await?;
+        self.exclusive(format!("{sha256}.signature"), async {
+            if let Some(found) = read_signature(&sig_path).await {
+                return found;
+            }
+            let _slot = self
+                .slots
+                .acquire()
+                .await
+                .map_err(|e| AppError::Other(anyhow::anyhow!("preview queue closed: {e}")))?;
+            let dir = sig_path.parent().unwrap_or(&self.dir);
+            let tmp = dir.join(format!(
+                "{sha256}.{}.sig.tmp",
+                uuid::Uuid::new_v4().simple()
+            ));
+            let job = Job {
+                format: CACHED_MESH,
+                input: mesh_path.clone(),
+                output: None,
+                signature: Some(tmp.clone()),
+                time_limit: Duration::from_secs(60),
+            };
+            let outcome = match &self.worker {
+                Some(exe) => run_worker(exe, &job).await,
+                None => run_in_process(&job).await,
+            };
+            match outcome {
+                Ok(()) => {
+                    tokio::fs::rename(&tmp, &sig_path).await.map_err(|e| {
+                        AppError::Other(anyhow::anyhow!("cannot store the shape signature: {e}"))
+                    })?;
+                }
+                Err(message) => {
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    let failed = serde_json::to_vec(&shape::Outcome::Error(message.clone()))
+                        .unwrap_or_default();
+                    let _ = tokio::fs::write(&sig_path, failed).await;
+                    return Err(AppError::BadRequest(message));
+                }
+            }
+            read_signature(&sig_path).await.unwrap_or_else(|| {
+                Err(AppError::Other(anyhow::anyhow!(
+                    "the shape signature could not be read back"
+                )))
+            })
+        })
+        .await
     }
 
     /// The cached mesh of a blob, converting it first if necessary.
@@ -231,13 +372,28 @@ impl Previews {
             .await
             .map_err(|e| AppError::Other(anyhow::anyhow!("preview queue closed: {e}")))?;
         let tmp = dir.join(format!("{sha256}.{}.tmp", uuid::Uuid::new_v4().simple()));
+        // the shape signature comes with the conversion, from the same mesh
+        let sig_tmp = tmp.with_extension("sig.tmp");
+        let job = Job {
+            format: format.as_str(),
+            input,
+            output: Some(tmp.clone()),
+            signature: (!format.is_point_cloud()).then(|| sig_tmp.clone()),
+            time_limit: format.time_limit(),
+        };
         let started = std::time::Instant::now();
         let outcome = match &self.worker {
-            Some(exe) => run_worker(exe, format, &input, &tmp).await,
-            None => run_in_process(format, &input, &tmp).await,
+            Some(exe) => run_worker(exe, &job).await,
+            None => run_in_process(&job).await,
         };
         match outcome {
             Ok(()) => {
+                if job.signature.is_some() {
+                    let sig_path = self.signature_path(sha256)?;
+                    if tokio::fs::rename(&sig_tmp, &sig_path).await.is_err() {
+                        let _ = tokio::fs::remove_file(&sig_tmp).await;
+                    }
+                }
                 tokio::fs::rename(&tmp, mesh_path).await.map_err(|e| {
                     AppError::Other(anyhow::anyhow!("cannot store the preview: {e}"))
                 })?;
@@ -251,6 +407,7 @@ impl Previews {
             }
             Err(message) => {
                 let _ = tokio::fs::remove_file(&tmp).await;
+                let _ = tokio::fs::remove_file(&sig_tmp).await;
                 let _ = tokio::fs::write(err_path, &message).await;
                 tracing::info!(sha256, format = format.as_str(), %message, "no preview");
                 Err(AppError::BadRequest(message))
@@ -270,21 +427,41 @@ async fn cached(mesh_path: &Path, err_path: &Path) -> AppResult<Option<PathBuf>>
     }
 }
 
+/// The cached shape signature: `None` if not computed yet (or unreadable).
+async fn read_signature(path: &Path) -> Option<AppResult<shape::Signature>> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+    match serde_json::from_slice::<shape::Outcome>(&bytes).ok()? {
+        shape::Outcome::Signature(s) if s.is_valid() => Some(Ok(s)),
+        shape::Outcome::Signature(_) => None,
+        shape::Outcome::Error(message) => Some(Err(AppError::BadRequest(message))),
+    }
+}
+
+/// One run of the preview process (see [`run_job`]).
+struct Job {
+    format: &'static str,
+    input: PathBuf,
+    output: Option<PathBuf>,
+    signature: Option<PathBuf>,
+    time_limit: Duration,
+}
+
 /// `teamcraft preview-mesh` in a child process that is killed at the time limit.
-async fn run_worker(
-    exe: &Path,
-    format: PreviewFormat,
-    input: &Path,
-    output: &Path,
-) -> Result<(), String> {
-    let child = tokio::process::Command::new(exe)
+async fn run_worker(exe: &Path, job: &Job) -> Result<(), String> {
+    let mut command = tokio::process::Command::new(exe);
+    command
         .arg("preview-mesh")
         .arg("--format")
-        .arg(format.as_str())
+        .arg(job.format)
         .arg("--input")
-        .arg(input)
-        .arg("--output")
-        .arg(output)
+        .arg(&job.input);
+    if let Some(output) = &job.output {
+        command.arg("--output").arg(output);
+    }
+    if let Some(signature) = &job.signature {
+        command.arg("--signature").arg(signature);
+    }
+    let child = command
         .env("RUST_LOG", "error")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -292,10 +469,10 @@ async fn run_worker(
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("The preview converter could not be started: {e}"))?;
-    match tokio::time::timeout(format.time_limit(), child.wait_with_output()).await {
+    match tokio::time::timeout(job.time_limit, child.wait_with_output()).await {
         Err(_) => Err(format!(
             "The model is too complex to preview (no result within {} s) – download it instead.",
-            format.time_limit().as_secs()
+            job.time_limit.as_secs()
         )),
         Ok(Err(e)) => Err(format!("The preview converter failed: {e}")),
         Ok(Ok(out)) if out.status.success() => Ok(()),
@@ -313,17 +490,21 @@ async fn run_worker(
     }
 }
 
-/// Conversion on a blocking thread (tests and unusual installations).
-async fn run_in_process(format: PreviewFormat, input: &Path, output: &Path) -> Result<(), String> {
-    let (input, output) = (input.to_path_buf(), output.to_path_buf());
+/// The job on a blocking thread (tests and unusual installations).
+async fn run_in_process(job: &Job) -> Result<(), String> {
+    let (format, input, output, signature) = (
+        job.format,
+        job.input.clone(),
+        job.output.clone(),
+        job.signature.clone(),
+    );
     let task = tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let bytes = convert_file(format, &input).map_err(|e| e.to_string())?;
-        std::fs::write(&output, bytes).map_err(|e| format!("cannot write the preview: {e}"))
+        run_job(format, &input, output.as_deref(), signature.as_deref()).map_err(|e| e.to_string())
     });
-    match tokio::time::timeout(format.time_limit(), task).await {
+    match tokio::time::timeout(job.time_limit, task).await {
         Err(_) => Err(format!(
             "The model is too complex to preview (no result within {} s).",
-            format.time_limit().as_secs()
+            job.time_limit.as_secs()
         )),
         Ok(Err(e)) => Err(format!("The preview converter failed: {e}")),
         Ok(Ok(result)) => result,
@@ -401,6 +582,36 @@ mod tests {
             .await
             .is_err());
         assert!(previews.paths("../../etc/passwd").is_err());
+
+        // The conversion wrote the shape signature as well.
+        let sig_path = previews.signature_path(&ok.sha256).unwrap();
+        assert!(sig_path.exists(), "signature written with the preview");
+        let sig = previews
+            .signature(&vault, &ok.sha256, PreviewFormat::Stl)
+            .await
+            .unwrap();
+        assert_eq!(sig.triangles, 1);
+        assert!(!sig.closed);
+        // Previews from before signatures: computed from the cached mesh.
+        std::fs::remove_file(&sig_path).unwrap();
+        assert!(previews.has_mesh(&ok.sha256).await);
+        let again = previews
+            .signature(&vault, &ok.sha256, PreviewFormat::Stl)
+            .await
+            .unwrap();
+        assert_eq!(again, sig);
+        assert!(previews
+            .signature(&vault, &bad.sha256, PreviewFormat::Stl)
+            .await
+            .is_err());
+        assert!(previews
+            .signature(&vault, &ok.sha256, PreviewFormat::Xyz)
+            .await
+            .is_err());
+        // A broken cached mesh is an error, not a panic.
+        let broken = root.join("broken.tcm");
+        std::fs::write(&broken, b"TCMESH01\xff\xff\xff\xff").unwrap();
+        assert!(run_job(CACHED_MESH, &broken, None, Some(&root.join("x.json"))).is_err());
         std::fs::remove_dir_all(&root).ok();
     }
 }

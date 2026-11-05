@@ -680,6 +680,37 @@ ul.file-refs { margin-bottom: 0.7rem; }
   border: 1px solid var(--border); border-radius: 4px; background: #fff;
 }
 
+/* similar parts (shape search) on the revision page */
+.similar-list { list-style: none; margin: 0; padding: 0; }
+.similar-list li {
+  display: grid; grid-template-columns: 2.5rem minmax(0, 1fr) auto; gap: var(--space-3);
+  align-items: center; padding: var(--space-2) 0; border-bottom: 1px solid var(--border);
+}
+.similar-list li:last-child { border-bottom: 0; }
+.similar-thumb {
+  width: 2.5rem; height: 2.5rem; object-fit: contain; display: block;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--surface-sunken);
+}
+img.similar-thumb { background: #fff; }
+.similar-main { min-width: 0; overflow-wrap: anywhere; }
+.similar-why { display: block; color: var(--text-dim); font-size: 0.8rem; margin-top: 0.15rem; }
+.similar-score { display: flex; align-items: center; gap: var(--space-2); font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; }
+.similar-score meter {
+  appearance: none; width: 4rem; height: 0.4rem; border: 0; border-radius: 999px;
+  background: var(--surface-sunken); overflow: hidden;
+}
+.similar-score meter::-webkit-meter-bar { background: var(--surface-sunken); border: 0; border-radius: 999px; height: 0.4rem; }
+.similar-score meter::-webkit-meter-optimum-value { background: var(--ok); border-radius: 999px; }
+.similar-score meter::-webkit-meter-suboptimum-value { background: var(--accent); border-radius: 999px; }
+.similar-score meter::-webkit-meter-even-less-good-value { background: var(--text-dim); border-radius: 999px; }
+.similar-score meter::-moz-meter-bar { background: var(--accent); border-radius: 999px; }
+.similar-score meter:-moz-meter-optimum::-moz-meter-bar { background: var(--ok); }
+.similar-score meter:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--text-dim); }
+@media (max-width: 560px) {
+  .similar-list li { grid-template-columns: 2.5rem minmax(0, 1fr); }
+  .similar-score { grid-column: 2; }
+}
+
 /* simulations: pass/fail of result values, out-of-date bases */
 .badge-pass { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); background: var(--ok-soft); }
 .badge-fail { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: var(--danger-soft); }

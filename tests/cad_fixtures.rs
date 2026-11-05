@@ -135,6 +135,14 @@ fn small_step_files_get_a_3d_preview() {
         let mesh = preview::convert_file(preview::PreviewFormat::Step, &fixture(rel))
             .unwrap_or_else(|e| panic!("{rel}: {e}"));
         assert!(mesh.len() > 1_000, "{rel}: {} bytes", mesh.len());
+        // the shape signature of the similar part search
+        let mesh = teamcraft::mesh::Mesh::decode(&mesh).unwrap();
+        let s = teamcraft::shape::compute(&mesh).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        assert!(s.is_valid(), "{rel}: {s:?}");
+        assert!(s.extents[0] >= s.extents[1] && s.extents[1] >= s.extents[2]);
+        assert!(s.area > 0.0 && s.triangles > 0, "{rel}: {s:?}");
+        let same = teamcraft::shape::compare(&s, &s, false);
+        assert!(same.score > 0.999, "{rel}: {same:?}");
     }
 }
 

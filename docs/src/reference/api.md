@@ -160,6 +160,7 @@ lowest level it is reached on; the report stops at 2000 rows.
 | Notifications    | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                   |
 | Personal         | `GET /favorites`, `POST/DELETE /items/{number}/favorite`, `GET/POST /searches`, `DELETE /searches/{id}`                               |
 | Save As, compare | `POST …/revisions/{code}/save-as` `{number?, name?, project?, files?, bom?}`, `GET …/revisions/{code}/bom/compare?with={code}`        |
+| Similar parts    | `GET …/revisions/{code}/similar` (`limit`, `ignore_scale`, `file`, `wait`) – parts of similar 3D shape, see below                    |
 | Formats          | `GET /formats` – the recognised CAD programs and formats                                                                              |
 | MCP              | `POST /mcp` – Model Context Protocol for AI assistants, see [MCP server](mcp.md)                                                      |
 | Assistant        | `GET/POST /assistant` – the built-in assistant (optional), see [Ask TeamCraft](../guide/assistant.md#api)                              |
@@ -170,6 +171,41 @@ Both compare the direct lines; `depth=all` compares every level, with the
 children resolved by `rule=latest|released|as_released` (each line then has
 its `level` and the resolved `revision` on both sides). The expanded BOM
 itself downloads as Excel workbook: `GET …/revisions/{code}/bom.xlsx?rule=`.
+
+### Similar parts
+
+`GET /items/{number}/revisions/{code|latest}/similar` compares the shape of
+the revision's 3D model (its STEP file, else its first mesh, or `file=name`)
+with the latest revisions of all other items – see
+[Finding similar parts](../guide/similar-parts.md) for the method.
+
+| Parameter      | Default | Meaning                                                                     |
+|----------------|---------|-----------------------------------------------------------------------------|
+| `limit`        | 10      | most hits (1–50)                                                            |
+| `ignore_scale` | false   | compare proportions and shape only (a scaled copy scores 100)              |
+| `file`         | –       | file name of the 3D model to compare by                                     |
+| `wait`         | 30      | seconds to wait (at most 200) when the shape signature is still computed   |
+
+```json
+{
+  "item": "PRT-000012", "revision": "A",
+  "status": "ready",
+  "source": { "file_id": "…", "filename": "bracket.step", "sha256": "…", "format": "step" },
+  "signature": { "extents": [120.0, 40.0, 8.0], "area": 12160.0, "volume": 38400.0, "closed": true, "triangles": 1234 },
+  "ignore_scale": false,
+  "candidates": [{
+    "item_number": "PRT-000007", "revision_code": "B", "name": "Bracket", "state": "released",
+    "revision_id": "…", "file_id": "…", "filename": "bracket-old.stl", "identical": false,
+    "score": 91, "shape": 94, "size": 97, "extents": [118.0, 40.0, 8.0],
+    "explanation": "extents 118 × 40 × 8 vs 120 × 40 × 8, shape distribution 94 % similar, volume 37760 vs 38400",
+    "thumbnail_file_id": null
+  }]
+}
+```
+
+`status` is `ready`, `pending` (call again shortly), `no_shape_file` (no STEP
+or mesh file) or `failed` (`message` says why, e.g. the model could not be
+read). `volume` is `null` when the mesh is not watertight.
 
 ## Change requests (ECR)
 

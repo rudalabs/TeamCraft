@@ -9,6 +9,7 @@
 - [Vault, check-out and check-in](guide/vault.md)
 - [Files, versions and 3D preview](guide/files.md)
 - [BOM, references and change propagation](guide/structure.md)
+- [Finding similar parts](guide/similar-parts.md)
 - [Change requests, change orders and notifications](guide/changes.md)
 - [Simulations (FEA, CFD)](guide/simulation.md)
 - [Desktop app](guide/desktop.md)

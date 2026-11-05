@@ -36,7 +36,8 @@ and caches the result next to the vault; uploads start the conversion in the
 background so the first viewer does not wait. Everything is pure Rust: STEP
 is read and tessellated with the [truck](https://github.com/ricosjp/truck)
 B-rep kernel, the mesh readers are part of TeamCraft. *Download STL* saves
-the shown triangles, e.g. for 3D printing.
+the shown triangles, e.g. for 3D printing. The same conversion computes the
+shape signature of the [similar part search](similar-parts.md).
 
 ## Previews of native CAD files
 

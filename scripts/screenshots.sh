@@ -269,6 +269,8 @@ seed() {
     item nut part "Hex nut 90591A141" '{"material":"Zinc-plated steel","mass_kg":0.002,"unit_cost":0.05}'
     item bracket part "Mounting bracket" '{"material":"Aluminium 7075-T6","mass_kg":0.38,"unit_cost":64.0,"description":"Machined bracket that holds the enclosure on the mast tube (NIST CTC-01)."}'
     item clamp part "Cable clamp" '{"material":"Stainless steel 1.4301","mass_kg":0.05,"unit_cost":3.4,"description":"Clamp for the sensor cable harness (NIST FTC-11)."}'
+    # the same geometry in a second item: a hit of the similar part search
+    item bracket_copy part "Mast bracket (supplier copy)" '{"material":"Aluminium 7075-T6","description":"Bracket model received from the supplier."}'
 
     log "uploading CAD files"
     attach mast "$mtc/nx/NIST mtc crada assembly.prt" >/dev/null
@@ -295,6 +297,7 @@ seed() {
     attach clamp "$FIXTURES/ftc-11/step/nist_ftc_11_asme1_rb.stp" cable_clamp.stp >/dev/null
     attach clamp "$FIXTURES/ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt" >/dev/null
     attach clamp "$FIXTURES/ftc-11/solidworks-2018/nist_ftc_11_asme1_rb_sw1802.SLDPRT" >/dev/null
+    attach bracket_copy "$FIXTURES/ctc-01/step/nist_ctc_01_asme1_rd.stp" supplier_bracket.stp >/dev/null
 
     log "building the multi-level BOM"
     bom_line mast enclosure 1 10
@@ -311,7 +314,7 @@ seed() {
 
     log "checking everything in"
     local key
-    for key in mast enclosure box cover plate window shcs_s shcs_l fhcs nut bracket clamp; do
+    for key in mast enclosure box cover plate window shcs_s shcs_l fhcs nut bracket clamp bracket_copy; do
         checkin "$key"
     done
 
@@ -539,6 +542,8 @@ capture() {
         die "the 3D viewer reported: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
     fi
     snap viewer-3d
+    # not in the README: the similar part search (signature from the conversion above)
+    shot revision-similar "/revisions/$BRACKET_REV" '#similar'
     shot bom "/revisions/$TOP_REV/bom"
     shot change-review "/changes/$CHANGE_ID"
     shot notifications /notifications

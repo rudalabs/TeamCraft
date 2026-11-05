@@ -30,7 +30,8 @@ use crate::{
     models::Revision,
     services::{
         audit, bom, changes, checkouts, desktop, files, impacts, imports, items, notifications,
-        package, projects, references, requests, revisions, stats, uploads, users, workset, Page,
+        package, projects, references, requests, revisions, similar, stats, uploads, users,
+        workset, Page,
     },
     web, AppState,
 };
@@ -165,6 +166,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/items/{number}/revisions/{code}/revise", post(revise))
         .route("/items/{number}/revisions/{code}/package", get(get_package))
         .route("/items/{number}/revisions/{code}/workset", get(get_workset))
+        .route("/items/{number}/revisions/{code}/similar", get(get_similar))
         .route(
             "/bom-imports",
             post(import_bom).layer(DefaultBodyLimit::max(import_limit)),
@@ -1110,6 +1112,37 @@ async fn get_workset(
     Ok(Json(json!(
         workset::resolve(&st.db, &me, rev.id, rule, q.references.unwrap_or(true)).await?
     )))
+}
+
+#[derive(Deserialize)]
+struct SimilarQuery {
+    limit: Option<i64>,
+    /// Compare proportions and shape only.
+    ignore_scale: Option<bool>,
+    /// The 3D file to compare by (default: the STEP model, else the first mesh).
+    file: Option<String>,
+    /// Seconds to wait for a shape signature that is still being computed.
+    wait: Option<u64>,
+}
+
+/// Similar parts by shape (see `services::similar`).
+async fn get_similar(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<SimilarQuery>,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &number, &code).await?;
+    let options = similar::Options {
+        limit: q.limit.unwrap_or(10).clamp(1, similar::MAX_LIMIT),
+        ignore_scale: q.ignore_scale.unwrap_or(false),
+    };
+    let wait = std::time::Duration::from_secs(q.wait.unwrap_or(30).min(200));
+    let report = similar::for_revision(&st, &me, &rev, q.file.as_deref(), options, wait).await?;
+    let mut out = json!(report);
+    out["item"] = json!(rev.item_number);
+    out["revision"] = json!(rev.code);
+    Ok(Json(out))
 }
 
 #[derive(Deserialize)]

@@ -26,6 +26,7 @@ pub mod references;
 pub mod requests;
 pub mod revisions;
 pub mod save_as;
+pub mod similar;
 pub mod simulations;
 pub mod stats;
 pub mod uploads;

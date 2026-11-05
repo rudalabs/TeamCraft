@@ -1833,7 +1833,8 @@
       dt("Description"), dd(h("span.pre", { text: rev.description || "—" })),
       dt("Created"), dd(fmtDate(rev.created_at) + " · " + rev.created_by_name),
       dt("Last modified"), dd(fmtDate(rev.updated_at)),
-      dt("Released"), dd(fmtDate(rev.released_at))
+      dt("Released"), dd(fmtDate(rev.released_at)),
+      dt("Similar parts"), dd(d.files.some(previewFormat) ? h("button.link", { type: "button", title: "Parts with a similar 3D shape (web UI)", on: { click: function () { call("open_web", { path: "/revisions/" + rev.id + "#similar" }).catch(function (e) { toast(errorText(e), "error"); }); } } }, "Compare the shape in the browser") : "— (no STEP or mesh file)")
     ]);
     var states = ["in_work", "in_review", "released", "obsolete"];
     var next = {

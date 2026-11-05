@@ -30,13 +30,15 @@
   clouds and tessellates STEP with the truck kernel; `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child
   process with a time limit. The browser only draws the compact
-  `TCMESH01` buffer.
+  `TCMESH01` buffer. The same child process writes the shape signature of
+  the [similar part search](../guide/similar-parts.md) (`shape.rs`), stored
+  once per content hash in `shape_signatures`.
 
 ## Source layout
 
 | Path                                 | Contents                                                                                             |
 |--------------------------------------|------------------------------------------------------------------------------------------------------|
-| `src/main.rs`                        | CLI: serve, migrate, user, vault check, rescan-references, healthcheck, mcp (stdio bridge)           |
+| `src/main.rs`                        | CLI: serve, migrate, user, vault check/signatures, rescan-references, healthcheck, mcp (stdio bridge) |
 | `src/lib.rs`                         | `AppState`, router, health endpoints, security headers                                               |
 | `src/domain.rs`                      | roles, lifecycle, revision letters, skins, validation                                                |
 | `src/services/`                      | items, revisions, files, chunked uploads, BOM, changes, references, impacts, simulations, projects, users, … |
@@ -47,6 +49,7 @@
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache                                                                     |
+| `src/shape.rs`                       | shape signatures (extents, area, volume, D2 distribution) for the similar part search               |
 | `migrations/`                        | PostgreSQL schema                                                                                    |
 | `tests/`                             | end-to-end tests, each against its own temporary database                                            |
 | `desktop/`                           | the Tauri desktop client (separate Cargo project)                                                    |
