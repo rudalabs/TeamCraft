@@ -1,7 +1,9 @@
 # TeamCraft on macOS
 
 Local build and test from the command line (macOS 12 or newer, Apple
-silicon or Intel).
+silicon or Intel). Releases contain the desktop app for Apple silicon
+(`.dmg`, `.app.zip`) but no macOS server binary: build the server as below
+or run the Docker image.
 
 ## 1. Prerequisites
 

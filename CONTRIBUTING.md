@@ -282,8 +282,9 @@ release may contain breaking changes.
 
 **Build artifacts.** Every push to `main` runs
 `.github/workflows/release.yml`, which builds the server binaries (Linux
-x86_64/ARM64, macOS ARM64, Windows x86_64) and the desktop installers
-(AppImage, `.deb`, `.rpm`, `.dmg`, `.msi`, NSIS `-setup.exe`) and keeps them
+x86_64/ARM64, Windows x64) and the desktop installers (AppImage, `.deb`,
+`.rpm` and Flatpak bundles for x86_64/aarch64, `.dmg`, and for Windows x64
+and ARM64 `.msi`, NSIS `-setup.exe` and a portable `.zip`) and keeps them
 as workflow artifacts for 14 days. *Run workflow* on the Actions page builds
 any branch the same way.
 
