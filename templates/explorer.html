@@ -43,7 +43,7 @@
       <tbody>
       {% for e in entries %}
         <tr class="{% if selected and selected.rev.id == e.revision_id %}selected{% endif %}">
-          <td class="nowrap"><a class="mono" href="{{ '/vault?folder=' ~ folder ~ ('&q=' ~ q if q else '') ~ '&rev=' ~ e.revision_id }}">{{ e.number }}</a></td>
+          <td class="nowrap"><a class="mono" href="{{ '/vault?folder=' ~ folder ~ ('&q=' ~ q if q else '') ~ '&rev=' ~ e.revision_id }}"{% if selected and selected.rev.id == e.revision_id %} aria-current="true"{% endif %}>{{ e.number }}</a></td>
           <td>{{ m.revbox(e.code) }}</td>
           <td class="ellipsis" title="{{ e.name }}">{{ e.name }}{% if folder in ["mine", "locked", "search"] and e.project_code %} <span class="muted small">{{ e.project_code }}</span>{% endif %}</td>
           <td class="nowrap">{{ m.badge(e.state) }}</td>

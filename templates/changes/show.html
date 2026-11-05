@@ -7,7 +7,7 @@
   <div>
     <p class="crumbs"><a href="/changes">Changes</a><span>{{ change.number }}</span></p>
     <div class="title-row">
-      <h1><span class="id">{{ change.number }}</span> {{ change.title }}</h1>
+      <h1><span class="id">{{ change.number }}</span> · {{ change.title }}</h1>
       <form method="post" action="/changes/{{ change.id }}/watch">
         <input type="hidden" name="watch" value="{% if watching %}0{% else %}1{% endif %}">
         <input type="hidden" name="back" value="/changes/{{ change.id }}">

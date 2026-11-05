@@ -590,6 +590,9 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
   min-width: 0;
 }
 .panel > h2 { margin-bottom: 10px; }
+/* card titles one step above the 13px rows; the count is muted, as on the web */
+.panel > h2, .panel-head > h2 { font-size: 15px; line-height: 20px; font-weight: 600; }
+.panel h2 .count { color: var(--text-dim); font-weight: 500; }
 /* one height with and without actions, so side-by-side tables line up */
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; margin-bottom: 8px; flex-wrap: wrap; }
 .panel-head > h2 { margin: 0; }
@@ -645,7 +648,10 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 @media (hover: hover) {
   button.fact:hover { background: var(--surface-hover); border-color: var(--border-strong); }
 }
-.review-hint { margin: var(--space-2) 0 0; }
+.review-hint { margin: var(--space-1) 0 var(--space-2); max-width: 72ch; }
+/* the review and decision comment: a label, the field at reading width, the hint below – as on the web */
+label:has(> textarea.review-comment) { max-width: 72ch; }
+textarea.review-comment { width: 100%; }
 
 /* Lifecycle stepper: done ✓, current in weight 600, future as an outline. */
 .lifecycle-track { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; list-style: none; padding: 0; margin: 0 0 8px; }
@@ -852,20 +858,23 @@ table.grid td.actions button { height: var(--d-ctl-sm); padding: 0 8px; font-siz
   padding: 4px 8px 4px 14px;
 }
 .impact-group-head h3 { margin: 0; font-size: 13px; min-width: 0; color: var(--text); }
-.impact-group-head h3::before { content: "△"; color: var(--st-impact-fg); margin-right: 6px; font-weight: 600; }
 .impact-group-name { font-weight: 500; }
 .impact-group-head .actions { display: flex; gap: 6px; margin-left: auto; }
-.impact-count, .count-badge {
+/* "N changes to check": plain impact-ink text after a △, as in the web UI –
+   the orange left rule already marks the group, so no fill */
+.impact-count { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; white-space: nowrap; color: var(--st-impact-fg); line-height: 16px; }
+.impact-count::before { content: "△"; }
+.count-badge {
+  min-width: 18px; padding: 0 4px; text-align: center; line-height: 16px; border-radius: 999px;
   font-size: 12px; font-weight: 500; white-space: nowrap;
   color: var(--st-impact-fg); background: var(--st-impact-bg);
-  border-radius: var(--radius-xs);
 }
-.impact-count { padding: 1px 6px; line-height: 16px; }
-.count-badge { min-width: 18px; padding: 0 4px; text-align: center; line-height: 16px; border-radius: 999px; }
 ul.impact-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
 ul.impact-rows > li {
   display: grid;
-  grid-template-columns: minmax(11rem, 1.3fr) minmax(8.5rem, 0.9fr) minmax(0, 1.6fr) auto;
+  /* the source is what people scan for; the event ("released via CHG-…") is
+     short and nowrap, so it takes only its own width */
+  grid-template-columns: minmax(12rem, 2fr) auto minmax(0, 1.4fr) auto;
   align-items: center;
   gap: 4px 12px;
   min-height: var(--d-row);

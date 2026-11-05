@@ -291,7 +291,7 @@
     return svg;
   }
   function lockBadge(name, mine) {
-    return h("span.badge.badge-lock", { title: "Checked out by " + name }, [lockIcon(mine), name]);
+    return h("span.badge.badge-lock", { title: "Checked out by " + (mine ? "you" : name) }, [lockIcon(mine), name, mine ? h("span.dim", { text: " (you)" }) : null]);
   }
 
   function errorText(err) {
@@ -844,7 +844,7 @@
       nav.appendChild(navHead("My worklist", [
         w.checkouts.length ? h("button.small", { type: "button", title: "Check in every check-out without local changes (releases the locks)",
           on: { click: function () { checkInAll(); } } }, [svgIcon(ICONS.checkin), " Check in all"]) : null,
-        h("button.small", { type: "button", title: "Refresh", on: { click: function () { selectView("worklist"); } } }, svgIcon(ICONS.refresh))
+        h("button.icon", { type: "button", title: "Refresh", "aria-label": "Refresh", on: { click: function () { selectView("worklist"); } } }, svgIcon(ICONS.refresh))
       ]));
       nav.appendChild(sectionTitle("Checked out by me", w.checkouts.length));
       nav.appendChild(w.checkouts.length ? h("ul.tree", null, w.checkouts.map(function (r) {
@@ -1093,32 +1093,36 @@
         stat(s.items, "Items"), stat(s.revisions_in_work, "WIP"), stat(s.revisions_in_review, "In Review"),
         stat(s.revisions_released, "Released"), stat(s.open_changes, "Open changes"), stat(fmtSize(s.stored_bytes), s.files + " files in the vault")
       ]));
+      // the same cards in the same order as the web dashboard: the review
+      // queue, the dependents to check, then the own check-outs
+      append(welcome, h("section.panel", null, [h("div.panel-head", null, [panelTitle("Waiting for my review", wl.reviews.length)]),
+        wl.reviews.length ? table(["Change", "Title", "Submitted"], wl.reviews.map(function (c) {
+          var open = function () { openChange(c.number); };
+          return { cells: [recordLink(c.number, open), c.title, fmtDate(c.submitted_at)], open: open };
+        })) : h("p.empty", { text: "Nothing to review." })]));
       var groups = impactGroups(wl);
       if (groups.length) {
-        append(welcome, h("section.panel", null, [h("h2", { text: "Dependents to check" }),
+        append(welcome, h("section.panel", null, [h("div.panel-head", null, [panelTitle("Dependents to check", groups.length)]),
           h("p.hint", { text: "Something these items use or reference was released in a new revision or made obsolete. Acknowledge what needs no change, or revise the item." })
         ].concat(groups.map(function (g) { return impactGroup(g, false); }))));
       }
-      if (wl.checkouts.length || wl.reviews.length) {
-        append(welcome, h("div.grid-2", null, [
-          h("section.panel", null, [h("div.panel-head", null, [h("h2", { text: "Checked out by me" }),
-            wl.checkouts.length ? h("button.small", { type: "button", title: "Check in every check-out without local changes (releases the locks)",
-              on: { click: function () { checkInAll(); } } }, [svgIcon(ICONS.checkin), " Check in all"]) : null]),
-            wl.checkouts.length ? table(["Revision", "Name", "Since"], wl.checkouts.map(function (r) {
-              var open = function () { openRevision(r.item_number, r.code); };
-              return { cells: [recordLink(r.item_number + "/" + r.code, open), r.name,
-                h("span", { title: fmtDate(r.checked_out_at), text: lockAge(r.checked_out_at) })], open: open };
-            })) : h("p.empty", { text: "Nothing checked out." })]),
-          h("section.panel", null, [h("div.panel-head", null, [h("h2", { text: "Waiting for my review" })]),
-            wl.reviews.length ? table(["Change", "Title", "Submitted"], wl.reviews.map(function (c) {
-              var open = function () { openChange(c.number); };
-              return { cells: [recordLink(c.number, open), c.title, fmtDate(c.submitted_at)], open: open };
-            })) : h("p.empty", { text: "Nothing to review." })])
-        ]));
-      }
+      append(welcome, h("section.panel", null, [h("div.panel-head", null, [panelTitle("Checked out by me", wl.checkouts.length),
+        wl.checkouts.length ? h("button.small", { type: "button", title: "Check in every check-out without local changes (releases the locks)",
+          on: { click: function () { checkInAll(); } } }, [svgIcon(ICONS.checkin), " Check in all"]) : null]),
+        wl.checkouts.length ? table(["Revision", "Name", "Since"], wl.checkouts.map(function (r) {
+          var open = function () { openRevision(r.item_number, r.code); };
+          return { cells: [recordLink(r.item_number + "/" + r.code, open), r.name,
+            h("span", { title: fmtDate(r.checked_out_at), text: lockAge(r.checked_out_at) })], open: open };
+        })) : h("p.empty", { text: "Nothing checked out." })]));
     };
     if (w) fill(w);
     else refreshWorklistCount().then(fill, function () {});
+  }
+
+  /** A Home card title with its count as a muted trailing number, like the
+   *  web dashboard's card titles and the worklist navigator. */
+  function panelTitle(text, n) {
+    return h("h2", null, [text + " ", h("span.count", { text: String(n) })]);
   }
 
   /** A record number in a table: a link like in the web UI and the dependents
@@ -2490,7 +2494,8 @@
           h("span.impact-event", null, [i.event === "released" ? "released" : badge("obsolete"),
             i.change_number ? " via " : null,
             i.change_number ? h("button.link.mono.plain-weight", { type: "button", on: { click: function () { openChange(i.change_number); } } }, i.change_number) : null]),
-          h("span.impact-relation", null, [relationShort(i.relation), i.detail ? h("span.impact-detail", { text: " · " + i.detail }) : null]),
+          // the referencing file name sits in the row title: the short relation fits the column
+          h("span.impact-relation", { title: i.detail ? relationText(i.relation) + " · " + i.detail : null, text: relationShort(i.relation) }),
           can ? h("button.small.ghost", { type: "button", on: { click: function () { acknowledgeDialog(i); } } }, "Acknowledge…") : null
         ]);
       })),
@@ -3263,7 +3268,8 @@
     var notOwner = owner ? null : "Only " + c.created_by_name + " (who created it) or an administrator can do this";
     var canSubmit = owner && c.status === "draft", canWithdraw = owner && c.status === "in_review";
     // The review decision lives in the toolbar – the comment field below goes with it.
-    var comment = canReview ? h("textarea", { maxlength: "4000", placeholder: "Comment – required when rejecting", "aria-label": "Review comment" }) : null;
+    // A visible label and hint as in the web review form (a placeholder would vanish once you type).
+    var comment = canReview ? h("textarea.review-comment", { id: "review-comment", maxlength: "4000", "aria-describedby": "review-comment-hint" }) : null;
     function decide(decision) {
       if (decision === "reject" && !comment.value.trim()) {
         toast("Write in the comment why you reject " + c.number, "error");
@@ -3279,7 +3285,7 @@
     }
     append(toolbar, [
       canReview ? toolGroup("Review", [
-        tool("Approve", "approve", function () { decide("approve"); }, { primary: true, title: "Approve " + c.number + " (with the comment below, if any)" }),
+        tool("Approve change", "approve", function () { decide("approve"); }, { primary: true, title: "Approve " + c.number + " (with the comment below, if any)" }),
         tool("Reject", "cancel", function () { decide("reject"); }, { danger: true, title: "Reject " + c.number + " – the comment below says why; the revisions go back to WIP" })
       ]) : null,
       toolGroup("Lifecycle", [
@@ -3317,8 +3323,9 @@
     if (hints[c.status]) body.appendChild(h("p.notice.info", { text: hints[c.status] }));
 
     if (canReview) {
-      body.appendChild(h("section.panel", null, [h("h2", { text: "Your review" }), comment,
-        h("p.small.muted.review-hint", { text: "Approve or Reject in the toolbar above. A comment is optional when approving and required when rejecting." })]));
+      body.appendChild(h("section.panel", null, [h("h2", { text: "Your review" }),
+        h("label", { for: "review-comment" }, ["Comment", comment]),
+        h("p.hint.review-hint", { id: "review-comment-hint", text: "A rejection needs a comment: what has to change. Approve change and Reject are in the toolbar above." })]));
     }
 
     append(body, h("div.grid-2", null, [
@@ -3576,11 +3583,18 @@
     if (hints[r.status]) body.appendChild(h("p.notice.info", { text: hints[r.status] }));
 
     if (can.decide) {
-      var comment = h("textarea", { maxlength: "4000", placeholder: "Comment – required when deferring or rejecting" });
+      var comment = h("textarea.review-comment", { id: "decision-comment", maxlength: "4000", "aria-describedby": "decision-comment-hint" });
       var decide = function (decision) {
+        if (decision !== "accept" && !comment.value.trim()) {
+          toast("Write in the comment why you " + decision + " " + r.number, "error");
+          comment.focus();
+          return;
+        }
         action("decide", { accept: "Accepting ", defer: "Deferring ", reject: "Rejecting " }[decision] + r.number, { decision: decision, comment: comment.value });
       };
-      body.appendChild(h("section.panel", null, [h("h2", { text: "Decision" }), comment,
+      body.appendChild(h("section.panel", null, [h("h2", { text: "Decision" }),
+        h("label", { for: "decision-comment" }, ["Comment", comment]),
+        h("p.hint.review-hint", { id: "decision-comment-hint", text: "Deferring or rejecting needs a comment: why, and what would change the decision." }),
         h("div.row", null, [
           h("button.primary", { type: "button", on: { click: function () { decide("accept"); } } }, "Accept"),
           r.status === "deferred" ? null : h("button", { type: "button", on: { click: function () { decide("defer"); } } }, "Defer"),

@@ -7,7 +7,7 @@
   <div>
     <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a><span>BOM</span></p>
     <div class="title-row">
-      <h1><a class="id title-link" href="/revisions/{{ rev.id }}">{{ rev.item_number }}</a>{{ m.revbox(rev.code) }} {{ rev.name }}</h1>
+      <h1><a class="id title-link" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }}</h1>
     </div>
     <p class="meta">
       Total mass {{ tree.total_mass_kg|fixed(3) }} kg{% if not tree.mass_complete %} <span class="marker-impact" title="A mass is missing in the structure">△ incomplete</span>{% endif %}

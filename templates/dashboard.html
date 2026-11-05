@@ -24,8 +24,9 @@
     <button class="ghost" type="button" data-toggle="assistant-panel" title="Triage your worklist or ask any question about the product data">Ask TeamCraft…</button>
     {% endif %}
     {% if me.can_edit %}
-    <a class="button" href="/items/new">New item</a>
-    {{ m.new_button("/changes/new", "New change") }}
+    {#- New item is the primary action on Home, in the desktop app as well -#}
+    <a class="button" href="/changes/new">New change</a>
+    {{ m.new_button("/items/new", "New item") }}
     {% else %}
     {{ m.new_button("/requests/new", "Request change") }}
     {% endif %}
@@ -49,15 +50,15 @@
   {% if reviews %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Change</th><th>Title</th><th class="hide-narrow">Priority</th><th class="hide-narrow">Author</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+    <thead><tr><th>Change</th><th>Title</th><th class="hide-narrow">Priority</th><th class="hide-narrow">Author</th><th class="hide-narrow"><span class="visually-hidden">Actions</span></th></tr></thead>
     <tbody>
     {% for c in reviews %}
       <tr>
         <td class="nowrap"><a class="mono" href="/changes/{{ c.id }}">{{ c.number }}</a></td>
-        <td class="ellipsis" title="{{ c.title }}">{{ c.title }}</td>
+        <td class="ellipsis" title="{{ c.title }}">{{ c.title }}<span class="show-narrow">{{ m.badge(c.priority) }}</span></td>
         <td class="nowrap hide-narrow">{{ m.badge(c.priority) }}</td>
         <td class="muted nowrap hide-narrow">{{ c.created_by_name }}</td>
-        <td class="row-actions"><a class="button small" href="/changes/{{ c.id }}#decision">Open review</a></td>
+        <td class="row-actions hide-narrow"><a class="button small" href="/changes/{{ c.id }}#decision">Open review</a></td>
       </tr>
     {% endfor %}
     </tbody>

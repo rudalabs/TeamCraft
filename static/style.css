@@ -59,8 +59,9 @@ p { text-wrap: pretty; margin: 0 0 var(--space-3); }
 
 a { color: var(--link); text-decoration: none; text-underline-offset: 3px; }
 /* Links inside running text are underlined, so colour is not their only cue
-   (WCAG 1.4.1); links in tables, navigation and menus stand on their own. */
-:where(p, dd, footer, ul.plain-list li, .hint, .empty, .notice, .flash, .assistant-text, .subtitle) a:not(.button, .revbox) {
+   (WCAG 1.4.1); links in tables, fact strips (dl.titleblock, dl.props),
+   navigation and menus stand on their own like table links. */
+:where(p, footer, ul.plain-list li, .hint, .empty, .notice, .flash, .assistant-text, .subtitle) a:not(.button, .revbox) {
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
@@ -155,8 +156,9 @@ kbd {
   white-space: nowrap;
   border-radius: var(--radius-sm);
 }
-/* Same weight as the other tabs, so the row never shifts between pages. */
-.nav a.active, .nav-admin:has(a.active) > summary { color: var(--text); background: var(--surface-2); }
+/* Same weight as the other tabs, so the row never shifts between pages; the
+   2px bar under the label marks the section where the tint alone is too faint. */
+.nav a.active, .nav-admin:has(a.active) > summary { color: var(--text); background: var(--surface-2); box-shadow: inset 0 -2px 0 var(--focus); }
 
 .quicksearch { position: relative; margin-left: auto; }
 .quicksearch input[type=search] { width: 280px; padding-right: 32px; }
@@ -308,7 +310,8 @@ details.menu[open] > .menu-pop { animation: menu-in 140ms var(--ease-out); }
 .menu-scheme { display: flex; gap: 2px; padding: 2px 4px 4px; }
 .menu-scheme form { flex: 1; margin: 0; }
 .menu-scheme button { width: 100%; height: 28px; padding: 0 8px; font-size: 13px; }
-.menu-scheme button[aria-pressed="true"] { color: var(--text); font-weight: 600; background: var(--selected); border-color: var(--focus); }
+/* pressed: tint and weight; the focus colour stays for :focus-visible alone */
+.menu-scheme button[aria-pressed="true"] { color: var(--text); font-weight: 600; background: var(--selected); border-color: var(--control-border); }
 @media (hover: hover) {
   .menu-pop > a:hover, .menu-pop .menu-item:hover, .menu-pop > form > button:hover { background: var(--surface-hover); text-decoration: none; }
 }
@@ -474,6 +477,8 @@ h2 .count, .count { color: var(--text-dim); font-weight: 500; }
 .pre { white-space: pre-wrap; }
 .hidden { display: none !important; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* shown only on phones (the 760px block), e.g. a priority under a title */
+.show-narrow { display: none; }
 
 /* Empty states: one quiet line in the panel frame. */
 .empty { margin: 0; color: var(--text-muted); font-size: 13px; line-height: 18px; }
@@ -506,10 +511,12 @@ tbody tr:last-child > td { border-bottom: none; }
   tbody tr:hover > td { background: var(--surface-hover); }
 }
 td.num, th.num { text-align: right; white-space: nowrap; }
-tbody tr.current > td, tbody tr.selected > td { background: var(--selected); }
-tbody tr.current > td:first-child, tbody tr.selected > td:first-child { box-shadow: inset 2px 0 0 var(--focus); }
+/* the current row (vault selection, the shown revision in its Revisions
+   list): the selected tint and a 2px bar – the same in the desktop app */
+tbody tr:is(.current, .selected, .this-rev) > td { background: var(--selected); }
+tbody tr:is(.current, .selected, .this-rev) > td:first-child { box-shadow: inset 2px 0 0 var(--focus); }
 /* --text-dim is below 4.5:1 on --selected in some dark skins: lift it there */
-tbody tr:is(.current, .selected) :is(.muted, .dim, .count, .hint, .none, .lvl, .small, .empty-cell),
+tbody tr:is(.current, .selected, .this-rev) :is(.muted, .dim, .count, .hint, .none, .lvl, .small, .empty-cell),
 .explorer-tree a.active .count { color: var(--text-muted); }
 tr.unresolved td { color: var(--st-review-fg); }
 td .empty-cell, .none { color: var(--text-dim); }
@@ -637,10 +644,11 @@ td.tree .guide { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1
 .state-glyph.st-rejected { color: var(--st-danger-fg); }
 .state-glyph.st-obsolete, .state-glyph.st-cancelled { color: var(--text-dim); }
 
-/* lock holder: by you in the link colour, by someone else the amber glyph */
+/* lock holder: the name in the text colour (it is no link); your own lock a
+   muted glyph and "(you)", someone else's the amber glyph – not colour alone */
 .lock { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; color: var(--text); vertical-align: middle; }
 .lock .icon { width: 14px; height: 14px; color: var(--st-lock-other); }
-.lock.lock-mine, .lock.lock-mine .icon { color: var(--link); }
+.lock.lock-mine .icon { color: var(--text-muted); }
 
 /* discussion thread of a change request */
 ol.thread { list-style: none; margin: 0 0 var(--space-3); padding: 0; display: grid; gap: var(--space-2); }
@@ -716,6 +724,8 @@ select, textarea {
   transition: border-color 120ms ease;
 }
 textarea { height: auto; min-height: 88px; padding: 6px 10px; resize: vertical; line-height: 20px; }
+/* the review comment at reading width, the same as in the desktop app */
+#decision textarea { max-width: 72ch; }
 select {
   appearance: none;
   padding-right: 30px;
@@ -742,12 +752,14 @@ form.inline.fields > label { gap: 2px; font-size: 12px; line-height: 16px; }
 form.inline.fields > label.grow { flex: 1 1 12rem; }
 form.inline.fields > label.grow input { width: 100%; }
 
-input[type=file] { font-size: 13px; color: var(--text-muted); max-width: 100%; }
+/* the native picker in the button's height, face and frame, so an upload row lines up */
+input[type=file] { font-size: 13px; color: var(--text-muted); max-width: 100%; vertical-align: middle; }
 input[type=file]::file-selector-button {
-  height: var(--ctl-h-sm);
-  padding: 0 10px;
+  height: var(--ctl-h);
+  padding: 0 12px;
   margin-right: 10px;
   font: inherit;
+  font-size: 14px;
   font-weight: 500;
   color: var(--text);
   cursor: pointer;
@@ -959,11 +971,8 @@ details.payload pre {
   position: absolute;
   top: 8px;
   right: 8px;
+  /* one frame: the buttons carry their own border, the group none */
   gap: 4px;
-  padding: 4px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
 }
 .viewer-bar { display: flex; gap: var(--space-2); align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .viewer-bar > p { margin: 0; }
@@ -1028,7 +1037,8 @@ tr.bom-diff-removed td:not(:first-child) { text-decoration: line-through; color:
 .upload-progress progress { flex: 1 1 14rem; height: 6px; accent-color: var(--primary); }
 
 /* Appearance: System / Light / Dark as radio cards, then the distro skins.
-   Every card carries its own data-skin, so it previews that skin. */
+   Only the preview carries the skin's data-skin; the card body stays in the
+   page's tokens, so only the selected card stands out (its focus border). */
 .scheme-cards { display: grid; gap: var(--space-3); grid-template-columns: repeat(3, minmax(0, 200px)); margin-bottom: var(--space-3); }
 /* distro skins: a compact row of small cards, so the dark tiles stay small */
 .skins { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fill, minmax(120px, 136px)); }
@@ -1114,7 +1124,8 @@ tr.bom-diff-removed td:not(:first-child) { text-decoration: line-through; color:
 ul.impact-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
 ul.impact-rows > li {
   display: grid;
-  grid-template-columns: minmax(12rem, 1.3fr) minmax(9rem, 0.9fr) minmax(0, 1.6fr) auto auto;
+  /* the source is what people scan for; the event is short and nowrap */
+  grid-template-columns: minmax(14rem, 2fr) auto minmax(0, 1.4fr) auto auto;
   align-items: center;
   gap: 4px var(--space-3);
   min-height: var(--row-h-dense);
@@ -1251,10 +1262,19 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
   .quicksearch input[type=search] { width: 100%; }
   .quicksearch kbd { display: none; }
   .bell, .usermenu { order: 2; }
-  /* phones: the sections wrap onto a second row instead of scrolling out of sight */
-  .nav { order: 3; flex: 1 0 calc(100% - 96px); flex-wrap: wrap; overflow: visible; padding-bottom: 4px; }
-  /* Admin closes the second nav row on the same baseline, not centred across both */
-  .nav-admin { order: 4; align-self: flex-end; margin-bottom: 4px; }
+  /* phones: the sections are one row of their own that scrolls sideways; the
+     fade on the right edge says there is more */
+  .nav {
+    order: 3; flex: 1 1 calc(100% - 96px); flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px;
+    scroll-snap-type: x proximity;
+    mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  }
+  .nav a { scroll-snap-align: start; }
+  /* Admin sits right after the row, on its baseline */
+  .nav-admin { order: 4; margin-left: 0; margin-bottom: 4px; }
+  /* the review queue: the title takes the width, the priority sits under it;
+     the change number already opens the review */
+  .show-narrow { display: block; margin-top: 2px; }
   .page-head { align-items: flex-start; }
   .page-head :is(.subtitle, .meta) a { white-space: nowrap; }
   /* phones: long titleblock values wrap instead of being cut */
@@ -1272,6 +1292,9 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
   /* no hover tooltip on touch: cut cells wrap instead */
   td.ellipsis { white-space: normal; overflow-wrap: anywhere; }
   .impact-source, .impact-relation { white-space: normal; }
+  /* row actions (⋯, History) get a full touch target on 40px rows */
+  button.xs, .button.xs { height: var(--ctl-h); min-width: var(--ctl-h); }
+  summary.button.xs { font-size: 16px; }
 }
 
 /* Forced colours (Windows High Contrast): box-shadow edges and backgrounds
@@ -1361,9 +1384,6 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
 .file-icon .icon { width: 14px; height: 14px; stroke-width: 1.5; }
 /* the 3D viewer is a link in the link colour, not a third chip style */
 a.view-3d { font-size: 12px; font-weight: 500; white-space: nowrap; }
-/* the side Revisions list marks the shown revision by weight only */
-tbody tr.this-rev > td { font-weight: 600; }
-tbody tr.this-rev .revbox { color: var(--text); border-color: var(--border-strong); font-weight: 600; }
 /* one gap between the cards of a stack: the last card of a column adds none */
 .with-rail > * > .card:last-child { margin-bottom: 0; }
 td.row-actions details.menu { display: inline-block; text-align: left; }

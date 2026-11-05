@@ -18,19 +18,20 @@
     <span class="hint">Only for you; the desktop app has its own choice.</span>
   </div>
   <p class="muted">Choose how TeamCraft looks in this browser.</p>
-  {#- A tiny mock of the page in the card's own tokens: top bar, two rows
+  {#- A tiny mock of the page in the skin's own tokens (only the preview carries
+      data-skin; the card body stays in the page's tokens): top bar, two rows
       with a primary chip and a state badge. -#}
   {% set mock %}<span class="sp-bar"></span><span class="sp-row"><span class="sp-text"></span><span class="sp-badge"></span></span><span class="sp-row"><span class="sp-text short"></span><span class="sp-chip"></span></span>{% endset %}
   <div class="scheme-cards" role="group" aria-label="Colour scheme">
     {% for s in skins %}{% if s.id in ["teamcraft", "teamcraft-day", "teamcraft-night"] %}
     <form method="post" action="/account/skin">
       <input type="hidden" name="skin" value="{{ s.id }}">
-      <button class="skin-card{% if s.id == me.skin %} selected{% endif %}" type="submit" data-skin="{{ s.id }}"
+      <button class="skin-card{% if s.id == me.skin %} selected{% endif %}" type="submit"
               aria-pressed="{% if s.id == me.skin %}true{% else %}false{% endif %}">
         {% if s.id == "teamcraft" -%}
         <span class="skin-preview split" aria-hidden="true"><span class="skin-preview" data-skin="teamcraft-day">{{ mock }}</span><span class="skin-preview" data-skin="teamcraft-night">{{ mock }}</span></span>
         {%- else -%}
-        <span class="skin-preview" aria-hidden="true">{{ mock }}</span>
+        <span class="skin-preview" data-skin="{{ s.id }}" aria-hidden="true">{{ mock }}</span>
         {%- endif %}
         <span class="skin-name"><strong>{% if s.id == "teamcraft" %}System{% elif s.id == "teamcraft-day" %}Light{% else %}Dark{% endif %}</strong>{% if s.id == me.skin %}<span class="skin-current">✓ Current</span>{% endif %}</span>
         <span class="small">{{ s.description }}</span>
@@ -43,9 +44,9 @@
     {% for s in skins %}{% if s.id not in ["teamcraft", "teamcraft-day", "teamcraft-night"] %}
     <form method="post" action="/account/skin">
       <input type="hidden" name="skin" value="{{ s.id }}">
-      <button class="skin-card{% if s.id == me.skin %} selected{% endif %}" type="submit" data-skin="{{ s.id }}"
+      <button class="skin-card{% if s.id == me.skin %} selected{% endif %}" type="submit"
               aria-pressed="{% if s.id == me.skin %}true{% else %}false{% endif %}">
-        <span class="skin-preview" aria-hidden="true">{{ mock }}</span>
+        <span class="skin-preview" data-skin="{{ s.id }}" aria-hidden="true">{{ mock }}</span>
         <span class="skin-name"><strong>{{ s.name }}</strong>{% if s.id == me.skin %}<span class="skin-current">✓ Current</span>{% endif %}</span>
       </button>
     </form>
