@@ -531,72 +531,80 @@ pub async fn analysis(pool: &PgPool, revision_ids: &[Uuid]) -> AppResult<Vec<Dep
         relation: String,
         via: Uuid,
     }
-    // (root item, item) pairs reached so far; the frontier holds the pairs
-    // of the last level.
-    let mut reached: HashSet<(Uuid, Uuid)> = roots.iter().map(|r| (r.item_id, r.item_id)).collect();
-    let mut frontier: Vec<(Uuid, Uuid)> = reached.iter().copied().collect();
-    let mut found: Vec<Found> = Vec::new();
-    for level in 1..=MAX_ANALYSIS_LEVELS {
-        if frontier.is_empty() {
-            break;
-        }
-        let targets: Vec<Uuid> = frontier
-            .iter()
-            .map(|(_, item)| *item)
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect();
-        let edges = sqlx::query_as::<_, Edge>(DEPENDENTS_SQL)
-            .bind(&targets)
-            .fetch_all(pool)
-            .await?;
-        let mut by_target: HashMap<Uuid, Vec<&Edge>> = HashMap::new();
-        for e in &edges {
-            by_target.entry(e.target).or_default().push(e);
-        }
-        let mut next = Vec::new();
-        for (root, item) in frontier {
-            for e in by_target.get(&item).into_iter().flatten() {
-                if reached.insert((root, e.dependent)) {
-                    next.push((root, e.dependent));
-                    found.push(Found {
-                        root,
-                        item: e.dependent,
-                        level,
-                        relation: e.relation.clone(),
-                        via: item,
-                    });
-                }
-            }
-        }
-        frontier = next;
-    }
-
     // CAD files of other items that reference the files (one level), for
-    // all revisions in one query.
+    // all revisions in one query – run while the walk below goes up.
     #[derive(sqlx::FromRow)]
     struct FileReferrer {
         source_revision_id: Uuid,
         item_id: Uuid,
     }
-    let file_referrers = sqlx::query_as::<_, FileReferrer>(
-        "SELECT DISTINCT ON (sf.revision_id, i.number) sf.revision_id AS source_revision_id,
-                i.id AS item_id
-         FROM files sf
-         JOIN revisions sr ON sr.id = sf.revision_id
-         JOIN file_references fr ON lower(fr.name) = lower(sf.filename)
-         JOIN file_versions dv ON dv.id = fr.file_version_id
-         JOIN files df ON df.id = dv.file_id AND dv.version = df.current_version
-         JOIN revisions r ON r.id = df.revision_id
-         JOIN items i ON i.id = r.item_id
-         WHERE sf.revision_id = ANY($1)
-           AND r.item_id <> sr.item_id
-           AND r.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = r.item_id)
-         ORDER BY sf.revision_id, i.number",
-    )
-    .bind(revision_ids)
-    .fetch_all(pool)
-    .await?;
+    let file_referrers = async {
+        Ok::<_, AppError>(
+            sqlx::query_as::<_, FileReferrer>(
+                "SELECT DISTINCT ON (sf.revision_id, i.number) sf.revision_id AS source_revision_id,
+                        i.id AS item_id
+                 FROM files sf
+                 JOIN revisions sr ON sr.id = sf.revision_id
+                 JOIN file_references fr ON lower(fr.name) = lower(sf.filename)
+                 JOIN file_versions dv ON dv.id = fr.file_version_id
+                 JOIN files df ON df.id = dv.file_id AND dv.version = df.current_version
+                 JOIN revisions r ON r.id = df.revision_id
+                 JOIN items i ON i.id = r.item_id
+                 WHERE sf.revision_id = ANY($1)
+                   AND r.item_id <> sr.item_id
+                   AND r.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = r.item_id)
+                 ORDER BY sf.revision_id, i.number",
+            )
+            .bind(revision_ids)
+            .fetch_all(pool)
+            .await?,
+        )
+    };
+    // (root item, item) pairs reached so far; the frontier holds the pairs
+    // of the last level.
+    let walk = async {
+        let mut reached: HashSet<(Uuid, Uuid)> =
+            roots.iter().map(|r| (r.item_id, r.item_id)).collect();
+        let mut frontier: Vec<(Uuid, Uuid)> = reached.iter().copied().collect();
+        let mut found: Vec<Found> = Vec::new();
+        for level in 1..=MAX_ANALYSIS_LEVELS {
+            if frontier.is_empty() {
+                break;
+            }
+            let targets: Vec<Uuid> = frontier
+                .iter()
+                .map(|(_, item)| *item)
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            let edges = sqlx::query_as::<_, Edge>(DEPENDENTS_SQL)
+                .bind(&targets)
+                .fetch_all(pool)
+                .await?;
+            let mut by_target: HashMap<Uuid, Vec<&Edge>> = HashMap::new();
+            for e in &edges {
+                by_target.entry(e.target).or_default().push(e);
+            }
+            let mut next = Vec::new();
+            for (root, item) in frontier {
+                for e in by_target.get(&item).into_iter().flatten() {
+                    if reached.insert((root, e.dependent)) {
+                        next.push((root, e.dependent));
+                        found.push(Found {
+                            root,
+                            item: e.dependent,
+                            level,
+                            relation: e.relation.clone(),
+                            via: item,
+                        });
+                    }
+                }
+            }
+            frontier = next;
+        }
+        Ok::<_, AppError>(found)
+    };
+    let (mut found, file_referrers) = tokio::try_join!(walk, file_referrers)?;
     let root_of: HashMap<Uuid, Uuid> = roots.iter().map(|r| (r.revision_id, r.item_id)).collect();
     // Checked per revision as before: a dependent found through BOM or
     // references keeps that relation.
