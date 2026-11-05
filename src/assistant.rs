@@ -631,15 +631,190 @@ impl Transport for HttpTransport {
     }
 }
 
-/// The MCP tools with the rights of `me`.
+/// Write tools that put free text into objects other users read.
+pub const TEXT_WRITE_TOOLS: [&str; 3] = [
+    "create_change_draft",
+    "create_change_request",
+    "comment_change_request",
+];
+
+/// The answer of a text write tool once the run has read restricted content.
+pub const TAINTED_WRITE: &str =
+    "Not written: this run read content of restricted project groups, and \
+     the text could carry it into an object that other users read. Tell the user to write it \
+     themselves (or to ask again without the restricted content).";
+
+/// The MCP tools with the rights of `me`. A run takes minutes, so every
+/// call uses the user's rights as they are at that moment (a membership
+/// lost or a group restricted during the run applies to the next step).
+///
+/// Confused deputy: text that other users typed (request comments, names,
+/// notes) reaches the model and may tell it to copy restricted content into
+/// a comment or a draft that those users can read. So once a read in this
+/// run returned something a reader without the user's restricted groups
+/// would not have got (or a write returned such an object, e.g. a draft
+/// with restricted dependencies), the text write tools refuse for the rest
+/// of the run.
 pub struct McpTools<'a> {
     pub state: &'a crate::AppState,
     pub me: &'a Actor,
+    /// A read returned restricted content (see above).
+    pub tainted: std::sync::atomic::AtomicBool,
+}
+
+impl<'a> McpTools<'a> {
+    pub fn new(state: &'a crate::AppState, me: &'a Actor) -> McpTools<'a> {
+        McpTools {
+            state,
+            me,
+            tainted: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// `me` without its restricted groups: every restricted group hidden,
+    /// and somebody else. Change orders and requests are also visible by
+    /// identity (author, reviewer, requester, assignee, the admin role in
+    /// the database), so the outsider gets an id that matches no user: what
+    /// the user reads only because of who they are counts as restricted
+    /// (fail closed – also their worklist and "mine" lists).
+    async fn outsider(&self, me: &Actor) -> Result<Option<Actor>, AppError> {
+        let restricted: Vec<uuid::Uuid> =
+            sqlx::query_scalar("SELECT id FROM projects WHERE visibility = 'restricted'")
+                .fetch_all(&self.state.db)
+                .await?;
+        if restricted.is_empty() {
+            // nothing is restricted: every reader gets the same
+            return Ok(None);
+        }
+        // Also for a user who is in no restricted group: as author,
+        // reviewer, requester or assignee they still read changes and
+        // requests that hold restricted items.
+        Ok(Some(Actor {
+            role: if me.is_admin() {
+                crate::domain::Role::Editor
+            } else {
+                me.role
+            },
+            hidden_projects: restricted,
+            id: uuid::Uuid::new_v4(),
+            ..me.clone()
+        }))
+    }
+
+    /// The page the question was asked on reaches the model in the first
+    /// message, not through a tool: an item or change order the outsider
+    /// may not see taints the run from the start (its number would
+    /// otherwise be free to copy into a public text).
+    pub async fn note_context(&self, question: &Question) {
+        use std::sync::atomic::Ordering;
+        let mut reads = Vec::new();
+        if let Some(item) = &question.item {
+            reads.push(("get_item", json!({ "item": item })));
+        }
+        if let Some(change) = &question.change {
+            reads.push(("get_change", json!({ "change": change })));
+        }
+        for (name, input) in reads {
+            if self.differs_for_outsider(self.me, name, &input).await {
+                self.tainted.store(true, Ordering::SeqCst);
+                return;
+            }
+        }
+    }
+
+    /// Whether `name` with `input` returns something to the user that the
+    /// outsider would not get. Unknown answers count as yes (fail closed).
+    async fn differs_for_outsider(&self, me: &Actor, name: &str, input: &Value) -> bool {
+        let mine = mcp::tools::call(self.state, me, name, input).await;
+        self.differs_from(me, name, input, &mine).await
+    }
+
+    async fn differs_from(&self, me: &Actor, name: &str, input: &Value, mine: &Value) -> bool {
+        match self.outsider(me).await {
+            Ok(None) => false,
+            Ok(Some(outsider)) => {
+                comparable(&mcp::tools::call(self.state, &outsider, name, input).await)
+                    != comparable(mine)
+            }
+            Err(_) => true,
+        }
+    }
+
+    /// Whether the result of a write tool carries restricted content. A
+    /// write cannot be repeated as the outsider, so the object it returns
+    /// is read again as the user and as the outsider.
+    async fn write_taints(&self, me: &Actor, name: &str, result: &Value) -> bool {
+        if result["isError"] == true || name == "comment_change_request" {
+            // errors name what the model passed in; a comment returns only
+            // its own text
+            return false;
+        }
+        match self.outsider(me).await {
+            Ok(None) => return false,
+            Ok(Some(_)) => {}
+            Err(_) => return true,
+        }
+        let content = &result["structuredContent"];
+        let follow_up = if let Some(n) = content["change"]["number"].as_str() {
+            Some(("get_change", json!({ "change": n })))
+        } else {
+            content["change_request"]["number"]
+                .as_str()
+                .map(|n| ("get_change_request", json!({ "request": n })))
+        };
+        match follow_up {
+            Some((tool, input)) => self.differs_for_outsider(me, tool, &input).await,
+            None => true, // cut output or an unknown shape
+        }
+    }
+}
+
+/// A tool result for the outsider comparison: the structured content
+/// without what the user may do (`you_may` of a request depends on who
+/// asks and holds no content). Results without structured content (cut
+/// output, errors) are compared as they are.
+fn comparable(result: &Value) -> Value {
+    match result.get("structuredContent") {
+        Some(Value::Object(content)) => {
+            let mut content = content.clone();
+            content.remove("you_may");
+            Value::Object(content)
+        }
+        _ => result.clone(),
+    }
 }
 
 impl Tools for McpTools<'_> {
     async fn call(&self, name: &str, input: &Value) -> Value {
-        mcp::tools::call(self.state, self.me, name, input).await
+        use std::sync::atomic::Ordering;
+        let me = match crate::services::users::active_actor(&self.state.db, self.me.id).await {
+            Ok(Some(me)) => me,
+            Ok(None) => return mcp::tools::failure("The account is no longer active."),
+            Err(e) => {
+                tracing::warn!(error = %e, "reloading the assistant's user failed");
+                return mcp::tools::failure("The tool is not available right now.");
+            }
+        };
+        if TEXT_WRITE_TOOLS.contains(&name) && self.tainted.load(Ordering::SeqCst) {
+            return mcp::tools::failure(TAINTED_WRITE);
+        }
+        let result = mcp::tools::call(self.state, &me, name, input).await;
+        if !self.tainted.load(Ordering::SeqCst) {
+            let read_only = mcp::tools::definitions()
+                .iter()
+                .any(|d| d["name"] == name && d["annotations"]["readOnlyHint"] == true);
+            let differs = if read_only {
+                // the same read as somebody outside the user's restricted groups
+                self.differs_from(&me, name, input, &result).await
+            } else {
+                // write results (a draft's overview, added dependencies) too
+                self.write_taints(&me, name, &result).await
+            };
+            if differs {
+                self.tainted.store(true, Ordering::SeqCst);
+            }
+        }
+        result
     }
 }
 

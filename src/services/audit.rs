@@ -153,9 +153,15 @@ async fn insert(
     details: Value,
 ) -> AppResult<()> {
     sqlx::query(
+        // mentioned_projects: the groups of the named items now, so the entry
+        // stays redacted after such an item is deleted
         "INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, summary, details,
-                                related_item_id, mentioned_items, mentioned_changes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                                related_item_id, mentioned_items, mentioned_changes,
+                                mentioned_projects)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                 ARRAY(SELECT DISTINCT pi.project_id FROM items pi
+                       WHERE pi.project_id IS NOT NULL
+                         AND (pi.id = $8 OR pi.id = ANY($9))))",
     )
     .bind(actor.map(|a| a.id))
     .bind(actor.map(|a| a.username.as_str()).unwrap_or("system"))
@@ -227,7 +233,9 @@ fn columns(n: usize, actor: usize) -> String {
            AS related_hidden,
          (EXISTS (SELECT 1 FROM items mi WHERE mi.id = ANY(a.mentioned_items) AND NOT {item})
           OR EXISTS (SELECT 1 FROM changes mc WHERE mc.id = ANY(a.mentioned_changes)
-                     AND NOT {change}))
+                     AND NOT {change})
+          -- the groups when written: also for items deleted since (fail closed)
+          OR a.mentioned_projects && ${n})
            AS mentions_hidden",
         related = access::item_visible("ri", n),
         item = access::item_visible("mi", n),

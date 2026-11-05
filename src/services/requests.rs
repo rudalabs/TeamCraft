@@ -249,7 +249,7 @@ const ITEM_SELECT: &str = "
                         WHERE r2.item_id = i.id ORDER BY r2.seq DESC LIMIT 1) lr";
 
 /// The affected items; items the actor may not see are placeholder rows
-/// (the note, written about the request, stays).
+/// (without identity and note), listed last.
 pub async fn items(pool: &PgPool, actor: &Actor, request_id: Uuid) -> AppResult<Vec<RequestItem>> {
     let mut rows = items_unchecked(pool, request_id).await?;
     for row in &mut rows {
@@ -257,6 +257,8 @@ pub async fn items(pool: &PgPool, actor: &Actor, request_id: Uuid) -> AppResult<
             row.mask();
         }
     }
+    // placeholders last: their position would bound the hidden number
+    rows.sort_by_key(|r| r.restricted);
     Ok(rows)
 }
 
@@ -928,6 +930,60 @@ pub async fn remove_item(pool: &PgPool, actor: &Actor, id: Uuid, item_id: Uuid) 
     Ok(())
 }
 
+/// An item that is about to be deleted leaves every request that names it
+/// (the rows go with the item, `items::delete`). Each request records it in
+/// its history – with the note, so nothing is lost without a trace – and
+/// tells its people. The deleter may not see every such request; nothing
+/// here is returned to them, and the entries are shown only to readers of
+/// the request.
+pub(crate) async fn item_deleted(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    item_id: Uuid,
+    item_number: &str,
+) -> AppResult<()> {
+    let rows = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT request_id, note FROM change_request_items WHERE item_id = $1 ORDER BY request_id",
+    )
+    .bind(item_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    for (request_id, note) in rows {
+        let request = lock_unchecked(conn, request_id).await?;
+        touch(conn, request_id).await?;
+        audit::record(
+            conn,
+            Some(actor),
+            "change_request.remove_item",
+            "change_request",
+            Some(request_id),
+            format!(
+                "Removed {item_number} from {}: the item was deleted",
+                request.number
+            ),
+            json!({ "item_id": item_id, "item_number": item_number, "note": note,
+                    "reason": "item_deleted" }),
+        )
+        .await?;
+        tell_people(
+            conn,
+            actor,
+            &request,
+            format!(
+                "{} deleted {item_number}, an affected item of {}",
+                actor.display_name, request.number
+            ),
+            if note.is_empty() {
+                String::new()
+            } else {
+                format!("Its note was: {}", domain::truncate_chars(&note, 500))
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// Adds a comment to the discussion. Every signed-in user may comment.
 pub async fn comment(
     pool: &PgPool,
@@ -1082,6 +1138,13 @@ pub async fn assign(
         return Err(not_now(&request));
     }
     if let Some(user) = &assignee {
+        // The check below looks at every item; for items the actor cannot
+        // see it would tell who is a member of their group.
+        if !projects.iter().all(|p| actor.can_see_project(*p)) {
+            return Err(AppError::Forbidden(
+                "You can no longer see all affected items of this request.".into(),
+            ));
+        }
         let blind = sqlx::query_scalar::<_, bool>(&format!(
             "SELECT EXISTS(SELECT 1 FROM change_request_items cri
                            JOIN items i ON i.id = cri.item_id
@@ -1384,7 +1447,8 @@ pub async fn create_change(
     .fetch_all(&mut *tx)
     .await?;
     let mut added = Vec::new();
-    let mut added_items = Vec::new();
+    // the items the entry names: added ones and skipped ones by number
+    let mut named_items = Vec::new();
     let mut skipped = Vec::new();
     for (item_id, number, project_id, in_work) in affected {
         // An assignee (or triager) may see the request without seeing every
@@ -1396,6 +1460,7 @@ pub async fn create_change(
             ));
             continue;
         }
+        named_items.push(item_id);
         let Some(rev_id) = in_work else {
             skipped.push(format!(
                 "{number}: no revision in work – revise it, then add it to the change"
@@ -1404,10 +1469,7 @@ pub async fn create_change(
         };
         // User errors are raised before anything is written; skip and go on.
         match changes::add_item_in(&mut tx, actor, change_id, rev_id).await {
-            Ok(label) => {
-                added.push(label);
-                added_items.push(item_id);
-            }
+            Ok(label) => added.push(label),
             Err(
                 e @ (AppError::Conflict(_)
                 | AppError::Forbidden(_)
@@ -1430,7 +1492,7 @@ pub async fn create_change(
         "change_request.create_change",
         "change_request",
         Some(id),
-        &audit::Mentions::items(added_items).with_change(change_id),
+        &audit::Mentions::items(named_items).with_change(change_id),
         format!("Created change {change_number} for {}", request.number),
         json!({ "change_id": change_id, "added": added, "skipped": skipped }),
     )

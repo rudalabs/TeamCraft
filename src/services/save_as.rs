@@ -67,6 +67,24 @@ pub async fn save_as(
     .await?;
     let new_rev = created.revision_id;
     let label = format!("{}/{}", src.item_number, src.code);
+    // A copy out of a restricted group is declassified, the source's
+    // identity is not: the file versions do not name it (the audit entry
+    // does, redacted for readers who may not see the source).
+    let source_restricted =
+        match src.project_id {
+            Some(source) if target != Some(source) => sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1 AND visibility = 'restricted')",
+            )
+            .bind(source)
+            .fetch_one(&mut *tx)
+            .await?,
+            _ => false,
+        };
+    let copied_from = if source_restricted {
+        "a restricted item".to_string()
+    } else {
+        label.clone()
+    };
 
     let mut files = 0;
     if input.with_files {
@@ -98,7 +116,7 @@ pub async fn save_as(
         )
         .bind(new_rev)
         .bind(src.id)
-        .bind(&label)
+        .bind(&copied_from)
         .bind(actor.id)
         .execute(&mut *tx)
         .await?;
@@ -130,12 +148,13 @@ pub async fn save_as(
         .await?
         .rows_affected();
     }
-    audit::record(
+    audit::record_related(
         &mut tx,
         Some(actor),
         "item.save_as",
         "item",
         Some(created.item_id),
+        Some(src.item_id),
         format!("Saved {label} as a new item"),
         json!({ "from_revision": src.id, "files": files, "bom_lines": lines }),
     )

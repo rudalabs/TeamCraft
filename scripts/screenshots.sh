@@ -523,16 +523,18 @@ element() {
         jq -r '.value["element-6066-11e4-a52e-4f735466cecf"]'
 }
 
+# sign_in_browser [WHO] – signs the browser in as WHO (default admin).
 sign_in_browser() {
-    log "signing in through the login form"
+    local who=${1:-admin}
+    log "signing in through the login form ($who)"
     open_page /login
     local user pass button
     user=$(element 'form[action="/login"] input[name="username"]')
     pass=$(element 'form[action="/login"] input[name="password"]')
     button=$(element 'form[action="/login"] button[type="submit"]')
-    wd POST "/session/$SESSION/element/$user/value" '{"text":"admin"}' >/dev/null
+    wd POST "/session/$SESSION/element/$user/value" "$(jq -nc --arg u "$who" '{text: $u}')" >/dev/null
     wd POST "/session/$SESSION/element/$pass/value" \
-        "$(jq -nc --rawfile p "$WORK/pw-admin" '{text: $p}')" >/dev/null
+        "$(jq -nc --rawfile p "$WORK/pw-$who" '{text: $p}')" >/dev/null
     wd POST "/session/$SESSION/element/$button/click" '{}' >/dev/null
     wait_js 'location.pathname !== "/login" && document.readyState === "complete"' 30 "the sign-in"
 }
@@ -785,6 +787,40 @@ capture_simulation() {
     shot simulation-results "/revisions/${REV[sim]}" '#simulation-results'
 }
 
+# Read permissions – extra images, not used in the README: the settings of a
+# restricted group (as admin) and what a non-member sees of a link into it.
+# Seeded last, so the README images stay as they are; signs the browser out.
+capture_restricted() {
+    log "adding the restricted project group LAB"
+    local lab_id out
+    lab_id=$(japi admin POST /projects \
+        '{"code":"LAB","name":"Sensor lab prototypes","description":"Prototype sensors that are not public yet.","visibility":"restricted"}' |
+        jq -r '.id')
+    japi admin POST /projects/LAB/members '{"username":"mchen","manager":true}' >/dev/null
+    out=$(japi admin POST /items '{"item_type":"part","name":"Lidar sensor head prototype","project":"LAB"}')
+    NUM[lidar]=$(jq -r '.item_number' <<<"$out")
+    REV[lidar]=$(jq -r '.id' <<<"$out")
+    item rig assembly "Sensor test rig" '{"description":"Test rig for the mast sensors."}'
+    bom_line rig clamp 2 10
+    bom_line rig lidar 1 20 "Prototype from the sensor lab"
+    checkin lidar
+    checkin rig
+
+    viewport 1440 900 "$SCALE" false
+    shot project-restricted "/projects/$lab_id" 'form[action$="/visibility"]'
+
+    log "switching the browser to jlopez (not a member of LAB)"
+    wd DELETE "/session/$SESSION/cookie" >/dev/null
+    sign_in_browser jlopez
+    shot restricted-bom "/revisions/${REV[rig]}/bom"
+    shot restricted-revision "/revisions/${REV[rig]}"
+    open_page "/revisions/${REV[lidar]}"
+    snap restricted-not-found
+    scheme dark
+    shot restricted-bom-dark "/revisions/${REV[rig]}/bom"
+    scheme light
+}
+
 # compare_with_readme – warns (never fails) about screenshots the README
 # shows that this run did not make, and lists the ones the README does not
 # show. Without DESKTOP_APP the desktop-*.png images are expected to be
@@ -826,6 +862,7 @@ main() {
         capture_desktop
     fi
     capture_simulation
+    capture_restricted
     log "done: $(find "$OUT_DIR" -maxdepth 1 -name '*.png' | wc -l) screenshots in $OUT_DIR"
     compare_with_readme
 }

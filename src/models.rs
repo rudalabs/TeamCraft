@@ -196,9 +196,9 @@ pub struct BomLine {
     #[sqlx(default)]
     #[serde(skip)]
     pub child_project_id: Option<Uuid>,
-    /// Placeholder for a child the reader may not see: find number,
-    /// quantity and notes (written by the parent's editors) stay, the
-    /// child's identity is removed.
+    /// Placeholder for a child the reader may not see: find number and
+    /// quantity stay; the child's identity and the notes (they describe the
+    /// hidden child, possibly written by a member) are removed.
     #[sqlx(default)]
     pub restricted: bool,
 }
@@ -215,6 +215,7 @@ impl BomLine {
         self.child_latest_code = String::new();
         self.child_latest_state = String::new();
         self.child_name = String::new();
+        self.notes = String::new();
         self.released_child_revision_id = None;
         self.released_child_code = None;
         self.child_project_id = None;
@@ -279,10 +280,11 @@ pub struct ItemReference {
 }
 
 impl ItemReference {
-    /// Turns the reference into a placeholder for a hidden target (kind and
-    /// note, written on the visible side, stay).
+    /// Turns the reference into a placeholder for a hidden target (the kind
+    /// stays; the note describes the hidden target and is removed).
     pub fn mask(&mut self) {
         self.to_item_id = Uuid::nil();
+        self.note = String::new();
         self.to_number = crate::services::access::RESTRICTED_LABEL.into();
         self.to_type = String::new();
         self.to_latest_revision_id = Uuid::nil();
@@ -357,7 +359,14 @@ pub struct Impact {
 }
 
 impl Impact {
-    /// Removes the source when the reader may not see it.
+    /// Removes the releasing change order (the reader may not see it).
+    pub fn hide_change(&mut self) {
+        self.change_id = None;
+        self.change_number = None;
+    }
+
+    /// Removes the source when the reader may not see it. The releasing
+    /// change needs a database check of its own (`impacts::redact_all`).
     pub fn redact(mut self, actor: &crate::auth::Actor) -> Self {
         if !actor.can_see_project(self.source_project_id) {
             self.source_item_id = Uuid::nil();

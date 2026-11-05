@@ -58,12 +58,20 @@ pub async fn outgoing(
             r.mask();
         }
     }
+    // placeholders last in their kind: their position would bound the
+    // hidden number
+    rows.sort_by(|a, b| (&a.kind, a.restricted).cmp(&(&b.kind, b.restricted)));
     Ok(rows)
 }
 
 /// A reference of a revision the actor may read (hidden target = placeholder).
 pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ItemReference> {
-    let mut r = sqlx::query_as::<_, ItemReference>(&format!("{REFERENCE_SELECT} WHERE ir.id = $1"))
+    Ok(masked_for(actor, get_unmasked(pool, actor, id).await?))
+}
+
+/// [`get`] without the placeholder (for the audit trail of a write).
+async fn get_unmasked(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ItemReference> {
+    let r = sqlx::query_as::<_, ItemReference>(&format!("{REFERENCE_SELECT} WHERE ir.id = $1"))
         .bind(id)
         .fetch_optional(pool)
         .await?
@@ -71,10 +79,14 @@ pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ItemRefere
     revisions::get(pool, actor, r.from_revision_id)
         .await
         .map_err(|_| AppError::not_found("Reference not found."))?;
+    Ok(r)
+}
+
+fn masked_for(actor: &Actor, mut r: ItemReference) -> ItemReference {
     if !actor.can_see_project(r.to_project_id) {
         r.mask();
     }
-    Ok(r)
+    r
 }
 
 /// Revisions (of other items the actor may see) that reference an item,
@@ -187,7 +199,7 @@ pub async fn add(
 
 /// Removes a reference from a revision that is checked out by the actor.
 pub async fn remove(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ItemReference> {
-    let existing = get(pool, actor, id).await?;
+    let existing = get_unmasked(pool, actor, id).await?;
     let mut tx = pool.begin().await?;
     let rev = revisions::lock(&mut tx, existing.from_revision_id).await?;
     revisions::ensure_editable(&rev, actor)?;
@@ -211,7 +223,7 @@ pub async fn remove(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ItemRef
     )
     .await?;
     tx.commit().await?;
-    Ok(existing)
+    Ok(masked_for(actor, existing))
 }
 
 /// Copies the references of `from` to the new revision `to` (Revise).

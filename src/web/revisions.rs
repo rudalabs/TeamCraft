@@ -180,9 +180,7 @@ pub async fn show(
         "edit": editable,
         "checkout": can_work && rev.checked_out_by.is_none(),
         "checkin": rev.checked_out_by == Some(me.id),
-        "cancel_checkout": rev.checked_out_by.is_some()
-            && me.can_edit()
-            && (rev.checked_out_by == Some(me.id) || me.is_admin()),
+        "cancel_checkout": revisions::may_cancel_checkout(&st.db, me, &rev).await?,
         "revise": in_project && !item_has_open_revision,
         "obsolete": in_project && state == LifecycleState::Released,
         "delete": ((item.created_by == me.id && in_project) || me.is_admin())

@@ -40,7 +40,9 @@
               <button class="small" type="submit" title="Managers edit the group and its members">Make manager</button>
             </form>
             {% endif %}
-            {% if can_manage or u.user_id == me.id %}
+            {% if u.source == "oidc" and project.oidc_group %}
+            <span class="muted small" title="Removed when the identity provider drops the user from {{ project.oidc_group }}">via IdP</span>
+            {% elif can_manage or u.user_id == me.id %}
             <form class="inline" method="post" action="/projects/{{ project.id }}/members/{{ u.user_id }}/remove"
                   data-confirm="{% if u.user_id == me.id %}Leave {{ project.code }}?{% else %}Remove {{ u.display_name }} from {{ project.code }}?{% endif %}">
               <button class="small danger" type="submit">{% if u.user_id == me.id %}Leave{% else %}Remove{% endif %}</button>
@@ -64,7 +66,7 @@
       </form>
       {% endif %}
       {% if project.oidc_group %}
-      <p class="hint">Members of the IdP group <span class="mono">{{ project.oidc_group }}</span> are added and removed automatically at their SSO login{% if not oidc_enabled %} (SSO is not configured on this instance){% endif %}. Manually added members stay.</p>
+      <p class="hint">Members of the IdP group <span class="mono">{{ project.oidc_group }}</span> are added and removed automatically at their SSO login{% if not oidc_enabled %} (SSO is not configured on this instance){% endif %}; to revoke such a membership, remove the user from the IdP group. Making them a manager keeps the membership synchronised. Manually added members stay. A manually added member who is also in the IdP group comes back at their next SSO login when removed here.</p>
       {% endif %}
     {% endif %}
   </section>
