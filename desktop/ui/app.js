@@ -146,7 +146,7 @@
     opts = opts || {};
     // Refresh is an icon button (F5 in the View menu does the same)
     var iconOnly = icon === "refresh" && label === "Refresh";
-    return h("button.tool" + (opts.primary ? ".primary" : "") + (opts.danger ? ".danger" : "") + (iconOnly ? ".icon" : ""), {
+    return h("button.tool" + (opts.primary ? ".primary" : "") + (opts.danger ? ".danger" : "") + (iconOnly ? ".icon" : "") + ".tool-" + icon, {
       type: "button", title: opts.title || (iconOnly ? "Refresh (F5)" : label), "aria-label": iconOnly ? label : null,
       disabled: opts.disabled, on: { click: onClick }
     }, [svgIcon(ICONS[icon] || ICONS.plus), iconOnly ? null : label]);
@@ -772,7 +772,7 @@
       title: g.item_number + "/" + g.revision_code + " " + g.item_name + " – " + n + " change" + (n === 1 ? "" : "s") + " to check",
       on: { click: function () { openRevision(g.item_number, g.revision_code, "references"); } }
     }, [
-      twisty, h("span.ico.warn", { text: "⚠" }),
+      twisty, h("span.ico.warn", { text: "△" }),
       h("span.label", null, [h("span.mono", { text: g.item_number + "/" + g.revision_code }), " ", g.item_name]),
       h("span.meta", null, h("span.count-badge", { text: String(n) }))
     ]);
