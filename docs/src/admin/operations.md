@@ -107,13 +107,15 @@ thousands of dependencies (about 220 ms).
   spinning disks) make the planner prefer full table scans.
 * **The `pg_trgm` extension** (part of PostgreSQL, "trusted", so the owner
   of the database may create it) backs the substring search over item
-  numbers, names and file names with trigram indexes. Migration 0023
-  creates it when it can; otherwise the search still works but reads the
+  numbers, names, attribute values and file names with trigram indexes.
+  Migrations 0023 and 0031 create it when they can; otherwise the search
+  still works but reads the
   tables – a few hundred milliseconds per search at 100,000 items. If the
   database role may not create extensions, an administrator can run
   `CREATE EXTENSION pg_trgm;` in the TeamCraft database and then the
   `CREATE INDEX … gin_trgm_ops` statements of
-  `migrations/0023_performance_indexes.sql`.
+  `migrations/0023_performance_indexes.sql` and
+  `migrations/0031_attribute_search_index.sql`.
 * **JIT is off and every statement gets a custom plan** in TeamCraft's
   sessions (`jit=off` and `plan_cache_mode=force_custom_plan`, sent as
   startup options of every connection; the server's settings for other

@@ -14,7 +14,7 @@
 
 <form class="card form-row" method="get" action="/items">
   <label>Search
-    <input type="search" name="q" value="{{ filter.q }}" placeholder="Number, name, material, file name or file content">
+    <input type="search" name="q" value="{{ filter.q }}" placeholder="Number, name, material, attribute, file name or content">
   </label>
   <label>Type
     <select name="type">
@@ -40,6 +40,23 @@
       {% for s in systems %}<option value="{{ s.id }}" {% if filter.system == s.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
     </select>
   </label>
+  <label>Classification
+    <select name="class">
+      <option value="">Any</option>
+      {% for c in classifications %}<option value="{{ c.value }}" {% if filter.class == c.value %}selected{% endif %}>{{ c.label }}</option>{% endfor %}
+    </select>
+  </label>
+  {% if attribute_defs %}
+  <label>Attribute
+    <select name="attr">
+      <option value="">—</option>
+      {% for a in attribute_defs %}<option value="{{ a.key }}" {% if filter.attr == a.key %}selected{% endif %}>{{ a.label }}{% if a.unit %} [{{ a.unit }}]{% endif %}{% if not a.active %} (inactive){% endif %}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Value <span class="hint" title="Text contains · yes/no · numbers: 12, >=10, <=20, 10..20 · empty: has a value">?</span>
+    <input type="text" name="value" value="{{ filter.value }}" placeholder="e.g. Bosch, yes, 10..20">
+  </label>
+  {% endif %}
   <div class="actions"><button class="primary" type="submit">Filter</button><a class="button" href="/items">Reset</a></div>
 </form>
 
@@ -55,13 +72,16 @@
   {% else %}
   <span class="small muted">none yet</span>
   {% endfor %}
-  {% if filter.q or filter.type or filter.project or filter.state or filter.system %}
+  {% if filter.q or filter.type or filter.project or filter.state or filter.system or filter.class or filter.attr %}
   <form class="inline" method="post" action="/searches">
     <input type="hidden" name="q" value="{{ filter.q }}">
     <input type="hidden" name="type" value="{{ filter.type }}">
     <input type="hidden" name="project" value="{{ filter.project }}">
     <input type="hidden" name="state" value="{{ filter.state }}">
     <input type="hidden" name="system" value="{{ filter.system }}">
+    <input type="hidden" name="class" value="{{ filter.class }}">
+    <input type="hidden" name="attr" value="{{ filter.attr }}">
+    <input type="hidden" name="value" value="{{ filter.value }}">
     <input type="text" name="name" maxlength="100" required placeholder="Name of this search" aria-label="Name of this search">
     <button class="small" type="submit">Save this search</button>
   </form>
@@ -69,6 +89,7 @@
 </div>
 
 <div class="card">
+  {% if filter_error %}<div class="flash flash-error" role="alert">{{ filter_error }}</div>{% endif %}
   {% if items %}
   <div class="table-wrap">
   <table>
@@ -80,7 +101,7 @@
       <tr>
         <td class="nowrap mono"><a href="/revisions/{{ i.latest_revision_id }}">{{ i.number }}</a></td>
         <td>{{ i.name }}{% if i.matched_file %} <span class="small muted" title="The search term was found in this file">· found in {{ i.matched_file }}</span>{% endif %}</td>
-        <td>{{ i.item_type|label }}</td>
+        <td>{{ i.item_type|label }}{% if i.classification != "make" %} <span class="badge badge-member" title="Classification">{% for c in classifications %}{% if c.value == i.classification %}{{ c.label|lower }}{% endif %}{% endfor %}</span>{% endif %}</td>
         <td class="mono">{{ i.latest_code }}</td>
         <td>{{ m.badge(i.latest_state) }}</td>
         <td>{{ i.project_code or "" }}</td>

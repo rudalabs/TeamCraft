@@ -26,15 +26,15 @@ use uuid::Uuid;
 use crate::{
     auth::{Actor, ApiUser},
     domain::{
-        ChangeStatus, Decision, ItemType, LifecycleState, Priority, ProjectVisibility,
+        self, ChangeStatus, Decision, ItemType, LifecycleState, Priority, ProjectVisibility,
         ReferenceKind, RevisionRule,
     },
     error::{AppError, AppResult},
     models::Revision,
     services::{
-        audit, bom, changes, checkouts, desktop, files, impacts, imports, items, notifications,
-        package, projects, references, requests, reviewers, revisions, similar, stats, uploads,
-        users, workset, Page,
+        attributes, audit, bom, changes, checkouts, desktop, files, impacts, imports, items,
+        notifications, package, projects, references, requests, reviewers, revisions, similar,
+        stats, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -65,7 +65,9 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(project_numbering).put(set_project_numbering),
         )
         .route("/items", get(list_items).post(create_item))
-        .route("/items/{number}", get(get_item))
+        .route("/items/{number}", get(get_item).patch(update_item))
+        .route("/attributes", get(list_attributes).post(create_attribute))
+        .route("/attributes/{key}", patch(update_attribute))
         .route("/items/{number}/where-used", get(where_used))
         .route("/items/{number}/interchange", get(interchange_api::show))
         .route(
@@ -379,9 +381,13 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/assistant                                 whether the built-in assistant is enabled, and its quick actions",
             "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention, context: {item?, revision?, change?}, allow_drafts?}",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
-            "GET    /api/v1/items?q=&type=&project=&state=&system=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo",
-            "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?}",
+            "GET    /api/v1/items?q=&type=&project=&state=&system=&class=&attr=&value=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo; class = make|purchased|standard; attr + value = custom attribute (value: text contains, yes/no, 12, >=10, <=20, 10..20, empty = has a value)",
+            "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?, classification?, attributes?}",
             "GET    /api/v1/items/{number}",
+            "PATCH  /api/v1/items/{number}                            {project?, unit?, classification?: make|purchased|standard} – master data",
+            "GET    /api/v1/attributes?all=                           custom attribute definitions (all=true: also deactivated ones)",
+            "POST   /api/v1/attributes                                {key, data_type: text|number|boolean|choice, label, unit?, choices?, item_types?, position?} – admins",
+            "PATCH  /api/v1/attributes/{key}                          {label?, unit?, choices?, item_types?, position?, active?} – admins",
             "GET    /api/v1/items/{number}/where-used?levels=         levels = N walks N levels up (parents of parents)",
             "GET    /api/v1/items/{number}/interchange                alternates, one-way 'alternate for', successor (superseded by), predecessors",
             "POST   /api/v1/items/{number}/alternates                 {item, note?, two_way? = true} – item may be built in instead",
@@ -393,7 +399,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/history?limit=             audit log of the item and its revisions",
             "GET    /api/v1/items/{number}/impacts                    impacts on the item (open first)",
             "GET    /api/v1/items/{number}/revisions/{code|latest}",
-            "PATCH  /api/v1/items/{number}/revisions/{code}           {name?, description?, material?, mass_kg?, unit_cost?}",
+            "PATCH  /api/v1/items/{number}/revisions/{code}           {name?, description?, material?, mass_kg?, unit_cost?, attributes?: {key: value|null}}",
             "POST   /api/v1/items/{number}/revisions/{code}/checkout",
             "POST   /api/v1/items/{number}/revisions/{code}/checkin   optional multipart: 'file' (new versions), 'comment', 'bases' = {\"name\": version | sha256} → 409 if a file moved on, 'folder' or 'folders' = {\"name\": \"folder\"}, 'uploads' = [upload id] (chunked uploads)",
             "POST   /api/v1/uploads                                   {item, revision, filename, size, sha256?, content_type?, base?, folder?} – start a chunked, resumable upload (checked-out revision)",
@@ -761,6 +767,12 @@ struct ItemQuery {
     state: Option<String>,
     /// CAD program, e.g. `solidworks`, `nx`, `creo` (see `GET /api/v1/formats`).
     system: Option<String>,
+    /// `make`, `purchased` or `standard`.
+    class: Option<String>,
+    /// Custom attribute key, with `value` (text contains, yes/no, `12`,
+    /// `>=10`, `<=20`, `10..20`; empty = has a value).
+    attr: Option<String>,
+    value: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -803,6 +815,9 @@ async fn list_items(
         project_id,
         state,
         system,
+        classification: domain::Classification::parse_field(q.class.as_deref())?,
+        attribute: q.attr,
+        attribute_value: q.value,
     };
     let page = Page::new(q.limit, q.offset);
     let (rows, total) = items::search(&st.db, &me, &filter, page).await?;
@@ -825,6 +840,19 @@ struct CreateItem {
     material: String,
     mass_kg: Option<f64>,
     unit_cost: Option<f64>,
+    /// `make` (default), `purchased` or `standard`.
+    classification: Option<String>,
+    /// Custom attribute values by key, e.g. `{"vendor": "Bosch", "length_mm": 120}`.
+    #[serde(default)]
+    attributes: serde_json::Map<String, Value>,
+}
+
+/// Custom attribute values of a request body as `key → text` changes.
+fn attribute_changes(values: &serde_json::Map<String, Value>) -> AppResult<Vec<(String, String)>> {
+    values
+        .iter()
+        .map(|(k, v)| Ok((k.clone(), domain::attribute_input_text(v)?)))
+        .collect()
 }
 
 async fn create_item(
@@ -854,10 +882,125 @@ async fn create_item(
             material: body.material,
             mass_kg: body.mass_kg,
             unit_cost: body.unit_cost,
+            classification: domain::Classification::parse_field(body.classification.as_deref())?
+                .unwrap_or_default(),
+            attributes: attribute_changes(&body.attributes)?,
         },
     )
     .await?;
     Ok((StatusCode::CREATED, Json(json!(rev))).into_response())
+}
+
+#[derive(Deserialize)]
+struct UpdateItem {
+    /// Project code to move the item to.
+    project: Option<String>,
+    unit: Option<String>,
+    classification: Option<String>,
+}
+
+/// Item master data: project group, unit (before the first release) and
+/// classification.
+async fn update_item(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(number): Path<String>,
+    ApiJson(body): ApiJson<UpdateItem>,
+) -> AppResult<Json<Value>> {
+    let item = items::get_by_number(&st.db, &me, &number).await?;
+    let project_id = match body.project.as_deref().filter(|p| !p.trim().is_empty()) {
+        Some(code) => Some(projects::get_by_code(&st.db, &me, code).await?.id),
+        None => item.project_id,
+    };
+    let updated = items::update_master(
+        &st.db,
+        &me,
+        item.id,
+        project_id,
+        body.unit.as_deref().unwrap_or(&item.unit),
+        domain::Classification::parse_field(body.classification.as_deref())?,
+    )
+    .await?;
+    Ok(Json(json!(updated)))
+}
+
+// ---------------------------------------------------------------------------
+// Custom attributes
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct AttributeQuery {
+    /// `true` also lists deactivated attributes.
+    #[serde(default)]
+    all: bool,
+}
+
+async fn list_attributes(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    Query(q): Query<AttributeQuery>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(attributes::list(&st.db, !q.all).await?)))
+}
+
+#[derive(Deserialize)]
+struct AttributeBody {
+    key: Option<String>,
+    data_type: Option<String>,
+    label: Option<String>,
+    unit: Option<String>,
+    choices: Option<Vec<String>>,
+    item_types: Option<Vec<String>>,
+    position: Option<i32>,
+    active: Option<bool>,
+}
+
+async fn create_attribute(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    ApiJson(body): ApiJson<AttributeBody>,
+) -> AppResult<Response> {
+    let def = attributes::create(
+        &st.db,
+        &me,
+        body.key.as_deref().unwrap_or(""),
+        body.data_type.as_deref().unwrap_or("text"),
+        attributes::AttributeSettings {
+            label: body.label.unwrap_or_default(),
+            unit: body.unit.unwrap_or_default(),
+            choices: body.choices.unwrap_or_default().join("\n"),
+            item_types: body.item_types.unwrap_or_default(),
+            position: body.position.unwrap_or(0),
+            active: true,
+        },
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(json!(def))).into_response())
+}
+
+async fn update_attribute(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(key): Path<String>,
+    ApiJson(body): ApiJson<AttributeBody>,
+) -> AppResult<Json<Value>> {
+    me.require(domain::Role::Admin)?;
+    let current = attributes::get_by_key(&st.db, &key).await?;
+    let def = attributes::update(
+        &st.db,
+        &me,
+        current.id,
+        attributes::AttributeSettings {
+            label: body.label.unwrap_or(current.label),
+            unit: body.unit.unwrap_or(current.unit),
+            choices: body.choices.unwrap_or(current.choices).join("\n"),
+            item_types: body.item_types.unwrap_or(current.item_types),
+            position: body.position.unwrap_or(current.position),
+            active: body.active.unwrap_or(current.active),
+        },
+    )
+    .await?;
+    Ok(Json(json!(def)))
 }
 
 async fn get_item(
@@ -957,6 +1100,10 @@ struct UpdateRevision {
     mass_kg: Option<Option<f64>>,
     #[serde(default, deserialize_with = "double_option")]
     unit_cost: Option<Option<f64>>,
+    /// Custom attribute changes by key; `null` or "" removes a value, keys not
+    /// listed keep theirs.
+    #[serde(default)]
+    attributes: serde_json::Map<String, Value>,
 }
 
 async fn update_revision(
@@ -976,6 +1123,7 @@ async fn update_revision(
             material: body.material.unwrap_or(rev.material),
             mass_kg: body.mass_kg.unwrap_or(rev.mass_kg),
             unit_cost: body.unit_cost.unwrap_or(rev.unit_cost),
+            attributes: attribute_changes(&body.attributes)?,
         },
     )
     .await?;

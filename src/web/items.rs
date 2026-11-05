@@ -14,9 +14,9 @@ use super::{
     finish, is_user_error, pagination, parse_opt_uuid, redirect, render, WebCtx, PER_PAGE,
 };
 use crate::{
-    domain::{self, ItemType, LifecycleState, COMMON_UNITS},
+    domain::{self, Classification, ItemType, LifecycleState, COMMON_UNITS},
     error::{AppError, AppResult},
-    services::{items, projects, Page},
+    services::{attributes, items, projects, Page},
     util, AppState,
 };
 
@@ -43,7 +43,19 @@ pub struct ListQuery {
     state: Option<String>,
     /// CAD program filter (see `cadformat::SYSTEMS`).
     system: Option<String>,
+    /// Classification: `make`, `purchased`, `standard`.
+    class: Option<String>,
+    /// Custom attribute key and the searched value.
+    attr: Option<String>,
+    value: Option<String>,
     page: Option<i64>,
+}
+
+fn classifications() -> Value {
+    json!(Classification::ALL
+        .iter()
+        .map(|c| json!({ "value": c.as_str(), "label": c.label() }))
+        .collect::<Vec<_>>())
 }
 
 pub async fn list(
@@ -61,18 +73,29 @@ pub async fn list(
             .as_deref()
             .filter(|s| crate::cadformat::system(s).is_some())
             .map(str::to_string),
+        classification: q.class.as_deref().and_then(Classification::parse),
+        attribute: q.attr.clone(),
+        attribute_value: q.value.clone(),
     };
     let page_no = q.page.unwrap_or(1).max(1);
-    let (rows, total) = items::search(
+    // A search value that does not fit the attribute (e.g. "abc" for a
+    // number) is shown above the empty result instead of an error page.
+    let (rows, total, filter_error) = match items::search(
         &st.db,
         &ctx.me,
         &filter,
         Page::from_page_number(Some(page_no), PER_PAGE),
     )
-    .await?;
-    let (projects, saved_searches) = tokio::try_join!(
+    .await
+    {
+        Ok((rows, total)) => (rows, total, None),
+        Err(e) if is_user_error(&e) => (Vec::new(), 0, Some(e.public_message())),
+        Err(e) => return Err(e),
+    };
+    let (projects, saved_searches, attribute_defs) = tokio::try_join!(
         projects::list(&st.db, &ctx.me, false),
         crate::services::personal::saved_searches(&st.db, ctx.me.id),
+        attributes::list(&st.db, false),
     )?;
     // Query string without the page parameter, for the pagination links.
     let base_query = [
@@ -81,6 +104,9 @@ pub async fn list(
         ("project", q.project.as_deref()),
         ("state", q.state.as_deref()),
         ("system", q.system.as_deref()),
+        ("class", q.class.as_deref()),
+        ("attr", q.attr.as_deref()),
+        ("value", q.value.as_deref()),
     ]
     .iter()
     .filter_map(|(k, v)| {
@@ -103,12 +129,18 @@ pub async fn list(
                 "project": q.project.unwrap_or_default(),
                 "state": q.state.unwrap_or_default(),
                 "system": q.system.unwrap_or_default(),
+                "class": q.class.unwrap_or_default(),
+                "attr": q.attr.unwrap_or_default(),
+                "value": q.value.unwrap_or_default(),
             },
+            "filter_error": filter_error,
             "systems": crate::cadformat::SYSTEMS,
             "projects": projects,
             "saved_searches": saved_searches,
             "types": item_types(),
             "states": states(),
+            "classifications": classifications(),
+            "attribute_defs": attribute_defs,
         }),
     )
 }
@@ -133,6 +165,8 @@ pub struct NewItemForm {
     mass_kg: String,
     #[serde(default)]
     unit_cost: String,
+    #[serde(default)]
+    classification: String,
 }
 
 async fn render_new(
@@ -153,6 +187,7 @@ async fn render_new(
             "projects": projects,
             "types": item_types(),
             "units": COMMON_UNITS,
+            "classifications": classifications(),
         }),
     )
 }
@@ -191,6 +226,9 @@ fn parse_new_item(form: &NewItemForm) -> AppResult<items::NewItem> {
         material: form.material.clone(),
         mass_kg: domain::parse_decimal("Mass", Some(&form.mass_kg))?,
         unit_cost: domain::parse_decimal("Unit cost", Some(&form.unit_cost))?,
+        classification: Classification::parse_field(Some(&form.classification))?
+            .unwrap_or_default(),
+        attributes: Vec::new(),
     })
 }
 
@@ -315,6 +353,8 @@ pub struct MasterForm {
     project_id: String,
     #[serde(default)]
     unit: String,
+    #[serde(default)]
+    classification: String,
     back: Option<String>,
 }
 
@@ -325,8 +365,16 @@ pub async fn update_master(
     Form(form): Form<MasterForm>,
 ) -> AppResult<Response> {
     let back = util::safe_redirect_target(form.back.as_deref());
-    let result = match parse_opt_uuid("Project", Some(&form.project_id)) {
-        Ok(project_id) => items::update_master(&st.db, &ctx.me, id, project_id, &form.unit).await,
+    let parsed = parse_opt_uuid("Project", Some(&form.project_id)).and_then(|project_id| {
+        Ok((
+            project_id,
+            Classification::parse_field(Some(&form.classification))?,
+        ))
+    });
+    let result = match parsed {
+        Ok((project_id, classification)) => {
+            items::update_master(&st.db, &ctx.me, id, project_id, &form.unit, classification).await
+        }
         Err(e) => Err(e),
     };
     finish(&st, result, &back, |item| {
