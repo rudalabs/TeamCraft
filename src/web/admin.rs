@@ -13,7 +13,8 @@ use super::{finish, pagination, render, WebCtx, PER_PAGE};
 use crate::{
     domain::{self, ProjectVisibility, Role},
     error::{AppError, AppResult},
-    services::{audit, projects, users, Page},
+    resultscan::TemplateInput,
+    services::{audit, projects, result_templates, users, Page},
     util, AppState,
 };
 
@@ -64,6 +65,7 @@ pub async fn project_show(
             ),
             Err(e) => return Err(e),
         };
+    let templates = result_templates::list(&st.db, &ctx.me, id).await?;
     let all_users = if can_manage {
         users::list(&st.db)
             .await?
@@ -84,6 +86,7 @@ pub async fn project_show(
             "is_member": ctx.me.projects.contains(&id),
             "can_edit": ctx.me.can_edit_project(Some(id)),
             "can_manage": can_manage,
+            "result_templates": templates,
             "oidc_enabled": st.config.oidc.is_some(),
             "numbering": numbering,
             "scheme_input": q.scheme.as_deref().map(str::trim).unwrap_or_else(|| project.number_scheme.as_deref().unwrap_or("")),
@@ -489,4 +492,94 @@ pub async fn audit(
             "per_page": PER_PAGE,
         }),
     )
+}
+
+#[derive(Deserialize)]
+pub struct TemplateForm {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    file_pattern: String,
+    #[serde(default)]
+    method: String,
+    #[serde(default)]
+    pattern: String,
+    #[serde(default)]
+    csv_column: String,
+    #[serde(default)]
+    csv_key_column: String,
+    #[serde(default)]
+    csv_key_value: String,
+    #[serde(default)]
+    pick: String,
+    #[serde(default)]
+    unit: String,
+    #[serde(default)]
+    lower_limit: String,
+    #[serde(default)]
+    upper_limit: String,
+    #[serde(default)]
+    load_case: String,
+    #[serde(default)]
+    solver: String,
+}
+
+impl TemplateForm {
+    fn input(self) -> AppResult<TemplateInput> {
+        Ok(TemplateInput {
+            lower_limit: domain::parse_decimal("Lower limit", Some(&self.lower_limit))?,
+            upper_limit: domain::parse_decimal("Upper limit", Some(&self.upper_limit))?,
+            name: self.name,
+            file_pattern: self.file_pattern,
+            method: self.method,
+            pattern: self.pattern,
+            csv_column: self.csv_column,
+            csv_key_column: self.csv_key_column,
+            csv_key_value: self.csv_key_value,
+            pick: self.pick,
+            unit: self.unit,
+            load_case: self.load_case,
+            solver: self.solver,
+            enabled: true,
+        })
+    }
+}
+
+/// `POST /projects/{id}/result-templates` – managers of the group, admins.
+pub async fn add_result_template(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<TemplateForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}#result-templates");
+    // a hidden group answers like a missing one before the form is looked at
+    projects::get(&st.db, &ctx.me, id).await?;
+    let result = match form.input() {
+        Ok(input) => result_templates::create(&st.db, &ctx.me, id, input).await,
+        Err(e) => Err(e),
+    };
+    finish(&st, result, &back, |t| {
+        (
+            back.clone(),
+            format!("Extraction template {} added.", t.name),
+        )
+    })
+}
+
+/// `POST /result-templates/{id}/delete`
+pub async fn delete_result_template(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let existing = result_templates::get(&st.db, &ctx.me, id).await?;
+    let back = format!("/projects/{}#result-templates", existing.project_id);
+    let result = result_templates::delete(&st.db, &ctx.me, id).await;
+    finish(&st, result, &back, |t| {
+        (
+            back.clone(),
+            format!("Extraction template {} removed.", t.name),
+        )
+    })
 }

@@ -17,8 +17,9 @@ use crate::{
     auth::ApiUser,
     domain::BasisRole,
     error::{AppError, AppResult},
+    resultscan::TemplateInput,
     services::{
-        items,
+        items, projects, result_templates,
         simulations::{self, NewBasis, ResultInput},
     },
     web, AppState,
@@ -241,6 +242,7 @@ pub(super) async fn patch_result(
             solver: body.solver.unwrap_or(current.solver),
             solver_version: body.solver_version.unwrap_or(current.solver_version),
             note: body.note.unwrap_or(current.note),
+            source: String::new(),
         },
     )
     .await?;
@@ -297,4 +299,55 @@ pub(super) async fn compare(
         "summary": simulations::compare_summary(&diffs),
         "diffs": diffs,
     })))
+}
+
+// ---------------------------------------------------------------------------
+// Extraction templates of a project group
+// ---------------------------------------------------------------------------
+
+/// `GET /projects/{code}/result-templates` – whoever may see the group.
+pub(super) async fn list_templates(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code(&st.db, &me, &code).await?;
+    let templates = result_templates::list(&st.db, &me, project.id).await?;
+    Ok(Json(
+        json!({ "project": project.code, "templates": templates }),
+    ))
+}
+
+/// `POST /projects/{code}/result-templates` – managers of the group, admins.
+pub(super) async fn create_template(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    ApiJson(body): ApiJson<TemplateInput>,
+) -> AppResult<Response> {
+    let project = projects::get_by_code(&st.db, &me, &code).await?;
+    let template = result_templates::create(&st.db, &me, project.id, body).await?;
+    Ok((StatusCode::CREATED, Json(json!(template))).into_response())
+}
+
+/// `PUT /result-templates/{id}` – replaces the settings of a template.
+pub(super) async fn put_template(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+    ApiJson(body): ApiJson<TemplateInput>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(
+        result_templates::update(&st.db, &me, id, body).await?
+    )))
+}
+
+/// `DELETE /result-templates/{id}`
+pub(super) async fn delete_template(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Value>> {
+    let removed = result_templates::delete(&st.db, &me, id).await?;
+    Ok(Json(json!({ "removed": removed.id })))
 }

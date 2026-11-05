@@ -258,7 +258,7 @@ the caller cannot read are left out; a successor there is a placeholder with
 | BOM import       | `POST /bom-imports` (new assembly), `POST …/bom/import` (into a checked-out revision); multipart `file` = CSV/Excel table or STEP assembly, `dry_run=true` returns the plan |
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`, `POST /impacts/{id}/acknowledge`, `POST …/impacts/acknowledge`    |
 | Change requests  | `GET/POST /change-requests`, `GET/PATCH /change-requests/{number}`, `comments`, `items`, `triage`, `assign`, `decide`, `reopen`, `withdraw`, `create-change`, `link-change`, `attachments`, `watch` |
-| Simulations      | `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
+| Simulations      | `GET/POST /projects/{code}/result-templates`, `PUT/DELETE /result-templates/{id}`, `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
 | Changes          | `GET/POST /changes`, items, reviewers, `suggested-reviewers`, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact` |
 | Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                 |
 | Notifications    | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                   |
@@ -375,6 +375,8 @@ checked out by the caller.
 | `PATCH/DELETE /simulation-results/{id}`                       | change any field (`null` clears a limit) or remove                                                                             |
 | `GET …/revisions/{code}/simulation/compare?with={code}`       | `{before, after, summary, diffs}` – matched by name and load case, with `delta` and `delta_percent`                           |
 | `GET /items/{number}/simulations`                             | simulations whose latest revision is based on the item, with `out_of_date` and `open_impact_id`                               |
+| `GET/POST /projects/{code}/result-templates` | extraction templates of a group (read: whoever sees the group; write: its managers and admins): `{name, file_pattern, method: regex\|csv, pattern \| csv_column [csv_key_column, csv_key_value], pick?: first\|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?}` |
+| `PUT/DELETE /result-templates/{id}`                          | replace (same fields) or remove a template                                                                                     |
 
 A solver script after a run:
 

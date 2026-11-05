@@ -1164,6 +1164,10 @@ mod tests {
                               "active": true, "source": "oidc", "added_at": TS, "manager": true }],
                 "candidates": [user()], "is_member": true, "can_edit": true, "oidc_enabled": true,
                 "can_manage": true,
+                "result_templates": [{ "id": OTHER, "project_id": OTHER, "name": "Pressure <drop>", "file_pattern": "*.log",
+                                       "method": "regex", "pattern": "dp:\\s*([0-9.]+)", "csv_column": "", "csv_key_column": "",
+                                       "csv_key_value": "", "pick": "last", "unit": "Pa", "lower_limit": null,
+                                       "upper_limit": 500.0, "load_case": "", "solver": "", "enabled": true }],
                 "numbering": { "scheme": "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}", "is_default": false,
                                "next": [{ "item_type": "part", "label": "Part", "number": "ROCKET-PRT-2026-0001" }] },
                 "scheme_input": "{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}", "previewing": true,
@@ -1172,6 +1176,8 @@ mod tests {
         );
         assert!(html.contains("CAD editor"));
         assert!(html.contains("via IdP group"));
+        assert!(html.contains("Pressure &lt;drop&gt;") && html.contains("/result-templates/"));
+        assert!(html.contains("Add template"), "managers add templates");
         assert!(html.contains("manager"), "project managers are marked");
         assert!(html.contains("Add member"), "managers add members");
         assert!(

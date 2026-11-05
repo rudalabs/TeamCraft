@@ -92,6 +92,7 @@ feature milestone – the features in *What works* are enough; what is missing i
 - [ ] Production install paths tested end to end per release: Docker Compose (`deploy/`), Linux packages (systemd
   unit), behind a reverse proxy with TLS; documented sizing and PostgreSQL versions (16–18)
 - [ ] Data retention and cleanup: old previews, staged uploads, expired sessions, audit log retention setting
+- [x] Preview safety: size caps per kind and a memory limit for the preview process (`TEAMCRAFT_PREVIEW_MAX_*`); big result files are stored, never parsed
 
 *Clients and packaging*
 
@@ -275,7 +276,7 @@ real files and belong to section 3 once such files are at hand.
 - [ ] OpenFOAM case summary (solver, time steps) from `controlDict` – the 3D preview of VTK and CalculiX results is
   done (#43)
 - [ ] `.sim` detection: verify the STAR-CCM+ marker with real files (heuristic: "STAR-CCM+" near the start)
-- [ ] Read result values from a `teamcraft-results.json`/CSV next to the files at check-in
+- [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded, audited, with source); never from big result files
 - [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only

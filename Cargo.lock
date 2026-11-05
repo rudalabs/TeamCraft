@@ -2746,6 +2746,7 @@ dependencies = [
  "minijinja",
  "quick-xml 0.37.5",
  "rand 0.8.8",
+ "regex",
  "reqwest",
  "rlimit",
  "rpassword",

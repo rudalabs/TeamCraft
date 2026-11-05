@@ -3184,6 +3184,7 @@ mod tests {
             solver: String::new(),
             solver_version: String::new(),
             note: String::new(),
+            source: String::new(),
             updated_at: chrono::Utc::now(),
             status: Some(crate::domain::result_status(value, None, upper)),
         }

@@ -55,6 +55,10 @@ pub struct Upload {
     /// `domain::normalize_folder`); `None` keeps the folder of an existing
     /// file (`""` for a new one).
     pub folder: Option<String>,
+    /// The beginning of a small text file (at most `resultscan::SCAN_MAX_BYTES`)
+    /// for result values from exchange files and templates; empty for other
+    /// files.
+    pub scan_head: Vec<u8>,
 }
 
 /// The name a file gets on the server – the key for bases and versions.
@@ -153,8 +157,12 @@ impl Upload {
         filename: String,
         client_content_type: &str,
     ) -> Upload {
+        let mut scan_head = Vec::new();
         let (format, content_text, references) = match vault.object_path(&blob.sha256) {
             Ok(path) => {
+                if crate::resultscan::scannable(&filename) {
+                    scan_head = read_head(&path, crate::resultscan::SCAN_MAX_BYTES).await;
+                }
                 let format = cadformat::detect_stored(&path, &filename).await;
                 let references = match format {
                     Some(f) if cadrefs::scans(f.id) => cadrefs::scan_file(&path, &filename).await,
@@ -177,8 +185,20 @@ impl Upload {
             references,
             base: None,
             folder: None,
+            scan_head,
         }
     }
+}
+
+/// The first `max` bytes of a file (never more, whatever its size).
+async fn read_head(path: &std::path::Path, max: u64) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let Ok(file) = tokio::fs::File::open(path).await else {
+        return Vec::new();
+    };
+    let mut head = Vec::new();
+    let _ = file.take(max).read_to_end(&mut head).await;
+    head
 }
 
 /// Scans the current versions that were stored before reference tracking
@@ -821,6 +841,9 @@ pub(crate) async fn store_uploads(
         .bind(rev.id)
         .execute(&mut *conn)
         .await?;
+    // result values from the exchange file and the group's templates, in the
+    // same transaction: a malformed exchange file refuses the whole store
+    crate::services::simulations::apply_file_values(conn, actor, rev, uploads).await?;
     Ok(stored)
 }
 

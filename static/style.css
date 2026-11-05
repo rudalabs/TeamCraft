@@ -1424,3 +1424,7 @@ td.row-actions details.menu { display: inline-block; text-align: left; }
   html.tc-assistant-open body { overflow: hidden; }
 }
 @media print { #assistant-drawer, .assistant-toggle { display: none; } }
+
+/* extraction templates of a project group */
+.template-fields { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+.template-fields > label { gap: 2px; }
