@@ -64,9 +64,15 @@
         <td class="nowrap">{% if n.restricted %}{% elif n.revision %}{{ m.badge(n.revision.state) }}{% else %}<span class="badge badge-in_review"><span class="glyph" aria-hidden="true">○</span>no {{ rule|replace("_", " ") }} revision</span>{% endif %}</td>
         <td class="ellipsis" title="{% if n.revision %}{{ n.revision.name }}{% endif %}">{% if n.revision %}{{ n.revision.name }}{% endif %}</td>
         <td class="num">{{ n.quantity|num(6) }}{% if n.unit and n.unit != "each" %} <span class="dim">{{ n.unit }}</span>{% endif %}</td>
+        {% if n.restricted %}
+        <td class="num dim" title="Not included in the totals">–</td>
+        <td class="num dim" title="Not included in the totals">–</td>
+        <td class="num dim" title="Not included in the totals">–</td>
+        {% else %}
         <td class="num">{{ n.unit_mass_kg|fixed(3) }}{% if not n.mass_complete %} <span class="marker-impact" title="A mass is missing in this sub-tree">△</span>{% endif %}</td>
         <td class="num">{{ n.total_mass_kg|fixed(3) }}</td>
         <td class="num">{{ n.total_cost|fixed(2) }}{% if not n.cost_complete %} <span class="marker-impact" title="A cost is missing in this sub-tree">△</span>{% endif %}</td>
+        {% endif %}
         <td class="muted ellipsis" title="{{ n.notes }}">{{ n.notes }}</td>
       </tr>
     {% endfor %}
