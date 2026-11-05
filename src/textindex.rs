@@ -189,6 +189,98 @@ mod tests {
     }
 
     #[test]
+    fn which_files_are_indexed() {
+        for name in [
+            "a.STEP",
+            "a.stp",
+            "a.p21",
+            "a.IGES",
+            "a.igs",
+            "notes.TXT",
+            "bom.csv",
+            "x.kicad_sch",
+            "motor.eng",
+            "part.scad",
+            "data.plmxml",
+        ] {
+            assert!(indexes(name), "{name}");
+        }
+        for name in ["a.pdf", "a.sldprt", "a.png", "README", "a.step.gz"] {
+            assert!(!indexes(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn iges_and_quoted_string_rules() {
+        // Strings without letters (numbers, blanks) are geometry, not names.
+        assert_eq!(
+            extract("a.igs", b"'1.5' '  ' 'Flange DN50' '1.4404 steel' '42'"),
+            "Flange DN50 1.4404 steel"
+        );
+        // An unterminated string at the end is still taken.
+        assert_eq!(extract("a.stp", b"#1=PRODUCT('Hub"), "Hub");
+        // Strings are trimmed.
+        assert_eq!(extract("a.stp", b"('  Bolt  ')"), "Bolt");
+    }
+
+    #[test]
+    fn plain_text_keeps_integers_and_words() {
+        assert_eq!(
+            extract("a.csv", b"M6;912;-0.5;1e5;3.;v1.2"),
+            "M6;912;-0.5;1e5;3.;v1.2",
+            "one word without white space stays whole"
+        );
+        assert_eq!(
+            extract("a.txt", b"len 12.5 mm -3.0 +1.0e-3 ISO 4762"),
+            "len mm ISO 4762"
+        );
+        assert_eq!(extract("a.txt", b""), "");
+        assert_eq!(
+            extract("a.txt", "Düse \u{fffd}".as_bytes()),
+            "Düse \u{fffd}",
+            "non-ASCII text is kept"
+        );
+        assert!(!is_decimal_number("1.2.3a") && is_decimal_number("1.2.3"));
+        assert!(!is_decimal_number("-") && !is_decimal_number("."));
+    }
+
+    #[test]
+    fn extracted_text_is_bounded() {
+        let big = "word ".repeat(MAX_TEXT);
+        assert_eq!(extract("a.txt", big.as_bytes()).chars().count(), MAX_TEXT);
+    }
+
+    #[tokio::test]
+    async fn stored_files_are_read() {
+        let path = std::env::temp_dir().join(format!("teamcraft-text-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&path, STEP).unwrap();
+        assert!(extract_file(&path, "m.step").await.contains("Engine mount"));
+        assert_eq!(
+            extract_file(&path, "m.bin").await,
+            "",
+            "not indexed by name"
+        );
+        std::fs::remove_file(&path).ok();
+        assert_eq!(extract_file(&path, "m.step").await, "", "missing file");
+    }
+
+    #[test]
+    fn prefix_queries_are_bounded() {
+        let many = (0..20)
+            .map(|i| format!("w{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let q = prefix_query(&many).unwrap();
+        assert_eq!(q.matches(":*").count(), 12, "at most twelve terms");
+        assert_eq!(
+            prefix_query("A:B"),
+            Some("a:* & b:*".into()),
+            "no tsquery syntax passes"
+        );
+        assert_eq!(prefix_query(""), None);
+    }
+
+    #[test]
     fn prefix_queries() {
         assert_eq!(prefix_query("Flan M6"), Some("flan:* & m6:*".into()));
         assert_eq!(

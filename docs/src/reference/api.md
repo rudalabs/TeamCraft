@@ -227,11 +227,28 @@ attributes with `yes`/`no`, numbers with `12`, `>=10`, `<=20` or `10..20`; an
 empty `value` finds every item that has the attribute. Revisions and the
 item search return `attributes` (object by key) and `classification`.
 
+### Alternates, supersession and replace in assemblies
+
+| Request                                            | Body / answer                                                                                     |
+|----------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| `GET /items/{number}/interchange`                  | `alternates` (with `two_way`), `alternate_for` (one-way), `successor` (or `null`), `predecessors` |
+| `POST /items/{number}/alternates`                  | `{item, note?, two_way? = true}` → `201` with the interchange data                                |
+| `DELETE /items/{number}/alternates/{alternate}`    | `204`; both directions when you may edit the alternate's group                                    |
+| `PUT /items/{number}/supersession`                 | `{item, note?}` – superseded by `item` (replaces an earlier successor; `409` for a circle)        |
+| `DELETE /items/{number}/supersession`              | `204`                                                                                             |
+| `GET /items/{number}/replace?with=NUMBER`          | preview: `rows` (one per BOM line of the latest parent revisions, with `action`), `replaced`, `hidden` |
+| `POST /items/{number}/replace`                     | `{with}` – applies the rows with `action = replace` in one transaction; `409` if there are none   |
+
+`action` is `replace`, `checked_out` (by somebody else), `no_permission`,
+`in_review`, `needs_revision` (released) or `cycle`. Linked items in groups
+the caller cannot read are left out; a successor there is a placeholder with
+`restricted: true`. The preview and the replacement carry `X-Hidden-Count`.
+
 ## Main resources
 
 | Resource         | Endpoints                                                                                                                             |
 |------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| Items            | `GET/POST /items` (`class=`, `attr=` + `value=` filters), `GET/PATCH /items/{number}` (classification, unit, project), `where-used` (`levels=1…25` for parents of parents), history, impacts, watch |
+| Items            | `GET/POST /items` (`class=`, `attr=` + `value=` filters), `GET/PATCH /items/{number}` (classification, unit, project), `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch |
 | Attributes       | `GET /attributes` (`all=true`: also inactive), `POST /attributes`, `PATCH /attributes/{key}` (admins); values in `attributes` of a revision |
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
 | Worklist         | `GET /worklist` (check-outs, reviews, impacts and `impact_groups`, statistics), `POST /worklist/checkin-all`                          |

@@ -822,3 +822,430 @@ async fn expired_sessions_are_removed() {
     assert_eq!(head(&app, &max, &fresh).await.status, StatusCode::OK);
     app.teardown().await;
 }
+
+// ---------------------------------------------------------------------------
+// The routes of the web UI (`/uploads`, session cookie, used by static/app.js)
+// ---------------------------------------------------------------------------
+
+/// A browser request: session cookie and same-origin headers.
+fn web_request(method: Method, uri: &str, cookie: Option<&str>) -> axum::http::request::Builder {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::HOST, "localhost:8080")
+        .header(header::ORIGIN, "http://localhost:8080")
+        .header("X-TeamCraft-Script", "1");
+    if let Some(c) = cookie {
+        builder = builder.header(header::COOKIE, c);
+    }
+    builder
+}
+
+async fn web_get(app: &common::TestApp, cookie: &str, id: &str) -> common::Response {
+    let request = web_request(Method::GET, &format!("/uploads/{id}"), Some(cookie))
+        .body(Body::empty())
+        .unwrap();
+    app.send(request).await
+}
+
+async fn web_start(app: &common::TestApp, cookie: &str, body: Value) -> common::Response {
+    let request = web_request(Method::POST, "/uploads", Some(cookie))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    app.send(request).await
+}
+
+async fn web_patch(
+    app: &common::TestApp,
+    cookie: &str,
+    id: &str,
+    offset: u64,
+    chunk: &[u8],
+) -> common::Response {
+    let request = web_request(Method::PATCH, &format!("/uploads/{id}"), Some(cookie))
+        .header(header::CONTENT_TYPE, "application/offset+octet-stream")
+        .header("Upload-Offset", offset.to_string())
+        .body(Body::from(chunk.to_vec()))
+        .unwrap();
+    app.send(request).await
+}
+
+/// The attach or check-in form as app.js sends it: text fields and small files.
+async fn web_form(
+    app: &common::TestApp,
+    uri: &str,
+    cookie: &str,
+    files: &[(&str, &[u8])],
+    fields: &[(&str, &str)],
+) -> common::Response {
+    let boundary = "teamcraft-chunked-boundary";
+    let mut body = Vec::new();
+    for (name, value) in fields {
+        body.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+                .as_bytes(),
+        );
+    }
+    for (filename, content) in files {
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: text/plain\r\n\r\n"
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(content);
+        body.extend_from_slice(b"\r\n");
+    }
+    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    let request = web_request(Method::POST, uri, Some(cookie))
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .unwrap();
+    app.send(request).await
+}
+
+async fn file_named(app: &common::TestApp, token: &str, name: &str) -> Value {
+    let files = app
+        .api(Method::GET, &format!("{REV}/files"), token, None)
+        .await
+        .json();
+    files
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["filename"] == name)
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+#[tokio::test]
+async fn chunked_uploads_from_the_web_ui() {
+    let app = app_or_skip!();
+    let (_, max) = app.user_in("max", Role::Editor, &["ROVER"]).await;
+    app.user_in("erika", Role::Editor, &["ROVER"]).await;
+    item(&app, &max).await;
+    let rev = app.api(Method::GET, REV, &max, None).await.json();
+    let rev_id = rev["revision"]["id"].as_str().unwrap().to_string();
+    let cookie = app.login("max").await;
+    let content = b"0123456789abcdefghij";
+
+    // The revision page marks the attach and check-in forms for app.js.
+    let page = app
+        .get_page(&format!("/revisions/{rev_id}"), Some(&cookie))
+        .await
+        .text();
+    assert_eq!(
+        page.matches(&format!("data-chunked=\"{rev_id}\"")).count(),
+        2,
+        "attach and check-in form"
+    );
+
+    // Signed out: a JSON 401, not a redirect to the login page.
+    let start_body = json!({ "revision_id": rev_id, "filename": "a.bin", "size": 1 }).to_string();
+    let request = web_request(Method::POST, "/uploads", None)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(start_body.clone()))
+        .unwrap();
+    let r = app.send(request).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(r.json()["error"]["code"], "unauthorized");
+    // Another site cannot start uploads with the cookie.
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/uploads")
+        .header(header::HOST, "localhost:8080")
+        .header(header::ORIGIN, "https://evil.example")
+        .header(header::COOKIE, &cookie)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(start_body))
+        .unwrap();
+    assert_eq!(app.send(request).await.status, StatusCode::FORBIDDEN);
+    // An unknown revision is a JSON 404.
+    let r = web_start(
+        &app,
+        &cookie,
+        json!({ "revision_id": Uuid::new_v4(), "filename": "a.bin", "size": 1 }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    assert!(r.json()["error"]["message"].is_string());
+
+    // Check-in with one chunked file and one small file in the form.
+    let r = web_start(
+        &app,
+        &cookie,
+        json!({ "revision_id": rev_id, "filename": "results.op2", "size": content.len(),
+                "content_type": "application/octet-stream" }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let session = r.json();
+    let id = session["id"].as_str().unwrap().to_string();
+    assert_eq!(session["revision_id"], rev_id.as_str());
+    assert!(session["chunk_bytes"].as_u64().unwrap() > 0);
+    let r = web_patch(&app, &cookie, &id, 0, &content[..12]).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.header("upload-offset").as_deref(), Some("12"));
+    // A repeated chunk (its answer was lost): 409 with the offset to go on from.
+    let r = web_patch(&app, &cookie, &id, 0, &content[..12]).await;
+    assert_eq!(r.status, StatusCode::CONFLICT);
+    assert_eq!(r.header("upload-offset").as_deref(), Some("12"));
+    // Resume: the state says where to continue.
+    let r = web_get(&app, &cookie, &id).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["offset"], 12);
+    let r = web_patch(&app, &cookie, &id, 12, &content[12..]).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["complete"], true);
+
+    // The session is private to its user.
+    let erika = app.login("erika").await;
+    assert_eq!(
+        web_get(&app, &erika, &id).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    let uploads_field = json!([id]).to_string();
+    let r = web_form(
+        &app,
+        &format!("/revisions/{rev_id}/checkin"),
+        &cookie,
+        &[("notes.txt", b"small file")],
+        &[("comment", "first run"), ("uploads", &uploads_field)],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let target = r.json()["location"].as_str().unwrap().to_string();
+    assert!(target.starts_with("/revisions/"), "{target}");
+    let stored = file_named(&app, &max, "results.op2").await;
+    assert_eq!(stored["sha256"], sha(content));
+    assert!(file_named(&app, &max, "notes.txt").await.is_object());
+    let rev = app.api(Method::GET, REV, &max, None).await.json();
+    assert!(
+        rev["revision"]["checked_out_by"].is_null(),
+        "the check-in released the lock"
+    );
+    // The finished session is gone (app.js then forgets its id).
+    assert_eq!(
+        web_get(&app, &cookie, &id).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    // Not checked out: no new session.
+    let r = web_start(
+        &app,
+        &cookie,
+        json!({ "revision_id": rev_id, "filename": "results.op2", "size": 4 }),
+    )
+    .await;
+    assert!(r.status.is_client_error(), "{}", r.status);
+
+    // Attach (the files form) with only a chunked file: version 2.
+    let r = app
+        .api(Method::POST, &format!("{REV}/checkout"), &max, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let next = b"second run";
+    let r = web_start(
+        &app,
+        &cookie,
+        json!({ "revision_id": rev_id, "filename": "results.op2", "size": next.len() }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let id = r.json()["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        web_patch(&app, &cookie, &id, 0, next).await.status,
+        StatusCode::OK
+    );
+    let uploads_field = json!([id]).to_string();
+    let r = web_form(
+        &app,
+        &format!("/revisions/{rev_id}/files"),
+        &cookie,
+        &[],
+        &[("comment", "second run"), ("uploads", &uploads_field)],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let stored = file_named(&app, &max, "results.op2").await;
+    assert_eq!(stored["version"], 2);
+    assert_eq!(stored["sha256"], sha(next));
+
+    // Cancel: the session and its staged chunks are removed.
+    let r = web_start(
+        &app,
+        &cookie,
+        json!({ "revision_id": rev_id, "filename": "big.bin", "size": 8 }),
+    )
+    .await;
+    let id = r.json()["id"].as_str().unwrap().to_string();
+    web_patch(&app, &cookie, &id, 0, b"1234").await;
+    let request = web_request(Method::DELETE, &format!("/uploads/{id}"), Some(&cookie))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.send(request).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        web_get(&app, &cookie, &id).await.status,
+        StatusCode::NOT_FOUND
+    );
+    let vault = app.vault().await;
+    let uuid = Uuid::parse_str(&id).unwrap();
+    assert!(!vault.uploads_dir().join(uuid.simple().to_string()).exists());
+    app.teardown().await;
+}
+
+/// The web routes check like the check-in: other sites, viewers, users
+/// without the check-out, restricted groups and foreign session ids.
+#[tokio::test]
+async fn web_uploads_check_origin_rights_and_ownership() {
+    let app = app_or_skip!();
+    let (_, max) = app.user_in("max", Role::Editor, &["ROVER"]).await;
+    app.user_in("erika", Role::Editor, &["ROVER"]).await;
+    app.user_in("vic", Role::Viewer, &["ROVER"]).await;
+    app.user_in("otto", Role::Editor, &["ROCKET"]).await;
+    let (_, admin) = app.user("root", Role::Admin).await;
+    item(&app, &max).await;
+    let rev = app.api(Method::GET, REV, &max, None).await.json();
+    let rev_id = rev["revision"]["id"].as_str().unwrap().to_string();
+    let cookie = app.login("max").await;
+    let start = json!({ "revision_id": rev_id, "filename": "big.bin", "size": 8 });
+
+    let r = web_start(&app, &cookie, start.clone()).await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let id = r.json()["id"].as_str().unwrap().to_string();
+
+    // Another site cannot append to or cancel the session with the cookie.
+    for method in [Method::PATCH, Method::DELETE] {
+        let request = Request::builder()
+            .method(method.clone())
+            .uri(format!("/uploads/{id}"))
+            .header(header::HOST, "localhost:8080")
+            .header(header::ORIGIN, "https://evil.example")
+            .header(header::COOKIE, &cookie)
+            .header("Upload-Offset", "0")
+            .body(Body::from(b"evil".to_vec()))
+            .unwrap();
+        assert_eq!(
+            app.send(request).await.status,
+            StatusCode::FORBIDDEN,
+            "cross-site {method}"
+        );
+    }
+    let r = web_get(&app, &cookie, &id).await;
+    assert_eq!(r.json()["offset"], 0, "nothing was appended");
+
+    // A viewer and an editor without the check-out cannot start uploads.
+    for who in ["vic", "erika"] {
+        let c = app.login(who).await;
+        let r = web_start(&app, &c, start.clone()).await;
+        assert!(
+            r.status == StatusCode::FORBIDDEN || r.status == StatusCode::CONFLICT,
+            "{who}: {} {}",
+            r.status,
+            r.text()
+        );
+    }
+
+    // A foreign session id does nothing: not readable, not appendable, not
+    // cancellable, and it cannot join another revision's check-in.
+    let erika = app.login("erika").await;
+    assert_eq!(
+        web_get(&app, &erika, &id).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        web_patch(&app, &erika, &id, 0, b"1234").await.status,
+        StatusCode::NOT_FOUND
+    );
+    let request = web_request(Method::DELETE, &format!("/uploads/{id}"), Some(&erika))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.send(request).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        web_patch(&app, &cookie, &id, 0, b"12345678").await.status,
+        StatusCode::OK,
+        "the owner goes on"
+    );
+    let (_, erika_token) = app.user_in("erika2", Role::Editor, &["ROVER"]).await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &erika_token,
+            Some(json!({ "item_type": "part", "name": "Other part", "project": "ROVER" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let other = r.json();
+    let other_number = other["item_number"].as_str().unwrap().to_string();
+    let other_rev_id = other["id"].as_str().unwrap().to_string();
+    let erika2 = app.login("erika2").await;
+    let uploads_field = json!([id]).to_string();
+    let r = web_form(
+        &app,
+        &format!("/revisions/{other_rev_id}/checkin"),
+        &erika2,
+        &[],
+        &[("uploads", &uploads_field)],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let files = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{other_number}/revisions/A/files"),
+            &erika_token,
+            None,
+        )
+        .await
+        .json();
+    assert_eq!(files.as_array().unwrap().len(), 0, "{files}");
+    let rev = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{other_number}/revisions/A"),
+            &erika_token,
+            None,
+        )
+        .await
+        .json();
+    assert!(
+        !rev["revision"]["checked_out_by"].is_null(),
+        "the failed check-in changed nothing"
+    );
+    let r = web_get(&app, &cookie, &id).await;
+    assert_eq!(r.status, StatusCode::OK, "max's session is untouched");
+    assert_eq!(r.json()["complete"], true);
+
+    // A restricted group: outsiders get 404, as on the revision page.
+    let r = app
+        .api(
+            Method::PUT,
+            "/api/v1/projects/ROVER/visibility",
+            &admin,
+            Some(json!({ "visibility": "restricted" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let otto = app.login("otto").await;
+    let r = web_start(&app, &otto, start.clone()).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text());
+    assert_eq!(
+        web_get(&app, &otto, &id).await.status,
+        StatusCode::NOT_FOUND
+    );
+    // The member still can.
+    let r = web_start(
+        &app,
+        &cookie,
+        json!({ "revision_id": rev_id, "filename": "more.bin", "size": 4 }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    app.teardown().await;
+}

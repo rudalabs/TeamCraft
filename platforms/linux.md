@@ -73,6 +73,10 @@ sudo apt install libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
 cd desktop && cargo run                     # connect to localhost:8080
 ```
 
+Without building: the release assets contain an AppImage, `.deb`, `.rpm` and
+a Flatpak bundle (`flatpak install --user TeamCraft_<version>_<arch>.flatpak`,
+see [packaging/](../packaging/README.md#flatpak)).
+
 ## Troubleshooting
 
 | Symptom | Fix |

@@ -664,4 +664,249 @@ mod tests {
         assert_eq!(t.rows[0].quantity, 1.0);
         assert_eq!(t.warnings.len(), 1);
     }
+
+    #[test]
+    fn header_synonyms_in_english_and_german() {
+        for (header, field) in [
+            ("ITEM NO.", "position"),
+            ("Pos.", "position"),
+            ("Find No", "position"),
+            ("Part Number", "number"),
+            ("Teilenummer", "number"),
+            ("Sachnummer", "number"),
+            ("Benennung", "name"),
+            ("Bezeichnung", "name"),
+            ("Beschreibung", "description"),
+            ("QTY.", "quantity"),
+            ("Menge", "quantity"),
+            ("Stück", "quantity"),
+            ("Einheit", "unit"),
+            ("UoM", "unit"),
+            ("Werkstoff", "material"),
+            ("Mass [kg]", "mass"),
+            ("Gewicht", "mass"),
+            ("BOM Structure", "structure"),
+            ("Stücklistenstruktur", "structure"),
+            ("File Name", "file"),
+            ("Ebene", "level"),
+            ("Strukturstufe", "level"),
+        ] {
+            assert_eq!(field_of(header), Some(field), "{header}");
+        }
+        assert_eq!(field_of("Colour"), None);
+        assert_eq!(field_of(""), None);
+        assert_eq!(field_label("number"), "Part number");
+        assert_eq!(field_label("unknown"), "?");
+    }
+
+    #[test]
+    fn utf8_byte_order_mark_and_delimiters() {
+        // Excel's "CSV UTF-8" writes a BOM before the header.
+        let mut bytes = b"\xEF\xBB\xBF".to_vec();
+        bytes.extend_from_slice("Teilenummer;Benennung;Menge\nA-1;Düse;2\n".as_bytes());
+        let t = read("bom.csv", &bytes).unwrap();
+        assert_eq!(t.columns[0].header, "Teilenummer", "no BOM in the header");
+        assert_eq!((t.rows[0].name.as_str(), t.rows[0].quantity), ("Düse", 2.0));
+        assert_eq!(sniff_delimiter("a;b;c\n1;2;3"), b';');
+        assert_eq!(sniff_delimiter("a\tb\tc"), b'\t');
+        assert_eq!(sniff_delimiter("a,b;c"), b',', "ties go to the comma");
+        assert_eq!(sniff_delimiter(""), b',');
+        // Commas inside a German semicolon file are decimal separators.
+        let t = read("bom.txt", b"Part Number;Name;QTY\nA;Tube;2,5\n").unwrap();
+        assert_eq!(t.rows[0].quantity, 2.5);
+    }
+
+    #[test]
+    fn header_row_needs_an_identifying_column() {
+        // Level and quantity alone do not make a header.
+        assert!(read("x.csv", b"Level,QTY\n1,2\n").is_err());
+        // The header may follow up to 29 title rows ...
+        let mut csv = "Title\n".repeat(29);
+        csv.push_str("Part Number,QTY\nA,1\n");
+        assert_eq!(read("x.csv", csv.as_bytes()).unwrap().rows.len(), 1);
+        // ... but not more.
+        let mut csv = "Title\n".repeat(30);
+        csv.push_str("Part Number,QTY\nA,1\n");
+        let err = read("x.csv", csv.as_bytes()).unwrap_err();
+        assert!(err.contains("No header row"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_columns_keep_the_first() {
+        let t = read("x.csv", b"Part Number,PN,Name\nA,B,Bolt\n").unwrap();
+        assert_eq!(t.rows[0].number, "A");
+        assert_eq!(t.columns.len(), 2);
+        assert_eq!(t.warnings.len(), 1);
+        assert!(t.warnings[0].contains("'PN'") && t.warnings[0].contains("'Part Number'"));
+    }
+
+    #[test]
+    fn names_fall_back_to_description_file_and_number() {
+        let csv = "Part Number,Name,Description,File Name\n\
+                   A,,Bracket left,\n\
+                   B,,,Motor mount.ipt\n\
+                   C,,,\n\
+                   ,,,\n\
+                   D,Shaft,Turned shaft,shaft.ipt\n";
+        let t = read("x.csv", csv.as_bytes()).unwrap();
+        let names: Vec<_> = t.rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["Bracket left", "Motor mount", "C", "Shaft"]);
+        assert_eq!(t.rows[0].description, "", "moved to the name");
+        assert_eq!(t.rows[3].description, "Turned shaft");
+        // The empty row is skipped, line numbers still match the file.
+        assert_eq!(
+            t.rows.iter().map(|r| r.line).collect::<Vec<_>>(),
+            vec![2, 3, 4, 6]
+        );
+    }
+
+    #[test]
+    fn quantities_and_units() {
+        let csv =
+            "Part Number,QTY,Unit\nA,,\nB,4 pcs,\nC,2.5 m,Satz\nD,abc,\nE,0,\nF,1000000000,\n";
+        let t = read("x.csv", csv.as_bytes()).unwrap();
+        let q: Vec<(f64, &str)> = t
+            .rows
+            .iter()
+            .map(|r| (r.quantity, r.unit.as_str()))
+            .collect();
+        assert_eq!(
+            q,
+            vec![
+                (1.0, ""),
+                (4.0, "each"),
+                (2.5, "set"),
+                (1.0, ""),
+                (1.0, ""),
+                (1.0, ""),
+            ],
+            "empty = 1; the unit column wins over the unit in the value"
+        );
+        assert_eq!(t.warnings.len(), 3, "abc, 0 and 10^9: {:?}", t.warnings);
+    }
+
+    #[test]
+    fn units_are_normalised() {
+        for (raw, unit) in [
+            ("EA", "each"),
+            ("Stk.", "each"),
+            ("pcs", "each"),
+            ("sets", "set"),
+            ("m²", "m2"),
+            ("qm", "m2"),
+            ("Liter", "l"),
+            ("  ", ""),
+            ("KG", "kg"),
+        ] {
+            assert_eq!(normalize_unit(raw), unit, "{raw}");
+        }
+        assert_eq!(normalize_unit(&"x".repeat(40)).chars().count(), 16);
+    }
+
+    #[test]
+    fn masses_in_any_unit() {
+        assert_eq!(parse_mass("0.125", "Mass"), Some(0.125), "kg by default");
+        assert_eq!(
+            parse_mass("125 g", "Mass [kg]"),
+            Some(0.125),
+            "the value's unit wins"
+        );
+        assert_eq!(parse_mass("2", "Weight (lb)"), Some(2.0 * 0.453_592_37));
+        assert_eq!(parse_mass("1,5", "Gewicht [kg]"), Some(1.5));
+        assert_eq!(parse_mass("-1", "Mass"), None, "negative");
+        assert_eq!(parse_mass("", "Mass"), None);
+        let t = read("x.csv", b"Part Number,Mass\nA,heavy\nB,\n").unwrap();
+        assert_eq!((t.rows[0].mass_kg, t.rows[1].mass_kg), (None, None));
+        assert_eq!(t.warnings.len(), 1, "only the value that is not understood");
+    }
+
+    #[test]
+    fn number_formats() {
+        assert_eq!(parse_number("1.234.567"), None, "two dots are no number");
+        assert_eq!(parse_number("1,234,567"), Some(1_234_567.0), "thousands");
+        assert_eq!(parse_number(" 7 "), Some(7.0));
+        assert_eq!(parse_number("-3"), Some(-3.0));
+        assert_eq!(parse_number("."), None);
+        assert_eq!(parse_number(""), None);
+    }
+
+    #[test]
+    fn dotted_positions_and_find_numbers() {
+        let csv = "Item,Part Number\n1,A\n1.1,B\n1.1.1,C\n1.2,D\nx,E\n2,F\n";
+        let t = read("x.csv", csv.as_bytes()).unwrap();
+        assert_eq!(levels(&t), vec![1, 2, 3, 2, 1, 1]);
+        assert_eq!(
+            t.rows.iter().map(|r| r.find_number).collect::<Vec<_>>(),
+            vec![Some(1), Some(1), Some(1), Some(2), None, Some(2)]
+        );
+        assert!(t.warnings.iter().any(|w| w.contains("'x'")));
+        // Without any dotted position the positions are find numbers of a flat list.
+        let t = read("x.csv", b"Pos,Part Number\n10,A\n0,B\n1000000,C\n").unwrap();
+        assert_eq!(levels(&t), vec![1, 1, 1]);
+        assert_eq!(
+            t.rows.iter().map(|r| r.find_number).collect::<Vec<_>>(),
+            vec![Some(10), None, None],
+            "find numbers outside 1..=999999 are dropped"
+        );
+    }
+
+    #[test]
+    fn level_column_edge_cases() {
+        // A non-numeric level is reported and used as 1.
+        let t = read("x.csv", b"Level,Part Number\n1,A\nzwei,B\n").unwrap();
+        assert_eq!(levels(&t), vec![1, 1]);
+        assert!(t.warnings[0].contains("'zwei'"));
+        // Two rows on level 0: no assembly row, both are direct children.
+        let t = read("x.csv", b"Level,Part Number\n0,A\n0,B\n1,C\n").unwrap();
+        assert!(t.root.is_none());
+        assert_eq!(levels(&t), vec![1, 1, 2]);
+        // A single level-0 row alone is a component, not the assembly.
+        let t = read("x.csv", b"Level,Part Number\n0,A\n").unwrap();
+        assert!(t.root.is_none());
+        assert_eq!(t.rows.len(), 1);
+        // Level gaps are closed (the row goes directly below the row above)
+        // and reported only once.
+        let t = read("x.csv", b"Level,Part Number\n1,A\n3,B\n1,C\n4,D\n").unwrap();
+        assert_eq!(levels(&t), vec![1, 2, 1, 2]);
+        assert_eq!(t.warnings.len(), 1, "{:?}", t.warnings);
+    }
+
+    #[test]
+    fn german_reference_components_are_skipped_with_their_children() {
+        let csv = "Pos.;Teilenummer;Stücklistenstruktur\n\
+                   1;A;Normal\n2;REF;Referenz\n2.1;REF-KIND;Normal\n2.1.1;REF-ENKEL;Normal\n\
+                   3;B;Normal\n3.1;C;Normal\n";
+        let t = read("x.csv", csv.as_bytes()).unwrap();
+        let numbers: Vec<_> = t.rows.iter().map(|r| r.number.as_str()).collect();
+        assert_eq!(numbers, vec!["A", "B", "C"]);
+        assert_eq!(levels(&t), vec![1, 1, 2]);
+    }
+
+    #[test]
+    fn too_many_rows_are_refused() {
+        let mut csv = String::from("Part Number\n");
+        let mut csv2 = String::from("Part Number,Name\n");
+        for i in 0..=MAX_ROWS {
+            csv.push_str(&format!("P{i}\n"));
+            csv2.push_str(&format!("P{i},N\n"));
+        }
+        assert!(
+            read("x.csv", csv.as_bytes()).is_err(),
+            "one column is no header"
+        );
+        let err = read("x.csv", csv2.as_bytes()).unwrap_err();
+        assert!(err.contains("more than"), "{err}");
+    }
+
+    #[test]
+    fn supported_file_names() {
+        for name in [
+            "a.csv", "a.TSV", "a.txt", "a.xlsx", "a.xlsm", "a.xlsb", "a.XLS", "a.ods",
+        ] {
+            assert!(supported(name), "{name}");
+        }
+        for name in ["a.pdf", "a.step", "a.csv.zip", "csv"] {
+            assert!(!supported(name), "{name}");
+        }
+    }
 }

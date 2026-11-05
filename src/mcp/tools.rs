@@ -24,8 +24,8 @@ use crate::{
     error::{AppError, AppResult},
     models::{BomLine, Change, ChangeRequest, FileRecord, Revision},
     services::{
-        audit, bom, changes, files, impacts, insights, items, notifications, projects, references,
-        requests, reviewers, revisions, similar, simulations, Page,
+        audit, bom, changes, files, impacts, insights, interchange, items, notifications, projects,
+        references, requests, reviewers, revisions, similar, simulations, Page,
     },
     AppState,
 };
@@ -117,6 +117,16 @@ const TOOLS: &[Tool] = &[
             and the item used on that line (`via`).",
         effect: READ,
         schema: schema_where_used,
+    },
+    Tool {
+        name: "replace_preview",
+        title: "Preview replacing an item in assemblies",
+        description: "What replacing an item by another one in every assembly that uses it would do: one row 
+            per BOM line of the latest revision of each parent with the action (replace = in work and free, 
+            checked_out, no_permission, in_review, needs_revision = released, cycle). Read only – the 
+            replacement itself is done by a person on the where-used page.",
+        effect: READ,
+        schema: schema_replace_preview,
     },
     Tool {
         name: "item_history",
@@ -395,6 +405,16 @@ fn schema_bom() -> Value {
     object(
         json!({ "item": p_item(), "revision": p_revision(), "rule": p_rule() }),
         &["item"],
+    )
+}
+
+fn schema_replace_preview() -> Value {
+    object(
+        json!({
+            "item": p_item(),
+            "with": { "type": "string", "description": "Item number of the replacement (its successor or an alternate)" },
+        }),
+        &["item", "with"],
     )
 }
 
@@ -789,6 +809,7 @@ pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value 
         "get_revision" => get_revision(st, me, &a).await,
         "get_bom" => get_bom(st, me, &a).await,
         "where_used" => where_used(st, me, &a).await,
+        "replace_preview" => replace_preview(st, me, &a).await,
         "item_history" => item_history(st, me, &a).await,
         "list_changes" => list_changes(st, me, &a).await,
         "get_change" => get_change(st, me, &a).await,
@@ -1036,6 +1057,12 @@ async fn get_item(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
     } else {
         simulations_of(st, me, item.id).await?
     };
+    let (alternates, alternate_for, successor, predecessors) = tokio::try_join!(
+        interchange::alternates(&st.db, me, item.id),
+        interchange::alternate_for(&st.db, me, item.id),
+        interchange::successor(&st.db, me, item.id),
+        interchange::predecessors(&st.db, me, item.id),
+    )?;
     Ok(json!({
         "item": {
             "number": item.number,
@@ -1054,6 +1081,10 @@ async fn get_item(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
             "released_at": r.released_at,
         })).collect::<Vec<_>>(),
         "open_change_requests": open_requests,
+        "alternates": alternates.iter().map(|a| linked_brief(a, true)).collect::<Vec<_>>(),
+        "alternate_for": alternate_for.iter().map(|a| linked_brief(a, false)).collect::<Vec<_>>(),
+        "superseded_by": successor.as_ref().map(|s| linked_brief(s, false)),
+        "supersedes": predecessors.iter().map(|p| linked_brief(p, false)).collect::<Vec<_>>(),
         "simulations": based,
         "truncated": requests_cut || based_cut,
         "url": web_url(st, &format!("/items/{}", item.id)),
@@ -1197,6 +1228,52 @@ async fn where_used(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value>
             "released_with": p.released_child_code,
         })).collect::<Vec<_>>(),
         "truncated": truncated,
+    }))
+}
+
+/// An alternate, successor or predecessor in a compact form.
+fn linked_brief(l: &interchange::LinkedItem, with_direction: bool) -> Value {
+    if l.restricted {
+        return json!({ "item": "restricted item" });
+    }
+    let mut v = json!({
+        "item": l.number,
+        "name": l.name,
+        "latest_revision": l.latest_code,
+        "latest_state": l.latest_state,
+        "note": l.note,
+    });
+    if with_direction {
+        v["two_way"] = json!(l.two_way);
+    }
+    v
+}
+
+async fn replace_preview(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
+    let item = items::get_by_number(&st.db, me, &a.req_str("item")?).await?;
+    let plan = interchange::plan_replace(&st.db, me, item.id, &a.req_str("with")?).await?;
+    let (rows, truncated) = capped(plan.rows, MAX_LIST);
+    Ok(json!({
+        "item": plan.old_number,
+        "with": plan.new_number,
+        "would_replace": plan.replaced,
+        "hidden_parents": plan.hidden,
+        "lines": rows.iter().map(|r| json!({
+            "assembly": r.parent_number,
+            "revision": r.parent_code,
+            "name": r.parent_name,
+            "state": r.parent_state,
+            "find_number": r.find_number,
+            "quantity": r.quantity,
+            "action": r.action,
+            "checked_out_by": r.checked_out_by_name,
+        })).collect::<Vec<_>>(),
+        "truncated": truncated,
+        "url": web_url(st, &format!(
+            "/items/{}/where-used?with={}",
+            item.id,
+            crate::util::pct_encode(&plan.new_number)
+        )),
     }))
 }
 

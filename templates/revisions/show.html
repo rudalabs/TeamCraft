@@ -95,6 +95,10 @@
 {% if not is_latest %}
 <div class="notice">You are looking at an older revision. <a href="/revisions/{{ latest_id }}">Go to the latest revision.</a></div>
 {% endif %}
+{% if interchange and interchange.successor %}
+<div class="notice">{{ rev.item_number }} is superseded by {% if interchange.successor.restricted %}{{ m.restricted() }}{% else %}<a class="mono" href="/revisions/{{ interchange.successor.latest_revision_id }}">{{ interchange.successor.number }}</a> {{ interchange.successor.name }}{% endif %} – do not use it for new designs.{% if interchange.successor.note %} <span class="small muted">· {{ interchange.successor.note }}</span>{% endif %}
+  <a href="/items/{{ item.id }}/where-used">Where used and replace in assemblies</a></div>
+{% endif %}
 {% if open_requests %}
 <div class="notice">{{ open_requests|length }} open change request{% if open_requests|length != 1 %}s{% endif %} on {{ rev.item_number }}:
   {% for r in open_requests %}<a href="/requests/{{ r.id }}">{{ r.number }}</a> {{ r.title }} ({{ r.status|label }}){% if not loop.last %} · {% endif %}{% endfor %}</div>
@@ -114,7 +118,7 @@
   <h2>Check in {{ rev.item_number }}/{{ rev.code }}</h2>
   <p class="hint">Files with the same name as an existing file become its next version. The files are stored and
     your check-out is released in one step – if anything fails, nothing changes.</p>
-  <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin" enctype="multipart/form-data">
+  <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin" enctype="multipart/form-data" data-chunked="{{ rev.id }}">
     <input type="hidden" name="bases" value="{{ file_bases }}">
     <label>New files / versions <span class="hint">optional, max. {{ max_upload_mb }} MiB per file</span>
       <input type="file" name="file" multiple>
@@ -338,7 +342,7 @@
     TeamCraft desktop app: it keeps one working folder per project group with the folder structure shown here
     (<span class="mono">TeamCraft/{% if rev.project_code %}{{ rev.project_code }}{% else %}&lt;group&gt;{% endif %}/&lt;folder&gt;/&lt;file&gt;</span>), gets whole assemblies and keeps files you have not checked out read-only.</p>
   {% if can.edit %}
-  <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data">
+  <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data" data-chunked="{{ rev.id }}">
     <input type="hidden" name="bases" value="{{ file_bases }}">
     <input type="file" name="file" multiple required>
     <input type="text" name="comment" maxlength="2000" placeholder="Comment (optional)" aria-label="Comment">
@@ -542,7 +546,7 @@
         {% else %}
         <td class="num">{{ l.find_number }}</td>
         {% endif %}
-        <td class="mono nowrap">{% if l.restricted %}{{ m.restricted() }}{% else %}<a href="/revisions/{{ l.child_latest_revision_id }}">{{ l.child_number }}</a>{% endif %}</td>
+        <td class="mono nowrap">{% if l.restricted %}{{ m.restricted() }}{% else %}<a href="/revisions/{{ l.child_latest_revision_id }}">{{ l.child_number }}</a>{% if interchange and l.child_item_id in interchange.superseded %} <span class="badge badge-out_of_date" title="Superseded – do not use for new designs">Superseded{% if interchange.superseded[l.child_item_id] %} by {{ interchange.superseded[l.child_item_id] }}{% endif %}</span>{% endif %}{% endif %}</td>
         <td>{{ l.child_name }}</td>
         <td class="nowrap"><span class="mono">{{ l.child_latest_code }}</span> {{ m.badge(l.child_latest_state) }}
           {% if l.released_child_code %}<span class="small muted" title="This revision was released with {{ l.child_number }}/{{ l.released_child_code }}">· released with <span class="mono">{{ l.released_child_code }}</span></span>{% endif %}</td>
@@ -744,6 +748,7 @@
     </table>
     {% elif not hidden.parents %}<p class="empty">Not used in any BOM.</p>{% endif %}
     {{ m.hidden_count(hidden.parents, "assemblies") }}
+    <p class="hint"><a href="/items/{{ item.id }}/where-used">All levels{% if me.role != "viewer" %} and replace in assemblies{% endif %} →</a></p>
   </section>
 
   <section class="card">
@@ -773,6 +778,86 @@
     {% endif %}
   </section>
 </div>
+
+{% if interchange %}
+<section class="card" id="interchange">
+  <h2>Alternates and replacement</h2>
+  <div class="grid grid-2 nested">
+    <div>
+      <h3>Alternates</h3>
+      <p class="hint">Items that may be built in instead of {{ rev.item_number }} in every assembly (same form, fit and function).</p>
+      {% if interchange.alternates or interchange.alternate_for %}
+      <div class="table-wrap">
+      <table>
+        <tbody>
+        {% for a in interchange.alternates %}
+          <tr>
+            <td class="mono nowrap"><a href="/revisions/{{ a.latest_revision_id }}">{{ a.number }}</a></td>
+            <td>{{ a.name }}{% if a.note %} <span class="small muted">· {{ a.note }}</span>{% endif %}</td>
+            <td class="nowrap"><span class="mono">{{ a.latest_code }}</span> {{ m.badge(a.latest_state) }}</td>
+            <td class="small nowrap">{% if a.two_way %}two-way{% else %}one-way{% endif %}</td>
+            {% if interchange.can_edit %}
+            <td class="right">
+              <form class="inline" method="post" action="/items/{{ item.id }}/alternates/{{ a.item_id }}/delete" data-confirm="Remove {{ a.number }} as alternate of {{ rev.item_number }}?">
+                <input type="hidden" name="back" value="{{ back }}#interchange">
+                <button class="small danger" type="submit">Remove</button>
+              </form>
+            </td>
+            {% endif %}
+          </tr>
+        {% endfor %}
+        {% for a in interchange.alternate_for %}
+          <tr>
+            <td class="mono nowrap"><a href="/revisions/{{ a.latest_revision_id }}">{{ a.number }}</a></td>
+            <td>{{ a.name }}{% if a.note %} <span class="small muted">· {{ a.note }}</span>{% endif %}</td>
+            <td class="nowrap"><span class="mono">{{ a.latest_code }}</span> {{ m.badge(a.latest_state) }}</td>
+            <td class="small nowrap" title="{{ rev.item_number }} may replace {{ a.number }}, not the other way round">may be replaced by {{ rev.item_number }}</td>
+            {% if interchange.can_edit %}<td></td>{% endif %}
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      {% else %}<p class="empty">No alternates.</p>{% endif %}
+      {% if interchange.can_edit %}
+      <form class="inline fields" method="post" action="/items/{{ item.id }}/alternates">
+        <input type="hidden" name="back" value="{{ back }}#interchange">
+        <label>Item <input class="item-no" type="text" name="item" placeholder="e.g. PRT-000012" required></label>
+        <label class="grow">Note <input type="text" name="note" placeholder="optional, e.g. second source" maxlength="500"></label>
+        <label class="check"><input type="checkbox" name="two_way" value="1" checked> two-way</label>
+        <button type="submit">Add alternate</button>
+      </form>
+      {% endif %}
+    </div>
+    <div>
+      <h3>Supersession</h3>
+      {% if interchange.successor %}
+      <p>Superseded by {% if interchange.successor.restricted %}{{ m.restricted() }}{% else %}<a class="mono" href="/revisions/{{ interchange.successor.latest_revision_id }}">{{ interchange.successor.number }}</a> {{ interchange.successor.name }}{% endif %}
+        <span class="small muted">· {{ interchange.successor.created_by_name }}, {{ m.time(interchange.successor.created_at) }}{% if interchange.successor.note %} · {{ interchange.successor.note }}{% endif %}</span></p>
+      {% if interchange.can_edit %}
+      <form class="inline" method="post" action="/items/{{ item.id }}/supersede/delete">
+        <input type="hidden" name="back" value="{{ back }}#interchange">
+        <button class="small" type="submit">No longer superseded</button>
+      </form>
+      {% endif %}
+      {% else %}<p class="empty">{{ rev.item_number }} is not superseded.</p>{% endif %}
+      {% if interchange.predecessors %}
+      <p>{{ rev.item_number }} supersedes
+        {% for p in interchange.predecessors %}<a class="mono" href="/revisions/{{ p.latest_revision_id }}">{{ p.number }}</a> {{ p.name }}{% if not loop.last %}, {% endif %}{% endfor %}.</p>
+      {% endif %}
+      {% if interchange.can_edit %}
+      <form class="inline fields" method="post" action="/items/{{ item.id }}/supersede">
+        <input type="hidden" name="back" value="{{ back }}#interchange">
+        <label>{% if interchange.successor %}New successor{% else %}Superseded by{% endif %} <input class="item-no" type="text" name="item" placeholder="e.g. PRT-000012" required></label>
+        <label class="grow">Note <input type="text" name="note" placeholder="optional, e.g. reason" maxlength="500"></label>
+        <button type="submit">Supersede</button>
+      </form>
+      <p class="hint">Superseding does not change any BOM. Replace {{ rev.item_number }} in the assemblies on the <a href="/items/{{ item.id }}/where-used">where-used page</a>.</p>
+      {% endif %}
+    </div>
+  </div>
+</section>
+{% endif %}
 
 <section class="card">
   <h2>History</h2>

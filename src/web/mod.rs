@@ -19,6 +19,7 @@ mod desktop;
 mod explorer;
 mod formats;
 mod imports;
+mod interchange;
 mod items;
 mod notifications;
 mod personal;
@@ -26,6 +27,7 @@ mod references;
 mod requests;
 mod revisions;
 mod simulations;
+mod uploads;
 mod webhooks;
 
 pub(crate) use bom::{package_response, package_rule};
@@ -91,10 +93,31 @@ pub fn router(state: &AppState) -> Router<AppState> {
                 .post(items::create)
                 .layer(DefaultBodyLimit::max(upload_limit)),
         )
+        // chunked, resumable uploads of large files (static/app.js)
+        .route("/uploads", post(uploads::create))
+        .route(
+            "/uploads/{id}",
+            get(uploads::status)
+                .patch(uploads::append)
+                .delete(uploads::abort),
+        )
         .route("/items/new", get(items::new_form))
         .route("/items/{id}", get(items::show))
         .route("/items/{id}/master", post(items::update_master))
         .route("/items/{id}/delete", post(items::delete))
+        // alternates, supersession, multi-level where-used, replace in assemblies
+        .route("/items/{id}/where-used", get(interchange::where_used))
+        .route("/items/{id}/replace", post(interchange::replace))
+        .route("/items/{id}/alternates", post(interchange::add_alternate))
+        .route(
+            "/items/{id}/alternates/{alternate}/delete",
+            post(interchange::delete_alternate),
+        )
+        .route("/items/{id}/supersede", post(interchange::supersede))
+        .route(
+            "/items/{id}/supersede/delete",
+            post(interchange::clear_supersession),
+        )
         .route("/i/{number}", get(items::by_number))
         .route("/formats", get(formats::show))
         // revisions & files
@@ -670,7 +693,12 @@ async fn html_errors(State(st): State<AppState>, req: Request, next: Next) -> Re
     let skin = skin_from_cookie(req.headers());
     let response = next.run(req).await;
     // The viewer fetches preview meshes itself and shows the JSON error message.
-    if target.split('?').next().unwrap_or("").ends_with("/mesh") {
+    let path = target.split('?').next().unwrap_or("");
+    if path.ends_with("/mesh") {
+        return response;
+    }
+    // So does the chunked upload of app.js – a 401 too, it then asks to sign in.
+    if path == "/uploads" || path.starts_with("/uploads/") {
         return response;
     }
     let Some(info) = response.extensions().get::<ErrorInfo>().cloned() else {

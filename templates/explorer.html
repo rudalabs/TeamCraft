@@ -104,7 +104,7 @@
 
     {% if can.checkin %}
     <h3>Check in</h3>
-    <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin?back={{ back }}" enctype="multipart/form-data">
+    <form class="stack" method="post" action="/revisions/{{ rev.id }}/checkin?back={{ back }}" enctype="multipart/form-data" data-chunked="{{ rev.id }}">
       <input type="file" name="file" multiple aria-label="New files or versions">
       <input type="text" name="comment" maxlength="2000" placeholder="What changed?" aria-label="Comment">
       <p class="hint">Same file name = next version. Max. {{ max_upload_mb }} MiB per file. Files and lock release happen in one step.</p>

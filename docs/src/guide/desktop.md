@@ -22,6 +22,15 @@ check-outs and reviews, and a **local working folder**:
   the same folder can also be imported into another group. *Help → How to
   Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file
   names, check and release);
+* *Import BOM…* (in the *Structure* tab and the *More* menu of a revision you
+  have checked out, or *Tools → Import BOM as New Assembly…*) reads a BOM
+  exported by the CAD program – CSV, Excel, ODS or a STEP assembly – with the
+  same column recognition as the web import: the preview shows the lines,
+  how many items are new or existing and the notes (for example a quantity
+  that is not a number); *Import* adds the lines in one step, creating the
+  missing items. *Part numbers from the file* or *New numbers* (the group's
+  numbering scheme), and whether items with the same number are reused, are
+  chosen in the dialog;
 * the *Workspace* tab shows per file where it is, whether it is up to date,
   modified, outdated, in conflict, new, missing or a name clash, whether it
   is read-only, and who holds the lock for how long; opening an outdated
@@ -31,9 +40,16 @@ check-outs and reviews, and a **local working folder**:
   else checked in meanwhile is never overwritten (see
   [Concurrency](vault.md#concurrency-nothing-is-overwritten-silently)) –
   and makes the files read-only again; files above 32 MiB are sent in
-  resumable chunks with progress in the status bar – a dropped connection
-  resumes where it stopped, *Cancel* stops the upload and nothing is stored
-  (see [Large files](vault.md#large-files-chunked-resumable-uploads));
+  resumable chunks – a dropped connection resumes where it stopped (see
+  [Large files](vault.md#large-files-chunked-resumable-uploads)). The dialog
+  stays open with the progress while the check-in runs, and **Cancel** stops
+  it at any point until the last byte is sent: before the next STEP export,
+  between two chunks of a large file (the chunks on the server are
+  discarded – a cancelled upload starts over next time) or half-way through
+  the request with the small files. Nothing is stored then, the revision
+  stays checked out to you and your local files are untouched. Once every
+  byte is sent the server finishes the check-in on its own; the dialog says
+  so (*too late to cancel*);
 * *Check in all* in the worklist checks in every check-out without local
   changes and lists those that still have changes;
 * *Dependents to check* (worklist and home) shows one line per dependent
@@ -195,7 +211,11 @@ parts of an assembly; no record of which version a file is, so changes
 cannot be checked in safely; and no read-only protection. Browser downloads
 are fine for one file or for looking at something – CAD work goes through
 the desktop working folder. *Pack and Go* (ZIP) is for sending a structure
-to someone outside TeamCraft.
+to someone outside TeamCraft: after the save dialog a progress dialog shows
+how much has arrived, and **Cancel** stops it – also while the server is
+still packing. The ZIP is written under a temporary name next to the target
+and renamed only when it is complete, so a cancelled or failed Pack and Go
+never leaves a half ZIP behind.
 
 **Moving an older workspace.** Earlier versions of the app kept one folder
 per revision, `<group>/<item>/<revision>/` (and before that
