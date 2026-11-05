@@ -36,10 +36,10 @@ var DEFAULT_WIDTH = 400;
 // action and its context; an unknown action from a newer server is harmless.
 var QUICK = {
   dashboard: [["attention", "What needs my attention"]],
-  revision: [["release_notes", "Draft release notes"], ["release_check", "Check before release"]],
-  item: [["release_notes", "Draft release notes"], ["release_check", "Check before release"]],
-  bom: [["release_check", "Check before release"]],
-  where_used: [],
+  revision: [["release_notes", "Draft release notes"], ["release_check", "Check before release"], ["impact", "What breaks if I change this?"], ["simulation_status", "Are the simulations still valid?"]],
+  item: [["release_notes", "Draft release notes"], ["release_check", "Check before release"], ["impact", "What breaks if I change this?"], ["simulation_status", "Are the simulations still valid?"]],
+  bom: [["release_check", "Check before release"], ["impact", "What breaks if I change this?"]],
+  where_used: [["impact", "What breaks if I change this?"]],
   change: [["review_brief", "Brief me for this review"]],
   changes: [["attention", "What needs my attention"]]
 };
