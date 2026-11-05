@@ -53,3 +53,15 @@ dependent – via BOM, references, CAD file references or as the basis of a
 a note (*form, fit and
 function unchanged*) or revises and releases the dependent, which resolves
 the check and propagates one level further. Every change shows this **impact analysis** before it is approved.
+
+*Dependents to check* on the dashboard (and in the desktop app) groups the
+open checks by the dependent revision: one header per assembly, drawing or
+simulation (*ASM-000002/A Electronics enclosure – 4 changes to check*) with
+**Open**, **Revise** and **Acknowledge all…**, and one compact row per source
+below it – the item that changed, *released* or *obsolete* via which change,
+and the link (BOM line, CAD file reference, drawing, specification, reference,
+simulation basis) – each with its own **Acknowledge…**. **Acknowledge all…**
+resolves exactly the checks shown with one note, in one step; checks resolved
+by someone else in the meantime are skipped, and every acknowledged check is
+recorded in the item's history. The revision page shows its open checks the
+same way.

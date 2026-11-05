@@ -570,17 +570,57 @@ button.small { padding: 0.15rem 0.55rem; font-size: 0.85em; border-radius: var(-
 
 /* ---------------------------------------------------------------- change propagation */
 
-/* A dependent has to be checked (server: src/services/impacts.rs). */
-.impact {
-  margin: 0 0 0.8rem;
-  padding: 0.6rem 0.8rem;
-  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
-  border-left: 4px solid var(--warn);
+/* The open impacts on one dependent revision (server: src/services/impacts.rs,
+   group_by_dependent): header with the group actions, one dense row per
+   source, the "revise resolves it" hint once. Same look as the web UI. */
+.impact-group {
+  margin: 0 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
   border-radius: var(--radius);
-  background: var(--warn-soft);
+  background: var(--surface);
 }
-.impact p { margin: 0 0 0.4rem; }
-.impact .row { gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.impact-group-head {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+.impact-group-head h3 { margin: 0; font-size: 0.95rem; min-width: 0; }
+.impact-group-name { font-weight: 600; }
+.impact-group-head .actions { display: flex; gap: var(--space-2); margin-left: auto; }
+.impact-count, .count-badge {
+  font-size: 0.74rem; font-weight: 600; white-space: nowrap;
+  color: var(--warn); background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  border-radius: 999px;
+}
+.impact-count { padding: 0.05rem 0.55rem; }
+.count-badge { min-width: 1.3rem; padding: 0 0.35rem; text-align: center; line-height: 1.2rem; }
+ul.impact-rows { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+ul.impact-rows > li {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1.3fr) minmax(8.5rem, 0.9fr) minmax(0, 1.6fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: 0.28rem var(--space-3);
+  font-size: 0.86rem;
+}
+ul.impact-rows > li + li { border-top: 1px solid var(--border); }
+.impact-source, .impact-relation { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.impact-source-name, .impact-relation { color: var(--text-muted); }
+.impact-event { white-space: nowrap; }
+.impact-detail { color: var(--text-dim); }
+.impact-group > .hint { margin: 0; padding: var(--space-1) var(--space-3) var(--space-2); border-top: 1px solid var(--border); }
+@media (hover: hover) {
+  ul.impact-rows > li:hover { background: var(--surface-hover); }
+}
+@media (max-width: 760px) {
+  ul.impact-rows > li { grid-template-columns: minmax(0, 1fr) auto; }
+  .impact-source, .impact-event, .impact-relation { grid-column: 1; }
+  ul.impact-rows > li > button { grid-column: 2; grid-row: 1 / span 3; }
+}
+.node .ico.warn { color: var(--warn); }
+.node .ico.dim { color: var(--text-dim); }
 ul.plain { margin: 0 0 0.6rem; padding-left: 1.1rem; }
 ul.plain li { margin: 0.2rem 0; }
 .badge-member { color: var(--ok); }
