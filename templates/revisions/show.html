@@ -746,6 +746,7 @@
       {% endfor %}
       </tbody>
     </table>
+    {% if where_used_more %}<p class="hint">Showing the first {{ where_used|length }} uses. The where-used report of the REST API and the assistant lists up to 2000, also over several levels.</p>{% endif %}
     {% elif not hidden.parents %}<p class="empty">Not used in any BOM.</p>{% endif %}
     {{ m.hidden_count(hidden.parents, "assemblies") }}
     <p class="hint"><a href="/items/{{ item.id }}/where-used">All levels{% if me.role != "viewer" %} and replace in assemblies{% endif %} →</a></p>

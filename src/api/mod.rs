@@ -19,7 +19,7 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
-use serde::{de::DeserializeOwned, Deserialize, Deserializer};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -589,17 +589,27 @@ async fn desktop_token(
 
 /// The personal start page of the desktop app (and the web dashboard).
 async fn worklist(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
-    let open = impacts::open_for(&st.db, &me).await?;
+    // independent queries run concurrently (like the dashboard)
+    let (checkouts, reviews, open, unread, my_changes, assigned, my_requests, stats) = tokio::try_join!(
+        revisions::checked_out_by(&st.db, &me),
+        changes::pending_reviews(&st.db, &me),
+        impacts::open_for(&st.db, &me),
+        notifications::unread_count(&st.db, &me),
+        changes::open_by(&st.db, &me),
+        requests::assigned_to(&st.db, &me),
+        requests::open_by(&st.db, &me),
+        stats::load(&st.db, &me),
+    )?;
     Ok(Json(json!({
-        "checkouts": revisions::checked_out_by(&st.db, &me).await?,
-        "reviews": changes::pending_reviews(&st.db, &me).await?,
-        "impacts": open,
+        "checkouts": checkouts,
+        "reviews": reviews,
         "impact_groups": impacts::group_by_dependent(open.clone()),
-        "notifications_unread": notifications::unread_count(&st.db, &me).await?,
-        "my_changes": changes::open_by(&st.db, &me).await?,
-        "requests_assigned": requests::assigned_to(&st.db, &me).await?,
-        "my_requests": requests::open_by(&st.db, &me).await?,
-        "stats": stats::load(&st.db, &me).await?,
+        "impacts": open,
+        "notifications_unread": unread,
+        "my_changes": my_changes,
+        "requests_assigned": assigned,
+        "my_requests": my_requests,
+        "stats": stats,
     })))
 }
 
@@ -1021,7 +1031,7 @@ async fn where_used(
 ) -> AppResult<Response> {
     let item = items::get_by_number(&st.db, &me, &number).await?;
     let body = Json(match q.levels {
-        None => json!(items::where_used(&st.db, &me, item.id).await?),
+        None => json!(items::where_used(&st.db, &me, item.id, items::MAX_WHERE_USED_ROWS).await?),
         Some(levels) => json!(items::where_used_levels(&st.db, &me, item.id, levels).await?),
     });
     let hidden = items::hidden_parents(&st.db, &me, item.id).await?;
@@ -1217,13 +1227,15 @@ async fn get_bom(
     ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<BomQuery>,
-) -> AppResult<Json<Value>> {
+) -> AppResult<Response> {
     let rev = revision_at(&st, &me, &number, &code).await?;
     if q.expand.unwrap_or(false) {
         let rule = bom_rule(q.rule.as_deref())?;
-        Ok(Json(json!(bom::tree(&st.db, &me, rev.id, rule).await?)))
+        // serialized straight from the tree: an expanded BOM can be tens of
+        // megabytes, an intermediate JSON value would double the work
+        Ok(Json(bom::tree(&st.db, &me, rev.id, rule).await?).into_response())
     } else {
-        Ok(Json(json!(bom::lines(&st.db, &me, rev.id).await?)))
+        Ok(Json(bom::lines(&st.db, &me, rev.id).await?).into_response())
     }
 }
 
@@ -1583,13 +1595,15 @@ async fn change_impact(
 ) -> AppResult<Response> {
     let change = changes::get_by_number(&st.db, &me, &number).await?;
     let (dependents, hidden) = changes::impact(&st.db, &me, change.id).await?;
-    Ok(with_hidden_count(Json(json!(dependents)), hidden))
+    // serialized straight from the list: a change of widely used parts has
+    // tens of thousands of dependents
+    Ok(with_hidden_count(Json(dependents), hidden))
 }
 
 /// A list answer plus `x-hidden-count`: how many entries were left out
 /// because they belong to restricted project groups the caller is not a
 /// member of (the list itself keeps its shape).
-pub(super) fn with_hidden_count(body: Json<Value>, hidden: i64) -> Response {
+pub(super) fn with_hidden_count<T: Serialize>(body: Json<T>, hidden: i64) -> Response {
     let mut response = body.into_response();
     response.headers_mut().insert(
         "x-hidden-count",

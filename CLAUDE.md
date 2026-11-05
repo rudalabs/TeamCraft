@@ -126,7 +126,7 @@ docs/              mdBook documentation (Doxygen-style theme in docs/theme/), pu
 platforms/         short build-and-test guides: linux.md, macos.md, windows.md
 Dockerfile         server image (rust builder → distroless/cc, non-root, HEALTHCHECK), built by CI only
 deploy/            production Docker install: docker-compose.yml (teamcraft + postgres), teamcraft.env.example, install.sh
-.github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 16/18, macOS/Windows builds), docs.yml, desktop.yml,
+.github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 16/18, macOS/Windows builds), docs.yml, desktop.yml, scale.yml (manual/weekly scale check, tests/scale.rs),
                    release.yml (binaries, installers, image + Docker install smoke test)
 desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part of the server build)
 ```

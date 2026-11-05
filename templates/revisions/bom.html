@@ -88,6 +88,7 @@
     </tfoot>
   </table>
   </div>
+  {% if rows_total is defined and rows_total > rows|length %}<p class="hint">Showing the first {{ rows|length }} of {{ rows_total }} lines; the totals cover all of them. Export CSV or Excel for the complete BOM.</p>{% endif %}
   {% if tree.restricted_lines %}<p class="hint">Mass and cost exclude {{ tree.restricted_lines }} restricted line{% if tree.restricted_lines != 1 %}s{% endif %} (items of project groups you are not a member of).</p>{% endif %}
   {% else %}
   <p class="empty">This revision has no BOM lines.</p>

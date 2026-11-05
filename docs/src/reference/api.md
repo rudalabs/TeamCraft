@@ -204,7 +204,7 @@ decision: the MCP server only reads impacts.
 the item. With `?levels=N` (1–25) it walks up further – parents of the
 parents – and every row also carries `level` (1 = direct parent) and
 `child_number` (the item used on that line). Each item is reported on the
-lowest level it is reached on; the report stops at 2000 rows.
+lowest level it is reached on. Both reports stop at 2000 rows.
 
 ### Custom attributes and classification
 

@@ -578,6 +578,12 @@ impl StructureLine {
 /// * `released`: its newest released revision;
 /// * `as_released`: the revision frozen in the line when the parent was
 ///   released (`released_child_revision_id`), else like `released`.
+///
+/// Every lookup per line or child item is an index probe (`LATERAL …
+/// LIMIT 1`, which PostgreSQL does not turn into a join): the planner's
+/// estimate of the lines below thousands of parents is often several times
+/// off, and a join planned for the estimate read all items and revisions
+/// (the scale check: 110 ms instead of a few for one level).
 const LEVEL_SQL: &str = "
     WITH l AS (
         SELECT bl.id, bl.parent_revision_id, bl.child_item_id, bl.find_number, bl.quantity,
@@ -586,12 +592,14 @@ const LEVEL_SQL: &str = "
         WHERE bl.parent_revision_id = ANY($1)
     ),
     pick AS (
-        SELECT DISTINCT ON (r.item_id)
-               r.item_id, r.id, r.code, r.state, r.name, r.mass_kg, r.unit_cost
-        FROM revisions r
-        WHERE r.item_id IN (SELECT child_item_id FROM l)
-          AND ($2 OR r.state = 'released')
-        ORDER BY r.item_id, r.seq DESC
+        SELECT c.item_id, p.id, p.code, p.state, p.name, p.mass_kg, p.unit_cost
+        FROM (SELECT DISTINCT child_item_id AS item_id FROM l) c
+        CROSS JOIN LATERAL (
+            SELECT r.id, r.code, r.state, r.name, r.mass_kg, r.unit_cost
+            FROM revisions r
+            WHERE r.item_id = c.item_id AND ($2 OR r.state = 'released')
+            ORDER BY r.seq DESC LIMIT 1
+        ) p
     )
     SELECT l.id, l.parent_revision_id, l.child_item_id, i.number AS child_number,
            i.item_type AS child_type, i.unit AS child_unit, l.find_number, l.quantity, l.notes,
@@ -603,8 +611,14 @@ const LEVEL_SQL: &str = "
            CASE WHEN fr.id IS NULL THEN p.unit_cost ELSE fr.unit_cost END AS child_unit_cost,
            i.project_id AS child_project_id
     FROM l
-    JOIN items i ON i.id = l.child_item_id
-    LEFT JOIN revisions fr ON $3 AND fr.id = l.released_child_revision_id
+    CROSS JOIN LATERAL (
+        SELECT it.number, it.item_type, it.unit, it.project_id
+        FROM items it WHERE it.id = l.child_item_id LIMIT 1
+    ) i
+    LEFT JOIN LATERAL (
+        SELECT r.id, r.code, r.state, r.name, r.mass_kg, r.unit_cost
+        FROM revisions r WHERE $3 AND r.id = l.released_child_revision_id LIMIT 1
+    ) fr ON true
     LEFT JOIN pick p ON p.item_id = l.child_item_id
     ORDER BY l.parent_revision_id, l.find_number";
 

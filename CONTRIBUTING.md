@@ -99,6 +99,31 @@ it is skipped, with `TEAMCRAFT_REQUIRE_PG_TOOLS=1` (CI) that fails.
 | the documentation | `mdbook build docs` (mdBook 0.5) and `scripts/check-doc-links.sh`   |
 | the web UI        | check the changed pages in a browser (no CSP errors in the console) |
 
+### Scale check
+
+If you change queries, indexes or pages that list many rows, run the scale
+check: an ignored test that seeds a large synthetic vault (~100k items, ~1M
+BOM lines, 2M audit rows; see
+[Operations → Scale check](docs/src/admin/operations.md#scale-check)) and
+times the hot paths through the router.
+
+```sh
+docker compose up -d db
+cargo test --release --test scale -- --ignored --nocapture
+```
+
+The seed (a few minutes, ~1.6 GB) goes into the database `teamcraft_scale` on
+the test server and is kept, so the next run only applies new migrations and
+measures; `DROP DATABASE teamcraft_scale` starts over. The report lands in
+`target/scale-report/` (`report.md`, `plans.md` with the
+`EXPLAIN (ANALYZE, BUFFERS)` plan of every statement, `results.json`). Set
+`TEAMCRAFT_SCALE_BASELINE=<an earlier results.json>` for a before/after
+column and `TEAMCRAFT_SCALE_RUNS` for more timed calls per step. The plans
+need a superuser (as in the dev container), because they come from
+`auto_explain`. On GitHub, run the **Scale check** workflow by hand
+(`gh workflow run scale.yml --ref <branch>`) and download the `scale-report`
+artifact; it is not part of the pull request checks.
+
 ## Updating the README screenshots
 
 The screenshots in `media/screenshots/` are made by

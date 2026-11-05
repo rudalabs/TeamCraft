@@ -37,7 +37,7 @@ use crate::{
     services::{
         access, audit,
         notifications::{self, Notice},
-        references, revisions,
+        revisions,
     },
 };
 
@@ -807,109 +807,270 @@ pub struct Dependent {
     pub visible: bool,
 }
 
-/// The dependents of the given revisions: multi-level through BOMs and item
-/// references of the latest revisions, plus CAD files that reference their
-/// files.
+/// Levels the impact analysis walks up.
+const MAX_ANALYSIS_LEVELS: i32 = 12;
+
+/// The direct dependents of a set of items: whose latest (not obsolete)
+/// revision uses one of them in its BOM, references it or is a simulation
+/// based on it – one query for a whole level of the analysis. `visible`
+/// tells whether the reader (hidden groups bound at `$2`) may see the
+/// dependent.
+fn dependents_sql() -> String {
+    format!(
+        "SELECT e.target, e.dependent, e.relation, {} AS visible
+         FROM (
+             SELECT bl.child_item_id AS target, pr.item_id AS dependent, 'bom'::text AS relation
+             FROM bom_lines bl JOIN revisions pr ON pr.id = bl.parent_revision_id
+             WHERE bl.child_item_id = ANY($1) AND {LATEST}
+             UNION
+             SELECT ir.to_item_id, pr.item_id, ir.kind
+             FROM item_references ir JOIN revisions pr ON pr.id = ir.from_revision_id
+             WHERE ir.to_item_id = ANY($1) AND {LATEST}
+             UNION
+             SELECT br.item_id, pr.item_id, 'simulation'::text
+             FROM revisions br
+             JOIN simulation_bases sb ON sb.basis_revision_id = br.id
+             JOIN revisions pr ON pr.id = sb.revision_id
+             WHERE br.item_id = ANY($1) AND {LATEST}
+         ) e
+         JOIN items di ON di.id = e.dependent
+         ORDER BY 1, 3, 2",
+        access::item_visible("di", 2)
+    )
+}
+
+/// The dependents of the given revisions that the actor may see, and how
+/// many dependents were left out because they belong to restricted groups
+/// (the walk does not go on through them): multi-level through BOMs and
+/// item references of the latest revisions, plus CAD files that reference
+/// their files.
+///
+/// The walk goes up level by level for all revisions at once (one query per
+/// level, not one per path or per revision): every dependent is reported on
+/// the lowest level it is reached on from each revision's item, with the
+/// relation and the item it depends on there.
 pub async fn analysis(
     pool: &PgPool,
     actor: &Actor,
     revision_ids: &[Uuid],
 ) -> AppResult<(Vec<Dependent>, i64)> {
+    use std::collections::{HashMap, HashSet};
     if revision_ids.is_empty() {
         return Ok((Vec::new(), 0));
     }
-    let mut out = sqlx::query_as::<_, Dependent>(&format!(
-        "WITH RECURSIVE edges AS (
-             SELECT bl.child_item_id AS target, pr.item_id AS dependent, 'bom'::text AS relation
-             FROM bom_lines bl JOIN revisions pr ON pr.id = bl.parent_revision_id
-             WHERE {LATEST}
-             UNION
-             SELECT ir.to_item_id, pr.item_id, ir.kind
-             FROM item_references ir JOIN revisions pr ON pr.id = ir.from_revision_id
-             WHERE {LATEST}
-             UNION
-             SELECT br.item_id, pr.item_id, 'simulation'::text
-             FROM simulation_bases sb
-             JOIN revisions br ON br.id = sb.basis_revision_id
-             JOIN revisions pr ON pr.id = sb.revision_id
-             WHERE {LATEST}
-         ),
-         up(root, item_id, level, relation, via, path, visible) AS (
-             SELECT r.item_id, r.item_id, 0, ''::text, r.item_id, ARRAY[r.item_id], {root_vis}
-             FROM revisions r JOIN items ri ON ri.id = r.item_id WHERE r.id = ANY($1)
-             UNION ALL
-             SELECT up.root, e.dependent, up.level + 1, e.relation, up.item_id, up.path || e.dependent,
-                    {vis}
-             FROM up JOIN edges e ON e.target = up.item_id
-             JOIN items ui ON ui.id = e.dependent
-             WHERE up.visible AND NOT (e.dependent = ANY(up.path)) AND up.level < 12
-         )
-         SELECT DISTINCT ON (up.root, up.item_id)
-                up.root AS root_item_id, up.level, up.item_id, i.number AS item_number, lr.name AS item_name,
-                lr.id AS revision_id, lr.code AS revision_code, lr.state AS revision_state,
-                up.relation, vi.number AS via_number, up.visible
-         FROM up
-         JOIN items i ON i.id = up.item_id
-         JOIN items vi ON vi.id = up.via
-         CROSS JOIN LATERAL (
-             SELECT r.id, r.code, r.state, r.name FROM revisions r
-             WHERE r.item_id = i.id ORDER BY r.seq DESC LIMIT 1
-         ) lr
-         WHERE up.level > 0
-         ORDER BY up.root, up.item_id, up.level",
-        vis = access::item_visible("ui", 2),
-        root_vis = access::item_visible("ri", 2)
+    #[derive(sqlx::FromRow)]
+    struct Root {
+        revision_id: Uuid,
+        item_id: Uuid,
+        visible: bool,
+    }
+    let roots = sqlx::query_as::<_, Root>(&format!(
+        "SELECT r.id AS revision_id, r.item_id, {} AS visible
+         FROM revisions r JOIN items i ON i.id = r.item_id
+         WHERE r.id = ANY($1)",
+        access::item_visible("i", 2)
     ))
     .bind(revision_ids)
     .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?;
-    // Hidden dependents are dropped (the walk stopped at them) and counted.
-    let hidden_items: std::collections::HashSet<Uuid> = out
-        .iter()
-        .filter(|d| !d.visible)
-        .map(|d| d.item_id)
-        .collect();
-    out.retain(|d| d.visible);
-    // CAD files of other items that reference the files (one level).
-    for id in revision_ids {
-        let rev = revisions::get_unchecked(pool, *id).await?;
-        if !actor.can_see_project(rev.project_id) {
-            continue;
-        }
-        // hidden file-name matches are left out without a count
-        let referrers = references::file_referrers(pool, actor, *id).await?;
-        for f in referrers {
-            if out
-                .iter()
-                .any(|d| d.root_item_id == rev.item_id && d.item_id == f.item_id)
-            {
-                continue;
+
+    #[derive(sqlx::FromRow)]
+    struct Edge {
+        target: Uuid,
+        dependent: Uuid,
+        relation: String,
+        visible: bool,
+    }
+    struct Found {
+        root: Uuid,
+        item: Uuid,
+        level: i32,
+        relation: String,
+        via: Uuid,
+        visible: bool,
+    }
+    // CAD files of other items that reference the files (one level), for
+    // all revisions in one query – run while the walk below goes up. Only
+    // items the actor may see (hidden file-name matches are left out
+    // without a count).
+    #[derive(sqlx::FromRow)]
+    struct FileReferrer {
+        source_revision_id: Uuid,
+        item_id: Uuid,
+    }
+    let file_referrers = async {
+        Ok::<_, AppError>(
+            sqlx::query_as::<_, FileReferrer>(&format!(
+                "SELECT DISTINCT ON (sf.revision_id, i.number) sf.revision_id AS source_revision_id,
+                        i.id AS item_id
+                 FROM files sf
+                 JOIN revisions sr ON sr.id = sf.revision_id
+                 JOIN file_references fr ON lower(fr.name) = lower(sf.filename)
+                 JOIN file_versions dv ON dv.id = fr.file_version_id
+                 JOIN files df ON df.id = dv.file_id AND dv.version = df.current_version
+                 JOIN revisions r ON r.id = df.revision_id
+                 JOIN items i ON i.id = r.item_id
+                 WHERE sf.revision_id = ANY($1)
+                   AND r.item_id <> sr.item_id
+                   AND r.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = r.item_id)
+                   AND {}
+                 ORDER BY sf.revision_id, i.number",
+                access::item_visible("i", 2)
+            ))
+            .bind(revision_ids)
+            .bind(&actor.hidden_projects)
+            .fetch_all(pool)
+            .await?,
+        )
+    };
+    // (root item, item) pairs reached so far; the frontier holds the pairs
+    // of the last level. Roots the actor may not see are not walked.
+    let walk = async {
+        let sql = dependents_sql();
+        let mut reached: HashSet<(Uuid, Uuid)> =
+            roots.iter().map(|r| (r.item_id, r.item_id)).collect();
+        let mut frontier: Vec<(Uuid, Uuid)> = roots
+            .iter()
+            .filter(|r| r.visible)
+            .map(|r| (r.item_id, r.item_id))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let mut found: Vec<Found> = Vec::new();
+        for level in 1..=MAX_ANALYSIS_LEVELS {
+            if frontier.is_empty() {
+                break;
             }
-            out.push(Dependent {
-                root_item_id: rev.item_id,
+            let targets: Vec<Uuid> = frontier
+                .iter()
+                .map(|(_, item)| *item)
+                .collect::<HashSet<_>>()
+                .into_iter()
+                .collect();
+            let edges = sqlx::query_as::<_, Edge>(&sql)
+                .bind(&targets)
+                .bind(&actor.hidden_projects)
+                .fetch_all(pool)
+                .await?;
+            let mut by_target: HashMap<Uuid, Vec<&Edge>> = HashMap::new();
+            for e in &edges {
+                by_target.entry(e.target).or_default().push(e);
+            }
+            let mut next = Vec::new();
+            for (root, item) in frontier {
+                for e in by_target.get(&item).into_iter().flatten() {
+                    if reached.insert((root, e.dependent)) {
+                        // hidden dependents end the walk on their path
+                        if e.visible {
+                            next.push((root, e.dependent));
+                        }
+                        found.push(Found {
+                            root,
+                            item: e.dependent,
+                            level,
+                            relation: e.relation.clone(),
+                            via: item,
+                            visible: e.visible,
+                        });
+                    }
+                }
+            }
+            frontier = next;
+        }
+        Ok::<_, AppError>(found)
+    };
+    let (found, file_referrers) = tokio::try_join!(walk, file_referrers)?;
+    // Hidden dependents are dropped and counted.
+    let hidden_items: HashSet<Uuid> = found
+        .iter()
+        .filter(|f| !f.visible)
+        .map(|f| f.item)
+        .collect();
+    let mut found: Vec<Found> = found.into_iter().filter(|f| f.visible).collect();
+    let root_of: HashMap<Uuid, Uuid> = roots
+        .iter()
+        .filter(|r| r.visible)
+        .map(|r| (r.revision_id, r.item_id))
+        .collect();
+    // Checked per revision as before: a dependent found through BOM or
+    // references keeps that relation.
+    let mut by_pair: HashSet<(Uuid, Uuid)> = found.iter().map(|f| (f.root, f.item)).collect();
+    for f in file_referrers {
+        let Some(&root) = root_of.get(&f.source_revision_id) else {
+            continue;
+        };
+        if by_pair.insert((root, f.item_id)) {
+            found.push(Found {
+                root,
+                item: f.item_id,
                 level: 1,
-                item_id: f.item_id,
-                item_number: f.item_number,
-                item_name: f.item_name,
-                revision_id: f.revision_id,
-                revision_code: f.revision_code,
-                revision_state: f.revision_state,
                 relation: "file".into(),
-                via_number: rev.item_number.clone(),
-                in_change: false,
+                via: root,
                 visible: true,
             });
         }
     }
-    let in_change: Vec<Uuid> =
-        sqlx::query_scalar("SELECT item_id FROM revisions WHERE id = ANY($1)")
-            .bind(revision_ids)
-            .fetch_all(pool)
-            .await?;
-    for d in &mut out {
-        d.in_change = in_change.contains(&d.item_id);
+
+    // Numbers, names and latest revisions of everything found, in one query.
+    #[derive(sqlx::FromRow)]
+    struct Latest {
+        item_id: Uuid,
+        number: String,
+        revision_id: Uuid,
+        code: String,
+        state: String,
+        name: String,
     }
+    let ids: Vec<Uuid> = found
+        .iter()
+        .flat_map(|f| [f.item, f.via])
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    let latest: HashMap<Uuid, Latest> = sqlx::query_as::<_, Latest>(
+        "SELECT i.id AS item_id, i.number, lr.id AS revision_id, lr.code, lr.state, lr.name
+         FROM items i
+         CROSS JOIN LATERAL (
+             SELECT r.id, r.code, r.state, r.name FROM revisions r
+             WHERE r.item_id = i.id ORDER BY r.seq DESC LIMIT 1
+         ) lr
+         WHERE i.id = ANY($1)",
+    )
+    .bind(&ids)
+    .fetch_all(pool)
+    .await?
+    .into_iter()
+    .map(|l| (l.item_id, l))
+    .collect();
+    let in_change: HashSet<Uuid> = roots.iter().map(|r| r.item_id).collect();
+    // The same dependent on the same level through the same item, reached
+    // from several revisions of the change, is listed once (the sort and
+    // dedup below would drop all but the first anyway) – before any text
+    // is copied for it.
+    let mut listed: HashSet<(i32, Uuid, Uuid)> = HashSet::new();
+    let mut out: Vec<Dependent> = found
+        .into_iter()
+        .filter(|f| listed.insert((f.level, f.item, f.via)))
+        .filter_map(|f| {
+            let item = latest.get(&f.item)?;
+            let via = latest.get(&f.via)?;
+            Some(Dependent {
+                root_item_id: f.root,
+                level: f.level,
+                item_id: f.item,
+                item_number: item.number.clone(),
+                item_name: item.name.clone(),
+                revision_id: item.revision_id,
+                revision_code: item.code.clone(),
+                revision_state: item.state.clone(),
+                relation: f.relation,
+                via_number: via.number.clone(),
+                in_change: in_change.contains(&f.item),
+                visible: true,
+            })
+        })
+        .collect();
     out.sort_by(|a, b| {
         (a.level, &a.item_number, &a.via_number).cmp(&(b.level, &b.item_number, &b.via_number))
     });

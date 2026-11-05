@@ -647,6 +647,40 @@ async fn complete_release_workflow() {
         .api(Method::GET, "/api/v1/items?state=in_work", &reviewer, None)
         .await;
     assert_eq!(r.json()["total"], 2);
+    // The state filter applies to the latest revision only: revision A of
+    // both items is released, but their latest revision B is in work.
+    let r = app
+        .api(Method::GET, "/api/v1/items?state=released", &reviewer, None)
+        .await;
+    assert_eq!(r.json()["total"], 0, "{}", r.text());
+    // The total stays the full count on a short page and behind the last one.
+    let r = app
+        .api(
+            Method::GET,
+            "/api/v1/items?state=in_work&limit=1",
+            &reviewer,
+            None,
+        )
+        .await;
+    assert_eq!(r.json()["total"], 2);
+    assert_eq!(r.json()["items"].as_array().unwrap().len(), 1);
+    for uri in [
+        "/api/v1/items?state=in_work&offset=5",
+        "/api/v1/items?project=ROCKET&offset=5",
+    ] {
+        let r = app.api(Method::GET, uri, &reviewer, None).await;
+        assert_eq!(r.json()["total"], 2, "{uri}");
+        assert!(r.json()["items"].as_array().unwrap().is_empty(), "{uri}");
+    }
+    let r = app
+        .api(
+            Method::GET,
+            "/api/v1/items?q=mount&offset=5",
+            &reviewer,
+            None,
+        )
+        .await;
+    assert_eq!(r.json()["total"], 1);
 
     // Audit trail
     let entries: i64 =
