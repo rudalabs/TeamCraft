@@ -1210,7 +1210,12 @@ fn amf(data: &[u8]) -> Result<Mesh> {
 
 fn gltf(data: &[u8]) -> Result<Mesh> {
     use base64::Engine;
-    let document = gltf::Gltf::from_slice(data).context("invalid glTF")?;
+    // gltf-json indexes the accessors named by a primitive without a range
+    // check while validating (a POSITION index past the accessor list
+    // panics), so a hostile file must not be able to unwind through here.
+    let document = std::panic::catch_unwind(|| gltf::Gltf::from_slice(data))
+        .map_err(|_| anyhow!("invalid glTF (inconsistent accessor references)"))?
+        .context("invalid glTF")?;
     let mut buffers: Vec<Vec<u8>> = Vec::new();
     for buffer in document.buffers() {
         let bytes = match buffer.source() {
