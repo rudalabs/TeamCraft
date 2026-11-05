@@ -82,6 +82,8 @@ pub struct Config {
     /// Root directory of the file vault (and of the cached 3D previews).
     pub vault_dir: PathBuf,
     pub max_upload_bytes: u64,
+    /// Size and memory limits of the 3D preview (`TEAMCRAFT_PREVIEW_MAX_*`).
+    pub preview: crate::preview::PreviewLimits,
     /// Largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/{id}`).
     pub upload_chunk_bytes: u64,
     pub session_ttl: Duration,
@@ -541,6 +543,31 @@ impl Config {
         if max_upload_mb == 0 {
             bail!("TEAMCRAFT_MAX_UPLOAD_MB must be at least 1");
         }
+        let preview = {
+            let defaults = crate::preview::PreviewLimits::default();
+            let mb = |key: &str, default: u64, min: u64| -> Result<u64> {
+                let value = env.parse_or(key, default / (1024 * 1024))?;
+                if !(min..=1_048_576).contains(&value) {
+                    bail!("{key} must be between {min} and 1048576");
+                }
+                Ok(value * 1024 * 1024)
+            };
+            crate::preview::PreviewLimits {
+                max_result_bytes: mb(
+                    "TEAMCRAFT_PREVIEW_MAX_RESULT_MB",
+                    defaults.max_result_bytes,
+                    1,
+                )?,
+                max_mesh_bytes: mb("TEAMCRAFT_PREVIEW_MAX_MESH_MB", defaults.max_mesh_bytes, 1)?,
+                max_step_bytes: mb("TEAMCRAFT_PREVIEW_MAX_STEP_MB", defaults.max_step_bytes, 1)?,
+                // 0 = no limit
+                max_memory_bytes: mb(
+                    "TEAMCRAFT_PREVIEW_MAX_MEMORY_MB",
+                    defaults.max_memory_bytes,
+                    0,
+                )?,
+            }
+        };
         let upload_chunk_mb = env.parse_or("TEAMCRAFT_UPLOAD_CHUNK_MB", 16u64)?;
         if !(1..=1024).contains(&upload_chunk_mb) {
             bail!("TEAMCRAFT_UPLOAD_CHUNK_MB must be between 1 and 1024");
@@ -653,6 +680,7 @@ impl Config {
             db_max_connections,
             vault_dir,
             max_upload_bytes: max_upload_mb * 1024 * 1024,
+            preview,
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
             cookie_secure,
@@ -1217,6 +1245,32 @@ mod tests {
             ("TEAMCRAFT_COOKIE_SECURE", "maybe")
         ])
         .is_err());
+    }
+
+    #[test]
+    fn preview_limits_from_the_environment() {
+        let d = config_from(&[("TEAMCRAFT_DB_PASSWORD", "x")])
+            .unwrap()
+            .preview;
+        assert_eq!(d, crate::preview::PreviewLimits::default());
+        assert_eq!(d.max_result_bytes, 64 * 1024 * 1024);
+        assert_eq!(d.max_memory_bytes, 1024 * 1024 * 1024);
+        let c = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_PREVIEW_MAX_RESULT_MB", "8"),
+            ("TEAMCRAFT_PREVIEW_MAX_MEMORY_MB", "0"),
+        ])
+        .unwrap()
+        .preview;
+        assert_eq!(c.max_result_bytes, 8 * 1024 * 1024);
+        assert_eq!(c.max_memory_bytes, 0, "0 = no limit");
+        for bad in [
+            ("TEAMCRAFT_PREVIEW_MAX_RESULT_MB", "0"),
+            ("TEAMCRAFT_PREVIEW_MAX_MESH_MB", "x"),
+            ("TEAMCRAFT_PREVIEW_MAX_STEP_MB", "0"),
+        ] {
+            assert!(config_from(&[("TEAMCRAFT_DB_PASSWORD", "x"), bad]).is_err());
+        }
     }
 
     fn assistant_from(pairs: &[(&str, &str)]) -> Result<Option<AssistantConfig>> {
