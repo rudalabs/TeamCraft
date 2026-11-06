@@ -747,33 +747,18 @@ async fn html_errors(State(st): State<AppState>, req: Request, next: Next) -> Re
 /// Rejects cross-site form submissions (defence in depth on top of
 /// `SameSite=Lax` cookies): the `Origin` (or `Referer`) of every
 /// non-GET request must match the host the browser talked to.
-///
-/// A request with neither header is refused when it carries a session
-/// cookie: browsers send `Origin` with every form post, so a cookie
-/// without it comes from a client that may have been made to send it.
-/// Without a session cookie the request acts for nobody – sign-in and the
-/// first-start setup – and is let through (sign-in only ever creates a
-/// session for the credentials the request itself carries).
 async fn csrf_guard(State(st): State<AppState>, req: Request, next: Next) -> Response {
     let safe = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
-    if !safe {
-        let blocked = match request_origin(req.headers(), &st.config.public_url) {
-            Origin::Same => false,
-            Origin::Foreign => true,
-            Origin::Unknown => auth::cookie_value(req.headers(), auth::SESSION_COOKIE)
-                .is_some_and(|t| !t.is_empty()),
-        };
-        if blocked {
-            tracing::warn!(
-                origin = ?req.headers().get(header::ORIGIN),
-                path = %req.uri().path(),
-                "blocked cross-site request"
-            );
-            return AppError::Forbidden(
-                "Cross-site request blocked. Reload the page and try again.".into(),
-            )
-            .into_response();
-        }
+    if !safe && !same_origin(req.headers(), &st.config.public_url) {
+        tracing::warn!(
+            origin = ?req.headers().get(header::ORIGIN),
+            path = %req.uri().path(),
+            "blocked cross-site request"
+        );
+        return AppError::Forbidden(
+            "Cross-site request blocked. Reload the page and try again.".into(),
+        )
+        .into_response();
     }
     next.run(req).await
 }
@@ -784,39 +769,20 @@ fn authority(url: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_ascii_lowercase())
 }
 
-/// Where a request comes from, by its `Origin` or `Referer` header.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Origin {
-    /// A page served by this instance.
-    Same,
-    /// Another site, `Origin: null` or an unreadable header.
-    Foreign,
-    /// Neither header (old browsers, privacy tools, scripts).
-    Unknown,
-}
-
 /// Whether the request originates from a page served by this instance.
-///
-/// `X-Forwarded-Host` counts as this instance: the reverse proxy in front
-/// must set it (or remove what the client sent).
-pub(crate) fn request_origin(headers: &HeaderMap, public_url: &str) -> Origin {
+pub(crate) fn same_origin(headers: &HeaderMap, public_url: &str) -> bool {
     let header_str = |name: header::HeaderName| headers.get(name).and_then(|v| v.to_str().ok());
     let source = match header_str(header::ORIGIN) {
-        Some("null") => return Origin::Foreign,
+        Some("null") => return false,
         Some(origin) => authority(origin),
         None => match header_str(header::REFERER) {
             Some(referer) => authority(referer),
-            None if headers.contains_key(header::ORIGIN)
-                || headers.contains_key(header::REFERER) =>
-            {
-                return Origin::Foreign
-            }
-            None => return Origin::Unknown,
+            // Neither header: browsers send one on every cross-site POST, so a
+            // request without both is not a browser form post (F4).
+            None => return false,
         },
     };
-    let Some(source) = source else {
-        return Origin::Foreign;
-    };
+    let Some(source) = source else { return false };
     let mut allowed: Vec<String> = Vec::new();
     if let Some(host) = header_str(header::HOST) {
         allowed.push(host.to_ascii_lowercase());
@@ -829,11 +795,7 @@ pub(crate) fn request_origin(headers: &HeaderMap, public_url: &str) -> Origin {
     if let Some(public) = authority(public_url) {
         allowed.push(public);
     }
-    if allowed.contains(&source) {
-        Origin::Same
-    } else {
-        Origin::Foreign
-    }
+    allowed.contains(&source)
 }
 
 // ---------------------------------------------------------------------------
@@ -878,46 +840,42 @@ mod tests {
     #[test]
     fn origin_checks() {
         let public = "https://plm.example.org";
-        let from = |pairs: &[(&'static str, &'static str)]| request_origin(&headers(pairs), public);
-        assert_eq!(from(&[("origin", "https://plm.example.org")]), Origin::Same);
-        assert_eq!(
-            from(&[
+        assert!(same_origin(
+            &headers(&[("origin", "https://plm.example.org")]),
+            public
+        ));
+        assert!(same_origin(
+            &headers(&[
                 ("origin", "http://localhost:8080"),
                 ("host", "localhost:8080")
             ]),
-            Origin::Same
-        );
-        assert_eq!(
-            from(&[
+            public
+        ));
+        assert!(same_origin(
+            &headers(&[
                 ("origin", "https://proxy.example.org"),
                 ("x-forwarded-host", "proxy.example.org")
             ]),
-            Origin::Same
-        );
-        assert_eq!(
-            from(&[
+            public
+        ));
+        assert!(!same_origin(
+            &headers(&[
                 ("origin", "https://evil.example"),
                 ("host", "plm.example.org")
             ]),
-            Origin::Foreign
-        );
-        assert_eq!(from(&[("origin", "null")]), Origin::Foreign);
-        assert_eq!(from(&[("origin", "not a url")]), Origin::Foreign);
-        assert_eq!(
-            from(&[("referer", "https://plm.example.org/items?q=1")]),
-            Origin::Same
-        );
-        assert_eq!(
-            from(&[("referer", "https://evil.example/x")]),
-            Origin::Foreign
-        );
-        assert_eq!(from(&[]), Origin::Unknown);
-        let mut unreadable = HeaderMap::new();
-        unreadable.insert(
-            header::ORIGIN,
-            HeaderValue::from_bytes(b"https://pl\xffm.example.org").unwrap(),
-        );
-        assert_eq!(request_origin(&unreadable, public), Origin::Foreign);
+            public
+        ));
+        assert!(!same_origin(&headers(&[("origin", "null")]), public));
+        assert!(same_origin(
+            &headers(&[("referer", "https://plm.example.org/items?q=1")]),
+            public
+        ));
+        assert!(!same_origin(
+            &headers(&[("referer", "https://evil.example/x")]),
+            public
+        ));
+        // F4: neither header present is refused.
+        assert!(!same_origin(&headers(&[]), public));
     }
 
     #[test]

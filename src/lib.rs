@@ -155,18 +155,9 @@ pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' da
      style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none'; \
      base-uri 'self'; form-action 'self'";
 
-/// `Strict-Transport-Security` when the public URL is https: browsers then
-/// use https only for a year. No `includeSubDomains` – other services under
-/// the same domain are not ours to decide.
-pub const STRICT_TRANSPORT_SECURITY: &str = "max-age=31536000";
-
 /// Builds the complete HTTP application.
 pub fn router(state: AppState) -> Router {
-    let hsts = state
-        .config
-        .public_url
-        .starts_with("https://")
-        .then(|| HeaderValue::from_static(STRICT_TRANSPORT_SECURITY));
+    let hsts = state.config.cookie_secure;
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -192,10 +183,12 @@ pub fn router(state: AppState) -> Router {
             HeaderName::from_static("permissions-policy"),
             HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
         ))
-        .layer(SetResponseHeaderLayer::if_not_present(
-            header::STRICT_TRANSPORT_SECURITY,
-            move |_: &axum::response::Response| hsts.clone(),
-        ))
+        .layer(tower::util::option_layer(hsts.then(|| {
+            SetResponseHeaderLayer::if_not_present(
+                header::STRICT_TRANSPORT_SECURITY,
+                HeaderValue::from_static("max-age=31536000"),
+            )
+        })))
         .layer(CatchPanicLayer::custom(panic_response))
         .layer(
             // One INFO line per request. Only the path is recorded: query

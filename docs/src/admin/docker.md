@@ -109,15 +109,12 @@ plm.example.org {
 ```
 
 With nginx, allow large uploads (`client_max_body_size 512m;`, matching
-`TEAMCRAFT_MAX_UPLOAD_MB`) and pass `Host` and `X-Forwarded-Proto`.
-
-The cross-site check of web forms accepts the host in `X-Forwarded-Host` as
-this instance, so the proxy must set that header itself or drop what the
-client sent – never pass a client's value through (Caddy sets it; with
-nginx, `proxy_set_header X-Forwarded-Host $host;`). A form post that carries
-the session cookie but neither `Origin` nor `Referer` is refused; current
-browsers always send `Origin`, so this only stops forged requests and
-scripts that reuse a browser cookie.
+`TEAMCRAFT_MAX_UPLOAD_MB`) and pass `Host` and `X-Forwarded-Proto`. TeamCraft sends
+`Strict-Transport-Security` itself when `TEAMCRAFT_PUBLIC_URL` is https. The cross-site check accepts the `Host` and
+`X-Forwarded-Host` the proxy passes: let the proxy overwrite `X-Forwarded-Host` (never pass on the client's), and
+note that a web form post without `Origin` and `Referer` is refused.
+Caddy sets `X-Forwarded-Host` itself; with nginx:
+`proxy_set_header X-Forwarded-Host $host;`.
 
 ## Upgrade
 

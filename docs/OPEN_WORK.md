@@ -76,19 +76,25 @@ feature milestone – the features in *What works* are enough; what is missing i
 *Security*
 
 - Open findings of the [threat model](src/dev/threat-model.md) (F1–F19 there):
-  - [ ] F1 (rest): count wrong current passwords of the own password change like failed sign-ins (the sign-in
-    form itself is throttled since the security fixes, part 1)
+  - [x] F1: failed password sign-ins throttled per username and client address (`TEAMCRAFT_SIGNIN_MAX_FAILURES`,
+    429 with `Retry-After`)
+  - [ ] F1 (rest): count wrong current passwords of the own password change like failed sign-ins
   - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
+  - [x] F3: sign-in, failed sign-in and sign-out in the audit log (`user.sign_in`, `user.sign_in_failed`,
+    `user.sign_out`; no password, token or unknown typed name)
+  - [x] F4: web posts without `Origin` and `Referer` are refused; install guide says the proxy must overwrite
+    `X-Forwarded-Host`
+  - [x] F5: `Strict-Transport-Security` when the public URL is https
   - [ ] F6: OIDC with a plain `http://` issuer: refuse it outside `localhost`, or verify ID token signatures (JWKS)
     for it – a decision, since it can break installations with an internal IdP
   - [ ] F7: end TeamCraft sessions of users removed at the IdP (shorter SSO sessions, back-channel logout or a
     periodic check)
   - [ ] F8: re-check the hash of a blob while it is downloaded (or periodically), not only in `vault check`
   - [ ] F9: disk quota per user and in total for uploads
-  - [ ] F10: serve downloads with a Content-Type derived from the format, and pin the download headers
-    (attachment, nosniff, CSP) in a test
+  - [ ] F10: serve downloads with a Content-Type derived from the format (the download headers are pinned in
+    `tests/web_security.rs`)
   - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
-  - [ ] F12: start the parser children with a cleared environment (no database URL, no keys)
+  - [x] F12: start the parser children with a cleared environment (no database URL, no keys)
   - [ ] F13: a cap on the unpacked size of XLSX/ODS tables, or read them in the isolated child
   - [ ] F14: fuzz targets for `simmesh`, `pdftext` and `resultscan` (the no-panic lints and the 3DS and Kelvin
     fixes are in `main` since #106/#108)
@@ -353,12 +359,6 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
-- [x] **Security fixes from the threat model, part 1** (web and sign-in): F4 a cookie request without `Origin`
-  and `Referer` is refused (sign-in without a cookie still passes; the proxy must set `X-Forwarded-Host`); F5
-  `Strict-Transport-Security` for an https public URL, all security headers pinned in `tests/web_security.rs`; F3
-  sign-in, failed sign-in and sign-out in the audit log (no password, token or unknown typed name); F1 failed
-  password sign-ins throttled per username and client address (`TEAMCRAFT_SIGNIN_MAX_FAILURES`, 429 with
-  `Retry-After`)
 - [x] **Threat model** (`docs/src/dev/threat-model.md`): assets, attackers, trust boundaries and per threat the
   mitigation with code and test or *open*; vault, sessions, PATs, OIDC, uploads, file parsers, webhooks,
   MCP/assistant, desktop ↔ server, backup/restore. 19 open findings listed in section 2, *Security*; one fixed on
