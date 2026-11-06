@@ -218,8 +218,10 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   [platforms/windows.md](../platforms/windows.md))
 - [ ] Install and start the release Flatpak bundles (x86_64, aarch64) and the portable Windows zips (x64, arm64) once –
   built and checked as files only (#66); GNOME runtime 49 may be end of life on Flathub, move to the current one
-- [ ] Release v0.1.0 again from the current `main` (re-tag), when asked – the published v0.1.0 is from `6f68f9a` and
-  has no Flatpak, Windows ARM64 or portable builds
+- [x] Release v0.1.0 again from the current `main` (re-tag), when asked – done on 2026-11-05: the tag `v0.1.0` now
+  points to `439724a` (it first pointed to `6f68f9a`), and its GitHub Release has the Flatpak bundles, the Windows
+  ARM64 installers and the portable zips; superseded by v0.2.0 (`ac406a2`). A clone that fetched the old tag keeps it:
+  `git fetch origin +refs/tags/v0.1.0:refs/tags/v0.1.0`
 
 ### 4. Parked features
 
