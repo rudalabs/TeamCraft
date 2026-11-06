@@ -99,9 +99,12 @@ state.
 
 Thin, outside the top 15: `notify.rs` (48 of 65 lines missed),
 `services/insights.rs` (83 of 187), `services/requests.rs` (162 of 1,587),
-`web/requests.rs`, `web/simulations.rs`, `web/attributes.rs`, `web/admin.rs`
-and `web/webhooks.rs` (a quarter of their lines missed each),
-`desktop/src/commands.rs`.
+`web/webhooks.rs` (a quarter of its lines missed),
+`desktop/src/commands.rs`. `web/requests.rs`, `web/simulations.rs`,
+`web/attributes.rs` and `web/admin.rs` were thin too and have handler tests
+since (`tests/web_request_handlers.rs`, `web_simulation_handlers.rs`,
+`web_admin_handlers.rs`: rights, cross-site guard, form errors, conflicts,
+restricted groups); the table above is from before them.
 
 ### Found while writing the tests
 
