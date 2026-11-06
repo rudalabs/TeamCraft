@@ -584,7 +584,8 @@ pub async fn members(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<ProjectMe
 /// * **Permission:** the group is visible to the actor ("not found"
 ///   otherwise) and the actor manages it (or is an administrator; 403); an
 ///   unknown username is refused (400).
-/// * **Locks:** none; the membership upsert is atomic per row.
+/// * **Locks:** the group row (`FOR UPDATE`) before the manager check, so a manager removed
+///   at the same moment is refused and membership changes of one group are serialised.
 /// * **Data:** an existing membership keeps its source (an IdP-synchronised
 ///   one stays one) and is only ever raised to manager, never lowered.
 /// * **Audit:** `project.add_member`.
@@ -602,6 +603,11 @@ pub async fn add_member(
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("Unknown user '{}'.", username.trim())))?;
     let mut tx = pool.begin().await?;
+    // serialise membership changes of this group (as `remove_member` does)
+    sqlx::query("SELECT id FROM projects WHERE id = $1 FOR UPDATE")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await?;
     require_manager(&mut tx, actor, project_id).await?;
     // An existing membership keeps its source: one synchronised from the
     // identity provider stays one (also when its holder is made a manager),
