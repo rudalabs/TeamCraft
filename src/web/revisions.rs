@@ -22,7 +22,7 @@ use crate::{
     preview::PreviewFormat,
     services::{
         attributes, audit, bom, changes, files, impacts, interchange, items, notifications,
-        projects, references, requests, revisions, similar, simulations, uploads,
+        projects, references, requests, result_proposals, revisions, similar, simulations, uploads,
     },
     thumbnail, util, AppState,
 };
@@ -325,9 +325,10 @@ pub async fn show(
     // for every other item the simulations based on it.
     let is_simulation = rev.item_type == ItemType::Simulation.as_str();
     let simulation = if is_simulation {
-        let (bases, results) = tokio::try_join!(
+        let (bases, results, proposals) = tokio::try_join!(
             simulations::bases(&st.db, me, id),
-            simulations::results(&st.db, me, id)
+            simulations::results(&st.db, me, id),
+            result_proposals::list(&st.db, me, id, Some("pending"))
         )?;
         let out_of_date = bases.iter().filter(|b| b.out_of_date.is_some()).count();
         let roles: Vec<_> = BasisRole::ALL
@@ -342,6 +343,8 @@ pub async fn show(
             "roles": roles,
             "views": result_views,
             "images": gallery,
+            "proposals": proposals,
+            "can_decide": me.can_edit() && me.can_edit_project(rev.project_id),
         })
     } else {
         serde_json::Value::Null
