@@ -151,14 +151,24 @@ fn names_in(run: &str, exts: &[&str], out: &mut Vec<String>) {
             }
             start -= 1;
         }
-        let name: String = chars.get(start..end).unwrap_or_default().iter().collect();
-        let name = name
+        let span: String = chars.get(start..end).unwrap_or_default().iter().collect();
+        let name = span
             .trim()
             .trim_start_matches(|c: char| !(c.is_alphanumeric() || c == '_'));
         // The stem in characters: the extension matched in lower case may
         // have more bytes than `ext` (the Kelvin sign is three bytes).
         let stem = name.chars().count().saturating_sub(ext.chars().count() + 1);
-        if stem > 0 && name.len() <= MAX_NAME && name.chars().take(stem).any(char::is_alphanumeric)
+        // Binary data that happens to end in `.jt` or the like: bytes that
+        // are no text (U+FFFD after the lossy decoding) inside the name, or
+        // right before a name without a letter (`�4.JT`). A real name after
+        // a length byte (`�Bracket.SLDPRT`) stays.
+        let binary = name.contains(char::REPLACEMENT_CHARACTER)
+            || (span.contains(char::REPLACEMENT_CHARACTER)
+                && !name.chars().take(stem).any(char::is_alphabetic));
+        if stem > 0
+            && !binary
+            && name.len() <= MAX_NAME
+            && name.chars().take(stem).any(char::is_alphanumeric)
         {
             out.push(name.to_string());
         }
@@ -267,6 +277,70 @@ fn step_file_name_entity(content: &[u8]) -> Option<std::ops::Range<usize>> {
         i += 1;
     }
     None
+}
+
+/// Bytes of a STEP file read for its export name: the HEADER comes first.
+pub const EXPORT_NAME_SCAN: u64 = 64 * 1024;
+
+/// The name a STEP file was exported under – the first string of the
+/// `FILE_NAME(...)` entity in its HEADER, reduced to the file name – when it
+/// is the name of a referencable file and differs from `own_name`. Other
+/// files may reference the file under that name (an assembly exported
+/// together with its parts, a part renamed after the export); it is a
+/// second name of the file itself and never a reference to another file.
+pub fn step_export_name(content: &[u8], own_name: &str) -> Option<String> {
+    let entity = step_file_name_entity(content)?;
+    let text = content.get(entity)?;
+    let open = text.iter().position(|&b| b == b'(')?;
+    let rest = text.get(open + 1..)?;
+    let quote = rest.iter().position(|b| !b.is_ascii_whitespace())?;
+    if rest.get(quote) != Some(&b'\'') {
+        return None;
+    }
+    // the string up to the closing quote; `''` is an escaped quote
+    let mut value = Vec::new();
+    let mut i = quote + 1;
+    loop {
+        match (rest.get(i), rest.get(i + 1)) {
+            (Some(b'\''), Some(b'\'')) => {
+                value.push(b'\'');
+                i += 2;
+            }
+            (Some(b'\''), _) => break,
+            (Some(&b), _) => {
+                value.push(b);
+                i += 1;
+            }
+            (None, _) => return None,
+        }
+    }
+    let value = String::from_utf8_lossy(&value);
+    let name = value.rsplit(['\\', '/']).next().unwrap_or_default().trim();
+    let name = cadformat::normalize_name(name);
+    let fits = !name.is_empty()
+        && name.len() <= MAX_NAME
+        && !name.contains(char::REPLACEMENT_CHARACTER)
+        && is_referencable(name)
+        && name.to_lowercase() != cadformat::normalize_name(own_name).to_lowercase();
+    fits.then(|| name.to_string())
+}
+
+/// [`step_export_name`] of a stored file (its first [`EXPORT_NAME_SCAN`]
+/// bytes); `None` if it cannot be read.
+pub async fn scan_export_name(path: &Path, own_name: &str) -> Option<String> {
+    let path = path.to_path_buf();
+    let own = own_name.to_string();
+    tokio::task::spawn_blocking(move || -> std::io::Result<Option<String>> {
+        let mut head = Vec::new();
+        std::fs::File::open(&path)?
+            .take(EXPORT_NAME_SCAN)
+            .read_to_end(&mut head)?;
+        Ok(step_export_name(&head, &own))
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .flatten()
 }
 
 /// The CAD file names referenced in `content`, without `own_name`; each name
@@ -654,5 +728,80 @@ mod tests {
             .flat_map(u16::to_le_bytes)
             .collect();
         find(&utf16, "x.kicad_pro");
+    }
+
+    fn step(header_name: &str) -> Vec<u8> {
+        format!(
+            "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\n\
+             FILE_NAME({header_name},'2026-11-06',(''),(''),'','','');\nENDSEC;\nDATA;\nENDSEC;\n"
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn the_step_export_name_is_a_second_name_of_the_file() {
+        assert_eq!(
+            step_export_name(&step("'bracket.stp'"), "bracket_v2.stp").as_deref(),
+            Some("bracket.stp")
+        );
+        // a path is reduced to the file name, spaces around it are dropped
+        assert_eq!(
+            step_export_name(&step("  'C:\\Export\\Rover\\Wheel hub.STEP' "), "x.stp").as_deref(),
+            Some("Wheel hub.STEP")
+        );
+        assert_eq!(
+            step_export_name(&step("'/srv/out/it''s (v2).stp'"), "x.stp").as_deref(),
+            Some("it's (v2).stp")
+        );
+        // a native name the exporting program kept is a name as well
+        assert_eq!(
+            step_export_name(&step("'Bracket.SLDPRT'"), "bracket.stp").as_deref(),
+            Some("Bracket.SLDPRT")
+        );
+        // not a second name: the same name, no name, no file name, a
+        // document, a name that is not text, a broken or missing entity
+        for header in [
+            "'BRACKET_V2.stp'",
+            "''",
+            "'   '",
+            "'Part1'",
+            "'C:\\Export\\'",
+            "'notes.pdf'",
+            "$",
+            "'unterminated.stp",
+        ] {
+            assert_eq!(
+                step_export_name(&step(header), "bracket_v2.stp"),
+                None,
+                "{header}"
+            );
+        }
+        let latin1 = b"ISO-10303-21;\nHEADER;\nFILE_NAME('Halterung_f\xfcr.stp','x');\nENDSEC;\n";
+        assert_eq!(step_export_name(latin1, "x.stp"), None);
+        let no_step = b"FILE_NAME('bracket.stp','2026');";
+        assert_eq!(step_export_name(no_step, "x.stp"), None);
+        let in_data =
+            b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('X'));\nENDSEC;\nDATA;\n#1=FILE_NAME('b.stp');\n";
+        assert_eq!(step_export_name(in_data, "x.stp"), None);
+        // never an outgoing reference of the file itself
+        assert!(find(&step("'bracket.stp'"), "bracket_v2.stp").is_empty());
+    }
+
+    #[test]
+    fn binary_noise_is_no_file_name() {
+        // `.JT` after bytes that are no text (seen in a JT file's
+        // compressed segments): no name
+        let mut content = vec![0x01, 0x9f, b'4', b'.', b'J', b'T', b'\n'];
+        // inside a name as well
+        content.extend(b"\x02ab\x9fcd.stp\x00");
+        assert!(
+            find(&content, "x.jt").is_empty(),
+            "{:?}",
+            find(&content, "x.jt")
+        );
+        // a real name after a length byte stays, also a numeric one in text
+        let mut content = vec![0x01, 0x8e];
+        content.extend(b"Bracket.SLDPRT\x00\x004711.stp\x00");
+        assert_eq!(find(&content, "x.sldasm"), ["Bracket.SLDPRT", "4711.stp"]);
     }
 }

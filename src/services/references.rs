@@ -263,6 +263,9 @@ pub struct FileMatch {
     pub filename: String,
     /// The file belongs to the revision that is being looked at.
     pub same_revision: bool,
+    /// Matched by the name the STEP file was exported under, not by its own
+    /// file name – only where no file has the referenced name itself.
+    pub export_name: bool,
 }
 
 /// A referenced file name and where TeamCraft has it.
@@ -310,19 +313,23 @@ pub async fn files_of_revision(
         return Ok(Vec::new());
     }
     let keys: Vec<String> = rows.iter().map(|r| r.name.to_lowercase()).collect();
+    // Candidates: the files of this revision and of the latest revisions of
+    // the other items the actor may see.
+    let scope = format!(
+        "(r.id = $2 OR (r.item_id <> (SELECT item_id FROM revisions WHERE id = $2)
+              AND r.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = r.item_id)))
+         AND {}",
+        access::item_visible("i", 3)
+    );
     let found = sqlx::query_as::<_, FileMatch>(&format!(
         "SELECT lower(f.filename) AS key, i.id AS item_id, i.number AS item_number, r.name AS item_name,
                 r.id AS revision_id, r.code AS revision_code, r.state AS revision_state,
-                f.id AS file_id, f.filename, r.id = $2 AS same_revision
+                f.id AS file_id, f.filename, r.id = $2 AS same_revision, FALSE AS export_name
          FROM files f
          JOIN revisions r ON r.id = f.revision_id
          JOIN items i ON i.id = r.item_id
-         WHERE lower(f.filename) = ANY($1)
-           AND (r.id = $2 OR (r.item_id <> (SELECT item_id FROM revisions WHERE id = $2)
-                AND r.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = r.item_id)))
-           AND {}
-         ORDER BY i.number",
-        access::item_visible("i", 3)
+         WHERE lower(f.filename) = ANY($1) AND {scope}
+         ORDER BY i.number"
     ))
     .bind(&keys)
     .bind(revision_id)
@@ -332,6 +339,37 @@ pub async fn files_of_revision(
     let mut by_key: HashMap<String, Vec<FileMatch>> = HashMap::new();
     for m in found {
         by_key.entry(m.key.clone()).or_default().push(m);
+    }
+    // A name no candidate has as its file name: the STEP files exported
+    // under it (the weaker match, never in place of a real one).
+    let unmatched: Vec<String> = keys
+        .iter()
+        .filter(|k| !by_key.contains_key(*k))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if !unmatched.is_empty() {
+        let weak = sqlx::query_as::<_, FileMatch>(&format!(
+            "SELECT lower(fv.export_name) AS key, i.id AS item_id, i.number AS item_number,
+                    r.name AS item_name, r.id AS revision_id, r.code AS revision_code,
+                    r.state AS revision_state, f.id AS file_id, f.filename,
+                    r.id = $2 AS same_revision, TRUE AS export_name
+             FROM files f
+             JOIN file_versions fv ON fv.file_id = f.id AND fv.version = f.current_version
+             JOIN revisions r ON r.id = f.revision_id
+             JOIN items i ON i.id = r.item_id
+             WHERE lower(fv.export_name) = ANY($1) AND {scope}
+             ORDER BY i.number, f.filename"
+        ))
+        .bind(&unmatched)
+        .bind(revision_id)
+        .bind(&actor.hidden_projects)
+        .fetch_all(pool)
+        .await?;
+        for m in weak {
+            by_key.entry(m.key.clone()).or_default().push(m);
+        }
     }
     let mut files: BTreeMap<(String, Uuid), FileWithReferences> = BTreeMap::new();
     for row in rows {
@@ -343,9 +381,15 @@ pub async fn files_of_revision(
                 format_kind: cadformat::by_id(&row.format).map(|f| f.kind),
                 references: Vec::new(),
             });
+        // (a STEP file is never its own match through its export name)
         let matches = by_key
             .get(&row.name.to_lowercase())
-            .cloned()
+            .map(|ms| {
+                ms.iter()
+                    .filter(|m| !(m.export_name && m.file_id == row.file_id))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         entry.references.push(ReferencedName {
             name: row.name,
@@ -368,6 +412,9 @@ pub struct FileReferrer {
     pub filename: String,
     /// The referenced file of this revision.
     pub referenced: String,
+    /// Referenced by the name the STEP file was exported under (see
+    /// [`FileMatch::export_name`]).
+    pub export_name: bool,
 }
 
 /// CAD files of the latest revisions of other items that reference one of
@@ -403,22 +450,50 @@ pub(crate) async fn file_referrers_unchecked(
     pool: &PgPool,
     revision_id: Uuid,
 ) -> AppResult<Vec<FileReferrer>> {
+    // By the file name, or by the STEP export name where no candidate of
+    // the referencing file (its revision, the latest revisions of the other
+    // items) has the referenced name itself – the same rule as in
+    // `files_of_revision`, without the read check (done by the caller).
     Ok(sqlx::query_as::<_, FileReferrer>(
-        "SELECT DISTINCT ON (i.number, df.filename, sf.filename)
-                i.id AS item_id, i.number AS item_number, r.id AS revision_id, r.code AS revision_code,
-                r.state AS revision_state, r.name AS item_name, df.id AS file_id, df.filename,
-                sf.filename AS referenced
-         FROM files sf
-         JOIN revisions sr ON sr.id = sf.revision_id
-         JOIN file_references fr ON lower(fr.name) = lower(sf.filename)
-         JOIN file_versions dv ON dv.id = fr.file_version_id
-         JOIN files df ON df.id = dv.file_id AND dv.version = df.current_version
-         JOIN revisions r ON r.id = df.revision_id
-         JOIN items i ON i.id = r.item_id
-         WHERE sf.revision_id = $1
-           AND r.item_id <> sr.item_id
-           AND r.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = r.item_id)
-         ORDER BY i.number, df.filename, sf.filename",
+        "SELECT DISTINCT ON (item_number, filename, referenced) *
+         FROM (
+             SELECT i.id AS item_id, i.number AS item_number, r.id AS revision_id,
+                    r.code AS revision_code, r.state AS revision_state, r.name AS item_name,
+                    df.id AS file_id, df.filename, sf.filename AS referenced, FALSE AS export_name
+             FROM files sf
+             JOIN revisions sr ON sr.id = sf.revision_id
+             JOIN file_references fr ON lower(fr.name) = lower(sf.filename)
+             JOIN file_versions dv ON dv.id = fr.file_version_id
+             JOIN files df ON df.id = dv.file_id AND dv.version = df.current_version
+             JOIN revisions r ON r.id = df.revision_id
+             JOIN items i ON i.id = r.item_id
+             WHERE sf.revision_id = $1
+               AND r.item_id <> sr.item_id
+               AND r.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = r.item_id)
+             UNION ALL
+             SELECT i.id, i.number, r.id, r.code, r.state, r.name, df.id, df.filename,
+                    sf.filename, TRUE
+             FROM files sf
+             JOIN file_versions sv ON sv.file_id = sf.id AND sv.version = sf.current_version
+             JOIN revisions sr ON sr.id = sf.revision_id
+             JOIN file_references fr ON lower(fr.name) = lower(sv.export_name)
+             JOIN file_versions dv ON dv.id = fr.file_version_id
+             JOIN files df ON df.id = dv.file_id AND dv.version = df.current_version
+             JOIN revisions r ON r.id = df.revision_id
+             JOIN items i ON i.id = r.item_id
+             WHERE sf.revision_id = $1
+               AND sv.export_name IS NOT NULL
+               AND r.item_id <> sr.item_id
+               AND r.seq = (SELECT MAX(x.seq) FROM revisions x WHERE x.item_id = r.item_id)
+               AND NOT EXISTS (
+                   SELECT 1 FROM files xf JOIN revisions xr ON xr.id = xf.revision_id
+                   WHERE lower(xf.filename) = lower(fr.name)
+                     AND (xr.id = r.id
+                          OR (xr.item_id <> r.item_id
+                              AND xr.seq = (SELECT MAX(y.seq) FROM revisions y
+                                            WHERE y.item_id = xr.item_id))))
+         ) m
+         ORDER BY item_number, filename, referenced, export_name",
     )
     .bind(revision_id)
     .fetch_all(pool)
@@ -480,6 +555,22 @@ pub fn suggestions(
         }
     }
     out
+}
+
+/// Stores the STEP export name of a file version (`None` removes it).
+pub(crate) async fn store_export_name(
+    conn: &mut PgConnection,
+    file_version_id: Uuid,
+    export_name: Option<&str>,
+) -> AppResult<()> {
+    sqlx::query(
+        "UPDATE file_versions SET export_name = $2, export_name_scanned = TRUE WHERE id = $1",
+    )
+    .bind(file_version_id)
+    .bind(export_name)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
 }
 
 /// Stores the references found in a newly stored file version.

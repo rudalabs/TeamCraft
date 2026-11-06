@@ -329,11 +329,54 @@ async fn nx_parts_report_no_false_references() {
     assert_eq!(in_memory, refs);
 }
 
-/// Gap: binary noise in JT files is read as file names.
+/// The NIST STEP files carry the name they were exported under in their
+/// header – a second name of the file when it differs from the stored one,
+/// never a reference.
 #[tokio::test]
-#[ignore = "known gap: false references of the heuristic scan in JT files"]
+async fn step_files_carry_their_export_name() {
+    for (rel, export) in [
+        (
+            "ctc-01/step/nist_ctc_01_asme1_rd.stp",
+            Some("nist_ctc_01_asme1.stp"),
+        ),
+        (
+            "ftc-11/step/nist_ftc_11_asme1_rb.stp",
+            Some("nist_ftc_11_asme1.stp"),
+        ),
+        // exported under the name it is stored with: no second name
+        ("ctc-01/step/nist_ctc_01_asme1_ap242-e1.stp", None),
+    ] {
+        let path = fixture(rel);
+        let own = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(
+            cadrefs::scan_export_name(&path, &own).await.as_deref(),
+            export,
+            "{rel}"
+        );
+        let refs = cadrefs::scan_file(&path, &own).await;
+        assert!(refs.is_empty(), "{rel}: {refs:?}");
+    }
+}
+
+/// A monolithic JT file (the whole assembly in one file) references no
+/// other file: the binary noise of its compressed segments (`…\x9f4.JT`)
+/// is not read as a file name. A name the file really holds is still found.
+#[tokio::test]
 async fn jt_files_report_no_false_references() {
     let rel = "mtc-assembly/nx/NIST mtc crada assembly.jt";
     let refs = cadrefs::scan_file(&fixture(rel), "NIST mtc crada assembly.jt").await;
     assert!(refs.is_empty(), "{rel}: {refs:?}");
+    // the same file with a part reference of a shattered JT assembly
+    // (UTF-16, as JT stores strings) between its segments
+    let mut bytes = std::fs::read(fixture(rel)).unwrap();
+    let at = bytes.len() / 2;
+    let name: Vec<u8> = "NIST mtc crada box.jt"
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    bytes.splice(at..at, [vec![0, 0], name, vec![0, 0]].concat());
+    assert_eq!(
+        cadrefs::find(&bytes, "NIST mtc crada assembly.jt"),
+        ["NIST mtc crada box.jt"]
+    );
 }

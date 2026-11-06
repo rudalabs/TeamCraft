@@ -704,7 +704,7 @@
         {% for f in references.file_referrers %}
           <tr>
             <td class="mono nowrap"><a href="/revisions/{{ f.revision_id }}">{{ f.item_number }}/{{ f.revision_code }}</a></td>
-            <td>{{ f.item_name }} <span class="small muted">· {{ f.filename }} references {{ f.referenced }}</span></td>
+            <td>{{ f.item_name }} <span class="small muted">· {{ f.filename }} references {{ f.referenced }}{% if f.export_name %} by the name it was exported under{% endif %}</span></td>
             <td>{{ m.badge(f.revision_state) }}</td>
           </tr>
         {% endfor %}
@@ -723,7 +723,7 @@
   <ul class="plain-list file-refs">
     {% for n in f.references %}
     <li><span class="mono small">{{ n.name }}</span> →
-      {% for x in n.matches %}{% if x.same_revision %}<span class="small">in this revision</span>{% else %}<a class="mono" href="/revisions/{{ x.revision_id }}">{{ x.item_number }}/{{ x.revision_code }}</a> {{ m.badge(x.revision_state) }}{% endif %}{% if not loop.last %}, {% endif %}{% else %}<span class="badge badge-in_review">not in TeamCraft</span>{% endfor %}
+      {% for x in n.matches %}{% if x.same_revision %}<span class="small">in this revision</span>{% else %}<a class="mono" href="/revisions/{{ x.revision_id }}">{{ x.item_number }}/{{ x.revision_code }}</a> {{ m.badge(x.revision_state) }}{% endif %}{% if x.export_name %} <span class="small muted" title="No file has this name; the STEP file was exported under it">as {{ x.filename }} (export name)</span>{% endif %}{% if not loop.last %}, {% endif %}{% else %}<span class="badge badge-in_review">not in TeamCraft</span>{% endfor %}
     </li>
     {% endfor %}
   </ul>
