@@ -140,12 +140,8 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   parsing edge cases (decimal comma, `1.1.2` positions with gaps, empty levels), malformed STEP (truncated, unknown
   entities, `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`) never panics (fuzz-style corpus); desktop folder import resumes
   after an interrupted run without duplicates
-- [ ] **Atomic processes** – each multi-row mutation is all-or-nothing under an injected failure (a failing
-  statement or a closed connection between steps): check-in (file versions + lock release), change order release
-  (all revisions or none, impact flags, notifications and webhooks in the same transaction), *Replace in assemblies*,
-  Save As with files and BOM, chunked upload `finish`, folder import per item, restricted-group visibility switch;
-  concurrent runs of the same mutation (two check-ins, two releases, two numbering requests) give one winner and a
-  clean 409, never a duplicate or a lost update
+- [ ] **Atomic processes** – the folder import per item is still open (with the import proofing); the rest is done,
+  see *Done*
 - [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
   make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
   with two failing integration tests; merge only with green checks
@@ -335,7 +331,13 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
-
+- [x] **Atomic processes** proofed (`tests/atomic_processes.rs`): a trigger in the test database makes one step fail
+  – with an error or by ending the connection (`pg_terminate_backend`) – and nothing is left (rows, counters, audit,
+  notifications, webhook deliveries, check-out, review decision, visibility) for check-in, change order release,
+  *Replace in assemblies*, Save As with files and BOM, chunked upload `finish` (repeatable afterwards) and the
+  restricted-group visibility switch; two check-ins, two releases, two replacements and parallel numbering (also the
+  same explicit number) give one winner and a 409. No atomicity bug found; a mutation check (check-in split into two
+  transactions) makes the tests fail
 - [x] **Migrations** proofed (`tests/migrations.rs`): numbering without duplicates and only the known gap (0015);
   every migration applied one at a time on an empty database, each step a version to upgrade from, ending at the
   schema of a fresh `migrate` (columns with type, nullability and default, constraints, indexes, triggers,
