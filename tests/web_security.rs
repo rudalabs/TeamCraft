@@ -1,5 +1,6 @@
 //! Security fixes from the threat model (`docs/src/dev/threat-model.md`):
-//! cross-site requests (F4), security headers (F5), sign-in audit (F3).
+//! cross-site requests (F4), security headers (F5), sign-in audit (F3),
+//! sign-in throttle (F1).
 
 mod common;
 
@@ -230,5 +231,92 @@ async fn sign_in_and_sign_out_are_audited() {
         assert!(!text.to_lowercase().contains("typed-secret"), "{text}");
         assert!(!text.contains("tc_sess_"), "no session token: {text}");
     }
+    app.teardown().await;
+}
+
+/// A password sign-in from `client` (as the reverse proxy reports it).
+async fn sign_in_from(
+    app: &common::TestApp,
+    username: &str,
+    password: &str,
+    client: &str,
+) -> common::Response {
+    use axum::{
+        body::Body,
+        http::{header, Method, Request},
+    };
+    let body = format!(
+        "username={}&password={}",
+        teamcraft::util::pct_encode(username),
+        teamcraft::util::pct_encode(password)
+    );
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/login")
+        .header(header::HOST, "localhost:8080")
+        .header(header::ORIGIN, "http://localhost:8080")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header("x-forwarded-for", client)
+        .body(Body::from(body))
+        .unwrap();
+    app.send(request).await
+}
+
+async fn audited(app: &common::TestApp, action: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE action = $1")
+        .bind(action)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap()
+}
+
+/// F1: failed sign-ins per username and per client address end in 429 with
+/// `Retry-After`, without checking the password; other names and addresses
+/// are not affected.
+#[tokio::test]
+async fn failed_sign_ins_are_throttled_per_name_and_address() {
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_SIGNIN_MAX_FAILURES", "2")]).await else {
+        return;
+    };
+    app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    app.user_in("max", Role::Editor, &["ROCKET"]).await;
+    let office = "198.51.100.20";
+
+    // per username: two failures, then even the right password is refused
+    for _ in 0..2 {
+        let r = sign_in_from(&app, "erika", "wrong-password", office).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    }
+    let r = sign_in_from(&app, "Erika", common::PASSWORD, office).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "{}", r.text());
+    assert!(r.text().contains("Too many failed sign-ins"));
+    let wait: u64 = r.header("retry-after").unwrap().parse().unwrap();
+    assert!((1..=15 * 60).contains(&wait), "{wait}");
+    assert!(r
+        .header("set-cookie")
+        .is_none_or(|c| !c.starts_with("tc_session=")));
+    assert_eq!(audited(&app, "user.sign_in").await, 0, "nobody signed in");
+    // from another address the name is still blocked; another name is not
+    let r = sign_in_from(&app, "erika", common::PASSWORD, "203.0.113.5").await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    let r = sign_in_from(&app, "max", common::PASSWORD, office).await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "{}", r.text());
+
+    // per address: 2 × 5 = 10 failures, spread over names
+    for i in 0..8 {
+        let r = sign_in_from(&app, &format!("guess{i}"), "x", office).await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED, "guess{i}");
+    }
+    let r = sign_in_from(&app, "max", common::PASSWORD, office).await;
+    assert_eq!(
+        r.status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "the address is full (2 + 8 failures)"
+    );
+    let r = sign_in_from(&app, "max", common::PASSWORD, "203.0.113.5").await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER, "another address is not");
+
+    // refused attempts are not audited as failed sign-ins (no flood)
+    assert_eq!(audited(&app, "user.sign_in_failed").await, 10);
     app.teardown().await;
 }
