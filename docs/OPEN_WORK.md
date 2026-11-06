@@ -170,8 +170,9 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   cannot be swapped – start with the services that take several ids
 - [ ] Document the invariants per service function (permission check, rows locked, audit action, notifications and
   webhooks emitted) in its doc comment; `cargo doc` then is the reference for reviewers
-- [ ] Architecture decision records in `docs/src/dev/` for the decisions that keep coming back: access model (deny
-  list on the actor, 404 for hidden), outbox for notifications and webhooks, content-addressed vault, no Node.js
+- [x] Architecture decision records in `docs/src/dev/adr/`: access model (deny list on the actor, 404 for hidden),
+  outbox for notifications and webhooks, content-addressed vault, no Node.js – each with context, decision,
+  consequences, alternatives (or "not documented") and the code and tests that hold it
 
 ### 3. Fixes and verification
 
