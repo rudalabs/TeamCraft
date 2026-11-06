@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks that every local image and link target in the Markdown documentation
 # exists: src="…" and href="…" (also single-quoted), ![…](…), […](…) and
-# reference definitions ([name]: target) in README.md, CONTRIBUTING.md,
+# reference definitions ([name]: target) in README.md, CHANGELOG.md, CONTRIBUTING.md,
 # SECURITY.md, platforms/*.md, desktop/README.md and docs/src/**/*.md.
 # Targets with a scheme (http:, https:, mailto:, …), anchors (#…) and
 # protocol-relative URLs are skipped; "#anchor" and "?query" suffixes and
@@ -39,7 +39,7 @@ done
 cd "$root"
 
 if [[ ${#files[@]} -eq 0 ]]; then
-    files=(README.md CONTRIBUTING.md SECURITY.md desktop/README.md)
+    files=(README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md desktop/README.md)
     while IFS= read -r f; do files+=("$f"); done < <(find platforms docs/src -name '*.md' -type f | sort)
 fi
 

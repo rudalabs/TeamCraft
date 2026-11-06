@@ -24,6 +24,7 @@
 - [Read permissions and restricted groups](admin/permissions.md)
 - [Event webhooks](admin/webhooks.md)
 - [Operations](admin/operations.md)
+- [Upgrade](admin/upgrade.md)
 
 # Reference
 
@@ -39,6 +40,7 @@
 
 - [Test coverage map](dev/coverage.md)
 - [Fuzzing the file readers](dev/fuzzing.md)
+- [Release checklist](dev/release-checklist.md)
 - [Architecture decision records](dev/adr/index.md)
     - [0001 Read access model](dev/adr/0001-access-model.md)
     - [0002 Outbox for notifications and webhooks](dev/adr/0002-outbox.md)

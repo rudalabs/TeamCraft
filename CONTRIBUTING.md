@@ -350,7 +350,14 @@ upgrade run and the uninstall. Images are built by CI only – please don't
 publish your own builds under the project's name. Check `deploy/install.sh`
 with `bash -n` and `shellcheck` (CI runs both).
 
-**Cutting a release** (maintainers):
+**Changelog.** A pull request whose change a user or an administrator
+notices adds an entry under *Unreleased* in `CHANGELOG.md`
+([Keep a Changelog](https://keepachangelog.com/en/1.1.0/): Added, Changed,
+Removed, Fixed, Security), with **Breaking** in front of a change that needs
+action on upgrade – also listed in `docs/src/admin/upgrade.md`.
+
+**Cutting a release** (maintainers), step by step with the checks in
+`docs/src/dev/release-checklist.md`:
 
 1. Set the same version in `Cargo.toml`, `desktop/Cargo.toml` and
    `desktop/tauri.conf.json` (the workflow refuses a mismatch), run

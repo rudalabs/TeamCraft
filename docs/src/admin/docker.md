@@ -122,7 +122,8 @@ curl -fsSL https://raw.githubusercontent.com/rudalabs/TeamCraft/main/deploy/inst
 ```
 
 Database migrations are applied on start. While TeamCraft is 0.x, read the
-release notes before an upgrade and take a backup first.
+release notes before an upgrade and take a backup first; the steps, the
+rollback and the changes per version are in [Upgrade](upgrade.md).
 
 ## Backup and restore
 

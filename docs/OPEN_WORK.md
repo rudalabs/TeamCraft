@@ -50,8 +50,8 @@ feature milestone – the features in *What works* are enough; what is missing i
 - [ ] Backup/restore tested for every release in CI, including restore of an older version's backup; documented
   restore drill; `teamcraft vault check` finds and reports every inconsistency between database and vault
 - [ ] All multi-row mutations proven all-or-nothing and safe under concurrency (section 1, *Atomic processes*)
-- [ ] Upgrade guide in the docs (`docs/src/admin/upgrade.md`): before/after steps, rollback by restore, breaking
-  changes per version
+- [x] Upgrade guide in the docs (`docs/src/admin/upgrade.md`): before/after steps, rollback by restore, breaking
+  changes per version – open: the support window and the upgrade paths (maintainer decision)
 
 *Stable interfaces*
 
@@ -101,19 +101,21 @@ feature milestone – the features in *What works* are enough; what is missing i
   in `SHA256SUMS.txt` and the build provenance are the verification, and the docs explain the first start past
   SmartScreen and Gatekeeper
 - [ ] Desktop app run and tested on Windows x64/ARM64, macOS and Linux for each RC (a short manual test script in
-  `docs/src/dev/release-checklist.md`)
+  `docs/src/dev/release-checklist.md`, written – open: run it for each RC)
 - [ ] Accessibility: keyboard use and screen-reader labels on the main web flows checked (WCAG 2.2 AA for contrast
   is already tested)
 
 *Documentation and project*
 
-- [ ] `CHANGELOG.md` (Keep a Changelog) from 0.2 on, written per PR; release notes from it
+- [x] `CHANGELOG.md` (Keep a Changelog) from 0.2 on, written per PR; release notes from it (0.2.0 reconstructed from
+  the merged pull requests)
 - [ ] User guide, admin guide and API/MCP reference complete and checked against the 1.0 behaviour; screenshots
   current
 - [ ] Support and versioning policy: SemVer from 1.0, which versions get security fixes (e.g. the latest minor and
   the previous one for 6 months), how to report bugs
 - [ ] Release checklist (`docs/src/dev/release-checklist.md`): green main, RC soak time, version bump in both
-  `Cargo.toml` files, tag, verify assets and checksums, image tags, announcement
+  `Cargo.toml` files, tag, verify assets and checksums, image tags, announcement – written, with the desktop and
+  server test; open (maintainer decision): RC soak time, sign-off, announcement channel
 - [ ] Governance basics: maintainers, review rule (one approving review, green checks), code of conduct
 
 **Not required for 1.0** – CAD add-ins, more 3D readers, the Jira connector, code-signed binaries, the assistant
