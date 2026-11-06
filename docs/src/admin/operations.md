@@ -64,10 +64,10 @@ present. Start the server afterwards; it applies newer migrations.
   the database stay, so a fresh, empty database is preferable. **To roll
   back an upgrade**, restore into a fresh database and start the old
   version; the next start of the new version migrates it again. Over the
-  upgraded database, the restore fails (tables of the newer version depend
-  on the ones it would replace) – and even where it did not, those tables
-  would remain and the next upgrade would stop with “relation already
-  exists”.
+  upgraded database, the restore fails when a table of the newer version
+  depends on one it would replace; where it succeeds, tables the newer
+  version added remain and the next upgrade may stop with “relation already
+  exists”. See [Upgrading](upgrade.md).
 * The database password comes from the configuration – `TEAMCRAFT_DB_PASSWORD`
   (or `_FILE`) or the password in `TEAMCRAFT_DATABASE_URL`, where special
   characters are percent-encoded (`p%40ss` for `p@ss`).
