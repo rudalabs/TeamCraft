@@ -48,6 +48,9 @@ pub struct Upload {
     pub format: Option<&'static CadFormat>,
     /// CAD files this file references (see `cadrefs`).
     pub references: Vec<String>,
+    /// The name a STEP file was exported under, when it differs from
+    /// `filename` (see `cadrefs::step_export_name`).
+    pub export_name: Option<String>,
     /// The server version the client based this upload on; if the file moved
     /// on since, the upload is refused (409) instead of overwriting it.
     pub base: Option<BaseVersion>,
@@ -158,6 +161,7 @@ impl Upload {
         client_content_type: &str,
     ) -> Upload {
         let mut scan_head = Vec::new();
+        let mut export_name = None;
         let (format, content_text, references) = match vault.object_path(&blob.sha256) {
             Ok(path) => {
                 if crate::resultscan::scannable(&filename) {
@@ -168,6 +172,9 @@ impl Upload {
                     Some(f) if cadrefs::scans(f.id) => cadrefs::scan_file(&path, &filename).await,
                     _ => Vec::new(),
                 };
+                if format.is_some_and(|f| f.id == "step") {
+                    export_name = cadrefs::scan_export_name(&path, &filename).await;
+                }
                 (
                     format,
                     crate::textindex::extract_file(&path, &filename).await,
@@ -183,6 +190,7 @@ impl Upload {
             content_text,
             format,
             references,
+            export_name,
             base: None,
             folder: None,
             scan_head,
@@ -230,18 +238,54 @@ pub async fn scan_unscanned_references(pool: &PgPool, vault: &Vault) -> AppResul
     .await?;
     let mut count = 0;
     for row in rows {
-        let names = match (row.format.as_deref(), vault.object_path(&row.sha256)) {
-            (Some(format), Ok(path)) if cadrefs::scans(format) => {
-                cadrefs::scan_file(&path, &row.filename).await
-            }
-            _ => Vec::new(),
+        let (names, export_name) = match (row.format.as_deref(), vault.object_path(&row.sha256)) {
+            (Some(format), Ok(path)) if cadrefs::scans(format) => (
+                cadrefs::scan_file(&path, &row.filename).await,
+                export_name_of(format, &path, &row.filename).await,
+            ),
+            _ => (Vec::new(), None),
         };
         let mut tx = pool.begin().await?;
         references::store_file_references(&mut tx, row.version_id, &names).await?;
+        references::store_export_name(&mut tx, row.version_id, export_name.as_deref()).await?;
+        tx.commit().await?;
+        count += 1;
+    }
+    // STEP files stored before export names were read (migration 0036):
+    // only their header, the references stay as they are
+    #[derive(sqlx::FromRow)]
+    struct StepRow {
+        version_id: Uuid,
+        filename: String,
+        sha256: String,
+    }
+    let rows = sqlx::query_as::<_, StepRow>(
+        "SELECT fv.id AS version_id, f.filename, fv.sha256
+         FROM file_versions fv JOIN files f ON f.id = fv.file_id AND fv.version = f.current_version
+         WHERE NOT fv.export_name_scanned AND f.format = 'step'",
+    )
+    .fetch_all(pool)
+    .await?;
+    for row in rows {
+        let Ok(path) = vault.object_path(&row.sha256) else {
+            continue;
+        };
+        let export_name = cadrefs::scan_export_name(&path, &row.filename).await;
+        let mut tx = pool.begin().await?;
+        references::store_export_name(&mut tx, row.version_id, export_name.as_deref()).await?;
         tx.commit().await?;
         count += 1;
     }
     Ok(count)
+}
+
+/// The export name of a stored STEP file (`None` for other formats).
+async fn export_name_of(format: &str, path: &std::path::Path, filename: &str) -> Option<String> {
+    if format == "step" {
+        cadrefs::scan_export_name(path, filename).await
+    } else {
+        None
+    }
 }
 
 /// Reads the references of the current file versions of the given formats
@@ -265,6 +309,7 @@ pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String])
         version_id: Uuid,
         filename: String,
         sha256: String,
+        format: String,
     }
     let formats: Vec<&str> = formats
         .iter()
@@ -272,7 +317,7 @@ pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String])
         .filter(|f| cadrefs::scans(f))
         .collect();
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT fv.id AS version_id, f.filename, fv.sha256
+        "SELECT fv.id AS version_id, f.filename, fv.sha256, f.format
          FROM file_versions fv JOIN files f ON f.id = fv.file_id AND fv.version = f.current_version
          WHERE f.format = ANY($1)
          ORDER BY fv.id",
@@ -282,8 +327,11 @@ pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String])
     .await?;
     let mut count = 0;
     for row in rows {
-        let names = match vault.object_path(&row.sha256) {
-            Ok(path) => cadrefs::scan_file(&path, &row.filename).await,
+        let (names, export_name) = match vault.object_path(&row.sha256) {
+            Ok(path) => (
+                cadrefs::scan_file(&path, &row.filename).await,
+                export_name_of(&row.format, &path, &row.filename).await,
+            ),
             Err(_) => continue,
         };
         let mut tx = pool.begin().await?;
@@ -296,6 +344,7 @@ pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String])
             .execute(&mut *tx)
             .await?;
         references::store_file_references(&mut tx, row.version_id, &names).await?;
+        references::store_export_name(&mut tx, row.version_id, export_name.as_deref()).await?;
         tx.commit().await?;
         count += 1;
     }
@@ -821,8 +870,8 @@ pub(crate) async fn store_uploads(
             let version_id = Uuid::new_v4();
             sqlx::query(
                 "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
-                                            uploaded_by, content_text)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                                            uploaded_by, content_text, export_name, export_name_scanned)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE)",
             )
             .bind(version_id)
             .bind(file_id)
@@ -833,6 +882,7 @@ pub(crate) async fn store_uploads(
             .bind(comment)
             .bind(actor.id)
             .bind(&upload.content_text)
+            .bind(&upload.export_name)
             .execute(&mut *conn)
             .await?;
             references::store_file_references(conn, version_id, &upload.references).await?;
@@ -1141,8 +1191,10 @@ pub async fn restore_version(
     let new_version_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
-                                    uploaded_by, content_text, references_scanned)
-         SELECT $1, file_id, $2, sha256, size_bytes, content_type, $3, $4, content_text, references_scanned
+                                    uploaded_by, content_text, references_scanned, export_name,
+                                    export_name_scanned)
+         SELECT $1, file_id, $2, sha256, size_bytes, content_type, $3, $4, content_text, references_scanned,
+                export_name, export_name_scanned
          FROM file_versions WHERE id = $5",
     )
     .bind(new_version_id)

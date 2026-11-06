@@ -223,9 +223,12 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 
 **Fixes**
 
-- [ ] Reference scan: false references in real files – NX parts fixed (stream container, `src/nxpart.rs`); open: noise
-  in JT files (gap test in `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is ignored; the scan
-  (`src/cadrefs.rs`) is a heuristic that was not tested with real files of the CAD programs yet (see the CAD sections)
+- [ ] Reference scan: false references in real files – NX parts fixed (stream container, `src/nxpart.rs`); noise in
+  JT files fixed (binary bytes around a name, `tests/cad_fixtures.rs`); the STEP header export name (`FILE_NAME`) is
+  a second name of the file for references of other files, used only where no file has the name itself (migration
+  0036, `tests/step_export_names.rs`; impacts, reviewers, readiness and the desktop working set still match the file
+  name only); open: the scan (`src/cadrefs.rs`) is a heuristic that was not tested with real files of the CAD programs
+  yet (see the CAD sections)
 
 **Tests with real data**
 
