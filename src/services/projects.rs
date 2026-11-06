@@ -483,7 +483,7 @@ pub(crate) async fn next_number(
 ///
 /// A scheme typed in reads the counter the group would use with it; the
 /// counters of restricted groups with a scheme of their own are private
-/// (see [`number_counter`]), so no scheme reads them from another group.
+/// (see `number_counter`), so no scheme reads them from another group.
 pub async fn numbering_preview(
     pool: &PgPool,
     project: &Project,

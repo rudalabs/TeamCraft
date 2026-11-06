@@ -52,7 +52,7 @@ pub struct LinkedItem {
     #[serde(skip)]
     pub project_id: Option<Uuid>,
     /// The item is in a group the actor may not read; everything but the
-    /// note-free placeholder is blanked (see [`LinkedItem::mask`]).
+    /// note-free placeholder is blanked (see `LinkedItem::mask`).
     #[sqlx(default)]
     pub restricted: bool,
 }
