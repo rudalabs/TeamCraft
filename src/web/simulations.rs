@@ -16,7 +16,7 @@ use crate::{
     domain::{self, BasisRole},
     error::{AppError, AppResult},
     services::{
-        items, revisions,
+        items, result_proposals, revisions,
         simulations::{self, NewBasis, ResultInput},
     },
     util, AppState,
@@ -292,4 +292,39 @@ pub async fn compare(
             "summary": summary,
         }),
     )
+}
+
+/// `POST /simulation-proposals/{id}/accept` – makes a value proposed from a
+/// report a result value (the revision must be checked out to the user).
+pub async fn accept_proposal(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<super::items::BackForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = result_proposals::accept(&st.db, &ctx.me, id).await;
+    finish(&st, result, &back, |p| {
+        (
+            back.clone(),
+            format!("Accepted the proposed value {}", p.name),
+        )
+    })
+}
+
+/// `POST /simulation-proposals/{id}/reject`
+pub async fn reject_proposal(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<super::items::BackForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = result_proposals::reject(&st.db, &ctx.me, id).await;
+    finish(&st, result, &back, |p| {
+        (
+            back.clone(),
+            format!("Rejected the proposed value {}", p.name),
+        )
+    })
 }

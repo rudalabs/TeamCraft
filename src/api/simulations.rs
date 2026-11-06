@@ -19,7 +19,7 @@ use crate::{
     error::{AppError, AppResult},
     resultscan::TemplateInput,
     services::{
-        items, projects, result_templates,
+        items, projects, result_proposals, result_templates,
         simulations::{self, NewBasis, ResultInput},
     },
     web, AppState,
@@ -350,4 +350,57 @@ pub(super) async fn delete_template(
 ) -> AppResult<Json<Value>> {
     let removed = result_templates::delete(&st.db, &me, id).await?;
     Ok(Json(json!({ "removed": removed.id })))
+}
+
+// ---------------------------------------------------------------------------
+// Values proposed by the assistant from a report
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(super) struct ProposalQuery {
+    /// `pending` (default), `accepted`, `rejected` or `all`.
+    status: Option<String>,
+}
+
+/// `GET …/simulation/proposals?status=` – the proposals of a revision.
+pub(super) async fn list_proposals(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<ProposalQuery>,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    let status = match q.status.as_deref().map(str::trim) {
+        None | Some("") | Some("pending") => Some("pending"),
+        Some("all") => None,
+        Some(s @ ("accepted" | "rejected")) => Some(s),
+        Some(_) => {
+            return Err(AppError::BadRequest(
+                "status must be pending, accepted, rejected or all.".into(),
+            ))
+        }
+    };
+    let proposals = result_proposals::list(&st.db, &me, rev.id, status).await?;
+    Ok(Json(json!({ "proposals": proposals })))
+}
+
+/// `POST /simulation-proposals/{id}/accept` – CAD editors, with the revision
+/// checked out: the proposal becomes a result value.
+pub(super) async fn accept_proposal(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Value>> {
+    let proposal = result_proposals::accept(&st.db, &me, id).await?;
+    Ok(Json(json!(proposal)))
+}
+
+/// `POST /simulation-proposals/{id}/reject`
+pub(super) async fn reject_proposal(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Value>> {
+    let proposal = result_proposals::reject(&st.db, &me, id).await?;
+    Ok(Json(json!(proposal)))
 }
