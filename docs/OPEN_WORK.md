@@ -324,6 +324,8 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
+- [x] CI gate for the API reference: the `fmt and clippy` job also runs `cargo doc --no-deps` with
+  `RUSTDOCFLAGS=-D warnings`; the 8 broken or private intra-doc links it found are fixed (doc comments only)
 - [x] **Backup / restore** proofed (`tests/backup_proofing.rs`, `tests/backup_errors.rs`): a corrupt or missing vault
   object refuses the backup and nothing is left (two fixes: the backup now checks every object against its name and
   every content the database refers to, and a failed backup removes what it wrote; the manifest is renamed into
