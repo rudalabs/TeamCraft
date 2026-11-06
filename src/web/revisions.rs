@@ -943,9 +943,52 @@ pub async fn download(
     file_response(&st, &me, id, &headers).await
 }
 
-/// The preview image stored inside a CAD file (Inventor, Solid Edge,
-/// SolidWorks), read once and cached next to the 3D previews. Shared with
-/// the REST API.
+/// The thumbnail of a format that is rendered from its 3D preview (NX
+/// parts): from the cache, or drawn from the cached preview mesh (converted
+/// first, in the isolated preview process). `None` when the format is not
+/// rendered or the file has no 3D preview (an NX assembly) – the image
+/// stored in the file is used then.
+async fn rendered_thumbnail(
+    st: &AppState,
+    format: &str,
+    sha256: &str,
+    cache: &std::path::Path,
+) -> AppResult<Option<thumbnail::Thumbnail>> {
+    let Some(preview) = crate::preview::PreviewFormat::of_format(format) else {
+        return Ok(None);
+    };
+    if !thumbnail::rendered(format) {
+        return Ok(None);
+    }
+    let lookup = {
+        let (cache, sha256) = (cache.to_path_buf(), sha256.to_string());
+        tokio::task::spawn_blocking(move || thumbnail::lookup(&cache, &sha256))
+            .await
+            .map_err(|e| AppError::Other(anyhow::anyhow!("thumbnail task failed: {e}")))??
+    };
+    if let Some(Some(known)) = lookup {
+        return Ok(Some(known));
+    }
+    let Ok(mesh_path) = st.previews.mesh(&st.vault, sha256, preview).await else {
+        return Ok(None);
+    };
+    let (cache, sha256) = (cache.to_path_buf(), sha256.to_string());
+    tokio::task::spawn_blocking(move || -> std::io::Result<Option<thumbnail::Thumbnail>> {
+        let Some(image) = thumbnail::render_mesh(&std::fs::read(mesh_path)?) else {
+            return Ok(None);
+        };
+        thumbnail::store(&cache, &sha256, Some(&image))?;
+        Ok(Some(image))
+    })
+    .await
+    .map_err(|e| AppError::Other(anyhow::anyhow!("thumbnail task failed: {e}")))?
+    .map_err(|e| AppError::Other(anyhow::anyhow!("cannot store the thumbnail: {e}")))
+}
+
+/// The preview image of a CAD file, read once and cached next to the 3D
+/// previews: stored inside the file (Inventor, Solid Edge, SolidWorks, NX
+/// assemblies and drawings) or rendered from the 3D preview (NX parts).
+/// Shared with the REST API.
 pub(crate) async fn thumbnail_response(
     st: &AppState,
     me: &Actor,
@@ -959,10 +1002,15 @@ pub(crate) async fn thumbnail_response(
     }
     let blob = st.vault.object_path(&f.sha256)?;
     let cache = st.vault.root().join("previews");
-    let sha256 = f.sha256.clone();
-    let found = tokio::task::spawn_blocking(move || thumbnail::cached(&cache, &sha256, &blob))
-        .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("thumbnail task failed: {e}")))??;
+    let found = match rendered_thumbnail(st, &f.format, &f.sha256, &cache).await? {
+        Some(rendered) => Some(rendered),
+        None => {
+            let sha256 = f.sha256.clone();
+            tokio::task::spawn_blocking(move || thumbnail::cached(&cache, &sha256, &blob))
+                .await
+                .map_err(|e| AppError::Other(anyhow::anyhow!("thumbnail task failed: {e}")))??
+        }
+    };
     let Some(image) = found else {
         return Err(AppError::not_found(format!(
             "{} has no embedded preview image.",

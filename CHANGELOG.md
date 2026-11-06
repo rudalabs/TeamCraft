@@ -22,6 +22,8 @@ Changes on `main` since the `v0.2.0` tag.
 - A sign-in throttle slows down repeated failed sign-ins.
 - 3D preview of NX parts (`.prt`) from the JT tessellation NX stores in the
   file, refined along its exact surface normals so round faces stay round.
+  The thumbnail of an NX part is rendered from it instead of the small JPEG
+  stored in the file.
 
 ### Changed
 

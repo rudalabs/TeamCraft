@@ -3563,6 +3563,73 @@ async fn preview_images_stored_in_cad_files() {
     app.teardown().await;
 }
 
+/// NX parts get a thumbnail rendered from their 3D preview (the JPEG in
+/// the file is small and poor); an NX assembly has no 3D preview and keeps
+/// its embedded JPEG.
+#[tokio::test]
+async fn nx_part_thumbnails_are_rendered_from_the_3d_preview() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "assembly", "name": "Crada", "project": "GEARBOX" })),
+    )
+    .await;
+    let nx = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/cad/nist/mtc-assembly/nx");
+    let nut = std::fs::read(nx.join("90591A141 HEX NUT.prt")).unwrap();
+    let assembly = std::fs::read(nx.join("NIST mtc crada assembly.prt")).unwrap();
+    let files = app
+        .api_multipart(
+            "/api/v1/items/ASM-000001/revisions/A/files",
+            &eng,
+            &[("nut.prt", &nut), ("crada.prt", &assembly)],
+            &[],
+        )
+        .await;
+    assert_eq!(files.status, StatusCode::CREATED, "{}", files.text());
+    let files = files.json();
+    let id_of = |name: &str| {
+        files
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["filename"] == name)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let thumbnail = |id: String| {
+        let app = &app;
+        let eng = &eng;
+        async move {
+            app.api(
+                Method::GET,
+                &format!("/api/v1/files/{id}/thumbnail"),
+                eng,
+                None,
+            )
+            .await
+        }
+    };
+    let part = thumbnail(id_of("nut.prt")).await;
+    assert_eq!(part.status, StatusCode::OK, "{}", part.text());
+    assert_eq!(part.header("content-type").as_deref(), Some("image/png"));
+    assert!(part.body.starts_with(&[0x89, b'P', b'N', b'G']));
+    // IHDR: the rendered size, RGBA
+    assert_eq!(&part.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
+    let again = thumbnail(id_of("nut.prt")).await;
+    assert_eq!(again.body, part.body, "served from the cache");
+
+    let asm = thumbnail(id_of("crada.prt")).await;
+    assert_eq!(asm.status, StatusCode::OK, "{}", asm.text());
+    assert_eq!(asm.header("content-type").as_deref(), Some("image/jpeg"));
+    app.teardown().await;
+}
+
 /// The most used Teamcenter working features: favorites, saved
 /// searches, Save As and the BOM comparison.
 #[tokio::test]

@@ -62,8 +62,12 @@ faces stay round (see [Research: 3D preview of NX parts](../research/nx-jt-previ
 NX assemblies and drawings have no such tessellation. For the rest
 TeamCraft shows what other PLM systems show:
 
+* **A picture of the 3D preview** for NX parts: the small JPEG NX stores
+  is replaced by an image rendered from the tessellation (512 × 512 PNG,
+  transparent background), drawn once and cached. NX assemblies and
+  drawings keep their stored JPEG.
 * **The preview image stored in the file.** Inventor (`.ipt`, `.iam`,
-  `.idw`, `.ipn`), Solid Edge (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`), NX (`.prt`, a JPEG) and
+  `.idw`, `.ipn`), Solid Edge (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`), NX assemblies and drawings (`.prt`, a JPEG) and
   SolidWorks files (up to 2014 in their OLE container, from 2015 on in a
   compressed section that TeamCraft inflates) carry a picture the CAD program wrote when saving. It
   appears next to the file on the revision page and in the desktop app (`GET /api/v1/files/{id}/thumbnail`). Only the

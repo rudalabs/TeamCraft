@@ -10,7 +10,10 @@
 //! * SolidWorks files up to 2014 are OLE files as well (`PreviewPNG`), newer
 //!   ones keep the PNG in a Deflate-compressed `PreviewPNG` section of their
 //!   own container (`swpart`);
-//! * NX parts keep a JPEG in their stream container (`nxpart`).
+//! * NX parts keep a JPEG in their stream container (`nxpart`). It is small
+//!   and poor, so NX parts get a thumbnail rendered from their 3D preview
+//!   instead ([`rendered`], [`render_mesh`]); the JPEG stays the fallback
+//!   for NX files without one (assemblies, drawings).
 //!
 //! Every candidate is validated (PNG chunk structure and checksums, plausible
 //! DIB header and sizes); the summary information wins, then streams named
@@ -36,8 +39,9 @@ use std::{
 };
 
 /// Bump to invalidate every cached thumbnail (2: SOLIDWORKS 2015+ previews,
-/// cached as "none" before).
-pub const CACHE_VERSION: u32 = 2;
+/// cached as "none" before; 3: NX parts rendered from their 3D preview
+/// instead of the embedded JPEG).
+pub const CACHE_VERSION: u32 = 3;
 
 const OLE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -374,35 +378,45 @@ fn dib_at(data: &[u8]) -> Option<Found> {
     })
 }
 
-/// The thumbnail of a vault blob, cached next to the 3D previews
-/// (`previews/ab/<sha256>.thumb.v<N>.png|bmp|none`).
-pub fn cached(cache_dir: &Path, sha256: &str, blob: &Path) -> io::Result<Option<Thumbnail>> {
+/// The cache directory and file name stem of a blob's thumbnail.
+fn cache_base(cache_dir: &Path, sha256: &str) -> io::Result<(PathBuf, String)> {
     if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "invalid content hash",
         ));
     }
-    let dir = cache_dir.join(&sha256[..2]);
-    let base = format!("{sha256}.thumb.v{CACHE_VERSION}");
+    let dir = cache_dir.join(sha256.get(..2).unwrap_or_default());
+    Ok((dir, format!("{sha256}.thumb.v{CACHE_VERSION}")))
+}
+
+/// A thumbnail already in the cache: `Some(None)` when the blob is known
+/// to have none, `None` when it was never looked at.
+pub fn lookup(cache_dir: &Path, sha256: &str) -> io::Result<Option<Option<Thumbnail>>> {
+    let (dir, base) = cache_base(cache_dir, sha256)?;
     for (ext, content_type) in [
         ("png", "image/png"),
         ("bmp", "image/bmp"),
         ("jpg", "image/jpeg"),
     ] {
         if let Ok(bytes) = std::fs::read(dir.join(format!("{base}.{ext}"))) {
-            return Ok(Some(Thumbnail {
+            return Ok(Some(Some(Thumbnail {
                 content_type,
                 bytes,
-            }));
+            })));
         }
     }
     if dir.join(format!("{base}.none")).exists() {
-        return Ok(None);
+        return Ok(Some(None));
     }
-    let found = extract(blob)?;
+    Ok(None)
+}
+
+/// Stores a thumbnail (rendered or found in the file) in the cache.
+pub fn store(cache_dir: &Path, sha256: &str, found: Option<&Thumbnail>) -> io::Result<()> {
+    let (dir, base) = cache_base(cache_dir, sha256)?;
     std::fs::create_dir_all(&dir)?;
-    let (name, bytes): (String, &[u8]) = match &found {
+    let (name, bytes): (String, &[u8]) = match found {
         Some(t) if t.content_type == "image/png" => (format!("{base}.png"), &t.bytes),
         Some(t) if t.content_type == "image/jpeg" => (format!("{base}.jpg"), &t.bytes),
         Some(t) => (format!("{base}.bmp"), &t.bytes),
@@ -411,8 +425,39 @@ pub fn cached(cache_dir: &Path, sha256: &str, blob: &Path) -> io::Result<Option<
     // write to a temporary name first, so a reader never sees half a file
     let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
     std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, dir.join(name))?;
+    std::fs::rename(&tmp, dir.join(name))
+}
+
+/// The thumbnail of a vault blob, cached next to the 3D previews
+/// (`previews/ab/<sha256>.thumb.v<N>.png|bmp|jpg|none`).
+pub fn cached(cache_dir: &Path, sha256: &str, blob: &Path) -> io::Result<Option<Thumbnail>> {
+    if let Some(known) = lookup(cache_dir, sha256)? {
+        return Ok(known);
+    }
+    let found = extract(blob)?;
+    store(cache_dir, sha256, found.as_ref())?;
     Ok(found)
+}
+
+/// Side of the thumbnails rendered from a 3D preview.
+pub const RENDERED_SIZE: u32 = 512;
+
+/// Formats whose thumbnail is rendered from their 3D preview instead of the
+/// image stored in the file: NX parts (the embedded JPEG is small and poor,
+/// the tessellation in the file is good). Files without a 3D preview (NX
+/// assemblies and drawings) keep the stored image.
+pub fn rendered(format_id: &str) -> bool {
+    format_id == "nx-part"
+}
+
+/// A PNG thumbnail drawn from a cached preview mesh (`TCMESH01`).
+pub fn render_mesh(mesh_bytes: &[u8]) -> Option<Thumbnail> {
+    let mesh = crate::mesh::Mesh::decode(mesh_bytes).ok()?;
+    mesh.check().ok()?;
+    crate::mesh::render::png(&mesh, RENDERED_SIZE).map(|bytes| Thumbnail {
+        content_type: "image/png",
+        bytes,
+    })
 }
 
 #[cfg(test)]

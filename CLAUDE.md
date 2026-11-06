@@ -116,7 +116,8 @@ src/cadformat.rs   file formats of CAD/BIM/DCC/mesh/point-cloud programs, stored
 src/cadrefs.rs     file names referenced inside CAD files (assemblies, drawings, STEP, KiCad) for reference tracking
 src/nxpart.rs      NX part stream container (SPLMSSTR): directory, reference streams, preview stream – read with seeks
 src/swpart.rs      SOLIDWORKS 2015+ section container: Deflate sections (bounded, CRC-checked), PreviewPNG, component tree (COMPINSTANCETREE)
-src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/
+src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/;
+                   NX parts: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
 src/bomtable.rs    BOM tables exported by CAD programs (CSV/TSV, Excel, ODS): header synonyms, levels, units – heuristic
 src/stepbom.rs     product structure of STEP assemblies (own Part 21 reader: PRODUCT … NEXT_ASSEMBLY_USAGE_OCCURRENCE) → BomTable
 src/assets.rs      embedded CSS/JS/logos/fonts, cache busting (?v=<asset hash>, ETag)

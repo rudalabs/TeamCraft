@@ -30,6 +30,7 @@ use anyhow::{anyhow, bail, Context, Result};
 mod jt;
 mod p21;
 mod pn;
+pub mod render;
 mod step;
 mod tessellated;
 

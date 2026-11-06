@@ -83,12 +83,30 @@ pub(crate) fn read_nx(data: &[u8]) -> Result<Mesh> {
                  not for assemblies and drawings) – the preview image is shown instead."
             )
         })?;
-    // The stream starts with a small index; the JT file follows it.
-    let start = jt
-        .get(..jt.len().min(4096))
-        .and_then(|head| head.windows(8).position(|w| w == b"Version "))
-        .ok_or_else(damaged)?;
+    let start = jt_start(jt).ok_or_else(damaged)?;
     read_jt(jt.get(start..).ok_or_else(damaged)?)
+}
+
+/// Where the JT file starts in the `/Root/FastLoad/JT` stream: after an
+/// index of `u32 9, u32 count, u32 0` and `count` 16-byte entries (19 in a
+/// small part, 259 in a large one). A stream laid out differently is
+/// searched for the version text in its first 64 KiB.
+fn jt_start(stream: &[u8]) -> Option<usize> {
+    const VERSION: &[u8] = b"Version ";
+    let count = usize::try_from(super::u32_le(stream, 4).ok()?).ok()?;
+    let after_index = count.checked_mul(16).and_then(|n| n.checked_add(12));
+    if let Some(at) = after_index {
+        if stream
+            .get(at..)
+            .is_some_and(|rest| rest.starts_with(VERSION))
+        {
+            return Some(at);
+        }
+    }
+    stream
+        .get(..stream.len().min(64 * 1024))?
+        .windows(VERSION.len())
+        .position(|w| w == VERSION)
 }
 
 /// The finest level of detail of a JT 9 file.
@@ -1474,6 +1492,25 @@ mod tests {
             arithmetic(&mut bits, 3, &escape, &[4, 9]).is_err(),
             "out-of-band values run out"
         );
+    }
+
+    #[test]
+    fn the_jt_file_starts_after_the_stream_index() {
+        // a large part: 259 index entries put the JT file past 4 KiB
+        for count in [19u32, 259] {
+            let mut stream = Vec::new();
+            stream.extend(9u32.to_le_bytes());
+            stream.extend(count.to_le_bytes());
+            stream.extend(0u32.to_le_bytes());
+            stream.resize(12 + 16 * count as usize, 0x11);
+            stream.extend(b"Version 9.4 JT DM");
+            assert_eq!(jt_start(&stream), Some(12 + 16 * count as usize));
+        }
+        // another layout: found by searching
+        let mut odd = vec![0u8; 100];
+        odd.extend(b"Version 9.4 JT");
+        assert_eq!(jt_start(&odd), Some(100));
+        assert_eq!(jt_start(b"short"), None);
     }
 
     #[test]
