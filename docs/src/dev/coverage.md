@@ -113,6 +113,10 @@ and `web/webhooks.rs` (a quarter of their lines missed each),
   their hash and did not require the objects the database refers to; a
   corrupt or missing object was found only at restore time. The backup now
   refuses both and removes what it wrote.
+* **Fixed** (2026-11-06) – the commands of the CLI wrote their log lines
+  (e.g. the audit line of `user create`) to standard output, between their
+  own output. They now log to standard error; the server still logs to
+  standard output (`tests/cli.rs`).
 * **No bug** (#92) – every multi-row mutation covered by `atomic_processes`
   already ran in one transaction; a mutation check (a check-in split into two
   transactions) makes those tests fail.
@@ -141,8 +145,12 @@ and `web/webhooks.rs` (a quarter of their lines missed each),
 
 1. `services/insights.rs` (BOM health check, duplicates) and `notify.rs`.
 2. FRD sample and a SOLIDWORKS container built by hand in the damage tests.
-3. The CLI (`main.rs`, 511 of 643 lines missed): run the commands in-process in
-   a test instead of only in the smoke test, so the coverage job sees them.
+3. Done: the CLI (`main.rs`, 511 of 643 lines missed) – `tests/cli.rs` runs the
+   real binary against a test database (`migrate`, `user`, `vault check`,
+   `rescan-references`, `assistant check`, `healthcheck`, `preview-mesh`,
+   `text-extract`, the `mcp` bridge), which the coverage job measures; `serve`,
+   `backup`/`restore` (see `backup_restore`) and `vault signatures` still run
+   only elsewhere.
 4. Done: atomicity under an injected failure (#92), a floor for the CI
    coverage job (`.github/coverage-floor`), OIDC failure paths and the SSRF
    check at connect time (`oidc_flow`, `webhook_ssrf`), `cargo fuzz` targets (see
