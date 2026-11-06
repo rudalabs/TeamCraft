@@ -225,6 +225,7 @@ fn main() {
             commands::agent_start,
             commands::agent_prompt,
             commands::agent_permission,
+            commands::agent_set_model,
             commands::agent_cancel,
             commands::agent_stop,
         ])

@@ -457,6 +457,10 @@ pub enum Event {
     Exited {
         text: String,
     },
+    /// The agent's model choice changed (picked here or by the agent).
+    Models {
+        models: Models,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -722,6 +726,117 @@ pub async fn read_text_file(root: &Path, params: &Value) -> Result<String, RpcEr
     ))
 }
 
+// ---------------------------------------------------------------- models
+
+/// Most model choices kept (an agent may list many).
+const MAX_MODELS: usize = 200;
+/// How long the agent may take to switch the model.
+const SET_MODEL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How the agent lets the client choose its model.
+#[derive(Clone, Debug, PartialEq)]
+enum ModelApi {
+    /// A session config option of category `model`
+    /// (`session/set_config_option`).
+    ConfigOption { config_id: String },
+    /// The older, unstable `models` field (`session/set_model`).
+    SetModel,
+}
+
+/// One model the agent offers.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ModelChoice {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// The models the agent offers and the one in use – whatever the agent
+/// brings (its own provider, its own sign-in); TeamCraft lists no models.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Models {
+    pub current: Option<String>,
+    pub options: Vec<ModelChoice>,
+    #[serde(skip)]
+    api: ModelApi,
+}
+
+fn push_choice(out: &mut Vec<ModelChoice>, id: &Value, name: &Value, description: &Value) {
+    let Some(id) = id.as_str().filter(|s| !s.is_empty() && s.len() <= TITLE) else {
+        return;
+    };
+    if out.len() >= MAX_MODELS || out.iter().any(|c| c.id == id) {
+        return;
+    }
+    out.push(ModelChoice {
+        id: id.to_string(),
+        name: truncate(
+            name.as_str().filter(|s| !s.trim().is_empty()).unwrap_or(id),
+            120,
+        ),
+        description: description
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| truncate(s, 500)),
+    });
+}
+
+/// The model option among a session's `configOptions`: a `select` of
+/// category `model`; its options are a flat list or groups of options.
+fn config_models(options: &Value) -> Option<Models> {
+    let opt = options.as_array()?.iter().find(|o| {
+        o["category"].as_str() == Some("model")
+            && o["type"].as_str().unwrap_or("select") == "select"
+    })?;
+    let config_id = opt["id"]
+        .as_str()
+        .filter(|s| !s.is_empty() && s.len() <= TITLE)?;
+    let mut choices = Vec::new();
+    for entry in opt["options"].as_array()? {
+        match entry["options"].as_array() {
+            Some(group) => {
+                for v in group {
+                    push_choice(&mut choices, &v["value"], &v["name"], &v["description"]);
+                }
+            }
+            None => push_choice(
+                &mut choices,
+                &entry["value"],
+                &entry["name"],
+                &entry["description"],
+            ),
+        }
+    }
+    (!choices.is_empty()).then(|| Models {
+        current: opt["currentValue"].as_str().map(|s| truncate(s, TITLE)),
+        options: choices,
+        api: ModelApi::ConfigOption {
+            config_id: config_id.to_string(),
+        },
+    })
+}
+
+/// The older `models` field: `availableModels` and `currentModelId`.
+fn legacy_models(models: &Value) -> Option<Models> {
+    let mut choices = Vec::new();
+    for m in models["availableModels"].as_array()? {
+        push_choice(&mut choices, &m["modelId"], &m["name"], &m["description"]);
+    }
+    (!choices.is_empty()).then(|| Models {
+        current: models["currentModelId"]
+            .as_str()
+            .map(|s| truncate(s, TITLE)),
+        options: choices,
+        api: ModelApi::SetModel,
+    })
+}
+
+/// The model choice of a `session/new` (or `session/load`) result: config
+/// options first, the older `models` field as fallback.
+pub fn models_of(result: &Value) -> Option<Models> {
+    config_models(&result["configOptions"]).or_else(|| legacy_models(&result["models"]))
+}
+
 // ---------------------------------------------------------------- session
 
 /// TeamCraft's MCP server as handed to the agent.
@@ -771,9 +886,16 @@ struct Shared {
     reads: Arc<Semaphore>,
     next_key: AtomicU64,
     stderr: Tail,
+    /// The models the agent offers, if it offers a choice.
+    models: Mutex<Option<Models>>,
 }
 
 impl Shared {
+    fn set_models(&self, models: Models) {
+        *self.models.lock().expect("models lock") = Some(models.clone());
+        self.sink.emit(Event::Models { models });
+    }
+
     fn our_session(&self, params: &Value) -> bool {
         match &*self.session_id.lock().expect("session lock") {
             Some(id) => params["sessionId"].as_str() == Some(id.as_str()),
@@ -840,7 +962,12 @@ async fn dispatch(shared: &Arc<Shared>, msg: Incoming) {
         Incoming::Response { id, result } => shared.rpc.resolve(id, result),
         Incoming::Notification { method, params } => {
             if method == "session/update" && shared.our_session(&params) {
-                if let Some(event) = translate_update(&params["update"]) {
+                let update = &params["update"];
+                if update["sessionUpdate"].as_str() == Some("config_option_update") {
+                    if let Some(models) = config_models(&update["configOptions"]) {
+                        shared.set_models(models);
+                    }
+                } else if let Some(event) = translate_update(update) {
                     shared.sink.emit(event);
                 }
             }
@@ -966,6 +1093,7 @@ where
         reads: Arc::new(Semaphore::new(MAX_READS)),
         next_key: AtomicU64::new(1),
         stderr: opts.stderr.clone(),
+        models: Mutex::new(None),
     });
     tokio::spawn(read_loop(BufReader::new(reader), shared.clone()));
     let result = handshake(&rpc, &shared, &opts).await;
@@ -1064,6 +1192,7 @@ async fn handshake(
         .ok_or_else(|| "The agent sent no session id.".to_string())?
         .to_string();
     *shared.session_id.lock().expect("session lock") = Some(session_id.clone());
+    *shared.models.lock().expect("models lock") = models_of(&created);
     if opts.mcp.is_some() && !http {
         shared.sink.emit(Event::Notice {
             text: "This agent does not support MCP servers over HTTP, so it has no TeamCraft tools – it only sees the workspace folder.".into(),
@@ -1179,6 +1308,52 @@ impl Session {
 
     pub fn busy(&self) -> bool {
         self.busy.load(Ordering::SeqCst)
+    }
+
+    /// The models the agent offers, if it offers a choice.
+    pub fn models(&self) -> Option<Models> {
+        self.shared.models.lock().expect("models lock").clone()
+    }
+
+    /// Switches the agent to one of the models it offers (between turns).
+    pub async fn set_model(&self, model: &str) -> Result<Models, String> {
+        let models = self
+            .models()
+            .ok_or_else(|| "This agent offers no choice of model.".to_string())?;
+        if !models.options.iter().any(|o| o.id == model) {
+            return Err(format!("The agent does not offer the model “{model}”."));
+        }
+        if self.busy() {
+            return Err("Wait until the agent has finished its answer, or cancel it.".into());
+        }
+        let (method, params) = match &models.api {
+            ModelApi::ConfigOption { config_id } => (
+                "session/set_config_option",
+                json!({ "sessionId": self.session_id, "configId": config_id, "value": model }),
+            ),
+            ModelApi::SetModel => (
+                "session/set_model",
+                json!({ "sessionId": self.session_id, "modelId": model }),
+            ),
+        };
+        let result = self
+            .shared
+            .rpc
+            .request(method, params, Some(SET_MODEL_TIMEOUT))
+            .await
+            .map_err(|e| format!("The agent did not switch the model: {}", e.message))?;
+        // the config option answer carries all options again; otherwise the
+        // pick is the current model now
+        let next = match models.api {
+            ModelApi::ConfigOption { .. } => config_models(&result["configOptions"]),
+            ModelApi::SetModel => None,
+        }
+        .unwrap_or(Models {
+            current: Some(model.to_string()),
+            ..models
+        });
+        self.shared.set_models(next.clone());
+        Ok(next)
     }
 
     /// Answers open permission requests with `cancelled` (the turn is over).
@@ -1300,6 +1475,11 @@ mod tests {
 
         /// Answers `initialize` and `session/new` like a real agent.
         async fn handshake(&mut self, http: bool) -> Value {
+            self.handshake_with(http, json!({})).await
+        }
+
+        /// As `handshake`, with further fields in the `session/new` result.
+        async fn handshake_with(&mut self, http: bool, extra: Value) -> Value {
             let init = self.recv().await;
             assert_eq!(init["method"], "initialize");
             self.send(json!({ "jsonrpc": "2.0", "id": init["id"], "result": {
@@ -1311,10 +1491,12 @@ mod tests {
             .await;
             let new = self.recv().await;
             assert_eq!(new["method"], "session/new");
-            self.send(
-                json!({ "jsonrpc": "2.0", "id": new["id"], "result": { "sessionId": "sess_1" } }),
-            )
-            .await;
+            let mut result = json!({ "sessionId": "sess_1" });
+            for (k, v) in extra.as_object().into_iter().flatten() {
+                result[k] = v.clone();
+            }
+            self.send(json!({ "jsonrpc": "2.0", "id": new["id"], "result": result }))
+                .await;
             json!({ "initialize": init, "new": new })
         }
     }
@@ -1355,6 +1537,19 @@ mod tests {
         Value,
         tempfile::TempDir,
     ) {
+        started_with(http, json!({})).await
+    }
+
+    async fn started_with(
+        http: bool,
+        extra: Value,
+    ) -> (
+        Arc<Session>,
+        FakeAgent,
+        Arc<Recorder>,
+        Value,
+        tempfile::TempDir,
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let (cr, cw, mut agent) = pipes();
         let sink = Arc::new(Recorder::default());
@@ -1363,7 +1558,7 @@ mod tests {
             let sink = sink.clone();
             async move { connect(cr, cw, sink, opts).await }
         });
-        let handshake = agent.handshake(http).await;
+        let handshake = agent.handshake_with(http, extra).await;
         let session = connecting.await.unwrap().expect("connected");
         (Arc::new(session), agent, sink, handshake, dir)
     }
@@ -2011,5 +2206,170 @@ mod tests {
             .await;
         let err = connecting.await.unwrap().err().unwrap();
         assert!(err.contains("ACP version 2"), "{err}");
+    }
+
+    fn config_option(current: &str) -> Value {
+        json!([
+            { "id": "mode", "name": "Mode", "category": "mode", "type": "select",
+              "currentValue": "ask", "options": [{ "value": "ask", "name": "Ask" }] },
+            { "id": "model", "name": "Model", "category": "model", "type": "select",
+              "currentValue": current,
+              "options": [
+                { "group": "fast", "name": "Fast", "options": [
+                  { "value": "small", "name": "Small", "description": "quick" } ] },
+                { "group": "deep", "name": "Deep", "options": [
+                  { "value": "large", "name": "Large" },
+                  { "value": "small", "name": "Small again" } ] }
+              ] }
+        ])
+    }
+
+    #[test]
+    fn models_come_from_config_options_or_the_models_field() {
+        let m = models_of(&json!({ "configOptions": config_option("small") })).unwrap();
+        assert_eq!(m.current.as_deref(), Some("small"));
+        let ids: Vec<&str> = m.options.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["small", "large"],
+            "groups flattened, duplicates dropped"
+        );
+        assert_eq!(m.options[0].description.as_deref(), Some("quick"));
+        assert_eq!(
+            m.api,
+            ModelApi::ConfigOption {
+                config_id: "model".into()
+            }
+        );
+        // a flat option list works too
+        let flat = json!({ "configOptions": [{ "id": "m", "category": "model", "type": "select",
+            "currentValue": "a", "options": [{ "value": "a" }, { "value": "b", "name": "B" }] }] });
+        let m = models_of(&flat).unwrap();
+        assert_eq!(
+            m.options[0].name, "a",
+            "the id stands in for a missing name"
+        );
+        assert_eq!(m.options.len(), 2);
+
+        let legacy = json!({ "models": { "currentModelId": "opus", "availableModels": [
+            { "modelId": "opus", "name": "Opus" }, { "modelId": "sonnet", "name": "Sonnet" },
+            { "modelId": "", "name": "broken" } ] } });
+        let m = models_of(&legacy).unwrap();
+        assert_eq!(m.api, ModelApi::SetModel);
+        assert_eq!(m.current.as_deref(), Some("opus"));
+        assert_eq!(m.options.len(), 2);
+
+        // config options win over the older field
+        let both = json!({ "configOptions": config_option("large"), "models": legacy["models"] });
+        assert_eq!(models_of(&both).unwrap().current.as_deref(), Some("large"));
+        // no choice offered
+        assert!(models_of(&json!({ "sessionId": "s" })).is_none());
+        assert!(models_of(
+            &json!({ "configOptions": [{ "id": "mode", "category": "mode",
+            "type": "select", "options": [{ "value": "x" }] }] })
+        )
+        .is_none());
+        let many: Vec<Value> = (0..500)
+            .map(|i| json!({ "modelId": format!("m{i}") }))
+            .collect();
+        let m = models_of(&json!({ "models": { "availableModels": many } })).unwrap();
+        assert_eq!(m.options.len(), MAX_MODELS);
+    }
+
+    #[tokio::test]
+    async fn the_model_is_switched_through_the_config_option() {
+        let (session, mut agent, sink, _, _dir) =
+            started_with(true, json!({ "configOptions": config_option("small") })).await;
+        assert_eq!(session.models().unwrap().current.as_deref(), Some("small"));
+        assert!(session
+            .set_model("huge")
+            .await
+            .unwrap_err()
+            .contains("does not offer"));
+        let switching = tokio::spawn({
+            let session = session.clone();
+            async move { session.set_model("large").await }
+        });
+        let req = agent.recv().await;
+        assert_eq!(req["method"], "session/set_config_option");
+        assert_eq!(
+            req["params"],
+            json!({ "sessionId": "sess_1", "configId": "model", "value": "large" })
+        );
+        agent
+            .send(json!({ "jsonrpc": "2.0", "id": req["id"],
+                "result": { "configOptions": config_option("large") } }))
+            .await;
+        let m = switching.await.unwrap().unwrap();
+        assert_eq!(m.current.as_deref(), Some("large"));
+        assert_eq!(session.models().unwrap().current.as_deref(), Some("large"));
+        sink.wait_for(
+            |e| matches!(e, Event::Models { models } if models.current.as_deref() == Some("large")),
+        )
+        .await;
+
+        // the agent changes it on its own
+        agent
+            .send(
+                json!({ "jsonrpc": "2.0", "method": "session/update", "params": {
+                "sessionId": "sess_1", "update": {
+                    "sessionUpdate": "config_option_update",
+                    "configOptions": config_option("small") } } }),
+            )
+            .await;
+        sink.wait_for(
+            |e| matches!(e, Event::Models { models } if models.current.as_deref() == Some("small")),
+        )
+        .await;
+        assert_eq!(session.models().unwrap().current.as_deref(), Some("small"));
+    }
+
+    #[tokio::test]
+    async fn the_model_is_switched_through_set_model_and_errors_keep_it() {
+        let models = json!({ "currentModelId": "opus", "availableModels": [
+            { "modelId": "opus", "name": "Opus" }, { "modelId": "sonnet", "name": "Sonnet" } ] });
+        let (session, mut agent, _sink, _, _dir) =
+            started_with(true, json!({ "models": models })).await;
+        let switching = tokio::spawn({
+            let session = session.clone();
+            async move { session.set_model("sonnet").await }
+        });
+        let req = agent.recv().await;
+        assert_eq!(req["method"], "session/set_model");
+        assert_eq!(
+            req["params"],
+            json!({ "sessionId": "sess_1", "modelId": "sonnet" })
+        );
+        agent
+            .send(json!({ "jsonrpc": "2.0", "id": req["id"], "result": {} }))
+            .await;
+        assert_eq!(
+            switching.await.unwrap().unwrap().current.as_deref(),
+            Some("sonnet")
+        );
+        // a refusal keeps the model in use
+        let switching = tokio::spawn({
+            let session = session.clone();
+            async move { session.set_model("opus").await }
+        });
+        let req = agent.recv().await;
+        agent
+            .send(json!({ "jsonrpc": "2.0", "id": req["id"],
+                "error": { "code": -32603, "message": "quota" } }))
+            .await;
+        let err = switching.await.unwrap().unwrap_err();
+        assert!(err.contains("quota"), "{err}");
+        assert_eq!(session.models().unwrap().current.as_deref(), Some("sonnet"));
+    }
+
+    #[tokio::test]
+    async fn an_agent_without_a_choice_has_no_models() {
+        let (session, _agent, _sink, _, _dir) = started(true).await;
+        assert!(session.models().is_none());
+        assert!(session
+            .set_model("x")
+            .await
+            .unwrap_err()
+            .contains("no choice"));
     }
 }
