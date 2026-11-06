@@ -200,9 +200,59 @@ fn cell_text(cell: &calamine::Data) -> String {
 }
 
 /// The cells of the first worksheet or of the CSV file.
+/// Most bytes the parts of an XLSX/XLSM/XLSB/ODS package may unpack to.
+/// The packages are read in the server process; without a cap a ZIP bomb of
+/// a few KiB could make calamine allocate gigabytes (threat model F13).
+pub const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024;
+/// Most entries such a package may have.
+const MAX_PACKAGE_ENTRIES: usize = 10_000;
+
+/// Refuses a ZIP package (XLSX, ODS …) that unpacks to more than `limit`
+/// bytes or has too many entries. The sizes in the ZIP directory are not
+/// trusted: every entry is inflated once into nothing and counted, never
+/// more than `limit` bytes in all. Not a ZIP (old `.xls`): nothing to check.
+fn check_package_size(filename: &str, bytes: &[u8], limit: u64) -> Result<(), String> {
+    use std::io::Read;
+    if !bytes.starts_with(b"PK") {
+        return Ok(());
+    }
+    let too_large = || {
+        format!(
+            "{filename} unpacks to more than {} MiB – it is refused (save a smaller sheet or export CSV).",
+            limit / (1024 * 1024)
+        )
+    };
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+        .map_err(|e| format!("{filename} is not a readable spreadsheet: {e}"))?;
+    if archive.len() > MAX_PACKAGE_ENTRIES {
+        return Err(format!(
+            "{filename} has more than {MAX_PACKAGE_ENTRIES} parts – it is refused."
+        ));
+    }
+    let mut total: u64 = 0;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("{filename} is not a readable spreadsheet: {e}"))?;
+        if entry.size() > limit.saturating_sub(total) {
+            return Err(too_large());
+        }
+        // inflate what is really there, at most up to the limit
+        let left = limit - total;
+        let read = std::io::copy(&mut entry.by_ref().take(left + 1), &mut std::io::sink())
+            .map_err(|e| format!("{filename} is not a readable spreadsheet: {e}"))?;
+        if read > left {
+            return Err(too_large());
+        }
+        total += read;
+    }
+    Ok(())
+}
+
 pub(crate) fn read_grid(filename: &str, bytes: &[u8]) -> Result<Vec<Vec<String>>, String> {
     if is_spreadsheet(filename) {
         use calamine::Reader;
+        check_package_size(filename, bytes, MAX_UNPACKED_BYTES)?;
         let mut workbook = calamine::open_workbook_auto_from_rs(Cursor::new(bytes.to_vec()))
             .map_err(|e| format!("{filename} is not a readable spreadsheet: {e}"))?;
         let sheet = workbook
@@ -648,6 +698,44 @@ mod tests {
 
     fn levels(t: &BomTable) -> Vec<usize> {
         t.rows.iter().map(|r| r.level).collect()
+    }
+
+    /// A ZIP package with the given (name, content) entries, deflated.
+    fn package(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, content) in entries {
+            zip.start_file(*name, options).unwrap();
+            zip.write_all(content).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn zip_bombs_are_refused_before_they_are_unpacked() {
+        const MIB: u64 = 1024 * 1024;
+        // a 2 MiB part that deflates to a few KiB: a small bomb
+        let zeros = vec![0u8; 2 * MIB as usize];
+        let bomb = package(&[("xl/worksheets/sheet1.xml", &zeros)]);
+        assert!(bomb.len() < 16 * 1024, "{} bytes", bomb.len());
+        let err = check_package_size("bom.xlsx", &bomb, MIB).unwrap_err();
+        assert!(err.contains("unpacks to more than 1 MiB"), "{err}");
+        assert!(check_package_size("bom.xlsx", &bomb, 4 * MIB).is_ok());
+        // parts that are fine one by one but too large together
+        let half = vec![b'x'; 600 * 1024];
+        let parts = package(&[("a.xml", &half), ("b.xml", &half)]);
+        assert!(check_package_size("bom.ods", &parts, MIB).is_err());
+        // too many parts
+        let names: Vec<String> = (0..=MAX_PACKAGE_ENTRIES).map(|i| format!("p{i}")).collect();
+        let many: Vec<(&str, &[u8])> = names.iter().map(|n| (n.as_str(), &b""[..])).collect();
+        let err = read("bom.xlsx", &package(&many)).unwrap_err();
+        assert!(err.contains("parts"), "{err}");
+        // not a ZIP (old .xls, CSV): nothing to check
+        assert!(check_package_size("bom.xls", b"\xd0\xcf\x11\xe0junk", 1).is_ok());
+        // a broken package is reported, not a panic
+        assert!(read("bom.xlsx", b"PK\x03\x04broken").is_err());
     }
 
     #[test]
