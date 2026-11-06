@@ -49,6 +49,12 @@ pub struct BomRow {
     pub unit: String,
     pub material: String,
     pub mass_kg: Option<f64>,
+    /// BOM structure / procurement as written (`Purchased`, `Normal`, `Kaufteil` …),
+    /// see `domain::Classification::from_bom_structure`.
+    pub structure: String,
+    /// Values of the columns no field is read from, in the order of
+    /// [`BomTable::extra_columns`] – custom attributes can be taken from them.
+    pub extra: Vec<String>,
 }
 
 /// A column of the file that is used, and for what.
@@ -66,6 +72,9 @@ pub struct BomTable {
     pub root: Option<BomRow>,
     pub rows: Vec<BomRow>,
     pub columns: Vec<Column>,
+    /// Headers of the other non-empty columns (vendor, order number, cost
+    /// center …); their values are in [`BomRow::extra`].
+    pub extra_columns: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -91,7 +100,8 @@ const FIELDS: &[(&str, &[&str])] = &[
     ("mass", &["mass", "masse", "weight", "gewicht", "massg", "masskg", "masslb", "massekg",
         "masseg", "weightkg", "weightg", "weightlb", "gewichtkg", "gewichtg"]),
     ("structure", &["bomstructure", "stücklistenstruktur", "stuecklistenstruktur", "structure",
-        "struktur"]),
+        "struktur", "procurement", "procurementtype", "beschaffung", "beschaffungsart", "makebuy",
+        "makeorbuy", "classification", "klassifizierung"]),
     ("file", &["filename", "filenamenoextension", "dateiname", "file", "datei"]),
 ];
 
@@ -107,7 +117,7 @@ pub fn field_label(field: &str) -> &'static str {
         "unit" => "Unit",
         "material" => "Material",
         "mass" => "Mass",
-        "structure" => "BOM structure",
+        "structure" => "BOM structure / classification",
         "file" => "File name",
         _ => "?",
     }
@@ -403,6 +413,17 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
             label: field_label(f),
         });
     }
+    // Columns no field is read from (custom attributes may use them).
+    let extra_index: Vec<usize> = mapping
+        .iter()
+        .enumerate()
+        .filter(|(col, field)| field.is_none() && !header[*col].trim().is_empty())
+        .map(|(col, _)| col)
+        .collect();
+    let extra_columns: Vec<String> = extra_index
+        .iter()
+        .map(|c| header[*c].trim().to_string())
+        .collect();
     let has = |f: &str| index.contains_key(f);
     let cell = |row: &[String], field: &str| -> String {
         index
@@ -554,6 +575,15 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
             unit,
             material: cell(row, "material"),
             mass_kg,
+            structure: cell(row, "structure"),
+            extra: extra_index
+                .iter()
+                .map(|c| {
+                    row.get(*c)
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_default()
+                })
+                .collect(),
         });
         positions.push(position.trim().trim_end_matches('.').to_string());
     }
@@ -589,6 +619,7 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
         root,
         rows,
         columns,
+        extra_columns,
         warnings,
     })
 }
@@ -632,6 +663,32 @@ mod tests {
             .any(|c| c.header == "QTY" && c.field == "quantity"));
         assert!(!t.columns.iter().any(|c| c.header == "Unit QTY"));
         assert!(t.warnings.iter().any(|w| w.contains("SKETCH-REF")));
+        assert_eq!(
+            t.rows[2].structure, "Purchased",
+            "kept for the classification"
+        );
+        assert_eq!(t.extra_columns, ["Unit QTY"], "unread columns are kept");
+        assert_eq!(t.rows[0].extra, [""]);
+    }
+
+    #[test]
+    fn extra_columns_for_custom_attributes() {
+        let csv = "Pos;Teilenummer;Benennung;Menge;Beschaffungsart;Lieferant;;Bestellnummer\n\
+                   1;GUIDE-1;Führung;2;Kaufteil;Bosch Rexroth;x;R1605\n\
+                   2;PLATE-1;Platte;1;Eigenfertigung;;;\n";
+        let t = read("bom.csv", csv.as_bytes()).unwrap();
+        assert!(t
+            .columns
+            .iter()
+            .any(|c| c.header == "Beschaffungsart" && c.field == "structure"));
+        assert_eq!(
+            t.extra_columns,
+            ["Lieferant", "Bestellnummer"],
+            "columns without a header are left out"
+        );
+        assert_eq!(t.rows[0].extra, ["Bosch Rexroth", "R1605"]);
+        assert_eq!(t.rows[0].structure, "Kaufteil");
+        assert_eq!(t.rows[1].extra, ["", ""]);
     }
 
     #[test]

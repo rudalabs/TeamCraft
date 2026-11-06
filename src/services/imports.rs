@@ -39,10 +39,10 @@ use uuid::Uuid;
 use crate::{
     auth::Actor,
     bomtable::{self, BomRow, BomTable, Column},
-    domain::{self, ItemType, Role},
+    domain::{self, AttributeType, Classification, ItemType, Role},
     error::{AppError, AppResult},
     services::{
-        access, audit, bom,
+        access, attributes, audit, bom,
         files::{self, Upload},
         items, revisions,
     },
@@ -163,6 +163,29 @@ pub struct PlannedItem {
     pub material: String,
     pub mass_kg: Option<f64>,
     pub unit: String,
+    /// Row in the file (first occurrence).
+    pub row: usize,
+    /// From the BOM structure / procurement column (new items only).
+    pub classification: Classification,
+    /// Custom attribute values from the file (new items only), validated.
+    pub attributes: Vec<PlannedAttribute>,
+}
+
+/// A custom attribute value a new item gets from the file.
+#[derive(Clone, Debug, Serialize)]
+pub struct PlannedAttribute {
+    pub key: String,
+    pub label: String,
+    /// As written in the file.
+    pub value: String,
+}
+
+/// A column of the file that fills a custom attribute.
+#[derive(Clone, Debug, Serialize)]
+pub struct AttributeColumn {
+    pub header: String,
+    pub key: String,
+    pub label: String,
 }
 
 /// A BOM line the import adds.
@@ -196,6 +219,10 @@ pub struct Plan {
     /// In file order (depth first), so it can be shown as an indented tree.
     pub lines: Vec<PlannedLine>,
     pub columns: Vec<Column>,
+    /// Columns read into custom attributes (header = key or label).
+    pub attribute_columns: Vec<AttributeColumn>,
+    /// Columns that are not imported.
+    pub unused_columns: Vec<String>,
     pub warnings: Vec<String>,
     pub new_items: usize,
     pub existing_items: usize,
@@ -342,6 +369,38 @@ pub async fn plan(
         return Err(AppError::Forbidden(format!(
             "You are not a member of the project group {project_code}; ask an admin to add you."
         )));
+    }
+
+    // Further columns: a header equal to the key or label of an active
+    // custom attribute fills that attribute of new items.
+    let defs = attributes::list_conn(conn, true).await?;
+    let squash = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let mut attribute_columns = Vec::new();
+    // (index into BomRow::extra, definition)
+    let mut attribute_sources: Vec<(usize, &crate::models::AttributeDef)> = Vec::new();
+    let mut unused_columns = Vec::new();
+    for (i, header) in table.extra_columns.iter().enumerate() {
+        let h = squash(header);
+        let def = defs
+            .iter()
+            .find(|d| squash(&d.key) == h || squash(&d.label) == h)
+            .filter(|d| !attribute_sources.iter().any(|(_, s)| s.key == d.key));
+        match def {
+            Some(d) => {
+                attribute_sources.push((i, d));
+                attribute_columns.push(AttributeColumn {
+                    header: header.clone(),
+                    key: d.key.clone(),
+                    label: d.label.clone(),
+                });
+            }
+            None => unused_columns.push(header.clone()),
+        }
     }
 
     // Items of TeamCraft with the part numbers of the file.
@@ -552,14 +611,22 @@ pub async fn plan(
                         None
                     }
                 });
-                items.push(planned_item(
-                    row,
-                    normalized,
-                    matched,
-                    taken,
-                    options,
-                    &mut warnings,
-                ));
+                let mut item =
+                    planned_item(row, normalized, matched, taken, options, &mut warnings);
+                if item.existing.is_none() {
+                    item.attributes = attribute_sources
+                        .iter()
+                        .filter_map(|(i, d)| {
+                            let value = row.extra.get(*i)?.trim();
+                            (!value.is_empty()).then(|| PlannedAttribute {
+                                key: d.key.clone(),
+                                label: d.label.clone(),
+                                value: value.to_string(),
+                            })
+                        })
+                        .collect();
+                }
+                items.push(item);
                 by_key.insert(key, items.len() - 1);
                 items.len() - 1
             }
@@ -643,6 +710,37 @@ pub async fn plan(
         ));
     }
 
+    // Attribute values are checked once the item types are final (a row
+    // with rows below it became an assembly); a value that does not fit is
+    // left out with a warning instead of stopping the import.
+    for it in items.iter_mut().filter(|i| i.existing.is_none()) {
+        let item_type = it.item_type.as_str();
+        let row = it.row;
+        it.attributes.retain(|a| {
+            let Some(d) = defs.iter().find(|d| d.key == a.key) else {
+                return false;
+            };
+            if !attributes::applies_to(d, item_type) {
+                warnings.push(format!(
+                    "Row {row}: {} does not apply to items of type {item_type} – '{}' is not imported.",
+                    d.label, a.value
+                ));
+                return false;
+            }
+            let data_type = AttributeType::parse(&d.data_type).unwrap_or(AttributeType::Text);
+            match domain::parse_attribute_value(&d.label, data_type, &d.choices, &a.value) {
+                Ok(_) => true,
+                Err(e) => {
+                    warnings.push(format!(
+                        "Row {row}: {} The value is not imported.",
+                        e.public_message()
+                    ));
+                    false
+                }
+            }
+        });
+    }
+
     // Find numbers: the file's where free, then the next multiples of 10.
     for (i, line) in lines.iter_mut().enumerate() {
         if let Some(f) = requested[i] {
@@ -677,6 +775,8 @@ pub async fn plan(
         items,
         lines,
         columns: table.columns.clone(),
+        attribute_columns,
+        unused_columns,
         warnings,
     })
 }
@@ -704,7 +804,19 @@ fn planned_item(
         } else {
             row.unit.clone()
         },
+        row: row.line,
+        classification: Classification::default(),
+        attributes: Vec::new(),
     };
+    if !row.structure.is_empty() {
+        match Classification::from_bom_structure(&row.structure) {
+            Some(c) => item.classification = c,
+            None => warnings.push(format!(
+                "Row {}: BOM structure '{}' is not understood – the item is classified as in-house.",
+                row.line, row.structure
+            )),
+        }
+    }
     match (normalized, matched) {
         (Some(n), Some(e)) => {
             item.existing = Some(e.id);
@@ -901,8 +1013,12 @@ async fn create_item(
             material: it.material.clone(),
             mass_kg: it.mass_kg,
             unit_cost: None,
-            classification: Default::default(),
-            attributes: Vec::new(),
+            classification: it.classification,
+            attributes: it
+                .attributes
+                .iter()
+                .map(|a| (a.key.clone(), a.value.clone()))
+                .collect(),
         },
     )
     .await?;
