@@ -60,14 +60,11 @@ opened it (`static/app.js`); a menu inside a panel closes first.
 
 Each of these is an entry in `docs/OPEN_WORK.md` (*Clients and packaging*):
 
-- **No skip link.** Eight stops (brand, navigation, search …) come before the
-  content on every page; the landmarks let screen-reader users jump, sighted
-  keyboard users have to tab through.
+- **Skip link** (done): "Skip to main content" is the first tab stop of every page and shows while focused.
 - **HTML built by JavaScript** – the assistant sidebar, the BOM tree
   controls, the 3D viewer, the upload progress – is not covered by the
   template test, and the desktop app (`desktop/ui`) not at all.
-- **Empty column headers.** 15 tables have an action column with an empty
-  `<th scope="col"></th>`; a screen reader announces nothing for it.
+- **Empty column headers** (done): the 15 action columns have the visually hidden text "Actions".
 - **No screen reader run.** The checks above are structural; nobody has
   used the main flows with NVDA, JAWS or VoiceOver yet.
 - **Focus of form fields** is a 1 px outline plus a coloured border: enough

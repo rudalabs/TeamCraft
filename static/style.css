@@ -1436,3 +1436,7 @@ td.row-actions details.menu { display: inline-block; text-align: left; }
 /* extraction templates of a project group */
 .template-fields { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
 .template-fields > label { gap: 2px; }
+
+/* Skip link: first tab stop, visible only while focused. */
+.skip-link { position: absolute; left: 8px; top: -48px; z-index: 1000; padding: 8px 14px; border-radius: 6px; background: var(--surface, #fff); color: var(--text, #000); border: 2px solid currentColor; text-decoration: none; }
+.skip-link:focus { top: 8px; }
