@@ -63,16 +63,62 @@ Missed lines / lines and line coverage from CI (`b4cf014`).
 | Area | Code | Tests | CI: missed / lines | HTTP / integration tests |
 |---|---|---|---|---|
 | File parsers (`mesh*`, `simmesh`, `stepbom`, `swpart`, `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex`, `cadformat`, `shape`, `pdftext`, `resultscan`) | 10.1k counted lines | unit tests per module; property tests (#94) | 361 / 10,058 – 96.4 % | `cad_fixtures` (real NIST files), `uploads`, `web_ui`, `parser_robustness`, `parser_corpus`, `preview_limits` |
-| `services/*` (business logic, the only writer) | 17.0k counted lines | unit tests in a third of the modules | 1,165 / 16,999 – 93.1 % | `api_flow`, `read_permissions`, `change_orders`, `change_requests`, `concurrency`, `uploads`, `webhooks`, `structure`, `numbering_and_watches`, `release_readiness`, `reviewers`, `audit_and_vault`, `interchange`, `working_folder`, `similar_parts`, `attributes`, `search_listing`, `scale`, `bom_performance`, `import_atomicity`, `import_proofing`, `service_refusals`, `migrations`, `atomic_processes`, `result_values`, `result_proposals`, `assistant_threads`, `agent_tools` |
-| `web/*` (HTML handlers) | 5.6k counted lines | – | 891 / 5,613 – 84.1 % | `web_ui`, the feature tests that use the forms, `no_unchecked_in_handlers` |
+| `services/*` (business logic, the only writer) | 17.0k counted lines | unit tests in a third of the modules | 1,165 / 16,999 – 93.1 % | `api_flow`, `read_permissions`, `change_orders`, `change_requests`, `concurrency`, `uploads`, `webhooks`, `structure`, `numbering_and_watches`, `release_readiness`, `reviewers`, `audit_and_vault`, `interchange`, `working_folder`, `similar_parts`, `attributes`, `search_listing`, `scale`, `bom_performance`, `import_atomicity`, `import_proofing`, `service_refusals`, `migrations`, `atomic_processes`, `result_values`, `result_proposals`, `assistant_threads`, `agent_tools`, `request_digests`, `folder_import`; `architecture_guards` (every mutation audited) |
+| `web/*` (HTML handlers) | 5.6k counted lines | – | 891 / 5,613 – 84.1 % | `web_ui`, `bom_tree_view`, the feature tests that use the forms, `no_unchecked_in_handlers`, `architecture_guards` (no SQL in handlers, every template registered and rendered) |
 | `api/*` (REST handlers) | 2.9k counted lines | – | 305 / 2,878 – 89.4 % | `api_flow` and the feature tests, `range_downloads` |
-| `domain/*`, `config.rs`, `util.rs`, `error.rs` | 3.1k counted lines | unit and property tests | 87 / 3,068 – 97.2 % | all of them; `domain_and_vault` |
+| `domain/*`, `config.rs`, `util.rs`, `error.rs` | 3.1k counted lines | unit and property tests | 87 / 3,068 – 97.2 % | all of them; `domain_and_vault`; `architecture_guards` (every configuration variable documented) |
 | `auth.rs`, `oidc.rs` | 0.6k counted lines | 10 unit | 191 / 649 – 70.6 % (`oidc.rs` 53.5 %) | `api_flow`, `read_permissions` (tokens, sessions), `oidc_flow` (SSO against a fake provider, session and PAT lifetime; the CI numbers predate it) |
 | `vault.rs`, `backup.rs`, `db.rs` | 1.1k counted lines | unit tests in each | 101 / 1,148 – 91.2 % | `audit_and_vault`, `domain_and_vault`, `uploads`, `backup_restore`, `backup_errors`, `backup_proofing`, `migrations` |
-| `webhooks.rs`, `delivery.rs`, `notify.rs` | 1.0k counted lines | unit tests in each | 129 / 971 – 86.7 % (`notify.rs` 26 %) | `webhooks`, `webhook_ssrf`, `api_flow` (e-mail outbox), `atomic_processes`; no test against a real SMTP/Mattermost server |
+| `webhooks.rs`, `delivery.rs`, `notify.rs` | 1.0k counted lines | unit tests in each | 129 / 971 – 86.7 % (`notify.rs` 26 %) | `webhooks`, `webhook_ssrf`, `api_flow` (e-mail outbox), `request_digests`, `atomic_processes`; no test against a real SMTP/Mattermost server |
 | `assistant.rs`, `llm/*`, `mcp/*` | 5.2k counted lines | unit tests in each | 306 / 5,236 – 94.2 % | `assistant`, `assistant_threads`, `mcp`, `agent_tools`, `read_permissions` |
 | `main.rs`, `lib.rs` (CLI, router) | 0.8k counted lines | 3 unit | 533 / 756 – 29.5 % | the CLI runs only in the CLI smoke test of the *tests* job, which the coverage job does not measure |
-| Desktop (`desktop/src`, own crate, not measured) | 9.1k lines | 72 unit | – | none (CI runs the desktop tests on Linux only) |
+| Desktop (`desktop/src`, own crate, not measured) | 9.1k lines | 72 unit | – | `folder_import` sends the requests of the desktop's folder import (`desktop/ui/app.js`) to the server; the app itself is not driven end to end (CI runs the desktop tests on Linux only) |
+
+## Features
+
+The feature list of the README (*What works*) and the tests that hold each
+feature, as of #109. Unit tests are named by module, integration tests by
+their file in `tests/`. When a pull request adds a feature or a test file,
+it updates this table; a test file that appears nowhere on this page is a
+sign that it was forgotten.
+
+| Feature | Unit tests | Integration tests | Not covered |
+|---|---|---|---|
+| Check-out / check-in | `services::checkouts`, `domain` | `api_flow`, `concurrency` (outdated base refused, two check-ins), `atomic_processes`, `working_folder`, `web_ui` | – |
+| Versions and rollback | – | `api_flow` (versions, restore), `audit_and_vault`, `range_downloads` | – |
+| Vault explorer | – | `web_ui`, `read_permissions` (restricted groups hidden), `scale` | – |
+| Large uploads | `services::uploads` | `uploads` (resume, chunk checks), `atomic_processes` (`finish` repeatable), `range_downloads` | – |
+| 160+ file formats | `cadformat` | `cad_fixtures` (NIST files), `parser_robustness` | most formats only by extension and magic bytes |
+| 3D preview | `mesh`, `mesh::step`, `preview` | `preview_limits`, `parser_robustness`, `parser_corpus`, `cad_fixtures` | preview of the NIST fixtures after a folder import (open work) |
+| Native CAD thumbnails | `thumbnail`, `nxpart`, `swpart` | `cad_fixtures`, `parser_robustness`, `parser_corpus` | Solid Edge (no openly licensed file) |
+| FEA/CFD results | `simmesh` (fixtures in `tests/fixtures/sim`) | `parser_robustness` (VTK, VTU, FRD), `preview_limits` | real solver output |
+| Search | `textindex`, `pdftext` (the search itself: `services::items`, no unit tests) | `search_listing`, `api_flow`, `scale` | – |
+| Similar parts | `shape` | `similar_parts` | – |
+| Multi-level BOM | `services::bom` | `structure` (roll-ups, revision rules, compare), `bom_tree_view` (levels, group filter, CSV), `bom_performance`, `scale` | – |
+| Where-used | – | `structure`, `interchange` (multi-level), `api_flow`, `mcp` | – |
+| Alternates and supersession | – | `interchange` | – |
+| BOM import | `bomtable`, `stepbom`, `services::imports` | `import_proofing`, `import_atomicity`, `attributes` (columns), `parser_robustness`, `folder_import` | an item whose creation answer was lost is created again (open work) |
+| Pack and Go | – | `api_flow`, `read_permissions` | – |
+| Lifecycle | `domain` (property tests) | `api_flow`, `change_orders`, `service_refusals` | – |
+| Change requests | – | `change_requests`, `request_digests` (e-mail digest) | – |
+| Change orders | – | `change_orders`, `reviewers`, `release_readiness`, `atomic_processes` | – |
+| Change propagation | `cadrefs` | `api_flow`, `cad_fixtures` (references in real files), `folder_import`, `agent_tools` (`impact_summary`) | the reference scan with files of every CAD program (open work) |
+| Release readiness | – | `release_readiness` | – |
+| Simulation management | – | `api_flow`, `webhooks` | – |
+| Result values | `resultscan` | `result_values`, `result_proposals` | – |
+| Roles and read permissions | `domain`, `auth` | `read_permissions`, `no_unchecked_in_handlers`, `api_flow` | – |
+| Single sign-on | `oidc` | `oidc_flow` (fake provider) | a real identity provider |
+| Numbering schemes | `domain` | `numbering_and_watches`, `atomic_processes` (parallel creation) | – |
+| Custom attributes | – | `attributes`, `import_proofing` | – |
+| Notifications | `services::notifications`, `delivery` | `numbering_and_watches` (watches), `change_requests`, `request_digests`, `api_flow` (e-mail outbox) | real SMTP and Mattermost servers |
+| Event webhooks | `webhooks` | `webhooks`, `webhook_ssrf`, `atomic_processes` | – |
+| Audit log | – | `audit_and_vault`, `architecture_guards` (every mutation audited) | – |
+| Backup and restore | `backup` | `backup_restore`, `backup_errors`, `backup_proofing`, `migrations` | – |
+| Web UI | `templates`, `assets`, `domain` (`skins_meet_contrast`) | `web_ui`, `architecture_guards` (templates registered and rendered) | keyboard and screen-reader use |
+| Desktop app | `desktop/src` (72) | `folder_import` | the app's UI: tested by hand only |
+| REST API | – | `api_flow` and every feature test above | – |
+| MCP server | `mcp` | `mcp`, `agent_tools`, `read_permissions` | – |
+| Ask TeamCraft | `assistant`, `llm` | `assistant`, `assistant_threads`, `result_proposals` | a real model (recorded fixtures: open work) |
 
 ## Top 15: the thinnest high-risk spots
 

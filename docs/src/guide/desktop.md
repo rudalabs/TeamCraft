@@ -239,12 +239,22 @@ whose newer revision takes the place, stay where they are; files you
 changed are moved first. Identical copies are removed, emptied old folders
 too, and every step is written to `.teamcraft/migration.log`.
 
-## Run it
+## Install it
+
+Every release since 0.1.0 has the desktop app on the
+[Releases page](https://github.com/rudalabs/TeamCraft/releases): Linux
+(`.AppImage`, `.deb`, `.rpm`, Flatpak), macOS (`.dmg`, `.app.zip`, Apple
+silicon) and Windows x64 and ARM64 (`.msi`, `-setup.exe`, a portable `.zip`).
+The [README](https://github.com/rudalabs/TeamCraft#download) lists them per
+platform. Check a download against `SHA256SUMS.txt`. The installers are not
+code-signed yet: macOS asks to confirm the first start (*right-click → Open*),
+and Windows SmartScreen shows *More info → Run anyway*.
+
+## Build it from source
 
 ```sh
 cd desktop
 cargo run            # Linux needs the WebKitGTK development packages
 ```
 
-The platform guides list the system packages. Installers are not published
-yet; the app is built and tested from source.
+The platform guides list the system packages.

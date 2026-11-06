@@ -137,9 +137,11 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   twice. Open: an item whose *creation* answer was lost (network gone between the server's commit and the app's
   log) is created again on the next run – that needs an idempotency key for `POST /items`
 - [x] **Atomic processes** – the folder import per item is covered too (see *Import*); the rest is done, see *Done*
-- [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
+- [x] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
   make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
-  with two failing integration tests; merge only with green checks
+  with two failing integration tests; merge only with green checks. The table is *Features* in
+  [docs/src/dev/coverage.md](src/dev/coverage.md#features), as of #109 (#65 itself never wrote one); a pull request that
+  adds a feature or a test file updates it
 
 **Parsers and CI gates**
 

@@ -99,6 +99,10 @@ it is skipped, with `TEAMCRAFT_REQUIRE_PG_TOOLS=1` (CI) that fails.
 | the documentation | `mdbook build docs` (mdBook 0.5) and `scripts/check-doc-links.sh`   |
 | the web UI        | check the changed pages in a browser (no CSP errors in the console) |
 
+A new feature or a new file in `tests/` also goes into the *Features* table
+of the [test coverage map](docs/src/dev/coverage.md#features): which tests
+hold the feature and what is not covered.
+
 ### Scale check
 
 If you change queries, indexes or pages that list many rows, run the scale
