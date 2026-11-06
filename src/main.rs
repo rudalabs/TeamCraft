@@ -276,24 +276,40 @@ async fn run(cli: Cli) -> ExitCode {
     }
 }
 
-fn init_tracing(format: LogFormat) {
+/// Where the log goes: the server logs to standard output (the service
+/// manager collects it); the other commands to standard error, so that
+/// their output (e.g. `teamcraft user list`) stays free of log lines.
+#[derive(Clone, Copy)]
+enum LogTo {
+    Stdout,
+    Stderr,
+}
+
+fn init_tracing(format: LogFormat, to: LogTo) {
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,tower_http=info,sqlx=warn"));
     let builder = tracing_subscriber::fmt().with_env_filter(filter);
-    match format {
-        LogFormat::Text => builder.init(),
-        LogFormat::Json => builder.json().init(),
+    match (format, to) {
+        (LogFormat::Text, LogTo::Stdout) => builder.init(),
+        (LogFormat::Json, LogTo::Stdout) => builder.json().init(),
+        (LogFormat::Text, LogTo::Stderr) => builder.with_writer(std::io::stderr).init(),
+        (LogFormat::Json, LogTo::Stderr) => builder.json().with_writer(std::io::stderr).init(),
     }
 }
 
+/// The configuration of a command (not the server, see [`LogTo`]).
 fn load_config() -> Result<Config> {
+    load_config_logging_to(LogTo::Stderr)
+}
+
+fn load_config_logging_to(to: LogTo) -> Result<Config> {
     let config = Config::from_env().context("invalid configuration")?;
-    init_tracing(config.log_format);
+    init_tracing(config.log_format, to);
     Ok(config)
 }
 
 async fn serve(no_migrate: bool) -> Result<ExitCode> {
-    let config = load_config()?;
+    let config = load_config_logging_to(LogTo::Stdout)?;
     notify::init(&config);
     tracing::info!(
         "starting TeamCraft {} ({})",

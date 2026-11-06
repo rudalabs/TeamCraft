@@ -32,6 +32,10 @@ sets the database connection with the password from a Docker secret
 | `TEAMCRAFT_LOG_FORMAT`    | `text`                           | `text` or `json`                                                                |
 | `RUST_LOG`                | `info,tower_http=info,sqlx=warn` | log filter                                                                      |
 
+The server (`teamcraft serve`) logs to standard output; the other commands
+(`migrate`, `user`, `vault`, `backup`, …) log to standard error, so that their
+output can be read by scripts.
+
 ## Database (PostgreSQL 16+)
 
 | Variable                                          | Default                                          | Meaning                                                                |
