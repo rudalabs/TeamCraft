@@ -158,6 +158,8 @@ pub enum PreviewFormat {
     Glb,
     ThreeDs,
     Step,
+    /// Siemens NX parts: the lightweight (JT) representation they store.
+    NxPart,
     Pts,
     Xyz,
     Las,
@@ -169,7 +171,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 17] = [
+    pub const ALL: [PreviewFormat; 18] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -180,6 +182,7 @@ impl PreviewFormat {
         PreviewFormat::Glb,
         PreviewFormat::ThreeDs,
         PreviewFormat::Step,
+        PreviewFormat::NxPart,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
         PreviewFormat::Las,
@@ -212,6 +215,7 @@ impl PreviewFormat {
             PreviewFormat::Glb => "glb",
             PreviewFormat::ThreeDs => "3ds",
             PreviewFormat::Step => "step",
+            PreviewFormat::NxPart => "nx-part",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
             PreviewFormat::Las => "las",

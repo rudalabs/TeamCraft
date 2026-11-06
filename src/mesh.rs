@@ -27,7 +27,9 @@ use std::io::{Cursor, Read};
 
 use anyhow::{anyhow, bail, Context, Result};
 
+mod jt;
 mod p21;
+mod pn;
 mod step;
 mod tessellated;
 
@@ -423,6 +425,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "pts" | "xyz" => text_points(data)?,
         "las" => las(data)?,
         "step" => step::read(data)?,
+        "nx-part" => jt::read_nx(data)?,
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
         "calculix-frd" => crate::simmesh::frd(data)?,

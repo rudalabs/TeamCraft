@@ -28,6 +28,7 @@ turn, double-click to reset; *Z up / Y up* switches the convention.
 | Previewed           | Formats                                                          |
 |---------------------|------------------------------------------------------------------|
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                   |
+| Native CAD          | NX parts (`.prt`) – the tessellation NX stores in the file      |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS |
 | Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces          |
 | Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields |
@@ -52,9 +53,14 @@ several fields, a selector – see [Simulations](simulation.md#results-in-3d).
 ## Previews of native CAD files
 
 Native CAD files (Inventor, Solid Edge, SolidWorks, NX, Creo, CATIA, …) are
-proprietary; TeamCraft does not read their geometry (see
+proprietary; TeamCraft does not read their exact geometry (see
 [Research: previews of native CAD files](../research/cad-previews.md)).
-Instead it shows what other PLM systems show:
+The one exception are **NX parts**: NX saves a tessellation of every part
+in a documented format (JT 9) into the file, and TeamCraft shows it in the
+3D viewer, refined along the exact surface normals stored with it, so round
+faces stay round (see [Research: 3D preview of NX parts](../research/nx-jt-preview.md)).
+NX assemblies and drawings have no such tessellation. For the rest
+TeamCraft shows what other PLM systems show:
 
 * **The preview image stored in the file.** Inventor (`.ipt`, `.iam`,
   `.idw`, `.ipn`), Solid Edge (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`), NX (`.prt`, a JPEG) and

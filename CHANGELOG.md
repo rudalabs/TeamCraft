@@ -20,6 +20,8 @@ Changes on `main` since the `v0.2.0` tag.
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.
+- 3D preview of NX parts (`.prt`) from the JT tessellation NX stores in the
+  file, refined along its exact surface normals so round faces stay round.
 
 ### Changed
 

@@ -27,7 +27,12 @@ list is on every server at `/formats` and `GET /api/v1/formats`
 NX parts (NX 1980 and later) are read through their stream container
 (`SPLMSSTR`, `src/nxpart.rs`): the referenced component files come only from
 its reference streams (not from the save history), the preview image from
-`/Root/images/preview`.
+`/Root/images/preview`, and the 3D preview of parts from
+`/Root/FastLoad/JT`: a JT 9 file whose finest level of detail
+(topologically compressed tri-strip sets, `src/mesh/jt.rs`) is refined
+along its stored surface normals up to 3 × 3 (`src/mesh/pn.rs`, at most
+about 500 000 triangles) and shown in millimetres. Assemblies and drawings
+carry no such stream; stand-alone `.jt` files (JT 10) are not previewed yet.
 
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
