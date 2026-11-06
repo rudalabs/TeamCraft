@@ -75,8 +75,33 @@ feature milestone – the features in *What works* are enough; what is missing i
 
 *Security*
 
-- [ ] Threat model in `docs/src/dev/` (vault, sessions, PATs, OIDC, uploads, file parsers, webhooks, MCP/assistant);
-  every finding resolved or documented
+- Open findings of the [threat model](src/dev/threat-model.md) (F1–F19 there):
+  - [ ] F1: rate limit or lockout for sign-in, the own password change and the desktop token exchange (with the
+    policy review below)
+  - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
+  - [ ] F3: sign-in, failed sign-in and sign-out in the audit log (not only log lines)
+  - [x] F4: web posts without `Origin` and `Referer` are refused; install guide says the proxy must overwrite
+    `X-Forwarded-Host`
+  - [x] F5: `Strict-Transport-Security` when the public URL is https
+  - [ ] F6: OIDC with a plain `http://` issuer: refuse it outside `localhost`, or verify ID token signatures (JWKS)
+    for it – a decision, since it can break installations with an internal IdP
+  - [ ] F7: end TeamCraft sessions of users removed at the IdP (shorter SSO sessions, back-channel logout or a
+    periodic check)
+  - [ ] F8: re-check the hash of a blob while it is downloaded (or periodically), not only in `vault check`
+  - [ ] F9: disk quota per user and in total for uploads
+  - [ ] F10: serve downloads with a Content-Type derived from the format (the download headers are pinned in
+    `tests/web_security.rs`)
+  - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
+  - [x] F12: start the parser children with a cleared environment (no database URL, no keys)
+  - [ ] F13: a cap on the unpacked size of XLSX/ODS tables, or read them in the isolated child
+  - [ ] F14: fuzz targets for `simmesh`, `pdftext` and `resultscan` (the no-panic lints and the 3DS and Kelvin
+    fixes are in `main` since #106/#108)
+  - [ ] F15: prompt injection: confirmation of assistant drafts per write, or taint for MCP sessions as well
+  - [ ] F16: per-user quota for the assistant and MCP (with the daily budget in section 2, *Assistant*)
+  - [ ] F17: `teamcraft mcp`: no redirects, a warning (or refusal) for `http://` servers other than `localhost`
+  - [ ] F18: desktop token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service); warn on
+    `http://` server URLs
+  - [ ] F19: backups written with mode 0600/0700, optional encryption, a signed manifest
 - [ ] External review or pentest of authentication, read permissions and file parsing; fuzzing of all parsers
   running continuously (section 1)
 - [ ] `cargo deny`/`cargo audit` green in CI, SBOM (CycloneDX) attached to each release, release artifacts with
@@ -341,6 +366,10 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
+- [x] **Threat model** (`docs/src/dev/threat-model.md`): assets, attackers, trust boundaries and per threat the
+  mitigation with code and test or *open*; vault, sessions, PATs, OIDC, uploads, file parsers, webhooks,
+  MCP/assistant, desktop ↔ server, backup/restore. 19 open findings listed in section 2, *Security*; one fixed on
+  the way: changing one's own password now signs out the user's other sessions
 - [x] **BOM tree view** for large structures (web UI only): lines with children fold and unfold (progressive
   enhancement in `static/app.js`, all expanded without JavaScript), `?depth=n` shows the first n levels (a line at the
   cut counts what is hidden below it), a *Group* column links each line's project group (restricted placeholders show
