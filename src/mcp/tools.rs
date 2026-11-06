@@ -2491,7 +2491,7 @@ async fn fill_change(
 ) -> AppResult<Vec<String>> {
     let mut added: Vec<String> = Vec::new();
     for rev in revs {
-        if let Err(e) = changes::add_item(&st.db, me, change.id, rev.id).await {
+        if let Err(e) = changes::add_item(&st.db, me, change.typed_id(), rev.typed_id()).await {
             let prefix = if added.is_empty() {
                 String::new()
             } else {

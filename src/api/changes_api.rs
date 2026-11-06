@@ -107,7 +107,7 @@ pub(super) async fn add_change_item(
                 })?
         }
     };
-    changes::add_item(&st.db, &me, change.id, rev.id).await?;
+    changes::add_item(&st.db, &me, change.typed_id(), rev.typed_id()).await?;
     Ok(Json(change_json(&st, &me, &number).await?))
 }
 

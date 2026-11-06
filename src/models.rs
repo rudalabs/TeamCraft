@@ -5,6 +5,8 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::ids::{ChangeId, ItemId, RevisionId};
+
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct User {
     pub id: Uuid,
@@ -583,6 +585,32 @@ pub struct AuditEntry {
     #[sqlx(default)]
     #[serde(skip)]
     pub mentions_hidden: bool,
+}
+
+// Typed ids of the rows (`crate::ids`): the kind comes from the row, so a
+// caller cannot hand a revision's id where a change order's is expected.
+
+impl Item {
+    pub fn typed_id(&self) -> ItemId {
+        ItemId(self.id)
+    }
+}
+
+impl Revision {
+    pub fn typed_id(&self) -> RevisionId {
+        RevisionId(self.id)
+    }
+
+    /// The item this revision belongs to.
+    pub fn typed_item_id(&self) -> ItemId {
+        ItemId(self.item_id)
+    }
+}
+
+impl Change {
+    pub fn typed_id(&self) -> ChangeId {
+        ChangeId(self.id)
+    }
 }
 
 #[cfg(test)]

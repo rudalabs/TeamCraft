@@ -94,7 +94,7 @@ pub(super) async fn delete_alternate(
 ) -> AppResult<StatusCode> {
     let item = items::get_by_number(&st.db, &me, &number).await?;
     let other = items::get_by_number(&st.db, &me, &alternate).await?;
-    interchange::remove_alternate(&st.db, &me, item.id, other.id).await?;
+    interchange::remove_alternate(&st.db, &me, item.typed_id(), other.typed_id()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

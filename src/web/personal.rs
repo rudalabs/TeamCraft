@@ -269,7 +269,8 @@ async fn comparison(
         (rev.clone(), other)
     };
     let rule = q.rule(&before, &after);
-    let diffs = bom_compare::compare(&st.db, me, before.id, after.id, depth, rule).await?;
+    let diffs =
+        bom_compare::compare(&st.db, me, before.typed_id(), after.typed_id(), depth, rule).await?;
     Ok(Comparison {
         rev,
         revisions: all,

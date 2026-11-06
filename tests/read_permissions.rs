@@ -2540,9 +2540,14 @@ async fn second_review_round_leaks_are_closed() {
         &hd_id.to_string(),
     )
     .await;
-    teamcraft::services::changes::remove_item(&app.pool, &mona_actor, chg2_id, hd_rev)
-        .await
-        .expect("remove from the change");
+    teamcraft::services::changes::remove_item(
+        &app.pool,
+        &mona_actor,
+        teamcraft::ids::ChangeId(chg2_id),
+        teamcraft::ids::RevisionId(hd_rev),
+    )
+    .await
+    .expect("remove from the change");
     teamcraft::services::items::delete(&app.pool, &mona_actor, hd_id)
         .await
         .expect("delete");

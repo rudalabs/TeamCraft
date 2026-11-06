@@ -172,7 +172,14 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 - [ ] One request/response contract for web, REST and MCP where they do the same thing (e.g. BOM, where-used,
   change requests): shared view structs in `services::*` instead of three hand-built JSON/HTML shapes
 - [ ] Typed ids (`ItemId`, `RevisionId`, `ChangeId`, … as newtypes over `Uuid`) at the service boundary, so that ids
-  cannot be swapped – start with the services that take several ids
+  cannot be swapped – start with the services that take several ids – started: `src/ids.rs` (transparent for serde
+  and sqlx, no `From<Uuid>`), `typed_id()` on `Item`, `Revision`, `Change`; typed in `changes::add_item`,
+  `remove_item`, `remove_reviewer`, `interchange::remove_alternate`, `bom_compare::compare`,
+  `personal::is_favorite` and the web routes `/changes/{id}/items/{revision_id}/remove` and
+  `/changes/{id}/reviewers/{user_id}/remove` (`Path<(ChangeId, RevisionId)>`).
+  Next: `ProjectId`/`UserId` (`projects::remove_member`, `notifications::is_watching`), the single-id services
+  (`revisions::get`, `bom::lines`, `items::open_revision` …), `ImportOptions`, `services::requests` (after its split),
+  then the `id` fields of the models themselves
 - [ ] Document the invariants per service function (permission check, rows locked, audit action, notifications and
   webhooks emitted) in its doc comment; `cargo doc` then is the reference for reviewers – started with an
   `# Invariants` section on `files::check_in`, `changes::review`, `interchange::replace`, `save_as::save_as`,

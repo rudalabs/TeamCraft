@@ -29,6 +29,7 @@ use crate::{
     auth::Actor,
     domain::{self, LifecycleState, Role},
     error::{AppError, AppResult},
+    ids::ItemId,
     models::Item,
     services::{access, audit, bom, items},
 };
@@ -245,9 +246,10 @@ async fn insert_alternate(
 pub async fn remove_alternate(
     pool: &PgPool,
     actor: &Actor,
-    item_id: Uuid,
-    alternate_item_id: Uuid,
+    item_id: ItemId,
+    alternate_item_id: ItemId,
 ) -> AppResult<u64> {
+    let (item_id, alternate_item_id) = (item_id.uuid(), alternate_item_id.uuid());
     let item = items::get(pool, actor, item_id).await?;
     ensure_item_editable(actor, &item)?;
     let other = items::get(pool, actor, alternate_item_id).await?;

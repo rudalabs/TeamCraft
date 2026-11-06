@@ -14,6 +14,7 @@ use crate::{
     auth::Actor,
     domain::RevisionRule,
     error::{AppError, AppResult},
+    ids::RevisionId,
     models::BomLine,
     services::bom::{self, BomNode},
 };
@@ -284,11 +285,12 @@ pub fn diff_trees(before: &[BomNode], after: &[BomNode]) -> Vec<LineDiff> {
 pub async fn compare(
     pool: &PgPool,
     actor: &Actor,
-    before: Uuid,
-    after: Uuid,
+    before: RevisionId,
+    after: RevisionId,
     depth: Depth,
     rule: RevisionRule,
 ) -> AppResult<Vec<LineDiff>> {
+    let (before, after) = (before.uuid(), after.uuid());
     match depth {
         Depth::Single => {
             let (a, b) = tokio::try_join!(

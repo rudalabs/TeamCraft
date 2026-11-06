@@ -186,7 +186,8 @@ async fn compare_at(
     )?;
     let (before, after) = if a.seq <= b.seq { (a, b) } else { (b, a) };
     let rule = rule.unwrap_or_else(|| bom_compare::default_rule(&before.state, &after.state));
-    let diffs = bom_compare::compare(&st.db, me, before.id, after.id, depth, rule).await?;
+    let diffs =
+        bom_compare::compare(&st.db, me, before.typed_id(), after.typed_id(), depth, rule).await?;
     Ok((before, after, diffs))
 }
 

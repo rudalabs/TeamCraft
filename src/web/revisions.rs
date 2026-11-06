@@ -159,7 +159,8 @@ pub async fn show(
         items::hidden_parents(&st.db, me, item.id),
         references::incoming_hidden(&st.db, me, item.id),
     )?;
-    let favorite = crate::services::personal::is_favorite(&st.db, ctx.me.id, item.id).await?;
+    let favorite =
+        crate::services::personal::is_favorite(&st.db, ctx.me.id, item.typed_id()).await?;
     // alternates and supersession of the item, superseded children of the BOM
     let child_ids: Vec<Uuid> = lines
         .iter()

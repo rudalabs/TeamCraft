@@ -11,6 +11,7 @@ use crate::{
     auth::Actor,
     domain,
     error::{AppError, AppResult},
+    ids::ItemId,
     util,
 };
 
@@ -22,7 +23,7 @@ pub const SEARCH_KEYS: [&str; 8] = [
 /// Most saved searches per user.
 pub const MAX_SAVED_SEARCHES: i64 = 50;
 
-pub async fn is_favorite(pool: &PgPool, user_id: Uuid, item_id: Uuid) -> AppResult<bool> {
+pub async fn is_favorite(pool: &PgPool, user_id: Uuid, item_id: ItemId) -> AppResult<bool> {
     Ok(sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (SELECT 1 FROM favorites WHERE user_id = $1 AND item_id = $2)",
     )

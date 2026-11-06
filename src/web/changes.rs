@@ -16,6 +16,7 @@ use super::{
 use crate::{
     domain::{ChangeStatus, Decision, LifecycleState, Priority, Role},
     error::{AppError, AppResult},
+    ids::{ChangeId, RevisionId},
     services::{audit, changes, items, notifications, requests, reviewers, revisions, users, Page},
     AppState,
 };
@@ -140,7 +141,9 @@ pub async fn create(
     };
     let to = format!("/changes/{}", change.id);
     if let Some(rev_id) = parse_opt_uuid("Revision", Some(&form.revision_id))? {
-        if let Err(e) = changes::add_item(&st.db, &ctx.me, change.id, rev_id).await {
+        if let Err(e) =
+            changes::add_item(&st.db, &ctx.me, change.typed_id(), RevisionId(rev_id)).await
+        {
             if !is_user_error(&e) {
                 return Err(e);
             }
@@ -296,7 +299,7 @@ pub async fn add_item(
                 revisions::label(&rev)
             )));
         }
-        changes::add_item(&st.db, &ctx.me, id, rev.id).await?;
+        changes::add_item(&st.db, &ctx.me, ChangeId(id), rev.typed_id()).await?;
         Ok(revisions::label(&rev))
     }
     .await;
@@ -343,7 +346,7 @@ pub async fn add_from_revision(
     let result = async {
         let change_id = parse_opt_uuid("Change", Some(&form.change_id))?
             .ok_or_else(|| AppError::BadRequest("Choose a change.".into()))?;
-        changes::add_item(&st.db, &ctx.me, change_id, rev_id).await?;
+        changes::add_item(&st.db, &ctx.me, ChangeId(change_id), RevisionId(rev_id)).await?;
         changes::get(&st.db, &ctx.me, change_id).await
     }
     .await;
@@ -358,7 +361,7 @@ pub async fn add_from_revision(
 pub async fn remove_item(
     State(st): State<AppState>,
     ctx: WebCtx,
-    Path((id, revision_id)): Path<(Uuid, Uuid)>,
+    Path((id, revision_id)): Path<(ChangeId, RevisionId)>,
 ) -> AppResult<Response> {
     let back = format!("/changes/{id}");
     let result = changes::remove_item(&st.db, &ctx.me, id, revision_id).await;
@@ -392,7 +395,7 @@ pub async fn add_reviewer(
 pub async fn remove_reviewer(
     State(st): State<AppState>,
     ctx: WebCtx,
-    Path((id, user_id)): Path<(Uuid, Uuid)>,
+    Path((id, user_id)): Path<(ChangeId, Uuid)>,
 ) -> AppResult<Response> {
     let back = format!("/changes/{id}");
     let result = changes::remove_reviewer(&st.db, &ctx.me, id, user_id).await;

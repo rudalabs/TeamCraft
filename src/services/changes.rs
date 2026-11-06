@@ -25,6 +25,7 @@ use crate::{
         Role, WebhookEvent,
     },
     error::{AppError, AppResult},
+    ids::{ChangeId, RevisionId},
     models::{Change, ChangeItem, ChangeReview},
     services::{
         access, audit, impacts, next_counter,
@@ -540,11 +541,11 @@ pub async fn update(
 pub async fn add_item(
     pool: &PgPool,
     actor: &Actor,
-    change_id: Uuid,
-    revision_id: Uuid,
+    change_id: ChangeId,
+    revision_id: RevisionId,
 ) -> AppResult<()> {
     let mut tx = pool.begin().await?;
-    add_item_in(&mut tx, actor, change_id, revision_id).await?;
+    add_item_in(&mut tx, actor, change_id.uuid(), revision_id.uuid()).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -727,9 +728,10 @@ pub async fn add_dependencies(
 pub async fn remove_item(
     pool: &PgPool,
     actor: &Actor,
-    change_id: Uuid,
-    revision_id: Uuid,
+    change_id: ChangeId,
+    revision_id: RevisionId,
 ) -> AppResult<()> {
+    let (change_id, revision_id) = (change_id.uuid(), revision_id.uuid());
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
@@ -846,9 +848,10 @@ pub async fn add_reviewer(
 pub async fn remove_reviewer(
     pool: &PgPool,
     actor: &Actor,
-    change_id: Uuid,
+    change_id: ChangeId,
     reviewer_id: Uuid,
 ) -> AppResult<()> {
+    let change_id = change_id.uuid();
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;

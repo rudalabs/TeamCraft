@@ -13,6 +13,7 @@ use uuid::Uuid;
 use super::{finish, is_user_error, render, WebCtx};
 use crate::{
     error::AppResult,
+    ids::ItemId,
     services::{interchange, items},
     util, AppState,
 };
@@ -74,7 +75,8 @@ pub async fn delete_alternate(
     Form(form): Form<super::items::BackForm>,
 ) -> AppResult<Response> {
     let back = back_to(form.back.as_deref(), id);
-    let result = interchange::remove_alternate(&st.db, &ctx.me, id, alternate).await;
+    let result =
+        interchange::remove_alternate(&st.db, &ctx.me, ItemId(id), ItemId(alternate)).await;
     finish(&st, result, &back, |n| {
         (
             back.clone(),
