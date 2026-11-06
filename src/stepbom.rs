@@ -21,6 +21,13 @@
 //!
 //! An own minimal Part 21 reader: `ruststep` was rejected as a direct
 //! dependency (see `docs/OPEN_WORK.md`), and only five entity types are needed.
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::collections::{HashMap, HashSet};
 
@@ -307,8 +314,7 @@ fn for_each_instance(text: &str, mut f: impl FnMut(u64, &str, &str)) {
     let b = text.as_bytes();
     let (mut start, mut i) = (0, 0);
     let mut in_string = false;
-    while i < b.len() {
-        let c = b[i];
+    while let Some(&c) = b.get(i) {
         if in_string {
             if c == b'\'' {
                 if b.get(i + 1) == Some(&b'\'') {
@@ -320,10 +326,13 @@ fn for_each_instance(text: &str, mut f: impl FnMut(u64, &str, &str)) {
         } else if c == b'\'' {
             in_string = true;
         } else if c == b'/' && b.get(i + 1) == Some(&b'*') {
-            i = text[i + 2..].find("*/").map_or(b.len(), |e| i + 2 + e + 2);
+            i = text
+                .get(i + 2..)
+                .and_then(|t| t.find("*/"))
+                .map_or(b.len(), |e| i + 2 + e + 2);
             continue;
         } else if c == b';' {
-            if let Some((id, keyword, body)) = instance(&text[start..i]) {
+            if let Some((id, keyword, body)) = text.get(start..i).and_then(instance) {
                 f(id, keyword, body);
             }
             start = i + 1;
@@ -341,8 +350,12 @@ fn instance(mut record: &str) -> Option<(u64, &str, &str)> {
     }
     let rest = record.trim_start().strip_prefix('#')?;
     let digits = rest.find(|c: char| !c.is_ascii_digit())?;
-    let id = rest[..digits].parse().ok()?;
-    let rest = rest[digits..].trim_start().strip_prefix('=')?.trim_start();
+    let id = rest.get(..digits)?.parse().ok()?;
+    let rest = rest
+        .get(digits..)?
+        .trim_start()
+        .strip_prefix('=')?
+        .trim_start();
     let end = rest
         .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .unwrap_or(rest.len());
@@ -384,7 +397,10 @@ impl Parser<'_> {
             match self.peek() {
                 Some(c) if c.is_ascii_whitespace() => self.i += 1,
                 Some(b'/') if self.bytes.get(self.i + 1) == Some(&b'*') => {
-                    self.i = self.text[self.i + 2..]
+                    self.i = self
+                        .text
+                        .get(self.i + 2..)
+                        .unwrap_or_default()
                         .find("*/")
                         .map_or(self.bytes.len(), |e| self.i + 2 + e + 2);
                 }
@@ -412,10 +428,12 @@ impl Parser<'_> {
                     while self.peek().is_some_and(|c| c.is_ascii_digit()) {
                         self.i += 1;
                     }
-                    out.push(match self.text[start..self.i].parse() {
-                        Ok(r) => Param::Ref(r),
-                        Err(_) => Param::Other,
-                    });
+                    out.push(
+                        match self.text.get(start..self.i).unwrap_or_default().parse() {
+                            Ok(r) => Param::Ref(r),
+                            Err(_) => Param::Other,
+                        },
+                    );
                 }
                 Some(b'(') if self.depth >= MAX_NESTING => {
                     // `other` skips the balanced list iteratively.
@@ -462,7 +480,7 @@ impl Parser<'_> {
         let mut from = self.i;
         while let Some(c) = self.peek() {
             if c == b'\'' {
-                raw.push_str(&self.text[from..self.i]);
+                raw.push_str(self.text.get(from..self.i).unwrap_or_default());
                 if self.bytes.get(self.i + 1) == Some(&b'\'') {
                     raw.push('\'');
                     self.i += 2;
@@ -474,7 +492,7 @@ impl Parser<'_> {
             }
             self.i += 1;
         }
-        raw.push_str(&self.text[from..]);
+        raw.push_str(self.text.get(from..).unwrap_or_default());
         decode(&raw)
     }
 }
@@ -485,9 +503,14 @@ impl Parser<'_> {
 fn decode(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut rest = raw;
+    // every cut below follows checked ASCII bytes, so it is on a character
+    // boundary; `get` keeps it from panicking all the same
+    fn from(s: &str, n: usize) -> &str {
+        s.get(n..).unwrap_or_default()
+    }
     while let Some(p) = rest.find('\\') {
-        out.push_str(&rest[..p]);
-        rest = &rest[p..];
+        out.push_str(rest.get(..p).unwrap_or_default());
+        rest = from(rest, p);
         if let Some(r) = rest.strip_prefix("\\\\") {
             out.push('\\');
             rest = r;
@@ -515,25 +538,25 @@ fn decode(raw: &str) -> String {
             .and_then(|h| u8::from_str_radix(h, 16).ok())
         {
             out.push(char::from(v));
-            rest = &rest[5..];
+            rest = from(rest, 5);
         } else if let Some(c) = rest
             .strip_prefix("\\S\\")
             .and_then(|r| r.bytes().next())
             .filter(u8::is_ascii)
         {
             out.push(char::from(c + 128));
-            rest = &rest[4..];
+            rest = from(rest, 4);
         } else if let Some(r) = rest.strip_prefix("\\N\\") {
             out.push('\n');
             rest = r;
         } else if let Some(r) = rest.strip_prefix("\\T\\") {
             out.push('\t');
             rest = r;
-        } else if rest.len() >= 4 && rest.as_bytes()[1] == b'P' && rest.as_bytes()[3] == b'\\' {
-            rest = &rest[4..];
+        } else if let [b'\\', b'P', _, b'\\', ..] = rest.as_bytes() {
+            rest = from(rest, 4);
         } else {
             out.push('\\');
-            rest = &rest[1..];
+            rest = from(rest, 1);
         }
     }
     out.push_str(rest);

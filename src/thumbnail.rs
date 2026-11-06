@@ -21,6 +21,13 @@
 //!
 //! [MS-CFB]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-cfb/
 //! [MS-OLEPS]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-oleps/
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::{
     fs::File,
@@ -90,7 +97,7 @@ pub fn extract(path: &Path) -> io::Result<Option<Thumbnail>> {
 pub fn extract_from<R: Read + Seek>(mut file: R) -> io::Result<Option<Thumbnail>> {
     let mut head = [0u8; 1024];
     let n = read_up_to(&mut file, &mut head)?;
-    let head = &head[..n];
+    let head = head.get(..n).unwrap_or(&head);
     file.rewind()?;
     if head.starts_with(&OLE_MAGIC) {
         return Ok(from_compound_file(file));
@@ -172,8 +179,8 @@ fn jpeg_size(data: &[u8]) -> Option<(u32, u32)> {
 
 fn read_up_to<R: Read>(file: &mut R, buf: &mut [u8]) -> io::Result<usize> {
     let mut n = 0;
-    while n < buf.len() {
-        match file.read(&mut buf[n..])? {
+    while let Some(rest) = buf.get_mut(n..).filter(|r| !r.is_empty()) {
+        match file.read(rest)? {
             0 => break,
             k => n += k,
         }
@@ -227,25 +234,35 @@ fn from_compound_file<F: Read + Seek>(inner: F) -> Option<Thumbnail> {
 fn find_in(data: &[u8], dibs: bool) -> Option<Found> {
     let mut best = None;
     let mut from = 0;
-    while let Some(pos) = data[from..]
-        .windows(PNG_MAGIC.len())
-        .position(|w| w == PNG_MAGIC)
+    while let Some(pos) = data
+        .get(from..)
+        .and_then(|rest| rest.windows(PNG_MAGIC.len()).position(|w| w == PNG_MAGIC))
     {
         let start = from + pos;
-        better(&mut best, png_at(&data[start..]));
+        if let Some(rest) = data.get(start..) {
+            better(&mut best, png_at(rest));
+        }
         from = start + 1;
     }
     if dibs {
         for i in 0..data.len().saturating_sub(40) {
-            if matches!(
-                u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]),
-                40 | 108 | 124
-            ) {
-                better(&mut best, dib_at(&data[i..]));
+            let Some(rest) = data.get(i..) else { break };
+            if matches!(le_u32(rest, 0), Some(40 | 108 | 124)) {
+                better(&mut best, dib_at(rest));
             }
         }
     }
     best
+}
+
+/// Four bytes at `o` as an array (`None` past the end).
+fn quad(data: &[u8], o: usize) -> Option<[u8; 4]> {
+    data.get(o..o.checked_add(4)?)
+        .and_then(|b| <[u8; 4]>::try_from(b).ok())
+}
+
+fn le_u32(data: &[u8], o: usize) -> Option<u32> {
+    quad(data, o).map(u32::from_le_bytes)
 }
 
 fn plausible(width: u32, height: u32) -> bool {
@@ -255,10 +272,7 @@ fn plausible(width: u32, height: u32) -> bool {
 /// A complete PNG at the start of `data`: every chunk complete with a valid
 /// checksum, `IHDR` first, `IEND` last.
 fn png_at(data: &[u8]) -> Option<Found> {
-    let be32 = |o: usize| {
-        data.get(o..o + 4)
-            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
-    };
+    let be32 = |o: usize| quad(data, o).map(u32::from_be_bytes);
     let mut pos = PNG_MAGIC.len();
     let (mut width, mut height) = (0, 0);
     loop {
@@ -268,7 +282,7 @@ fn png_at(data: &[u8]) -> Option<Found> {
         if end > data.len() || !kind.iter().all(u8::is_ascii_alphabetic) {
             return None;
         }
-        if crc32fast::hash(&data[pos + 4..end - 4]) != be32(end - 4)? {
+        if crc32fast::hash(data.get(pos + 4..end - 4)?) != be32(end - 4)? {
             return None;
         }
         if pos == PNG_MAGIC.len() {
@@ -290,7 +304,7 @@ fn png_at(data: &[u8]) -> Option<Found> {
         area: u64::from(width) * u64::from(height),
         thumbnail: Thumbnail {
             content_type: "image/png",
-            bytes: data[..pos].to_vec(),
+            bytes: data.get(..pos)?.to_vec(),
         },
     })
 }
@@ -298,11 +312,12 @@ fn png_at(data: &[u8]) -> Option<Found> {
 /// A device-independent bitmap at the start of `data` (BITMAPINFOHEADER, V4
 /// or V5, uncompressed or bit fields), returned as a BMP file.
 fn dib_at(data: &[u8]) -> Option<Found> {
-    let le32 = |o: usize| {
-        data.get(o..o + 4)
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    let le32 = |o: usize| le_u32(data, o);
+    let le16 = |o: usize| {
+        data.get(o..o + 2)
+            .and_then(|b| <[u8; 2]>::try_from(b).ok())
+            .map(u16::from_le_bytes)
     };
-    let le16 = |o: usize| data.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
     let header = usize::try_from(le32(0)?).ok()?;
     if !matches!(header, 40 | 108 | 124) || data.len() < header {
         return None;
@@ -349,7 +364,7 @@ fn dib_at(data: &[u8]) -> Option<Found> {
     bmp.extend_from_slice(&file_size.to_le_bytes());
     bmp.extend_from_slice(&[0; 4]);
     bmp.extend_from_slice(&offset.to_le_bytes());
-    bmp.extend_from_slice(&data[..total]);
+    bmp.extend_from_slice(data.get(..total)?);
     Some(Found {
         area: u64::from(w) * u64::from(h),
         thumbnail: Thumbnail {
