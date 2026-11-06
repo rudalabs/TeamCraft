@@ -14,6 +14,7 @@ mod cadexport;
 mod commands;
 mod folderimport;
 mod layout;
+mod resume;
 mod settings;
 mod signin;
 mod workspace;

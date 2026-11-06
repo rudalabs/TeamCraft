@@ -125,6 +125,18 @@ pub fn router(state: &AppState) -> Router<AppState> {
             patch(simulations::patch_result).delete(simulations::delete_result),
         )
         .route(
+            "/items/{number}/revisions/{code}/simulation/proposals",
+            get(simulations::list_proposals),
+        )
+        .route(
+            "/simulation-proposals/{id}/accept",
+            post(simulations::accept_proposal),
+        )
+        .route(
+            "/simulation-proposals/{id}/reject",
+            post(simulations::reject_proposal),
+        )
+        .route(
             "/items/{number}/revisions/{code}/simulation/compare",
             get(simulations::compare),
         )
@@ -391,7 +403,7 @@ async fn index() -> Json<Value> {
             "PUT    /api/v1/projects/{code}/numbering                 {scheme} e.g. {PROJECT}-{TYPE}-{YYYY}-{SEQ:4}, empty = {TYPE}-{SEQ:6} – managers and admins",
             "POST   /api/v1/mcp                                       Model Context Protocol (JSON-RPC 2.0) for AI assistants, see the MCP reference",
             "GET    /api/v1/assistant                                 whether the built-in assistant is enabled, and its quick actions",
-            "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention|impact|simulation_status, context: {kind?, item?, revision?, change?, request?, project?, view?, rule?, query?, filters?, selected?, shown?}, allow_drafts?, thread?}",
+            "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention|impact|simulation_status|result_values, context: {kind?, item?, revision?, change?, request?, project?, view?, rule?, query?, filters?, selected?, shown?}, allow_drafts?, thread?}",
             "GET    /api/v1/assistant/thread                          the caller's conversation (thread: true questions), newest message last",
             "DELETE /api/v1/assistant/thread                          new conversation: deletes the caller's thread",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
@@ -449,6 +461,9 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/simulation/results/import  multipart: file (CSV/Excel: name,value,unit,limit_low,limit_high,load_case), replace?",
             "PATCH  /api/v1/simulation-results/{id}                   any result field",
             "DELETE /api/v1/simulation-results/{id}",
+            "GET    /api/v1/items/{number}/revisions/{code}/simulation/proposals?status=   values proposed by the assistant from reports (pending|accepted|rejected|all)",
+            "POST   /api/v1/simulation-proposals/{id}/accept          makes a proposed value a result value – CAD editors, revision checked out",
+            "POST   /api/v1/simulation-proposals/{id}/reject",
             "GET    /api/v1/items/{number}/revisions/{code}/simulation/compare?with=A   result values of two revisions",
             "GET    /api/v1/items/{number}/simulations                simulations based on the item (out of date?)",
             "GET    /api/v1/projects/{code}/result-templates         extraction templates of the group (see the simulation guide)",
@@ -478,11 +493,11 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases', 'folder' (in the project group) or 'folders' = {\"name\": \"folder\"}",
             "GET    /api/v1/files/{id}",
             "PATCH  /api/v1/files/{id}                                {folder} – its place in the working folder (revision checked out by you)",
-            "GET    /api/v1/files/{id}/content",
+            "GET    /api/v1/files/{id}/content                   resumable: Range: bytes=N- with If-Range: \"<sha256>\" (ETag) → 206",
             "GET    /api/v1/files/{id}/thumbnail                      preview image stored in Inventor, Solid Edge and SolidWorks files (PNG or BMP, 404 if none)",
             "GET    /api/v1/files/{id}/versions",
             "POST   /api/v1/files/{id}/restore                        {version}",
-            "GET    /api/v1/file-versions/{id}/content",
+            "GET    /api/v1/file-versions/{id}/content           resumable like /files/{id}/content",
             "DELETE /api/v1/files/{id}",
             "GET    /api/v1/changes?status=",
             "POST   /api/v1/changes                                   {title, description?, priority?}",
@@ -1709,8 +1724,9 @@ async fn download_version(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Response> {
-    web::version_response(&st, &me, id).await
+    web::version_response(&st, &me, id, &headers).await
 }
 
 /// 3D preview mesh of the current version (binary `TCMESH01`, see `mesh`).
@@ -1765,8 +1781,9 @@ async fn download(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Response> {
-    web::file_response(&st, &me, id).await
+    web::file_response(&st, &me, id, &headers).await
 }
 
 /// The preview image embedded in an Inventor, Solid Edge or SolidWorks file.
