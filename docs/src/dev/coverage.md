@@ -59,9 +59,9 @@ database (before this work → after, where tests were added).
 | `services/*` (business logic, the only writer) | 21.9k lines | 63 unit | not measurable without PostgreSQL (6–67 % of lines run in unit tests) | `api_flow`, `read_permissions`, `change_orders`, `change_requests`, `concurrency`, `uploads`, `webhooks`, `structure`, `numbering_and_watches`, `release_readiness`, `reviewers`, `audit_and_vault`, `interchange`, `working_folder`, `similar_parts`, `attributes`, `search_listing`, `scale`, `bom_performance`, `import_atomicity` (new), `service_refusals` (new), `migrations` (new) |
 | `web/*`, `api/*` (thin handlers) | 10.9k lines | 2 unit | – | `web_ui`, `api_flow`, `no_unchecked_in_handlers` (architecture guard) |
 | `domain.rs`, `config.rs`, `util.rs`, `error.rs` | 4.4k lines | 46 unit | 5–167 missed | all of them; `domain_and_vault` (new) |
-| `auth.rs`, `oidc.rs` | 0.9k lines | 10 unit | 97 / 180 missed (63 % / 53 %) | `api_flow`, `read_permissions` (tokens, sessions); OIDC has no integration test |
+| `auth.rs`, `oidc.rs` | 0.9k lines | 10 unit | 97 / 180 missed (63 % / 53 %) | `api_flow`, `read_permissions` (tokens, sessions), `oidc_flow` (new: SSO against a fake provider, session and PAT lifetime) |
 | `vault.rs`, `backup.rs`, `db.rs` | 1.5k lines | 14 unit | vault 62 → 53, backup 142 → 113, db 85 of 105 missed | `audit_and_vault`, `uploads`, `backup_restore`, `backup_errors` (new), `migrations` (new) |
-| `webhooks.rs`, `delivery.rs`, `notify.rs` | 1.5k lines | 14 unit | 242 / 252 / 48 missed | `webhooks`, `api_flow` (e-mail outbox), no test against a real SMTP/Mattermost server |
+| `webhooks.rs`, `delivery.rs`, `notify.rs` | 1.5k lines | 15 unit | 242 / 252 / 48 missed | `webhooks`, `webhook_ssrf` (new), `api_flow` (e-mail outbox), no test against a real SMTP/Mattermost server |
 | `assistant.rs`, `llm/*`, `mcp/*` | 5.6k lines | 27 unit | mcp/tools 1197 of 2246 missed | `assistant`, `mcp`, `read_permissions` (owned by other work in progress, not touched here) |
 | Desktop (`desktop/src`, own crate, not measured: needs WebKitGTK) | 8.6k lines | 66 unit | estimate: pure helpers (`layout`, `abortable`, `api`, `settings`) tested, Tauri commands (`commands.rs` 1.2k lines, 3 tests), `workspace.rs` (1.5k, 6) and `acp.rs` (2k, 21) thin | none (CI runs the desktop tests on Linux only) |
 
@@ -79,8 +79,8 @@ Ranked by risk × thinness; *tests added* is what this change brought.
 | 6 | `services/items.rs`, `revisions.rs` (1.6k lines, 0 unit) | Creation, numbering, lifecycle | integration only | 3 DB tests in `tests/service_refusals.rs`, 7 DB-free in `tests/domain_and_vault.rs` | refused creation leaves no row/audit entry (duplicate number 409, read-only role, other group, bad type/group/name); concurrent creation with one number → one 201 and one 409; concurrent numbering gives distinct numbers; lifecycle table is exactly the documented four transitions; revision letters round-trip and skip I O Q S X Z; name/number/user/project/password boundaries |
 | 7 | `services/bom.rs` (1.4k lines) | Cycles and quantities corrupt every roll-up | 10 unit, `structure` | 2 DB tests in `service_refusals` | cycles (direct and via a sub-assembly), zero/negative quantity, unknown child: all refused, nothing written; one winner for two lines with the same position |
 | 8 | `services/checkouts.rs` | The lock is the integrity mechanism of the vault | 2 unit, `concurrency` | 1 DB test | three concurrent check-outs → one 200, two 409, one holder, audited |
-| 9 | `services/users.rs`, `auth.rs`, `oidc.rs` | Sessions, tokens, SSO – untrusted input, 6.7 % / 63 % / 53 % lines run in unit tests | 2 / 6 / 4 unit | – | **open**: OIDC callback state/nonce/PKCE failures, token expiry and revocation |
-| 10 | `webhooks.rs` + `services/webhooks.rs` (SSRF guard, signing) | Server-side requests to configurable URLs | 8 + 4 unit, `webhooks` | – | **open**: guard against private/link-local/IPv6-mapped targets and DNS rebinding |
+| 9 | `services/users.rs`, `auth.rs`, `oidc.rs` | Sessions, tokens, SSO – untrusted input, 6.7 % / 63 % / 53 % lines run in unit tests | 2 / 6 / 4 unit | 8 DB tests in `tests/oidc_flow.rs` (fake identity provider in the test process) | a good login provisions the account with the mapped role and a working session; a missing, forged or expired `state`, the same callback twice, an error from the provider, and ID tokens with a wrong `nonce`, an old `exp`, another `aud` or `iss` or no subject sign nobody in and provision no account; a PKCE verifier that does not match and a used code are refused by the provider and shown as a login error (**bug found and fixed**, below); a wrong client secret stays an internal error; ID token signatures are not checked by design (pinned); sessions end on expiry, sign-out and deactivation; PATs end on expiry, revocation (owner or admin only, audited) and deactivation |
+| 10 | `webhooks.rs` + `services/webhooks.rs` (SSRF guard, signing) | Server-side requests to configurable URLs | 8 + 4 unit, `webhooks` | 1 unit test, 4 DB tests in `tests/webhook_ssrf.rs` | the address table already had a unit test (`internal_addresses`); new: the check happens when the connection is made – a host name that passes when saved and resolves to loopback, cloud metadata, an IPv4-mapped or unique-local address when used (DNS rebinding) is refused and the receiver sees nothing, every attempt resolves anew, mixed answers keep only the public addresses, `localhost` through the system resolver is refused, an IP literal stored in the database is refused when sent; control: the same answer for a listed host is delivered. Name resolution is injectable (`Dispatcher::with_lookup`) for this; no bug found |
 | 11 | `mesh.rs` readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, points, LAS) | Untrusted bytes, big allocations | 12 unit + fixtures, 130 missed | 7 in `tests/parser_robustness.rs` | every prefix and 400 corruptions of each sample never panic and yield only consistent meshes (indices in range, finite, survives the cache encoding); claimed sizes (4 billion triangles, 10⁹ vertices) are refused; random bodies behind the magic numbers; **bug found and fixed**: a glTF primitive naming a non-existent accessor panicked inside the glTF library |
 | 12 | `simmesh.rs` (2k lines, VTK/VTU/FRD) | Untrusted, 1.5k lines of hand-written parsing | 19 unit in `simmesh/tests.rs` | covered by the damage tests (VTK legacy, VTU) | prefixes and corruptions of VTK legacy and XML samples; FRD has no hand-made sample yet |
 | 13 | `swpart.rs`, `nxpart.rs`, `thumbnail.rs` (containers with offsets and Deflate) | Offsets, lengths, decompression bombs | 14 / 7 / 12 unit + NIST files | 3 tests | every prefix and corruption of an NX container, random bytes behind SOLIDWORKS/OLE/NX/PNG magics for the thumbnail reader, hostile component XML, `inflate` with a lying size |
@@ -99,6 +99,23 @@ server), `services/requests.rs` (1.9k lines, 5 unit), `services/simulations.rs`,
   log entry, but a library panic must not be reachable from an upload. The
   library call is now wrapped in `catch_unwind` and yields an error;
   regression test `gltf_accessor_index_out_of_range_is_an_error`.
+* **Fixed** – a login code the identity provider refused (`invalid_grant`:
+  a code already used or expired, or a PKCE verifier that does not match –
+  an intercepted code) ended in a 500 page and an incident report. It is a
+  failed login attempt, not a server fault: it is now the login page with a
+  400 and "the identity provider refused the login code"; other token
+  endpoint errors (`invalid_client`, a 5xx, no connection) stay internal
+  errors because the administrator has to act. Regression tests
+  `a_pkce_mismatch_or_a_used_code_is_refused_by_the_provider` and
+  `a_misconfigured_client_stays_a_server_error`.
+* **Observation, decision left open** – ID token signatures are not
+  verified; that rests on the token coming straight from the token endpoint
+  over TLS (OIDC Core 3.1.3.7 step 6). `TEAMCRAFT_OIDC_ISSUER_URL` also
+  accepts `http://` (an internal identity provider without TLS); then
+  nothing protects the token on its way. Refusing `http://` outside of
+  `localhost`, or verifying the signature against the provider's JWKS when
+  the issuer is plain HTTP, would close that – not changed here because it
+  can break existing installations.
 * **Observation, not a bug of its own** – `backup::backup` copies vault
   objects without checking their hash; a corrupt object is found only when
   the backup is verified (`restore`). `docs/OPEN_WORK.md` asks for "a vault
@@ -113,8 +130,10 @@ server), `services/requests.rs` (1.9k lines, 5 unit), `services/simulations.rs`,
    failure hook in the services or a trigger that raises in the test
    database – `CREATE TRIGGER … RAISE EXCEPTION` on the last table written is
    the cheap way).
-2. OIDC callback failure paths with a fake provider; token expiry/revocation.
-3. SSRF guard table test for webhooks (pure function, no database).
+2. ~~OIDC callback failure paths with a fake provider; token expiry/revocation~~ –
+   done: `tests/oidc_flow.rs`.
+3. ~~SSRF guard table test for webhooks~~ – done: `internal_addresses` (unit)
+   and the connect-time tests in `tests/webhook_ssrf.rs`.
 4. FRD sample and a SOLIDWORKS container built by hand in the damage tests.
 5. ~~`cargo fuzz` targets for the parsers~~ – done: `fuzz/`, the weekly
    *Fuzzing* workflow and `tests/parser_corpus.rs` (seeds and NIST files on
