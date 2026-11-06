@@ -129,12 +129,6 @@ structure should not prevent translations later). They may land in 1.x minor rel
 The feature list is covered broadly since #65 (and #67); the weak spots are the processes that must never leave
 half a state behind. Prefer tests that fail on a real regression over tests that restate the code.
 
-- [ ] **Migrations** – today only `db::supported_postgres_versions` is unit-tested. Add: every migration applies in
-  order on an empty database and the schema matches a fresh `migrate` (no drift between numbered files); a database
-  with data from the previous release (seeded fixture, e.g. v0.1.0) upgrades without loss (row counts, foreign keys,
-  CHECK constraints of the enum columns); applying twice is a no-op; a changed checksum of an applied migration is
-  refused unless the version is in `db::EDITED_BEFORE_RELEASE`; numbering of `migrations/` has no duplicates and the
-  gaps are known (0015)
 - [ ] **Backup / restore** – beyond `tests/backup_restore.rs` and the argument/manifest tests in `src/backup.rs`:
   restore of a backup from an older schema version (then migrate), a vault object missing or corrupt during
   backup (refused, nothing written), interrupted backup leaves no directory that `verify` accepts, restore into a
@@ -230,7 +224,6 @@ real files and belong to section 3 once such files are at hand.
   items per file with different numbers, while CAD references are matched by file name (import tutorial, user guide)
 - [ ] Check the desktop *Import BOM…* in the real app (native file dialog; so far checked in Chromium with a stubbed
   Tauri against a real server)
-- [ ] Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI)
 - [ ] Screenshots and short GIFs of the desktop app for the README, and screenshots in the book (the web pages are
   captured in CI by `scripts/screenshots.sh`)
@@ -273,6 +266,9 @@ real files and belong to section 3 once such files are at hand.
   done (#43)
 - [ ] `.sim` detection: verify the STAR-CCM+ marker with real files (heuristic: "STAR-CCM+" near the start)
 - [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded, audited, with source); never from big result files
+- [x] Result values proposed by the assistant from PDF/text reports (`propose_result_values`, drafts with a quote, accepted or rejected by a CAD editor); PDF text layer in `read_file_text`
+- [ ] `read_file_text` of plain-text files shows the search text, which drops decimal numbers (`textindex`): read the real text (bounded) for the assistant, so text and CSV reports work like PDFs
+- [ ] Scanned PDF reports (OCR) – not planned; attach a PDF with a text layer or the numbers by hand
 - [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
@@ -342,6 +338,18 @@ real files and belong to section 3 once such files are at hand.
   restricted-group visibility switch; two check-ins, two releases, two replacements and parallel numbering (also the
   same explicit number) give one winner and a 409. No atomicity bug found; a mutation check (check-in split into two
   transactions) makes the tests fail
+- [x] **Migrations** proofed (`tests/migrations.rs`): numbering without duplicates and only the known gap (0015);
+  every migration applied one at a time on an empty database, each step a version to upgrade from, ending at the
+  schema of a fresh `migrate` (columns with type, nullability and default, constraints, indexes, triggers,
+  functions); twice is a no-op; a changed checksum is refused unless in `db::EDITED_BEFORE_RELEASE`; a failed
+  migration blocks the upgrade; a v0.1.0 database with data (`tests/fixtures/migrations/v0.1.0-seed.sql`: every
+  v0.1.0 table, every enum value of v0.1.0) upgrades without loss – same row counts, same values in the old columns,
+  every constraint validated and every CHECK true for every row, the API reads the old data; 0021 (not in v0.1.0)
+  is applied after 0022
+- [x] Desktop Get: resume a single large file half-way – the server answers `Range` / `If-Range` on file downloads
+  (ETag = SHA-256, 206 / 416, `src/httprange.rs`); the desktop keeps the bytes received in
+  `<name>.<sha>.teamcraft-download`, asks only for the rest and checks the SHA-256 of the whole file before the rename
+  (`desktop/src/resume.rs`)
 - [x] Tests across the feature list: functional and semantic unit and integration tests per feature (#65, two audit
   test expectations fixed in #67)
 - [x] Release pipeline: Flatpak bundles (x86_64, aarch64), desktop installers for Windows ARM64, portable Windows

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ rev.item_number }}/{{ rev.code }} {{ rev.name }}{% endblock %}
 {% block nav_items %}active{% endblock %}
-{% block tc_context %}data-tc-kind="revision" data-tc-item="{{ rev.item_number }}" data-tc-revision="{{ rev.code }}"{% if item.project_code %} data-tc-project="{{ item.project_code }}"{% endif %} data-tc-view="overview"{% endblock %}
+{% block tc_context %}data-tc-kind="{% if rev.item_type == "simulation" %}simulation{% else %}revision{% endif %}" data-tc-item="{{ rev.item_number }}" data-tc-revision="{{ rev.code }}"{% if item.project_code %} data-tc-project="{{ item.project_code }}"{% endif %} data-tc-view="overview"{% endblock %}
 {% block content %}
 {% import "macros.html" as m %}
 {% set back = "/revisions/" ~ rev.id %}
@@ -499,6 +499,41 @@
   </div>
   <p class="hint">Pass when lower limit ≤ value ≤ upper limit (limits inclusive, either may be empty).</p>
   {% else %}<p class="empty">No result values yet.</p>{% endif %}
+  {% if simulation.proposals %}
+  <h3 id="result-proposals">Proposed from reports <span class="badge badge-in_work">{{ simulation.proposals|length }}</span></h3>
+  <p class="hint">Drafts from the assistant, read from a report of this revision – they are not results until you accept them{% if simulation.can_decide and not can.edit %} (check the revision out to accept){% endif %}. Compare each with the quoted text.</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Result</th><th>Load case</th><th class="num">Value</th><th>Unit</th><th class="num">Limits</th><th>From the report</th>{% if simulation.can_decide %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for p in simulation.proposals %}
+      <tr>
+        <td>{{ p.name }}</td>
+        <td class="small">{{ p.load_case }}</td>
+        <td class="num value">{{ p.value }}</td>
+        <td class="small">{{ p.unit }}</td>
+        <td class="num small">{% if p.lower_limit is not none %}{{ p.lower_limit }}{% else %}—{% endif %} … {% if p.upper_limit is not none %}{{ p.upper_limit }}{% else %}—{% endif %}</td>
+        <td class="small"><span class="mono">{{ p.source_file }}</span> v{{ p.source_version }}<br><q>{{ p.quote }}</q> <span class="muted">· {{ p.proposed_by_name }}</span></td>
+        {% if simulation.can_decide %}
+        <td class="right nowrap">
+          {% if can.edit %}
+          <form class="inline" method="post" action="/simulation-proposals/{{ p.id }}/accept">
+            <input type="hidden" name="back" value="{{ back }}#simulation-results">
+            <button class="small" type="submit">Accept</button>
+          </form>
+          {% endif %}
+          <form class="inline" method="post" action="/simulation-proposals/{{ p.id }}/reject">
+            <input type="hidden" name="back" value="{{ back }}#simulation-results">
+            <button class="small danger" type="submit">Reject</button>
+          </form>
+        </td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endif %}
   {% if can.edit %}
   <h3>Add result</h3>
   <form class="inline" method="post" action="/revisions/{{ rev.id }}/simulation/results">

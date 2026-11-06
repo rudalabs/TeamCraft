@@ -1,10 +1,18 @@
 //! The schema migrations: numbering, a complete run on an empty database,
 //! running twice, and the rules for changed checksums. The numbering test
-//! needs no database.
+//! needs no database. Also: every migration one at a time (each step a
+//! version somebody may upgrade from), the whole schema (constraints,
+//! indexes) against a fresh `migrate`, and an upgrade of a v0.1.0 database
+//! with data (`tests/fixtures/migrations/v0.1.0-seed.sql`) without loss.
 
 mod common;
 
-use std::collections::BTreeSet;
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+};
+
+use sqlx::migrate::Migrator;
 
 use teamcraft::db::{self, MIGRATOR};
 
@@ -148,4 +156,287 @@ async fn a_failed_migration_blocks_the_upgrade() {
         .unwrap();
     assert!(db::migrate(&app.pool).await.is_err());
     app.teardown().await;
+}
+
+// ---------------------------------------------------------------------------
+// Proofing: the whole schema, step by step, and an upgrade with data
+// ---------------------------------------------------------------------------
+
+/// Migrations of the pre-release v0.1.0 (tag `v0.1.0`): 0001–0014, 0016–0020
+/// and 0022 – 0021 came later, so an upgrade applies it after 0022.
+fn in_v0_1_0(version: i64) -> bool {
+    matches!(version, 1..=14 | 16..=20 | 22)
+}
+
+/// A migrator with only the embedded migrations `keep` selects (the fields
+/// are public for `sqlx::migrate!`; sqlx is pinned in Cargo.lock).
+fn migrator_of(keep: impl Fn(i64) -> bool) -> Migrator {
+    Migrator {
+        migrations: Cow::Owned(
+            MIGRATOR
+                .iter()
+                .filter(|m| keep(m.version))
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: MIGRATOR.ignore_missing,
+        locking: MIGRATOR.locking,
+        no_tx: MIGRATOR.no_tx,
+    }
+}
+
+/// Everything that makes up the schema: columns with type, nullability and
+/// default, constraints (CHECK lists of the enum columns, keys, foreign
+/// keys), indexes, triggers and functions.
+async fn schema(pool: &sqlx::PgPool) -> Vec<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT 'column ' || table_name || '.' || column_name || ' ' || data_type || ' '
+                || is_nullable || ' ' || coalesce(column_default, '')
+         FROM information_schema.columns WHERE table_schema = 'public'
+         UNION ALL
+         SELECT 'constraint ' || conrelid::regclass::text || ' ' || conname || ' '
+                || pg_get_constraintdef(oid)
+         FROM pg_constraint WHERE connamespace = 'public'::regnamespace
+         UNION ALL
+         SELECT 'index ' || indexdef FROM pg_indexes WHERE schemaname = 'public'
+         UNION ALL
+         SELECT 'trigger ' || tgrelid::regclass::text || ' ' || tgname
+         FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+         WHERE NOT t.tgisinternal AND c.relnamespace = 'public'::regnamespace
+         UNION ALL
+         SELECT 'function ' || proname || '(' || pg_get_function_identity_arguments(oid) || ')'
+         FROM pg_proc WHERE pronamespace = 'public'::regnamespace
+         ORDER BY 1",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// Differences of two schema listings, for a readable failure.
+fn diff(left: &[String], right: &[String]) -> String {
+    let (l, r): (BTreeSet<&String>, BTreeSet<&String>) =
+        (left.iter().collect(), right.iter().collect());
+    let only_left: Vec<_> = l.difference(&r).collect();
+    let only_right: Vec<_> = r.difference(&l).collect();
+    format!("only in the first: {only_left:#?}\nonly in the second: {only_right:#?}")
+}
+
+#[tokio::test]
+async fn migrations_apply_one_at_a_time_and_end_at_the_fresh_schema() {
+    let app = app_or_skip!();
+    let name = app.create_empty_database("steps").await;
+    let other = app
+        .open(&name, std::env::temp_dir().join(format!("tc-mig-{name}")))
+        .await;
+    let all: Vec<i64> = MIGRATOR.iter().map(|m| m.version).collect();
+    // every intermediate version is a database somebody may upgrade from
+    for (i, version) in all.iter().enumerate() {
+        let upto = *version;
+        migrator_of(|v| v <= upto)
+            .run(&other.pool)
+            .await
+            .unwrap_or_else(|e| panic!("migration {version} on top of the ones before: {e}"));
+        let applied: Vec<i64> = applied(&other.pool).await.iter().map(|r| r.0).collect();
+        assert_eq!(applied, all[..=i], "after {version}");
+    }
+    let fresh = schema(&app.pool).await;
+    let stepped = schema(&other.pool).await;
+    assert!(fresh == stepped, "{}", diff(&fresh, &stepped));
+    // the regular start-up on top of it changes nothing
+    db::migrate(&other.pool).await.expect("start-up");
+    assert_eq!(schema(&other.pool).await, stepped);
+    other.teardown().await;
+}
+
+/// `table → row count` of every table in `public`.
+async fn row_counts(pool: &sqlx::PgPool) -> BTreeMap<String, i64> {
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT tablename::text FROM pg_tables WHERE schemaname = 'public' ORDER BY 1",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let mut counts = BTreeMap::new();
+    for t in tables {
+        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{t}\""))
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        counts.insert(t, n);
+    }
+    counts
+}
+
+/// A fingerprint of the content of `table` over `columns` (row order
+/// independent).
+async fn content(pool: &sqlx::PgPool, table: &str, columns: &[String]) -> String {
+    let list = columns
+        .iter()
+        .map(|c| format!("\"{c}\"::text"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    sqlx::query_scalar(&format!(
+        "SELECT coalesce(md5(string_agg(r, '|' ORDER BY r)), '') FROM
+         (SELECT ROW({list})::text AS r FROM \"{table}\") x"
+    ))
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// `table → columns` (excluding generated search vectors, which are
+/// computed by the database itself).
+async fn columns(pool: &sqlx::PgPool) -> BTreeMap<String, Vec<String>> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT table_name::text, column_name::text FROM information_schema.columns
+         WHERE table_schema = 'public' AND data_type <> 'tsvector'
+         ORDER BY 1, ordinal_position",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (t, c) in rows {
+        map.entry(t).or_default().push(c);
+    }
+    map
+}
+
+#[tokio::test]
+async fn a_v0_1_0_database_with_data_upgrades_without_loss() {
+    let app = app_or_skip!();
+    let name = app.create_empty_database("v010").await;
+    let other = app
+        .open(&name, std::env::temp_dir().join(format!("tc-mig-{name}")))
+        .await;
+
+    // a v0.1.0 installation: its migrations, then its data
+    migrator_of(in_v0_1_0)
+        .run(&other.pool)
+        .await
+        .expect("the v0.1.0 migrations");
+    let seed = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/migrations/v0.1.0-seed.sql"),
+    )
+    .unwrap();
+    sqlx::raw_sql(&seed)
+        .execute(&other.pool)
+        .await
+        .expect("the v0.1.0 seed data");
+    let counts_before = row_counts(&other.pool).await;
+    for (table, n) in &counts_before {
+        assert!(
+            *n > 0 || table == "_sqlx_migrations",
+            "the seed covers every v0.1.0 table: {table} is empty"
+        );
+    }
+    let columns_before = columns(&other.pool).await;
+    let mut content_before = BTreeMap::new();
+    for (table, cols) in &columns_before {
+        if table != "_sqlx_migrations" {
+            content_before.insert(table.clone(), content(&other.pool, table, cols).await);
+        }
+    }
+
+    // the upgrade: what a start of the current server does
+    db::migrate(&other.pool).await.expect("upgrade from v0.1.0");
+    let applied_versions: Vec<i64> = applied(&other.pool).await.iter().map(|r| r.0).collect();
+    assert_eq!(
+        applied_versions,
+        MIGRATOR.iter().map(|m| m.version).collect::<Vec<_>>(),
+        "0021 was applied after 0022"
+    );
+
+    // no rows lost (or added) in the tables of v0.1.0
+    let counts_after = row_counts(&other.pool).await;
+    for (table, n) in &counts_before {
+        if table == "_sqlx_migrations" {
+            continue;
+        }
+        assert_eq!(counts_after.get(table), Some(n), "rows of {table}");
+    }
+    // the v0.1.0 columns hold exactly the same values
+    for (table, cols) in &columns_before {
+        if table == "_sqlx_migrations" {
+            continue;
+        }
+        let now = content(&other.pool, table, cols).await;
+        assert_eq!(&now, &content_before[table], "content of {table} changed");
+    }
+    // every constraint is validated, and every CHECK holds for every row
+    let unvalidated: Vec<String> = sqlx::query_scalar(
+        "SELECT conrelid::regclass::text || '.' || conname FROM pg_constraint
+         WHERE connamespace = 'public'::regnamespace AND NOT convalidated",
+    )
+    .fetch_all(&other.pool)
+    .await
+    .unwrap();
+    assert!(
+        unvalidated.is_empty(),
+        "NOT VALID constraints: {unvalidated:?}"
+    );
+    let checks: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT conrelid::regclass::text, conname::text, pg_get_constraintdef(oid)
+         FROM pg_constraint WHERE connamespace = 'public'::regnamespace AND contype = 'c'",
+    )
+    .fetch_all(&other.pool)
+    .await
+    .unwrap();
+    assert!(checks.len() > 40, "the enum columns have CHECK constraints");
+    for (table, name, def) in &checks {
+        let expr = def.strip_prefix("CHECK ").expect(def);
+        let violating: i64 =
+            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE NOT {expr}"))
+                .fetch_one(&other.pool)
+                .await
+                .unwrap();
+        assert_eq!(violating, 0, "{table}.{name}: {def}");
+    }
+    // the same schema as a fresh database
+    let fresh = schema(&app.pool).await;
+    let upgraded = schema(&other.pool).await;
+    assert!(fresh == upgraded, "{}", diff(&fresh, &upgraded));
+    // running it again is a no-op
+    let before_again = applied(&other.pool).await;
+    db::migrate(&other.pool).await.expect("second start");
+    assert_eq!(applied(&other.pool).await, before_again);
+    assert_eq!(row_counts(&other.pool).await, counts_after);
+
+    // and the current server reads the old data
+    let actor = other.actor("erika").await;
+    let (_, token) = teamcraft::services::users::create_token(&other.pool, &actor, "upgrade", None)
+        .await
+        .expect("token");
+    let r = other
+        .api(
+            axum::http::Method::GET,
+            "/api/v1/items/ASM-000001/revisions/A/bom",
+            &token,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, axum::http::StatusCode::OK, "{}", r.text());
+    assert!(r.text().contains("PRT-000001") && r.text().contains("PRT-000002"));
+    let r = other
+        .api(
+            axum::http::Method::GET,
+            "/api/v1/items/PRT-000001",
+            &token,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, axum::http::StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["revisions"].as_array().map(Vec::len), Some(2));
+    let r = other
+        .api(
+            axum::http::Method::GET,
+            "/api/v1/change-requests",
+            &token,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, axum::http::StatusCode::OK, "{}", r.text());
+    other.teardown().await;
 }

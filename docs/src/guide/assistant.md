@@ -16,6 +16,7 @@ CAD generation:
 | Revision page         | **Check before release**     | a checklist: blocking items (unreleased BOM children and references, check-outs) and warnings     |
 | Revision page         | **What breaks if I change this?** | the assemblies that use the item (released ones first), open change orders and requests that already touch it, simulations that would go out of date, what to check first |
 | Revision page         | **Are the simulations still valid?** | the simulations based on the item: which are out of date and why, failed results, what to re-run |
+| Simulation page       | **Fill result values from the report** | reads the report (PDF or text) of the revision and proposes result values – drafts with the file and the quoted text; you accept or reject them on the *Results* card (drafts must be allowed) |
 | Change order page     | **Brief me for this review** | what changes, the impact on dependents outside the change, risks, questions for the author       |
 | Dashboard             | **What needs my attention**  | an ordered to-do list from your worklist: reviews, impacts, old check-outs, your drafts           |
 | Everywhere            | **Ask**                      | any question, e.g. "Which assemblies use PRT-000012, and are they released?"                     |
@@ -33,7 +34,7 @@ CAD generation:
 - "What does the spec of PRT-000012 say about the coating?" – the assistant
   reads the text that TeamCraft extracted from the attached files for the
   search (STEP and IGES strings, text, CSV, JSON, XML, KiCad and similar
-  formats; not PDFs, images or binary CAD files). It can read only files
+  formats, and the text layer of PDF reports; not images, scanned PDFs or binary CAD files). It can read only files
   that you may open.
 - "Draft a change request from my notes: …" – with drafts allowed (see
   below), the assistant raises the request; otherwise it shows what the
@@ -211,7 +212,7 @@ cookie (same-origin only), which are not part of the REST API.
 
 `action` is one of `ask` (default, needs `question`), `release_notes` and
 `release_check` (need `context.item`, optional `context.revision`),
-`impact` and `simulation_status` (need `context.item`), `review_brief`
+`impact`, `simulation_status` and `result_values` (need `context.item`), `review_brief`
 (needs `context.change`) and `attention`. The answer contains
 `answer.text` (markdown), `answer.truncated`, `tools` (`[{name, ok}]`),
 `steps`, `model` and the token counts. `GET /api/v1/me` reports

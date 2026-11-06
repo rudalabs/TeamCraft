@@ -195,7 +195,12 @@ revision) plus the items whose files its CAD files reference (an assembly
 names its parts, a drawing its model) – and downloads **only what is
 missing or outdated**, compared by SHA-256. Every file is checked against
 its SHA-256 after the download and recorded at once, so a Get that was
-cancelled or interrupted continues where it stopped. The status bar shows
+cancelled or interrupted continues where it stopped – also inside a large file:
+the bytes already received stay next to the file
+(`<name>.<sha>.teamcraft-download`, ignored by the working folder), the next
+Get asks the server only for the rest and checks the SHA-256 of the whole
+file before it puts it in place. A file that changed on the server
+meanwhile is downloaded completely again. The status bar shows
 the progress with a *Cancel* button.
 
 **Nothing is overwritten.**
