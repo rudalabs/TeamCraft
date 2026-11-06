@@ -807,6 +807,11 @@ mod tests {
                         "out_of_date": 1, "roles": basis_roles.clone(),
                         "views": [{ "id": ME, "filename": "beam <load>.vtu", "version": 2 }],
                         "images": [{ "id": ME, "filename": "pressure <p>.png", "version": 1, "sha256": "ab" }],
+                        "can_decide": true,
+                        "proposals": [{ "id": OTHER, "revision_id": ME, "name": "Mass flow <p>", "value": 2.25, "unit": "kg/s",
+                                        "lower_limit": null, "upper_limit": 3.0, "load_case": "", "solver": "", "solver_version": "",
+                                        "source_file": "report <1>.pdf", "source_version": 2, "quote": "mass flow 2.25 kg/s",
+                                        "status": "pending", "proposed_by": ME, "proposed_by_name": "Erika", "created_at": TS }],
                     },
                     "based_simulations": [],
                     "can": if editable { can_all.clone() } else { json!({}) }, "max_upload_mb": 512,
@@ -834,6 +839,10 @@ mod tests {
                 "View result in 3D",
                 "beam &lt;load&gt;.vtu v2",
                 "class=\"sim-gallery\"",
+                "Proposed from reports",
+                "Mass flow &lt;p&gt;",
+                "report &lt;1&gt;.pdf",
+                "/simulation-proposals/",
                 "pressure &lt;p&gt;.png",
             ] {
                 assert!(html.contains(expected), "simulation page shows {expected}");

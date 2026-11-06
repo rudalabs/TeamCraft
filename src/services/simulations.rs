@@ -301,7 +301,7 @@ async fn based_on_item_unchecked(pool: &PgPool, item_id: Uuid) -> AppResult<Vec<
 }
 
 /// Fails unless the revision belongs to a simulation item.
-fn ensure_simulation(rev: &Revision) -> AppResult<()> {
+pub(crate) fn ensure_simulation(rev: &Revision) -> AppResult<()> {
     if rev.item_type == ItemType::Simulation.as_str() {
         Ok(())
     } else {
@@ -694,7 +694,7 @@ impl ResultInput {
 }
 
 /// Locks a simulation revision the actor may edit.
-async fn lock_editable(
+pub(crate) async fn lock_editable(
     conn: &mut PgConnection,
     actor: &Actor,
     revision_id: Uuid,
@@ -967,6 +967,8 @@ pub(crate) enum Origin {
     Exchange(String),
     /// Extraction templates of the project group.
     Templates(Vec<String>),
+    /// A proposal from a report that a CAD editor accepted (file name).
+    Proposal(String),
 }
 
 impl Origin {
@@ -975,6 +977,7 @@ impl Origin {
             Origin::Import => "simulation.result.import",
             Origin::Exchange(_) => "simulation.result.exchange",
             Origin::Templates(_) => "simulation.result.template",
+            Origin::Proposal(_) => "simulation.proposal.accept",
         }
     }
 
@@ -985,6 +988,7 @@ impl Origin {
             Origin::Templates(files) => {
                 format!("result values extracted from {}", files.join(", "))
             }
+            Origin::Proposal(file) => format!("accepted a proposed result value from {file}"),
         }
     }
 
@@ -993,6 +997,7 @@ impl Origin {
             Origin::Import => json!("import"),
             Origin::Exchange(file) => json!({ "exchange_file": file }),
             Origin::Templates(files) => json!({ "template_files": files }),
+            Origin::Proposal(file) => json!({ "proposal_file": file }),
         }
     }
 }

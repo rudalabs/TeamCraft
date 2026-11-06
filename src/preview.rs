@@ -336,6 +336,17 @@ fn signature_outcome(mesh: &crate::mesh::Mesh) -> shape::Outcome {
     }
 }
 
+/// The `teamcraft` binary that runs isolated jobs (`preview-mesh`,
+/// `text-extract`); `None` in tests and other binaries, which run them
+/// in-process.
+pub fn worker_exe() -> Option<PathBuf> {
+    std::env::current_exe().ok().filter(|exe| {
+        exe.file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s == "teamcraft")
+    })
+}
+
 /// Cached, isolated conversions (one per server, part of `AppState`).
 pub struct Previews {
     dir: PathBuf,
@@ -350,11 +361,7 @@ impl Previews {
     pub fn new(vault: &Vault, limits: PreviewLimits) -> Previews {
         // Only the real server binary understands `preview-mesh`; test
         // binaries convert in-process.
-        let worker = std::env::current_exe().ok().filter(|exe| {
-            exe.file_stem()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| s == "teamcraft")
-        });
+        let worker = worker_exe();
         Previews {
             dir: vault.root().join("previews"),
             worker,

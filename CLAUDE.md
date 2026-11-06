@@ -77,7 +77,7 @@ committed and pushed right away – before the implementation starts.
 ## Architecture
 
 ```text
-src/main.rs        CLI (clap): serve (default), migrate, user, vault check, assistant check, rescan-references, healthcheck, mcp (stdio bridge), preview-mesh (hidden)
+src/main.rs        CLI (clap): serve (default), migrate, user, vault check, assistant check, rescan-references, healthcheck, mcp (stdio bridge), preview-mesh and text-extract (hidden)
 src/lib.rs         AppState, router (healthz/readyz, /api/v1, web UI), security headers, tracing
 src/config.rs      env configuration; every variable also as NAME_FILE; all optional for local use
 src/domain.rs      pure rules: Role, ItemType, LifecycleState, ChangeStatus, revision letters, numbering schemes, skins, validation
@@ -104,9 +104,12 @@ src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm 
                    context with the user's rights; services/assistant_threads.rs = the per-user conversation (text only)
 src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows shown): parsing and caps only – ids are hints
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
+src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck) → TCMESH01
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
-src/textindex.rs   text extraction from uploads for the full-text search
+src/textindex.rs   text extraction from uploads for the full-text search (PDF via pdftext)
+src/pdftext.rs     text layer of PDF reports in the isolated `teamcraft text-extract` child (size, page, time, memory limits)
+src/resultscan.rs result values from `teamcraft-results.json|csv` and per-group extraction templates (pure, bounded)
 src/cadformat.rs   file formats of CAD/BIM/DCC/mesh/point-cloud programs, stored in files.format
 src/cadrefs.rs     file names referenced inside CAD files (assemblies, drawings, STEP, KiCad) for reference tracking
 src/nxpart.rs      NX part stream container (SPLMSSTR): directory, reference streams, preview stream – read with seeks
