@@ -471,15 +471,17 @@ async fn desktop_sign_in_through_the_browser() {
 async fn wrong_password_is_rejected() {
     let app = app_or_skip!();
     app.user("max", Role::Editor).await;
+    // the login form of this instance (a post without Origin and Referer is
+    // refused before the password is looked at: web_security.rs)
     let r = app
         .post_form(
             "/login",
             None,
-            None,
+            Some("http://localhost:8080"),
             &[("username", "max"), ("password", "wrong-password")],
         )
         .await;
-    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "{}", r.text());
     assert!(r.text().contains("Invalid username or password"));
     app.teardown().await;
 }
