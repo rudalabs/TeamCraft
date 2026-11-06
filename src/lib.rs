@@ -150,6 +150,7 @@ pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' da
 
 /// Builds the complete HTTP application.
 pub fn router(state: AppState) -> Router {
+    let hsts = state.config.cookie_secure;
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -175,6 +176,12 @@ pub fn router(state: AppState) -> Router {
             HeaderName::from_static("permissions-policy"),
             HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
         ))
+        .layer(tower::util::option_layer(hsts.then(|| {
+            SetResponseHeaderLayer::if_not_present(
+                header::STRICT_TRANSPORT_SECURITY,
+                HeaderValue::from_static("max-age=31536000"),
+            )
+        })))
         .layer(CatchPanicLayer::custom(panic_response))
         .layer(
             // One INFO line per request. Only the path is recorded: query
