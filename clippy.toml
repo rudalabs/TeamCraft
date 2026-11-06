@@ -1,0 +1,7 @@
+# Panics on file input are denied in the parser modules (#![deny(...)] at the
+# top of src/swpart.rs, src/mesh.rs, src/simmesh.rs, src/config.rs); tests may
+# still unwrap, expect, index and panic.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true

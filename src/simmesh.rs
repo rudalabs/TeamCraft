@@ -26,6 +26,13 @@
 //! checked against the data before anything is allocated, decompression is
 //! bounded by the sizes the arrays need, indices are checked – a hostile file
 //! is an error, never a panic, an endless loop or an unbounded allocation.
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -117,12 +124,13 @@ impl Num {
         })
     }
 
-    /// The value of `b` (exactly [`Num::size`] bytes).
+    /// The value of `b` (exactly [`Num::size`] bytes; NaN if fewer).
     fn get(self, b: &[u8], big_endian: bool) -> f64 {
         macro_rules! conv {
             ($t:ty, $n:expr) => {{
-                let mut a = [0u8; $n];
-                a.copy_from_slice(&b[..$n]);
+                let Some(a) = b.get(..$n).and_then(|s| <[u8; $n]>::try_from(s).ok()) else {
+                    return f64::NAN;
+                };
                 (if big_endian {
                     <$t>::from_be_bytes(a)
                 } else {
@@ -130,9 +138,10 @@ impl Num {
                 }) as f64
             }};
         }
+        let first = || b.first().copied();
         match self {
-            Num::I8 => b[0] as i8 as f64,
-            Num::U8 => b[0] as f64,
+            Num::I8 => first().map_or(f64::NAN, |v| v as i8 as f64),
+            Num::U8 => first().map_or(f64::NAN, f64::from),
             Num::I16 => conv!(i16, 2),
             Num::U16 => conv!(u16, 2),
             Num::I32 => conv!(i32, 4),
@@ -242,17 +251,18 @@ impl Reduce {
                 + 3.0 * (xy * xy + yz * yz + xz * xz))
                 .sqrt()
         };
-        (match self {
-            Reduce::Value => c.first().copied().unwrap_or(f64::NAN),
-            Reduce::Magnitude => c.iter().map(|v| v * v).sum::<f64>().sqrt(),
-            Reduce::VonMises6 if c.len() >= 6 => vm(c[0], c[1], c[2], c[3], c[4], c[5]),
-            Reduce::VonMises9 if c.len() >= 9 => vm(
-                c[0],
-                c[4],
-                c[8],
-                0.5 * (c[1] + c[3]),
-                0.5 * (c[5] + c[7]),
-                0.5 * (c[2] + c[6]),
+        (match (self, c) {
+            (Reduce::Value, _) => c.first().copied().unwrap_or(f64::NAN),
+            (Reduce::Magnitude, _) => c.iter().map(|v| v * v).sum::<f64>().sqrt(),
+            (Reduce::VonMises6, &[xx, yy, zz, xy, yz, xz, ..]) => vm(xx, yy, zz, xy, yz, xz),
+            // a full 3 × 3 tensor, row by row
+            (Reduce::VonMises9, &[c0, c1, c2, c3, c4, c5, c6, c7, c8, ..]) => vm(
+                c0,
+                c4,
+                c8,
+                0.5 * (c1 + c3),
+                0.5 * (c5 + c7),
+                0.5 * (c2 + c6),
             ),
             _ => f64::NAN,
         }) as f32
@@ -378,22 +388,29 @@ impl Boundary {
         // the face is matched by its distinct corners, so a quad with one
         // repeated node pairs with the triangle of the neighbour.
         let mut face = [u32::MAX; 4];
-        let mut n = 0;
-        for &p in &nodes[..nodes.len().min(4)] {
-            if n == 0 || face[n - 1] != p {
-                face[n] = p;
-                n += 1;
+        let mut n = 0usize;
+        for &p in nodes.iter().take(4) {
+            let last = n.checked_sub(1).and_then(|i| face.get(i)).copied();
+            if last != Some(p) {
+                if let Some(slot) = face.get_mut(n) {
+                    *slot = p;
+                    n += 1;
+                }
             }
         }
-        if n > 1 && face[n - 1] == face[0] {
+        if n > 1 && face.get(n - 1) == face.first() {
             n -= 1;
-            face[n] = u32::MAX;
+            if let Some(slot) = face.get_mut(n) {
+                *slot = u32::MAX;
+            }
         }
         if n < 3 {
             return; // a collapsed face has no area
         }
         let mut key = face;
-        key[..n].sort_unstable();
+        if let Some(corners) = key.get_mut(..n) {
+            corners.sort_unstable();
+        }
         if self.faces.remove(&key).is_none() {
             self.faces.insert(key, (self.seq, face, n as u8));
             self.seq += 1;
@@ -401,12 +418,17 @@ impl Boundary {
     }
 
     fn cell(&mut self, nodes: &[u32], faces: &[&[usize]], order: Option<&[usize; 8]>) {
-        let mut face = [0u32; 4];
-        for f in faces {
-            for (k, &i) in f.iter().enumerate() {
-                face[k] = nodes[order.map_or(i, |o| o[i])];
+        'faces: for f in faces {
+            let mut face = [0u32; 4];
+            for (slot, &i) in face.iter_mut().zip(f.iter()) {
+                let i = order.and_then(|o| o.get(i).copied()).unwrap_or(i);
+                // the callers check the node count of the cell type
+                let Some(&p) = nodes.get(i) else {
+                    continue 'faces;
+                };
+                *slot = p;
             }
-            self.toggle(&face[..f.len()]);
+            self.toggle(face.get(..f.len()).unwrap_or(&face));
         }
     }
 }
@@ -427,8 +449,13 @@ fn thin_triangles(tris: &mut Vec<u32>, max: usize) {
 
 /// Polygon → triangle fan.
 fn fan(out: &mut Vec<u32>, polygon: &[u32]) {
-    for k in 1..polygon.len().saturating_sub(1) {
-        out.extend([polygon[0], polygon[k], polygon[k + 1]]);
+    let Some((&first, rest)) = polygon.split_first() else {
+        return;
+    };
+    for w in rest.windows(2) {
+        if let [b, c] = *w {
+            out.extend([first, b, c]);
+        }
     }
 }
 
@@ -451,9 +478,16 @@ impl Grid {
         Ok(())
     }
 
+    /// The nodes of cell `c` (the readers check that the ends rise and stay
+    /// inside the connectivity; anything else is an empty cell here).
     fn cell(&self, c: usize) -> &[u32] {
-        let start = if c == 0 { 0 } else { self.ends[c - 1] };
-        &self.conn[start..self.ends[c]]
+        let start = c
+            .checked_sub(1)
+            .and_then(|p| self.ends.get(p))
+            .copied()
+            .unwrap_or(0);
+        let end = self.ends.get(c).copied().unwrap_or(start);
+        self.conn.get(start..end).unwrap_or_default()
     }
 
     /// Adds a field unless the field budget is used up.
@@ -488,8 +522,13 @@ impl Grid {
             for (c, &v) in f.values.iter().enumerate() {
                 if v.is_finite() {
                     for &p in self.cell(c) {
-                        sum[p as usize] += v as f64;
-                        hits[p as usize] += 1;
+                        // every node is below `n` (checked above)
+                        if let (Some(s), Some(h)) =
+                            (sum.get_mut(p as usize), hits.get_mut(p as usize))
+                        {
+                            *s += v as f64;
+                            *h += 1;
+                        }
                     }
                 }
             }
@@ -520,39 +559,39 @@ impl Grid {
         let mut tris: Vec<u32> = Vec::new();
         let mut boundary = Boundary::default();
         const VOXEL_ORDER: [usize; 8] = [0, 1, 3, 2, 4, 5, 7, 6];
-        for c in 0..cells {
+        for (c, &ty) in self.types.iter().enumerate() {
             let nodes = self.cell(c);
             let len = nodes.len();
-            match self.types[c] {
-                TRIANGLE | QUADRATIC_TRIANGLE | BIQUADRATIC_TRIANGLE if len >= 3 => {
-                    tris.extend(&nodes[..3])
+            match (ty, nodes) {
+                (TRIANGLE | QUADRATIC_TRIANGLE | BIQUADRATIC_TRIANGLE, &[a, b, c, ..]) => {
+                    tris.extend([a, b, c])
                 }
-                TRIANGLE_STRIP => {
-                    for k in 0..len.saturating_sub(2) {
-                        if k % 2 == 0 {
-                            tris.extend([nodes[k], nodes[k + 1], nodes[k + 2]]);
-                        } else {
-                            tris.extend([nodes[k + 1], nodes[k], nodes[k + 2]]);
+                (TRIANGLE_STRIP, _) => {
+                    for (k, w) in nodes.windows(3).enumerate() {
+                        if let [a, b, c] = *w {
+                            // every second triangle turns the other way
+                            tris.extend(if k % 2 == 0 { [a, b, c] } else { [b, a, c] });
                         }
                     }
                 }
-                POLYGON => fan(&mut tris, nodes),
-                PIXEL if len >= 4 => fan(&mut tris, &[nodes[0], nodes[1], nodes[3], nodes[2]]),
-                QUAD | QUADRATIC_QUAD | BIQUADRATIC_QUAD if len >= 4 => fan(&mut tris, &nodes[..4]),
-                TETRA | QUADRATIC_TETRA if len >= 4 => boundary.cell(nodes, TET_FACES, None),
-                VOXEL if len >= 8 => boundary.cell(nodes, HEX_FACES, Some(&VOXEL_ORDER)),
-                HEXAHEDRON
-                | QUADRATIC_HEXAHEDRON
-                | TRIQUADRATIC_HEXAHEDRON
-                | BIQUADRATIC_QUADRATIC_HEXAHEDRON
-                    if len >= 8 =>
-                {
-                    boundary.cell(nodes, HEX_FACES, None)
+                (POLYGON, _) => fan(&mut tris, nodes),
+                (PIXEL, &[a, b, c, d, ..]) => fan(&mut tris, &[a, b, d, c]),
+                (QUAD | QUADRATIC_QUAD | BIQUADRATIC_QUAD, &[a, b, c, d, ..]) => {
+                    fan(&mut tris, &[a, b, c, d])
                 }
-                WEDGE | QUADRATIC_WEDGE | BIQUADRATIC_QUADRATIC_WEDGE if len >= 6 => {
+                (TETRA | QUADRATIC_TETRA, _) if len >= 4 => boundary.cell(nodes, TET_FACES, None),
+                (VOXEL, _) if len >= 8 => boundary.cell(nodes, HEX_FACES, Some(&VOXEL_ORDER)),
+                (
+                    HEXAHEDRON
+                    | QUADRATIC_HEXAHEDRON
+                    | TRIQUADRATIC_HEXAHEDRON
+                    | BIQUADRATIC_QUADRATIC_HEXAHEDRON,
+                    _,
+                ) if len >= 8 => boundary.cell(nodes, HEX_FACES, None),
+                (WEDGE | QUADRATIC_WEDGE | BIQUADRATIC_QUADRATIC_WEDGE, _) if len >= 6 => {
                     boundary.cell(nodes, WEDGE_FACES, None)
                 }
-                PYRAMID | QUADRATIC_PYRAMID if len >= 5 => {
+                (PYRAMID | QUADRATIC_PYRAMID, _) if len >= 5 => {
                     boundary.cell(nodes, PYRAMID_FACES, None)
                 }
                 // vertices, lines, beams, polyhedra and unknown cells are not drawn
@@ -569,14 +608,16 @@ impl Grid {
         let mut outer: Vec<(u64, [u32; 4], u8)> = boundary.faces.into_values().collect();
         outer.sort_unstable_by_key(|f| f.0);
         for (_, face, k) in outer {
-            fan(&mut tris, &face[..k as usize]);
+            fan(&mut tris, face.get(..k as usize).unwrap_or(&face));
             check_triangles(tris.len() / 3)?;
         }
         // drop degenerate triangles (collapsed hexahedra, repeated nodes)
         let mut kept = Vec::with_capacity(tris.len());
         for t in tris.chunks_exact(3) {
-            if t[0] != t[1] && t[1] != t[2] && t[0] != t[2] {
-                kept.extend_from_slice(t);
+            if let [a, b, c] = *t {
+                if a != b && b != c && a != c {
+                    kept.extend([a, b, c]);
+                }
             }
         }
         let mut tris = kept;
@@ -602,15 +643,24 @@ impl Grid {
         let mut used: Vec<u32> = Vec::new();
         for i in tris.iter_mut() {
             let p = *i as usize;
-            if remap[p] == u32::MAX {
-                remap[p] = used.len() as u32;
+            // every node is below `n` (checked above)
+            let (Some(slot), Some(xyz)) = (remap.get_mut(p), self.points.get(p * 3..p * 3 + 3))
+            else {
+                bail!("A cell refers to a missing point.");
+            };
+            if *slot == u32::MAX {
+                *slot = used.len() as u32;
                 used.push(*i);
-                positions.extend_from_slice(&self.points[p * 3..p * 3 + 3]);
+                positions.extend_from_slice(xyz);
             }
-            *i = remap[p];
+            *i = *slot;
         }
         for f in &mut fields {
-            f.values = used.iter().map(|&p| f.values[p as usize]).collect();
+            let values = &f.values;
+            f.values = used
+                .iter()
+                .map(|&p| values.get(p as usize).copied().unwrap_or(f32::NAN))
+                .collect();
         }
         let mut mesh = Mesh {
             positions,
@@ -635,15 +685,20 @@ struct Legacy<'a> {
 }
 
 impl<'a> Legacy<'a> {
+    /// The data not read yet.
+    fn rest(&self) -> &'a [u8] {
+        self.data.get(self.at..).unwrap_or_default()
+    }
+
     /// The next line as bytes (without the line end).
     fn raw_line(&mut self) -> Option<&'a [u8]> {
-        if self.at >= self.data.len() {
+        let rest = self.rest();
+        if rest.is_empty() {
             return None;
         }
-        let rest = &self.data[self.at..];
         let end = rest.iter().position(|&b| b == b'\n').unwrap_or(rest.len());
         self.at += (end + 1).min(rest.len());
-        Some(&rest[..end])
+        Some(rest.get(..end).unwrap_or(rest))
     }
 
     /// Tokens of the next non-empty line; its line end is consumed, so binary
@@ -662,13 +717,13 @@ impl<'a> Legacy<'a> {
 
     /// Whether the next line starts with `keyword` (nothing is consumed).
     fn peek(&self, keyword: &str) -> bool {
-        let rest = &self.data[self.at.min(self.data.len())..];
+        let rest = self.rest();
         let start = rest
             .iter()
             .position(|b| !b.is_ascii_whitespace())
             .unwrap_or(rest.len());
-        rest[start..]
-            .get(..keyword.len())
+        rest.get(start..)
+            .and_then(|r| r.get(..keyword.len()))
             .is_some_and(|w| w.eq_ignore_ascii_case(keyword.as_bytes()))
     }
 
@@ -694,17 +749,18 @@ impl<'a> Legacy<'a> {
             each_binary(bytes, ty, true, count, f)
         } else {
             for _ in 0..count {
-                let rest = &self.data[self.at.min(self.data.len())..];
+                let rest = self.rest();
                 let start = rest
                     .iter()
                     .position(|b| !b.is_ascii_whitespace())
                     .context("the VTK file is truncated (fewer values than declared)")?;
-                let len = rest[start..]
+                let token = rest.get(start..).unwrap_or_default();
+                let len = token
                     .iter()
                     .position(|b| b.is_ascii_whitespace())
-                    .unwrap_or(rest.len() - start);
+                    .unwrap_or(token.len());
                 self.at += start + len;
-                f(number(&rest[start..start + len])?)?;
+                f(number(token.get(..len).unwrap_or(token))?)?;
             }
             Ok(())
         }
@@ -761,7 +817,10 @@ impl<'a> Legacy<'a> {
             let t = self
                 .line()?
                 .context("truncated VTK file (no CONNECTIVITY)")?;
-            if !t[0].eq_ignore_ascii_case("CONNECTIVITY") {
+            if !t
+                .first()
+                .is_some_and(|k| k.eq_ignore_ascii_case("CONNECTIVITY"))
+            {
                 bail!("CONNECTIVITY expected after OFFSETS");
             }
             let ty = Num::legacy(t.get(1).copied())?;
@@ -777,10 +836,11 @@ impl<'a> Legacy<'a> {
                 bail!("invalid cell offsets");
             }
             for w in offsets.windows(2) {
-                if w[1] < w[0] {
+                let [from, to] = *w else { continue };
+                if to < from {
                     bail!("invalid cell offsets");
                 }
-                grid.ends.push(base + w[1]);
+                grid.ends.push(base + to);
             }
         } else {
             // classic layout: n, id × n, n, id × n, …
@@ -838,14 +898,15 @@ pub fn vtk_legacy(data: &[u8]) -> Result<Mesh> {
     }
     r.raw_line(); // title
     let mode = r.line()?.context("the VTK file is truncated")?;
-    r.binary = match mode[0].to_ascii_uppercase().as_str() {
+    let first = |t: &[&str]| t.first().copied().unwrap_or_default().to_ascii_uppercase();
+    r.binary = match first(&mode).as_str() {
         "ASCII" => false,
         "BINARY" => true,
         other => bail!("unknown VTK file type '{}'", short(other)),
     };
     let dataset = r.line()?.context("the VTK file is truncated")?;
     let kind = dataset.get(1).map(|s| s.to_ascii_uppercase());
-    if !dataset[0].eq_ignore_ascii_case("DATASET") {
+    if first(&dataset) != "DATASET" {
         bail!("DATASET expected in the VTK file");
     }
     let poly = match kind.as_deref() {
@@ -861,7 +922,7 @@ pub fn vtk_legacy(data: &[u8]) -> Result<Mesh> {
     // POINT_DATA / CELL_DATA: (is point data, count)
     let mut attr: Option<(bool, usize)> = None;
     while let Some(t) = r.line()? {
-        let key = t[0].to_ascii_uppercase();
+        let key = first(&t);
         let target = |grid: &mut Grid, attr: Option<(bool, usize)>, field: Field| {
             if let Some((is_point, n)) = attr {
                 if field.values.len() == n {
@@ -989,7 +1050,7 @@ pub fn vtk_legacy(data: &[u8]) -> Result<Mesh> {
                         skip_metadata(&mut r);
                     }
                     let a = r.line()?.context("the VTK file is truncated (FIELD)")?;
-                    let name = a[0].to_string();
+                    let name = a.first().copied().unwrap_or_default().to_string();
                     let components = count(a.get(1).copied(), "component count")?;
                     let tuples = count(a.get(2).copied(), "tuple count")?;
                     let ty = Num::legacy(a.get(3).copied())?;
@@ -1110,12 +1171,15 @@ fn base64_blocks(text: &[u8]) -> Result<Vec<u8>> {
     let mut start = 0;
     while start < clean.len() {
         let mut end = start;
-        while end + 4 <= clean.len() && !clean[end..end + 4].contains(&b'=') {
+        while clean
+            .get(end..end + 4)
+            .is_some_and(|quad| !quad.contains(&b'='))
+        {
             end += 4;
         }
         end = (end + 4).min(clean.len());
         base64::engine::general_purpose::STANDARD
-            .decode_vec(&clean[start..end], &mut out)
+            .decode_vec(clean.get(start..end).unwrap_or_default(), &mut out)
             .map_err(|e| anyhow!("invalid base64 data: {e}"))?;
         start = end;
     }
@@ -1144,11 +1208,13 @@ impl<'a> XmlFile<'a> {
         if !self.zlib {
             let n = self.header(&bytes, 0)?;
             let end = n.checked_add(hs).context("invalid data header")?;
+            let truncated =
+                "the result file is truncated (data block shorter than its header says)";
             if end > bytes.len() {
-                bail!("the result file is truncated (data block shorter than its header says)");
+                bail!(truncated);
             }
             return Ok(match bytes {
-                Cow::Borrowed(b) => Cow::Borrowed(&b[hs..end]),
+                Cow::Borrowed(b) => Cow::Borrowed(b.get(hs..end).context(truncated)?),
                 Cow::Owned(mut v) => {
                     v.truncate(end);
                     v.drain(..hs);
@@ -1249,7 +1315,7 @@ impl<'a> XmlFile<'a> {
                     .and_then(|&o| base.checked_add(o))
                     .unwrap_or(self.appended_end)
                     .min(self.appended_end);
-                let region = &self.data[start..end.max(start)];
+                let region = self.data.get(start..end.max(start)).unwrap_or_default();
                 let data = if raw {
                     self.payload(Cow::Borrowed(region), need)?
                 } else {
@@ -1367,7 +1433,9 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
     use quick_xml::events::Event;
     // Raw appended data is binary and not XML: only the part before it is parsed.
     let appended_at = find(data, b"<AppendedData");
-    let xml = &data[..appended_at.unwrap_or(data.len())];
+    let xml = appended_at.and_then(|at| data.get(..at)).unwrap_or(data);
+    // the data from byte `i` on (empty past the end)
+    let from = |i: usize| data.get(i..).unwrap_or_default();
     let mut file = XmlFile {
         data,
         big_endian: false,
@@ -1378,20 +1446,20 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
         offsets: Vec::new(),
     };
     if let Some(at) = appended_at {
-        let tag_end = data[at..]
+        let tag_end = from(at)
             .iter()
             .position(|&b| b == b'>')
             .map(|p| at + p)
             .context("unterminated AppendedData tag")?;
-        let tag = String::from_utf8_lossy(&data[at..tag_end]);
+        let tag = String::from_utf8_lossy(data.get(at..tag_end).unwrap_or_default());
         let raw = !tag.contains("base64");
-        let underscore = data[tag_end..]
+        let underscore = from(tag_end)
             .iter()
             .position(|&b| b == b'_')
             .map(|p| tag_end + p + 1)
             .context("AppendedData without the '_' marker")?;
         file.appended = Some((underscore, raw));
-        if let Some(end) = data[underscore..]
+        if let Some(end) = from(underscore)
             .windows(b"</AppendedData".len())
             .rposition(|w| w == b"</AppendedData")
         {
@@ -1608,16 +1676,16 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
             })?;
         }
         if poly {
-            for (k, (s, ty)) in [
+            for ((s, ty), count) in [
                 (Section::Verts, POLY_VERTEX),
                 (Section::Lines, POLY_LINE),
                 (Section::Strips, TRIANGLE_STRIP),
                 (Section::Polys, POLYGON),
             ]
             .into_iter()
-            .enumerate()
+            .zip(piece.poly_counts)
             {
-                file.topology(&mut grid, piece, s, piece.poly_counts[k], base, Some(ty))?;
+                file.topology(&mut grid, piece, s, count, base, Some(ty))?;
             }
         } else {
             file.topology(&mut grid, piece, Section::Cells, piece.cells, base, None)?;
@@ -1794,8 +1862,10 @@ pub fn frd(data: &[u8]) -> Result<Mesh> {
                     let next = grid.point_count() as u32;
                     match ids.entry(id) {
                         std::collections::hash_map::Entry::Occupied(o) => {
+                            // a node written twice: the later coordinates win
                             let at = *o.get() as usize * 3;
-                            for (p, &c) in grid.points[at..at + 3].iter_mut().zip(&buf) {
+                            let point = grid.points.get_mut(at..at + 3).unwrap_or_default();
+                            for (p, &c) in point.iter_mut().zip(&buf) {
                                 *p = c as f32;
                             }
                         }
@@ -1814,11 +1884,11 @@ pub fn frd(data: &[u8]) -> Result<Mesh> {
                               ints: &mut Vec<i64>|
                  -> Result<()> {
                     if let Some((nodes, ty)) = current {
-                        if ints.len() < nodes {
-                            bail!("an FRD element has too few nodes");
-                        }
+                        let element = ints
+                            .get(..nodes)
+                            .context("an FRD element has too few nodes")?;
                         grid.check_cells(1, nodes)?;
-                        for id in &ints[..nodes] {
+                        for id in element {
                             let p = ids
                                 .get(id)
                                 .context("an FRD element refers to a missing node")?;
@@ -1911,8 +1981,8 @@ pub fn frd(data: &[u8]) -> Result<Mesh> {
             let mut node: Option<u32> = None;
             let flush = |node: Option<u32>, buf: &mut Vec<f64>, values: &mut Vec<f32>| {
                 if let Some(v) = node.and_then(|p| values.get_mut(p as usize)) {
-                    if buf.len() >= stored && stored > 0 {
-                        *v = reduce.apply(&buf[..stored]);
+                    if let Some(components) = buf.get(..stored).filter(|_| stored > 0) {
+                        *v = reduce.apply(components);
                     }
                 }
                 buf.clear();
@@ -1941,8 +2011,8 @@ pub fn frd(data: &[u8]) -> Result<Mesh> {
                     unit: String::new(),
                     values,
                 };
-                if fields.get(i).is_some_and(|(k, _)| *k == name) {
-                    fields[i].1 = field;
+                if let Some((_, slot)) = fields.get_mut(i).filter(|(k, _)| *k == name) {
+                    *slot = field;
                 } else {
                     if i < fields.len() {
                         fields.remove(i); // a lower-priority block makes room
