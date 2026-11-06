@@ -257,7 +257,7 @@ pub async fn show(
         requests::attachments(&st.db, id),
         requests::linked_changes(&st.db, &ctx.me, id),
         audit::for_entities(&st.db, &ctx.me, &ids, 100),
-        notifications::is_watching(&st.db, ctx.me.id, "change_request", id),
+        notifications::is_watching(&st.db, ctx.me.user_id(), "change_request", id),
         requests::abilities_of(&st.db, &ctx.me, &request),
     )?;
     let candidates = if can.assign {

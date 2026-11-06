@@ -25,6 +25,7 @@ use crate::{
     config::Config,
     domain::Role,
     error::{AppError, AppResult},
+    ids::UserId,
     services, AppState,
 };
 
@@ -52,6 +53,11 @@ pub struct Actor {
 }
 
 impl Actor {
+    /// The actor's user id, typed (`crate::ids`).
+    pub fn user_id(&self) -> UserId {
+        UserId(self.id)
+    }
+
     /// Whether the actor may read data of a project group (`None` = items
     /// without a group, readable by everyone).
     pub fn can_see_project(&self, project_id: Option<Uuid>) -> bool {

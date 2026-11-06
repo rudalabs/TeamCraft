@@ -25,7 +25,7 @@ use crate::{
         Role, WebhookEvent,
     },
     error::{AppError, AppResult},
-    ids::{ChangeId, RevisionId},
+    ids::{ChangeId, RevisionId, UserId},
     models::{Change, ChangeItem, ChangeReview},
     services::{
         access, audit, impacts, next_counter,
@@ -849,9 +849,9 @@ pub async fn remove_reviewer(
     pool: &PgPool,
     actor: &Actor,
     change_id: ChangeId,
-    reviewer_id: Uuid,
+    reviewer_id: UserId,
 ) -> AppResult<()> {
-    let change_id = change_id.uuid();
+    let (change_id, reviewer_id) = (change_id.uuid(), reviewer_id.uuid());
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;

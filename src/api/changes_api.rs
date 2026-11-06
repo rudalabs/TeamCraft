@@ -77,7 +77,7 @@ pub(super) async fn get_change(
     let mut value = change_json(&st, &me, &number).await?;
     let change = changes::get_by_number(&st.db, &me, &number).await?;
     value["watching"] =
-        json!(notifications::is_watching(&st.db, me.id, "change", change.id).await?);
+        json!(notifications::is_watching(&st.db, me.user_id(), "change", change.id).await?);
     Ok(Json(value))
 }
 

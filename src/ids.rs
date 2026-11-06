@@ -79,6 +79,14 @@ typed_id!(
     /// A change order (`changes.id`).
     ChangeId
 );
+typed_id!(
+    /// A project group (`projects.id`).
+    ProjectId
+);
+typed_id!(
+    /// A user account (`users.id`).
+    UserId
+);
 
 #[cfg(test)]
 mod tests {

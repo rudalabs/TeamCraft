@@ -16,6 +16,7 @@ use super::{
 use crate::{
     domain::{self, Classification, ItemType, LifecycleState, COMMON_UNITS},
     error::{AppError, AppResult},
+    ids::{ItemId, ProjectId},
     services::{attributes, items, projects, Page},
     util, AppState,
 };
@@ -373,7 +374,15 @@ pub async fn update_master(
     });
     let result = match parsed {
         Ok((project_id, classification)) => {
-            items::update_master(&st.db, &ctx.me, id, project_id, &form.unit, classification).await
+            items::update_master(
+                &st.db,
+                &ctx.me,
+                ItemId(id),
+                project_id.map(ProjectId),
+                &form.unit,
+                classification,
+            )
+            .await
         }
         Err(e) => Err(e),
     };

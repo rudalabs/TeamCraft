@@ -18,6 +18,7 @@ use crate::{
     auth::Actor,
     domain::{self, ItemType, ProjectVisibility, Role},
     error::{AppError, AppResult},
+    ids::{ProjectId, UserId},
     models::{Project, ProjectMember},
     services::{access, audit, users},
 };
@@ -604,9 +605,10 @@ pub async fn add_member(
 pub async fn remove_member(
     pool: &PgPool,
     actor: &Actor,
-    project_id: Uuid,
-    user_id: Uuid,
+    project_id: ProjectId,
+    user_id: UserId,
 ) -> AppResult<i64> {
+    let (project_id, user_id) = (project_id.uuid(), user_id.uuid());
     let project = get(pool, actor, project_id).await?;
     let mut tx = pool.begin().await?;
     // serialise membership changes of this group

@@ -13,6 +13,7 @@ use super::{finish, pagination, render, WebCtx, PER_PAGE};
 use crate::{
     domain::{self, ProjectVisibility, Role},
     error::{AppError, AppResult},
+    ids::{ProjectId, UserId},
     resultscan::TemplateInput,
     services::{audit, projects, result_templates, users, Page},
     util, AppState,
@@ -228,10 +229,10 @@ pub async fn add_member(
 pub async fn remove_member(
     State(st): State<AppState>,
     ctx: WebCtx,
-    Path((id, user_id)): Path<(Uuid, Uuid)>,
+    Path((id, user_id)): Path<(ProjectId, UserId)>,
 ) -> AppResult<Response> {
     let back = format!("/projects/{id}");
-    let leaving = user_id == ctx.me.id;
+    let leaving = user_id == ctx.me.user_id();
     let result = projects::remove_member(&st.db, &ctx.me, id, user_id).await;
     finish(&st, result, &back, |held| {
         let mut message = if leaving {

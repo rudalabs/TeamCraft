@@ -1,6 +1,7 @@
 //! Items, custom attributes and revisions, including check-out and check-in.
 
 use super::*;
+use crate::ids::ProjectId;
 
 // ---------------------------------------------------------------------------
 // Items & revisions
@@ -166,8 +167,8 @@ pub(super) async fn update_item(
     let updated = items::update_master(
         &st.db,
         &me,
-        item.id,
-        project_id,
+        item.typed_id(),
+        project_id.map(ProjectId),
         body.unit.as_deref().unwrap_or(&item.unit),
         domain::Classification::parse_field(body.classification.as_deref())?,
     )
@@ -261,7 +262,7 @@ pub(super) async fn get_item(
 ) -> AppResult<Json<Value>> {
     let item = items::get_by_number(&st.db, &me, &number).await?;
     let revs = items::revisions(&st.db, &me, item.id).await?;
-    let watching = notifications::is_watching(&st.db, me.id, "item", item.id).await?;
+    let watching = notifications::is_watching(&st.db, me.user_id(), "item", item.id).await?;
     Ok(Json(
         json!({ "item": item, "revisions": revs, "watching": watching }),
     ))

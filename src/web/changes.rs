@@ -16,7 +16,7 @@ use super::{
 use crate::{
     domain::{ChangeStatus, Decision, LifecycleState, Priority, Role},
     error::{AppError, AppResult},
-    ids::{ChangeId, RevisionId},
+    ids::{ChangeId, RevisionId, UserId},
     services::{audit, changes, items, notifications, requests, reviewers, revisions, users, Page},
     AppState,
 };
@@ -185,7 +185,7 @@ pub async fn show(
     // dependents; the page lists the nearest ones (the API has all).
     let impact_total = impact.len();
     impact.truncate(IMPACT_SHOWN);
-    let watching = notifications::is_watching(&st.db, ctx.me.id, "change", id).await?;
+    let watching = notifications::is_watching(&st.db, ctx.me.user_id(), "change", id).await?;
     let implements = requests::for_change(&st.db, me, id).await?;
     let status = changes::status_of(&change);
     // Release readiness: only meaningful before the change goes into review.
@@ -395,7 +395,7 @@ pub async fn add_reviewer(
 pub async fn remove_reviewer(
     State(st): State<AppState>,
     ctx: WebCtx,
-    Path((id, user_id)): Path<(ChangeId, Uuid)>,
+    Path((id, user_id)): Path<(ChangeId, UserId)>,
 ) -> AppResult<Response> {
     let back = format!("/changes/{id}");
     let result = changes::remove_reviewer(&st.db, &ctx.me, id, user_id).await;

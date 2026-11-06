@@ -174,7 +174,7 @@ async fn request_json(st: &AppState, me: &Actor, request: ChangeRequest) -> AppR
         requests::attachments(&st.db, id),
         requests::linked_changes(&st.db, me, id),
         audit::for_entities(&st.db, me, &ids, 100),
-        notifications::is_watching(&st.db, me.id, "change_request", id),
+        notifications::is_watching(&st.db, me.user_id(), "change_request", id),
         requests::abilities_of(&st.db, me, &request),
     )?;
     Ok(json!({

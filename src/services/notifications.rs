@@ -32,6 +32,7 @@ use crate::{
     auth::Actor,
     domain::{self, NotificationKind},
     error::{AppError, AppResult},
+    ids::UserId,
     models::Revision,
     services::{access, audit, audit::Mentions},
 };
@@ -723,10 +724,11 @@ pub async fn set_watch(
 
 pub async fn is_watching(
     pool: &PgPool,
-    user_id: Uuid,
+    user_id: UserId,
     entity_type: &str,
     entity_id: Uuid,
 ) -> AppResult<bool> {
+    let user_id = user_id.uuid();
     Ok(sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM watches WHERE user_id = $1 AND entity_type = $2 AND entity_id = $3)",
     )

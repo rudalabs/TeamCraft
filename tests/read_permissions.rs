@@ -13,7 +13,10 @@ use std::collections::BTreeSet;
 
 use axum::http::{header, Method, StatusCode};
 use serde_json::{json, Value};
-use teamcraft::domain::Role;
+use teamcraft::{
+    domain::Role,
+    ids::{ItemId, ProjectId, UserId},
+};
 use uuid::Uuid;
 
 macro_rules! app_or_skip {
@@ -1453,8 +1456,8 @@ async fn visibility_is_managed_and_audited() {
     let moved = teamcraft::services::items::update_master(
         &app.pool,
         &item,
-        item_id,
-        Some(rover),
+        ItemId(item_id),
+        Some(ProjectId(rover)),
         "each",
         None,
     )
@@ -2890,10 +2893,14 @@ async fn third_review_round_leaks_are_closed() {
     let r = app.api(Method::POST, &cancel, &mona, None).await;
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
     let rex_id = app.actor("rex").await.id;
-    let held =
-        teamcraft::services::projects::remove_member(&app.pool, &mona_actor, group_id, rex_id)
-            .await
-            .expect("remove rex");
+    let held = teamcraft::services::projects::remove_member(
+        &app.pool,
+        &mona_actor,
+        ProjectId(group_id),
+        UserId(rex_id),
+    )
+    .await
+    .expect("remove rex");
     assert_eq!(held, 1);
     // a former member's lock: a manager releases it, nobody else
     let r = app.api(Method::POST, &cancel, &otto, None).await;
@@ -3334,9 +3341,14 @@ async fn fourth_review_round_leaks_are_closed() {
     )
     .await;
     let bob_id = app.actor("bob").await.id;
-    teamcraft::services::projects::remove_member(&app.pool, &mona_actor, group_id, bob_id)
-        .await
-        .expect("remove bob");
+    teamcraft::services::projects::remove_member(
+        &app.pool,
+        &mona_actor,
+        ProjectId(group_id),
+        UserId(bob_id),
+    )
+    .await
+    .expect("remove bob");
     let bob_actor = app.actor("bob").await;
     assert!(bob_actor.hidden_projects.contains(&group_id));
     let pub_q = new_item(&app, &otto, "part", "ROVER").await;
@@ -3497,8 +3509,13 @@ async fn fourth_review_round_leaks_are_closed() {
         Some(("oidc".to_string(), true)),
         "promoting keeps the membership synchronised"
     );
-    let removed =
-        teamcraft::services::projects::remove_member(&app.pool, &admin_actor, rocket, sam_id).await;
+    let removed = teamcraft::services::projects::remove_member(
+        &app.pool,
+        &admin_actor,
+        ProjectId(rocket),
+        UserId(sam_id),
+    )
+    .await;
     assert!(
         matches!(removed, Err(teamcraft::error::AppError::Conflict(_))),
         "an IdP membership would come back: {removed:?}"

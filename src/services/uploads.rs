@@ -28,6 +28,7 @@ use crate::{
     auth::Actor,
     domain::{self, BaseVersion},
     error::{AppError, AppResult},
+    ids::RevisionId,
     models::Revision,
     services::files,
     vault::{StoredBlob, Vault},
@@ -390,8 +391,9 @@ pub async fn complete(
     vault: &Vault,
     actor: &Actor,
     id: Uuid,
-    revision_id: Option<Uuid>,
+    revision_id: Option<RevisionId>,
 ) -> AppResult<files::Upload> {
+    let revision_id = revision_id.map(RevisionId::uuid);
     let mut tx = pool.begin().await?;
     let session = load(&mut tx, actor, id, true).await?;
     if let Some(rid) = revision_id {

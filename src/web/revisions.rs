@@ -19,6 +19,7 @@ use crate::{
     domain::{self, BasisRole, ItemType, LifecycleState, ReferenceKind, COMMON_UNITS},
     error::{AppError, AppResult},
     httprange,
+    ids::RevisionId,
     models::{AttributeDef, FileRecord, Revision},
     preview::PreviewFormat,
     services::{
@@ -148,7 +149,7 @@ pub async fn show(
         references::files_of_revision(&st.db, me, id),
         references::file_referrers(&st.db, me, id),
         impacts::for_item(&st.db, me, item.id),
-        notifications::is_watching(&st.db, ctx.me.id, "item", item.id),
+        notifications::is_watching(&st.db, ctx.me.user_id(), "item", item.id),
         changes::for_revision(&st.db, me, id),
         // target groups for moving the item (only groups the user may edit)
         projects::editable_by(&st.db, &ctx.me),
@@ -160,7 +161,7 @@ pub async fn show(
         references::incoming_hidden(&st.db, me, item.id),
     )?;
     let favorite =
-        crate::services::personal::is_favorite(&st.db, ctx.me.id, item.typed_id()).await?;
+        crate::services::personal::is_favorite(&st.db, ctx.me.user_id(), item.typed_id()).await?;
     // alternates and supersession of the item, superseded children of the BOM
     let child_ids: Vec<Uuid> = lines
         .iter()
@@ -748,7 +749,7 @@ pub(crate) async fn take_session_uploads(
     )?;
     for id in &ids {
         let mut upload =
-            uploads::complete(&st.db, &st.vault, actor, *id, Some(revision_id)).await?;
+            uploads::complete(&st.db, &st.vault, actor, *id, Some(RevisionId(revision_id))).await?;
         let key = files::stored_name(&upload.filename).to_lowercase();
         if upload.base.is_none() {
             upload.base = bases.get(&key).cloned();

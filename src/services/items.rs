@@ -9,6 +9,7 @@ use crate::{
     auth::Actor,
     domain::{self, Classification, ItemType, LifecycleState, ProjectVisibility, Role},
     error::{AppError, AppResult},
+    ids::{ItemId, ProjectId},
     models::{Item, ItemSummary, Revision, WhereUsed, WhereUsedLevel},
     services::{access, attributes, audit, files, notifications, projects, revisions, Page},
 };
@@ -692,11 +693,12 @@ pub(crate) async fn create_tx(
 pub async fn update_master(
     pool: &PgPool,
     actor: &Actor,
-    item_id: Uuid,
-    project_id: Option<Uuid>,
+    item_id: ItemId,
+    project_id: Option<ProjectId>,
     unit: &str,
     classification: Option<Classification>,
 ) -> AppResult<Item> {
+    let (item_id, project_id) = (item_id.uuid(), project_id.map(ProjectId::uuid));
     actor.require(Role::Editor)?;
     let unit = validate_unit(unit)?;
     let mut tx = pool.begin().await?;
