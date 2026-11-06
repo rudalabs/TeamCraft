@@ -2978,3 +2978,167 @@ mod tests {
         assert!(normalize_folder(&"y".repeat(MAX_FOLDER_SEGMENT + 1)).is_err());
     }
 }
+
+/// Property tests for the pure rules: they must hold for every input, not
+/// only for the examples of `tests`.
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Largest sequence whose code `revision_seq` still reads back (six
+    /// letters: 20 + 20² + … + 20⁶).
+    const MAX_READABLE_SEQ: i32 = 67_368_420;
+
+    fn lifecycle_states() -> impl Strategy<Value = LifecycleState> {
+        prop_oneof![
+            Just(LifecycleState::InWork),
+            Just(LifecycleState::InReview),
+            Just(LifecycleState::Released),
+            Just(LifecycleState::Obsolete),
+        ]
+    }
+
+    fn item_types() -> impl Strategy<Value = ItemType> {
+        prop::sample::select(ItemType::ALL.to_vec())
+    }
+
+    /// A valid scheme: literal text and placeholders with exactly one `{SEQ}`.
+    fn schemes() -> impl Strategy<Value = String> {
+        let token = prop_oneof![
+            "[A-Za-z0-9][A-Za-z0-9._-]{0,5}",
+            Just("{PROJECT}".to_string()),
+            Just("{type}".to_string()),
+            Just("{YYYY}".to_string()),
+            Just("{YY}".to_string()),
+            Just("{MM}".to_string()),
+            Just("-".to_string()),
+        ];
+        (
+            prop::collection::vec(token.clone(), 0..3),
+            1usize..=9,
+            prop::collection::vec(token, 0..3),
+        )
+            .prop_map(|(before, width, after)| {
+                format!("{}{{SEQ:{width}}}{}", before.concat(), after.concat())
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn revision_codes_round_trip(seq in 1..=MAX_READABLE_SEQ) {
+            let code = revision_code(seq);
+            prop_assert!(code.len() <= 6);
+            prop_assert!(code.bytes().all(|b| REVISION_ALPHABET.contains(&b)));
+            prop_assert_eq!(revision_seq(&code), Some(seq));
+        }
+
+        #[test]
+        fn revision_codes_sort_like_their_sequence(a in 1..=MAX_READABLE_SEQ, b in 1..=MAX_READABLE_SEQ) {
+            let (ca, cb) = (revision_code(a), revision_code(b));
+            // shorter codes come first, equal lengths sort alphabetically
+            prop_assert_eq!(a.cmp(&b), (ca.len(), &ca).cmp(&(cb.len(), &cb)));
+        }
+
+        #[test]
+        fn revision_seq_never_panics_and_only_accepts_canonical_codes(code in "\\PC{0,12}") {
+            if let Some(seq) = revision_seq(&code) {
+                prop_assert!(seq >= 1);
+                prop_assert_eq!(revision_code(seq), code.trim().to_ascii_uppercase());
+            }
+        }
+
+        #[test]
+        fn number_schemes_never_panic(raw in "\\PC{0,120}") {
+            let _ = NumberScheme::parse(&raw);
+        }
+
+        #[test]
+        fn number_schemes_with_braces_never_panic(raw in "[A-Za-z0-9{}:._ -]{0,120}") {
+            let _ = NumberScheme::parse(&raw);
+        }
+
+        #[test]
+        fn valid_schemes_have_one_canonical_spelling(raw in schemes()) {
+            // a generated scheme can still be too long; only valid ones count
+            if let Ok(scheme) = NumberScheme::parse(&raw) {
+                let canonical = scheme.as_string();
+                let again = NumberScheme::parse(&canonical).expect("the canonical spelling parses");
+                prop_assert_eq!(&again, &scheme);
+                prop_assert_eq!(again.as_string(), canonical);
+            }
+        }
+
+        #[test]
+        fn generated_numbers_are_read_back_and_fit(
+            raw in schemes(),
+            ty in item_types(),
+            project in "[A-Z][A-Z0-9]{0,31}",
+            year in 1990i32..2200,
+            month in 1u32..=12,
+            seq in 0i64..1_000_000_000,
+        ) {
+            if let Ok(scheme) = NumberScheme::parse(&raw) {
+                let ctx = NumberContext { project: &project, item_type: ty, year, month };
+                let number = scheme.format(&ctx, seq);
+                prop_assert_eq!(scheme.seq_of(&ctx, &number), Some(seq), "{} -> {}", raw, number);
+                // the counter does not depend on the sequence or its width
+                prop_assert!(scheme.counter_key(&ctx).starts_with("num:"));
+                // the item-number alphabet and length rule of the items table
+                prop_assert!(number.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')), "{number}");
+                prop_assert!(number.starts_with(|c: char| c.is_ascii_alphanumeric()));
+                let width = scheme.as_string().split("{SEQ").nth(1).map_or(1, |s| {
+                    s.trim_start_matches(':').split('}').next().and_then(|n| n.parse().ok()).unwrap_or(1)
+                });
+                if seq < 10i64.pow(width as u32) {
+                    prop_assert!(number.len() <= 64, "{} is {} characters", number, number.len());
+                }
+            }
+        }
+
+        #[test]
+        fn numbers_of_other_prefixes_are_not_read(
+            raw in schemes(),
+            project in "[A-Z][A-Z0-9]{0,31}",
+            other in "[a-z]{1,4}",
+        ) {
+            if let Ok(scheme) = NumberScheme::parse(&raw) {
+                let ctx = NumberContext { project: &project, item_type: ItemType::Part, year: 2026, month: 11 };
+                let number = format!("{other}{}", scheme.format(&ctx, 7));
+                // lower case never occurs in generated numbers
+                prop_assert_eq!(scheme.seq_of(&ctx, &number), None);
+            }
+        }
+
+        #[test]
+        fn lifecycle_states_only_move_forward_or_back_to_work(a in lifecycle_states(), b in lifecycle_states()) {
+            if a.can_transition_to(b) {
+                prop_assert!(a != b);
+                // nothing leaves Obsolete, nothing re-enters Released from outside review
+                prop_assert!(a != LifecycleState::Obsolete);
+                if b == LifecycleState::Released {
+                    prop_assert_eq!(a, LifecycleState::InReview);
+                }
+                // editable states are open, and only editable states can be left to review
+                if a.is_editable() {
+                    prop_assert!(a.is_open());
+                }
+            }
+        }
+
+        #[test]
+        fn lifecycle_has_no_path_back_from_released(start in lifecycle_states(), steps in prop::collection::vec(lifecycle_states(), 0..12)) {
+            let mut at = start;
+            let mut released = start == LifecycleState::Released;
+            for next in steps {
+                if at.can_transition_to(next) {
+                    at = next;
+                    released |= at == LifecycleState::Released;
+                }
+                if released {
+                    prop_assert!(matches!(at, LifecycleState::Released | LifecycleState::Obsolete));
+                }
+            }
+        }
+    }
+}
