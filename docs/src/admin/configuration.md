@@ -27,7 +27,7 @@ sets the database connection with the password from a Docker secret
 | Variable                  | Default                          | Meaning                                                                         |
 |---------------------------|----------------------------------|---------------------------------------------------------------------------------|
 | `TEAMCRAFT_BIND_ADDR`     | `127.0.0.1:8080`                 | address to listen on (`0.0.0.0:8080` to serve the network)                      |
-| `TEAMCRAFT_PUBLIC_URL`    | `http://localhost:<port>`        | external URL: SSO redirects, CSRF origin check, `Secure` cookies for `https://` |
+| `TEAMCRAFT_PUBLIC_URL`    | `http://localhost:<port>`        | external URL: SSO redirects, CSRF origin check; for `https://` also `Secure` cookies and `Strict-Transport-Security` |
 | `TEAMCRAFT_INSTANCE_NAME` | `TeamCraft`                      | name in the header and page titles                                              |
 | `TEAMCRAFT_LOG_FORMAT`    | `text`                           | `text` or `json`                                                                |
 | `RUST_LOG`                | `info,tower_http=info,sqlx=warn` | log filter                                                                      |
@@ -96,8 +96,20 @@ limit still are). Every variable also exists as `NAME_FILE`.
 | `TEAMCRAFT_SESSION_TTL_HOURS`                      | `72`                              | session lifetime                                                               |
 | `TEAMCRAFT_COOKIE_SECURE`                          | `true` for `https://` public URLs | force the `Secure` cookie flag                                                 |
 | `TEAMCRAFT_LOCAL_LOGIN`                            | `true` without SSO                | username/password accounts                                                     |
+| `TEAMCRAFT_SIGNIN_MAX_FAILURES`                    | `10`                              | failed password sign-ins per username in 15 minutes before 429 (5× per client address; `0` = off) |
 | `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME` / `_PASSWORD` | `admin` / –                       | create this administrator on start when there are no accounts (public servers) |
 | `TEAMCRAFT_OIDC_*`                                 | –                                 | single sign-on, see [Users, roles and SSO](users.md)                           |
+
+Failed password sign-ins are counted per username and per client address
+for 15 minutes from the first failure; when a counter is full the sign-in
+page answers `429 Too Many Requests` with `Retry-After` – even for the right
+password – until the 15 minutes have passed. A successful sign-in clears the
+username's counter. The counters live in the memory of each server process
+(a restart clears them). Behind a reverse proxy on the same host or an
+internal network, the client address is the last `X-Forwarded-For` entry,
+the one the proxy added; a client that talks to the server directly is
+counted by its own address. Sign-in, failed sign-in and sign-out are in
+the audit log (`user.sign_in`, `user.sign_in_failed`, `user.sign_out`).
 
 ## Notifications (optional)
 
