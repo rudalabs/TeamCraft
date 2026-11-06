@@ -12,6 +12,8 @@
 
 #![allow(dead_code)]
 
+pub mod releases;
+
 use std::path::PathBuf;
 
 use axum::{

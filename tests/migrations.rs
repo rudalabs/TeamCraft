@@ -2,18 +2,15 @@
 //! running twice, and the rules for changed checksums. The numbering test
 //! needs no database. Also: every migration one at a time (each step a
 //! version somebody may upgrade from), the whole schema (constraints,
-//! indexes) against a fresh `migrate`, and an upgrade of a v0.1.0 database
-//! with data (`tests/fixtures/migrations/v0.1.0-seed.sql`) without loss.
+//! indexes) against a fresh `migrate`, and an upgrade of the published
+//! v0.1.0 (and of the first `v0.1.0` tag) with data
+//! (`tests/fixtures/migrations/`) without loss.
 
 mod common;
 
-use std::{
-    borrow::Cow,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::collections::{BTreeMap, BTreeSet};
 
-use sqlx::migrate::Migrator;
-
+use common::releases::{self, migrator_of, Release, V0_1_0, V0_1_0_FIRST_TAG};
 use teamcraft::db::{self, MIGRATOR};
 
 macro_rules! app_or_skip {
@@ -162,26 +159,33 @@ async fn a_failed_migration_blocks_the_upgrade() {
 // Proofing: the whole schema, step by step, and an upgrade with data
 // ---------------------------------------------------------------------------
 
-/// Migrations of the pre-release v0.1.0 (tag `v0.1.0`): 0001–0014, 0016–0020
-/// and 0022 – 0021 came later, so an upgrade applies it after 0022.
-fn in_v0_1_0(version: i64) -> bool {
-    matches!(version, 1..=14 | 16..=20 | 22)
-}
-
-/// A migrator with only the embedded migrations `keep` selects (the fields
-/// are public for `sqlx::migrate!`; sqlx is pinned in Cargo.lock).
-fn migrator_of(keep: impl Fn(i64) -> bool) -> Migrator {
-    Migrator {
-        migrations: Cow::Owned(
-            MIGRATOR
-                .iter()
-                .filter(|m| keep(m.version))
-                .cloned()
-                .collect(),
-        ),
-        ignore_missing: MIGRATOR.ignore_missing,
-        locking: MIGRATOR.locking,
-        no_tx: MIGRATOR.no_tx,
+/// The released schemas match the tags: what `git ls-tree <tag> migrations/`
+/// lists is what [`Release::has`] selects (the tags are fetched in CI's
+/// full clone; a shallow clone without them skips the check).
+#[test]
+fn the_release_schemas_match_their_tags() {
+    for (release, commit) in [(V0_1_0, "439724a"), (V0_1_0_FIRST_TAG, "6f68f9a")] {
+        let Ok(out) = std::process::Command::new("git")
+            .args(["ls-tree", "--name-only", commit, "migrations/"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+        else {
+            return;
+        };
+        if !out.status.success() {
+            eprintln!("{commit} not in this clone – skipped");
+            continue;
+        }
+        let in_tag: Vec<i64> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.strip_prefix("migrations/")?.get(..4)?.parse().ok())
+            .collect();
+        let selected: Vec<i64> = MIGRATOR
+            .iter()
+            .map(|m| m.version)
+            .filter(|v| (release.has)(*v))
+            .collect();
+        assert_eq!(selected, in_tag, "{}", release.name);
     }
 }
 
@@ -303,35 +307,47 @@ async fn columns(pool: &sqlx::PgPool) -> BTreeMap<String, Vec<String>> {
     map
 }
 
+/// The published v0.1.0 – what a release user has.
 #[tokio::test]
 async fn a_v0_1_0_database_with_data_upgrades_without_loss() {
+    upgrade_without_loss(V0_1_0, "v010").await;
+}
+
+/// A build of the first `v0.1.0` tag: 0021 is applied after 0022.
+#[tokio::test]
+async fn a_database_of_the_first_v0_1_0_tag_upgrades_without_loss() {
+    upgrade_without_loss(V0_1_0_FIRST_TAG, "v010first").await;
+}
+
+async fn upgrade_without_loss(release: Release, label: &str) {
     let app = app_or_skip!();
-    let name = app.create_empty_database("v010").await;
+    let name = app.create_empty_database(label).await;
     let other = app
         .open(&name, std::env::temp_dir().join(format!("tc-mig-{name}")))
         .await;
 
-    // a v0.1.0 installation: its migrations, then its data
-    migrator_of(in_v0_1_0)
-        .run(&other.pool)
-        .await
-        .expect("the v0.1.0 migrations");
-    let seed = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/migrations/v0.1.0-seed.sql"),
-    )
-    .unwrap();
-    sqlx::raw_sql(&seed)
-        .execute(&other.pool)
-        .await
-        .expect("the v0.1.0 seed data");
+    // an installation of the release: its migrations, then its data
+    release.install(&other.pool).await;
     let counts_before = row_counts(&other.pool).await;
     for (table, n) in &counts_before {
         assert!(
             *n > 0 || table == "_sqlx_migrations",
-            "the seed covers every v0.1.0 table: {table} is empty"
+            "the seed covers every table of {}: {table} is empty",
+            release.name
         );
     }
+    // … and every value of every enum column of that schema, so that a later
+    // migration that narrows a CHECK meets a row it would refuse
+    let unused = releases::unused_enum_values(&other.pool).await;
+    assert!(
+        unused.is_empty(),
+        "the seed of {} has no row with {unused:#?}",
+        release.name
+    );
+    assert!(
+        releases::enum_values(&other.pool).await.len() > 20,
+        "the enum columns are found"
+    );
     let columns_before = columns(&other.pool).await;
     let mut content_before = BTreeMap::new();
     for (table, cols) in &columns_before {
@@ -341,12 +357,14 @@ async fn a_v0_1_0_database_with_data_upgrades_without_loss() {
     }
 
     // the upgrade: what a start of the current server does
-    db::migrate(&other.pool).await.expect("upgrade from v0.1.0");
+    db::migrate(&other.pool)
+        .await
+        .unwrap_or_else(|e| panic!("upgrade from {}: {e}", release.name));
     let applied_versions: Vec<i64> = applied(&other.pool).await.iter().map(|r| r.0).collect();
     assert_eq!(
         applied_versions,
         MIGRATOR.iter().map(|m| m.version).collect::<Vec<_>>(),
-        "0021 was applied after 0022"
+        "every migration applied, in order (0021 after 0022 for the first tag)"
     );
 
     // no rows lost (or added) in the tables of v0.1.0
@@ -355,7 +373,12 @@ async fn a_v0_1_0_database_with_data_upgrades_without_loss() {
         if table == "_sqlx_migrations" {
             continue;
         }
-        assert_eq!(counts_after.get(table), Some(n), "rows of {table}");
+        assert_eq!(
+            counts_after.get(table),
+            Some(n),
+            "rows of {table} ({})",
+            release.name
+        );
     }
     // the v0.1.0 columns hold exactly the same values
     for (table, cols) in &columns_before {
@@ -363,7 +386,11 @@ async fn a_v0_1_0_database_with_data_upgrades_without_loss() {
             continue;
         }
         let now = content(&other.pool, table, cols).await;
-        assert_eq!(&now, &content_before[table], "content of {table} changed");
+        assert_eq!(
+            &now, &content_before[table],
+            "content of {table} changed ({})",
+            release.name
+        );
     }
     // every constraint is validated, and every CHECK holds for every row
     let unvalidated: Vec<String> = sqlx::query_scalar(

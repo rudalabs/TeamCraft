@@ -2,8 +2,9 @@
 //!
 //! * a corrupt or a missing vault object refuses the backup, and nothing that
 //!   looks like a backup is left;
-//! * a backup of an older schema (v0.1.0 with data, the fixture of
-//!   `tests/migrations.rs`) restores into an empty database and then migrates;
+//! * a backup of an older schema (the published v0.1.0 with data, the
+//!   fixtures of `tests/migrations.rs`) restores into an empty database and
+//!   then migrates;
 //! * a failing `restore --force` leaves the database **and** the vault as they
 //!   were;
 //! * credentials from a percent-encoded URL and from a `_FILE` reach the
@@ -16,12 +17,12 @@
 
 mod common;
 
-use std::{borrow::Cow, path::Path, process::Command};
+use std::{path::Path, process::Command};
 
 use axum::http::{Method, StatusCode};
+use common::releases::V0_1_0;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sqlx::migrate::Migrator;
 use teamcraft::{
     backup,
     config::Config,
@@ -172,11 +173,6 @@ async fn a_corrupt_or_missing_vault_object_refuses_the_backup() {
     app.teardown().await;
 }
 
-/// Migrations of the pre-release v0.1.0 (see `tests/migrations.rs`).
-fn in_v0_1_0(version: i64) -> bool {
-    matches!(version, 1..=14 | 16..=20 | 22)
-}
-
 #[tokio::test]
 async fn a_backup_of_an_older_schema_restores_and_then_migrates() {
     let app = app_or_skip!();
@@ -187,26 +183,7 @@ async fn a_backup_of_an_older_schema_restores_and_then_migrates() {
     let old_db = app.create_empty_database("v010src").await;
     let old_vault = scratch("v010vault");
     let old = app.open(&old_db, old_vault.clone()).await;
-    Migrator {
-        migrations: Cow::Owned(
-            MIGRATOR
-                .iter()
-                .filter(|m| in_v0_1_0(m.version))
-                .cloned()
-                .collect(),
-        ),
-        ignore_missing: MIGRATOR.ignore_missing,
-        locking: MIGRATOR.locking,
-        no_tx: MIGRATOR.no_tx,
-    }
-    .run(&old.pool)
-    .await
-    .expect("v0.1.0 migrations");
-    let seed = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/migrations/v0.1.0-seed.sql"),
-    )
-    .unwrap();
-    sqlx::raw_sql(&seed).execute(&old.pool).await.expect("seed");
+    V0_1_0.install(&old.pool).await;
     // the fixture names invented hashes: give every referenced content a
     // real object in the old vault
     let referenced = teamcraft::services::files::all_hashes(&old.pool)

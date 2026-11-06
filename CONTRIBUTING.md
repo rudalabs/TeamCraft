@@ -229,10 +229,13 @@ code base. These are the most important rules:
   after must be equal; add a case there for a new multi-step mutation.
 * **Schema changes** go into a new numbered file in `migrations/`. Never edit
   a migration that is already on `main`, because existing databases have
-  applied it. `tests/migrations.rs` upgrades a v0.1.0 database with data
-  (`tests/fixtures/migrations/v0.1.0-seed.sql`) and fails when a migration
-  loses rows, changes old values or narrows a `CHECK` list that old rows
-  still use – a new enum value is fine, removing one needs a data migration.
+  applied it. `tests/migrations.rs` upgrades databases of the released
+  schemas with data (`tests/common/releases.rs`, seeds in
+  `tests/fixtures/migrations/`) and fails when a migration loses rows,
+  changes old values or narrows a `CHECK` list that old rows still use – a
+  new enum value is fine, removing one needs a data migration. After a
+  release, add its schema there with a seed for its new tables and enum
+  values; the test fails on a table or value without a row.
 * **Enums** are `TEXT` columns with `CHECK` constraints. The Rust enums in
   `src/domain.rs` provide `as_str()` and `parse()`.
 * **Errors** use `AppError` (`src/error.rs`). User errors are shown to the

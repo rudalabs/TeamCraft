@@ -393,10 +393,15 @@ real files and belong to section 3 once such files are at hand.
   every migration applied one at a time on an empty database, each step a version to upgrade from, ending at the
   schema of a fresh `migrate` (columns with type, nullability and default, constraints, indexes, triggers,
   functions); twice is a no-op; a changed checksum is refused unless in `db::EDITED_BEFORE_RELEASE`; a failed
-  migration blocks the upgrade; a v0.1.0 database with data (`tests/fixtures/migrations/v0.1.0-seed.sql`: every
-  v0.1.0 table, every enum value of v0.1.0) upgrades without loss – same row counts, same values in the old columns,
-  every constraint validated and every CHECK true for every row, the API reads the old data; 0021 (not in v0.1.0)
-  is applied after 0022
+  migration blocks the upgrade; a database of the published v0.1.0 (tag at `439724a`: 0001–0014, 0016–0031) with
+  data (`tests/fixtures/migrations/v0.1.0-seed.sql` and `v0.1.0-seed-0021-0031.sql`) upgrades without loss – every
+  table and every enum value of the schema in the seed (the test reads the CHECK lists and fails on an unused
+  value), same row counts, same values in the old columns, every constraint validated and every CHECK true for
+  every row, the API reads the old data; the same for a build of the first `v0.1.0` tag (`6f68f9a`, 0021 applied
+  after 0022); the backup of a published-v0.1.0 database restores and migrates. The release lists
+  (`tests/common/releases.rs`) are checked against `git ls-tree` of the tag commits where the clone has them. Mutation
+  checks: a later migration that deletes rows, or that narrows `items.classification` (only the published start
+  has such rows), makes the upgrade test fail
 - [x] Desktop Get: resume a single large file half-way – the server answers `Range` / `If-Range` on file downloads
   (ETag = SHA-256, 206 / 416, `src/httprange.rs`); the desktop keeps the bytes received in
   `<name>.<sha>.teamcraft-download`, asks only for the rest and checks the SHA-256 of the whole file before the rename

@@ -59,7 +59,7 @@ present. Start the server afterwards; it applies newer migrations.
 * Large objects of the database travel with the dump. The `previews/` cache
   is neither backed up nor touched by a restore; previews are made again.
 * A backup of an older version restores into an empty database; the next
-  start migrates it (tested with a v0.1.0 database).
+  start migrates it (tested with a database of the published v0.1.0).
 * `--force` replaces the objects contained in the backup; other objects in
   the database stay, so a fresh, empty database is preferable. **To roll
   back an upgrade**, restore into a fresh database and start the old

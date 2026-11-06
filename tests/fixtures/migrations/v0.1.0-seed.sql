@@ -1,10 +1,12 @@
--- Data of a TeamCraft v0.1.0 database (migrations 0001–0014, 0016–0020,
--- 0022) for tests/migrations.rs: it is loaded into a database at exactly
--- that schema, then the current migrations upgrade it. Every table that
--- existed in v0.1.0 gets rows, and every value of the TEXT enum columns
--- (CHECK constraints) of v0.1.0 occurs at least once, so a later migration
--- that narrows a CHECK or loses rows makes the upgrade test fail.
--- Invented data only, no organisation names.
+-- Data of a TeamCraft v0.1.0 database for the upgrade tests
+-- (tests/common/releases.rs). On its own it fits the first v0.1.0 tag
+-- (6f68f9a: migrations 0001–0014, 0016–0020, 0022); the published v0.1.0
+-- (439724a: 0001–0014, 0016–0031) loads v0.1.0-seed-0021-0031.sql after it.
+-- It is loaded into a database at exactly that schema, then the current
+-- migrations upgrade it. Every table of the schema gets rows, and every value
+-- of the TEXT enum columns (CHECK constraints) occurs at least once (both
+-- checked by the test), so a later migration that narrows a CHECK or loses
+-- rows makes the upgrade test fail. Invented data only, no organisation names.
 
 -- users: every role and both auth sources
 INSERT INTO users (id, username, display_name, email, auth_source, password_hash, oidc_subject, role, active, skin) VALUES
@@ -167,7 +169,15 @@ INSERT INTO webhooks (id, name, url, secret, secret_hint, events, project_id, ac
 INSERT INTO webhook_deliveries (id, webhook_id, event_id, event, payload, status, attempts, last_status_code, last_error) VALUES
   ('77777777-0000-4000-8000-000000000001', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000101', 'revision.released', '{"item":"PRT-000001"}', 'sent', 1, 200, ''),
   ('77777777-0000-4000-8000-000000000002', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000102', 'change.submitted', '{}', 'pending', 0, NULL, ''),
-  ('77777777-0000-4000-8000-000000000003', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000103', 'change_request.created', '{}', 'failed', 8, 500, 'server error');
+  ('77777777-0000-4000-8000-000000000003', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000103', 'change_request.created', '{}', 'failed', 8, 500, 'server error'),
+  -- the other events of the delivery CHECK (found missing by the enum check of the test)
+  ('77777777-0000-4000-8000-000000000004', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000104', 'revision.obsoleted', '{}', 'sent', 1, 204, ''),
+  ('77777777-0000-4000-8000-000000000005', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000105', 'change.approved', '{}', 'sent', 1, 200, ''),
+  ('77777777-0000-4000-8000-000000000006', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000106', 'change.rejected', '{}', 'sent', 2, 200, ''),
+  ('77777777-0000-4000-8000-000000000007', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000107', 'change.released', '{}', 'pending', 0, NULL, ''),
+  ('77777777-0000-4000-8000-000000000008', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000108', 'change_request.decided', '{}', 'sent', 1, 200, ''),
+  ('77777777-0000-4000-8000-000000000009', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000109', 'simulation.result_added', '{}', 'failed', 3, 410, 'gone'),
+  ('77777777-0000-4000-8000-000000000010', '66666666-0000-4000-8000-000000000001', '77777777-0000-4000-8000-000000000110', 'ping', '{}', 'sent', 1, 200, '');
 
 -- audit trail
 INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, summary, details) VALUES
