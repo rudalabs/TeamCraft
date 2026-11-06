@@ -260,7 +260,7 @@ async fn run(cli: Cli) -> ExitCode {
         Command::Mcp { server, token_file } => mcp_bridge(&server, token_file.as_deref()).await,
         Command::Serve { no_migrate } => serve(no_migrate).await,
         Command::Migrate => migrate().await,
-        Command::Backup { dir } => backup_command(dir),
+        Command::Backup { dir } => backup_command(dir).await,
         Command::Restore { dir, force } => restore_command(dir, force).await,
         Command::User { command } => user_command(command).await,
         Command::Vault { command } => vault_command(command).await,
@@ -465,9 +465,9 @@ async fn migrate() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn backup_command(dir: std::path::PathBuf) -> Result<ExitCode> {
+async fn backup_command(dir: std::path::PathBuf) -> Result<ExitCode> {
     let config = load_config()?;
-    let summary = teamcraft::backup::backup(&config, &dir)?;
+    let summary = teamcraft::backup::backup(&config, &dir).await?;
     println!(
         "backup written to '{}': {} vault object(s), {} byte database dump (sha256 {})",
         dir.display(),

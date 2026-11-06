@@ -205,26 +205,35 @@ async fn symlinks_in_the_vault_are_not_followed() {
     refused(&dir, "not a regular file").await;
 }
 
-#[test]
-fn a_failed_backup_leaves_no_manifest_and_refuses_a_used_directory() {
+#[tokio::test]
+async fn a_failed_backup_leaves_nothing_and_refuses_a_used_directory() {
     let vault = scratch("vault");
     let target = scratch("target").join("out");
-    // the database is not reachable (or pg_dump is not installed): the
-    // run fails, and since the manifest is written last, what is left in the
-    // directory is never accepted as a backup
-    let err = backup::backup(&config(&vault), &target);
-    assert!(err.is_err());
-    assert!(!target.join("manifest.json").exists());
+    // the database is not reachable (or pg_dump is not installed): the run
+    // fails and removes what it wrote – the directory it created is gone
+    let err = backup::backup(&config(&vault), &target).await.unwrap_err();
+    assert!(
+        format!("{err:#}").contains("no backup was written"),
+        "{err:#}"
+    );
+    assert!(
+        !target.exists(),
+        "the directory the backup created is removed"
+    );
+    // an empty directory given as target stays, empty
+    let empty = scratch("empty");
+    backup::backup(&config(&vault), &empty).await.unwrap_err();
+    assert_eq!(std::fs::read_dir(&empty).unwrap().count(), 0);
 
     // a directory with content is never used as a target
     let used = scratch("used");
     std::fs::write(used.join("keep.txt"), b"mine").unwrap();
-    let err = backup::backup(&config(&vault), &used).unwrap_err();
+    let err = backup::backup(&config(&vault), &used).await.unwrap_err();
     assert!(format!("{err:#}").contains("not empty"), "{err:#}");
     assert_eq!(std::fs::read(used.join("keep.txt")).unwrap(), b"mine");
 
     // a file is not a directory
     let file = used.join("keep.txt");
-    let err = backup::backup(&config(&vault), &file).unwrap_err();
+    let err = backup::backup(&config(&vault), &file).await.unwrap_err();
     assert!(format!("{err:#}").contains("not a directory"), "{err:#}");
 }

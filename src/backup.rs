@@ -149,8 +149,24 @@ fn ssl_mode_str(mode: PgSslMode) -> &'static str {
 }
 
 /// Writes a backup of the configured database and vault into `dir`.
-pub fn backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
-    prepare_target(dir)?;
+///
+/// Every vault object is checked against its name while it is copied, and
+/// every file content the database refers to must be in the vault: a
+/// corrupt or missing object refuses the backup. A failed backup removes
+/// what it wrote (the directory, if it created it), so nothing is left that
+/// looks like a backup; the manifest is written last and renamed into place.
+pub async fn backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
+    let created = prepare_target(dir)?;
+    match write_backup(config, dir).await {
+        Ok(summary) => Ok(summary),
+        Err(error) => {
+            discard_partial(dir, created);
+            Err(error.context("no backup was written"))
+        }
+    }
+}
+
+async fn write_backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
     let database = DatabaseArgs::from_config(config);
     let dump = dir.join(DUMP_FILE);
     run(dump_command(&database, &dump), "pg_dump")?;
@@ -162,26 +178,111 @@ pub fn backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
         .len();
     let db_dump_sha256 = sha256_file(&dump)?;
 
+    // Read after the dump: a content is stored in the vault before the row
+    // that names it is committed, so everything the dump refers to is listed.
+    let referenced = referenced_hashes(config).await?;
     let target_objects = dir.join(VAULT_DIR).join("objects");
     fs::create_dir_all(&target_objects)
         .with_context(|| format!("cannot create '{}'", target_objects.display()))?;
-    let stats = copy_objects(&config.vault_dir.join("objects"), &target_objects, false)?;
+    let copied = copy_checked_objects(&config.vault_dir.join("objects"), &target_objects)?;
+    let missing: Vec<&String> = referenced
+        .iter()
+        .filter(|hash| !copied.contains(hash.as_str()))
+        .collect();
+    if let Some(first) = missing.first() {
+        bail!(
+            "{} file content(s) the database refers to are missing from the vault (e.g. {first}); \
+             check the vault with `teamcraft vault check`",
+            missing.len()
+        );
+    }
 
     let manifest = Manifest {
         created_at_unix: now_unix(),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
-        vault_objects: stats.copied as u64,
+        vault_objects: copied.len() as u64,
         db_dump_sha256: db_dump_sha256.clone(),
     };
     let manifest_path = dir.join(MANIFEST_FILE);
-    fs::write(&manifest_path, manifest.to_json())
+    let partial = dir.join(format!("{MANIFEST_FILE}.partial"));
+    fs::write(&partial, manifest.to_json())
+        .with_context(|| format!("cannot write '{}'", partial.display()))?;
+    fs::rename(&partial, &manifest_path)
         .with_context(|| format!("cannot write '{}'", manifest_path.display()))?;
 
     Ok(BackupSummary {
         db_dump_bytes,
         db_dump_sha256,
-        vault_objects: stats.copied,
+        vault_objects: copied.len(),
     })
+}
+
+/// The file contents the database refers to (as `teamcraft vault check`).
+async fn referenced_hashes(config: &Config) -> Result<Vec<String>> {
+    let pool = crate::db::connect(config)
+        .await
+        .context("cannot connect to the database to list the referenced file contents")?;
+    let hashes = crate::services::files::all_hashes(&pool).await;
+    pool.close().await;
+    hashes.map_err(|e| anyhow::anyhow!("cannot list the referenced file contents: {e}"))
+}
+
+/// Copies every object like [`copy_objects`] and checks its content against
+/// its name; returns the hashes copied.
+fn copy_checked_objects(
+    source_objects: &Path,
+    target_objects: &Path,
+) -> Result<std::collections::HashSet<String>> {
+    let mut copied = std::collections::HashSet::new();
+    for object in collect_objects(source_objects)? {
+        let target = object_path_under(target_objects, &object.hash)?;
+        if fs::symlink_metadata(&target).is_ok() {
+            bail!(
+                "backup target already contains the object '{}'",
+                object.hash
+            );
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("cannot create '{}'", parent.display()))?;
+        }
+        fs::copy(&object.path, &target).with_context(|| {
+            format!(
+                "cannot copy vault object '{}' to '{}'",
+                object.path.display(),
+                target.display()
+            )
+        })?;
+        let actual = sha256_file(&target)?;
+        if actual != object.hash {
+            bail!(
+                "vault object {} is corrupt (its content is {actual}); restore it from an \
+                 older backup or check the vault with `teamcraft vault check --verify-hashes`",
+                object.hash
+            );
+        }
+        copied.insert(object.hash);
+    }
+    Ok(copied)
+}
+
+/// Removes what a failed backup wrote: the whole directory if the backup
+/// created it, otherwise its content (it was empty before).
+fn discard_partial(dir: &Path, created: bool) {
+    if created {
+        let _ = fs::remove_dir_all(dir);
+        return;
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let _ = if path.is_dir() {
+                fs::remove_dir_all(&path)
+            } else {
+                fs::remove_file(&path)
+            };
+        }
+    }
 }
 
 /// Verifies a backup directory and restores it into the configured database
@@ -238,7 +339,9 @@ async fn ensure_database_empty(config: &Config, force: bool) -> Result<()> {
     Ok(())
 }
 
-fn prepare_target(dir: &Path) -> Result<()> {
+/// Checks that `dir` is an empty directory or does not exist (then it is
+/// created); returns whether it was created.
+fn prepare_target(dir: &Path) -> Result<bool> {
     if dir.exists() {
         if !dir.is_dir() {
             bail!("backup target '{}' is not a directory", dir.display());
@@ -253,11 +356,12 @@ fn prepare_target(dir: &Path) -> Result<()> {
         {
             bail!("backup target '{}' is not empty", dir.display());
         }
+        Ok(false)
     } else {
         fs::create_dir_all(dir)
             .with_context(|| format!("cannot create backup target '{}'", dir.display()))?;
+        Ok(true)
     }
-    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
