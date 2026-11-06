@@ -305,6 +305,7 @@ fn load_config() -> Result<Config> {
 fn load_config_logging_to(to: LogTo) -> Result<Config> {
     let config = Config::from_env().context("invalid configuration")?;
     init_tracing(config.log_format, to);
+    teamcraft::config::warn_unknown_variables();
     Ok(config)
 }
 

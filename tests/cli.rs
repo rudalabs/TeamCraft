@@ -232,6 +232,48 @@ async fn migrate_and_local_accounts() {
 }
 
 #[tokio::test]
+async fn unknown_environment_variables_are_warned_about() {
+    let app = app_or_skip!();
+    // a typo is ignored, but named with the nearest known variable
+    let typo = with(env(&app), "TEAMCRAFT_PUBLC_URL", "http://example.invalid");
+    let r = run(&typo, &["user", "list"], b"").await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(
+        r.stderr.contains("TEAMCRAFT_PUBLC_URL") && r.stderr.contains("TEAMCRAFT_PUBLIC_URL"),
+        "{}",
+        r.stderr
+    );
+    assert!(!r.stdout.contains("TEAMCRAFT_PUBLC_URL"), "{}", r.stdout);
+    // the _FILE form is checked by its base name
+    let typo_file = with(env(&app), "TEAMCRAFT_DB_PASWORD_FILE", "/nonexistent");
+    let r = run(&typo_file, &["user", "list"], b"").await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(
+        r.stderr.contains("TEAMCRAFT_DB_PASSWORD_FILE"),
+        "{}",
+        r.stderr
+    );
+    // known names (also as _FILE) and tooling variables stay quiet
+    let quiet = with(
+        with(env(&app), "TEAMCRAFT_INSTANCE_NAME", "cli test"),
+        "TEAMCRAFT_REQUIRE_DB_TESTS",
+        "1",
+    );
+    let r = run(&quiet, &["user", "list"], b"").await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert!(
+        !r.stderr.contains("unknown environment variable"),
+        "{}",
+        r.stderr
+    );
+    // a warning does not hide a real configuration error
+    let both = with(typo, "TEAMCRAFT_DB_PORT", "not-a-port");
+    let r = run(&both, &["user", "list"], b"").await;
+    assert_eq!(r.code, 1);
+    assert!(r.stderr.contains("invalid configuration"), "{}", r.stderr);
+}
+
+#[tokio::test]
 async fn vault_check_finds_missing_and_corrupt_files() {
     let app = app_or_skip!();
     let (_, token) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
