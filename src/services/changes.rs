@@ -352,11 +352,12 @@ async fn transition_items(
     change_id: Uuid,
     to: LifecycleState,
 ) -> AppResult<Vec<String>> {
-    let ids =
-        sqlx::query_scalar::<_, Uuid>("SELECT revision_id FROM change_items WHERE change_id = $1")
-            .bind(change_id)
-            .fetch_all(&mut *conn)
-            .await?;
+    let ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT revision_id FROM change_items WHERE change_id = $1 ORDER BY revision_id",
+    )
+    .bind(change_id)
+    .fetch_all(&mut *conn)
+    .await?;
     let mut labels = Vec::with_capacity(ids.len());
     for id in ids {
         let rev = revisions::lock(conn, id).await?;
@@ -974,11 +975,12 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
     ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
-    let item_ids =
-        sqlx::query_scalar::<_, Uuid>("SELECT revision_id FROM change_items WHERE change_id = $1")
-            .bind(change_id)
-            .fetch_all(&mut *tx)
-            .await?;
+    let item_ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT revision_id FROM change_items WHERE change_id = $1 ORDER BY revision_id",
+    )
+    .bind(change_id)
+    .fetch_all(&mut *tx)
+    .await?;
     if item_ids.is_empty() {
         return Err(AppError::Conflict(
             "Add at least one revision before submitting the change.".into(),
