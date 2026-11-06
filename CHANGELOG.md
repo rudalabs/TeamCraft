@@ -12,6 +12,21 @@ notices gets an entry under *Unreleased* in the same pull request.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the web UI refuses a form post without `Origin` and `Referer`
+  headers (threat model F4). Browsers send them; a script that posts to the
+  web UI must send one (the REST API with tokens is not affected). Behind a
+  reverse proxy, let the proxy overwrite `X-Forwarded-Host` (#111).
+
+### Security
+
+- Changing one's own password signs out the user's other sessions; personal
+  access tokens stay (#110).
+- `Strict-Transport-Security` when `TEAMCRAFT_PUBLIC_URL` is https, and the
+  file parser child processes start with an empty environment (no database
+  URL, no keys) (#111).
+
 ### Fixed
 
 - The reference scan cut a file name inside a character when its extension
