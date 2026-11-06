@@ -24,6 +24,7 @@
 - [Read permissions and restricted groups](admin/permissions.md)
 - [Event webhooks](admin/webhooks.md)
 - [Operations](admin/operations.md)
+- [Support policy](admin/support-policy.md)
 
 # Reference
 
@@ -41,6 +42,7 @@
 - [Fuzzing the file readers](dev/fuzzing.md)
 - [Threat model](dev/threat-model.md)
 - [Accessibility](dev/accessibility.md)
+- [Release checklist](dev/release-checklist.md)
 - [Architecture decision records](dev/adr/index.md)
     - [0001 Read access model](dev/adr/0001-access-model.md)
     - [0002 Outbox for notifications and webhooks](dev/adr/0002-outbox.md)
