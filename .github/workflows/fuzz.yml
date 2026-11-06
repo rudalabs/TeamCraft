@@ -1,0 +1,72 @@
+# TeamCraft fuzzing: a short `cargo fuzz` run per reader of untrusted files
+# (the targets in fuzz/, entry points in src/fuzz_harness.rs). Each target
+# starts from its seeds (fuzz/seeds/<target>) and the openly licensed NIST CAD
+# files (tests/fixtures/cad). A crash uploads the input (fuzz/artifacts) as
+# an artifact; it becomes a regression unit test with the minimised input
+# (`cargo fuzz tmin`), see fuzz/README.md.
+#
+# Weekly and manual (Actions → Fuzzing → Run workflow) – never on pull
+# requests. The stable part of the same corpus runs in every CI run
+# (tests/parser_corpus.rs). Nothing is packaged or published.
+name: Fuzzing
+
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: "300"
+  schedule:
+    - cron: "41 2 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fuzz:
+    name: fuzz ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [stepbom, swpart, nxpart, cadrefs, bomtable, thumbnail, textindex, mesh, mesh_step]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> target
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Build the target
+        run: cargo fuzz build ${{ matrix.target }}
+      - name: Fuzz
+        env:
+          SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || '300' }}
+        run: |
+          mkdir -p "fuzz/corpus/${{ matrix.target }}" "fuzz/seeds/${{ matrix.target }}"
+          # the first corpus directory collects new inputs; seeds and
+          # fixtures are read only
+          cargo fuzz run ${{ matrix.target }} \
+            "fuzz/corpus/${{ matrix.target }}" \
+            "fuzz/seeds/${{ matrix.target }}" \
+            tests/fixtures/cad/nist \
+            -- -max_total_time="$SECONDS_PER_TARGET" -max_len=1048576 \
+               -timeout=60 -rss_limit_mb=2560
+      - name: Crash inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore

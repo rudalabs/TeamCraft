@@ -149,18 +149,16 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   minimised input; a short fuzz run per parser in a scheduled CI job
 - [ ] No `unwrap`/`expect`/indexing panics on file input outside tests: audit `swpart`, `mesh`, `simmesh`, `config`,
   then enable `clippy::unwrap_used`/`expect_used` for the parser modules
-- [ ] Property tests (`proptest`) for the pure rules in `domain.rs`: revision letter sequence, lifecycle transition
-  table, numbering scheme expansion and counters, skin contrast
+- [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
 - [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*, report only: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) – open: a floor that may not drop, once the numbers of a few PRs are known
-- [ ] `cargo deny` in CI: licences compatible with MPL-2.0 (see *Rules for all of them* below), security advisories,
-  duplicate major versions
+- [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
 - [ ] Branch protection on `main`: required checks (fmt/clippy, tests on PostgreSQL 16 and 18, builds, docs links)
 
 ### 2. Structure
 
 - [ ] Split the largest modules by area, without behaviour changes, one PR each: `src/mcp/tools.rs` (~3000 lines →
   one file per area like `services/`), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
-  skins,validation}.rs`), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`),
+  skins,validation}.rs`) – domain done (`src/domain/*.rs`, re-exported), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`) – api done (`src/api/*_api.rs`, route table stays in `mod.rs`),
   `src/services/requests.rs` (~1900), `desktop/ui/app.js` (~4700 → ES modules per view, no bundler)
 - [ ] Guard tests for the architecture rules, like `tests/no_unchecked_in_handlers.rs`: no `sqlx` in `src/web`,
   `src/api`, `src/mcp` (holds today – keep it that way); every mutation in `services::*` writes an audit entry (list
