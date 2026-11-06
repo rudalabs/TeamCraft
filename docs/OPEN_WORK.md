@@ -234,7 +234,6 @@ real files and belong to section 3 once such files are at hand.
   items per file with different numbers, while CAD references are matched by file name (import tutorial, user guide)
 - [ ] Check the desktop *Import BOM…* in the real app (native file dialog; so far checked in Chromium with a stubbed
   Tauri against a real server)
-- [ ] Get: resume a single large file half-way (HTTP range requests; today a cancelled file starts over)
 - [ ] Change requests: assign and link a change order from the desktop app (today: in the web UI)
 - [ ] Screenshots and short GIFs of the desktop app for the README, and screenshots in the book (the web pages are
   captured in CI by `scripts/screenshots.sh`)
@@ -342,6 +341,10 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
+- [x] Desktop Get: resume a single large file half-way – the server answers `Range` / `If-Range` on file downloads
+  (ETag = SHA-256, 206 / 416, `src/httprange.rs`); the desktop keeps the bytes received in
+  `<name>.<sha>.teamcraft-download`, asks only for the rest and checks the SHA-256 of the whole file before the rename
+  (`desktop/src/resume.rs`)
 - [x] Tests across the feature list: functional and semantic unit and integration tests per feature (#65, two audit
   test expectations fixed in #67)
 - [x] Release pipeline: Flatpak bundles (x86_64, aarch64), desktop installers for Windows ARM64, portable Windows

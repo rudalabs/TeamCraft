@@ -493,11 +493,11 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases', 'folder' (in the project group) or 'folders' = {\"name\": \"folder\"}",
             "GET    /api/v1/files/{id}",
             "PATCH  /api/v1/files/{id}                                {folder} – its place in the working folder (revision checked out by you)",
-            "GET    /api/v1/files/{id}/content",
+            "GET    /api/v1/files/{id}/content                   resumable: Range: bytes=N- with If-Range: \"<sha256>\" (ETag) → 206",
             "GET    /api/v1/files/{id}/thumbnail                      preview image stored in Inventor, Solid Edge and SolidWorks files (PNG or BMP, 404 if none)",
             "GET    /api/v1/files/{id}/versions",
             "POST   /api/v1/files/{id}/restore                        {version}",
-            "GET    /api/v1/file-versions/{id}/content",
+            "GET    /api/v1/file-versions/{id}/content           resumable like /files/{id}/content",
             "DELETE /api/v1/files/{id}",
             "GET    /api/v1/changes?status=",
             "POST   /api/v1/changes                                   {title, description?, priority?}",
@@ -1724,8 +1724,9 @@ async fn download_version(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Response> {
-    web::version_response(&st, &me, id).await
+    web::version_response(&st, &me, id, &headers).await
 }
 
 /// 3D preview mesh of the current version (binary `TCMESH01`, see `mesh`).
@@ -1780,8 +1781,9 @@ async fn download(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Response> {
-    web::file_response(&st, &me, id).await
+    web::file_response(&st, &me, id, &headers).await
 }
 
 /// The preview image embedded in an Inventor, Solid Edge or SolidWorks file.
