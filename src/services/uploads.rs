@@ -508,6 +508,18 @@ pub async fn forget(pool: &PgPool, vault: &Vault, ids: &[Uuid]) {
 /// Completes an upload and stores it as a new file or version of its
 /// revision – with `check_in` also releasing the check-out, in one
 /// transaction (like a multipart check-in).
+///
+/// # Invariants
+///
+/// * **Permission:** the actor's own session; storing then has the checks of
+///   [`files::check_in`] or [`files::attach`] (checked out by the actor).
+/// * **Steps:** completing the session (size and SHA-256 verified) and storing
+///   it are two transactions. When storing fails, the verified content stays
+///   in the session and `finish` can be repeated without sending the bytes
+///   again (`tests/atomic_processes.rs`); the session is removed only after
+///   storing succeeded.
+/// * **Audit, notifications, webhooks:** those of [`files::check_in`] /
+///   [`files::attach`] (`file.upload` / `file.version`, `revision.checkin`).
 pub async fn finish(
     pool: &PgPool,
     vault: &Vault,

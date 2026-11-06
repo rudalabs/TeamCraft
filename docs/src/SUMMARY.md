@@ -39,6 +39,11 @@
 
 - [Test coverage map](dev/coverage.md)
 - [Fuzzing the file readers](dev/fuzzing.md)
+- [Architecture decision records](dev/adr/index.md)
+    - [0001 Read access model](dev/adr/0001-access-model.md)
+    - [0002 Outbox for notifications and webhooks](dev/adr/0002-outbox.md)
+    - [0003 Content-addressed vault](dev/adr/0003-content-addressed-vault.md)
+    - [0004 No Node.js, no bundler](dev/adr/0004-no-node.md)
 
 # Research
 
