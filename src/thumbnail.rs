@@ -83,7 +83,11 @@ fn better(best: &mut Option<Found>, candidate: Option<Found>) {
 
 /// The preview image of a CAD file, if it has one.
 pub fn extract(path: &Path) -> io::Result<Option<Thumbnail>> {
-    let mut file = File::open(path)?;
+    extract_from(io::BufReader::new(File::open(path)?))
+}
+
+/// [`extract`] for any seekable reader (the fuzz targets pass bytes).
+pub fn extract_from<R: Read + Seek>(mut file: R) -> io::Result<Option<Thumbnail>> {
     let mut head = [0u8; 1024];
     let n = read_up_to(&mut file, &mut head)?;
     let head = &head[..n];
@@ -103,8 +107,8 @@ pub fn extract(path: &Path) -> io::Result<Option<Thumbnail>> {
 }
 
 /// SOLIDWORKS 2015+ files: the PNG of the `PreviewPNG` section.
-fn from_sw_container(file: File) -> io::Result<Option<Thumbnail>> {
-    let Some(mut sw) = crate::swpart::SwContainer::open(io::BufReader::new(file))? else {
+fn from_sw_container<R: Read + Seek>(file: R) -> io::Result<Option<Thumbnail>> {
+    let Some(mut sw) = crate::swpart::SwContainer::open(file)? else {
         return Ok(None);
     };
     let Some(data) = sw.read(crate::swpart::PREVIEW_SECTION, MAX_STREAM)? else {
@@ -114,8 +118,8 @@ fn from_sw_container(file: File) -> io::Result<Option<Thumbnail>> {
 }
 
 /// NX parts: the JPEG in the `/Root/images/preview` stream.
-fn from_nx_part(file: File) -> io::Result<Option<Thumbnail>> {
-    let Some(mut part) = crate::nxpart::NxPart::open(io::BufReader::new(file))? else {
+fn from_nx_part<R: Read + Seek>(file: R) -> io::Result<Option<Thumbnail>> {
+    let Some(mut part) = crate::nxpart::NxPart::open(file)? else {
         return Ok(None);
     };
     let Some(data) = part.read(crate::nxpart::PREVIEW_STREAM, MAX_STREAM)? else {
@@ -166,7 +170,7 @@ fn jpeg_size(data: &[u8]) -> Option<(u32, u32)> {
     }
 }
 
-fn read_up_to(file: &mut File, buf: &mut [u8]) -> io::Result<usize> {
+fn read_up_to<R: Read>(file: &mut R, buf: &mut [u8]) -> io::Result<usize> {
     let mut n = 0;
     while n < buf.len() {
         match file.read(&mut buf[n..])? {

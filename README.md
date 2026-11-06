@@ -325,6 +325,7 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | Tauri 2                              | desktop app                              | MIT / Apache-2.0                         |
 | futures-core                         | desktop app: cancellable streamed uploads | MIT / Apache-2.0                        |
 | Montserrat, Oswald                   | fonts                                    | SIL OFL 1.1                              |
+| libfuzzer-sys (libFuzzer)            | fuzz targets in `fuzz/` only, never shipped | MIT / Apache-2.0 (libFuzzer: Apache-2.0 with LLVM exception) |
 
 SolidWorks, NX, Creo, CATIA, Inventor, Fusion,
 Revit and the other product names are trademarks of their respective
