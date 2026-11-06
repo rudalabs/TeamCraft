@@ -105,8 +105,10 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   coverage:
-    # Report only: no threshold yet (docs/src/dev/coverage.md). The unit and
+    # Report plus a floor: the job fails when the total line coverage drops
+    # below .github/coverage-floor (docs/src/dev/coverage.md). The unit and
     # the database tests run together, so the numbers include the services.
+    # (The name is kept so that branch protection rules keep matching.)
     name: coverage (report only)
     runs-on: ubuntu-24.04
     services:
@@ -157,3 +159,17 @@ jobs:
             target/llvm-cov/html
             coverage-summary.txt
           retention-days: 14
+      # last, so the summary and the report are there when the floor fails
+      - name: Coverage floor (.github/coverage-floor)
+        run: |
+          floor=$(grep -v '^#' .github/coverage-floor | tr -d '[:space:]')
+          lines=$(awk '/^TOTAL/ { gsub("%", "", $10); print $10 }' coverage-summary.txt)
+          if [ -z "$floor" ] || [ -z "$lines" ]; then
+            echo "::error::cannot read the floor ('$floor') or the total line coverage ('$lines')"
+            exit 1
+          fi
+          echo "Total line coverage: ${lines} % (floor ${floor} %)" | tee -a "$GITHUB_STEP_SUMMARY"
+          if awk -v l="$lines" -v f="$floor" 'BEGIN { exit !(l + 0 < f + 0) }'; then
+            echo "::error::line coverage ${lines} % is below the floor ${floor} % – add tests for the new code, or lower .github/coverage-floor in this pull request and say why"
+            exit 1
+          fi
