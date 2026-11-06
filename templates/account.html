@@ -113,7 +113,7 @@
     <p class="hint">Personal access tokens authenticate scripts and tools against the REST API at <span class="mono">{{ api_base }}</span> with your permissions.</p>
     {% if tokens %}
     <table>
-      <thead><tr><th>Name</th><th>Prefix</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Prefix</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"></th></tr></thead>
       <tbody>
       {% for t in tokens %}
         <tr>

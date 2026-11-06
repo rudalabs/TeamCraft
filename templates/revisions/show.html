@@ -106,6 +106,7 @@
 {% elif rev.state == "in_work" and can.checkout %}
 <div class="notice">Check out this revision to change attributes, files or the BOM.</div>
 {% endif %}
+{% if impact_groups %}<h2 class="visually-hidden">Checks needed</h2>{% endif %}
 {% for g in impact_groups %}{{ m.impact_group(g, back, can.acknowledge, true) }}{% endfor %}
 
 {% if can.checkin %}
@@ -213,7 +214,7 @@
   </div>
   <div id="lifecycle-rules" class="table-wrap hidden">
     <table>
-      <thead><tr><th>From</th><th>To</th><th>How</th><th>Who</th></tr></thead>
+      <thead><tr><th scope="col">From</th><th scope="col">To</th><th scope="col">How</th><th scope="col">Who</th></tr></thead>
       <tbody>
       {% for r in lifecycle.rules %}
         <tr><td class="nowrap">{{ m.badge(r.from) }}</td><td class="nowrap">{{ m.badge(r.to) }}</td><td>{{ r.how }}</td><td>{{ r.who }}</td></tr>
@@ -227,7 +228,7 @@
   <h2>Revisions</h2>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Rev</th><th>State</th><th>Created</th></tr></thead>
+    <thead><tr><th scope="col">Rev</th><th scope="col">State</th><th scope="col">Created</th></tr></thead>
     <tbody>
     {% for r in revisions %}
       <tr{% if r.id == rev.id %} class="this-rev" aria-current="page"{% endif %}>
@@ -251,7 +252,7 @@
   {% if files %}
   <div class="table-wrap">
   <table class="dense files-table">
-    <thead><tr><th>File</th><th title="Place inside the project group – the desktop working folder mirrors it">Folder</th><th>Version</th><th class="num">Size</th><th>Uploaded</th><th>SHA-256</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+    <thead><tr><th scope="col">File</th><th scope="col" title="Place inside the project group – the desktop working folder mirrors it">Folder</th><th scope="col">Version</th><th scope="col" class="num">Size</th><th scope="col">Uploaded</th><th scope="col">SHA-256</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
     <tbody>
     {% for f in files %}
       <tr>
@@ -302,7 +303,7 @@
       <tr id="versions-{{ f.id }}" class="hidden">
         <td colspan="7">
           <table>
-            <thead><tr><th>Version</th><th>Comment</th><th class="num">Size</th><th>Uploaded</th><th></th></tr></thead>
+            <thead><tr><th scope="col">Version</th><th scope="col">Comment</th><th scope="col" class="num">Size</th><th scope="col">Uploaded</th><th scope="col"></th></tr></thead>
             <tbody>
             {% for v in f.versions %}
               <tr class="{% if v.version == f.version %}current{% endif %}">
@@ -339,7 +340,7 @@
   {% if can.edit %}
   <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data" data-chunked="{{ rev.id }}">
     <input type="hidden" name="bases" value="{{ file_bases }}">
-    <input type="file" name="file" multiple required>
+    <input type="file" name="file" multiple required aria-label="Files to upload">
     <input type="text" name="comment" maxlength="2000" placeholder="Comment (optional)" aria-label="Comment">
     <button type="submit">Upload</button>
     <span class="hint">same file name = new version · max. {{ max_upload_mb }} MiB per file · <a href="/formats">CAD formats</a></span>
@@ -390,7 +391,7 @@
   {% if simulation.bases %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Role</th><th>Item</th><th>Name</th><th>Simulated</th><th>Status</th>{% if can.edit %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Role</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Simulated</th><th scope="col">Status</th>{% if can.edit %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
     {% for b in simulation.bases %}
       <tr>
@@ -454,7 +455,7 @@
   </p>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Result</th><th>Load case</th><th class="num">Value</th><th>Unit</th><th class="num">Lower limit</th><th class="num">Upper limit</th><th>Status</th><th>Solver</th>{% if can.edit %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Result</th><th scope="col">Load case</th><th scope="col" class="num">Value</th><th scope="col">Unit</th><th scope="col" class="num">Lower limit</th><th scope="col" class="num">Upper limit</th><th scope="col">Status</th><th scope="col">Solver</th>{% if can.edit %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
     {% for r in simulation.results %}
       <tr class="result-{{ r.status }}">
@@ -504,7 +505,7 @@
   <p class="hint">Drafts from the assistant, read from a report of this revision – they are not results until you accept them{% if simulation.can_decide and not can.edit %} (check the revision out to accept){% endif %}. Compare each with the quoted text.</p>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Result</th><th>Load case</th><th class="num">Value</th><th>Unit</th><th class="num">Limits</th><th>From the report</th>{% if simulation.can_decide %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Result</th><th scope="col">Load case</th><th scope="col" class="num">Value</th><th scope="col">Unit</th><th scope="col" class="num">Limits</th><th scope="col">From the report</th>{% if simulation.can_decide %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
     {% for p in simulation.proposals %}
       <tr>
@@ -549,7 +550,7 @@
   </form>
   <h3>Import from CSV or Excel</h3>
   <form class="inline" method="post" action="/revisions/{{ rev.id }}/simulation/results/import" enctype="multipart/form-data">
-    <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" required>
+    <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" required aria-label="Result table (CSV or Excel)">
     <label class="check"><input type="checkbox" name="replace" value="1"> Replace all values</label>
     <button type="submit">Import</button>
     <span class="hint">columns <span class="mono">name,value,unit,limit_low,limit_high,load_case</span> (optional: solver, solver_version, note) · same name and load case = update</span>
@@ -571,7 +572,7 @@
   {% if lines %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th class="num">Find no.</th><th>Item</th><th>Name</th><th>Latest</th><th class="num">Qty</th><th>Notes</th>{% if can.edit %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col" class="num">Find no.</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Latest</th><th scope="col" class="num">Qty</th><th scope="col">Notes</th>{% if can.edit %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
     {% for l in lines %}
       <tr>
@@ -747,7 +748,7 @@
   {% if based_simulations %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Simulation</th><th>Name</th><th>State</th><th>Based on</th><th>Results</th><th>Status</th></tr></thead>
+    <thead><tr><th scope="col">Simulation</th><th scope="col">Name</th><th scope="col">State</th><th scope="col">Based on</th><th scope="col">Results</th><th scope="col">Status</th></tr></thead>
     <tbody>
     {% for s in based_simulations %}
       <tr>
@@ -773,7 +774,7 @@
     <h2>Where used</h2>
     {% if where_used %}
     <table>
-      <thead><tr><th>Parent</th><th>Name</th><th>State</th><th class="num">Qty</th></tr></thead>
+      <thead><tr><th scope="col">Parent</th><th scope="col">Name</th><th scope="col">State</th><th scope="col" class="num">Qty</th></tr></thead>
       <tbody>
       {% for w in where_used %}
         <tr>

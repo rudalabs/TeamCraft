@@ -45,7 +45,7 @@
   {% if reviews %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Change</th><th>Title</th><th class="hide-narrow">Priority</th><th class="hide-narrow">Author</th><th class="hide-narrow"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <thead><tr><th scope="col">Change</th><th scope="col">Title</th><th scope="col" class="hide-narrow">Priority</th><th scope="col" class="hide-narrow">Author</th><th scope="col" class="hide-narrow"><span class="visually-hidden">Actions</span></th></tr></thead>
     <tbody>
     {% for c in reviews %}
       <tr>
@@ -85,7 +85,7 @@
     {% if checkouts %}
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Revision</th><th>Name</th><th class="num">Held for</th></tr></thead>
+      <thead><tr><th scope="col">Revision</th><th scope="col">Name</th><th scope="col" class="num">Held for</th></tr></thead>
       <tbody>
       {% for r in checkouts %}
         <tr>
@@ -107,7 +107,7 @@
     {% if my_changes %}
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Change</th><th>Title</th><th>Status</th></tr></thead>
+      <thead><tr><th scope="col">Change</th><th scope="col">Title</th><th scope="col">Status</th></tr></thead>
       <tbody>
       {% for c in my_changes %}
         <tr>
@@ -127,7 +127,7 @@
     {% if assigned_requests %}
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Request</th><th>Title</th><th>Status</th><th>Due</th></tr></thead>
+      <thead><tr><th scope="col">Request</th><th scope="col">Title</th><th scope="col">Status</th><th scope="col">Due</th></tr></thead>
       <tbody>
       {% for r in assigned_requests %}
         <tr>
@@ -151,7 +151,7 @@
     {% if my_requests %}
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Request</th><th>Title</th><th>Status</th></tr></thead>
+      <thead><tr><th scope="col">Request</th><th scope="col">Title</th><th scope="col">Status</th></tr></thead>
       <tbody>
       {% for r in my_requests %}
         <tr>

@@ -26,7 +26,7 @@
     <h2>Members</h2>
     {% if members %}
     <table>
-      <thead><tr><th>Name</th><th>Role</th><th>Added</th><th></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Added</th><th scope="col"></th></tr></thead>
       <tbody>
       {% for u in members %}
         <tr>
@@ -120,7 +120,7 @@
     {% if previewing %}<span class="badge badge-in_work">preview – not saved</span>{% elif not project.number_scheme %}<span class="muted small">(built-in default)</span>{% endif %}</p>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Item type</th><th>Next generated number</th></tr></thead>
+    <thead><tr><th scope="col">Item type</th><th scope="col">Next generated number</th></tr></thead>
     <tbody>
     {% for n in numbering.next %}<tr><td>{{ n.label }}</td><td class="mono">{{ n.number }}</td></tr>{% endfor %}
     </tbody>
@@ -151,7 +151,7 @@
   {% if result_templates %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Result</th><th>Files</th><th>Finds</th><th>Unit</th><th class="num">Limits</th>{% if can_manage %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Result</th><th scope="col">Files</th><th scope="col">Finds</th><th scope="col">Unit</th><th scope="col" class="num">Limits</th>{% if can_manage %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
     {% for t in result_templates %}
       <tr>
