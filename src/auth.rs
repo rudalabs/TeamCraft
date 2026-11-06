@@ -6,7 +6,12 @@
 //!   `Authorization: Bearer tc_pat_…`. The API never accepts cookies, which
 //!   keeps it immune to CSRF.
 
-use std::sync::LazyLock;
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    sync::{LazyLock, Mutex},
+    time::{Duration, Instant},
+};
 
 use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
@@ -305,10 +310,209 @@ impl FromRequestParts<AppState> for ApiUser {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Sign-in throttle
+// ---------------------------------------------------------------------------
+
+/// How long failed sign-ins are counted (from the first failure).
+pub const SIGN_IN_WINDOW: Duration = Duration::from_secs(15 * 60);
+/// A client address may fail this many times the per-username limit: an
+/// office behind one NAT address shares it.
+pub const SIGN_IN_ADDRESS_FACTOR: u32 = 5;
+/// Counters kept at most; beyond, new usernames are not counted (client
+/// addresses still are), so the map stays bounded under a spray.
+const SIGN_IN_MAX_ENTRIES: usize = 100_000;
+
+/// Failed password sign-ins per username and per client address
+/// (`TEAMCRAFT_SIGNIN_MAX_FAILURES` within [`SIGN_IN_WINDOW`]); once a
+/// counter is full, sign-in for that name or address is refused with 429
+/// until the window has passed – without checking the password. Counted in
+/// memory per server process; a successful sign-in clears the username's
+/// counter, not the address's (else an attacker with an account of their
+/// own could reset it between guesses).
+#[derive(Debug)]
+pub struct SignInThrottle {
+    max_failures: u32,
+    window: Duration,
+    counters: Mutex<HashMap<String, (Instant, u32)>>,
+}
+
+impl SignInThrottle {
+    /// `max_failures` 0 turns the throttle off.
+    pub fn new(max_failures: u32, window: Duration) -> SignInThrottle {
+        SignInThrottle {
+            max_failures,
+            window,
+            counters: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The counters a sign-in attempt touches.
+    pub fn keys(username: &str, client: Option<IpAddr>) -> Vec<String> {
+        let mut keys = vec![format!("user:{}", username.trim().to_ascii_lowercase())];
+        if let Some(ip) = client {
+            keys.push(format!("ip:{ip}"));
+        }
+        keys
+    }
+
+    fn limit(&self, key: &str) -> u32 {
+        if key.starts_with("ip:") {
+            self.max_failures.saturating_mul(SIGN_IN_ADDRESS_FACTOR)
+        } else {
+            self.max_failures
+        }
+    }
+
+    fn counters(&self) -> std::sync::MutexGuard<'_, HashMap<String, (Instant, u32)>> {
+        self.counters.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// `Some(wait)` when one of the counters is full.
+    pub fn blocked(&self, keys: &[String]) -> Option<Duration> {
+        if self.max_failures == 0 {
+            return None;
+        }
+        let now = Instant::now();
+        let counters = self.counters();
+        keys.iter()
+            .filter_map(|k| {
+                let (start, n) = counters.get(k)?;
+                let elapsed = now.saturating_duration_since(*start);
+                (elapsed < self.window && *n >= self.limit(k)).then(|| self.window - elapsed)
+            })
+            .max()
+    }
+
+    /// Counts a failed attempt.
+    pub fn failed(&self, keys: &[String]) {
+        if self.max_failures == 0 {
+            return;
+        }
+        let now = Instant::now();
+        let window = self.window;
+        let mut counters = self.counters();
+        if counters.len() >= SIGN_IN_MAX_ENTRIES {
+            counters.retain(|_, (start, _)| now.saturating_duration_since(*start) < window);
+        }
+        for key in keys {
+            let full = counters.len() >= SIGN_IN_MAX_ENTRIES;
+            if full && !key.starts_with("ip:") && !counters.contains_key(key) {
+                continue;
+            }
+            let entry = counters.entry(key.clone()).or_insert((now, 0));
+            if now.saturating_duration_since(entry.0) >= window {
+                *entry = (now, 0);
+            }
+            entry.1 = entry.1.saturating_add(1);
+        }
+    }
+
+    /// A successful sign-in clears the username's counter.
+    pub fn succeeded(&self, username: &str) {
+        self.counters()
+            .remove(&format!("user:{}", username.trim().to_ascii_lowercase()));
+    }
+}
+
+/// The client address of a request: the peer, or – when the peer is a
+/// reverse proxy on an internal address – the last `X-Forwarded-For` entry,
+/// the one that proxy added (a client can only prepend to the header). In
+/// tests without a peer address, the header alone.
+pub fn client_address(headers: &HeaderMap, peer: Option<IpAddr>) -> Option<IpAddr> {
+    let forwarded = || {
+        headers
+            .get("x-forwarded-for")?
+            .to_str()
+            .ok()?
+            .rsplit(',')
+            .next()?
+            .trim()
+            .parse::<IpAddr>()
+            .ok()
+    };
+    match peer {
+        Some(ip) if !crate::webhooks::is_internal(ip) => Some(ip),
+        Some(ip) => forwarded().or(Some(ip)),
+        None => forwarded(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::HeaderValue;
+
+    #[test]
+    fn sign_in_throttle_counts_per_name_and_address() {
+        let t = SignInThrottle::new(3, Duration::from_secs(60));
+        let ip: IpAddr = "203.0.113.7".parse().unwrap();
+        let erika = SignInThrottle::keys(" Erika ", Some(ip));
+        assert_eq!(erika, ["user:erika", "ip:203.0.113.7"]);
+        for _ in 0..3 {
+            assert_eq!(t.blocked(&erika), None);
+            t.failed(&erika);
+        }
+        let wait = t.blocked(&erika).expect("the name is blocked");
+        assert!(wait <= Duration::from_secs(60) && wait > Duration::from_secs(50));
+        // another name from the same address: the address has room (3 × 5)
+        let max = SignInThrottle::keys("max", Some(ip));
+        assert_eq!(t.blocked(&max), None);
+        for _ in 0..11 {
+            t.failed(&max);
+        }
+        assert!(
+            t.blocked(&SignInThrottle::keys("anna", Some(ip))).is_none(),
+            "14 of 15"
+        );
+        t.failed(&SignInThrottle::keys("anna", Some(ip)));
+        assert!(
+            t.blocked(&SignInThrottle::keys("anna", Some(ip))).is_some(),
+            "the address is full"
+        );
+        assert!(t.blocked(&SignInThrottle::keys("anna", None)).is_none());
+        // success clears the name, not the address
+        t.succeeded("ERIKA");
+        assert!(t.blocked(&["user:erika".to_string()]).is_none());
+        assert!(t.blocked(&erika).is_some(), "the address stays counted");
+
+        // the window passes
+        let short = SignInThrottle::new(1, Duration::from_millis(30));
+        let k = SignInThrottle::keys("x", None);
+        short.failed(&k);
+        assert!(short.blocked(&k).is_some());
+        std::thread::sleep(Duration::from_millis(40));
+        assert!(short.blocked(&k).is_none());
+        short.failed(&k);
+        assert!(short.blocked(&k).is_some(), "a new window starts");
+
+        // 0 = off
+        let off = SignInThrottle::new(0, Duration::from_secs(60));
+        for _ in 0..100 {
+            off.failed(&k);
+        }
+        assert!(off.blocked(&k).is_none());
+    }
+
+    #[test]
+    fn client_addresses_behind_a_proxy() {
+        let mut h = HeaderMap::new();
+        h.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("198.51.100.1, 203.0.113.9"),
+        );
+        let proxy: IpAddr = "127.0.0.1".parse().unwrap();
+        let public: IpAddr = "192.0.2.44".parse().unwrap();
+        // the proxy's own entry, not what the client prepended
+        assert_eq!(client_address(&h, Some(proxy)), "203.0.113.9".parse().ok());
+        // a client talking to the server directly cannot choose its address
+        assert_eq!(client_address(&h, Some(public)), Some(public));
+        assert_eq!(client_address(&HeaderMap::new(), Some(proxy)), Some(proxy));
+        assert_eq!(client_address(&h, None), "203.0.113.9".parse().ok());
+        let mut bad = HeaderMap::new();
+        bad.insert("x-forwarded-for", HeaderValue::from_static("not-an-ip"));
+        assert_eq!(client_address(&bad, Some(proxy)), Some(proxy));
+    }
 
     #[test]
     fn password_hash_round_trip() {

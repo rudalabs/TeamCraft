@@ -89,6 +89,8 @@ pub struct AppState {
     /// Sends outgoing event webhooks ("Send test", "Retry"; the background
     /// task has its own).
     pub webhooks: webhooks::Dispatcher,
+    /// Failed password sign-ins per username and client address.
+    pub sign_in: Arc<auth::SignInThrottle>,
 }
 
 impl AppState {
@@ -129,8 +131,13 @@ impl AppState {
         };
         let webhooks = webhooks::Dispatcher::from_config(&config)
             .context("setting up the webhook delivery failed")?;
+        let sign_in = Arc::new(auth::SignInThrottle::new(
+            config.signin_max_failures,
+            auth::SIGN_IN_WINDOW,
+        ));
         Ok(AppState {
             db,
+            sign_in,
             config: Arc::new(config),
             templates: Arc::new(templates),
             vault,
@@ -150,6 +157,7 @@ pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' da
 
 /// Builds the complete HTTP application.
 pub fn router(state: AppState) -> Router {
+    let hsts = state.config.cookie_secure;
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -175,6 +183,12 @@ pub fn router(state: AppState) -> Router {
             HeaderName::from_static("permissions-policy"),
             HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
         ))
+        .layer(tower::util::option_layer(hsts.then(|| {
+            SetResponseHeaderLayer::if_not_present(
+                header::STRICT_TRANSPORT_SECURITY,
+                HeaderValue::from_static("max-age=31536000"),
+            )
+        })))
         .layer(CatchPanicLayer::custom(panic_response))
         .layer(
             // One INFO line per request. Only the path is recorded: query

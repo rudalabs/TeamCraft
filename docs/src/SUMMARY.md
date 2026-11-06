@@ -39,6 +39,7 @@
 
 - [Test coverage map](dev/coverage.md)
 - [Fuzzing the file readers](dev/fuzzing.md)
+- [Threat model](dev/threat-model.md)
 - [Architecture decision records](dev/adr/index.md)
     - [0001 Read access model](dev/adr/0001-access-model.md)
     - [0002 Outbox for notifications and webhooks](dev/adr/0002-outbox.md)

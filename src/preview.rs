@@ -701,6 +701,7 @@ async fn run_worker(exe: &Path, job: &Job) -> Result<(), String> {
         command.arg("--signature").arg(signature);
     }
     let child = command
+        .env_clear()
         .env("RUST_LOG", "error")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

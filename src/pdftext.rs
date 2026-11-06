@@ -167,6 +167,7 @@ async fn run_worker(exe: &Path, input: std::fs::File) -> Result<String, String> 
         .arg(MAX_PDF_BYTES.to_string())
         .arg("--max-memory-bytes")
         .arg(MEMORY_BYTES.load(Ordering::Relaxed).to_string())
+        .env_clear()
         .env("RUST_LOG", "error")
         .stdin(std::process::Stdio::from(input))
         .stdout(std::process::Stdio::piped())

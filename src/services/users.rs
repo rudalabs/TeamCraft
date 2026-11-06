@@ -131,29 +131,131 @@ pub async fn set_skin(pool: &PgPool, actor: &Actor, skin: &str) -> AppResult<()>
     Ok(())
 }
 
-/// Creates a session and returns the plaintext token for the cookie.
-pub async fn create_session(pool: &PgPool, user_id: Uuid, ttl: Duration) -> AppResult<String> {
+/// How a user signed in (recorded in the audit log).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SignIn {
+    /// Username and password.
+    Password,
+    /// Single sign-on (OIDC).
+    Sso,
+    /// The administrator created at the first start.
+    Setup,
+}
+
+impl SignIn {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SignIn::Password => "password",
+            SignIn::Sso => "sso",
+            SignIn::Setup => "setup",
+        }
+    }
+}
+
+/// Creates a session and returns the plaintext token for the cookie; the
+/// sign-in is recorded in the audit log (`user.sign_in`, never the token).
+pub async fn create_session(
+    pool: &PgPool,
+    user_id: Uuid,
+    ttl: Duration,
+    how: SignIn,
+) -> AppResult<String> {
+    let me = actor(pool, user_id).await?;
     let token = auth::generate_token(auth::SESSION_TOKEN_PREFIX);
     let expires_at = Utc::now()
         + chrono::Duration::from_std(ttl).unwrap_or_else(|_| chrono::Duration::hours(72));
+    let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")
         .bind(auth::hash_token(&token))
         .bind(user_id)
         .bind(expires_at)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     sqlx::query("UPDATE users SET last_login_at = now() WHERE id = $1")
         .bind(user_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    audit::record(
+        &mut tx,
+        Some(&me),
+        "user.sign_in",
+        "user",
+        Some(user_id),
+        format!("Signed in ({})", how.as_str()),
+        json!({ "method": how.as_str() }),
+    )
+    .await?;
+    tx.commit().await?;
     Ok(token)
 }
 
+/// Ends a web session (sign-out); recorded as `user.sign_out`. An unknown
+/// or already ended session is not an error and leaves no entry.
 pub async fn delete_session(pool: &PgPool, token: &str) -> AppResult<()> {
-    sqlx::query("DELETE FROM sessions WHERE token_hash = $1")
-        .bind(auth::hash_token(token))
-        .execute(pool)
+    let mut tx = pool.begin().await?;
+    let ended: Option<Uuid> =
+        sqlx::query_scalar("DELETE FROM sessions WHERE token_hash = $1 RETURNING user_id")
+            .bind(auth::hash_token(token))
+            .fetch_optional(&mut *tx)
+            .await?;
+    if let Some(user_id) = ended {
+        let me = actor(pool, user_id).await?;
+        audit::record(
+            &mut tx,
+            Some(&me),
+            "user.sign_out",
+            "user",
+            Some(user_id),
+            "Signed out",
+            json!({}),
+        )
         .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Records a failed password sign-in (`user.sign_in_failed`). For an
+/// existing account the entry names it; for an unknown username it does
+/// not keep what was typed – that is often a password entered in the wrong
+/// field. The password itself is never recorded.
+pub async fn record_failed_sign_in(pool: &PgPool, username: &str) -> AppResult<()> {
+    let typed = username.trim().to_ascii_lowercase();
+    let account: Option<(Uuid, String)> =
+        sqlx::query_as("SELECT id, username FROM users WHERE username = $1")
+            .bind(&typed)
+            .fetch_optional(pool)
+            .await?;
+    let mut tx = pool.begin().await?;
+    match &account {
+        Some((id, name)) => {
+            tracing::warn!(username = %name, "failed sign-in");
+            audit::record(
+                &mut tx,
+                None,
+                "user.sign_in_failed",
+                "user",
+                Some(*id),
+                format!("Failed sign-in as '{name}'"),
+                json!({ "known_account": true }),
+            )
+            .await?
+        }
+        None => {
+            tracing::warn!("failed sign-in with an unknown username");
+            audit::record(
+                &mut tx,
+                None,
+                "user.sign_in_failed",
+                "user",
+                None,
+                "Failed sign-in with an unknown username",
+                json!({ "known_account": false }),
+            )
+            .await?
+        }
+    }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -504,11 +606,17 @@ pub async fn set_password(
 }
 
 /// Changes the caller's own password after verifying the current one.
+///
+/// Signs out every other web session of the user (a session stolen before
+/// the change must not outlive it); `keep_session` is the token of the
+/// session that made the change. Personal access tokens stay: they are
+/// separate credentials the user revokes one by one.
 pub async fn change_own_password(
     pool: &PgPool,
     actor: &Actor,
     current: &str,
     new: &str,
+    keep_session: Option<&str>,
 ) -> AppResult<()> {
     if authenticate_local(pool, &actor.username, current)
         .await?
@@ -526,6 +634,13 @@ pub async fn change_own_password(
         .bind(&hash)
         .execute(&mut *tx)
         .await?;
+    let ended =
+        sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token_hash IS DISTINCT FROM $2")
+            .bind(actor.id)
+            .bind(keep_session.map(auth::hash_token))
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
     audit::record(
         &mut tx,
         Some(actor),
@@ -533,7 +648,7 @@ pub async fn change_own_password(
         "user",
         Some(actor.id),
         "Changed own password",
-        json!({}),
+        json!({ "other_sessions_ended": ended }),
     )
     .await?;
     tx.commit().await?;
