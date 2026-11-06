@@ -112,7 +112,8 @@ fn the_conversion_process_refuses_a_large_input_before_opening_it() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-#[cfg(target_os = "linux")]
+// RLIMIT_AS on Linux (macOS does not enforce it), a Job Object on Windows
+#[cfg(any(target_os = "linux", windows))]
 #[test]
 fn the_conversion_process_stops_at_its_memory_limit() {
     let dir = temp_dir();
@@ -185,7 +186,7 @@ fn the_pdf_text_process_is_bounded() {
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stderr).contains("not a readable PDF"));
     // a memory limit far below what the process already maps stops it
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", windows))]
     {
         let small = dir.join("small.pdf");
         std::fs::write(&small, vec![b'%'; 2 * MIB as usize]).unwrap();

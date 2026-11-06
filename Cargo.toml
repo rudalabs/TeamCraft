@@ -87,3 +87,8 @@ strip = "debuginfo"
 
 [target."cfg(unix)".dependencies]
 rlimit = "0.10"
+
+# Memory limit of the parser children on Windows (Job Objects); already in
+# the dependency tree through tokio. MIT/Apache-2.0.
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_System_Threading"] }

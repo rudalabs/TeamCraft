@@ -102,10 +102,11 @@ fn check_size(input: &Path, limit: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Limits the address space of this process (the preview child), so a file
+/// Limits the memory of this process (the preview or text child), so a file
 /// that needs more memory fails cleanly instead of taking the server host
-/// down. Linux and macOS; elsewhere (Windows) the limit is not enforced.
-/// Returns whether a limit is in force.
+/// down: the address space on Unix (`RLIMIT_AS`, enforced on Linux), the
+/// committed memory on Windows (a Job Object the process puts itself into,
+/// threat model F11). Returns whether a limit is in force.
 pub fn limit_memory(bytes: u64) -> bool {
     if bytes == 0 {
         return false;
@@ -114,9 +115,49 @@ pub fn limit_memory(bytes: u64) -> bool {
     {
         rlimit::setrlimit(rlimit::Resource::AS, bytes, bytes).is_ok()
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        limit_memory_windows(bytes)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         false
+    }
+}
+
+/// A Job Object with `JOB_OBJECT_LIMIT_PROCESS_MEMORY`, this process
+/// assigned to it. The job handle stays open for the life of the process
+/// (the child is short-lived); nested jobs work since Windows 8.
+#[cfg(windows)]
+fn limit_memory_windows(bytes: u64) -> bool {
+    use windows_sys::Win32::System::{
+        JobObjects::{
+            AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+            SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+        },
+        Threading::GetCurrentProcess,
+    };
+    let Ok(limit) = usize::try_from(bytes) else {
+        return false;
+    };
+    // SAFETY: plain Win32 calls with valid pointers to stack data; the job
+    // handle is checked before it is used and deliberately never closed.
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return false;
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY;
+        info.ProcessMemoryLimit = limit;
+        let set = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            std::ptr::from_ref(&info).cast(),
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        set != 0 && AssignProcessToJobObject(job, GetCurrentProcess()) != 0
     }
 }
 
