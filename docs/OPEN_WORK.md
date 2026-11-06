@@ -140,12 +140,14 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   backup (refused, nothing written), interrupted backup leaves no directory that `verify` accepts, restore into a
   non-empty target without `--force` is refused, `--force` failure leaves database *and* vault untouched (vault side
   not covered yet), percent-encoded and `_FILE` credentials, large-object and preview-cache handling
-- [ ] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): the dry-run plan equals what the
-  import writes (property test over generated tables), an error in row *n* rolls back rows 1…*n*-1, re-import of the
-  same table is idempotent (no duplicate items or BOM lines), cycles and self-references refused, quantity/unit
-  parsing edge cases (decimal comma, `1.1.2` positions with gaps, empty levels), malformed STEP (truncated, unknown
-  entities, `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`) never panics (fuzz-style corpus); desktop folder import resumes
-  after an interrupted run without duplicates
+- [x] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): the dry-run plan equals what the
+  import writes, line by line over 24 generated tables (`tests/import_proofing.rs`); an error in row *n* rolls back
+  rows 1…*n*-1 and re-import is idempotent (`tests/import_atomicity.rs`); cycles and self-references are skipped with
+  a warning and never reach the database; quantity/unit/position edge cases; malformed STEP (every truncation,
+  unknown entities, `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`, complex instances, deep lists) never panics. Found and
+  fixed: a dotted position whose parent row is missing (`1.3.1` without `1.3`) went silently below the row above –
+  now below the nearest existing ancestor with a warning, and positions out of order are reported
+- [ ] **Import** – desktop folder import resumes after an interrupted run without duplicates
 - [ ] **Atomic processes** – each multi-row mutation is all-or-nothing under an injected failure (a failing
   statement or a closed connection between steps): check-in (file versions + lock release), change order release
   (all revisions or none, impact flags, notifications and webhooks in the same transaction), *Replace in assemblies*,
