@@ -105,10 +105,16 @@ jobs:
         shell: bash
         run: |
           set +e
-          xvfb-run -a env WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-            timeout 20 desktop/target/debug/teamcraft-desktop > smoke.log 2>&1
-          status=$?
+          # The app's status goes through a file: xvfb-run itself sometimes
+          # fails while cleaning up its temporary directory ("problem while
+          # cleaning up temporary directory", exit 1) after the app ran fine.
+          rm -f smoke.status
+          xvfb-run -a sh -c 'WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+            timeout 20 desktop/target/debug/teamcraft-desktop > smoke.log 2>&1; echo $? > smoke.status'
+          xvfb=$?
           cat smoke.log
+          if [ ! -s smoke.status ]; then echo "xvfb-run failed with $xvfb before the app ran"; exit 1; fi
+          status=$(cat smoke.status)
           # 124 = still running when the timeout stopped it
           if [ "$status" -ne 124 ]; then echo "the app exited early with $status"; exit 1; fi
           if grep -q "panicked" smoke.log; then echo "the app panicked"; exit 1; fi

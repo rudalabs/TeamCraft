@@ -93,6 +93,16 @@ database. `tests/backup_restore.rs` additionally runs `pg_dump` and
 `pg_restore` from `PATH` (major version at least the server's); without them
 it is skipped, with `TEAMCRAFT_REQUIRE_PG_TOOLS=1` (CI) that fails.
 
+Each test binary keeps at most 6 test databases open at a time, with 5
+connections each (`TEAMCRAFT_TEST_DB_SLOTS` changes the 6). Running several
+test binaries or checkouts against one server at the same time can still
+exceed PostgreSQL's `max_connections` (100); the harness then waits for
+connections instead of failing. On a server whose `lc_messages` is not English (the
+Windows installer takes the system language), PostgreSQL sends that refusal
+in a non-UTF-8 encoding that sqlx cannot read – `lc_messages = 'C'` in
+`postgresql.conf` gives readable errors. A failing test prints the server's
+warnings and errors (`RUST_LOG` selects more), so a `500` shows its cause.
+
 | If you changed …  | also run                                                            |
 |-------------------|---------------------------------------------------------------------|
 | the desktop app   | `cargo fmt/clippy/test --manifest-path desktop/Cargo.toml`          |

@@ -12,7 +12,11 @@
 
 #![allow(dead_code)]
 
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+    time::{Duration, Instant},
+};
 
 use axum::{
     body::Body,
@@ -32,6 +36,7 @@ use teamcraft::{
     services::users::{self, NewLocalUser},
     AppState,
 };
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -48,6 +53,9 @@ pub struct TestApp {
     admin_password: Option<String>,
     pub db_name: String,
     pub vault_dir: PathBuf,
+    /// The place of this test database among [`db_slots`] (none for a
+    /// second app of the same test, see [`TestApp::open`]).
+    _slot: Option<OwnedSemaphorePermit>,
 }
 
 /// Project groups every test database starts with: (code, name, IdP group).
@@ -121,11 +129,145 @@ pub async fn setup() -> Option<TestApp> {
     setup_with(&[]).await
 }
 
+/// Connections of the pool of one test database.
+const POOL_SIZE: u32 = 5;
+
+/// How long a request of a test may wait for a pooled connection. The
+/// default 30 s is too short when several test binaries, builds and other
+/// checkouts share one machine: a request that cannot get a connection
+/// answers `500`, and the test fails for a reason that is not in the code.
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// How long the harness retries a connection the server refuses for now
+/// (too many connections, starting up).
+const CONNECT_RETRY: Duration = Duration::from_secs(300);
+
+/// Test databases one test binary keeps open at the same time (default 6,
+/// `TEAMCRAFT_TEST_DB_SLOTS` overrides it). The test threads (one per CPU by
+/// default) would otherwise open up to `threads × POOL_SIZE` connections,
+/// and a few binaries at once exceed PostgreSQL's `max_connections` (100):
+/// the server refuses connections and requests fail at random.
+fn db_slots() -> Arc<Semaphore> {
+    static SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    SLOTS
+        .get_or_init(|| {
+            let n = std::env::var("TEAMCRAFT_TEST_DB_SLOTS")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(6);
+            Arc::new(Semaphore::new(n))
+        })
+        .clone()
+}
+
+/// Whether the server refused a connection only for now: too many
+/// connections (`53300`) or still starting up (`57P03`). A server whose
+/// `lc_messages` is not English (e.g. `German_Germany.1252`) sends that
+/// refusal in a non-UTF-8 encoding, which sqlx reports as a protocol error
+/// without the code – retried as well (sqlx's own pool does not). On
+/// Windows the refusal may also arrive as a reset connection (os error
+/// 10054) before the message is read. A server that is not running at all
+/// (connection refused) is not retried: the tests are skipped at once.
+fn refused_for_now(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Database(db) => matches!(db.code().as_deref(), Some("53300" | "57P03")),
+        sqlx::Error::Protocol(message) => message.contains("non-UTF-8"),
+        sqlx::Error::Io(io) => matches!(
+            io.kind(),
+            std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+        ),
+        _ => false,
+    }
+}
+
+/// Connects to the test database server, retrying while it refuses
+/// connections for now (see [`refused_for_now`]).
+async fn connect_retrying(options: &PgConnectOptions) -> Result<PgConnection, sqlx::Error> {
+    let deadline = Instant::now() + CONNECT_RETRY;
+    let mut wait = Duration::from_millis(50);
+    loop {
+        match PgConnection::connect_with(options).await {
+            Err(e) if refused_for_now(&e) && Instant::now() < deadline => {
+                tokio::time::sleep(wait).await;
+                wait = (wait * 2).min(Duration::from_secs(2));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// A pool on database `database` of the test server with all of its
+/// [`POOL_SIZE`] connections opened up front and kept open: a test never
+/// waits for the server to accept a new connection in the middle of a
+/// request. While the server refuses connections for now (see
+/// [`refused_for_now`]), the pool is closed again – so that tests waiting
+/// for connections do not each hold a few – and opened anew a little later.
+async fn test_pool(options: &PgConnectOptions, database: &str) -> Result<PgPool, sqlx::Error> {
+    let deadline = Instant::now() + CONNECT_RETRY;
+    let mut wait = Duration::from_millis(50);
+    loop {
+        let pool = PgPoolOptions::new()
+            .max_connections(POOL_SIZE)
+            .min_connections(POOL_SIZE)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .acquire_timeout(ACQUIRE_TIMEOUT)
+            .connect_lazy_with(options.clone().database(database));
+        let mut open = Vec::new();
+        // sqlx itself retries a refusal it can read (until the acquire
+        // timeout) – too long to hold the connections opened so far
+        let refused = loop {
+            if open.len() == POOL_SIZE as usize {
+                break None;
+            }
+            match tokio::time::timeout(Duration::from_secs(10), pool.acquire()).await {
+                Ok(Ok(conn)) => open.push(conn),
+                Ok(Err(e)) if !refused_for_now(&e) => break Some(Err(e)),
+                Ok(Err(_)) | Err(_) => break Some(Ok(())),
+            }
+        };
+        drop(open);
+        match refused {
+            None => return Ok(pool),
+            Some(Err(e)) => return Err(e),
+            Some(Ok(())) if Instant::now() < deadline => {
+                pool.close().await;
+                // a little jitter, so waiting tests do not retry in step
+                let jitter = Duration::from_millis(u64::from(Uuid::new_v4().as_bytes()[0]));
+                tokio::time::sleep(wait + jitter).await;
+                wait = (wait * 2).min(Duration::from_secs(2));
+            }
+            Some(Ok(())) => return Err(sqlx::Error::PoolTimedOut),
+        }
+    }
+}
+
+/// Sends the server's log (warnings and errors, or `RUST_LOG`) to the output
+/// of the test, which shows it when the test fails: the cause of a `500` is
+/// only logged, never sent to the client.
+fn init_logging() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"));
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_test_writer()
+            .try_init();
+    });
+}
+
 /// Like [`setup`], with additional configuration variables.
 pub async fn setup_with(extra: &'static [(&'static str, &'static str)]) -> Option<TestApp> {
+    init_logging();
     let (admin_options, admin_password) = admin_options()?;
+    let slot = db_slots()
+        .acquire_owned()
+        .await
+        .expect("the semaphore is never closed");
     let db_name = format!("teamcraft_test_{}", Uuid::new_v4().simple());
-    let mut admin = match PgConnection::connect_with(&admin_options).await {
+    let mut admin = match connect_retrying(&admin_options).await {
         Ok(conn) => conn,
         Err(e) if !require_db() => {
             eprintln!("skipping database test: no database server reachable ({e}) – start one with `docker compose up -d db`");
@@ -139,9 +281,7 @@ pub async fn setup_with(extra: &'static [(&'static str, &'static str)]) -> Optio
         .expect("CREATE DATABASE (the test role needs CREATEDB)");
     admin.close().await.ok();
 
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect_with(admin_options.clone().database(&db_name))
+    let pool = test_pool(&admin_options, &db_name)
         .await
         .expect("connect to the temporary database");
     db::migrate(&pool).await.expect("migrations apply");
@@ -185,6 +325,7 @@ pub async fn setup_with(extra: &'static [(&'static str, &'static str)]) -> Optio
         admin_password,
         db_name,
         vault_dir,
+        _slot: Some(slot),
     })
 }
 
@@ -218,7 +359,7 @@ impl TestApp {
     /// `teardown` of the app returned by [`TestApp::open`]).
     pub async fn create_empty_database(&self, suffix: &str) -> String {
         let name = format!("{}_{suffix}", self.db_name);
-        let mut admin = PgConnection::connect_with(&self.admin_options)
+        let mut admin = connect_retrying(&self.admin_options)
             .await
             .expect("connect to the test database server");
         sqlx::query(&format!("CREATE DATABASE {name}"))
@@ -232,9 +373,7 @@ impl TestApp {
     /// A second application on another database and vault of the same
     /// server (e.g. a restored backup), without migrating or seeding it.
     pub async fn open(&self, database: &str, vault_dir: PathBuf) -> TestApp {
-        let pool = PgPoolOptions::new()
-            .max_connections(5)
-            .connect_with(self.admin_options.clone().database(database))
+        let pool = test_pool(&self.admin_options, database)
             .await
             .expect("connect to the other database");
         let config = self.client_config(database, &vault_dir);
@@ -249,13 +388,15 @@ impl TestApp {
             admin_password: self.admin_password.clone(),
             db_name: database.to_string(),
             vault_dir,
+            _slot: None,
         }
     }
 
     /// Drops the temporary database and vault.
     pub async fn teardown(self) {
         self.pool.close().await;
-        if let Ok(mut admin) = PgConnection::connect_with(&self.admin_options).await {
+        // retried: a database left behind under load stays on the server
+        if let Ok(mut admin) = connect_retrying(&self.admin_options).await {
             let _ = sqlx::query(&format!(
                 "DROP DATABASE IF EXISTS {} WITH (FORCE)",
                 self.db_name
