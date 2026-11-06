@@ -85,11 +85,11 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 
 | Threat | STRIDE | Mitigation | Tests | Status |
 |---|---|---|---|---|
-| Cross-site form post (CSRF) | E | `csrf_guard` on every non-GET web request compares `Origin` (or `Referer`) with the host and the public URL; `Origin: null` is refused; `SameSite=Lax` as second layer (`src/web/mod.rs` `csrf_guard`, `same_origin`). A request **without both headers is let through** (relies on SameSite), and `X-Forwarded-Host` is trusted as sent by the proxy | `src/web/mod.rs` `origin_checks`; `tests/web_ui.rs` (desktop authorize with a foreign origin); `tests/assistant_threads.rs`, `tests/uploads.rs` (cross-site cases) | partial (F4) |
+| Cross-site form post (CSRF) | E | `csrf_guard` on every non-GET web request compares `Origin` (or `Referer`) with the host and the public URL; `Origin: null` is refused; `SameSite=Lax` as second layer (`src/web/mod.rs` `csrf_guard`, `same_origin`). A request without both headers is refused; `X-Forwarded-Host` is trusted as sent by the proxy (documented in the install guide) | `src/web/mod.rs` `origin_checks`; `tests/web_security.rs`; `tests/web_ui.rs` (desktop authorize with a foreign origin); `tests/assistant_threads.rs`, `tests/uploads.rs` (cross-site cases) | mitigated (F4) |
 | Cookies used against the API | E | the API accepts only `Authorization: Bearer` (`src/auth.rs` `ApiUser`); no cookie code in `src/api` | – (no test sends a session cookie to `/api/v1`) | partial: no test |
 | Script injection (XSS) | E, I | MiniJinja templates; CSP `default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`, no inline JS or styles (`src/lib.rs`) | `tests/web_ui.rs` (asserts `nosniff` and `default-src 'self'`) | mitigated; frame and referrer headers not asserted |
 | Clickjacking | T | `frame-ancestors 'none'` and `X-Frame-Options: DENY` (`src/lib.rs`) | – | partial: no test |
-| Downgrade to HTTP | I | no `Strict-Transport-Security` header from the server and none documented for the proxy | – | **open** (F5) |
+| Downgrade to HTTP | I | `Strict-Transport-Security` (1 year) when the public URL is https (`src/lib.rs`); the install guide covers the proxy | `tests/web_security.rs` | mitigated (F5) |
 | Open redirect after sign-in | S | `util::safe_redirect_target` accepts only local paths (no `//`, no `\`); applied to `next` and to the OIDC return target | `src/util.rs` `redirect_targets`; `tests/oidc_flow.rs` (return to `next`) | mitigated |
 | First-start setup taken over | E | `/setup` only with local sign-in, a loopback bind address and no user yet, under an advisory lock (`src/web/auth_pages.rs` `setup_open`) | `tests/web_ui.rs` `first_start_creates_the_administrator` | mitigated |
 
@@ -123,7 +123,7 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 | Another user's upload session used | S, T | sessions are loaded only for their owner (others get 404), expire after 24 h, appends are serialised and need the confirmed offset (409 otherwise) (`src/services/uploads.rs` `load`, `append`) | `tests/uploads.rs` `sessions_are_private_and_checked`, `concurrent_chunks_at_one_offset_are_serialised`, `expired_sessions_are_removed` | mitigated |
 | Disk or memory exhausted by uploads | D | `TEAMCRAFT_MAX_UPLOAD_MB` (512) as body limit and in `Upload::write`; chunks up to `TEAMCRAFT_UPLOAD_CHUNK_MB` (16); at most 16 open upload sessions per user; expired sessions and stale staging files are removed | `tests/domain_and_vault.rs` `an_upload_over_the_limit_is_refused_and_leaves_no_blob`; `src/services/uploads.rs` `chunks_stay_within_the_announced_size` | partial: no quota per user or in total (F9) |
 | Download of a restricted file | I | every download path goes through `files::get` / `get_version` with `access::ensure_visible`; Range and If-Range in `src/httprange.rs` | `tests/read_permissions.rs` `outsiders_see_nothing_of_a_restricted_group`; `tests/range_downloads.rs` `downloads_resume_with_range_and_if_range` | mitigated |
-| An uploaded HTML or SVG file runs script | E | downloads are always `Content-Disposition: attachment` (`util::content_disposition`), `X-Content-Type-Options: nosniff` and the CSP on every response; request attachments additionally `default-src 'none'; sandbox`. The stored Content-Type is the one the client sent (`files::clean_content_type` checks only its form) | – (no test pins the download headers) | partial (F10) |
+| An uploaded HTML or SVG file runs script | E | downloads are always `Content-Disposition: attachment` (`util::content_disposition`), `X-Content-Type-Options: nosniff` and the CSP on every response; request attachments additionally `default-src 'none'; sandbox`. The stored Content-Type is the one the client sent (`files::clean_content_type` checks only its form) | – `tests/web_security.rs` pins attachment, nosniff and CSP | partial (F10) |
 
 ## File parsers
 
@@ -188,15 +188,15 @@ Each has an entry in `docs/OPEN_WORK.md` (section 2, *Security*).
 | F1 | No rate limit or lockout for sign-in, password change and the desktop token exchange | authentication |
 | F2 | PATs have no scopes (read-only, MCP-only); the desktop token has full rights for 90 days | tokens |
 | F3 | Sign-in, failed sign-in and sign-out are not in the audit log | audit |
-| F4 | CSRF: a request without `Origin` and `Referer` passes on SameSite alone; `X-Forwarded-Host` is trusted | web |
-| F5 | No HSTS from the server and none documented for the reverse proxy | web |
+| F4 | ~~CSRF: a request without `Origin` and `Referer` passes~~ fixed; `X-Forwarded-Host` is trusted as sent (documented) | web |
+| F5 | ~~No HSTS~~ fixed: sent when the public URL is https | web |
 | F6 | ID token signatures are not verified, yet the issuer may be plain `http://` | OIDC |
 | F7 | A user removed at the IdP keeps a running session until it expires | OIDC |
 | F8 | Downloads do not re-check the blob hash (tampering on disk shows only in `vault check` or a backup) | vault |
 | F9 | No disk quota per user or in total | uploads |
-| F10 | Served Content-Type is the client's; the download headers (attachment, nosniff, CSP) have no test | downloads |
+| F10 | Served Content-Type is the client's (the download headers are now pinned by a test) | downloads |
 | F11 | No memory limit for the preview and text children on Windows; 3MF entries up to 2 GiB | parsers |
-| F12 | The parser children inherit the server's environment (secrets) | parsers |
+| F12 | ~~The parser children inherit the server's environment~~ fixed: cleared | parsers |
 | F13 | XLSX/ODS are unpacked in the server process without a cap on the unpacked size | parsers |
 | F14 | `simmesh`, `pdftext`, `resultscan` not fuzzed (the no-panic lints and the 3DS fix are in `main`, #106/#108) | parsers |
 | F15 | Prompt injection: the untrusted marker is advisory; no taint for external MCP clients | assistant / MCP |

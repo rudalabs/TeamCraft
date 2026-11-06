@@ -777,8 +777,9 @@ pub(crate) fn same_origin(headers: &HeaderMap, public_url: &str) -> bool {
         Some(origin) => authority(origin),
         None => match header_str(header::REFERER) {
             Some(referer) => authority(referer),
-            // Neither header present (old browsers, privacy tools): rely on SameSite.
-            None => return true,
+            // Neither header: browsers send one on every cross-site POST, so a
+            // request without both is not a browser form post (F4).
+            None => return false,
         },
     };
     let Some(source) = source else { return false };
@@ -873,7 +874,8 @@ mod tests {
             &headers(&[("referer", "https://evil.example/x")]),
             public
         ));
-        assert!(same_origin(&headers(&[]), public));
+        // F4: neither header present is refused.
+        assert!(!same_origin(&headers(&[]), public));
     }
 
     #[test]
