@@ -80,19 +80,19 @@ feature milestone – the features in *What works* are enough; what is missing i
     policy review below)
   - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
   - [ ] F3: sign-in, failed sign-in and sign-out in the audit log (not only log lines)
-  - [ ] F4: CSRF: refuse state-changing web requests without `Origin` and `Referer`, or add a token; document that
-    the proxy must overwrite `X-Forwarded-Host`
-  - [ ] F5: `Strict-Transport-Security` when the public URL is https, or the proxy setting in the install guide
+  - [x] F4: web posts without `Origin` and `Referer` are refused; install guide says the proxy must overwrite
+    `X-Forwarded-Host`
+  - [x] F5: `Strict-Transport-Security` when the public URL is https
   - [ ] F6: OIDC with a plain `http://` issuer: refuse it outside `localhost`, or verify ID token signatures (JWKS)
     for it – a decision, since it can break installations with an internal IdP
   - [ ] F7: end TeamCraft sessions of users removed at the IdP (shorter SSO sessions, back-channel logout or a
     periodic check)
   - [ ] F8: re-check the hash of a blob while it is downloaded (or periodically), not only in `vault check`
   - [ ] F9: disk quota per user and in total for uploads
-  - [ ] F10: serve downloads with a Content-Type derived from the format, and pin the download headers
-    (attachment, nosniff, CSP) in a test
+  - [ ] F10: serve downloads with a Content-Type derived from the format (the download headers are pinned in
+    `tests/web_security.rs`)
   - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
-  - [ ] F12: start the parser children with a cleared environment (no database URL, no keys)
+  - [x] F12: start the parser children with a cleared environment (no database URL, no keys)
   - [ ] F13: a cap on the unpacked size of XLSX/ODS tables, or read them in the isolated child
   - [ ] F14: fuzz targets for `simmesh`, `pdftext` and `resultscan` (the no-panic lints and the 3DS and Kelvin
     fixes are in `main` since #106/#108)
