@@ -104,8 +104,11 @@ pub fn mesh_step(data: &[u8]) {
     let _ = crate::mesh::read("step", data);
 }
 
+/// A target: its name (as in `fuzz/fuzz_targets/<name>.rs`) and entry point.
+pub type Target = (&'static str, fn(&[u8]));
+
 /// Every target by name: the fuzz targets and the corpus test use this list.
-pub const TARGETS: &[(&str, fn(&[u8]))] = &[
+pub const TARGETS: &[Target] = &[
     ("stepbom", stepbom),
     ("swpart", swpart),
     ("nxpart", nxpart),
