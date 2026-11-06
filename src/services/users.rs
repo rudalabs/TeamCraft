@@ -132,28 +132,86 @@ pub async fn set_skin(pool: &PgPool, actor: &Actor, skin: &str) -> AppResult<()>
 }
 
 /// Creates a session and returns the plaintext token for the cookie.
-pub async fn create_session(pool: &PgPool, user_id: Uuid, ttl: Duration) -> AppResult<String> {
+/// Starts a browser session and records the sign-in (`method`: `local`,
+/// `sso` or `setup`) in the audit log, in the same transaction.
+pub async fn create_session(
+    pool: &PgPool,
+    user_id: Uuid,
+    ttl: Duration,
+    method: &str,
+) -> AppResult<String> {
     let token = auth::generate_token(auth::SESSION_TOKEN_PREFIX);
     let expires_at = Utc::now()
         + chrono::Duration::from_std(ttl).unwrap_or_else(|_| chrono::Duration::hours(72));
+    let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)")
         .bind(auth::hash_token(&token))
         .bind(user_id)
         .bind(expires_at)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE users SET last_login_at = now() WHERE id = $1")
-        .bind(user_id)
-        .execute(pool)
-        .await?;
+    let username: String = sqlx::query_scalar(
+        "UPDATE users SET last_login_at = now() WHERE id = $1 RETURNING username",
+    )
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    audit::record(
+        &mut tx,
+        None,
+        "auth.login",
+        "user",
+        Some(user_id),
+        format!("{username} signed in ({method})"),
+        json!({ "method": method }),
+    )
+    .await?;
+    tx.commit().await?;
     Ok(token)
 }
 
+/// Records a refused local sign-in. The name is what was typed, shortened;
+/// it may be a mistyped password, so nothing else is stored.
+pub async fn record_failed_login(pool: &PgPool, username: &str) -> AppResult<()> {
+    let typed: String = username.trim().chars().take(100).collect();
+    let mut tx = pool.begin().await?;
+    audit::record(
+        &mut tx,
+        None,
+        "auth.login_failed",
+        "user",
+        None,
+        format!("Failed sign-in for '{typed}'"),
+        json!({ "username": typed }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Ends a browser session and records the sign-out.
 pub async fn delete_session(pool: &PgPool, token: &str) -> AppResult<()> {
-    sqlx::query("DELETE FROM sessions WHERE token_hash = $1")
-        .bind(auth::hash_token(token))
-        .execute(pool)
+    let mut tx = pool.begin().await?;
+    let user: Option<(Uuid, String)> = sqlx::query_as(
+        "WITH gone AS (DELETE FROM sessions WHERE token_hash = $1 RETURNING user_id)
+         SELECT u.id, u.username FROM gone JOIN users u ON u.id = gone.user_id",
+    )
+    .bind(auth::hash_token(token))
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some((id, username)) = user {
+        audit::record(
+            &mut tx,
+            None,
+            "auth.logout",
+            "user",
+            Some(id),
+            format!("{username} signed out"),
+            json!({}),
+        )
         .await?;
+    }
+    tx.commit().await?;
     Ok(())
 }
 

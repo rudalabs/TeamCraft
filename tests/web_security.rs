@@ -105,3 +105,70 @@ async fn downloads_are_attachments_with_nosniff_and_csp() {
     );
     assert!(r.header("content-security-policy").is_some());
 }
+
+#[tokio::test]
+async fn sign_in_failures_and_sign_out_are_audited_and_failures_are_braked() {
+    let app = app_or_skip!(&[("TEAMCRAFT_LOGIN_MAX_FAILURES", "3")]);
+    let (actor, _) = app.user("erika", Role::Editor).await;
+    let origin = Some("http://localhost:8080");
+    for _ in 0..3 {
+        let r = app
+            .post_form(
+                "/login",
+                None,
+                origin,
+                &[("username", "erika"), ("password", "wrong-password")],
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    }
+    // the fourth attempt is refused, even with the right password
+    let r = app
+        .post_form(
+            "/login",
+            None,
+            origin,
+            &[("username", "Erika"), ("password", common::PASSWORD)],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    // another user is not affected
+    app.user("bernd", Role::Viewer).await;
+    let cookie = app.login("bernd").await;
+    let r = app.post_form("/logout", Some(&cookie), origin, &[]).await;
+    assert!(r.status.is_redirection());
+
+    let failed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'auth.login_failed'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(failed, 3);
+    let bernd = app.actor("bernd").await;
+    assert_eq!(
+        app.audit_actions(bernd.id).await,
+        vec!["auth.login", "auth.logout"]
+    );
+    let _ = actor;
+}
+
+#[tokio::test]
+async fn mcp_requests_are_limited_per_user() {
+    let app = app_or_skip!(&[("TEAMCRAFT_MCP_CALLS_PER_MINUTE", "3")]);
+    let (_, token) = app.user("erika", Role::Editor).await;
+    let (_, other) = app.user("bernd", Role::Editor).await;
+    let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" });
+    let mut statuses = Vec::new();
+    for _ in 0..4 {
+        statuses.push(
+            app.api(Method::POST, "/api/v1/mcp", &token, Some(ping.clone()))
+                .await
+                .status,
+        );
+    }
+    assert_eq!(statuses[3], StatusCode::TOO_MANY_REQUESTS, "{statuses:?}");
+    let r = app
+        .api(Method::POST, "/api/v1/mcp", &other, Some(ping))
+        .await;
+    assert_ne!(r.status, StatusCode::TOO_MANY_REQUESTS);
+}

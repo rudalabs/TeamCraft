@@ -94,6 +94,13 @@ pub struct Config {
     /// Largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/{id}`).
     pub upload_chunk_bytes: u64,
     pub session_ttl: Duration,
+    /// Failed password checks per user name within 15 minutes before sign-in
+    /// is refused for the rest of the window (0 = no limit).
+    pub login_max_failures: u32,
+    /// Assistant questions per user and day (0 = no limit).
+    pub assistant_runs_per_day: u32,
+    /// MCP requests per user and minute (0 = no limit).
+    pub mcp_calls_per_minute: u32,
     /// Adds the `Secure` attribute to cookies (required when served via HTTPS).
     pub cookie_secure: bool,
     pub log_format: LogFormat,
@@ -588,6 +595,10 @@ impl Config {
             bail!("TEAMCRAFT_SESSION_TTL_HOURS must be at least 1");
         }
 
+        let login_max_failures = env.parse_or("TEAMCRAFT_LOGIN_MAX_FAILURES", 10u32)?;
+        let assistant_runs_per_day = env.parse_or("TEAMCRAFT_ASSISTANT_RUNS_PER_DAY", 200u32)?;
+        let mcp_calls_per_minute = env.parse_or("TEAMCRAFT_MCP_CALLS_PER_MINUTE", 600u32)?;
+
         let cookie_secure = match env.get("TEAMCRAFT_COOKIE_SECURE")? {
             Some(v) => parse_bool(&v).context("TEAMCRAFT_COOKIE_SECURE must be true or false")?,
             None => public_url.starts_with("https://"),
@@ -697,6 +708,9 @@ impl Config {
             preview,
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
+            login_max_failures,
+            assistant_runs_per_day,
+            mcp_calls_per_minute,
             cookie_secure,
             log_format,
             bootstrap_admin,

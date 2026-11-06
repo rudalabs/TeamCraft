@@ -89,7 +89,8 @@ pub async fn setup_submit(
     };
     match created {
         Ok(user) => {
-            let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
+            let token =
+                users::create_session(&st.db, user.id, st.config.session_ttl, "setup").await?;
             Ok(signed_in_redirect(&st, &user, &token, Some("/projects")))
         }
         Err(e) if super::is_user_error(&e) => {
@@ -166,14 +167,38 @@ pub async fn login_submit(
             "Password login is disabled on this instance; please use single sign-on.".into(),
         ));
     }
+    let key = format!("login:{}", form.username.trim().to_lowercase());
+    if let Err(wait) = st.limits.failed_logins.check(&key) {
+        tracing::warn!(username = %form.username.trim(), "sign-in refused: too many failures");
+        let mut page = render_login(
+            &st,
+            LoginPage {
+                next: form.next.as_deref(),
+                error: Some(format!(
+                    "Too many failed sign-ins. Try again in {} minutes.",
+                    wait.div_ceil(60)
+                )),
+                flash: None,
+                username: form.username.trim(),
+                skin: skin_from_cookie(&headers),
+                setup: false,
+            },
+        )?;
+        *page.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+        return Ok(page);
+    }
     match users::authenticate_local(&st.db, &form.username, &form.password).await? {
         Some(user) => {
-            let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
+            st.limits.failed_logins.clear(&key);
+            let token =
+                users::create_session(&st.db, user.id, st.config.session_ttl, "local").await?;
             tracing::info!(username = %user.username, "local login");
             Ok(signed_in_redirect(&st, &user, &token, form.next.as_deref()))
         }
         None => {
             tracing::warn!(username = %form.username.trim(), "failed local login");
+            st.limits.failed_logins.record(&key);
+            users::record_failed_login(&st.db, &form.username).await?;
             let mut page = render_login(
                 &st,
                 LoginPage {
@@ -266,7 +291,7 @@ pub async fn oidc_callback(
     let result = async {
         let (identity, return_to) = oidc.finish_login(&st.db, &code, &state).await?;
         let user = users::upsert_oidc_user(&st.db, identity).await?;
-        let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
+        let token = users::create_session(&st.db, user.id, st.config.session_ttl, "sso").await?;
         tracing::info!(username = %user.username, role = %user.role, "SSO login");
         Ok::<_, AppError>((user, token, return_to))
     }

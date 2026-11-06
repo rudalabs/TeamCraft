@@ -656,9 +656,21 @@ async fn desktop_token(
     State(st): State<AppState>,
     ApiJson(body): ApiJson<DesktopTokenBody>,
 ) -> AppResult<Json<Value>> {
-    Ok(Json(json!(
-        desktop::exchange(&st.db, &body.code, &body.verifier).await?
-    )))
+    // One shared brake for failed exchanges: the codes are 256-bit and
+    // single-use, this only stops a flood of guesses.
+    if let Err(wait) = st.limits.failed_logins.check("desktop-exchange") {
+        return Err(AppError::TooManyRequests(format!(
+            "Too many failed sign-ins. Try again in {} minutes.",
+            wait.div_ceil(60)
+        )));
+    }
+    match desktop::exchange(&st.db, &body.code, &body.verifier).await {
+        Ok(token) => Ok(Json(json!(token))),
+        Err(e) => {
+            st.limits.failed_logins.record("desktop-exchange");
+            Err(e)
+        }
+    }
 }
 
 /// The personal start page of the desktop app (and the web dashboard).

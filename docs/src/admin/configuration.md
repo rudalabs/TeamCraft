@@ -94,6 +94,9 @@ limit still are). Every variable also exists as `NAME_FILE`.
 | Variable                                           | Default                           | Meaning                                                                        |
 |----------------------------------------------------|-----------------------------------|--------------------------------------------------------------------------------|
 | `TEAMCRAFT_SESSION_TTL_HOURS`                      | `72`                              | session lifetime                                                               |
+| `TEAMCRAFT_LOGIN_MAX_FAILURES`                     | `10`                              | failed password checks per user name (sign-in, own password change) within 15 minutes before it is refused for the rest of the window; `0` = no limit. One shared brake covers the desktop sign-in code exchange. Counted in memory per server process |
+| `TEAMCRAFT_ASSISTANT_RUNS_PER_DAY`                 | `200`                             | assistant questions per user and day; `0` = no limit                           |
+| `TEAMCRAFT_MCP_CALLS_PER_MINUTE`                   | `600`                             | MCP requests per user and minute; `0` = no limit                               |
 | `TEAMCRAFT_COOKIE_SECURE`                          | `true` for `https://` public URLs | force the `Secure` cookie flag                                                 |
 | `TEAMCRAFT_LOCAL_LOGIN`                            | `true` without SSO                | username/password accounts                                                     |
 | `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME` / `_PASSWORD` | `admin` / –                       | create this administrator on start when there are no accounts (public servers) |

@@ -71,7 +71,7 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 |---|---|---|---|---|
 | Password database stolen | I | Argon2id with a random salt (`src/auth.rs` `hash_password`); minimum 10 characters (`src/domain/validation.rs` `validate_password`) | `src/auth.rs` `password_hash_round_trip` | mitigated |
 | User enumeration at sign-in | I | one message for unknown user, wrong password, OIDC-only and inactive accounts; a dummy Argon2 verify for unknown users (`src/services/users.rs` `authenticate_local`, `src/auth.rs` `DUMMY_HASH`) | `tests/web_ui.rs` `wrong_password_is_rejected` (message); no timing test | mitigated |
-| Password guessing (A1) | S | none in the server: no rate limit or lockout on `/login`, on the password change or on `/api/v1/desktop/token`; only the Argon2 cost slows it | – | **open** (F1) |
+| Password guessing (A1) | S | `TEAMCRAFT_LOGIN_MAX_FAILURES` (10 per 15 minutes) per user name on `/login` and per user on the own password change, one shared brake on `/api/v1/desktop/token` (`src/ratelimit.rs`); in memory per process. Side effect: someone who knows a user name can lock that account out of password sign-in for up to 15 minutes (SSO and tokens are not affected) | `src/ratelimit.rs` unit tests; `tests/web_security.rs` | mitigated (F1) |
 | Session token guessed or stolen from the database | S, I | 256-bit random tokens, only SHA-256 hashes stored (`src/auth.rs` `generate_token`, `hash_token`; `src/services/users.rs` `create_session`) | `src/auth.rs` `tokens_are_random_and_hashed` | mitigated |
 | Session cookie read by script or sent cross-site | I | `HttpOnly; SameSite=Lax`, `Secure` when the public URL is https (`src/auth.rs` `cookie_attributes`, `src/config.rs` `TEAMCRAFT_COOKIE_SECURE`) | – (attributes not asserted by a test) | partial: no test |
 | Session outlives its purpose | S | absolute lifetime `TEAMCRAFT_SESSION_TTL_HOURS` (72 h); the lookup requires `expires_at > now()` and an active user (`actor_for_session`); sign-out deletes the row; deactivation and an admin password reset delete all sessions | `tests/oidc_flow.rs` `sessions_expire_end_with_sign_out_and_with_deactivation` | mitigated |
@@ -79,7 +79,7 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 | Role or membership changed, old rights stay | E | role and memberships are read from the database on every request (`actor_for_session`, `actor_for_api_token`) | `tests/read_permissions.rs` `visibility_is_managed_and_audited` | mitigated |
 | Personal access token (PAT) stolen | S, I | 256-bit random, SHA-256 hash stored, shown once, optional expiry, revocation by the owner or an admin (audited `token.revoke`), dead with a deactivated account (`src/services/users.rs` `create_token`, `revoke_token`, `actor_for_api_token`) | `tests/oidc_flow.rs` `personal_access_tokens_expire_are_revoked_and_die_with_the_account`; `tests/api_flow.rs` `api_requires_a_valid_token` | mitigated |
 | A PAT has more rights than its client needs | E | none: a PAT carries all rights of its user (REST and MCP, writes included); the desktop app's token lives 90 days. The MCP reference advises one token per client with an expiry (`docs/src/reference/mcp.md`) | – | **open** (F2) |
-| Sign-in events cannot be traced | R | token creation and revocation, password changes, role changes, OIDC provisioning and desktop authorisation are audited; local and SSO sign-in, failed sign-in and sign-out are only log lines (`src/web/auth_pages.rs`) | `tests/audit_and_vault.rs` (mutations) | **open** (F3) |
+| Sign-in events cannot be traced | R | token creation and revocation, password changes, role changes, OIDC provisioning, desktop authorisation, sign-in (`auth.login`, method local/sso/setup), failed sign-in (`auth.login_failed`, with the typed name) and sign-out (`auth.logout`) are audited (`src/services/users.rs`) | `tests/audit_and_vault.rs`; `tests/web_security.rs` | mitigated (F3) |
 
 ## Web: CSRF, XSS, headers, redirects
 
@@ -157,7 +157,7 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 | Exfiltration through the rendered answer | I | markdown-lite escapes everything, has no images and no free links (only `/i/<item>` links); the CSP blocks foreign images (`src/assistant.rs` `render_markdown`) | `src/assistant.rs` `markdown_is_rendered_safely` | mitigated |
 | Data sent to the model provider | I | off unless an administrator configures a key; the dialogs name provider and host; only question and answer text are stored, threads expire (30 days) and are owner-only; audit entries carry counts, not content (`src/services/assistant_threads.rs`, `src/services/assistant.rs`) | `tests/assistant_threads.rs` | accepted (documented in `docs/src/guide/assistant.md`, `SECURITY.md`) |
 | The LLM client is turned against internal hosts | I | the base URL is administrator configuration; no redirects, key in a sensitive header, errors without URL (`src/llm/http.rs`) | `src/llm/http.rs` `redirects_are_not_followed_and_the_key_stays_on_the_host`, `network_errors_do_not_carry_the_url` | accepted (B6) |
-| Cost or capacity exhausted by one user | D | 12 steps, 16 000 output tokens per call, 800 000 tokens per run, 240 s, four runs at a time; no per-user quota or rate limit | – | **open** (F16; OPEN_WORK *per-user daily budget*) |
+| Cost or capacity exhausted by one user | D | 12 steps, 16 000 output tokens per call, 800 000 tokens per run, 240 s, four runs at a time; per user 200 assistant questions a day (`TEAMCRAFT_ASSISTANT_RUNS_PER_DAY`) and 600 MCP requests a minute (`TEAMCRAFT_MCP_CALLS_PER_MINUTE`), in memory (`src/ratelimit.rs`); no token budget in money | `tests/web_security.rs` `mcp_requests_are_limited_per_user` | mitigated (F16) |
 | `teamcraft mcp` bridge leaks its token | I | token from a file or `TEAMCRAFT_TOKEN`, never printed; it follows redirects with the default policy (reqwest drops `Authorization` when host or port change) and accepts `http://` servers (`src/main.rs`) | `src/main.rs` `mcp_endpoint_accepts_base_or_full_url` | partial (F17) |
 
 ## Desktop app ↔ server
@@ -185,9 +185,9 @@ Each has an entry in `docs/OPEN_WORK.md` (section 2, *Security*).
 
 | | Finding | Area |
 |---|---|---|
-| F1 | No rate limit or lockout for sign-in, password change and the desktop token exchange | authentication |
+| F1 | ~~No rate limit for sign-in, password change and the desktop token exchange~~ fixed | authentication |
 | F2 | PATs have no scopes (read-only, MCP-only); the desktop token has full rights for 90 days | tokens |
-| F3 | Sign-in, failed sign-in and sign-out are not in the audit log | audit |
+| F3 | ~~Sign-in, failed sign-in and sign-out are not in the audit log~~ fixed | audit |
 | F4 | ~~CSRF: a request without `Origin` and `Referer` passes~~ fixed; `X-Forwarded-Host` is trusted as sent (documented) | web |
 | F5 | ~~No HSTS~~ fixed: sent when the public URL is https | web |
 | F6 | ID token signatures are not verified, yet the issuer may be plain `http://` | OIDC |
@@ -200,7 +200,7 @@ Each has an entry in `docs/OPEN_WORK.md` (section 2, *Security*).
 | F13 | XLSX/ODS are unpacked in the server process without a cap on the unpacked size | parsers |
 | F14 | `simmesh`, `pdftext`, `resultscan` not fuzzed (the no-panic lints and the 3DS fix are in `main`, #106/#108) | parsers |
 | F15 | Prompt injection: the untrusted marker is advisory; no taint for external MCP clients | assistant / MCP |
-| F16 | No per-user quota or rate limit for the assistant and MCP | assistant / MCP |
+| F16 | ~~No per-user quota or rate limit for the assistant and MCP~~ fixed | assistant / MCP |
 | F17 | The `teamcraft mcp` bridge follows redirects and accepts `http://` | MCP |
 | F18 | Desktop token in a plain file (no keychain, no Windows ACL); `http://` server URLs accepted | desktop |
 | F19 | Backups are written with the process umask, unencrypted, with an unsigned manifest | backup |

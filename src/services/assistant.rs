@@ -167,6 +167,12 @@ async fn run_once(
     let Some(client) = st.assistant.as_deref() else {
         return Err(AssistantError::Disabled.into_app_error());
     };
+    if let Err(wait) = st.limits.assistant.hit(&me.id.to_string()) {
+        return Err(AppError::TooManyRequests(format!(
+            "You have reached the daily limit for the assistant. Try again in {} minutes.",
+            wait.div_ceil(60)
+        )));
+    }
     let Ok(_permit) = client.permits.try_acquire() else {
         return Err(AssistantError::Busy.into_app_error());
     };

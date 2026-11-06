@@ -29,6 +29,9 @@ pub enum AppError {
     /// (`503`); the message is shown to the user, nothing is reported.
     #[error("{0}")]
     Unavailable(String),
+    /// A brake (`ratelimit`) refused the request (`429`).
+    #[error("{0}")]
+    TooManyRequests(String),
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("I/O error: {0}")]
@@ -63,6 +66,7 @@ impl AppError {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             AppError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             AppError::Database(sqlx::Error::RowNotFound) => StatusCode::NOT_FOUND,
             AppError::Database(_)
             | AppError::Io(_)
@@ -80,6 +84,7 @@ impl AppError {
             AppError::Unauthorized => "unauthorized",
             AppError::PayloadTooLarge(_) => "payload_too_large",
             AppError::Unavailable(_) => "unavailable",
+            AppError::TooManyRequests(_) => "rate_limited",
             AppError::Database(sqlx::Error::RowNotFound) => "not_found",
             AppError::Database(_)
             | AppError::Io(_)

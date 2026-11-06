@@ -76,10 +76,10 @@ feature milestone – the features in *What works* are enough; what is missing i
 *Security*
 
 - Open findings of the [threat model](src/dev/threat-model.md) (F1–F19 there):
-  - [ ] F1: rate limit or lockout for sign-in, the own password change and the desktop token exchange (with the
+  - [x] F1: rate limit or lockout for sign-in, the own password change and the desktop token exchange (with the
     policy review below)
   - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
-  - [ ] F3: sign-in, failed sign-in and sign-out in the audit log (not only log lines)
+  - [x] F3: sign-in, failed sign-in and sign-out in the audit log (not only log lines)
   - [x] F4: web posts without `Origin` and `Referer` are refused; install guide says the proxy must overwrite
     `X-Forwarded-Host`
   - [x] F5: `Strict-Transport-Security` when the public URL is https
@@ -97,7 +97,7 @@ feature milestone – the features in *What works* are enough; what is missing i
   - [ ] F14: fuzz targets for `simmesh`, `pdftext` and `resultscan` (the no-panic lints and the 3DS and Kelvin
     fixes are in `main` since #106/#108)
   - [ ] F15: prompt injection: confirmation of assistant drafts per write, or taint for MCP sessions as well
-  - [ ] F16: per-user quota for the assistant and MCP (with the daily budget in section 2, *Assistant*)
+  - [x] F16: per-user quota for the assistant and MCP (with the daily budget in section 2, *Assistant*)
   - [ ] F17: `teamcraft mcp`: no redirects, a warning (or refusal) for `http://` servers other than `localhost`
   - [ ] F18: desktop token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service); warn on
     `http://` server URLs

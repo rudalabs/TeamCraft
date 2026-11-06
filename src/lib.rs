@@ -39,6 +39,7 @@ pub mod oidc;
 pub mod pagecontext;
 pub mod pdftext;
 pub mod preview;
+pub mod ratelimit;
 pub mod resultscan;
 pub mod services;
 pub mod shape;
@@ -89,6 +90,8 @@ pub struct AppState {
     /// Sends outgoing event webhooks ("Send test", "Retry"; the background
     /// task has its own).
     pub webhooks: webhooks::Dispatcher,
+    /// Brakes against password guessing and runaway assistant/MCP use.
+    pub limits: Arc<ratelimit::Limits>,
 }
 
 impl AppState {
@@ -129,6 +132,20 @@ impl AppState {
         };
         let webhooks = webhooks::Dispatcher::from_config(&config)
             .context("setting up the webhook delivery failed")?;
+        let limits = Arc::new(ratelimit::Limits {
+            failed_logins: ratelimit::RateLimiter::new(
+                config.login_max_failures,
+                std::time::Duration::from_secs(15 * 60),
+            ),
+            assistant: ratelimit::RateLimiter::new(
+                config.assistant_runs_per_day,
+                std::time::Duration::from_secs(24 * 3600),
+            ),
+            mcp: ratelimit::RateLimiter::new(
+                config.mcp_calls_per_minute,
+                std::time::Duration::from_secs(60),
+            ),
+        });
         Ok(AppState {
             db,
             config: Arc::new(config),
@@ -138,6 +155,7 @@ impl AppState {
             previews,
             assistant,
             webhooks,
+            limits,
         })
     }
 }

@@ -124,14 +124,30 @@ pub async fn change_password(
             ));
         }
         let this_session = auth::cookie_value(&headers, auth::SESSION_COOKIE);
-        users::change_own_password(
+        let key = format!("password:{}", ctx.me.id);
+        if let Err(wait) = st.limits.failed_logins.check(&key) {
+            return Err(AppError::TooManyRequests(format!(
+                "Too many wrong passwords. Try again in {} minutes.",
+                wait.div_ceil(60)
+            )));
+        }
+        let changed = users::change_own_password(
             &st.db,
             &ctx.me,
             &form.current_password,
             &form.new_password,
             this_session.as_deref(),
         )
-        .await
+        .await;
+        match &changed {
+            Ok(()) => st.limits.failed_logins.clear(&key),
+            // only a wrong current password counts, not a weak new one
+            Err(AppError::BadRequest(m)) if m.starts_with("The current password") => {
+                st.limits.failed_logins.record(&key)
+            }
+            Err(_) => {}
+        }
+        changed
     }
     .await;
     finish(&st, result, "/account", |_| {

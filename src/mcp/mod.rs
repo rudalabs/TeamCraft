@@ -70,6 +70,14 @@ fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
 
 /// `POST /api/v1/mcp`.
 pub async fn http(State(st): State<AppState>, ApiUser(me): ApiUser, body: Bytes) -> Response {
+    if let Err(wait) = st.limits.mcp.hit(&me.id.to_string()) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, wait.to_string())],
+            "Too many MCP requests; slow down.",
+        )
+            .into_response();
+    }
     let reply = match serde_json::from_slice::<Value>(&body) {
         Err(e) => Some(error(Value::Null, PARSE_ERROR, format!("parse error: {e}"))),
         Ok(Value::Array(batch)) if batch.is_empty() => {
