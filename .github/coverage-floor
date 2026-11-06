@@ -1,0 +1,7 @@
+# Lowest total line coverage (percent) the CI job "coverage" accepts.
+# Measured on main: 91.48 (6b7c95a), 91.52 (e513b37), 91.53 (5a39a85),
+# 91.65 (0fcfa26, b4cf014) – the floor is the current value minus 0.5.
+# Raise it when the coverage has grown for good. Lowering it is a
+# deliberate change of this file in a pull request, with the reason in the
+# pull request description. See docs/src/dev/coverage.md.
+91.1

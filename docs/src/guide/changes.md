@@ -125,6 +125,14 @@ or direct message). Every user chooses channels and mutes kinds on the
 account page; delivery runs from an outbox, so a slow mail server never
 delays a request.
 
+With e-mail switched on, CAD editors also get a **digest of the change
+requests waiting for triage** – one e-mail per project group, by default
+once a day: the requests raised since the last digest that are still *New*,
+and the numbers of the older ones that still wait. No new request, no
+e-mail. The digest also appears in the bell's list, already marked as read.
+Mute *E-mail digest of new change requests …* on the account page if the
+immediate notifications are enough.
+
 Other systems – CI, ERP, CAM, a team channel – can react to releases,
 reviews and change requests through [event webhooks](../admin/webhooks.md),
 which administrators set up.
