@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, State},
-    http::header,
+    http::{header, HeaderMap},
     response::Response,
     Form,
 };
@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use super::{finish, redirect_flash, render, skin_cookie, Flash, WebCtx};
 use crate::{
-    domain,
+    auth, domain,
     error::{AppError, AppResult},
     services::{notifications, users},
     AppState,
@@ -114,6 +114,7 @@ pub struct PasswordForm {
 pub async fn change_password(
     State(st): State<AppState>,
     ctx: WebCtx,
+    headers: HeaderMap,
     Form(form): Form<PasswordForm>,
 ) -> AppResult<Response> {
     let result = async {
@@ -122,12 +123,22 @@ pub async fn change_password(
                 "The new passwords do not match.".into(),
             ));
         }
-        users::change_own_password(&st.db, &ctx.me, &form.current_password, &form.new_password)
-            .await
+        let this_session = auth::cookie_value(&headers, auth::SESSION_COOKIE);
+        users::change_own_password(
+            &st.db,
+            &ctx.me,
+            &form.current_password,
+            &form.new_password,
+            this_session.as_deref(),
+        )
+        .await
     }
     .await;
     finish(&st, result, "/account", |_| {
-        ("/account".into(), "Your password was changed".into())
+        (
+            "/account".into(),
+            "Your password was changed; your other sign-ins were signed out".into(),
+        )
     })
 }
 
