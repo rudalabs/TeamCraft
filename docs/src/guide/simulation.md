@@ -142,6 +142,24 @@ match does nothing; templates belong to one group and apply to simulations of
 that group only. Values typed in by hand are overwritten by a template or the
 exchange file with the same name and load case on the next check-in.
 
+### Values from a report (assistant)
+
+A CFD or FEA report is usually a PDF. TeamCraft reads the text layer of PDFs
+when they are uploaded (in an isolated process with a time, size and memory
+limit: at most 32 MB, 100 pages and 200 000 characters; scanned PDFs have no
+text, there is no OCR), so the assistant can read it with `read_file_text`.
+The quick action **Fill result values from the report** on the simulation page
+(drafts must be allowed) – or the MCP tool `propose_result_values` – proposes
+the key numbers the report states. A proposal is a **draft**: it names the
+file version and quotes the text it was read from (the quote must stand in
+the report, so numbers cannot be invented from nothing) and appears under
+*Proposed from reports* on the *Results* card. A CAD editor of the group
+**accepts** it (the revision must be checked out to them, as for any value;
+the value then shows the file as its source) or **rejects** it. The assistant
+never writes a final value and never releases anything; every proposal,
+acceptance and rejection is audited. Compare every number with the quote
+before accepting – the model can misread a table.
+
 ## Results in 3D
 
 Result files in open formats open in the browser's 3D viewer like CAD

@@ -43,6 +43,7 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [Text from PDF reports](research/pdf-text-extraction.md)
     - [One provider interface for the assistant](research/agent-interface.md)
     - [Sharing UI code between web and desktop](research/shared-ui.md)
     - [Supersede, replace and alternate parts](research/supersede-alternates.md)

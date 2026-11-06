@@ -28,6 +28,7 @@ pub mod domain;
 pub mod error;
 #[doc(hidden)]
 pub mod fuzz_harness;
+pub mod httprange;
 pub mod llm;
 pub mod mcp;
 pub mod mesh;
@@ -36,6 +37,7 @@ pub mod notify;
 pub mod nxpart;
 pub mod oidc;
 pub mod pagecontext;
+pub mod pdftext;
 pub mod preview;
 pub mod resultscan;
 pub mod services;
@@ -115,6 +117,7 @@ impl AppState {
             None => None,
         };
         let previews = Arc::new(Previews::new(&vault, config.preview));
+        crate::pdftext::configure(config.preview.max_memory_bytes);
         let assistant = match &config.assistant {
             Some(a) => Some(Arc::new({
                 if let Some(warning) = a.insecure_key_warning() {

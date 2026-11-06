@@ -37,6 +37,7 @@ var DEFAULT_WIDTH = 400;
 var QUICK = {
   dashboard: [["attention", "What needs my attention"]],
   revision: [["release_notes", "Draft release notes"], ["release_check", "Check before release"], ["impact", "What breaks if I change this?"], ["simulation_status", "Are the simulations still valid?"]],
+  simulation: [["release_notes", "Draft release notes"], ["release_check", "Check before release"], ["impact", "What breaks if I change this?"], ["simulation_status", "Are the simulations still valid?"], ["result_values", "Fill result values from the report"]],
   item: [["release_notes", "Draft release notes"], ["release_check", "Check before release"], ["impact", "What breaks if I change this?"], ["simulation_status", "Are the simulations still valid?"]],
   bom: [["release_check", "Check before release"], ["impact", "What breaks if I change this?"]],
   where_used: [["impact", "What breaks if I change this?"]],

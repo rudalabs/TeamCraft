@@ -114,6 +114,8 @@ struct Hidden {
     result_id: Uuid,
     /// An extraction template of the group.
     template_id: Uuid,
+    /// A value proposed from a report of the hidden simulation.
+    proposal_id: Uuid,
     /// A member's notification about the hidden item.
     notification_id: Uuid,
     /// A member's staged BOM import.
@@ -155,6 +157,7 @@ fn fill(path: &str, h: &Hidden) -> Option<String> {
             ("{id}", "impacts") => h.impact_id.to_string(),
             ("{id}", "simulation-results") => h.result_id.to_string(),
             ("{id}", "result-templates") => h.template_id.to_string(),
+            ("{id}", "simulation-proposals") => h.proposal_id.to_string(),
             ("{id}", "notifications") => h.notification_id.to_string(),
             ("{id}", "import") => h.import_id.to_string(),
             ("{revision_id}", _) => h.revision_id.to_string(),
@@ -198,6 +201,7 @@ fn every_route_has_a_placeholder_rule() {
         impact_id: Uuid::nil(),
         result_id: Uuid::nil(),
         template_id: Uuid::nil(),
+        proposal_id: Uuid::nil(),
         notification_id: Uuid::nil(),
         import_id: Uuid::nil(),
         caller: Uuid::nil(),
@@ -638,6 +642,18 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         &sim,
     )
     .await;
+    let proposal_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO result_proposals (id, revision_id, name, value, source_file, source_version, quote, proposed_by)
+         SELECT $1, r.id, $2, 1.0, 'report.txt', 1, 'quoted text', (SELECT id FROM users LIMIT 1)
+         FROM revisions r JOIN items i ON i.id = r.item_id WHERE i.number = $3",
+    )
+    .bind(proposal_id)
+    .bind(format!("proposed {m}"))
+    .bind(&sim)
+    .execute(&app.pool)
+    .await
+    .unwrap();
     let template_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO result_templates (id, project_id, name, file_pattern, method, pattern)
@@ -710,6 +726,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
                     (SELECT row_to_json(x)::text FROM impacts x WHERE x.id = $1),
                     (SELECT row_to_json(x)::text FROM simulation_results x WHERE x.id = $2),
                     (SELECT row_to_json(x)::text FROM result_templates x WHERE x.id = $5),
+                    (SELECT row_to_json(x)::text FROM result_proposals x WHERE x.id = $6),
                     (SELECT row_to_json(x)::text FROM notifications x WHERE x.id = $3),
                     (SELECT x.id::text FROM staged_imports x WHERE x.id = $4))",
             )
@@ -718,6 +735,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
             .bind(notification_id)
             .bind(import_id)
             .bind(template_id)
+            .bind(proposal_id)
             .fetch_one(&pool)
             .await
             .unwrap()
@@ -757,6 +775,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         impact_id,
         result_id,
         template_id,
+        proposal_id,
         notification_id,
         import_id,
         caller: Uuid::nil(),
@@ -777,6 +796,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         impact_id.to_string(),
         result_id.to_string(),
         template_id.to_string(),
+        proposal_id.to_string(),
         notification_id.to_string(),
         import_id.to_string(),
         sim.clone(),
@@ -935,7 +955,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
     let routes = all_routes();
     let before = counts(&app).await;
     let before_rows = id_rows().await;
-    assert_eq!(before_rows.matches(" | ").count(), 3, "{before_rows}");
+    assert_eq!(before_rows.matches(" | ").count(), 5, "{before_rows}");
     for (who, token, actor) in [
         ("outsider_editor", &out_editor, &out_editor_actor),
         ("outsider_viewer", &out_viewer, &out_viewer_actor),
@@ -1063,6 +1083,7 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
         "number": ecr, "q": "hidden", "query": "hidden", "items": [hid], "title": "probe",
         "body": "probe", "comment": "probe", "levels": 3, "project": code, "from": "A",
         "to": "A", "file": format!("{m}.txt"), "version": 1, "offset": 0,
+        "values": [{ "name": "probe", "value": 1.0, "file": format!("{m}.txt"), "quote": "probe" }],
     });
     let sent = vec![
         hid.clone(),
@@ -1098,6 +1119,31 @@ async fn outsiders_see_nothing_of_a_restricted_group() {
                 .await;
             assert_clean(who, &format!("MCP {name}"), &r, &markers, &sent);
         }
+        // proposing values into a simulation of the hidden group: not found,
+        // nothing stored
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/mcp",
+                token,
+                Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                             "params": { "name": "propose_result_values",
+                                         "arguments": { "item": sim, "values": args["values"] } } })),
+            )
+            .await;
+        assert_clean(
+            who,
+            "MCP propose_result_values on the hidden simulation",
+            &r,
+            &markers,
+            &[sent.clone(), vec![sim.clone()]].concat(),
+        );
+        let stored: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM result_proposals WHERE name = 'probe'")
+                .fetch_one(&app.pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, 0, "{who}: nothing proposed");
         // full text (also the file content), the group filter
         for search in [
             json!({ "q": m }),
@@ -1150,6 +1196,7 @@ fn clone_hidden(h: &Hidden) -> Hidden {
         impact_id: h.impact_id,
         result_id: h.result_id,
         template_id: h.template_id,
+        proposal_id: h.proposal_id,
         notification_id: h.notification_id,
         import_id: h.import_id,
         caller: h.caller,
@@ -1173,6 +1220,7 @@ fn targets_hidden(uri: &str, h: &Hidden) -> bool {
         h.impact_id,
         h.result_id,
         h.template_id,
+        h.proposal_id,
         h.notification_id,
         // (not the staged import: an import that cannot be opened sends the
         // user back to the upload form with a message, like a gone one)
