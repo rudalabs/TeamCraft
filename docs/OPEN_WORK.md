@@ -591,4 +591,4 @@ README licence table, follow the definition of done in `CLAUDE.md`. The docs are
 
 ## Pending verification (2026-11-06)
 
-Written on `test/v0.2-proofing`; `--lib`, fmt and clippy are green, but the **database tests have not run yet** (no trust-auth PostgreSQL available to the agent): `tests/item_idempotency.rs`, `tests/upgrade_restore.rs`, `tests/concurrency_mutations.rs`, `tests/import_scale_and_concurrency.rs`, `tests/folder_import.rs`. Run `TEAMCRAFT_REQUIRE_DB_TESTS=1 TEAMCRAFT_REQUIRE_PG_TOOLS=1 cargo test` before merging into `main`. Also fix `operations.md`: restore over an upgraded database fails only when a newer table references a restored one.
+Open PRs #122 (idempotency key, `tests/item_idempotency.rs`), #123 (`tests/upgrade_restore.rs`, upgrade guide), #124 (unknown config variables), #125 (`tests/concurrency_mutations.rs` and lock ordering), #126 (`tests/import_scale_and_concurrency.rs`), #127 and #128 (docs). Their database tests were written without access to a database; **CI is the first real run** – fix failures there before merging, and tick the items above (idempotency key, upgrade tests) only once green.
