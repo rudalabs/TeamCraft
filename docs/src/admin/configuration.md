@@ -22,6 +22,13 @@ In the [Docker installation](docker.md) the variables go into
 sets the database connection with the password from a Docker secret
 (`TEAMCRAFT_DB_PASSWORD_FILE=/run/secrets/db_password`).
 
+Values are validated on start; an invalid value stops the program with a
+message naming the variable. A `TEAMCRAFT_*` variable that TeamCraft does not
+know (usually a typo) is ignored but logged as a warning with the nearest
+known name (`unknown environment variable … is ignored; did you mean …?`;
+`<NAME>_FILE` forms are checked by `NAME`). A test keeps this page and the variables
+read by `src/config.rs` in sync.
+
 ## Server
 
 | Variable                  | Default                          | Meaning                                                                         |
@@ -41,7 +48,8 @@ output can be read by scripts.
 | Variable                                          | Default                                          | Meaning                                                                |
 |---------------------------------------------------|--------------------------------------------------|------------------------------------------------------------------------|
 | `TEAMCRAFT_DATABASE_URL`                          | –                                                | `postgres://user:password@host:port/db`; alternatively the parts below |
-| `TEAMCRAFT_DB_HOST` / `_PORT` / `_NAME` / `_USER` | `localhost` / `5432` / `teamcraft` / `teamcraft` | connection parts                                                       |
+| `TEAMCRAFT_DB_HOST`, `TEAMCRAFT_DB_PORT`, `TEAMCRAFT_DB_NAME`, `TEAMCRAFT_DB_USER` | `localhost` / `5432` / `teamcraft` / `teamcraft` | connection parts                                      |
+| `DATABASE_URL`                                    | –                                                | fallback for `TEAMCRAFT_DATABASE_URL` (the usual name in hosting platforms) |
 | `TEAMCRAFT_DB_PASSWORD`                           | –                                                | password (not needed with trust authentication or `~/.pgpass`)         |
 | `TEAMCRAFT_DB_SSLMODE`                            | `prefer`                                         | `disable`, `prefer`, `require`, `verify-ca`, `verify-full`             |
 | `TEAMCRAFT_DB_MAX_CONNECTIONS`                    | `10`                                             | pool size                                                              |
@@ -101,7 +109,7 @@ limit still are). Every variable also exists as `NAME_FILE`.
 | `TEAMCRAFT_COOKIE_SECURE`                          | `true` for `https://` public URLs | force the `Secure` cookie flag                                                 |
 | `TEAMCRAFT_LOCAL_LOGIN`                            | `true` without SSO                | username/password accounts                                                     |
 | `TEAMCRAFT_SIGNIN_MAX_FAILURES`                    | `10`                              | failed password sign-ins per username in 15 minutes before 429 (5× per client address; `0` = off) |
-| `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME` / `_PASSWORD` | `admin` / –                       | create this administrator on start when there are no accounts (public servers) |
+| `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME`, `TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD` | `admin` / –                       | create this administrator on start when there are no accounts (public servers) |
 | `TEAMCRAFT_OIDC_*`                                 | –                                 | single sign-on, see [Users, roles and SSO](users.md)                           |
 
 Failed password sign-ins are counted per username and per client address

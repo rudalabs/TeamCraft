@@ -63,6 +63,164 @@ pub fn load_env_files() -> Vec<(String, dotenvy::Error)> {
         .collect()
 }
 
+/// Every variable the configuration (and the command line) reads, also as
+/// `<NAME>_FILE`. Sorted; guarded by tests against the string literals of
+/// this file and against `docs/src/admin/configuration.md`.
+pub const KNOWN_VARIABLES: &[&str] = &[
+    "DATABASE_URL",
+    "MATTERMOST_ERROR_WEBHOOK",
+    "TEAMCRAFT_ANTHROPIC_API_KEY",
+    "TEAMCRAFT_ASSISTANT_API_KEY",
+    "TEAMCRAFT_ASSISTANT_BASE_URL",
+    "TEAMCRAFT_ASSISTANT_MAX_CONCURRENT",
+    "TEAMCRAFT_ASSISTANT_MAX_STEPS",
+    "TEAMCRAFT_ASSISTANT_MAX_TOKENS",
+    "TEAMCRAFT_ASSISTANT_MODEL",
+    "TEAMCRAFT_ASSISTANT_PROVIDER",
+    "TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT",
+    "TEAMCRAFT_ASSISTANT_RETENTION_DAYS",
+    "TEAMCRAFT_ASSISTANT_RUN_TIMEOUT",
+    "TEAMCRAFT_BIND_ADDR",
+    "TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD",
+    "TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME",
+    "TEAMCRAFT_COOKIE_SECURE",
+    "TEAMCRAFT_DATABASE_URL",
+    "TEAMCRAFT_DB_HOST",
+    "TEAMCRAFT_DB_MAX_CONNECTIONS",
+    "TEAMCRAFT_DB_NAME",
+    "TEAMCRAFT_DB_PASSWORD",
+    "TEAMCRAFT_DB_PORT",
+    "TEAMCRAFT_DB_SSLMODE",
+    "TEAMCRAFT_DB_USER",
+    "TEAMCRAFT_ENV_FILE",
+    "TEAMCRAFT_INSTANCE_NAME",
+    "TEAMCRAFT_LOCAL_LOGIN",
+    "TEAMCRAFT_LOG_FORMAT",
+    "TEAMCRAFT_MAIL_FROM",
+    "TEAMCRAFT_MATTERMOST_DIRECT",
+    "TEAMCRAFT_MATTERMOST_WEBHOOK",
+    "TEAMCRAFT_MAX_UPLOAD_MB",
+    "TEAMCRAFT_OIDC_ADMIN_GROUP",
+    "TEAMCRAFT_OIDC_CLIENT_ID",
+    "TEAMCRAFT_OIDC_CLIENT_SECRET",
+    "TEAMCRAFT_OIDC_DISPLAY_NAME",
+    "TEAMCRAFT_OIDC_EDITOR_GROUP",
+    "TEAMCRAFT_OIDC_GROUPS_CLAIM",
+    "TEAMCRAFT_OIDC_ISSUER_URL",
+    "TEAMCRAFT_OIDC_SCOPES",
+    "TEAMCRAFT_OIDC_USERNAME_CLAIM",
+    "TEAMCRAFT_OIDC_VIEWER_GROUP",
+    "TEAMCRAFT_PREVIEW_MAX_MEMORY_MB",
+    "TEAMCRAFT_PREVIEW_MAX_MESH_MB",
+    "TEAMCRAFT_PREVIEW_MAX_RESULT_MB",
+    "TEAMCRAFT_PREVIEW_MAX_STEP_MB",
+    "TEAMCRAFT_PUBLIC_URL",
+    "TEAMCRAFT_REQUEST_DIGEST_HOURS",
+    "TEAMCRAFT_SERVER",
+    "TEAMCRAFT_SESSION_TTL_HOURS",
+    "TEAMCRAFT_SIGNIN_MAX_FAILURES",
+    "TEAMCRAFT_SMTP_URL",
+    "TEAMCRAFT_TOKEN",
+    "TEAMCRAFT_UPLOAD_CHUNK_MB",
+    "TEAMCRAFT_VAULT_DIR",
+    "TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS",
+    "TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE",
+    "TEAMCRAFT_WEBHOOK_RETENTION_DAYS",
+];
+
+/// Variables of the build and the test tooling: documented and never warned
+/// about, but not part of the server configuration.
+pub const TOOLING_VARIABLES: &[&str] = &[
+    "TEAMCRAFT_REQUIRE_DB_TESTS",
+    "TEAMCRAFT_REQUIRE_PG_TOOLS",
+    "TEAMCRAFT_SYSTEM_CONFIG",
+    "TEAMCRAFT_TEST_DATABASE_URL",
+    "TEAMCRAFT_WRITE_SIM_FIXTURES",
+];
+
+/// Edit distance of two names (insertions, deletions, substitutions).
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut diagonal = i;
+        if let Some(first) = row.first_mut() {
+            *first = i + 1;
+        }
+        for (j, cb) in b.iter().enumerate() {
+            let above = row.get(j + 1).copied().unwrap_or(0);
+            let left = row.get(j).copied().unwrap_or(0);
+            let value = (diagonal + usize::from(ca != *cb))
+                .min(above + 1)
+                .min(left + 1);
+            if let Some(slot) = row.get_mut(j + 1) {
+                *slot = value;
+            }
+            diagonal = above;
+        }
+    }
+    row.last().copied().unwrap_or(0)
+}
+
+/// The known name closest to `base`, if it is close enough to be a likely typo.
+fn nearest_known(base: &str) -> Option<&'static str> {
+    let limit = (base.len() / 6).clamp(2, 4);
+    KNOWN_VARIABLES
+        .iter()
+        .map(|known| (edit_distance(base, known), *known))
+        .filter(|(distance, _)| *distance <= limit)
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, known)| known)
+}
+
+/// `TEAMCRAFT_*` (and `MATTERMOST_*`) names that TeamCraft does not know,
+/// each with the nearest known name. `<NAME>_FILE` is checked as `NAME`.
+pub fn unknown_variables<I: IntoIterator<Item = String>>(
+    names: I,
+) -> Vec<(String, Option<String>)> {
+    let mut out: Vec<(String, Option<String>)> = names
+        .into_iter()
+        .filter(|n| n.starts_with("TEAMCRAFT_") || n.starts_with("MATTERMOST_"))
+        .filter_map(|name| {
+            let (base, file) = match name.strip_suffix("_FILE") {
+                Some(base) => (base, true),
+                None => (name.as_str(), false),
+            };
+            let is_known = |n: &str| KNOWN_VARIABLES.contains(&n) || TOOLING_VARIABLES.contains(&n);
+            // TEAMCRAFT_ENV_FILE is a name of its own, not a `_FILE` form
+            if is_known(&name) || is_known(base) {
+                return None;
+            }
+            let hint = nearest_known(base).map(|known| {
+                if file {
+                    format!("{known}_FILE")
+                } else {
+                    known.to_string()
+                }
+            });
+            Some((name, hint))
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Logs a warning for every unknown `TEAMCRAFT_*` variable of the process
+/// environment (a typo would otherwise silently leave the default in place).
+/// Call after the tracing subscriber is installed.
+pub fn warn_unknown_variables() {
+    let names = std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned());
+    for (name, hint) in unknown_variables(names) {
+        match hint {
+            Some(known) => tracing::warn!(
+                "unknown environment variable {name} is ignored; did you mean {known}?"
+            ),
+            None => tracing::warn!("unknown environment variable {name} is ignored"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LogFormat {
     Text,
@@ -1558,5 +1716,175 @@ mod tests {
                 "{key}={value}"
             );
         }
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn unknown_variables_are_found_with_a_suggestion() {
+        let found = unknown_variables(names(&[
+            "TEAMCRAFT_PUBLIC_URL",
+            "TEAMCRAFT_PUBLIC_URL_FILE",
+            "TEAMCRAFT_PUBLC_URL",
+            "TEAMCRAFT_DB_PASSWORD_FIL",
+            "TEAMCRAFT_TOTALLY_DIFFERENT_THING_X",
+            "TEAMCRAFT_REQUIRE_DB_TESTS",
+            "TEAMCRAFT_ENV_FILE",
+            "PATH",
+            "MATTERMOST_ERROR_WEBHOK",
+        ]));
+        let get = |n: &str| found.iter().find(|(k, _)| k == n).map(|(_, h)| h.clone());
+        assert_eq!(found.len(), 4, "{found:?}");
+        assert_eq!(
+            get("TEAMCRAFT_PUBLC_URL"),
+            Some(Some("TEAMCRAFT_PUBLIC_URL".into()))
+        );
+        assert_eq!(
+            get("TEAMCRAFT_DB_PASSWORD_FIL"),
+            Some(Some("TEAMCRAFT_DB_PASSWORD".into()))
+        );
+        assert_eq!(
+            get("MATTERMOST_ERROR_WEBHOK"),
+            Some(Some("MATTERMOST_ERROR_WEBHOOK".into()))
+        );
+        assert_eq!(get("TEAMCRAFT_TOTALLY_DIFFERENT_THING_X"), Some(None));
+        // known, file form of a known, tooling, foreign: no warning
+        assert_eq!(get("TEAMCRAFT_PUBLIC_URL_FILE"), None);
+        assert_eq!(get("TEAMCRAFT_REQUIRE_DB_TESTS"), None);
+        assert_eq!(get("TEAMCRAFT_ENV_FILE"), None);
+        assert_eq!(get("PATH"), None);
+    }
+
+    #[test]
+    fn unknown_file_variable_suggests_the_file_form() {
+        assert_eq!(
+            unknown_variables(names(&["TEAMCRAFT_DB_PASWORD_FILE"])),
+            vec![(
+                "TEAMCRAFT_DB_PASWORD_FILE".to_string(),
+                Some("TEAMCRAFT_DB_PASSWORD_FILE".to_string())
+            )]
+        );
+    }
+
+    #[test]
+    fn edit_distance_basics() {
+        assert_eq!(edit_distance("", ""), 0);
+        assert_eq!(edit_distance("abc", "abc"), 0);
+        assert_eq!(edit_distance("abc", ""), 3);
+        assert_eq!(edit_distance("", "abc"), 3);
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
+    }
+
+    /// Variable-like words (`TEAMCRAFT_…`, `MATTERMOST_…`, `DATABASE_URL`) of
+    /// `text`; with `quoted` only those that are a whole string literal.
+    fn variable_words(text: &str, quoted: bool) -> std::collections::BTreeSet<String> {
+        let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        let mut out = std::collections::BTreeSet::new();
+        let mut word_start: Option<usize> = None;
+        // a sentinel space flushes a word at the end of the text
+        for (pos, c) in text.char_indices().chain([(text.len(), ' ')]) {
+            if is_word(c) {
+                word_start.get_or_insert(pos);
+                continue;
+            }
+            let Some(start) = word_start.take() else {
+                continue;
+            };
+            let word = text.get(start..pos).unwrap_or("");
+            let before = text.get(..start).and_then(|t| t.chars().last());
+            let named = word.starts_with("TEAMCRAFT_")
+                || word.starts_with("MATTERMOST_")
+                || word == "DATABASE_URL";
+            let literal = before == Some('"') && c == '"';
+            if named && (literal || !quoted) && !word.chars().any(|c| c.is_ascii_lowercase()) {
+                out.insert(word.to_string());
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn variable_words_scanner() {
+        let words = variable_words("a \"TEAMCRAFT_A\" `TEAMCRAFT_B_*` TEAMCRAFT_c x", false);
+        assert_eq!(
+            words.into_iter().collect::<Vec<_>>(),
+            vec!["TEAMCRAFT_A".to_string(), "TEAMCRAFT_B_".to_string()]
+        );
+        let words = variable_words("\"TEAMCRAFT_A\" TEAMCRAFT_B TEAMCRAFT_C", true);
+        assert_eq!(words.into_iter().collect::<Vec<_>>(), vec!["TEAMCRAFT_A"]);
+    }
+
+    #[test]
+    fn known_variables_match_the_source() {
+        let source = include_str!("config.rs");
+        let production = source.split("mod tests {").next().unwrap_or(source);
+        let read: std::collections::BTreeSet<String> = variable_words(production, true)
+            .into_iter()
+            .filter(|w| !w.ends_with('_') && !TOOLING_VARIABLES.contains(&w.as_str()))
+            .collect();
+        let known: std::collections::BTreeSet<String> =
+            KNOWN_VARIABLES.iter().map(|s| s.to_string()).collect();
+        // the command line reads these two itself (src/main.rs)
+        let cli_only = ["TEAMCRAFT_SERVER", "TEAMCRAFT_TOKEN"];
+        let missing: Vec<_> = read.difference(&known).collect();
+        assert!(
+            missing.is_empty(),
+            "read by config.rs, not in KNOWN_VARIABLES: {missing:?}"
+        );
+        let stale: Vec<_> = known
+            .difference(&read)
+            .filter(|k| !cli_only.contains(&k.as_str()))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "in KNOWN_VARIABLES, not read by config.rs: {stale:?}"
+        );
+        assert!(
+            KNOWN_VARIABLES.windows(2).all(|w| w[0] < w[1]),
+            "keep KNOWN_VARIABLES sorted"
+        );
+        for tool in TOOLING_VARIABLES {
+            assert!(!known.contains(*tool), "{tool} is in both lists");
+        }
+    }
+
+    #[test]
+    fn documentation_and_known_variables_agree() {
+        let docs = include_str!("../docs/src/admin/configuration.md");
+        let words = variable_words(docs, false);
+        let (prefixes, full): (Vec<_>, Vec<_>) = words.iter().partition(|w| w.ends_with('_'));
+        let undocumented: Vec<_> = KNOWN_VARIABLES
+            .iter()
+            .filter(|k| {
+                !full.iter().any(|w| w.as_str() == **k)
+                    && !prefixes.iter().any(|p| k.starts_with(p.as_str()))
+            })
+            .collect();
+        assert!(
+            undocumented.is_empty(),
+            "not in configuration.md: {undocumented:?}"
+        );
+        let real =
+            |name: &str| KNOWN_VARIABLES.contains(&name) || TOOLING_VARIABLES.contains(&name);
+        let stale: Vec<_> = full
+            .iter()
+            .filter(|w| !real(w) && !real(w.strip_suffix("_FILE").unwrap_or(w.as_str())))
+            .collect();
+        assert!(stale.is_empty(), "documented, but unknown: {stale:?}");
+        let stale_prefixes: Vec<_> = prefixes
+            .iter()
+            .filter(|p| {
+                !KNOWN_VARIABLES
+                    .iter()
+                    .chain(TOOLING_VARIABLES)
+                    .any(|k| k.starts_with(p.as_str()))
+            })
+            .collect();
+        assert!(
+            stale_prefixes.is_empty(),
+            "documented prefix matches nothing: {stale_prefixes:?}"
+        );
     }
 }
