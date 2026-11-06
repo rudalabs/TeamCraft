@@ -360,7 +360,13 @@ const COUNTED: [&str; 22] = [
 async fn counts(app: &common::TestApp) -> Vec<(String, i64)> {
     let mut out = Vec::new();
     for t in COUNTED {
-        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {t}"))
+        // signing in and out is audited (`user.sign_*`), but it changes no data
+        let filter = if t == "audit_log" {
+            " WHERE action NOT LIKE 'user.sign%'"
+        } else {
+            ""
+        };
+        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {t}{filter}"))
             .fetch_one(&app.pool)
             .await
             .expect("count");

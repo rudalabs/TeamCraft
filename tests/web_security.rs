@@ -1,5 +1,5 @@
 //! Security fixes from the threat model (`docs/src/dev/threat-model.md`):
-//! cross-site requests (F4), security headers (F5).
+//! cross-site requests (F4), security headers (F5), sign-in audit (F3).
 
 mod common;
 
@@ -153,6 +153,82 @@ async fn security_headers_and_hsts_for_https() {
             Some(teamcraft::STRICT_TRANSPORT_SECURITY),
             "{uri}"
         );
+    }
+    app.teardown().await;
+}
+
+/// The sign-in entries of the audit log: action, user, entity, summary, details.
+async fn sign_in_entries(
+    app: &common::TestApp,
+) -> Vec<(String, String, Option<uuid::Uuid>, String, String)> {
+    sqlx::query_as(
+        "SELECT action, username, entity_id, summary, details::text FROM audit_log
+         WHERE action LIKE 'user.sign%' ORDER BY at, id",
+    )
+    .fetch_all(&app.pool)
+    .await
+    .unwrap()
+}
+
+/// F3: sign-in, failed sign-in and sign-out are in the audit log – never a
+/// password, a session token or an unknown typed username.
+#[tokio::test]
+async fn sign_in_and_sign_out_are_audited() {
+    let app = app_or_skip!();
+    let (erika, _) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    let cookie = app.login("erika").await;
+    let wrong = "wrong-password-4711";
+    for (username, password) in [("erika", wrong), ("Typed-Secret-0815", wrong)] {
+        let r = app
+            .post_form(
+                "/login",
+                None,
+                SAME_ORIGIN,
+                &[("username", username), ("password", password)],
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    }
+    let r = app
+        .post_form("/logout", Some(&cookie), SAME_ORIGIN, &[])
+        .await;
+    assert!(r.status.is_redirection());
+
+    let entries = sign_in_entries(&app).await;
+    let actions: Vec<&str> = entries.iter().map(|e| e.0.as_str()).collect();
+    assert_eq!(
+        actions,
+        [
+            "user.sign_in",
+            "user.sign_in_failed",
+            "user.sign_in_failed",
+            "user.sign_out"
+        ],
+        "{entries:?}"
+    );
+    let (_, by, entity, summary, details) = &entries[0];
+    assert_eq!((by.as_str(), *entity), ("erika", Some(erika.id)));
+    assert!(summary.contains("password") && details.contains("\"password\""));
+    // a failed sign-in names an existing account …
+    assert_eq!(entries[1].2, Some(erika.id));
+    assert!(entries[1].3.contains("erika"));
+    // … but keeps nothing of an unknown typed name
+    assert_eq!(entries[2].2, None);
+    assert_eq!(
+        (entries[3].1.as_str(), entries[3].2),
+        ("erika", Some(erika.id))
+    );
+
+    let everything: Vec<String> =
+        sqlx::query_scalar("SELECT summary || ' ' || details::text FROM audit_log")
+            .fetch_all(&app.pool)
+            .await
+            .unwrap();
+    for text in &everything {
+        assert!(!text.contains(wrong), "no password: {text}");
+        assert!(!text.contains(common::PASSWORD), "no password: {text}");
+        assert!(!text.to_lowercase().contains("typed-secret"), "{text}");
+        assert!(!text.contains("tc_sess_"), "no session token: {text}");
     }
     app.teardown().await;
 }

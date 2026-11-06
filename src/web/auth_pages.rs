@@ -89,7 +89,9 @@ pub async fn setup_submit(
     };
     match created {
         Ok(user) => {
-            let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
+            let token =
+                users::create_session(&st.db, user.id, st.config.session_ttl, users::SignIn::Setup)
+                    .await?;
             Ok(signed_in_redirect(&st, &user, &token, Some("/projects")))
         }
         Err(e) if super::is_user_error(&e) => {
@@ -168,12 +170,18 @@ pub async fn login_submit(
     }
     match users::authenticate_local(&st.db, &form.username, &form.password).await? {
         Some(user) => {
-            let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
+            let token = users::create_session(
+                &st.db,
+                user.id,
+                st.config.session_ttl,
+                users::SignIn::Password,
+            )
+            .await?;
             tracing::info!(username = %user.username, "local login");
             Ok(signed_in_redirect(&st, &user, &token, form.next.as_deref()))
         }
         None => {
-            tracing::warn!(username = %form.username.trim(), "failed local login");
+            users::record_failed_sign_in(&st.db, &form.username).await?;
             let mut page = render_login(
                 &st,
                 LoginPage {
@@ -266,7 +274,9 @@ pub async fn oidc_callback(
     let result = async {
         let (identity, return_to) = oidc.finish_login(&st.db, &code, &state).await?;
         let user = users::upsert_oidc_user(&st.db, identity).await?;
-        let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
+        let token =
+            users::create_session(&st.db, user.id, st.config.session_ttl, users::SignIn::Sso)
+                .await?;
         tracing::info!(username = %user.username, role = %user.role, "SSO login");
         Ok::<_, AppError>((user, token, return_to))
     }

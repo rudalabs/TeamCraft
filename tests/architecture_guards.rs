@@ -189,11 +189,6 @@ const NOT_AUDITED: &[(&str, &str)] = &[
     ("uploads::forget", "removes finished upload sessions"),
     ("uploads::purge_expired", "housekeeping of upload sessions"),
     ("users::actor_for_api_token", "last-used time of a token"),
-    (
-        "users::create_session",
-        "web sign-in session (the sign-in is logged)",
-    ),
-    ("users::delete_session", "web sign-out"),
     ("users::purge_expired", "housekeeping of sessions"),
     ("users::set_skin", "the user's own display preference"),
     (
