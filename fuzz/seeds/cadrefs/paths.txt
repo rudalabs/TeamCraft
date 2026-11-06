@@ -1,0 +1,2 @@
+Frame assembly references C:\Rover\Motor mount.ipt, "wheel hub.SLDPRT" and 'nozzle.stp'.
+Drawing: frame.idw

@@ -43,7 +43,7 @@ minijinja = "2"
 # 3D preview, all pure Rust: glTF (MIT/Apache-2.0), 3MF/AMF XML (MIT),
 # STEP B-rep reading and tessellation with the truck kernel (Apache-2.0)
 gltf = { version = "1.4", default-features = false, features = ["utils"] }
-quick-xml = "0.37"
+quick-xml = "0.42"
 truck-stepio = "0.3"
 # Text of PDF reports (MIT OR Apache-2.0), only in the isolated `text-extract` process
 pdf_oxide = { version = "0.3", default-features = false, features = ["legacy-crypto"] }
@@ -77,6 +77,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 regex = "1"
 
 [dev-dependencies]
+proptest = "1"
 tower = { version = "0.5", features = ["util"] }
 
 [profile.release]

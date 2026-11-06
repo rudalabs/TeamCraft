@@ -298,6 +298,49 @@ fn parse_position(raw: &str) -> Option<(usize, Option<i32>)> {
     Some((parts.len(), parts.last().and_then(|p| p.parse().ok())))
 }
 
+/// Level of a row with the dotted position `pos` (`1.3.1`): one below the
+/// nearest earlier row whose position is a prefix of it. If the direct parent
+/// (`1.3`) is missing, the row goes below the nearest existing ancestor (`1`)
+/// – or to the top level – with a warning, instead of silently below
+/// whatever row came last. `positions[i]` belongs to `rows[i]`.
+fn dotted_level(
+    pos: &str,
+    positions: &[String],
+    rows: &[BomRow],
+    line: usize,
+    warnings: &mut Vec<String>,
+) -> usize {
+    let Some((parent, _)) = pos.rsplit_once('.') else {
+        return 1;
+    };
+    let ancestor = positions
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, p)| !p.is_empty() && pos.starts_with(&format!("{p}.")));
+    match ancestor {
+        Some((i, p)) => {
+            if p != parent {
+                warnings.push(format!(
+                    "Row {line}: position {pos} has no row {parent} – placed below {p}."
+                ));
+            } else if rows[i + 1..].iter().any(|r| r.level <= rows[i].level) {
+                warnings.push(format!(
+                    "Row {line}: position {pos} comes after rows that are not below {p} – placed \
+                     below the nearest row above."
+                ));
+            }
+            rows[i].level + 1
+        }
+        None => {
+            warnings.push(format!(
+                "Row {line}: position {pos} has no row {parent} – placed on the top level."
+            ));
+            1
+        }
+    }
+}
+
 /// `Part.ipt` → `Part` (file names used as component names).
 fn file_stem(name: &str) -> &str {
     match name.rsplit_once('.') {
@@ -388,6 +431,10 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
     let mut rows: Vec<BomRow> = Vec::new();
     // Level of a skipped reference component: rows below it are skipped too.
     let mut skip_below: Option<usize> = None;
+    // Dotted positions: the position of every row in `rows`, and of skipped
+    // reference components (their rows below are skipped by prefix).
+    let mut positions: Vec<String> = Vec::new();
+    let mut skipped_positions: Vec<String> = Vec::new();
     for (offset, row) in body.iter().enumerate() {
         let line = header_index + offset + 2;
         if is_header_again(row) {
@@ -414,12 +461,27 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
                 parse_position(&position).and_then(|(_, f)| f),
             )
         } else if dotted {
-            parse_position(&position).unwrap_or_else(|| {
-                warnings.push(format!(
-                    "Row {line}: position '{position}' is not like 1.2.3 – used level 1."
-                ));
-                (1, None)
-            })
+            match parse_position(&position) {
+                None => {
+                    warnings.push(format!(
+                        "Row {line}: position '{position}' is not like 1.2.3 – used level 1."
+                    ));
+                    (1, None)
+                }
+                Some((_, find_number)) => {
+                    let pos = position.trim().trim_end_matches('.');
+                    if skipped_positions
+                        .iter()
+                        .any(|s| pos.starts_with(&format!("{s}.")))
+                    {
+                        continue; // below a skipped reference component
+                    }
+                    (
+                        dotted_level(pos, &positions, &rows, line, &mut warnings),
+                        find_number,
+                    )
+                }
+            }
         } else {
             (1, position.parse::<i32>().ok())
         };
@@ -438,6 +500,9 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
                 "Row {line}: {shown} is a reference component and is not imported."
             ));
             skip_below = Some(level);
+            if dotted {
+                skipped_positions.push(position.trim().trim_end_matches('.').to_string());
+            }
             continue;
         }
         if name.is_empty() {
@@ -490,6 +555,7 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
             material: cell(row, "material"),
             mass_kg,
         });
+        positions.push(position.trim().trim_end_matches('.').to_string());
     }
 
     // One first row on level 0 below which everything else lies: the assembly itself.

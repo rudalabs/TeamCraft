@@ -38,6 +38,7 @@
 # Development
 
 - [Test coverage map](dev/coverage.md)
+- [Fuzzing the file readers](dev/fuzzing.md)
 
 # Research
 

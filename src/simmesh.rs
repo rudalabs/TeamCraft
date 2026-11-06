@@ -1082,11 +1082,15 @@ struct XmlFile<'a> {
     offsets: Vec<usize>,
 }
 
-fn xml_attr(e: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<String> {
+fn xml_attr(e: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<String> {
     e.attributes()
         .flatten()
         .find(|a| a.key.local_name().as_ref() == name)
-        .and_then(|a| a.unescape_value().ok().map(|v| v.into_owned()))
+        .and_then(|a| {
+            a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .ok()
+                .map(|v| v.into_owned())
+        })
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -1413,12 +1417,11 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
                     continue;
                 }
                 match e.local_name().as_ref() {
-                    b"VTKFile" => {
-                        kind = xml_attr(e, b"type");
-                        file.big_endian =
-                            xml_attr(e, b"byte_order").as_deref() == Some("BigEndian");
-                        file.header64 = xml_attr(e, b"header_type").as_deref() == Some("UInt64");
-                        match xml_attr(e, b"compressor").as_deref() {
+                    "VTKFile" => {
+                        kind = xml_attr(e, "type");
+                        file.big_endian = xml_attr(e, "byte_order").as_deref() == Some("BigEndian");
+                        file.header64 = xml_attr(e, "header_type").as_deref() == Some("UInt64");
+                        match xml_attr(e, "compressor").as_deref() {
                             None | Some("") => {}
                             Some("vtkZLibDataCompressor") => file.zlib = true,
                             Some(other) => bail!(
@@ -1427,11 +1430,11 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
                             ),
                         }
                     }
-                    b"Piece" => {
+                    "Piece" => {
                         if pieces.len() >= 100_000 {
                             bail!("too many pieces");
                         }
-                        let n = |name: &[u8]| -> Result<usize> {
+                        let n = |name: &str| -> Result<usize> {
                             match xml_attr(e, name) {
                                 None => Ok(0),
                                 Some(v) => {
@@ -1440,41 +1443,41 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
                             }
                         };
                         pieces.push(XmlPiece {
-                            points: n(b"NumberOfPoints")?,
-                            cells: n(b"NumberOfCells")?,
+                            points: n("NumberOfPoints")?,
+                            cells: n("NumberOfCells")?,
                             poly_counts: [
-                                n(b"NumberOfVerts")?,
-                                n(b"NumberOfLines")?,
-                                n(b"NumberOfStrips")?,
-                                n(b"NumberOfPolys")?,
+                                n("NumberOfVerts")?,
+                                n("NumberOfLines")?,
+                                n("NumberOfStrips")?,
+                                n("NumberOfPolys")?,
                             ],
                             ..XmlPiece::default()
                         });
                     }
                     name => {
                         let s = match name {
-                            b"Points" => Some(Section::Points),
-                            b"Cells" => Some(Section::Cells),
-                            b"Verts" => Some(Section::Verts),
-                            b"Lines" => Some(Section::Lines),
-                            b"Strips" => Some(Section::Strips),
-                            b"Polys" => Some(Section::Polys),
-                            b"PointData" => Some(Section::PointData),
-                            b"CellData" => Some(Section::CellData),
+                            "Points" => Some(Section::Points),
+                            "Cells" => Some(Section::Cells),
+                            "Verts" => Some(Section::Verts),
+                            "Lines" => Some(Section::Lines),
+                            "Strips" => Some(Section::Strips),
+                            "Polys" => Some(Section::Polys),
+                            "PointData" => Some(Section::PointData),
+                            "CellData" => Some(Section::CellData),
                             _ => None,
                         };
                         if let Some(s) = s {
                             if s == Section::PointData {
                                 if let Some(p) = pieces.last_mut() {
-                                    p.active_scalars = xml_attr(e, b"Scalars");
+                                    p.active_scalars = xml_attr(e, "Scalars");
                                 }
                             }
                             if !empty {
                                 section = Some(s);
                             }
-                        } else if name == b"DataArray" {
+                        } else if name == "DataArray" {
                             if let (Some(s), false) = (section, pieces.is_empty()) {
-                                let format = match xml_attr(e, b"format").as_deref() {
+                                let format = match xml_attr(e, "format").as_deref() {
                                     Some("ascii") => Format::Ascii,
                                     Some("binary") => Format::Binary,
                                     Some("appended") => Format::Appended,
@@ -1484,9 +1487,9 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
                                     ),
                                 };
                                 let a = XmlArray {
-                                    name: xml_attr(e, b"Name").unwrap_or_default(),
-                                    ty: Num::xml(xml_attr(e, b"type").as_deref())?,
-                                    components: match xml_attr(e, b"NumberOfComponents") {
+                                    name: xml_attr(e, "Name").unwrap_or_default(),
+                                    ty: Num::xml(xml_attr(e, "type").as_deref())?,
+                                    components: match xml_attr(e, "NumberOfComponents") {
                                         None => 1,
                                         Some(v) => v
                                             .trim()
@@ -1494,7 +1497,7 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
                                             .map_err(|_| anyhow!("invalid NumberOfComponents"))?,
                                     },
                                     format,
-                                    offset: match xml_attr(e, b"offset") {
+                                    offset: match xml_attr(e, "offset") {
                                         None => 0,
                                         Some(v) => v
                                             .trim()
@@ -1519,7 +1522,10 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
             }
             Event::Text(t) => {
                 if let (Some((_, a)), 0) = (array.as_mut(), nested) {
-                    let bytes = t.into_inner();
+                    let bytes = match t.into_inner() {
+                        std::borrow::Cow::Borrowed(s) => std::borrow::Cow::Borrowed(s.as_bytes()),
+                        std::borrow::Cow::Owned(s) => std::borrow::Cow::Owned(s.into_bytes()),
+                    };
                     if a.text.is_empty() {
                         a.text = bytes;
                     } else {
@@ -1531,7 +1537,7 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
             }
             Event::CData(t) => {
                 if let (Some((_, a)), 0) = (array.as_mut(), nested) {
-                    a.text.to_mut().extend_from_slice(&t.into_inner());
+                    a.text.to_mut().extend_from_slice(t.into_inner().as_bytes());
                 }
             }
             Event::End(ref e) => {
@@ -1546,15 +1552,15 @@ pub fn vtk_xml(data: &[u8]) -> Result<Mesh> {
                 let name = e.local_name();
                 if matches!(
                     name.as_ref(),
-                    b"Points"
-                        | b"Cells"
-                        | b"Verts"
-                        | b"Lines"
-                        | b"Strips"
-                        | b"Polys"
-                        | b"PointData"
-                        | b"CellData"
-                        | b"Piece"
+                    "Points"
+                        | "Cells"
+                        | "Verts"
+                        | "Lines"
+                        | "Strips"
+                        | "Polys"
+                        | "PointData"
+                        | "CellData"
+                        | "Piece"
                 ) {
                     section = None;
                 }
