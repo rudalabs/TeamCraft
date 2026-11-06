@@ -14,6 +14,13 @@
 //! Regular expressions are compiled with the `regex` crate's size limits and
 //! run in time linear in the input (no backtracking), so a hostile pattern or
 //! file can neither hang nor exhaust the server.
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
@@ -429,11 +436,12 @@ pub fn glob_matches(pattern: &str, name: &str) -> bool {
     // iterative wildcard match, linear in practice and never recursive
     let (mut pi, mut ni) = (0usize, 0usize);
     let (mut star, mut mark) = (None, 0usize);
-    while ni < n.len() {
-        if pi < p.len() && (p[pi] == '?' || p[pi] == n[ni]) {
+    while let Some(&c) = n.get(ni) {
+        let at = p.get(pi).copied();
+        if at == Some('?') || at == Some(c) {
             pi += 1;
             ni += 1;
-        } else if pi < p.len() && p[pi] == '*' {
+        } else if at == Some('*') {
             star = Some(pi);
             mark = ni;
             pi += 1;
@@ -445,7 +453,7 @@ pub fn glob_matches(pattern: &str, name: &str) -> bool {
             return false;
         }
     }
-    while pi < p.len() && p[pi] == '*' {
+    while p.get(pi) == Some(&'*') {
         pi += 1;
     }
     pi == p.len()

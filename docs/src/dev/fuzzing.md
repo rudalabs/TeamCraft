@@ -30,17 +30,23 @@ crash only when it reaches the harness.
 
 ## No panics by construction
 
-`swpart`, `mesh` (with its submodules), `simmesh` and `config` deny
-`clippy::unwrap_used`, `expect_used`, `indexing_slicing`, `panic` and
-`unreachable` with `#![deny(...)]` at the top of the module. Clippy in CI
-therefore refuses a new `data[at]`, `data[a..b]` or `.unwrap()` there. Read
-through the bounded helpers in `mesh` (`bytes_at`, `u16_le`, `u32_le`,
-`f32_le`, `range`, `quads`) or `get`, slice patterns
-(`let [x, y, z] = *v.as_slice() else { … }`), `windows` and `zip`. A file
-that is shorter than it claims then becomes an error, not a panic. Tests may
-still unwrap and index (`clippy.toml`). An exception needs
-`#[allow(clippy::indexing_slicing)]` on the smallest item, with a comment why
-no file can reach it (example: `mesh::compose`, fixed-size arrays).
+Every reader of untrusted files denies `clippy::unwrap_used`, `expect_used`,
+`indexing_slicing`, `panic` and `unreachable` with `#![deny(...)]` at the
+top of the module. These are `swpart`, `mesh` with its submodules,
+`simmesh`, `stepbom`, `nxpart`, `thumbnail`, `cadrefs`, `bomtable`,
+`textindex` and `resultscan`, and `config` too. Clippy in CI therefore
+refuses a new `data[at]`, `data[a..b]` or `.unwrap()` there. Read through the
+bounded helpers in `mesh` (`bytes_at`, `u16_le`, `u32_le`, `f32_le`, `range`,
+`quads`) or `get`, slice patterns (`let [x, y, z] = *v.as_slice() else { … }`),
+`windows` and `zip`. A file that is shorter than it claims then becomes an
+error, not a panic. Tests may still unwrap and index (`clippy.toml`). An
+exception needs `#[allow(clippy::indexing_slicing)]` on the smallest item,
+with a comment why no file can reach it (example: `mesh::compose`,
+fixed-size arrays).
+
+The lint does not see every cut of a `&str`. Cut strings with `get` as well,
+and never at a byte position computed on another string. A lower-cased copy
+can be longer: the Kelvin sign `K` is three bytes, its lower case `k` is one.
 
 ## Running a target locally
 

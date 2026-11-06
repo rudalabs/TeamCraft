@@ -1083,9 +1083,9 @@ fn three_mf(data: &[u8]) -> Result<Mesh> {
         .and_then(|r| {
             let r = String::from_utf8_lossy(r).into_owned();
             let at = r.find("3dmodel")?;
-            let start = r[..at].rfind("Target=\"")? + 8;
-            let end = start + r[start..].find('"')?;
-            Some(r[start..end].trim_start_matches('/').to_string())
+            let start = r.get(..at)?.rfind("Target=\"")? + 8;
+            let end = start + r.get(start..)?.find('"')?;
+            Some(r.get(start..end)?.trim_start_matches('/').to_string())
         })
         .unwrap_or_else(|| "3D/3dmodel.model".to_string());
     let xml = zip_entry(data, |n| n.eq_ignore_ascii_case(&target))?
