@@ -48,8 +48,10 @@ binary. Each pending migration runs once, in order, in its own transaction.
 - A database of an older version is migrated to the current schema. This is
   tested with every change: each migration on an empty database and a second
   run that does nothing, the migrations one at a time ending at the same
-  schema as a fresh database, and a v0.1.0 database with data that upgrades
-  without loss (`tests/migrations.rs`).
+  schema as a fresh database, and a database with data that upgrades without
+  loss (`tests/migrations.rs`). That database has the schema of the first
+  `v0.1.0` tag (`6f68f9a`, see [below](#breaking-changes-per-version)); an upgrade from the
+  published v0.1.0 schema is not tested separately yet.
 - A migration that failed half-way is never skipped: the next start stops
   until it is resolved (`a_failed_migration_blocks_the_upgrade`). Restore the
   backup and report the error.
@@ -91,7 +93,14 @@ migrates the restored database again.
 
 ### 0.1.0 → 0.2.0
 
-Migrations `0021` to `0035` run on the first start. They need no action:
+Migrations `0032` to `0035` run on the first start and need no action: the
+assistant's conversations, the result extraction templates, the proposed
+result values and the change request digests get their tables.
+
+The tag `v0.1.0` was moved on the day of the release from `6f68f9a` to
+`439724a`; the published release is the second. A database of a build from
+the first tag lacks `0021` and `0023` to `0031` as well; the upgrade applies
+them too:
 
 - `0023` creates the `pg_trgm` extension and trigram indexes for the
   substring search. It is a trusted extension, so the database owner may
@@ -104,8 +113,6 @@ Migrations `0021` to `0035` run on the first start. They need no action:
 
 Breaking:
 
-- No macOS server binary any more (the desktop app is still built for
-  macOS). Run the server in Docker or on Linux or Windows.
 - The server archives are named by platform: `teamcraft-0.2.0-linux-x86_64.tar.gz`,
   `-linux-aarch64.tar.gz`, `-windows-x64.zip`. Download scripts that build the
   old target-triple names must be changed.
