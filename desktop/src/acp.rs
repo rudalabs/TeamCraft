@@ -1473,12 +1473,8 @@ mod tests {
             self.out.write_all(&line).await.unwrap();
         }
 
-        /// Answers `initialize` and `session/new` like a real agent.
-        async fn handshake(&mut self, http: bool) -> Value {
-            self.handshake_with(http, json!({})).await
-        }
-
-        /// As `handshake`, with further fields in the `session/new` result.
+        /// Answers `initialize` and `session/new` like a real agent, with
+        /// `extra` as further fields of the `session/new` result.
         async fn handshake_with(&mut self, http: bool, extra: Value) -> Value {
             let init = self.recv().await;
             assert_eq!(init["method"], "initialize");
