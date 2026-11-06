@@ -549,3 +549,77 @@ async fn personal_access_tokens_expire_are_revoked_and_die_with_the_account() {
     );
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn changing_the_own_password_ends_the_other_sessions() {
+    // A session stolen before the change must not outlive it; the session
+    // that made the change stays, and so do personal access tokens.
+    let app = app_or_skip!();
+    let (_, token) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    let here = app.login("erika").await;
+    let elsewhere = app.login("erika").await;
+    assert_eq!(
+        app.get_page("/", Some(&elsewhere)).await.status,
+        StatusCode::OK
+    );
+
+    // a wrong current password changes nothing
+    let r = app
+        .post_form(
+            "/account/password",
+            Some(&here),
+            Some("http://localhost:8080"),
+            &[
+                ("current_password", "not-my-password"),
+                ("new_password", "a-new-long-password"),
+                ("confirm_password", "a-new-long-password"),
+            ],
+        )
+        .await;
+    assert!(r.status.is_redirection(), "{}", r.status);
+    assert_eq!(
+        app.get_page("/", Some(&elsewhere)).await.status,
+        StatusCode::OK
+    );
+
+    let r = app
+        .post_form(
+            "/account/password",
+            Some(&here),
+            Some("http://localhost:8080"),
+            &[
+                ("current_password", common::PASSWORD),
+                ("new_password", "a-new-long-password"),
+                ("confirm_password", "a-new-long-password"),
+            ],
+        )
+        .await;
+    assert!(r.status.is_redirection(), "{}", r.status);
+    let audited: serde_json::Value = sqlx::query_scalar(
+        "SELECT details FROM audit_log WHERE action = 'user.password' ORDER BY at DESC LIMIT 1",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(audited["other_sessions_ended"], 1, "{audited}");
+
+    let gone = app.get_page("/", Some(&elsewhere)).await;
+    assert!(
+        gone.status.is_redirection(),
+        "the other session ended: {}",
+        gone.status
+    );
+    assert_eq!(
+        app.get_page("/", Some(&here)).await.status,
+        StatusCode::OK,
+        "the session that changed the password stays"
+    );
+    assert_eq!(
+        app.api(Method::GET, "/api/v1/items", &token, None)
+            .await
+            .status,
+        StatusCode::OK,
+        "tokens are revoked one by one, not with the password"
+    );
+    app.teardown().await;
+}
