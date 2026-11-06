@@ -4300,6 +4300,12 @@
     try { window.localStorage.setItem(importLogKey(project, folder), JSON.stringify(log)); }
     catch (e) { /* the import still works, it just cannot be continued */ }
   }
+  /** An entry of the import log: the item number (done) or
+   * `{ number, pending: true }` – created, but its files did not arrive yet;
+   * the next run checks it out again and completes it instead of skipping it. */
+  function loggedNumber(entry) { return typeof entry === "string" ? entry : entry && entry.number; }
+  function loggedPending(entry) { return !!(entry && typeof entry === "object" && entry.pending); }
+  function importDone(log, key) { return !!log[key] && !loggedPending(log[key]); }
 
   /** Earlier versions kept one log per folder, without the project group. Such
    * a log is moved to the group of the items it lists (asked for its first
@@ -4310,7 +4316,7 @@
     try { old = JSON.parse(window.localStorage.getItem(oldKey)); } catch (e) { /* unreadable: ignored */ }
     var keys = old ? Object.keys(old) : [];
     if (!keys.length) return Promise.resolve();
-    return api("GET", "/items/" + enc(old[keys[0]])).then(function (r) {
+    return api("GET", "/items/" + enc(loggedNumber(old[keys[0]]))).then(function (r) {
       var project = r.item && r.item.project_code;
       if (!project) return;
       var log = importLog(project, folder);
@@ -4368,7 +4374,7 @@
    * the check-out taken when the item was created (same timestamp) counts:
    * an item someone checked out again later to work on it keeps its lock. */
   function releaseImported(log, failed) {
-    var numbers = Object.keys(log).map(function (k) { return log[k]; });
+    var numbers = Object.keys(log).map(function (k) { return loggedNumber(log[k]); });
     if (!numbers.length) return Promise.resolve();
     return refreshWorklistCount().then(function (w) {
       var ids = w.checkouts.filter(function (r) {
@@ -4411,7 +4417,8 @@
     function showPlan() {
       plan = planImport(scanned, kinds, options());
       var log = importLog(project.value, scannedPath);
-      var open = plan.items.filter(function (it) { return !log[it.key]; });
+      var open = plan.items.filter(function (it) { return !importDone(log, it.key); });
+      var unfinished = open.filter(function (it) { return loggedPending(log[it.key]); }).length;
       report.textContent = "";
       append(report, [
         h("p", null, [h("strong", { text: plan.files + " files" }), " → " + plan.items.length + " items (" +
@@ -4419,6 +4426,7 @@
           plan.items.filter(function (it) { return it.type === "part"; }).length + " parts, " +
           plan.items.filter(function (it) { return it.type === "document"; }).length + " documents)" +
           (plan.items.length - open.length ? " – " + (plan.items.length - open.length) + " already imported, skipped" : "") +
+          (unfinished ? " – " + unfinished + " created before without all files, completed now" : "") +
           (plan.ignored ? " · " + plan.ignored + " lock/backup files left out" : "") +
           (plan.extras && !extras.checked ? " · " + plan.extras + " other files not imported" : "")]),
         plan.duplicates.length ? h("div.notice", null, [h("strong", { text: plan.duplicates.length + " duplicate file names – only the first file of each name is imported. Rename them in the CAD program (TeamCraft recognises CAD references by file name):" }),
@@ -4449,21 +4457,40 @@
       if (running) return;
       if (!plan) { d.fail("Scan the folder first."); return; }
       var path = scannedPath, group = project.value, log = importLog(group, path);
-      var todo = plan.items.filter(function (it) { return !log[it.key]; });
+      var todo = plan.items.filter(function (it) { return !importDone(log, it.key); });
       var created = [], failed = [], files = 0, checkedIn = 0;
       running = true; stop = false;
       todo.reduce(function (chain, it, i) {
         return chain.then(function () {
           if (stop) return;
           progress(i + 1, todo.length, "Item " + (i + 1) + " of " + todo.length + ": " + it.name);
-          return api("POST", "/items", { item_type: it.type, name: it.name, project: group, number: it.number }).then(function (rev) {
-            // remembered at once, so a second run never creates it twice
-            log[it.key] = rev.item_number; saveImportLog(group, path, log);
+          // An item an earlier run created without all its files: checked out
+          // again and completed (its revision A is still in work).
+          var pendingNumber = loggedPending(log[it.key]) ? loggedNumber(log[it.key]) : null;
+          var start = pendingNumber
+            ? api("POST", "/items/" + enc(pendingNumber) + "/revisions/A/checkout").catch(function (err) {
+                // checked out to me already (e.g. the earlier run stopped before its check-in)
+                return api("GET", "/items/" + enc(pendingNumber) + "/revisions/A").then(function (r) {
+                  var rev = r.revision || r;
+                  if (rev.checked_out_by === state.me.id) return rev;
+                  throw err;
+                });
+              })
+            : api("POST", "/items", { item_type: it.type, name: it.name, project: group, number: it.number });
+          return start.then(function (rev) {
+            if (!pendingNumber) {
+              // remembered at once, so a second run never creates it twice –
+              // pending until its files are in
+              log[it.key] = { number: rev.item_number, pending: true }; saveImportLog(group, path, log);
+            }
             created.push({ rev: rev, item: it });
             return call("upload_files", { item: rev.item_number, code: rev.code, paths: it.files.map(function (f) { return f.path; }),
               comment: "Imported from " + scanned.folder_name, folders: importFolders(it.files, scanned.folder_name) })
-              .then(function () { files += it.files.length; },
-                function (err) { failed.push(rev.item_number + " (" + it.name + "): files not uploaded – " + errorText(err)); })
+              .then(function () {
+                files += it.files.length;
+                log[it.key] = rev.item_number; saveImportLog(group, path, log);
+              },
+                function (err) { failed.push(rev.item_number + " (" + it.name + "): files not uploaded – " + errorText(err) + " – scan and import again to complete it"); })
               // Checked in right away: an import that is interrupted (app closed,
               // sign-in expired, network gone, an error in a later step) never
               // leaves the items created so far in "My check-outs".
