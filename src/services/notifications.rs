@@ -19,6 +19,7 @@
 //! | check-out released by somebody else     | the holder of the lock                             |
 //! | change request raised                   | CAD editors of the affected project groups, watchers of the affected items |
 //! | change request triaged, assigned, commented, decided, implemented | requester, assignee, commenters, watchers of the request |
+//! | periodic digest of the requests waiting for triage (`request_digests`) | CAD editors of the project group, e-mail only |
 //!
 //! Creating an item makes its creator a watcher.
 
