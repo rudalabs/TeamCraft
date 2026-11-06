@@ -279,8 +279,7 @@ real files and belong to section 3 once such files are at hand.
 - [ ] Chunked uploads from the *New item* form of the web UI – it still sends its files in one request (the revision
   exists only afterwards); the attach and check-in forms use `/uploads` (feature 9)
 - [ ] Custom attributes per file type (feature 5, items are done)
-- [ ] Feature 6 leftovers: local substitutes per BOM line, a warning when a superseded item is added to a BOM in the
-  desktop app
+- [ ] Feature 6 leftovers: local substitutes per BOM line (the superseded warning is done)
 - [ ] Numbering schemes: a separate scheme per item type within a group, an instance-wide default other than
   `{TYPE}-{SEQ:6}` (feature 4)
 - [ ] Jira connector for change requests and change orders, one-way first (TeamCraft → Jira) – design and order of
@@ -569,8 +568,7 @@ Documented in the UI, keep in mind:
    circles) are item-level relations (`services::interchange`); *Replace in assemblies* on `/items/{id}/where-used`
    (and `GET/POST /api/v1/items/{number}/replace`, MCP `replace_preview`) changes the parents whose latest revision
    is in work and not checked out by others, and lists the rest with the reason. Research:
-   [supersede-alternates](src/research/supersede-alternates.md). Open: local substitutes per BOM line, a warning
-   when a superseded item is added to a BOM in the desktop app.
+   [supersede-alternates](src/research/supersede-alternates.md). Open: local substitutes per BOM line. The REST answer for a BOM line says when its child is superseded; the desktop folder import reports such parts (the only place the desktop app adds lines).
 7. **BOM comparison** with Excel export (`rust_xlsxwriter`, MIT/Apache-2.0): direct lines, and over all levels with a
    revision rule (`depth=all`); the expanded BOM itself exports as Excel too.
 8. **Bulk import of a folder tree:** done in the desktop app (*Import CAD Folder…*).

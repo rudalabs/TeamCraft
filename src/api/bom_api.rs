@@ -220,7 +220,19 @@ pub(super) async fn add_bom_line(
         },
     )
     .await?;
-    Ok((StatusCode::CREATED, Json(json!(line))).into_response())
+    // A superseded child may be added on purpose; tell the client so it can
+    // warn (`superseded_by` = the successor's number, null when the successor
+    // is in a group the caller may not read).
+    let superseded =
+        crate::services::interchange::superseded_among(&st.db, &me, &[line.child_item_id])
+            .await?
+            .remove(&line.child_item_id);
+    let mut out = json!(line);
+    if let Some(successor) = superseded {
+        out["superseded"] = json!(true);
+        out["superseded_by"] = json!(successor);
+    }
+    Ok((StatusCode::CREATED, Json(out)).into_response())
 }
 
 #[derive(Deserialize)]

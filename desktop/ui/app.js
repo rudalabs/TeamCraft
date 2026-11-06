@@ -4384,7 +4384,7 @@
    * same `.prt` format (kind "model"), so an NX assembly is only recognised by
    * the references the server found in its file. */
   var REFERENCING_KINDS = ["assembly", "model"];
-  function bomFromReferences(created, progress, failed) {
+  function bomFromReferences(created, progress, failed, notes) {
     var lines = 0;
     var assemblies = created.filter(function (c) { return c.item.type !== "document"; });
     return assemblies.reduce(function (chain, c, i) {
@@ -4405,7 +4405,14 @@
             var added = children.reduce(function (ch, child) {
               return ch.then(function () {
                 return api("POST", base + "/bom", { child: child, quantity: 1, notes: "From the CAD references – check the quantity" })
-                  .then(function () { lines++; }, function () { /* e.g. it would be circular */ });
+                  .then(function (line) {
+                    lines++;
+                    // a superseded part may be used on purpose – but say so
+                    if (line && line.superseded) {
+                      notes.push(c.rev.item_number + " uses " + child + ", which is superseded" +
+                        (line.superseded_by ? " by " + line.superseded_by : "") + " – check whether the new part should be used");
+                    }
+                  }, function () { /* e.g. it would be circular */ });
               });
             }, Promise.resolve());
             // whatever happened while adding the lines: the lock is released again
@@ -4512,7 +4519,7 @@
       if (!plan) { d.fail("Scan the folder first."); return; }
       var path = scannedPath, group = project.value, log = importLog(group, path);
       var todo = plan.items.filter(function (it) { return !importDone(log, it.key); });
-      var created = [], failed = [], files = 0, checkedIn = 0;
+      var created = [], failed = [], notes = [], files = 0, checkedIn = 0;
       running = true; stop = false;
       todo.reduce(function (chain, it, i) {
         return chain.then(function () {
@@ -4559,7 +4566,7 @@
         });
       }, Promise.resolve()).then(function () {
         // the assemblies are checked out once more for their BOM lines – and always checked in again
-        return bom.checked ? bomFromReferences(created, progress, failed) : 0;
+        return bom.checked ? bomFromReferences(created, progress, failed, notes) : 0;
       }).catch(function (err) {
         failed.push(errorText(err));
         return 0;
@@ -4574,7 +4581,7 @@
         d.close();
         importFinishedDialog({
           stopped: stop, created: created, files: files, skipped: plan.items.length - todo.length,
-          bom: bom.checked, lines: lines, checkedIn: checkedIn, failed: failed,
+          bom: bom.checked, lines: lines, checkedIn: checkedIn, failed: failed, notes: notes,
           folder: scanned.folder_name, project: group
         });
       });
@@ -4619,6 +4626,8 @@
       ]),
       r.failed.length ? h("div.notice", null, [h("strong", { text: r.failed.length + (r.failed.length === 1 ? " problem:" : " problems:") }),
         h("ul.small", null, r.failed.map(function (f) { return h("li", { text: f }); }))]) : null,
+      (r.notes || []).length ? h("div.notice", null, [h("strong", { text: "Superseded parts in the new BOMs:" }),
+        h("ul.small", null, r.notes.map(function (n) { return h("li", { text: n }); }))]) : null,
       h("p.small.dim", { text: "Next: check the structure and the quantities, then release the product with one change order (Help → How to Import a CAD Folder)." })
     ]);
     var actions = [];

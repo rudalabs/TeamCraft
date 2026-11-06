@@ -20,6 +20,9 @@ Changes on `main` since the `v0.2.0` tag.
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.
+- Adding a superseded part to a BOM through the REST API says so in the answer
+  (`superseded`, `superseded_by`); the desktop folder import lists such parts
+  in its report.
 
 ### Changed
 

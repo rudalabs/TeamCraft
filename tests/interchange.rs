@@ -508,3 +508,47 @@ async fn replace_in_assemblies() {
     assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
     app.teardown().await;
 }
+
+/// Adding a superseded part to a BOM is allowed, but the REST answer says so
+/// (the desktop app reports it after a folder import); a normal part carries
+/// no such fields.
+#[tokio::test]
+async fn adding_a_superseded_part_is_flagged() {
+    let app = app_or_skip!();
+    let (_, erika) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    let old = new_item(&app, &erika, "part", "ROCKET").await;
+    let new = new_item(&app, &erika, "part", "ROCKET").await;
+    let plain = new_item(&app, &erika, "part", "ROCKET").await;
+    let asm = new_item(&app, &erika, "assembly", "ROCKET").await;
+    let r = app
+        .api(
+            Method::PUT,
+            &format!("/api/v1/items/{old}/supersession"),
+            &erika,
+            Some(json!({ "item": new })),
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.text());
+
+    let add = |child: String| {
+        let (app, erika, asm) = (&app, erika.clone(), asm.clone());
+        async move {
+            let r = app
+                .api(
+                    Method::POST,
+                    &format!("/api/v1/items/{asm}/revisions/A/bom"),
+                    &erika,
+                    Some(json!({ "child": child, "quantity": 1 })),
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+            r.json()
+        }
+    };
+    let flagged = add(old).await;
+    assert_eq!(flagged["superseded"], true);
+    assert_eq!(flagged["superseded_by"], new.as_str());
+    let fine = add(plain).await;
+    assert!(fine.get("superseded").is_none(), "{fine}");
+    app.teardown().await;
+}
