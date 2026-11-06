@@ -91,8 +91,10 @@ src/services/      business logic – the only code that writes to the database
 src/web/           HTML handlers (cookie sessions, flash messages, CSRF origin check, error pages,
                    explorer.rs = /vault, auth_pages.rs incl. first-start /setup, imports.rs = BOM import)
 src/api/           JSON REST API (bearer tokens only, never cookies)
-src/mcp/           MCP server at POST /api/v1/mcp (stateless JSON-RPC, bearer PAT); tools.rs = tools + prompts
-                   over services::* (read-mostly, writes only draft changes); `teamcraft mcp` = stdio bridge in main.rs
+src/mcp/           MCP server at POST /api/v1/mcp (stateless JSON-RPC, bearer PAT); tools.rs = tool table, results,
+                   dispatch; tools/*.rs = handlers per area, schemas, args, prompts – over services::* (read-mostly,
+                   writes only draft changes); tests/mcp_contract.rs snapshots the tool list, schemas and prompts
+                   (tests/fixtures/mcp/contract.json); `teamcraft mcp` = stdio bridge in main.rs
 src/auth.rs        Argon2 passwords, tokens, cookies, WebUser/ApiUser extractors
 src/oidc.rs        OIDC authorization code + PKCE (any provider), group → role mapping
 src/llm/           provider-neutral LLM layer (no TeamCraft types): Turn/ToolCall/Reply/Usage/LlmError, pure Provider trait

@@ -157,7 +157,8 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 ### 2. Structure
 
 - [ ] Split the largest modules by area, without behaviour changes, one PR each: `src/mcp/tools.rs` (~3000 lines →
-  one file per area like `services/`), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
+  one file per area like `services/`) – mcp done (`src/mcp/tools/*.rs`; tool table, results and dispatch stay in
+  `tools.rs`; `tests/mcp_contract.rs` snapshots tool list, schemas and prompts), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
   skins,validation}.rs`) – domain done (`src/domain/*.rs`, re-exported), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`) – api done (`src/api/*_api.rs`, route table stays in `mod.rs`),
   `src/services/requests.rs` (~1900), `desktop/ui/app.js` (~4700 → ES modules per view, no bundler)
 - [ ] Guard tests for the architecture rules, like `tests/no_unchecked_in_handlers.rs`: no `sqlx` in `src/web`,
