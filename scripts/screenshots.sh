@@ -311,6 +311,92 @@ result_cfd_vtu() {
 checkin() { api "${2:-admin}" POST "/items/${NUM[$1]}/revisions/latest/checkin" >/dev/null; }
 checkout() { api "${2:-admin}" POST "/items/${NUM[$1]}/revisions/latest/checkout" >/dev/null; }
 
+# report_pdf FILE – writes a one-page surface roughness inspection report as
+# a minimal PDF (Helvetica, one content stream, hand-counted xref). The
+# measurement is made up for the screenshot and says so on the page.
+report_pdf() {
+    local LC_ALL=C file=$1
+    local -a lines=(
+        'Part: Enclosure box, aluminium 6061-T6      Lot 0412'
+        'Feature: sealing face (gasket land) of the box'
+        'Method: stylus profilometer, cut-off 0.8 mm, five traces'
+        ''
+        'Drawing requirement:   Ra <= 1.6 \265m'
+        'Measured:              Ra 3.1 / 3.3 / 3.2 / 3.4 / 3.0 \265m   (mean 3.2 \265m)'
+        ''
+        'Result: FAILED - the surface is too rough, twice the allowed roughness.'
+        'Remark: tool marks run across the gasket land. The IP67 leak test'
+        '(0.3 bar, 10 min) of the same lot failed.'
+        ''
+        'Demo data: a fictitious measurement for the TeamCraft screenshots.'
+    )
+    local stream='BT /F2 16 Tf 56 780 Td (Surface roughness inspection report) Tj ET BT /F1 11 Tf 56 746 Td 18 TL' line
+    for line in "${lines[@]}"; do
+        stream+=" ($line) Tj T*"
+    done
+    stream+=' ET'
+    local -a obj=(
+        '<</Type/Catalog/Pages 2 0 R>>'
+        '<</Type/Pages/Kids[3 0 R]/Count 1>>'
+        '<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]/Resources<</Font<</F1 4 0 R/F2 5 0 R>>>>/Contents 6 0 R>>'
+        '<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>>'
+        '<</Type/Font/Subtype/Type1/BaseFont/Helvetica-Bold/Encoding/WinAnsiEncoding>>'
+        "<</Length ${#stream}>>
+stream
+$stream
+endstream"
+    )
+    local out=$'%PDF-1.4\n' i
+    local -a off=()
+    for i in "${!obj[@]}"; do
+        off+=("${#out}")
+        out+="$((i + 1)) 0 obj"$'\n'"${obj[$i]}"$'\n'"endobj"$'\n'
+    done
+    local xref=${#out}
+    out+="xref"$'\n'"0 $((${#obj[@]} + 1))"$'\n'"0000000000 65535 f "$'\n'
+    for i in "${off[@]}"; do
+        out+="$(printf '%010d 00000 n ' "$i")"$'\n'
+    done
+    out+="trailer"$'\n'"<</Size $((${#obj[@]} + 1))/Root 1 0 R>>"$'\n'"startxref"$'\n'"$xref"$'\n'"%%EOF"$'\n'
+    printf '%s' "$out" >"$file"
+}
+
+# seed_change_request – an engineering change request with a report: the
+# inspection report says the roughness of the box's sealing face is too high.
+# Raised by jlopez with the PDF attached, in triage with mchen. Seeded after
+# the README's web pages, so those images keep their content.
+seed_change_request() {
+    log "raising a change request: sealing face of the box too rough"
+    local report=$WORK/roughness-report-lot-0412.pdf out
+    report_pdf "$report"
+    out=$(japi jlopez POST /change-requests "$(jq -nc --arg i "${NUM[box]}" '{
+        title: "Sealing face of the enclosure box is too rough",
+        reason: "defect",
+        priority: "high",
+        description: "Problem: the inspection report of lot 0412 measures a roughness of Ra 3.2 µm on the sealing face of the enclosure box. The drawing allows Ra 1.6 µm at most, and the IP67 leak test of the same lot failed.\n\nProposal: finish the gasket land with a fine pass (feed 0.05 mm/rev, new insert), add the Ra value to the incoming inspection, and check the cover for the same tool marks. The thicker cover (ECO) depends on a tight seal.",
+        items: [{item: $i, note: "Sealing face, lot 0412"}]}')")
+    ECR_ID=$(jq -r '.change_request.id' <<<"$out")
+    ECR_NUM=$(jq -r '.change_request.number' <<<"$out")
+    api jlopez POST "/change-requests/$ECR_NUM/attachments" \
+        -F "file=@\"$report\";filename=\"roughness-report-lot-0412.pdf\"" >/dev/null
+    api mchen POST "/change-requests/$ECR_NUM/triage" >/dev/null
+    japi mchen POST "/change-requests/$ECR_NUM/assign" '{"username":"mchen"}' >/dev/null
+    japi mchen POST "/change-requests/$ECR_NUM/comments" \
+        '{"body":"Confirmed on the second sample: tool marks across the gasket land. I will ask the supplier for a re-finish and check whether the cover has the same problem."}' >/dev/null
+    japi jlopez POST "/change-requests/$ECR_NUM/comments" \
+        '{"body":"The leak test of lot 0412 is attached to the report in the quality system. Please decide before the cover change is released."}' >/dev/null
+    log "  $ECR_NUM raised"
+}
+
+capture_change_request() {
+    seed_change_request
+    viewport 1440 900 "$SCALE" false
+    shot change-request "/requests/$ECR_ID"
+    scheme dark
+    shot change-request-dark "/requests/$ECR_ID"
+    scheme light
+}
+
 seed() {
     local code
     log "creating the administrator through the first-start page"
@@ -431,6 +517,7 @@ seed() {
     out=$(japi mchen POST /changes \
         '{"title":"Thicker enclosure cover for the IP67 seal","description":"The cover flexes under the gasket load. Wall thickness 3 mm to 4 mm, screw pattern unchanged.","priority":"high"}')
     eco2=$(jq -r '.number' <<<"$out")
+    ECO_REVIEW=$eco2
     CHANGE_ID=$(jq -r '.id' <<<"$out")
     for key in cover enclosure; do
         japi mchen POST "/changes/$eco2/items" "$(jq -nc --arg i "${NUM[$key]}" '{item: $i}')" >/dev/null
@@ -785,7 +872,13 @@ capture_desktop() {
 desktop_run() {
     local suffix=$1 skin=$2 settings=$WORK/xdg-config/io.github.rudalabs.teamcraft/settings.json
     log "capturing TeamCraft Desktop, skin $skin (1440x900, Xvfb)"
-    jq -n --arg url "$BASE_URL" --arg skin "$skin" '{server_url: $url, skin: $skin}' >"$settings"
+    # The scripted demo agent (scripts/demo-agent.sh, no AI) for the Agent view.
+    local agent_script
+    agent_script=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/demo-agent.sh
+    [[ -f $agent_script ]] || die "scripts/demo-agent.sh is missing"
+    jq -n --arg url "$BASE_URL" --arg skin "$skin" --arg agent "$agent_script" \
+        '{server_url: $url, skin: $skin, agent: "Demo agent",
+          agents: [{name: "Demo agent", command: "bash", args: [$agent]}]}' >"$settings"
     # The app asks GTK for the dark variant of the window chrome (the menu
     # bar) with a dark skin; the bare Xvfb session does not follow that
     # preference, so the dark run names the dark GTK theme itself.
@@ -823,9 +916,29 @@ desktop_run() {
     desktop_click 210 203 # "Waiting for my review": the enclosure change
     settle 2 "the change order tab"
     desktop_snap "desktop-change$suffix"
+    desktop_agent "$suffix"
     kill "$APP_PID" 2>/dev/null || true
     wait "$APP_PID" 2>/dev/null || true
     APP_PID=
+}
+
+# desktop_agent SUFFIX – the Agent view (Ctrl+4) with the scripted demo agent
+# (scripts/demo-agent.sh): start it in the navigator, ask one question and
+# wait for the streamed answer. desktop-agent-nav*.png (the navigator before
+# the start) is a calibration image for the click position, not in the README.
+desktop_agent() {
+    local suffix=$1
+    # The facts the demo agent talks about: the review ECO and the roughness ECR.
+    export DEMO_ECO=${ECO_REVIEW:-} DEMO_ECR=${ECR_NUM:-}
+    desktop_key ctrl+4
+    settle 2 "the agent view"
+    desktop_snap "desktop-agent-nav$suffix"
+    desktop_click 100 215 # "Start" in the navigator
+    settle 4 "the agent to start"
+    xdotool type --delay 25 "What needs my attention?" || die "xdotool could not type"
+    desktop_key Return
+    settle 6 "the agent's answer"
+    desktop_snap "desktop-agent$suffix"
 }
 
 # desktop_click X Y – left click at screen position X,Y, then the pointer
@@ -945,6 +1058,7 @@ main() {
     wait_for_server
     seed
     capture
+    capture_change_request
     if [[ -n $DESKTOP_APP ]]; then
         capture_desktop
     fi
