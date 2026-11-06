@@ -26,6 +26,22 @@ pub struct SaveAs {
     pub with_bom: bool,
 }
 
+/// Creates the new item from `source_revision_id` (see the module
+/// documentation).
+///
+/// # Invariants
+///
+/// * **Permission:** the source revision is visible to the actor; creating
+///   the item needs the CAD editor role and membership of the target group;
+///   copying out of a restricted group into another one needs a manager of
+///   the source group (`items::ensure_may_take_out`).
+/// * **Locks:** the target group (`FOR SHARE`, a visibility switch waits)
+///   and the number counter that creating the item steps.
+/// * **Audit:** `item.create` and `item.save_as`.
+/// * **Notifications:** none; the author becomes a watcher of the new item.
+/// * **Webhooks:** none.
+/// * **Atomic:** item, revision, files and BOM lines in one transaction – a
+///   failure leaves no item and no counter step (`tests/atomic_processes.rs`).
 pub async fn save_as(
     pool: &PgPool,
     actor: &Actor,

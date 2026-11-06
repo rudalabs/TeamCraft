@@ -478,6 +478,7 @@ mod tests {
             cost_complete: false,
             cycle: false,
             restricted: false,
+            project_id: None,
             children,
         }
     }

@@ -50,6 +50,29 @@ impl Classification {
         }
     }
 
+    /// The classification a BOM export states in its *BOM structure* or
+    /// procurement column (Inventor: Normal, Purchased, Phantom, Inseparable;
+    /// German exports: Kaufteil, Normteil, Eigenfertigung …). `None` for an
+    /// empty or unknown value.
+    pub fn from_bom_structure(raw: &str) -> Option<Classification> {
+        let s: String = raw
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        match s.as_str() {
+            "normal" | "make" | "inhouse" | "eigenfertigung" | "eigenteil" | "fertigungsteil"
+            | "fertigung" | "phantom" | "inseparable" | "untrennbar" => Some(Classification::Make),
+            "purchased" | "purchase" | "buy" | "bought" | "kaufteil" | "zukaufteil" | "zukauf"
+            | "gekauft" | "einkauf" | "einkaufsteil" => Some(Classification::Purchased),
+            "standard" | "standardpart" | "normteil" | "norm" | "normalien" | "library"
+            | "librarypart" | "contentcenter" | "toolbox" | "katalogteil" => {
+                Some(Classification::Standard)
+            }
+            _ => None,
+        }
+    }
+
     /// Parses an optional form or API value; empty means "unchanged/default".
     pub fn parse_field(raw: Option<&str>) -> Result<Option<Classification>, AppError> {
         match raw.map(str::trim).filter(|s| !s.is_empty()) {

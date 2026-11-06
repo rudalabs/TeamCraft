@@ -555,6 +555,70 @@
     select.addEventListener("blur", apply);
   });
 
+  // BOM tree: every line with lines below it gets a toggle button that folds
+  // its branch. Without JavaScript all rows stay visible. Rows carry
+  // data-level; the lines below a row are the following rows with a higher
+  // level.
+  document.querySelectorAll("table[data-bom-tree]").forEach(function (table) {
+    var rows = Array.prototype.slice.call(table.tBodies[0].rows);
+    var levelOf = function (row) { return parseInt(row.getAttribute("data-level"), 10) || 1; };
+    var folded = new Set();
+    var buttons = new Map();
+
+    // Hides every row below a folded row (also below an open row inside it).
+    function apply() {
+      var hideBelow = null;
+      rows.forEach(function (row) {
+        var level = levelOf(row);
+        if (hideBelow !== null && level > hideBelow) { row.hidden = true; return; }
+        hideBelow = null;
+        row.hidden = false;
+        if (folded.has(row)) hideBelow = level;
+      });
+      buttons.forEach(function (button, row) {
+        var open = !folded.has(row);
+        button.setAttribute("aria-expanded", String(open));
+        button.firstChild.textContent = open ? "▾" : "▸";
+      });
+    }
+
+    rows.forEach(function (row, i) {
+      var next = rows[i + 1];
+      var cell = row.querySelector("td.bom-item");
+      if (!next || !cell || levelOf(next) <= levelOf(row)) return;
+      var button = document.createElement("button");
+      var glyph = document.createElement("span");
+      glyph.setAttribute("aria-hidden", "true");
+      button.appendChild(glyph);
+      button.type = "button";
+      button.className = "tree-toggle";
+      var name = row.getAttribute("data-tc-row") || "line";
+      button.setAttribute("aria-label", "Fold or unfold the lines below " + name);
+      button.addEventListener("click", function () {
+        if (folded.has(row)) folded["delete"](row); else folded.add(row);
+        apply();
+      });
+      cell.insertBefore(button, cell.firstChild);
+      buttons.set(row, button);
+    });
+    if (!buttons.size) return;
+    apply();
+
+    var tools = document.querySelector("[data-bom-tools]");
+    if (tools) {
+      tools.hidden = false;
+      tools.querySelector("[data-bom-collapse-all]").addEventListener("click", function () {
+        // every branch folds; unfolding one keeps its folded sub-branches folded
+        buttons.forEach(function (button, row) { folded.add(row); });
+        apply();
+      });
+      tools.querySelector("[data-bom-expand-all]").addEventListener("click", function () {
+        folded.clear();
+        apply();
+      });
+    }
+  });
+
   // Flash messages can be dismissed.
   document.querySelectorAll("main > .flash").forEach(function (flash) {
     var close = document.createElement("button");
