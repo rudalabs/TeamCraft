@@ -91,9 +91,12 @@ feature milestone – the features in *What works* are enough; what is missing i
   - [ ] F9: disk quota per user and in total for uploads
   - [ ] F10: serve downloads with a Content-Type derived from the format, and pin the download headers
     (attachment, nosniff, CSP) in a test
-  - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
-  - [ ] F12: start the parser children with a cleared environment (no database URL, no keys)
-  - [ ] F13: a cap on the unpacked size of XLSX/ODS tables, or read them in the isolated child
+  - [ ] F11: a smaller cap for 3MF entries (the memory limit of the preview and text children on Windows is done:
+    a Job Object, `preview::limit_memory`)
+  - [x] F12: the parser children start with a cleared environment (`preview::child_command`: PATH, temporary and
+    system folders, locale only)
+  - [x] F13: XLSX/ODS packages are inflated and counted before calamine opens them, at most 256 MiB unpacked and
+    10 000 parts (`bomtable::check_package_size`)
   - [ ] F14: fuzz targets for `simmesh`, `pdftext` and `resultscan` (the no-panic lints and the 3DS and Kelvin
     fixes are in `main` since #106/#108)
   - [ ] F15: prompt injection: confirmation of assistant drafts per write, or taint for MCP sessions as well
@@ -101,7 +104,8 @@ feature milestone – the features in *What works* are enough; what is missing i
   - [ ] F17: `teamcraft mcp`: no redirects, a warning (or refusal) for `http://` servers other than `localhost`
   - [ ] F18: desktop token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service); warn on
     `http://` server URLs
-  - [ ] F19: backups written with mode 0600/0700, optional encryption, a signed manifest
+  - [ ] F19: optional encryption of backups, a signed manifest (modes 0700/0600 on Unix are done; Windows: the
+    folder's ACL, see Operations)
 - [ ] External review or pentest of authentication, read permissions and file parsing; fuzzing of all parsers
   running continuously (section 1)
 - [ ] `cargo deny`/`cargo audit` green in CI, SBOM (CycloneDX) attached to each release, release artifacts with
