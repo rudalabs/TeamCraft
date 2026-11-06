@@ -142,10 +142,10 @@ async fn backup_and_restore_with_the_postgresql_client_tools() {
     // backup
     let dir = std::env::temp_dir().join(format!("teamcraft-backup-e2e-{}", uuid::Uuid::new_v4()));
     let source = app.client_config(&app.db_name, &app.vault_dir);
-    let summary = backup::backup(&source, &dir).expect("backup");
+    let summary = backup::backup(&source, &dir).await.expect("backup");
     assert_eq!(summary.vault_objects, 1);
     assert!(summary.db_dump_bytes > 0);
-    let err = backup::backup(&source, &dir).unwrap_err().to_string();
+    let err = backup::backup(&source, &dir).await.unwrap_err().to_string();
     assert!(err.contains("not empty"), "{err}");
 
     // restore into a fresh database and vault
