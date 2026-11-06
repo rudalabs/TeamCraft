@@ -347,6 +347,37 @@ pub fn worker_exe() -> Option<PathBuf> {
     })
 }
 
+/// Environment variables a parser child keeps; everything else – the
+/// database URL, `TEAMCRAFT_*` keys and passwords, cloud credentials – is
+/// not passed on, so a parser exploited through a hostile file finds no
+/// secrets in its environment (threat model F12). `PATH` and the temporary
+/// and system folders are what the runtime needs to start.
+const CHILD_ENV: [&str; 9] = [
+    "PATH",
+    "SYSTEMROOT",
+    "SystemRoot",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+];
+
+/// A command for an isolated parser job (`preview-mesh`, `text-extract`):
+/// cleared environment except [`CHILD_ENV`], quiet logging.
+pub(crate) fn child_command(exe: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(exe);
+    command.env_clear();
+    for name in CHILD_ENV {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    command.env("RUST_LOG", "error");
+    command
+}
+
 /// Cached, isolated conversions (one per server, part of `AppState`).
 pub struct Previews {
     dir: PathBuf,
@@ -683,7 +714,7 @@ struct Job {
 
 /// `teamcraft preview-mesh` in a child process that is killed at the time limit.
 async fn run_worker(exe: &Path, job: &Job) -> Result<(), String> {
-    let mut command = tokio::process::Command::new(exe);
+    let mut command = child_command(exe);
     command
         .arg("preview-mesh")
         .arg("--format")
@@ -701,7 +732,6 @@ async fn run_worker(exe: &Path, job: &Job) -> Result<(), String> {
         command.arg("--signature").arg(signature);
     }
     let child = command
-        .env("RUST_LOG", "error")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -759,6 +789,38 @@ async fn run_in_process(job: &Job) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A parser child does not see the server's secrets (threat model F12).
+    #[tokio::test]
+    async fn parser_children_get_no_secrets() {
+        // what the server process has in its environment
+        std::env::set_var("TEAMCRAFT_DB_PASSWORD_F12_TEST", "secret-f12");
+        std::env::set_var("AWS_SECRET_ACCESS_KEY_F12_TEST", "secret-f12");
+        let (program, args): (&str, &[&str]) = if cfg!(windows) {
+            ("cmd", &["/C", "set"])
+        } else {
+            ("env", &[])
+        };
+        let out = child_command(Path::new(program))
+            .args(args)
+            .output()
+            .await
+            .expect("start the environment listing");
+        assert!(out.status.success());
+        let env = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(!env.contains("secret-f12"), "secrets leaked: {env}");
+        assert!(
+            !env.lines()
+                .any(|l| l.to_ascii_uppercase().starts_with("TEAMCRAFT_")),
+            "{env}"
+        );
+        assert!(env.contains("RUST_LOG=error"), "{env}");
+        assert!(
+            env.lines()
+                .any(|l| l.to_ascii_uppercase().starts_with("PATH=")),
+            "the child still finds its runtime: {env}"
+        );
+    }
 
     #[test]
     fn partial_previews_get_no_shape_signature() {
