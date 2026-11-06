@@ -584,3 +584,285 @@ pub struct AuditEntry {
     #[serde(skip)]
     pub mentions_hidden: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::Actor;
+    use crate::domain::{ProjectVisibility, Role};
+    use crate::services::access::RESTRICTED_LABEL;
+
+    /// Marker that every identifying field of a fixture contains; after
+    /// masking it must not appear anywhere in the serialized row.
+    const SECRET: &str = "TOPSECRET";
+
+    fn id() -> Uuid {
+        Uuid::from_u128(0x1234_5678)
+    }
+
+    fn actor(hidden: Vec<Uuid>) -> Actor {
+        Actor {
+            id: Uuid::from_u128(1),
+            username: "reader".into(),
+            display_name: "Reader".into(),
+            role: Role::Viewer,
+            skin: String::new(),
+            projects: Vec::new(),
+            hidden_projects: hidden,
+        }
+    }
+
+    fn secret(name: &str) -> String {
+        format!("{SECRET}-{name}")
+    }
+
+    fn bom_line() -> BomLine {
+        BomLine {
+            id: Uuid::from_u128(77),
+            parent_revision_id: Uuid::from_u128(78),
+            child_item_id: id(),
+            child_number: secret("number"),
+            child_type: secret("type"),
+            child_unit: secret("unit"),
+            find_number: 30,
+            quantity: 4.5,
+            notes: secret("notes"),
+            child_latest_revision_id: id(),
+            child_latest_code: secret("code"),
+            child_latest_state: secret("state"),
+            child_name: secret("name"),
+            released_child_revision_id: Some(id()),
+            released_child_code: Some(secret("released")),
+            child_project_id: Some(id()),
+            restricted: false,
+        }
+    }
+
+    fn reference() -> ItemReference {
+        ItemReference {
+            id: Uuid::from_u128(79),
+            from_revision_id: Uuid::from_u128(80),
+            to_item_id: id(),
+            to_number: secret("number"),
+            to_type: secret("type"),
+            kind: "drawing".into(),
+            note: secret("note"),
+            to_latest_revision_id: id(),
+            to_latest_code: secret("code"),
+            to_latest_state: secret("state"),
+            to_name: secret("name"),
+            released_to_revision_id: Some(id()),
+            released_to_code: Some(secret("released")),
+            created_at: Utc::now(),
+            to_project_id: Some(id()),
+            restricted: false,
+        }
+    }
+
+    fn impact(project: Option<Uuid>) -> Impact {
+        Impact {
+            id: Uuid::from_u128(81),
+            item_id: Uuid::from_u128(82),
+            item_number: "DEP-000001".into(),
+            project_id: None,
+            project_code: None,
+            revision_id: Uuid::from_u128(83),
+            revision_code: "A".into(),
+            revision_state: "draft".into(),
+            item_name: "Dependent".into(),
+            source_item_id: id(),
+            source_number: secret("number"),
+            source_revision_id: id(),
+            source_code: secret("code"),
+            source_name: secret("name"),
+            event: "released".into(),
+            relation: "bom".into(),
+            detail: secret("detail"),
+            change_id: Some(id()),
+            change_number: Some(secret("change")),
+            created_at: Utc::now(),
+            resolved_at: None,
+            resolution: None,
+            resolved_by_name: None,
+            note: String::new(),
+            source_project_id: project,
+            source_restricted: false,
+        }
+    }
+
+    fn change_item() -> ChangeItem {
+        ChangeItem {
+            revision_id: id(),
+            item_id: id(),
+            item_number: secret("number"),
+            code: secret("code"),
+            name: secret("name"),
+            state: secret("state"),
+            checked_out_by_name: Some(secret("user")),
+            project_id: Some(id()),
+            restricted: false,
+        }
+    }
+
+    fn request_item() -> RequestItem {
+        RequestItem {
+            item_id: id(),
+            item_number: secret("number"),
+            item_type: secret("type"),
+            project_id: Some(id()),
+            project_code: Some(secret("project")),
+            revision_id: Some(id()),
+            revision_code: Some(secret("code")),
+            revision_state: Some(secret("state")),
+            name: secret("name"),
+            latest_revision_id: id(),
+            latest_code: secret("latest"),
+            latest_state: secret("state"),
+            note: secret("note"),
+            restricted: false,
+        }
+    }
+
+    fn json<T: Serialize>(value: &T) -> String {
+        serde_json::to_string(value).unwrap()
+    }
+
+    #[test]
+    fn masked_bom_line_leaks_nothing_but_position_and_quantity() {
+        let mut line = bom_line();
+        assert!(
+            json(&line).contains(SECRET),
+            "the fixture must carry the marker"
+        );
+        line.mask();
+        let out = json(&line);
+        assert!(!out.contains(SECRET), "leaked: {out}");
+        assert!(!out.contains(&id().to_string()), "leaked an id: {out}");
+        assert!(line.restricted);
+        assert_eq!(line.child_number, RESTRICTED_LABEL);
+        assert_eq!(line.child_item_id, Uuid::nil());
+        assert_eq!(line.find_number, 30);
+        assert_eq!(line.quantity, 4.5);
+        assert!(line.child_project_id.is_none());
+    }
+
+    #[test]
+    fn masked_reference_keeps_only_its_kind() {
+        let mut r = reference();
+        r.mask();
+        let out = json(&r);
+        assert!(!out.contains(SECRET), "leaked: {out}");
+        assert!(!out.contains(&id().to_string()), "leaked an id: {out}");
+        assert!(r.restricted);
+        assert_eq!(r.kind, "drawing");
+        assert_eq!(r.to_number, RESTRICTED_LABEL);
+        assert_eq!(r.to_item_id, Uuid::nil());
+    }
+
+    #[test]
+    fn masked_change_item_leaks_nothing() {
+        let mut c = change_item();
+        c.mask();
+        let out = json(&c);
+        assert!(!out.contains(SECRET), "leaked: {out}");
+        assert!(!out.contains(&id().to_string()), "leaked an id: {out}");
+        assert!(c.restricted);
+        assert_eq!(c.item_number, RESTRICTED_LABEL);
+        assert!(c.checked_out_by_name.is_none());
+    }
+
+    #[test]
+    fn masked_request_item_leaks_nothing_including_the_note() {
+        let mut r = request_item();
+        r.mask();
+        let out = json(&r);
+        assert!(!out.contains(SECRET), "leaked: {out}");
+        assert!(!out.contains(&id().to_string()), "leaked an id: {out}");
+        assert!(r.restricted);
+        assert_eq!(r.item_number, RESTRICTED_LABEL);
+        assert!(r.project_code.is_none() && r.revision_id.is_none());
+    }
+
+    #[test]
+    fn masking_twice_changes_nothing() {
+        let mut once = bom_line();
+        once.mask();
+        let mut twice = once.clone();
+        twice.mask();
+        assert_eq!(json(&once), json(&twice));
+    }
+
+    #[test]
+    fn project_ids_never_serialize() {
+        // the group id is only there for the read check
+        let line = bom_line();
+        let value: serde_json::Value = serde_json::from_str(&json(&line)).unwrap();
+        assert!(value.get("child_project_id").is_none());
+        let r = reference();
+        let value: serde_json::Value = serde_json::from_str(&json(&r)).unwrap();
+        assert!(value.get("to_project_id").is_none());
+        let i = impact(Some(id()));
+        let value: serde_json::Value = serde_json::from_str(&json(&i)).unwrap();
+        assert!(value.get("source_project_id").is_none());
+    }
+
+    #[test]
+    fn impact_of_a_hidden_source_is_redacted() {
+        let hidden = id();
+        let redacted = impact(Some(hidden)).redact(&actor(vec![hidden]));
+        let out = json(&redacted);
+        assert!(!out.contains(SECRET), "leaked: {out}");
+        assert!(redacted.source_restricted);
+        assert_eq!(redacted.source_number, RESTRICTED_LABEL);
+        assert!(redacted.change_id.is_none() && redacted.change_number.is_none());
+        // what the reader may know stays
+        assert_eq!(redacted.item_number, "DEP-000001");
+        assert_eq!(redacted.event, "released");
+        assert_eq!(redacted.relation, "bom");
+    }
+
+    #[test]
+    fn impact_of_a_visible_source_is_unchanged() {
+        let other = Uuid::from_u128(999);
+        for project in [None, Some(id())] {
+            let before = impact(project);
+            let after = before.clone().redact(&actor(vec![other]));
+            assert_eq!(json(&before), json(&after));
+            assert!(!after.source_restricted);
+        }
+    }
+
+    #[test]
+    fn hide_change_only_removes_the_change() {
+        let mut i = impact(None);
+        i.hide_change();
+        assert!(i.change_id.is_none() && i.change_number.is_none());
+        assert!(
+            json(&i).contains(&secret("number")),
+            "the source stays visible"
+        );
+        assert!(!i.source_restricted);
+    }
+
+    #[test]
+    fn project_restriction_follows_the_visibility_string() {
+        let mut p = Project {
+            id: id(),
+            code: "P".into(),
+            name: "P".into(),
+            description: String::new(),
+            active: true,
+            created_at: Utc::now(),
+            oidc_group: None,
+            member_count: 0,
+            created_by: None,
+            number_scheme: None,
+            visibility: ProjectVisibility::Internal.as_str().into(),
+        };
+        assert!(!p.is_restricted());
+        p.visibility = ProjectVisibility::Restricted.as_str().into();
+        assert!(p.is_restricted());
+        p.visibility = "Restricted".into();
+        assert!(!p.is_restricted(), "the comparison is exact");
+    }
+}
