@@ -6,7 +6,9 @@
 //! * Plain text formats (txt, md, csv, json, xml, yaml, ASCII STL, KiCad,
 //!   Teamcenter PLM XML, OpenSCAD, motor thrust curves, …):
 //!   the text itself.
-//! * Everything else (PDF, binary CAD, images): nothing (not indexed yet).
+//! * PDF: the text layer, read in an isolated process (see `pdftext`); scanned
+//!   PDFs have none.
+//! * Everything else (binary CAD, images): nothing (not indexed yet).
 //!
 //! At most `MAX_READ` bytes are read and `MAX_TEXT` characters are kept.
 
@@ -23,6 +25,8 @@ const MAX_TEXT: usize = 200_000;
 enum Kind {
     QuotedStrings,
     PlainText,
+    /// PDF: read in an isolated process (`pdftext`), only by [`extract_file`].
+    Pdf,
     None,
 }
 
@@ -32,6 +36,7 @@ fn kind_of(filename: &str) -> Kind {
         .map(|(_, e)| e.to_ascii_lowercase())
         .unwrap_or_default();
     match ext.as_str() {
+        "pdf" => Kind::Pdf,
         "step" | "stp" | "p21" | "iges" | "igs" => Kind::QuotedStrings,
         "txt" | "md" | "csv" | "tsv" | "json" | "xml" | "yaml" | "yml" | "toml" | "ini" | "cfg"
         | "log" | "stl" | "obj" | "kicad_sch" | "kicad_pcb" | "kicad_pro" | "kicad_sym"
@@ -49,7 +54,7 @@ pub fn indexes(filename: &str) -> bool {
 /// Extracts searchable text from raw file content.
 pub fn extract(filename: &str, content: &[u8]) -> String {
     let text = match kind_of(filename) {
-        Kind::None => return String::new(),
+        Kind::None | Kind::Pdf => return String::new(),
         // A text extension with binary content (binary STL): nothing to index.
         Kind::PlainText if content.contains(&0) => return String::new(),
         // Drop decimal numbers (e.g. the facet coordinates of ASCII STL files);
@@ -86,6 +91,9 @@ pub async fn extract_file(path: &Path, filename: &str) -> String {
     let Ok(file) = tokio::fs::File::open(path).await else {
         return String::new();
     };
+    if kind_of(filename) == Kind::Pdf {
+        return crate::pdftext::extract_file(file).await;
+    }
     let mut content = Vec::new();
     if file.take(MAX_READ).read_to_end(&mut content).await.is_err() {
         return String::new();
@@ -202,10 +210,11 @@ mod tests {
             "motor.eng",
             "part.scad",
             "data.plmxml",
+            "report.pdf",
         ] {
             assert!(indexes(name), "{name}");
         }
-        for name in ["a.pdf", "a.sldprt", "a.png", "README", "a.step.gz"] {
+        for name in ["a.sldprt", "a.png", "README", "a.step.gz"] {
             assert!(!indexes(name), "{name}");
         }
     }

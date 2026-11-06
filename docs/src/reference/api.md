@@ -141,6 +141,20 @@ storing fails after the content was verified (for example a 409 because the
 file moved on), the session keeps the verified content, so `finish` can be
 repeated without sending the bytes again.
 
+### Resumable downloads
+
+`GET /files/{id}/content` and `GET /file-versions/{id}/content` (and the
+web UI's downloads) answer every request with `Accept-Ranges: bytes` and the
+strong ETag `"<sha256>"` of the content. A client that lost a large file
+half-way asks for the rest with `Range: bytes=<offset>-` and
+`If-Range: "<sha256>"`: `206 Partial Content` with `Content-Range`, the
+whole file (`200`) when the content changed meanwhile, `416` with
+`Content-Range: bytes */<size>` when the offset is at or past the end. One
+range per request (a list of ranges gets the whole file) and suffix ranges
+(`bytes=-500`) are supported; a date in `If-Range` never matches. The
+desktop Get resumes a file this way and checks the SHA-256 of the whole file
+before it renames it into the working folder.
+
 ### Working folder: folders and the working set
 
 Every file has a `folder` inside its project group (`""` = the top), the
@@ -377,6 +391,8 @@ checked out by the caller.
 | `GET /items/{number}/simulations`                             | simulations whose latest revision is based on the item, with `out_of_date` and `open_impact_id`                               |
 | `GET/POST /projects/{code}/result-templates` | extraction templates of a group (read: whoever sees the group; write: its managers and admins): `{name, file_pattern, method: regex\|csv, pattern \| csv_column [csv_key_column, csv_key_value], pick?: first\|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?}` |
 | `PUT/DELETE /result-templates/{id}`                          | replace (same fields) or remove a template                                                                                     |
+| `GET …/revisions/{code}/simulation/proposals?status=` | values the assistant proposed from reports (`pending` default, `accepted`, `rejected`, `all`): `{proposals: [{name, value, unit, limits, load_case, source_file, source_version, quote, status, proposed_by_name}]}` |
+| `POST /simulation-proposals/{id}/accept`, `…/reject`  | CAD editors of the group; accepting makes it a result value (same name and load case = update) and needs the revision checked out |
 
 A solver script after a run:
 

@@ -71,10 +71,12 @@ pub enum Action {
     Impact,
     /// Whether the simulations based on an item are still valid.
     SimulationStatus,
+    /// Propose result values of a simulation from its report (`propose_result_values`).
+    ResultValues,
 }
 
 impl Action {
-    pub const ALL: [Action; 7] = [
+    pub const ALL: [Action; 8] = [
         Action::Ask,
         Action::ReleaseNotes,
         Action::ReleaseCheck,
@@ -82,6 +84,7 @@ impl Action {
         Action::Attention,
         Action::Impact,
         Action::SimulationStatus,
+        Action::ResultValues,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -93,6 +96,7 @@ impl Action {
             Action::Attention => "attention",
             Action::Impact => "impact",
             Action::SimulationStatus => "simulation_status",
+            Action::ResultValues => "result_values",
         }
     }
 
@@ -111,6 +115,7 @@ impl Action {
             Action::Attention => "What needs my attention",
             Action::Impact => "What breaks if I change this?",
             Action::SimulationStatus => "Are the simulations still valid?",
+            Action::ResultValues => "Fill result values from the report",
         }
     }
 
@@ -120,7 +125,8 @@ impl Action {
             Action::ReleaseNotes
             | Action::ReleaseCheck
             | Action::Impact
-            | Action::SimulationStatus => "revision",
+            | Action::SimulationStatus
+            | Action::ResultValues => "revision",
             Action::ReviewBrief => "change",
             Action::Ask | Action::Attention => "",
         }
@@ -276,6 +282,20 @@ impl Question {
                 "simulation_status",
                 json!({ "item": item, "revision": revision }),
             ),
+            Action::ResultValues => format!(
+                "Fill in the result values of simulation {item} revision {revision} from its report.\n\
+                 1. Call get_revision with item={item} and revision={revision} and pick the report files (PDF or \
+                 text); say plainly if there are none.\n\
+                 2. Read each report with read_file_text (follow next_offset, at most 5 pages per file).\n\
+                 3. Call propose_result_values once with every key number the report states (maximum stress, \
+                 displacement, pressure drop, safety factor, frequencies, …): name, value, unit as written, the \
+                 limits only if the report states them, the load case, the solver, and for every value the file \
+                 name and a quote copied exactly from the text. Never estimate, convert or invent numbers.\n\
+                 4. Tell me what you proposed and what you left out and why. The proposals are drafts: I accept \
+                 them on the Results card of the simulation (the revision must be checked out). If drafts are \
+                 not allowed in this conversation, list the values you would propose instead and say that I have \
+                 to allow drafts and ask again."
+            ),
             Action::Impact => format!(
                 "What would changing {item} touch? Call impact_summary with item={item} and levels=3 first; \
                  use where_used, get_item or list_simulations only to explain something the summary shows. \
@@ -318,7 +338,8 @@ pub fn system_prompt(me: &Actor, allow_drafts: bool) -> String {
     let drafts = if allow_drafts {
         "Drafts are allowed in this conversation: you may create or extend DRAFT change orders with \
          create_change_draft and add_to_change, raise a change request with create_change_request and \
-         comment on one with comment_change_request, but only when the request asks for it. Never claim \
+         comment on one with comment_change_request, propose result values of a simulation from its report with \
+         propose_result_values (drafts that the user accepts in TeamCraft), but only when the request asks for it. Never claim \
          that something was submitted, approved, released, triaged or decided."
     } else {
         "This conversation is read-only: you cannot create or change anything. If a change order, a change \
@@ -489,10 +510,11 @@ pub trait Tools: Sync {
 }
 
 /// Write tools that put free text into objects other users read.
-pub const TEXT_WRITE_TOOLS: [&str; 3] = [
+pub const TEXT_WRITE_TOOLS: [&str; 4] = [
     "create_change_draft",
     "create_change_request",
     "comment_change_request",
+    "propose_result_values",
 ];
 
 /// The answer of a text write tool once the run has read restricted content.
@@ -624,9 +646,12 @@ impl<'a> McpTools<'a> {
     /// write cannot be repeated as the outsider, so the object it returns
     /// is read again as the user and as the outsider.
     async fn write_taints(&self, me: &Actor, name: &str, result: &Value) -> bool {
-        if result["isError"] == true || name == "comment_change_request" {
-            // errors name what the model passed in; a comment returns only
-            // its own text
+        if result["isError"] == true
+            || name == "comment_change_request"
+            || name == "propose_result_values"
+        {
+            // errors name what the model passed in; a comment or a proposal
+            // returns only its own text
             return false;
         }
         match self.outsider(me).await {
@@ -1517,7 +1542,9 @@ mod tests {
         let with_drafts = names(true);
         assert!(with_drafts.contains(&"create_change_draft".to_string()));
         assert!(with_drafts.contains(&"create_change_request".to_string()));
-        assert_eq!(with_drafts.len(), read_only.len() + 4);
+        assert_eq!(with_drafts.len(), read_only.len() + 5);
+        assert!(!read_only.contains(&"propose_result_values".to_string()));
+        assert!(with_drafts.contains(&"propose_result_values".to_string()));
     }
 
     /// Every tool schema stays inside the subset that all the listed

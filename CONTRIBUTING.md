@@ -216,9 +216,16 @@ code base. These are the most important rules:
   a new kind of path parameter needs a placeholder rule in its `fill()`.
 * **SQL** uses runtime queries (`sqlx::query_as::<_, T>` with `FromRow`), not
   the `query!` macros, so building needs no database.
+* **Multi-row mutations** run in one transaction. `tests/atomic_processes.rs`
+  shows how to prove it: `inject` puts a trigger on a table that makes one
+  step fail (an error or a lost connection), and the `snapshot` before and
+  after must be equal; add a case there for a new multi-step mutation.
 * **Schema changes** go into a new numbered file in `migrations/`. Never edit
   a migration that is already on `main`, because existing databases have
-  applied it.
+  applied it. `tests/migrations.rs` upgrades a v0.1.0 database with data
+  (`tests/fixtures/migrations/v0.1.0-seed.sql`) and fails when a migration
+  loses rows, changes old values or narrows a `CHECK` list that old rows
+  still use – a new enum value is fine, removing one needs a data migration.
 * **Enums** are `TEXT` columns with `CHECK` constraints. The Rust enums in
   `src/domain.rs` provide `as_str()` and `parse()`.
 * **Errors** use `AppError` (`src/error.rs`). User errors are shown to the

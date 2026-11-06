@@ -97,6 +97,7 @@ async fn read_file_text_pages_through_the_extracted_text() {
     let text = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
     upload(&app, &erika, &part, "spec.txt", text.as_bytes()).await;
     upload(&app, &erika, &part, "drawing.pdf", b"%PDF-1.4 binary").await;
+    upload(&app, &erika, &part, "photo.png", b"\x89PNG binary").await;
 
     // the whole text; a viewer may read it too (internal group)
     for token in [&erika, &vera] {
@@ -179,6 +180,17 @@ async fn read_file_text_pages_through_the_extracted_text() {
         &erika,
         "read_file_text",
         json!({ "item": part, "file": "drawing.pdf" }),
+    )
+    .await;
+    let v = structured(&r);
+    assert_eq!(v["text"], "");
+    // a PDF without a readable text layer: empty, with the reason
+    assert!(v["note"].as_str().unwrap().contains("no extractable text"));
+    let r = tool(
+        &app,
+        &erika,
+        "read_file_text",
+        json!({ "item": part, "file": "photo.png" }),
     )
     .await;
     let v = structured(&r);
