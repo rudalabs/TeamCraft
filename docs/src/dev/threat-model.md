@@ -71,25 +71,25 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 |---|---|---|---|---|
 | Password database stolen | I | Argon2id with a random salt (`src/auth.rs` `hash_password`); minimum 10 characters (`src/domain/validation.rs` `validate_password`) | `src/auth.rs` `password_hash_round_trip` | mitigated |
 | User enumeration at sign-in | I | one message for unknown user, wrong password, OIDC-only and inactive accounts; a dummy Argon2 verify for unknown users (`src/services/users.rs` `authenticate_local`, `src/auth.rs` `DUMMY_HASH`) | `tests/web_ui.rs` `wrong_password_is_rejected` (message); no timing test | mitigated |
-| Password guessing (A1) | S | none in the server: no rate limit or lockout on `/login`, on the password change or on `/api/v1/desktop/token`; only the Argon2 cost slows it | – | **open** (F1) |
+| Password guessing (A1) | S | failed sign-ins counted per username and per client address for 15 minutes (`TEAMCRAFT_SIGNIN_MAX_FAILURES`, 10 per name, 50 per address); then 429 with `Retry-After` without checking the password; the address is the peer or, behind an internal proxy, the proxy's `X-Forwarded-For` entry; in memory per process (`src/auth.rs` `SignInThrottle`, `client_address`; `src/web/auth_pages.rs` `login_submit`). Not throttled: the own password change (needs a session) and the desktop token exchange (its one-time code is deleted on the first attempt) | `src/auth.rs` `sign_in_throttle_counts_per_name_and_address`, `client_addresses_behind_a_proxy`; `tests/web_security.rs` `failed_sign_ins_are_throttled_per_name_and_address` | mitigated (F1 fixed) |
 | Session token guessed or stolen from the database | S, I | 256-bit random tokens, only SHA-256 hashes stored (`src/auth.rs` `generate_token`, `hash_token`; `src/services/users.rs` `create_session`) | `src/auth.rs` `tokens_are_random_and_hashed` | mitigated |
 | Session cookie read by script or sent cross-site | I | `HttpOnly; SameSite=Lax`, `Secure` when the public URL is https (`src/auth.rs` `cookie_attributes`, `src/config.rs` `TEAMCRAFT_COOKIE_SECURE`) | – (attributes not asserted by a test) | partial: no test |
 | Session outlives its purpose | S | absolute lifetime `TEAMCRAFT_SESSION_TTL_HOURS` (72 h); the lookup requires `expires_at > now()` and an active user (`actor_for_session`); sign-out deletes the row; deactivation and an admin password reset delete all sessions | `tests/oidc_flow.rs` `sessions_expire_end_with_sign_out_and_with_deactivation` | mitigated |
-| A stolen session survives the victim's password change | S | **fixed in this change**: `users::change_own_password` ends every other session of the user (the one that made the change stays) and records how many in the audit entry | `tests/oidc_flow.rs` `changing_the_own_password_ends_the_other_sessions` | mitigated |
+| A stolen session survives the victim's password change | S | fixed in #110: `users::change_own_password` ends every other session of the user (the one that made the change stays) and records how many in the audit entry | `tests/oidc_flow.rs` `changing_the_own_password_ends_the_other_sessions` | mitigated |
 | Role or membership changed, old rights stay | E | role and memberships are read from the database on every request (`actor_for_session`, `actor_for_api_token`) | `tests/read_permissions.rs` `visibility_is_managed_and_audited` | mitigated |
 | Personal access token (PAT) stolen | S, I | 256-bit random, SHA-256 hash stored, shown once, optional expiry, revocation by the owner or an admin (audited `token.revoke`), dead with a deactivated account (`src/services/users.rs` `create_token`, `revoke_token`, `actor_for_api_token`) | `tests/oidc_flow.rs` `personal_access_tokens_expire_are_revoked_and_die_with_the_account`; `tests/api_flow.rs` `api_requires_a_valid_token` | mitigated |
 | A PAT has more rights than its client needs | E | none: a PAT carries all rights of its user (REST and MCP, writes included); the desktop app's token lives 90 days. The MCP reference advises one token per client with an expiry (`docs/src/reference/mcp.md`) | – | **open** (F2) |
-| Sign-in events cannot be traced | R | token creation and revocation, password changes, role changes, OIDC provisioning and desktop authorisation are audited; local and SSO sign-in, failed sign-in and sign-out are only log lines (`src/web/auth_pages.rs`) | `tests/audit_and_vault.rs` (mutations) | **open** (F3) |
+| Sign-in events cannot be traced | R | token creation and revocation, password changes, role changes, OIDC provisioning and desktop authorisation are audited, and so are sign-in (`user.sign_in` with the method: password, SSO, setup), failed password sign-in (`user.sign_in_failed`; an unknown typed username is not kept) and sign-out (`user.sign_out`) – never a password or token (`src/services/users.rs` `create_session`, `delete_session`, `record_failed_sign_in`) | `tests/web_security.rs` `sign_in_and_sign_out_are_audited`; `tests/architecture_guards.rs` | mitigated (F3 fixed) |
 
 ## Web: CSRF, XSS, headers, redirects
 
 | Threat | STRIDE | Mitigation | Tests | Status |
 |---|---|---|---|---|
-| Cross-site form post (CSRF) | E | `csrf_guard` on every non-GET web request compares `Origin` (or `Referer`) with the host and the public URL; `Origin: null` is refused; `SameSite=Lax` as second layer (`src/web/mod.rs` `csrf_guard`, `same_origin`). A request **without both headers is let through** (relies on SameSite), and `X-Forwarded-Host` is trusted as sent by the proxy | `src/web/mod.rs` `origin_checks`; `tests/web_ui.rs` (desktop authorize with a foreign origin); `tests/assistant_threads.rs`, `tests/uploads.rs` (cross-site cases) | partial (F4) |
+| Cross-site form post (CSRF) | E | `csrf_guard` on every non-GET web request compares `Origin` (or `Referer`) with the host and the public URL; `Origin: null` is refused; `SameSite=Lax` as second layer (`src/web/mod.rs` `csrf_guard`, `request_origin`). A request with neither header is refused when it carries the session cookie; without a session cookie (sign-in, first-start setup) it acts for nobody and passes. `X-Forwarded-Host` counts as this instance – the install guide asks the proxy to set it (`docs/src/admin/docker.md`) | `src/web/mod.rs` `origin_checks`; `tests/web_security.rs` `cookie_requests_without_origin_or_referer_are_refused`; `tests/web_ui.rs` `cross_site_posts_are_blocked`; `tests/assistant_threads.rs`, `tests/uploads.rs` (cross-site cases) | mitigated (F4 fixed) |
 | Cookies used against the API | E | the API accepts only `Authorization: Bearer` (`src/auth.rs` `ApiUser`); no cookie code in `src/api` | – (no test sends a session cookie to `/api/v1`) | partial: no test |
-| Script injection (XSS) | E, I | MiniJinja templates; CSP `default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`, no inline JS or styles (`src/lib.rs`) | `tests/web_ui.rs` (asserts `nosniff` and `default-src 'self'`) | mitigated; frame and referrer headers not asserted |
-| Clickjacking | T | `frame-ancestors 'none'` and `X-Frame-Options: DENY` (`src/lib.rs`) | – | partial: no test |
-| Downgrade to HTTP | I | no `Strict-Transport-Security` header from the server and none documented for the proxy | – | **open** (F5) |
+| Script injection (XSS) | E, I | MiniJinja templates; CSP `default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`, no inline JS or styles (`src/lib.rs`) | `tests/web_security.rs` `security_headers_and_hsts_for_https` (the full policy, no `unsafe-inline`/`unsafe-eval`) | mitigated |
+| Clickjacking | T | `frame-ancestors 'none'` and `X-Frame-Options: DENY` (`src/lib.rs`) | `tests/web_security.rs` `security_headers_and_hsts_for_https` | mitigated |
+| Downgrade to HTTP | I | `Strict-Transport-Security: max-age=31536000` on every response when `TEAMCRAFT_PUBLIC_URL` is https (`src/lib.rs` `STRICT_TRANSPORT_SECURITY`) | `tests/web_security.rs` `security_headers_and_hsts_for_https` | mitigated (F5 fixed) |
 | Open redirect after sign-in | S | `util::safe_redirect_target` accepts only local paths (no `//`, no `\`); applied to `next` and to the OIDC return target | `src/util.rs` `redirect_targets`; `tests/oidc_flow.rs` (return to `next`) | mitigated |
 | First-start setup taken over | E | `/setup` only with local sign-in, a loopback bind address and no user yet, under an advisory lock (`src/web/auth_pages.rs` `setup_open`) | `tests/web_ui.rs` `first_start_creates_the_administrator` | mitigated |
 
@@ -181,15 +181,16 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 
 ## Open findings
 
-Each has an entry in `docs/OPEN_WORK.md` (section 2, *Security*).
+Each open one has an entry in `docs/OPEN_WORK.md` (section 2, *Security*);
+fixed ones are struck through and name the change.
 
 | | Finding | Area |
 |---|---|---|
-| F1 | No rate limit or lockout for sign-in, password change and the desktop token exchange | authentication |
+| F1 | ~~No rate limit or lockout for sign-in~~ – fixed (`fix/security-web-auth`): per username and client address, 429; the password change and the desktop token exchange are not throttled (see the table above) | authentication |
 | F2 | PATs have no scopes (read-only, MCP-only); the desktop token has full rights for 90 days | tokens |
-| F3 | Sign-in, failed sign-in and sign-out are not in the audit log | audit |
-| F4 | CSRF: a request without `Origin` and `Referer` passes on SameSite alone; `X-Forwarded-Host` is trusted | web |
-| F5 | No HSTS from the server and none documented for the reverse proxy | web |
+| F3 | ~~Sign-in, failed sign-in and sign-out are not in the audit log~~ – fixed (`fix/security-web-auth`) | audit |
+| F4 | ~~CSRF: a request without `Origin` and `Referer` passes on SameSite alone~~ – fixed (`fix/security-web-auth`); the proxy must set `X-Forwarded-Host` (install guide) | web |
+| F5 | ~~No HSTS~~ – fixed (`fix/security-web-auth`): sent for an https public URL | web |
 | F6 | ID token signatures are not verified, yet the issuer may be plain `http://` | OIDC |
 | F7 | A user removed at the IdP keeps a running session until it expires | OIDC |
 | F8 | Downloads do not re-check the blob hash (tampering on disk shows only in `vault check` or a backup) | vault |

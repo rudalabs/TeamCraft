@@ -76,13 +76,9 @@ feature milestone – the features in *What works* are enough; what is missing i
 *Security*
 
 - Open findings of the [threat model](src/dev/threat-model.md) (F1–F19 there):
-  - [ ] F1: rate limit or lockout for sign-in, the own password change and the desktop token exchange (with the
-    policy review below)
+  - [ ] F1 (rest): count wrong current passwords of the own password change like failed sign-ins (the sign-in
+    form itself is throttled since the security fixes, part 1)
   - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
-  - [ ] F3: sign-in, failed sign-in and sign-out in the audit log (not only log lines)
-  - [ ] F4: CSRF: refuse state-changing web requests without `Origin` and `Referer`, or add a token; document that
-    the proxy must overwrite `X-Forwarded-Host`
-  - [ ] F5: `Strict-Transport-Security` when the public URL is https, or the proxy setting in the install guide
   - [ ] F6: OIDC with a plain `http://` issuer: refuse it outside `localhost`, or verify ID token signatures (JWKS)
     for it – a decision, since it can break installations with an internal IdP
   - [ ] F7: end TeamCraft sessions of users removed at the IdP (shorter SSO sessions, back-channel logout or a
@@ -357,6 +353,12 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
+- [x] **Security fixes from the threat model, part 1** (web and sign-in): F4 a cookie request without `Origin`
+  and `Referer` is refused (sign-in without a cookie still passes; the proxy must set `X-Forwarded-Host`); F5
+  `Strict-Transport-Security` for an https public URL, all security headers pinned in `tests/web_security.rs`; F3
+  sign-in, failed sign-in and sign-out in the audit log (no password, token or unknown typed name); F1 failed
+  password sign-ins throttled per username and client address (`TEAMCRAFT_SIGNIN_MAX_FAILURES`, 429 with
+  `Retry-After`)
 - [x] **Threat model** (`docs/src/dev/threat-model.md`): assets, attackers, trust boundaries and per threat the
   mitigation with code and test or *open*; vault, sessions, PATs, OIDC, uploads, file parsers, webhooks,
   MCP/assistant, desktop ↔ server, backup/restore. 19 open findings listed in section 2, *Security*; one fixed on
