@@ -228,6 +228,15 @@ const NOT_AUDITED: &[(&str, &str)] = &[
         "uploads::append",
         "a chunk of the user's own upload session; storing it (finish) is audited",
     ),
+    (
+        "request_digests::run_once",
+        "background e-mail digest: notifications derived from waiting requests (each audited when \
+         raised) and the bookkeeping of what the digests covered; no actor",
+    ),
+    (
+        "request_digests::spawn",
+        "starts the background task of request_digests::run_once",
+    ),
 ];
 
 #[derive(Debug, Default, Clone)]
