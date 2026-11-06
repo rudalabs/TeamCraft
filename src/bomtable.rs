@@ -24,6 +24,13 @@
 //!
 //! Libraries: `csv` (MIT/Unlicense), `calamine` (MIT), `encoding_rs`
 //! (MIT/Apache-2.0).
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::{collections::HashMap, io::Cursor};
 
@@ -233,7 +240,7 @@ fn split_number(raw: &str) -> Option<(f64, &str)> {
         .char_indices()
         .find(|(_, c)| !(c.is_ascii_digit() || matches!(c, '.' | ',' | '-' | '+')))
         .map_or(s.len(), |(i, _)| i);
-    let num = &s[..end];
+    let (num, unit) = (s.get(..end)?, s.get(end..)?);
     if !num.bytes().any(|b| b.is_ascii_digit()) {
         return None;
     }
@@ -246,7 +253,7 @@ fn split_number(raw: &str) -> Option<(f64, &str)> {
         _ => num.to_string(),
     };
     let value = normalized.parse::<f64>().ok().filter(|v| v.is_finite())?;
-    Some((value, s[end..].trim()))
+    Some((value, unit.trim()))
 }
 
 /// The number at the start of a cell (`4,5 m` → 4.5).
@@ -330,17 +337,20 @@ fn dotted_level(
         .find(|(_, p)| !p.is_empty() && pos.starts_with(&format!("{p}.")));
     match ancestor {
         Some((i, p)) => {
+            // positions and rows grow together, one entry per row
+            let Some(row) = rows.get(i) else { return 1 };
+            let after = rows.get(i + 1..).unwrap_or_default();
             if p != parent {
                 warnings.push(format!(
                     "Row {line}: position {pos} has no row {parent} – placed below {p}."
                 ));
-            } else if rows[i + 1..].iter().any(|r| r.level <= rows[i].level) {
+            } else if after.iter().any(|r| r.level <= row.level) {
                 warnings.push(format!(
                     "Row {line}: position {pos} comes after rows that are not below {p} – placed \
                      below the nearest row above."
                 ));
             }
-            rows[i].level + 1
+            row.level + 1
         }
         None => {
             warnings.push(format!(
@@ -391,7 +401,12 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
              Description / Benennung and QTY / Menge."
                 .to_string()
         })?;
-    let header = &grid[header_index];
+    let header: &[String] = grid
+        .get(header_index)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    // a header cell, trimmed ("" past the end of the row)
+    let head = |c: usize| header.get(c).map_or("", |s| s.trim());
     let mut warnings = Vec::new();
     let mut columns = Vec::new();
     let mut index: HashMap<&'static str, usize> = HashMap::new();
@@ -400,15 +415,15 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
         if let Some(first) = index.get(f) {
             warnings.push(format!(
                 "Column '{}' is ignored: '{}' already provides the {}.",
-                header[col].trim(),
-                header[*first].trim(),
+                head(col),
+                head(*first),
                 field_label(f).to_lowercase()
             ));
             continue;
         }
         index.insert(f, col);
         columns.push(Column {
-            header: header[col].trim().to_string(),
+            header: head(col).to_string(),
             field: f,
             label: field_label(f),
         });
@@ -417,13 +432,10 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
     let extra_index: Vec<usize> = mapping
         .iter()
         .enumerate()
-        .filter(|(col, field)| field.is_none() && !header[*col].trim().is_empty())
+        .filter(|(col, field)| field.is_none() && !head(*col).is_empty())
         .map(|(col, _)| col)
         .collect();
-    let extra_columns: Vec<String> = extra_index
-        .iter()
-        .map(|c| header[*c].trim().to_string())
-        .collect();
+    let extra_columns: Vec<String> = extra_index.iter().map(|c| head(*c).to_string()).collect();
     let has = |f: &str| index.contains_key(f);
     let cell = |row: &[String], field: &str| -> String {
         index
@@ -432,7 +444,7 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
             .map(|s| s.trim().to_string())
             .unwrap_or_default()
     };
-    let body = &grid[header_index + 1..];
+    let body = grid.get(header_index + 1..).unwrap_or_default();
     if body.len() > MAX_ROWS {
         return Err(format!("The table has more than {MAX_ROWS} rows."));
     }
@@ -442,11 +454,12 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
         && body
             .iter()
             .any(|r| parse_position(&cell(r, "position")).is_some_and(|(l, _)| l > 1));
-    let mass_header = index.get("mass").map_or("", |c| header[*c].as_str());
+    let raw_head = |c: usize| header.get(c).map_or("", String::as_str);
+    let mass_header = index.get("mass").map_or("", |c| raw_head(*c));
     let is_header_again = |row: &[String]| {
         index
             .values()
-            .all(|c| row.get(*c).map(|v| squash(v)) == Some(squash(&header[*c])))
+            .all(|c| row.get(*c).map(|v| squash(v)) == Some(squash(raw_head(*c))))
     };
 
     let mut rows: Vec<BomRow> = Vec::new();
@@ -589,8 +602,13 @@ fn parse(grid: Vec<Vec<String>>) -> Result<BomTable, String> {
     }
 
     // One first row on level 0 below which everything else lies: the assembly itself.
-    let root = (rows.len() > 1 && rows[0].level == 0 && rows[1..].iter().all(|r| r.level > 0))
-        .then(|| rows.remove(0));
+    let root = match rows.as_slice() {
+        [first, rest @ ..] => {
+            first.level == 0 && !rest.is_empty() && rest.iter().all(|r| r.level > 0)
+        }
+        [] => false,
+    }
+    .then(|| rows.remove(0));
     if rows.is_empty() {
         return Err("The table has a header but no component rows.".into());
     }

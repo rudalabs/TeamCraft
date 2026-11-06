@@ -547,12 +547,19 @@ pub async fn set_password(
 
 /// Changes the caller's own password after verifying the current one.
 ///
+/// Signs out every other web session of the user (a session stolen before
+/// the change must not outlive it); `keep_session` is the token of the
+/// session that made the change. Personal access tokens stay: they are
+/// separate credentials the user revokes one by one.
+///
 /// # Invariants
 ///
-/// * **Permission:** the current password must be right (400).
+/// * **Permission:** the current password must be right (400); the new one
+///   must pass the password rules (400).
 /// * **Locks:** none.
-/// * **Data:** the password is stored only as a hash; sessions stay.
-/// * **Audit:** `user.password`.
+/// * **Data:** the password is stored only as a hash; every web session of
+///   the user except `keep_session` is deleted, personal access tokens stay.
+/// * **Audit:** `user.password` (with the number of sessions ended).
 /// * **Notifications / webhooks:** none.
 /// * **Atomic:** one transaction.
 pub async fn change_own_password(
@@ -560,6 +567,7 @@ pub async fn change_own_password(
     actor: &Actor,
     current: &str,
     new: &str,
+    keep_session: Option<&str>,
 ) -> AppResult<()> {
     if authenticate_local(pool, &actor.username, current)
         .await?
@@ -577,6 +585,13 @@ pub async fn change_own_password(
         .bind(&hash)
         .execute(&mut *tx)
         .await?;
+    let ended =
+        sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token_hash IS DISTINCT FROM $2")
+            .bind(actor.id)
+            .bind(keep_session.map(auth::hash_token))
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
     audit::record(
         &mut tx,
         Some(actor),
@@ -584,7 +599,7 @@ pub async fn change_own_password(
         "user",
         Some(actor.id),
         "Changed own password",
-        json!({}),
+        json!({ "other_sessions_ended": ended }),
     )
     .await?;
     tx.commit().await?;
