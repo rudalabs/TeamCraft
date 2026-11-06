@@ -14,6 +14,13 @@
 //! The readers are defensive: sizes are limited, indices are checked and a
 //! malformed file is an error, never a panic or an endless loop. The server
 //! still runs them in a separate process with a time limit (see `preview`).
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
@@ -108,8 +115,14 @@ pub fn color_map(t: f32) -> [u8; 3] {
     let x = t.clamp(0.0, 1.0) * (COLOR_MAP.len() - 1) as f32;
     let i = (x.floor() as usize).min(COLOR_MAP.len() - 2);
     let f = x - i as f32;
-    let (a, b) = (COLOR_MAP[i], COLOR_MAP[i + 1]);
-    std::array::from_fn(|k| (a[k] as f32 + (b[k] as f32 - a[k] as f32) * f).round() as u8)
+    let (Some(a), Some(b)) = (COLOR_MAP.get(i), COLOR_MAP.get(i + 1)) else {
+        return NEUTRAL;
+    };
+    let mut rgb = [0u8; 3];
+    for ((out, &a), &b) in rgb.iter_mut().zip(a).zip(b) {
+        *out = (a as f32 + (b as f32 - a as f32) * f).round() as u8;
+    }
+    rgb
 }
 
 impl Mesh {
@@ -205,14 +218,16 @@ impl Mesh {
 
     /// Bounding box `[min x, min y, min z, max x, max y, max z]`.
     pub fn bounds(&self) -> [f32; 6] {
-        let mut b = [f32::MAX, f32::MAX, f32::MAX, f32::MIN, f32::MIN, f32::MIN];
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
         for p in self.positions.chunks_exact(3) {
-            for a in 0..3 {
-                b[a] = b[a].min(p[a]);
-                b[a + 3] = b[a + 3].max(p[a]);
+            for ((lo, hi), &c) in lo.iter_mut().zip(hi.iter_mut()).zip(p) {
+                *lo = lo.min(c);
+                *hi = hi.max(c);
             }
         }
-        b
+        let [x0, y0, z0] = lo;
+        let [x1, y1, z1] = hi;
+        [x0, y0, z0, x1, y1, z1]
     }
 
     /// The binary form read by `shared/js/viewer.js`:
@@ -322,12 +337,11 @@ impl Mesh {
     /// Reads [`Mesh::encode`] output (tests, tools). Every size is checked,
     /// so a damaged cache file is an error, not a panic.
     pub fn decode(data: &[u8]) -> Result<Mesh> {
-        if data.len() < 48 || &data[..8] != MAGIC {
+        if data.len() < 48 || data.get(..8) != Some(MAGIC.as_slice()) {
             bail!("not a TeamCraft mesh");
         }
         let u = |at: usize| -> Result<usize> {
-            let b = data.get(at..at + 4).context("truncated mesh")?;
-            Ok(u32::from_le_bytes(b.try_into()?) as usize)
+            Ok(u32_le(data, at).context("truncated mesh")? as usize)
         };
         let (vertices, indices, parts, flags) = (u(8)?, u(12)?, u(16)?, u(20)?);
         let colors = if flags & 1 == 1 { vertices * 3 } else { 0 };
@@ -335,17 +349,12 @@ impl Mesh {
         if data.len() < need {
             bail!("truncated mesh");
         }
-        let f32s = |at: usize, n: usize| -> Vec<f32> {
-            data[at..at + n * 4]
-                .chunks_exact(4)
-                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
-                .collect()
-        };
-        let positions = f32s(48, vertices * 3);
+        let positions = quads(range(data, 48, 48 + vertices * 12)?)
+            .map(f32::from_le_bytes)
+            .collect();
         let at = 48 + vertices * 12;
-        let index_values = data[at..at + indices * 4]
-            .chunks_exact(4)
-            .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        let index_values = quads(range(data, at, at + indices * 4)?)
+            .map(u32::from_le_bytes)
             .collect();
         let at = at + indices * 4;
         // end of the body: after the colours (padded) and the field section
@@ -371,11 +380,8 @@ impl Mesh {
                     .checked_mul(4)
                     .and_then(|n| n.checked_add(at))
                     .context("truncated mesh")?;
-                let values = data
-                    .get(at..values_end)
-                    .context("truncated mesh")?
-                    .chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                let values = quads(data.get(at..values_end).context("truncated mesh")?)
+                    .map(f32::from_le_bytes)
                     .collect();
                 at = values_end;
                 fields.push(Field { name, unit, values });
@@ -395,7 +401,7 @@ impl Mesh {
         Ok(Mesh {
             positions,
             indices: index_values,
-            colors: data[at..at + colors].to_vec(),
+            colors: range(data, at, at + colors)?.to_vec(),
             parts: parts as u32,
             fields,
             faces,
@@ -430,6 +436,54 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
 // helpers
 // ---------------------------------------------------------------------------
 
+/// The error of a read past the end: the file is shorter than it claims.
+fn ends_early(at: usize) -> anyhow::Error {
+    anyhow!("The file ends early (byte {at}).")
+}
+
+/// `data[from..to]`, or an error instead of a panic.
+pub(crate) fn range(data: &[u8], from: usize, to: usize) -> Result<&[u8]> {
+    data.get(from..to).ok_or_else(|| ends_early(from))
+}
+
+/// `N` bytes at `at`, or an error instead of a panic.
+pub(crate) fn bytes_at<const N: usize>(data: &[u8], at: usize) -> Result<[u8; N]> {
+    at.checked_add(N)
+        .and_then(|end| data.get(at..end))
+        .and_then(|s| <[u8; N]>::try_from(s).ok())
+        .ok_or_else(|| ends_early(at))
+}
+
+pub(crate) fn u16_le(data: &[u8], at: usize) -> Result<u16> {
+    bytes_at(data, at).map(u16::from_le_bytes)
+}
+
+pub(crate) fn u32_le(data: &[u8], at: usize) -> Result<u32> {
+    bytes_at(data, at).map(u32::from_le_bytes)
+}
+
+fn i32_le(data: &[u8], at: usize) -> Result<i32> {
+    bytes_at(data, at).map(i32::from_le_bytes)
+}
+
+pub(crate) fn f32_le(data: &[u8], at: usize) -> Result<f32> {
+    bytes_at(data, at).map(f32::from_le_bytes)
+}
+
+fn f64_le(data: &[u8], at: usize) -> Result<f64> {
+    bytes_at(data, at).map(f64::from_le_bytes)
+}
+
+fn u64_le(data: &[u8], at: usize) -> Result<u64> {
+    bytes_at(data, at).map(u64::from_le_bytes)
+}
+
+/// The bytes in groups of four (an incomplete group at the end is dropped).
+pub(crate) fn quads(data: &[u8]) -> impl Iterator<Item = [u8; 4]> + '_ {
+    data.chunks_exact(4)
+        .filter_map(|c| <[u8; 4]>::try_from(c).ok())
+}
+
 fn text(data: &[u8]) -> std::borrow::Cow<'_, str> {
     String::from_utf8_lossy(data)
 }
@@ -450,9 +504,13 @@ fn truncate(s: &str) -> String {
 
 /// Polygon → triangle fan.
 fn fan(mesh: &mut Mesh, polygon: &[u32]) {
-    for k in 1..polygon.len().saturating_sub(1) {
-        mesh.indices
-            .extend([polygon[0], polygon[k], polygon[k + 1]]);
+    let Some((&first, rest)) = polygon.split_first() else {
+        return;
+    };
+    for w in rest.windows(2) {
+        if let [b, c] = *w {
+            mesh.indices.extend([first, b, c]);
+        }
     }
 }
 
@@ -502,8 +560,7 @@ impl Welder {
 // ---------------------------------------------------------------------------
 
 fn stl(data: &[u8]) -> Result<Mesh> {
-    if data.len() >= 84 {
-        let n = u32::from_le_bytes(data[80..84].try_into().unwrap()) as usize;
+    if let Ok(n) = u32_le(data, 80).map(|n| n as usize) {
         if n.checked_mul(50).and_then(|b| b.checked_add(84)) == Some(data.len()) {
             if n == 0 {
                 bail!("The STL file contains no triangles.");
@@ -514,10 +571,8 @@ fn stl(data: &[u8]) -> Result<Mesh> {
                 let o = 84 + t * 50 + 12;
                 for v in 0..3 {
                     let at = o + v * 12;
-                    let f = |k: usize| {
-                        f32::from_le_bytes(data[at + k * 4..at + k * 4 + 4].try_into().unwrap())
-                    };
-                    w.push([f(0), f(1), f(2)]);
+                    let f = |k: usize| f32_le(data, at + k * 4);
+                    w.push([f(0)?, f(1)?, f(2)?]);
                 }
             }
             return Ok(w.mesh);
@@ -562,21 +617,18 @@ fn obj(data: &[u8]) -> Result<Mesh> {
         match it.next() {
             Some("v") => {
                 let values: Vec<f64> = it.map(float).collect::<Result<_>>()?;
-                if values.len() < 3 {
+                let [x, y, z, rest @ ..] = values.as_slice() else {
                     bail!("OBJ vertex with less than three coordinates");
-                }
-                mesh.vertex([values[0], values[1], values[2]]);
-                if values.len() >= 6 {
-                    let scale = if values[3..6].iter().all(|c| *c <= 1.0) {
+                };
+                mesh.vertex([*x, *y, *z]);
+                if let [r, g, b, ..] = rest {
+                    let rgb = [*r, *g, *b];
+                    let scale = if rgb.iter().all(|c| *c <= 1.0) {
                         255.0
                     } else {
                         1.0
                     };
-                    colors.extend(
-                        values[3..6]
-                            .iter()
-                            .map(|c| (c * scale).clamp(0.0, 255.0) as u8),
-                    );
+                    colors.extend(rgb.iter().map(|c| (c * scale).clamp(0.0, 255.0) as u8));
                 }
             }
             Some("f") => {
@@ -716,18 +768,21 @@ impl<'a> PlyReader<'a> {
             .context("PLY file ends early")?;
         self.at += n;
         let mut b = [0u8; 8];
-        b[..n].copy_from_slice(bytes);
-        if let PlyEncoding::Big = self.encoding {
-            b[..n].reverse();
+        for (to, from) in b.iter_mut().zip(bytes) {
+            *to = *from;
         }
+        if let (PlyEncoding::Big, Some(value)) = (&self.encoding, b.get_mut(..n)) {
+            value.reverse();
+        }
+        let [b0, b1, b2, b3, ..] = b;
         Ok(match ty {
-            PlyType::I8 => b[0] as i8 as f64,
-            PlyType::U8 => b[0] as f64,
-            PlyType::I16 => i16::from_le_bytes([b[0], b[1]]) as f64,
-            PlyType::U16 => u16::from_le_bytes([b[0], b[1]]) as f64,
-            PlyType::I32 => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64,
-            PlyType::U32 => u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64,
-            PlyType::F32 => f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64,
+            PlyType::I8 => b0 as i8 as f64,
+            PlyType::U8 => b0 as f64,
+            PlyType::I16 => i16::from_le_bytes([b0, b1]) as f64,
+            PlyType::U16 => u16::from_le_bytes([b0, b1]) as f64,
+            PlyType::I32 => i32::from_le_bytes([b0, b1, b2, b3]) as f64,
+            PlyType::U32 => u32::from_le_bytes([b0, b1, b2, b3]) as f64,
+            PlyType::F32 => f32::from_le_bytes([b0, b1, b2, b3]) as f64,
             PlyType::F64 => f64::from_le_bytes(b),
         })
     }
@@ -738,12 +793,13 @@ fn ply(data: &[u8]) -> Result<Mesh> {
         .windows(10)
         .position(|w| w == b"end_header")
         .context("PLY header without end_header")?;
-    let header = std::str::from_utf8(&data[..end]).context("PLY header is not text")?;
+    let header = std::str::from_utf8(data.get(..end).unwrap_or_default())
+        .context("PLY header is not text")?;
     let mut body = end + 10;
     // the header ends with "end_header\n" (or "\r\n")
-    while body < data.len() && (data[body] == b'\r' || data[body] == b'\n') {
+    while let Some(&c) = data.get(body).filter(|c| matches!(c, b'\r' | b'\n')) {
         body += 1;
-        if data[body - 1] == b'\n' {
+        if c == b'\n' {
             break;
         }
     }
@@ -787,7 +843,9 @@ fn ply(data: &[u8]) -> Result<Mesh> {
     }
     let encoding = encoding.context("PLY header without format")?;
     let body_text = match encoding {
-        PlyEncoding::Ascii => std::str::from_utf8(&data[body..]).unwrap_or(""),
+        PlyEncoding::Ascii => {
+            std::str::from_utf8(data.get(body..).unwrap_or_default()).unwrap_or("")
+        }
         _ => "",
     };
     let mut reader = PlyReader {
@@ -818,11 +876,10 @@ fn ply(data: &[u8]) -> Result<Mesh> {
     for element in &elements {
         let is_vertex = element.name == "vertex";
         let is_face = element.name == "face";
-        let pos: Vec<Option<usize>> = ["x", "y", "z", "red", "green", "blue"]
-            .iter()
-            .map(|n| element.properties.iter().position(|p| p.name == *n))
-            .collect();
-        let color_scale = pos[3].map(|i| element.properties[i].ty).map_or(1.0, |t| {
+        let [px, py, pz, pr, pg, pb] = ["x", "y", "z", "red", "green", "blue"]
+            .map(|n| element.properties.iter().position(|p| p.name == n));
+        let color_ty = pr.and_then(|i| element.properties.get(i)).map(|p| p.ty);
+        let color_scale = color_ty.map_or(1.0, |t| {
             if matches!(t, PlyType::F32 | PlyType::F64) {
                 255.0
             } else {
@@ -832,9 +889,9 @@ fn ply(data: &[u8]) -> Result<Mesh> {
         let mut values = vec![0f64; element.properties.len()];
         for row in 0..element.count {
             polygon.clear();
-            for (k, property) in element.properties.iter().enumerate() {
+            for (property, slot) in element.properties.iter().zip(values.iter_mut()) {
                 match property.list {
-                    None => values[k] = reader.value(property.ty)?,
+                    None => *slot = reader.value(property.ty)?,
                     Some(count_ty) => {
                         let n = reader.value(count_ty)? as usize;
                         if n > 1024 {
@@ -855,12 +912,12 @@ fn ply(data: &[u8]) -> Result<Mesh> {
                 }
             }
             if is_vertex && row % stride == 0 {
-                let get = |i: Option<usize>| i.map(|i| values[i]);
-                let (Some(x), Some(y), Some(z)) = (get(pos[0]), get(pos[1]), get(pos[2])) else {
+                let get = |i: Option<usize>| i.and_then(|i| values.get(i).copied());
+                let (Some(x), Some(y), Some(z)) = (get(px), get(py), get(pz)) else {
                     bail!("PLY vertices without x, y, z");
                 };
                 mesh.vertex([x, y, z]);
-                if let (Some(r), Some(g), Some(b)) = (get(pos[3]), get(pos[4]), get(pos[5])) {
+                if let (Some(r), Some(g), Some(b)) = (get(pr), get(pg), get(pb)) {
                     colors.extend([r, g, b].map(|c| (c * color_scale).clamp(0.0, 255.0) as u8));
                 }
             }
@@ -912,10 +969,10 @@ fn off(data: &[u8]) -> Result<Mesh> {
             .take(3)
             .map(float)
             .collect::<Result<_>>()?;
-        if v.len() < 3 {
+        let [x, y, z] = *v.as_slice() else {
             bail!("OFF vertex with less than three coordinates");
-        }
-        mesh.vertex([v[0], v[1], v[2]]);
+        };
+        mesh.vertex([x, y, z]);
     }
     let mut polygon = Vec::new();
     for _ in 0..nf {
@@ -964,6 +1021,8 @@ fn apply(m: &Affine, p: [f64; 3]) -> [f64; 3] {
 }
 
 /// `a` first, then `b`.
+// Fixed-size arrays: r < 4, c < 3 and k < 3 keep every index below 12.
+#[allow(clippy::indexing_slicing)]
 fn compose(a: &Affine, b: &Affine) -> Affine {
     let mut m = [0.0; 12];
     for r in 0..4 {
@@ -1066,8 +1125,8 @@ fn three_mf_model(xml: &[u8]) -> Result<Mesh> {
                     if let Some(obj) = current.as_ref().and_then(|id| objects.get_mut(id)) {
                         let n = obj.mesh.vertex_count() as u32;
                         let mut t = [0u32; 3];
-                        for (k, name) in ["v1", "v2", "v3"].iter().enumerate() {
-                            t[k] = attr(e, name)
+                        for (slot, name) in t.iter_mut().zip(["v1", "v2", "v3"]) {
+                            *slot = attr(e, name)
                                 .and_then(|v| v.parse().ok())
                                 .filter(|v| *v < n)
                                 .context("3MF triangle refers to a missing vertex")?;
@@ -1124,8 +1183,10 @@ fn instantiate(
     if !obj.mesh.positions.is_empty() {
         let mut part = obj.mesh.clone();
         for p in part.positions.chunks_exact_mut(3) {
-            let q = apply(transform, [p[0] as f64, p[1] as f64, p[2] as f64]);
-            p.copy_from_slice(&[q[0] as f32, q[1] as f32, q[2] as f32]);
+            if let [x, y, z] = p {
+                let [qx, qy, qz] = apply(transform, [*x as f64, *y as f64, *z as f64]);
+                (*x, *y, *z) = (qx as f32, qy as f32, qz as f32);
+            }
         }
         part.parts = 1;
         out.append(part);
@@ -1264,9 +1325,13 @@ const IDENTITY4: [[f32; 4]; 4] = [
 /// Column-major 4×4 product `a · b`.
 fn mul4(a: &[[f32; 4]; 4], b: &[[f32; 4]; 4]) -> [[f32; 4]; 4] {
     let mut m = [[0f32; 4]; 4];
-    for (c, column) in m.iter_mut().enumerate() {
+    for (column, b_column) in m.iter_mut().zip(b) {
         for (r, value) in column.iter_mut().enumerate() {
-            *value = (0..4).map(|k| a[k][r] * b[c][k]).sum();
+            *value = a
+                .iter()
+                .zip(b_column)
+                .map(|(a_column, b)| a_column.get(r).map_or(0.0, |a| a * b))
+                .sum();
         }
     }
     m
@@ -1298,9 +1363,15 @@ fn gltf_node(
                 parts: 1,
                 ..Mesh::default()
             };
-            for p in positions {
-                let w = &world;
-                let t = |r: usize| w[0][r] * p[0] + w[1][r] * p[1] + w[2][r] * p[2] + w[3][r];
+            for [x, y, z] in positions {
+                // row r of the column-major matrix times (x, y, z, 1)
+                let t = |r: usize| -> f32 {
+                    world
+                        .iter()
+                        .zip([x, y, z, 1.0])
+                        .map(|(column, s)| column.get(r).map_or(0.0, |v| v * s))
+                        .sum()
+                };
                 part.positions.extend([t(0), t(1), t(2)]);
             }
             if !points {
@@ -1334,7 +1405,7 @@ fn gltf_node(
 // ---------------------------------------------------------------------------
 
 fn three_ds(data: &[u8]) -> Result<Mesh> {
-    if data.len() < 6 || u16::from_le_bytes([data[0], data[1]]) != 0x4D4D {
+    if data.len() < 6 || u16_le(data, 0).ok() != Some(0x4D4D) {
         bail!("Not a 3DS file.");
     }
     let mut out = Mesh::default();
@@ -1354,19 +1425,27 @@ fn three_ds_chunks(
         bail!("3DS chunks nest too deeply");
     }
     while at + 6 <= end {
-        let id = u16::from_le_bytes([data[at], data[at + 1]]);
-        let len = u32::from_le_bytes(data[at + 2..at + 6].try_into().unwrap()) as usize;
+        let (Ok(id), Ok(len)) = (u16_le(data, at), u32_le(data, at + 2)) else {
+            break; // truncated
+        };
+        let len = len as usize;
         if len < 6 || at + len > end {
             break; // truncated or padding
         }
         let body = at + 6;
         let chunk_end = at + len;
+        // the u16 count at the start of a vertex or face list; a list chunk
+        // too short for it is skipped like a truncated chunk
+        let count = (body + 2 <= chunk_end)
+            .then(|| u16_le(data, body).ok())
+            .flatten()
+            .map(usize::from);
         match id {
             // main → editor → object → triangle mesh: descend
             0x3D3D => three_ds_chunks(data, body, chunk_end, out, object, depth + 1)?,
             0x4000 => {
                 // object block: zero-terminated name, then sub-chunks
-                let name_end = data[body..chunk_end]
+                let name_end = range(data, body, chunk_end)?
                     .iter()
                     .position(|b| *b == 0)
                     .map_or(chunk_end, |p| body + p + 1);
@@ -1384,17 +1463,17 @@ fn three_ds_chunks(
                     at = chunk_end;
                     continue;
                 };
-                let n = u16::from_le_bytes([data[body], data[body + 1]]) as usize;
+                let Some(n) = count else {
+                    at = chunk_end;
+                    continue;
+                };
                 if body + 2 + n * 12 > chunk_end {
                     bail!("3DS vertex list is truncated");
                 }
                 for v in 0..n {
                     let o = body + 2 + v * 12;
-                    let f = |k: usize| {
-                        f32::from_le_bytes(data[o + k * 4..o + k * 4 + 4].try_into().unwrap())
-                            as f64
-                    };
-                    mesh.vertex([f(0), f(1), f(2)]);
+                    let f = |k: usize| f32_le(data, o + k * 4).map(f64::from);
+                    mesh.vertex([f(0)?, f(1)?, f(2)?]);
                 }
             }
             0x4120 => {
@@ -1402,18 +1481,19 @@ fn three_ds_chunks(
                     at = chunk_end;
                     continue;
                 };
-                let n = u16::from_le_bytes([data[body], data[body + 1]]) as usize;
+                let Some(n) = count else {
+                    at = chunk_end;
+                    continue;
+                };
                 if body + 2 + n * 8 > chunk_end {
                     bail!("3DS face list is truncated");
                 }
-                let count = mesh.vertex_count() as u32;
+                let vertices = mesh.vertex_count() as u32;
                 for f in 0..n {
                     let o = body + 2 + f * 8;
-                    let i = |k: usize| {
-                        u16::from_le_bytes([data[o + k * 2], data[o + k * 2 + 1]]) as u32
-                    };
-                    let t = [i(0), i(1), i(2)];
-                    if t.iter().any(|v| *v >= count) {
+                    let i = |k: usize| u16_le(data, o + k * 2).map(u32::from);
+                    let t = [i(0)?, i(1)?, i(2)?];
+                    if t.iter().any(|v| *v >= vertices) {
                         bail!("3DS face refers to a missing vertex");
                     }
                     mesh.indices.extend(t);
@@ -1450,16 +1530,17 @@ fn text_points(data: &[u8]) -> Result<Mesh> {
             .filter(|t| !t.is_empty())
             .map_while(|t| t.parse::<f64>().ok().filter(|v| v.is_finite()))
             .collect();
-        if values.len() < 3 {
+        let [x, y, z, rest @ ..] = values.as_slice() else {
             continue;
-        }
+        };
         row += 1;
         if (row - 1) % stride != 0 {
             continue;
         }
-        mesh.vertex([values[0], values[1], values[2]]);
-        if values.len() >= 6 {
-            let rgb = &values[values.len() - 3..];
+        mesh.vertex([*x, *y, *z]);
+        // the last three values are the colour (an intensity may come first)
+        if let [.., r, g, b] = rest {
+            let rgb = [*r, *g, *b];
             if rgb.iter().all(|c| (0.0..=255.0).contains(c)) {
                 colors.extend(rgb.iter().map(|c| *c as u8));
             }
@@ -1475,29 +1556,30 @@ fn text_points(data: &[u8]) -> Result<Mesh> {
 }
 
 fn las(data: &[u8]) -> Result<Mesh> {
-    if data.len() < 227 || &data[..4] != b"LASF" {
+    if data.len() < 227 || data.get(..4) != Some(b"LASF".as_slice()) {
         bail!("Not a LAS file.");
     }
-    let u16_at = |at: usize| u16::from_le_bytes([data[at], data[at + 1]]) as usize;
-    let u32_at = |at: usize| u32::from_le_bytes(data[at..at + 4].try_into().unwrap()) as usize;
-    let f64_at = |at: usize| f64::from_le_bytes(data[at..at + 8].try_into().unwrap());
-    let offset = u32_at(96);
-    let format = data[104];
+    let u16_at = |at: usize| u16_le(data, at).map(usize::from);
+    let u32_at = |at: usize| u32_le(data, at).map(|v| v as usize);
+    let f64_at = |at: usize| f64_le(data, at);
+    let byte_at = |at: usize| data.get(at).copied().ok_or_else(|| ends_early(at));
+    let offset = u32_at(96)?;
+    let format = byte_at(104)?;
     if format & 0x80 != 0 {
         bail!("Compressed LAZ point clouds are not previewed – export an uncompressed .las.");
     }
     let format = format & 0x3F;
-    let record = u16_at(105);
-    let mut count = u32_at(107);
-    if count == 0 && data.len() >= 255 && data[25] >= 4 {
-        count = u64::from_le_bytes(data[247..255].try_into().unwrap()) as usize;
+    let record = u16_at(105)?;
+    let mut count = u32_at(107)?;
+    if count == 0 && data.len() >= 255 && byte_at(25)? >= 4 {
+        count = u64_le(data, 247)? as usize;
     }
     if record < 12 || offset > data.len() {
         bail!("Invalid LAS header.");
     }
     count = count.min((data.len() - offset) / record);
-    let scale = [f64_at(131), f64_at(139), f64_at(147)];
-    let origin = [f64_at(155), f64_at(163), f64_at(171)];
+    let [sx, sy, sz] = [f64_at(131)?, f64_at(139)?, f64_at(147)?];
+    let [ox, oy, oz] = [f64_at(155)?, f64_at(163)?, f64_at(171)?];
     let rgb_at = match format {
         2 => Some(20),
         3 | 5 => Some(28),
@@ -1513,15 +1595,11 @@ fn las(data: &[u8]) -> Result<Mesh> {
     let mut raw_colors: Vec<u16> = Vec::new();
     for i in (0..count).step_by(stride) {
         let o = offset + i * record;
-        let c = |k: usize| i32::from_le_bytes(data[o + k * 4..o + k * 4 + 4].try_into().unwrap());
-        mesh.vertex([
-            c(0) as f64 * scale[0] + origin[0],
-            c(1) as f64 * scale[1] + origin[1],
-            c(2) as f64 * scale[2] + origin[2],
-        ]);
+        let c = |k: usize| i32_le(data, o + k * 4).map(f64::from);
+        mesh.vertex([c(0)? * sx + ox, c(1)? * sy + oy, c(2)? * sz + oz]);
         if let Some(at) = rgb_at {
             for k in 0..3 {
-                raw_colors.push(u16_at(o + at + k * 2) as u16);
+                raw_colors.push(u16_le(data, o + at + k * 2)?);
             }
         }
     }
@@ -1665,6 +1743,49 @@ property uchar red\nproperty uchar green\nproperty uchar blue\nelement face 1\np
             (mesh.triangle_count(), mesh.vertex_count(), mesh.parts),
             (1, 3, 1)
         );
+    }
+
+    /// Regression: a vertex or face list chunk of the minimum length 6 has
+    /// no room for its count. At the end of the file the count was read
+    /// past the last byte – a panic. Now the chunk is skipped.
+    #[test]
+    fn three_ds_list_chunks_without_their_count() {
+        let chunk = |id: u16, body: &[u8]| {
+            let mut c = id.to_le_bytes().to_vec();
+            c.extend_from_slice(&((body.len() + 6) as u32).to_le_bytes());
+            c.extend_from_slice(body);
+            c
+        };
+        let file_with = |lists: Vec<u8>| {
+            let object = chunk(0x4000, &[b"a\0".to_vec(), chunk(0x4100, &lists)].concat());
+            chunk(0x4D4D, &chunk(0x3D3D, &object))
+        };
+        for id in [0x4110u16, 0x4120] {
+            // the empty list is the last chunk of the file
+            let file = file_with(chunk(id, &[]));
+            assert!(read("3ds", &file).is_err(), "{id:#x}: no geometry");
+            assert!(three_ds(&file).unwrap().positions.is_empty());
+        }
+        // an empty list before a complete one: skipped, the rest is read
+        let mut vertices = 3u16.to_le_bytes().to_vec();
+        for c in [0f32, 0., 0., 1., 0., 0., 0., 1., 0.] {
+            vertices.extend_from_slice(&c.to_le_bytes());
+        }
+        let mut faces = 1u16.to_le_bytes().to_vec();
+        for i in [0u16, 1, 2, 0] {
+            faces.extend_from_slice(&i.to_le_bytes());
+        }
+        let file = file_with(
+            [
+                chunk(0x4110, &[]),
+                chunk(0x4110, &vertices),
+                chunk(0x4120, &[]),
+                chunk(0x4120, &faces),
+            ]
+            .concat(),
+        );
+        let mesh = read("3ds", &file).unwrap();
+        assert_eq!((mesh.triangle_count(), mesh.vertex_count()), (1, 3));
     }
 
     fn zip_of(files: &[(&str, &str)]) -> Vec<u8> {

@@ -122,7 +122,7 @@ pub fn read(data: &[u8]) -> Result<Mesh> {
         );
     }
     let start = data.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(data);
-    let start = &start[start.iter().take_while(|b| b.is_ascii_whitespace()).count()..];
+    let start = start.trim_ascii_start();
     if !start.starts_with(b"ISO-10303-21") {
         bail!("Not a STEP file (ISO-10303-21 header missing).");
     }
@@ -333,9 +333,9 @@ fn tolerance<'a>(
     let mut any = false;
     for v in vertices.into_iter().flatten() {
         any = true;
-        for a in 0..3 {
-            min[a] = min[a].min(v[a]);
-            max[a] = max[a].max(v[a]);
+        for ((lo, hi), c) in min.iter_mut().zip(max.iter_mut()).zip([v.x, v.y, v.z]) {
+            *lo = lo.min(c);
+            *hi = hi.max(c);
         }
     }
     let diameter = if any {
@@ -361,7 +361,7 @@ fn oriented(
     let pos = p.positions();
     let area = p.face_iter().any(|f| {
         (2..f.len()).any(|k| {
-            let at = |i: usize| <[Point3]>::get(pos, f[i].pos).copied();
+            let at = |i: usize| f.get(i).and_then(|v| <[Point3]>::get(pos, v.pos)).copied();
             let (Some(a), Some(b), Some(c)) = (at(0), at(k - 1), at(k)) else {
                 return false;
             };
