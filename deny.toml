@@ -1,0 +1,45 @@
+# cargo-deny policy: `cargo deny check` (CI job "dependencies").
+
+[graph]
+all-features = false
+
+[advisories]
+# Vulnerabilities and yanked crates fail the check. The three "unmaintained"
+# notices below are transitive, have no fixed release to move to and are not
+# vulnerabilities; revisit them when the parent crates update.
+ignore = [
+    { id = "RUSTSEC-2026-0196", reason = "cgmath is unmaintained; pulled in by truck-base (STEP reading). No advisory against it, no drop-in replacement for truck." },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is unmaintained; a build-time macro dependency of ruststep-derive and truck-derivers, not part of the running server." },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; pulled in by pdf_oxide (text extraction from PDFs). Parsers run under the preview size and memory limits." },
+]
+
+[licenses]
+# Permissive licences only. r-efi is offered as MIT OR Apache-2.0 OR
+# LGPL-2.1-or-later; the permissive options are used.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "0BSD",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Different versions of one crate are common in a tree this size; show them
+# without failing.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -129,23 +129,14 @@ structure should not prevent translations later). They may land in 1.x minor rel
 The feature list is covered broadly since #65 (and #67); the weak spots are the processes that must never leave
 half a state behind. Prefer tests that fail on a real regression over tests that restate the code.
 
-- [ ] **Backup / restore** – beyond `tests/backup_restore.rs` and the argument/manifest tests in `src/backup.rs`:
-  restore of a backup from an older schema version (then migrate), a vault object missing or corrupt during
-  backup (refused, nothing written), interrupted backup leaves no directory that `verify` accepts, restore into a
-  non-empty target without `--force` is refused, `--force` failure leaves database *and* vault untouched (vault side
-  not covered yet), percent-encoded and `_FILE` credentials, large-object and preview-cache handling
 - [ ] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): the dry-run plan equals what the
   import writes (property test over generated tables), an error in row *n* rolls back rows 1…*n*-1, re-import of the
   same table is idempotent (no duplicate items or BOM lines), cycles and self-references refused, quantity/unit
   parsing edge cases (decimal comma, `1.1.2` positions with gaps, empty levels), malformed STEP (truncated, unknown
   entities, `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`) never panics (fuzz-style corpus); desktop folder import resumes
   after an interrupted run without duplicates
-- [ ] **Atomic processes** – each multi-row mutation is all-or-nothing under an injected failure (a failing
-  statement or a closed connection between steps): check-in (file versions + lock release), change order release
-  (all revisions or none, impact flags, notifications and webhooks in the same transaction), *Replace in assemblies*,
-  Save As with files and BOM, chunked upload `finish`, folder import per item, restricted-group visibility switch;
-  concurrent runs of the same mutation (two check-ins, two releases, two numbering requests) give one winner and a
-  clean 409, never a duplicate or a lost update
+- [ ] **Atomic processes** – the folder import per item is still open (with the import proofing); the rest is done,
+  see *Done*
 - [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
   make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
   with two failing integration tests; merge only with green checks
@@ -158,18 +149,16 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   minimised input; a short fuzz run per parser in a scheduled CI job
 - [ ] No `unwrap`/`expect`/indexing panics on file input outside tests: audit `swpart`, `mesh`, `simmesh`, `config`,
   then enable `clippy::unwrap_used`/`expect_used` for the parser modules
-- [ ] Property tests (`proptest`) for the pure rules in `domain.rs`: revision letter sequence, lifecycle transition
-  table, numbering scheme expansion and counters, skin contrast
+- [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
 - [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*, report only: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) – open: a floor that may not drop, once the numbers of a few PRs are known
-- [ ] `cargo deny` in CI: licences compatible with MPL-2.0 (see *Rules for all of them* below), security advisories,
-  duplicate major versions
+- [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
 - [ ] Branch protection on `main`: required checks (fmt/clippy, tests on PostgreSQL 16 and 18, builds, docs links)
 
 ### 2. Structure
 
 - [ ] Split the largest modules by area, without behaviour changes, one PR each: `src/mcp/tools.rs` (~3000 lines →
   one file per area like `services/`), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
-  skins,validation}.rs`), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`),
+  skins,validation}.rs`) – domain done (`src/domain/*.rs`, re-exported), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`) – api done (`src/api/*_api.rs`, route table stays in `mod.rs`),
   `src/services/requests.rs` (~1900), `desktop/ui/app.js` (~4700 → ES modules per view, no bundler)
 - [ ] Guard tests for the architecture rules, like `tests/no_unchecked_in_handlers.rs`: no `sqlx` in `src/web`,
   `src/api`, `src/mcp` (holds today – keep it that way); every mutation in `services::*` writes an audit entry (list
@@ -334,7 +323,20 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
-
+- [x] **Backup / restore** proofed (`tests/backup_proofing.rs`, `tests/backup_errors.rs`): a corrupt or missing vault
+  object refuses the backup and nothing is left (two fixes: the backup now checks every object against its name and
+  every content the database refers to, and a failed backup removes what it wrote; the manifest is renamed into
+  place); a v0.1.0 backup with data restores into an empty database and migrates; a failing `restore --force`
+  leaves database and vault untouched; credentials from a fully percent-encoded URL and from `_FILE`; large objects
+  travel, the preview cache stays out and a target's cache is left alone; restore into a non-empty database needs
+  `--force` (`tests/backup_restore.rs`)
+- [x] **Atomic processes** proofed (`tests/atomic_processes.rs`): a trigger in the test database makes one step fail
+  – with an error or by ending the connection (`pg_terminate_backend`) – and nothing is left (rows, counters, audit,
+  notifications, webhook deliveries, check-out, review decision, visibility) for check-in, change order release,
+  *Replace in assemblies*, Save As with files and BOM, chunked upload `finish` (repeatable afterwards) and the
+  restricted-group visibility switch; two check-ins, two releases, two replacements and parallel numbering (also the
+  same explicit number) give one winner and a 409. No atomicity bug found; a mutation check (check-in split into two
+  transactions) makes the tests fail
 - [x] **Migrations** proofed (`tests/migrations.rs`): numbering without duplicates and only the known gap (0015);
   every migration applied one at a time on an empty database, each step a version to upgrade from, ending at the
   schema of a fresh `migrate` (columns with type, nullability and default, constraints, indexes, triggers,

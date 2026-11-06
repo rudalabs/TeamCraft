@@ -116,8 +116,9 @@ server), `services/requests.rs` (1.9k lines, 5 unit), `services/simulations.rs`,
 2. OIDC callback failure paths with a fake provider; token expiry/revocation.
 3. SSRF guard table test for webhooks (pure function, no database).
 4. FRD sample and a SOLIDWORKS container built by hand in the damage tests.
-5. `cargo fuzz` targets for the parsers (`docs/OPEN_WORK.md`), fed with the
-   samples of `tests/parser_robustness.rs` as seed corpus.
+5. ~~`cargo fuzz` targets for the parsers~~ – done: `fuzz/`, the weekly
+   *Fuzzing* workflow and `tests/parser_corpus.rs` (seeds and NIST files on
+   stable), see [Fuzzing the file readers](fuzzing.md).
 6. A floor for the CI coverage job once its numbers are stable.
 
 ## Per module
