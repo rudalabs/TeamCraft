@@ -11,6 +11,13 @@
 //! * Everything else (binary CAD, images): nothing (not indexed yet).
 //!
 //! At most `MAX_READ` bytes are read and `MAX_TEXT` characters are kept.
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::path::Path;
 
