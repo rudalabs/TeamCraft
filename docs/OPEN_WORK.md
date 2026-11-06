@@ -158,10 +158,6 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 
 **Parsers and CI gates**
 
-- [ ] Fuzz targets (`cargo fuzz`, own `fuzz/` crate outside the server build) for every reader of untrusted files:
-  `mesh` (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, point clouds), `simmesh` (VTK, VTU/VTP, FRD), `stepbom`, `swpart`,
-  `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex`; crashes found become regression unit tests with the
-  minimised input; a short fuzz run per parser in a scheduled CI job
 - [ ] No `unwrap`/`expect`/indexing panics on file input outside tests: audit `swpart`, `mesh`, `simmesh`, `config`,
   then enable `clippy::unwrap_used`/`expect_used` for the parser modules
 - [ ] Property tests (`proptest`) for the pure rules in `domain.rs`: revision letter sequence, lifecycle transition
@@ -339,6 +335,12 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
+- [x] Fuzz targets for every reader of untrusted files: own `fuzz/` crate outside the server build (`stepbom`,
+  `swpart`, `nxpart`, `cadrefs`, `bomtable`, `thumbnail`, `textindex`, `mesh` with the `simmesh` formats,
+  `mesh_step`), entry points shared with the stable corpus test `tests/parser_corpus.rs` (seeds in `fuzz/seeds/` and
+  the NIST files, whole, cut and corrupted – no panic found), weekly CI job *Fuzzing* (`fuzz.yml`, 5 min per target),
+  crash → minimised regression unit test ([docs](src/dev/fuzzing.md)); still to do: watch the first scheduled runs –
+  `cargo fuzz` itself has not run yet (nightly, not available on the Windows laptop it was written on)
 - [x] Tests across the feature list: functional and semantic unit and integration tests per feature (#65, two audit
   test expectations fixed in #67)
 - [x] Release pipeline: Flatpak bundles (x86_64, aarch64), desktop installers for Windows ARM64, portable Windows

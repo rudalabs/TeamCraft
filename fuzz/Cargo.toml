@@ -1,0 +1,84 @@
+[package]
+name = "teamcraft-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MPL-2.0"
+description = "cargo fuzz targets for the readers of untrusted files (never part of the server build)"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+teamcraft = { path = ".." }
+
+# Its own workspace: `cargo build` in the repository root never sees this crate.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "stepbom"
+path = "fuzz_targets/stepbom.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "swpart"
+path = "fuzz_targets/swpart.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nxpart"
+path = "fuzz_targets/nxpart.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cadrefs"
+path = "fuzz_targets/cadrefs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bomtable"
+path = "fuzz_targets/bomtable.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "thumbnail"
+path = "fuzz_targets/thumbnail.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "textindex"
+path = "fuzz_targets/textindex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mesh"
+path = "fuzz_targets/mesh.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mesh_step"
+path = "fuzz_targets/mesh_step.rs"
+test = false
+doc = false
+bench = false
