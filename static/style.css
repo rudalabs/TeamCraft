@@ -569,6 +569,14 @@ table.dense td.bom-item.lvl-5 { padding-left: 120px; }
 table.dense td.bom-item.lvl-6 { padding-left: 144px; }
 table.dense td.bom-item.lvl-deep { padding-left: 168px; }
 .tree-guide { display: inline-block; width: 14px; margin-left: -18px; margin-right: 4px; color: var(--text-dim); text-align: right; }
+/* BOM tree: fold button (added by app.js), lines of the filtered group,
+   count of lines left out by the level or group filter */
+tr[hidden] { display: none; }
+.tree-toggle { background: none; border: 0; padding: 0 4px; margin: 0 2px 0 -2px; min-width: 18px; color: var(--text-dim); cursor: pointer; font: inherit; line-height: 1; }
+.tree-toggle:hover, .tree-toggle:focus-visible { color: var(--text); }
+tr.group-match td { background: var(--accent-soft); }
+.bom-hidden { margin-left: 6px; font-size: 12px; }
+.bom-tools { margin: 0 0 8px; display: flex; gap: 8px; }
 /* a page title that links keeps the ink colour; the link shows on hover */
 h1 a.title-link { color: var(--text); }
 td.tree { position: relative; }
