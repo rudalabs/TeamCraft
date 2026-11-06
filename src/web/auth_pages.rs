@@ -1,10 +1,12 @@
 //! Login (local password and OIDC single sign-on) and logout.
 
+use std::net::SocketAddr;
+
 use axum::{
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::Response,
-    Form,
+    Extension, Form,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -89,7 +91,9 @@ pub async fn setup_submit(
     };
     match created {
         Ok(user) => {
-            let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
+            let token =
+                users::create_session(&st.db, user.id, st.config.session_ttl, users::SignIn::Setup)
+                    .await?;
             Ok(signed_in_redirect(&st, &user, &token, Some("/projects")))
         }
         Err(e) if super::is_user_error(&e) => {
@@ -158,6 +162,7 @@ fn signed_in_redirect(st: &AppState, user: &User, token: &str, next: Option<&str
 
 pub async fn login_submit(
     State(st): State<AppState>,
+    peer: Option<Extension<ConnectInfo<SocketAddr>>>,
     headers: HeaderMap,
     Form(form): Form<LoginForm>,
 ) -> AppResult<Response> {
@@ -166,27 +171,59 @@ pub async fn login_submit(
             "Password login is disabled on this instance; please use single sign-on.".into(),
         ));
     }
+    let client = auth::client_address(&headers, peer.map(|Extension(ConnectInfo(a))| a.ip()));
+    let keys = auth::SignInThrottle::keys(&form.username, client);
+    let login_error = |message: String, status: StatusCode| -> AppResult<Response> {
+        let mut page = render_login(
+            &st,
+            LoginPage {
+                next: form.next.as_deref(),
+                error: Some(message),
+                flash: None,
+                username: form.username.trim(),
+                skin: skin_from_cookie(&headers),
+                setup: false,
+            },
+        )?;
+        *page.status_mut() = status;
+        Ok(page)
+    };
+    // Refused before the password is checked: no oracle, no Argon2 work.
+    if let Some(wait) = st.sign_in.blocked(&keys) {
+        let minutes = wait.as_secs().div_ceil(60).max(1);
+        tracing::warn!(?client, "sign-in throttled");
+        let mut page = login_error(
+            format!(
+                "Too many failed sign-ins. Try again in {minutes} minute{}.",
+                if minutes == 1 { "" } else { "s" }
+            ),
+            StatusCode::TOO_MANY_REQUESTS,
+        )?;
+        if let Ok(v) = HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
+            page.headers_mut().insert(header::RETRY_AFTER, v);
+        }
+        return Ok(page);
+    }
     match users::authenticate_local(&st.db, &form.username, &form.password).await? {
         Some(user) => {
-            let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
+            st.sign_in.succeeded(&form.username);
+            let token = users::create_session(
+                &st.db,
+                user.id,
+                st.config.session_ttl,
+                users::SignIn::Password,
+            )
+            .await?;
             tracing::info!(username = %user.username, "local login");
             Ok(signed_in_redirect(&st, &user, &token, form.next.as_deref()))
         }
         None => {
-            tracing::warn!(username = %form.username.trim(), "failed local login");
-            let mut page = render_login(
-                &st,
-                LoginPage {
-                    next: form.next.as_deref(),
-                    error: Some("Invalid username or password.".into()),
-                    flash: None,
-                    username: form.username.trim(),
-                    skin: skin_from_cookie(&headers),
-                    setup: false,
-                },
-            )?;
-            *page.status_mut() = StatusCode::UNAUTHORIZED;
-            Ok(page)
+            st.sign_in.failed(&keys);
+            users::record_failed_sign_in(&st.db, &form.username).await?;
+            login_error(
+                "Invalid username or password.".into(),
+                StatusCode::UNAUTHORIZED,
+            )
         }
     }
 }
@@ -266,7 +303,9 @@ pub async fn oidc_callback(
     let result = async {
         let (identity, return_to) = oidc.finish_login(&st.db, &code, &state).await?;
         let user = users::upsert_oidc_user(&st.db, identity).await?;
-        let token = users::create_session(&st.db, user.id, st.config.session_ttl).await?;
+        let token =
+            users::create_session(&st.db, user.id, st.config.session_ttl, users::SignIn::Sso)
+                .await?;
         tracing::info!(username = %user.username, role = %user.role, "SSO login");
         Ok::<_, AppError>((user, token, return_to))
     }

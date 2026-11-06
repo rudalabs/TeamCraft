@@ -76,10 +76,12 @@ feature milestone – the features in *What works* are enough; what is missing i
 *Security*
 
 - Open findings of the [threat model](src/dev/threat-model.md) (F1–F19 there):
-  - [ ] F1: rate limit or lockout for sign-in, the own password change and the desktop token exchange (with the
-    policy review below)
+  - [x] F1: failed password sign-ins throttled per username and client address (`TEAMCRAFT_SIGNIN_MAX_FAILURES`,
+    429 with `Retry-After`)
+  - [ ] F1 (rest): count wrong current passwords of the own password change like failed sign-ins
   - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
-  - [ ] F3: sign-in, failed sign-in and sign-out in the audit log (not only log lines)
+  - [x] F3: sign-in, failed sign-in and sign-out in the audit log (`user.sign_in`, `user.sign_in_failed`,
+    `user.sign_out`; no password, token or unknown typed name)
   - [x] F4: web posts without `Origin` and `Referer` are refused; install guide says the proxy must overwrite
     `X-Forwarded-Host`
   - [x] F5: `Strict-Transport-Security` when the public URL is https

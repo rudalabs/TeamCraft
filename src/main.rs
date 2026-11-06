@@ -394,10 +394,13 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
         .await
         .with_context(|| format!("cannot listen on {bind_addr}"))?;
     tracing::info!("listening on http://{bind_addr}");
-    axum::serve(listener, teamcraft::router(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("HTTP server failed")?;
+    axum::serve(
+        listener,
+        teamcraft::router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .context("HTTP server failed")?;
     tracing::info!("shut down cleanly");
     Ok(ExitCode::SUCCESS)
 }

@@ -94,6 +94,10 @@ pub struct Config {
     /// Largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/{id}`).
     pub upload_chunk_bytes: u64,
     pub session_ttl: Duration,
+    /// Failed password sign-ins per username within 15 minutes before sign-in
+    /// is refused (`TEAMCRAFT_SIGNIN_MAX_FAILURES`; five times as many per
+    /// client address; 0 = off). See [`crate::auth::SignInThrottle`].
+    pub signin_max_failures: u32,
     /// Adds the `Secure` attribute to cookies (required when served via HTTPS).
     pub cookie_secure: bool,
     pub log_format: LogFormat,
@@ -588,6 +592,8 @@ impl Config {
             bail!("TEAMCRAFT_SESSION_TTL_HOURS must be at least 1");
         }
 
+        let signin_max_failures = env.parse_or("TEAMCRAFT_SIGNIN_MAX_FAILURES", 10u32)?;
+
         let cookie_secure = match env.get("TEAMCRAFT_COOKIE_SECURE")? {
             Some(v) => parse_bool(&v).context("TEAMCRAFT_COOKIE_SECURE must be true or false")?,
             None => public_url.starts_with("https://"),
@@ -697,6 +703,7 @@ impl Config {
             preview,
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
+            signin_max_failures,
             cookie_secure,
             log_format,
             bootstrap_admin,
