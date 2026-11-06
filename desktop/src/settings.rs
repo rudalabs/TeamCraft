@@ -32,6 +32,10 @@ pub struct Settings {
     pub agents: Vec<crate::acp::AgentProfile>,
     /// Name of the agent picked last.
     pub agent: Option<String>,
+    /// The model picked last per agent (agent name → the agent's model id);
+    /// applied at the next start if the agent still offers it.
+    #[serde(default)]
+    pub agent_models: std::collections::BTreeMap<String, String>,
     /// Not stored in settings.json.
     #[serde(skip)]
     pub token: Option<String>,

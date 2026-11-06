@@ -264,6 +264,12 @@ with its own provider.
 - **Permission requests** of the agent show up in the conversation with
   **Allow once** and **Reject**. The desktop app never grants an "always"
   permission.
+- **Model:** if the agent offers a choice of models, the navigator shows a
+  **Model** picker under the agent. The list is the agent's own. It depends
+  on the agent's provider, sign-in and plan, and TeamCraft adds or checks
+  nothing. The model switches between answers, not during one. The desktop
+  app remembers the pick per agent and selects it again at the next start
+  if the agent still offers it. Agents that offer no choice show no picker.
 - **Cancel** in the toolbar stops the running turn. **Stop** in the
   navigator ends the agent process. Signing out stops it too.
 
@@ -301,9 +307,13 @@ tool calls as yours.
 The desktop app speaks ACP version 1 (JSON-RPC 2.0, one message per line,
 at most 8 MiB per message) and calls `initialize`, `session/new` (with the
 workspace folder as `cwd` and TeamCraft as an `http` entry in
-`mcpServers`), `session/prompt` and `session/cancel`. It handles
+`mcpServers`), `session/prompt` and `session/cancel`. For the model
+picker it reads the session's `configOptions` (the `select` option of
+category `model`, set with `session/set_config_option`) or, from agents
+that only send that, the older unstable `models` field (set with
+`session/set_model`). It handles
 `session/update` (message and thought chunks, `tool_call`,
-`tool_call_update`, `plan`), `session/request_permission` and
+`tool_call_update`, `plan`, `config_option_update`), `session/request_permission` and
 `fs/read_text_file`. It answers every other agent request with "method not
 found". At most 8 file reads run at once and at most 16 permission requests
 wait for an answer; further ones are refused or answered with `cancelled`.

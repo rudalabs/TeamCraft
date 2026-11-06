@@ -160,10 +160,6 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   one file per area like `services/`), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
   skins,validation}.rs`) – domain done (`src/domain/*.rs`, re-exported), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`) – api done (`src/api/*_api.rs`, route table stays in `mod.rs`),
   `src/services/requests.rs` (~1900), `desktop/ui/app.js` (~4700 → ES modules per view, no bundler)
-- [ ] Guard tests for the architecture rules, like `tests/no_unchecked_in_handlers.rs`: no `sqlx` in `src/web`,
-  `src/api`, `src/mcp` (holds today – keep it that way); every mutation in `services::*` writes an audit entry (list
-  of audit actions checked against the mutating functions); every template in `TEMPLATES` and in
-  `every_template_renders`; every config variable in `docs/src/admin/configuration.md`
 - [ ] One request/response contract for web, REST and MCP where they do the same thing (e.g. BOM, where-used,
   change requests): shared view structs in `services::*` instead of three hand-built JSON/HTML shapes
 - [ ] Typed ids (`ItemId`, `RevisionId`, `ChangeId`, … as newtypes over `Uuid`) at the service boundary, so that ids
@@ -333,6 +329,12 @@ real files and belong to section 3 once such files are at hand.
   Not done: the desktop app's structure tab (own renderer in `desktop/ui/app.js`) has none of this yet
 - [x] CI gate for the API reference: the `fmt and clippy` job also runs `cargo doc --no-deps` with
   `RUSTDOCFLAGS=-D warnings`; the 8 broken or private intra-doc links it found are fixed (doc comments only)
+- [x] Guard tests for the architecture rules (`tests/architecture_guards.rs`, no database, walk directories so module
+  splits do not break them): no `sqlx` in `src/web`, `src/api`, `src/mcp`; every public service function that
+  writes (itself or through the services it calls) records an audit entry, exceptions listed with a reason
+  (`NOT_AUDITED`: personal data, caches, sessions, staging, housekeeping); every template in `TEMPLATES` and rendered by
+  `every_template_renders`; every `TEAMCRAFT_*` variable in `docs/src/admin/configuration.md` (found: `TEAMCRAFT_ENV_FILE`
+  and the build-time `TEAMCRAFT_SYSTEM_CONFIG` were undocumented). A mutation check per rule made each guard fail once.
 - [x] **Backup / restore** proofed (`tests/backup_proofing.rs`, `tests/backup_errors.rs`): a corrupt or missing vault
   object refuses the backup and nothing is left (two fixes: the backup now checks every object against its name and
   every content the database refers to, and a failed backup removes what it wrote; the manifest is renamed into

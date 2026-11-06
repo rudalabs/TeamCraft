@@ -27,7 +27,9 @@
 //! check sees the real target.
 
 use std::{
+    future::Future,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    pin::Pin,
     sync::Arc,
     time::Duration,
 };
@@ -294,19 +296,48 @@ pub fn is_internal(ip: IpAddr) -> bool {
     }
 }
 
+/// Name resolution for webhook connections: host name → addresses. The
+/// system resolver in production ([`system_lookup`]); tests pass their own
+/// answers to [`Dispatcher::with_lookup`] (DNS rebinding without a DNS
+/// server).
+pub type Lookup = Arc<
+    dyn Fn(String) -> Pin<Box<dyn Future<Output = std::io::Result<Vec<IpAddr>>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// The operating system's resolver.
+pub fn system_lookup() -> Lookup {
+    Arc::new(|host: String| {
+        Box::pin(async move {
+            Ok(tokio::net::lookup_host((host.as_str(), 0))
+                .await?
+                .map(|a| a.ip())
+                .collect())
+        })
+    })
+}
+
 /// DNS resolution that drops the addresses the policy does not allow; the
-/// HTTP client only ever connects to what this returns.
+/// HTTP client only ever connects to what this returns. It runs for every new
+/// connection, so an answer that changes between the check and the connect
+/// (DNS rebinding) is checked as it is used.
 struct GuardedResolver {
     policy: Arc<TargetPolicy>,
+    lookup: Lookup,
 }
 
 impl reqwest::dns::Resolve for GuardedResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let policy = self.policy.clone();
         let host = name.as_str().trim_end_matches('.').to_ascii_lowercase();
+        let lookup = (self.lookup)(host.clone());
         Box::pin(async move {
-            let found: Vec<SocketAddr> =
-                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            let found: Vec<SocketAddr> = lookup
+                .await?
+                .into_iter()
+                .map(|ip| SocketAddr::new(ip, 0))
+                .collect();
             let allowed: Vec<SocketAddr> = found
                 .iter()
                 .copied()
@@ -453,6 +484,16 @@ impl Dispatcher {
     }
 
     pub fn new(public_url: &str, config: &WebhookConfig) -> anyhow::Result<Dispatcher> {
+        Dispatcher::with_lookup(public_url, config, system_lookup())
+    }
+
+    /// A dispatcher whose connections resolve host names with `lookup`
+    /// (tests; [`Dispatcher::new`] uses the system resolver).
+    pub fn with_lookup(
+        public_url: &str,
+        config: &WebhookConfig,
+        lookup: Lookup,
+    ) -> anyhow::Result<Dispatcher> {
         let policy = Arc::new(TargetPolicy::new(config));
         let http = reqwest::Client::builder()
             .timeout(TIMEOUT)
@@ -461,6 +502,7 @@ impl Dispatcher {
             .no_proxy()
             .dns_resolver(Arc::new(GuardedResolver {
                 policy: policy.clone(),
+                lookup,
             }))
             .user_agent(concat!("TeamCraft-Webhooks/", env!("CARGO_PKG_VERSION")))
             .build()?;
@@ -846,6 +888,96 @@ mod tests {
         let ip = "10.0.0.5".parse().unwrap();
         assert!(!p.address_allowed("erp.internal", ip));
         assert!(p.address_allowed("erp.internal", "203.0.113.9".parse().unwrap()));
+    }
+
+    /// A lookup that gives the next of `answers` on every call (the last one
+    /// once they run out) and counts the calls.
+    fn scripted(answers: &[&[&str]]) -> (Lookup, Arc<std::sync::atomic::AtomicUsize>) {
+        let answers: Vec<Vec<IpAddr>> = answers
+            .iter()
+            .map(|a| a.iter().map(|ip| ip.parse().unwrap()).collect())
+            .collect();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = calls.clone();
+        let lookup: Lookup = Arc::new(move |_host: String| {
+            let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let answer = answers[n.min(answers.len() - 1)].clone();
+            Box::pin(async move { Ok(answer) })
+        });
+        (lookup, calls)
+    }
+
+    async fn resolve(r: &GuardedResolver, host: &str) -> Result<Vec<IpAddr>, String> {
+        use reqwest::dns::Resolve;
+        match r.resolve(host.parse().unwrap()).await {
+            Ok(addrs) => Ok(addrs.map(|a| a.ip()).collect()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn every_connection_checks_the_answer_it_uses() {
+        // DNS rebinding: the first answer is public, the next one loopback.
+        // The resolver runs for each connection and filters what it returns,
+        // so there is no gap between a check and the connect.
+        let (lookup, calls) = scripted(&[&["203.0.113.9"], &["127.0.0.1"]]);
+        let r = GuardedResolver {
+            policy: Arc::new(TargetPolicy::default()),
+            lookup,
+        };
+        let public: IpAddr = "203.0.113.9".parse().unwrap();
+        assert_eq!(resolve(&r, "hooks.example.org").await, Ok(vec![public]));
+        let rebound = resolve(&r, "hooks.example.org").await.unwrap_err();
+        assert!(rebound.contains("private, loopback"), "{rebound}");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+        // a mixed answer keeps only the public addresses – also internal
+        // addresses in IPv6 clothing
+        let (lookup, _) = scripted(&[&[
+            "127.0.0.1",
+            "203.0.113.9",
+            "::ffff:10.0.0.1",
+            "169.254.169.254",
+            "fd00::1",
+            "0.0.0.0",
+        ]]);
+        let r = GuardedResolver {
+            policy: Arc::new(TargetPolicy::default()),
+            lookup,
+        };
+        assert_eq!(resolve(&r, "Hooks.Example.org.").await, Ok(vec![public]));
+
+        // nothing but internal addresses: refused, and nothing is returned
+        let (lookup, _) = scripted(&[&["10.0.0.5", "::1"]]);
+        let r = GuardedResolver {
+            policy: Arc::new(TargetPolicy::default()),
+            lookup,
+        };
+        assert!(resolve(&r, "erp.internal").await.is_err());
+
+        // a listed host may be internal, still never the unspecified address
+        let (lookup, _) = scripted(&[&["10.0.0.5", "0.0.0.0"]]);
+        let r = GuardedResolver {
+            policy: Arc::new(TargetPolicy::new(&WebhookConfig {
+                allowed_hosts: vec!["erp.internal".into()],
+                allow_private: false,
+                retention_days: 30,
+            })),
+            lookup,
+        };
+        assert_eq!(
+            resolve(&r, "erp.internal").await,
+            Ok(vec!["10.0.0.5".parse().unwrap()])
+        );
+
+        // no answer at all
+        let (lookup, _) = scripted(&[&[]]);
+        let r = GuardedResolver {
+            policy: Arc::new(TargetPolicy::default()),
+            lookup,
+        };
+        let none = resolve(&r, "gone.example.org").await.unwrap_err();
+        assert!(none.contains("has no address"), "{none}");
     }
 
     #[test]
