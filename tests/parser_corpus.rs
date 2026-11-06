@@ -23,7 +23,7 @@ fn fixture_types(target: &str) -> Option<&'static [&'static str]> {
         "bomtable" => &["tsv", "csv"],
         // The STEP tessellation is slow in a debug build: only small files.
         "mesh_step" => &["stp"],
-        "mesh" => &[],
+        "mesh" | "simmesh" | "pdftext" | "resultscan" => &[],
         _ => return None,
     })
 }

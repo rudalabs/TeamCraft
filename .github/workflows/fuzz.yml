@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [stepbom, swpart, nxpart, cadrefs, bomtable, thumbnail, textindex, mesh, mesh_step]
+        target: [stepbom, swpart, nxpart, cadrefs, bomtable, thumbnail, textindex, mesh, mesh_step, simmesh, pdftext, resultscan]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly

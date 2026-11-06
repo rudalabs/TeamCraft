@@ -7,6 +7,13 @@
 //! opened (in tests, where there is no such binary, on a blocking thread).
 //! The result is bounded as well – [`MAX_PAGES`] pages, [`MAX_CHARS`]
 //! characters. There is no OCR: a scanned PDF has no text.
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::{
     path::Path,

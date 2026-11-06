@@ -104,6 +104,61 @@ pub fn mesh_step(data: &[u8]) {
     let _ = crate::mesh::read("step", data);
 }
 
+/// The simulation result readers (VTK legacy and XML, CalculiX FRD) called
+/// directly; `mesh` reaches them through the format dispatch as well.
+pub fn simmesh(data: &[u8]) {
+    let _ = crate::simmesh::vtk_legacy(data);
+    let _ = crate::simmesh::vtk_xml(data);
+    let _ = crate::simmesh::frd(data);
+}
+
+/// The text layer of a PDF report (what the isolated `text-extract` child runs).
+pub fn pdftext(data: &[u8]) {
+    let _ = crate::pdftext::extract(data);
+}
+
+/// Result values: the exchange files (JSON and CSV) and the per-group
+/// extraction templates (regex and CSV column) over the same bytes.
+pub fn resultscan(data: &[u8]) {
+    use crate::resultscan::{extract, parse_exchange, ResultTemplate};
+    for name in ["teamcraft-results.json", "teamcraft-results.csv"] {
+        let _ = parse_exchange(name, data);
+    }
+    let now = chrono::Utc::now();
+    let template = |name: &str, method: &str, pattern: &str, column: &str| ResultTemplate {
+        id: uuid::Uuid::nil(),
+        project_id: uuid::Uuid::nil(),
+        name: name.into(),
+        file_pattern: "*".into(),
+        method: method.into(),
+        pattern: pattern.into(),
+        csv_column: column.into(),
+        csv_key_column: String::new(),
+        csv_key_value: String::new(),
+        pick: "last".into(),
+        unit: String::new(),
+        lower_limit: None,
+        upper_limit: None,
+        load_case: String::new(),
+        solver: String::new(),
+        enabled: true,
+        created_at: now,
+        updated_at: now,
+    };
+    let templates = [
+        template(
+            "displacement",
+            "regex",
+            r"(?i)displacement\s*=\s*([-+0-9.eE]+)",
+            "",
+        ),
+        template("load", "csv", "", "load"),
+    ];
+    for name in ["report.txt", "run.csv", "out.log"] {
+        let _ = extract(name, data, &templates);
+    }
+}
+
 /// A target: its name (as in `fuzz/fuzz_targets/<name>.rs`) and entry point.
 pub type Target = (&'static str, fn(&[u8]));
 
@@ -118,6 +173,9 @@ pub const TARGETS: &[Target] = &[
     ("textindex", textindex),
     ("mesh", mesh),
     ("mesh_step", mesh_step),
+    ("simmesh", simmesh),
+    ("pdftext", pdftext),
+    ("resultscan", resultscan),
 ];
 
 /// A panic hook that prints the message and nothing else: panics a reader

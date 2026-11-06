@@ -1,0 +1,5 @@
+Run 7
+Max displacement = 1.5e-3 mm
+step,load,disp
+1,10,0.5
+2,20,1.0

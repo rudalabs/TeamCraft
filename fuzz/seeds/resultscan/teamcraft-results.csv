@@ -1,0 +1,3 @@
+name,value,unit,limit_min,limit_max,load_case
+max stress,212.5,MPa,,250,LC1
+mass,1.25,kg,,,
