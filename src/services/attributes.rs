@@ -29,7 +29,10 @@ pub async fn list(pool: &PgPool, active_only: bool) -> AppResult<Vec<AttributeDe
     list_conn(&mut conn, active_only).await
 }
 
-async fn list_conn(conn: &mut PgConnection, active_only: bool) -> AppResult<Vec<AttributeDef>> {
+pub(crate) async fn list_conn(
+    conn: &mut PgConnection,
+    active_only: bool,
+) -> AppResult<Vec<AttributeDef>> {
     Ok(sqlx::query_as::<_, AttributeDef>(&format!(
         "SELECT {COLUMNS} FROM attribute_defs WHERE active OR NOT $1 ORDER BY position, label"
     ))

@@ -150,7 +150,7 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 - [ ] No `unwrap`/`expect`/indexing panics on file input outside tests: audit `swpart`, `mesh`, `simmesh`, `config`,
   then enable `clippy::unwrap_used`/`expect_used` for the parser modules
 - [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
-- [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*, report only: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) – open: a floor that may not drop, once the numbers of a few PRs are known
+- [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
 - [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
 - [ ] Branch protection on `main`: required checks (fmt/clippy, tests on PostgreSQL 16 and 18, builds, docs links)
 
@@ -169,9 +169,12 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 - [ ] Typed ids (`ItemId`, `RevisionId`, `ChangeId`, … as newtypes over `Uuid`) at the service boundary, so that ids
   cannot be swapped – start with the services that take several ids
 - [ ] Document the invariants per service function (permission check, rows locked, audit action, notifications and
-  webhooks emitted) in its doc comment; `cargo doc` then is the reference for reviewers
-- [ ] Architecture decision records in `docs/src/dev/` for the decisions that keep coming back: access model (deny
-  list on the actor, 404 for hidden), outbox for notifications and webhooks, content-addressed vault, no Node.js
+  webhooks emitted) in its doc comment; `cargo doc` then is the reference for reviewers – started with an
+  `# Invariants` section on `files::check_in`, `changes::review`, `interchange::replace`, `save_as::save_as`,
+  `uploads::finish` and `projects::set_visibility`; the other mutating functions follow
+- [x] Architecture decision records in `docs/src/dev/adr/`: access model (deny list on the actor, 404 for hidden),
+  outbox for notifications and webhooks, content-addressed vault, no Node.js – each with context, decision,
+  consequences, alternatives (or "not documented") and the code and tests that hold it
 
 ### 3. Fixes and verification
 
@@ -232,7 +235,6 @@ real files and belong to section 3 once such files are at hand.
   desktop app
 - [ ] Numbering schemes: a separate scheme per item type within a group, an instance-wide default other than
   `{TYPE}-{SEQ:6}` (feature 4)
-- [ ] Change requests: e-mail digest of new requests per project group
 - [ ] Jira connector for change requests and change orders, one-way first (TeamCraft → Jira) – design and order of
   work in [docs/src/research/jira-connector.md](src/research/jira-connector.md)
 
@@ -242,9 +244,8 @@ real files and belong to section 3 once such files are at hand.
   read yet: complex instances, the quantities of `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`; the geometry of the parts is
   not split into the new items, a STEP file imported *into* a checked-out revision is not attached to it (see *3c*)
 - [ ] CSV/Excel BOM import: test the column recognition with real exports (per CAD program below, also Fusion and
-  Creo); CATIA V5 *Bill of Material* text exports are not understood (see *3b*)
-- [ ] BOM import: map further columns (Inventor *BOM Structure = Purchased*, vendor …) to the classification and to
-  custom attributes (feature 5, second part; `bomtable` has to keep unmapped columns first)
+  Creo); CATIA V5 *Bill of Material* text exports are not understood (see *3b*); this includes the *BOM structure*
+  values and the attribute columns read since feature 5
 
 **3D preview**
 
@@ -324,6 +325,8 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
+- [x] CI gate for the API reference: the `fmt and clippy` job also runs `cargo doc --no-deps` with
+  `RUSTDOCFLAGS=-D warnings`; the 8 broken or private intra-doc links it found are fixed (doc comments only)
 - [x] **Backup / restore** proofed (`tests/backup_proofing.rs`, `tests/backup_errors.rs`): a corrupt or missing vault
   object refuses the backup and nothing is left (two fixes: the backup now checks every object against its name and
   every content the database refers to, and a failed backup removes what it wrote; the manifest is renamed into
@@ -389,6 +392,9 @@ real files and belong to section 3 once such files are at hand.
 - [x] Configurable numbering schemes per project group with preview (feature 4)
 - [x] Custom attributes per item type (text, number, yes/no, choice list; versioned per revision), classification
   in-house/purchased/standard part, attribute search in the item list, REST API, saved searches and MCP (feature 5)
+- [x] BOM import fills the classification (*BOM structure* / procurement column: Purchased, Kaufteil, Content Center …)
+  and custom attributes (columns named like an attribute) of new items; values that do not fit are skipped with a
+  warning (feature 5, second part)
 - [x] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts and multi-level where-used in API, MCP
   and web UI (feature 6) – alternates (two-way or one-way) and supersession per item, *Replace in assemblies* from the
   where-used page with a preview (in-work parents changed, released ones listed for a new revision), migration 0030
@@ -400,6 +406,10 @@ real files and belong to section 3 once such files are at hand.
   2026-11-05)
 - [x] Engineering change requests before the change order (web, API, desktop, attachments, triage, *Create change
   order*); MCP tools `create_change_request`, `comment_change_request` and the `triage_requests` prompt
+- [x] Change requests: e-mail digest of the new requests waiting for triage per project group – to its CAD editors
+  every `TEAMCRAFT_REQUEST_DIGEST_HOURS` (default 24), muted per user like every kind (`request_digest`), only when
+  something new came in, no second digest of a period after a restart (`request_digests`, migration 0035), checked
+  again at sending time (restricted groups); tested in `tests/request_digests.rs` with a recording mailer
 - [x] Simulation management v1 (item type `simulation`, basis links, out-of-date detection, result values, import,
   comparison, result file formats) and the 3D preview of VTK and CalculiX results (#43)
 - [x] Chunked resumable uploads in the API and the desktop app (feature 9, part)
@@ -485,8 +495,11 @@ Documented in the UI, keep in mind:
    (JSONB; versioned, copied by revise and *Save as*, part of the full-text search), the classification
    in-house/purchased/standard part as item master data (`items.classification`), filters `class`, `attr` + `value`
    (text contains, yes/no, `12`, `>=10`, `10..20`) in the item list, the REST API, saved searches and the MCP search.
-   Open: attributes per file type; the BOM import mapping further columns (e.g. Inventor *BOM Structure =
-   Purchased*, vendor) to the classification and attributes – `bomtable` drops unknown columns today.
+   The BOM import fills both for new items: the *BOM structure* / procurement column (Normal, Purchased,
+   Phantom, Kaufteil, Normteil, Content Center …) sets the classification, other columns whose header is the key
+   or label of an active attribute fill it (`bomtable` keeps unread columns in `extra_columns`); values that do
+   not fit are left out with a warning, existing items stay unchanged, the preview lists the attribute columns and
+   the columns that are not imported. Open: attributes per file type.
 6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate parts, multi-level where-used: done.
    Alternates (`item_alternates`, two-way by default) and supersession (`item_supersessions`, one successor, no
    circles) are item-level relations (`services::interchange`); *Replace in assemblies* on `/items/{id}/where-used`

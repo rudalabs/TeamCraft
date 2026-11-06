@@ -15,7 +15,7 @@ use super::{
     finish, is_user_error, redirect_flash, render, revisions::multipart_error, Flash, WebCtx,
 };
 use crate::{
-    domain::Role,
+    domain::{self, Role},
     error::{AppError, AppResult},
     services::{
         imports::{self, ImportOptions, NumberSource, Plan},
@@ -173,6 +173,12 @@ fn preview_rows(plan: &Plan) -> Vec<Value> {
                 "unit": it.unit,
                 "material": it.material,
                 "mass_kg": it.mass_kg,
+                "classification": if it.existing.is_none() && it.classification != domain::Classification::Make {
+                    it.classification.label()
+                } else {
+                    ""
+                },
+                "attributes": it.attributes,
             })
         })
         .collect()

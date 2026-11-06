@@ -425,3 +425,164 @@ async fn custom_attributes_and_classification() {
     assert_eq!(audits, 6, "4 created, 2 updated");
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn bom_import_fills_classification_and_attributes() {
+    let app = app_or_skip!();
+    let (_, admin) = app.user("root", Role::Admin).await;
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROVER"]).await;
+    for body in [
+        json!({ "key": "vendor", "data_type": "text", "label": "Vendor", "item_types": ["part"] }),
+        json!({ "key": "length_mm", "data_type": "number", "label": "Length", "unit": "mm" }),
+        json!({ "key": "surface", "data_type": "choice", "label": "Surface", "choices": ["anodized", "painted"] }),
+    ] {
+        let r = app
+            .api(Method::POST, "/api/v1/attributes", &admin, Some(body))
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
+    // Inventor-like structured export with extra columns: "Vendor" = label,
+    // "length_mm" = key, "Oberfläche" and "Cost Center" match nothing.
+    let csv =
+        "Item,Part Number,BOM Structure,QTY,Description,Vendor,length_mm,Surface,Cost Center\n\
+               1,FRAME-1,Normal,1,Frame,Item GmbH,800,painted,K100\n\
+               1.1,GUIDE-1,Kaufteil,2,Linear guide,Bosch Rexroth,\"120,5\",anodized,K100\n\
+               1.2,ISO 4762 M6 x 20,Content Center,8,Screw,Würth,20,chrome,K100\n\
+               2,MOTOR-1,Purchased,1,Motor,Maxon,abc,,K200\n\
+               3,PLATE-1,Phantom,1,Plate,,,,\n\
+               4,ODD-1,Superpart,1,Odd one,,,,\n";
+    let files: &[(&str, &[u8])] = &[("rover.csv", csv.as_bytes())];
+
+    let plan = app
+        .api_multipart(
+            "/api/v1/bom-imports",
+            &eng,
+            files,
+            &[("project", "ROVER"), ("dry_run", "true")],
+        )
+        .await;
+    assert_eq!(plan.status, StatusCode::OK, "{}", plan.text());
+    let plan = plan.json();
+    let headers: Vec<&str> = plan["attribute_columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["header"].as_str().unwrap())
+        .collect();
+    assert_eq!(headers, ["Vendor", "length_mm", "Surface"], "{plan}");
+    assert_eq!(plan["unused_columns"], json!(["Cost Center"]));
+    let warnings = plan["warnings"].to_string();
+    assert!(
+        warnings.contains("Vendor does not apply to items of type assembly"),
+        "{warnings}"
+    );
+    assert!(warnings.contains("'chrome' is not one of"), "{warnings}");
+    assert!(warnings.contains("'abc' is not a number"), "{warnings}");
+    assert!(
+        warnings.contains("BOM structure 'Superpart' is not understood"),
+        "{warnings}"
+    );
+
+    let done = app
+        .api_multipart(
+            "/api/v1/bom-imports",
+            &eng,
+            files,
+            &[("project", "ROVER"), ("name", "Rover")],
+        )
+        .await;
+    assert_eq!(done.status, StatusCode::CREATED, "{}", done.text());
+    let created = done.json()["created"].clone();
+    let number_of = |file_number: &str| {
+        created
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["file_number"] == file_number)
+            .unwrap_or_else(|| panic!("{file_number} in {created}"))["number"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let rev = |number: String| {
+        let app = &app;
+        let eng = &eng;
+        async move {
+            app.api(
+                Method::GET,
+                &format!("/api/v1/items/{number}/revisions/latest"),
+                eng,
+                None,
+            )
+            .await
+            .json()["revision"]
+                .clone()
+        }
+    };
+    let frame = rev(number_of("FRAME-1")).await;
+    assert_eq!(frame["item_type"], "assembly");
+    assert_eq!(frame["classification"], "make");
+    assert_eq!(
+        frame["attributes"],
+        json!({ "length_mm": 800.0, "surface": "painted" }),
+        "vendor is for parts only"
+    );
+    let guide = rev(number_of("GUIDE-1")).await;
+    assert_eq!(guide["classification"], "purchased", "Kaufteil");
+    assert_eq!(
+        guide["attributes"],
+        json!({ "vendor": "Bosch Rexroth", "length_mm": 120.5, "surface": "anodized" })
+    );
+    let screw = rev(number_of("ISO 4762 M6 x 20")).await;
+    assert_eq!(screw["classification"], "standard", "Content Center");
+    assert_eq!(
+        screw["attributes"],
+        json!({ "vendor": "Würth", "length_mm": 20.0 }),
+        "the invalid choice is left out"
+    );
+    let motor = rev(number_of("MOTOR-1")).await;
+    assert_eq!(motor["classification"], "purchased");
+    assert_eq!(motor["attributes"], json!({ "vendor": "Maxon" }));
+    assert_eq!(
+        rev(number_of("PLATE-1")).await["classification"],
+        "make",
+        "Phantom"
+    );
+    assert_eq!(rev(number_of("ODD-1")).await["classification"], "make");
+
+    // the search finds the imported values
+    let r = app
+        .api(
+            Method::GET,
+            "/api/v1/items?class=purchased&attr=vendor&value=bosch",
+            &eng,
+            None,
+        )
+        .await;
+    let hits = r.json();
+    let found: Vec<&str> = hits["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(found, ["Linear guide"]);
+
+    // An existing item is not changed by a second import.
+    let csv2 = "Part Number,QTY,BOM Structure,Vendor\nGUIDE-1,1,Normal,Other Ltd\n";
+    let guide_number = number_of("GUIDE-1");
+    let csv2 = csv2.replace("GUIDE-1", &guide_number);
+    let r = app
+        .api_multipart(
+            "/api/v1/bom-imports",
+            &eng,
+            &[("again.csv", csv2.as_bytes())],
+            &[("project", "ROVER")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let guide = rev(guide_number).await;
+    assert_eq!(guide["classification"], "purchased");
+    assert_eq!(guide["attributes"]["vendor"], "Bosch Rexroth");
+    app.teardown().await;
+}
