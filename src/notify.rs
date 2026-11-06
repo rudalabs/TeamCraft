@@ -52,32 +52,48 @@ pub fn init(config: &Config) {
     });
 }
 
+impl Notifier {
+    /// Whether a message may go out at `now`: at most one per
+    /// [`MIN_INTERVAL`]. Returns the number of errors suppressed since the
+    /// last message (and starts counting anew), or `None` when this error is
+    /// only counted.
+    fn admit(&self, now: Instant) -> Option<u64> {
+        let mut last = self.last_sent.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_some_and(|t| now.saturating_duration_since(t) < MIN_INTERVAL) {
+            self.suppressed.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        *last = Some(now);
+        Some(self.suppressed.swap(0, Ordering::Relaxed))
+    }
+
+    /// The Mattermost message for an error.
+    fn text(&self, message: &str, suppressed: u64) -> String {
+        let mut text = format!(
+            "#### :rotating_light: {} error\n`{}`\n```\n{}\n```",
+            self.instance,
+            self.public_url,
+            truncate(message, 3000)
+        );
+        if suppressed > 0 {
+            text.push_str(&format!(
+                "\n_{suppressed} further error(s) were suppressed during the last minute._"
+            ));
+        }
+        text
+    }
+}
+
 /// Reports an internal error. Never blocks and never fails.
 pub fn report_error(message: &str) {
     let Some(n) = NOTIFIER.get() else { return };
     let Ok(runtime) = tokio::runtime::Handle::try_current() else {
         return;
     };
-    {
-        let mut last = n.last_sent.lock().unwrap_or_else(|e| e.into_inner());
-        if last.is_some_and(|t| t.elapsed() < MIN_INTERVAL) {
-            n.suppressed.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-        *last = Some(Instant::now());
-    }
-    let suppressed = n.suppressed.swap(0, Ordering::Relaxed);
-    let mut text = format!(
-        "#### :rotating_light: {} error\n`{}`\n```\n{}\n```",
-        n.instance,
-        n.public_url,
-        truncate(message, 3000)
-    );
-    if suppressed > 0 {
-        text.push_str(&format!(
-            "\n_{suppressed} further error(s) were suppressed during the last minute._"
-        ));
-    }
+    let Some(suppressed) = n.admit(Instant::now()) else {
+        return;
+    };
+    let text = n.text(message, suppressed);
     let request = n
         .http
         .post(&n.url)
@@ -112,5 +128,51 @@ mod tests {
     #[test]
     fn report_without_notifier_is_a_noop() {
         report_error("nothing happens");
+    }
+
+    fn notifier() -> Notifier {
+        Notifier {
+            url: "http://127.0.0.1:9/hooks/x".into(),
+            instance: "TeamCraft Test".into(),
+            public_url: "https://plm.example.org/".into(),
+            http: reqwest::Client::new(),
+            last_sent: Mutex::new(None),
+            suppressed: AtomicU64::new(0),
+        }
+    }
+
+    #[test]
+    fn one_message_per_minute_and_the_rest_counted() {
+        let n = notifier();
+        let t0 = Instant::now();
+        assert_eq!(n.admit(t0), Some(0), "the first error goes out");
+        assert_eq!(n.admit(t0 + Duration::from_secs(1)), None);
+        assert_eq!(n.admit(t0 + Duration::from_secs(59)), None);
+        // the minute is over: the next message reports the two in between
+        assert_eq!(n.admit(t0 + MIN_INTERVAL), Some(2));
+        assert_eq!(n.admit(t0 + MIN_INTERVAL + Duration::from_secs(1)), None);
+        assert_eq!(
+            n.admit(t0 + MIN_INTERVAL * 3),
+            Some(1),
+            "counting starts anew"
+        );
+        // a clock that seems to go backwards does not send twice
+        assert_eq!(n.admit(t0), None);
+    }
+
+    #[test]
+    fn the_message_names_instance_and_address_and_is_bounded() {
+        let n = notifier();
+        let text = n.text("database error: boom", 0);
+        assert!(text.starts_with("#### :rotating_light: TeamCraft Test error\n"));
+        assert!(text.contains("`https://plm.example.org/`"));
+        assert!(text.contains("```\ndatabase error: boom\n```"));
+        assert!(!text.contains("suppressed"));
+        let text = n.text("x", 3);
+        assert!(text.ends_with("_3 further error(s) were suppressed during the last minute._"));
+        // a huge error text is cut at 3000 characters (multi-byte safe)
+        let text = n.text(&"ü".repeat(10_000), 0);
+        assert_eq!(text.matches('ü').count(), 3000);
+        assert!(text.contains("ü…\n```"));
     }
 }

@@ -97,11 +97,24 @@ state.
 | 14 | `stepbom.rs`, `bomtable.rs`, `cadrefs.rs`, `textindex.rs`, `cadformat.rs` | Untrusted text and spreadsheets; heuristic | unit tests, damage tests | 5 / 655, 10 / 747, 2 / 442, 2 / 200, 4 / 771 | – |
 | 15 | `vault.rs` | Content-addressed storage: the bytes of every revision | `domain_and_vault`; since #93 every backup hashes every object and requires every referenced one | 30 / 324 | – |
 
-Thin, outside the top 15: `notify.rs` (48 of 65 lines missed),
-`services/insights.rs` (83 of 187), `services/requests.rs` (162 of 1,587),
-`web/requests.rs`, `web/simulations.rs`, `web/attributes.rs`, `web/admin.rs`
-and `web/webhooks.rs` (a quarter of their lines missed each),
-`desktop/src/commands.rs`.
+Thin, outside the top 15: `services/requests.rs` (162 of 1,587 lines missed),
+`web/requests.rs`, `web/simulations.rs`, `web/attributes.rs` and `web/admin.rs`
+(a quarter of their lines missed each), `desktop/src/commands.rs`. Covered
+since (the numbers in the table below are from before, until the next
+coverage run):
+
+* `notify.rs` (48 of 65 missed) – `tests/notify.rs`: an internal error of a
+  request reaches a local stand-in for Mattermost, further errors within the
+  minute are only counted, a receiver answering 500 changes nothing; unit
+  tests for the rate limit (with the clock passed in) and the message.
+* `services/insights.rs` (83 of 187) – `tests/insights.rs`: every kind of BOM
+  issue once per line, the released rule, a cycle, a hidden line reported
+  without its number, an empty BOM, the cap of 500 findings; duplicate files
+  with and without a scope, for a reader and an administrator.
+* `web/webhooks.rs` (48 of 216) – `tests/web_webhooks.rs`: every page and
+  action for a non-administrator and from another site, the form rules
+  (including internal addresses as IP literals), test delivery, retry (409
+  for a sent delivery and an inactive webhook), secret rotation, deletion.
 
 ### Found while writing the tests
 
@@ -133,20 +146,29 @@ and `web/webhooks.rs` (a quarter of their lines missed each),
   `localhost`, or verifying the signature against the provider's JWKS when
   the issuer is plain HTTP, would close that – not changed here because it
   can break existing installations.
+* **Fixed** (2026-11-06) – `insights::duplicate_files` with a revision of a
+  group the reader may not see answered with the visible copies of its files
+  (only the MCP tool checked the revision first). The service now answers
+  "not found" itself (`tests/insights.rs`).
+* **No bug** – a webhook URL with a host name such as `localhost` is saved:
+  only IP literals are checked then, the name when the connection is made
+  (`tests/webhook_ssrf.rs`).
 * **No bug** – the SSRF check at connect time: the resolver filters every
   answer for each new connection; a mutation that drops the filter fails the
   four resolver-based tests.
 
 ### What to write next
 
-1. `services/insights.rs` (BOM health check, duplicates) and `notify.rs`.
+1. `services/requests.rs` and the thin web pages (`web/requests.rs`,
+   `web/simulations.rs`, `web/attributes.rs`, `web/admin.rs`).
 2. FRD sample and a SOLIDWORKS container built by hand in the damage tests.
 3. The CLI (`main.rs`, 511 of 643 lines missed): run the commands in-process in
    a test instead of only in the smoke test, so the coverage job sees them.
 4. Done: atomicity under an injected failure (#92), a floor for the CI
    coverage job (`.github/coverage-floor`), OIDC failure paths and the SSRF
    check at connect time (`oidc_flow`, `webhook_ssrf`), `cargo fuzz` targets (see
-   [Fuzzing the file readers](fuzzing.md)).
+   [Fuzzing the file readers](fuzzing.md)), error notifications, BOM health
+   check and duplicates, webhook pages (`notify`, `insights`, `web_webhooks`).
 
 ## Per module
 
