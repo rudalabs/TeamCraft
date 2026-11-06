@@ -26,6 +26,7 @@ pub mod db;
 pub mod delivery;
 pub mod domain;
 pub mod error;
+pub mod httprange;
 pub mod llm;
 pub mod mcp;
 pub mod mesh;
