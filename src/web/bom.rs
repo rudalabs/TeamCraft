@@ -68,8 +68,9 @@ pub async fn show(
         .unwrap_or_default();
     let depth = parse_depth(q.depth.as_deref());
     let group_code = q.group.as_deref().map(str::trim).filter(|g| !g.is_empty());
+    // project codes are stored in upper case (`normalize_project_code`)
     let group = match group_code {
-        Some(code) => Some(projects::get_by_code(&st.db, me, code).await?),
+        Some(code) => Some(projects::get_by_code(&st.db, me, &code.to_ascii_uppercase()).await?),
         None => None,
     };
     let tree = bom::tree(&st.db, me, id, rule).await?;
