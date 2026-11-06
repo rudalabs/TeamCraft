@@ -92,8 +92,8 @@ state.
 | 9 | `services/users.rs`, `auth.rs`, `oidc.rs` | Sessions, tokens, SSO – untrusted input | unit tests, `api_flow`, `read_permissions`, `oidc_flow` (8, fake identity provider in the test process): a good login provisions the account with the mapped role; a missing, forged or expired `state`, a replayed callback, an error from the provider, a wrong `nonce`, an old `exp`, another `aud` or `iss`, no subject sign nobody in; a PKCE mismatch and a used code are a login error (fixed, below), a wrong client secret stays an internal error; ID token signatures are not checked by design (pinned); sessions and PATs end on expiry, sign-out / revocation (owner or admin, audited) and deactivation | 187 / 690, 11 / 262, 180 / 387 (before `oidc_flow`) | – (a plain-HTTP issuer, below) |
 | 10 | `webhooks.rs` + `services/webhooks.rs` (SSRF guard, signing) | Server-side requests to configurable URLs | unit tests of the address rules (`internal_addresses`, `default_policy_blocks_internal_targets`, `allow_list_restricts_and_trusts_hosts`), HMAC vectors, `webhooks`, `atomic_processes`, `webhook_ssrf` (4) and `every_connection_checks_the_answer_it_uses`: a name that passes when saved and resolves to loopback, cloud metadata, an IPv4-mapped or unique-local address when used (DNS rebinding) is refused at connect time and every attempt resolves anew; mixed answers keep only public addresses; `localhost` via the system resolver and a stored IP literal are refused; a listed host is delivered (resolution injectable: `Dispatcher::with_lookup`) | 43 / 582, 25 / 679 | – |
 | 11 | `mesh.rs` readers | Untrusted bytes, big allocations | `parser_robustness`, `parser_corpus`, fuzz targets | 108 / 1,535 | – |
-| 12 | `simmesh.rs` (VTK/VTU/FRD) | Untrusted, hand-written parsing | 19 unit, damage tests | 81 / 1,465 | **an FRD sample in the damage tests** |
-| 13 | `swpart.rs`, `nxpart.rs`, `thumbnail.rs` | Offsets, lengths, decompression bombs | unit tests, NIST files, damage tests | 8 / 657, 3 / 262, 15 / 543 | **a SOLIDWORKS container built by hand** |
+| 12 | `simmesh.rs` (VTK/VTU/FRD) | Untrusted, hand-written parsing | 19 unit (every fixture cut and damaged), `parser_robustness`: two CalculiX samples – short format (`fuzz/seeds/mesh/tetra.frd`) and long format (`beam.frd`) – whole, at every length and damaged; what an accepted copy holds is a consistent mesh with one value per vertex (`the_frd_samples_carry_their_results`) | 81 / 1,465 | – |
+| 13 | `swpart.rs`, `nxpart.rs`, `thumbnail.rs` | Offsets, lengths, decompression bombs | unit tests, NIST files, damage tests; `parser_robustness`: a SOLIDWORKS container built by hand (every length, every byte of the compressed data, headers that lie about the CRC, the size, a 4 GiB size, the compressed size and the name length) and the NIST part and assembly cut around and damaged inside the preview and component tree sections – a section is lost or read unchanged, never different (without the CRC check both tests fail) | 8 / 657, 3 / 262, 15 / 543 | – |
 | 14 | `stepbom.rs`, `bomtable.rs`, `cadrefs.rs`, `textindex.rs`, `cadformat.rs` | Untrusted text and spreadsheets; heuristic | unit tests, damage tests | 5 / 655, 10 / 747, 2 / 442, 2 / 200, 4 / 771 | – |
 | 15 | `vault.rs` | Content-addressed storage: the bytes of every revision | `domain_and_vault`; since #93 every backup hashes every object and requires every referenced one | 30 / 324 | – |
 
@@ -140,13 +140,13 @@ and `web/webhooks.rs` (a quarter of their lines missed each),
 ### What to write next
 
 1. `services/insights.rs` (BOM health check, duplicates) and `notify.rs`.
-2. FRD sample and a SOLIDWORKS container built by hand in the damage tests.
-3. The CLI (`main.rs`, 511 of 643 lines missed): run the commands in-process in
+2. The CLI (`main.rs`, 511 of 643 lines missed): run the commands in-process in
    a test instead of only in the smoke test, so the coverage job sees them.
-4. Done: atomicity under an injected failure (#92), a floor for the CI
+3. Done: atomicity under an injected failure (#92), a floor for the CI
    coverage job (`.github/coverage-floor`), OIDC failure paths and the SSRF
    check at connect time (`oidc_flow`, `webhook_ssrf`), `cargo fuzz` targets (see
-   [Fuzzing the file readers](fuzzing.md)).
+   [Fuzzing the file readers](fuzzing.md)), FRD samples and SOLIDWORKS
+   sections (built by hand and the NIST files) in the damage tests.
 
 ## Per module
 
@@ -254,7 +254,7 @@ that use the module by name (`teamcraft::…`); the HTTP-driven coverage of
 | `services/webhooks.rs` | 915 | 4 | 25 of 679 | 96.3 % | – |
 | `services/workset.rs` | 304 | 0 | 7 of 192 | 96.4 % | – |
 | `shape.rs` | 1031 | 9 | 20 of 771 | 97.4 % | cad_fixtures |
-| `simmesh.rs` | 1968 | 19 | 81 of 1465 | 94.5 % | – |
+| `simmesh.rs` | 1968 | 19 | 81 of 1465 | 94.5 % | parser_robustness |
 | `stepbom.rs` | 865 | 13 | 5 of 655 | 99.2 % | import_proofing, parser_robustness |
 | `swpart.rs` | 978 | 14 | 8 of 657 | 98.8 % | parser_robustness |
 | `templates.rs` | 1615 | 3 | 6 of 1263 | 99.5 % | – |

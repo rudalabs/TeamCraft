@@ -98,7 +98,40 @@ fn lenient_samples() -> Vec<(&'static str, Vec<u8>)> {
         ("xyz", b"0 0 0\n1 0 0\n0 1 0 255 0 0\n".to_vec()),
         ("vtk-legacy", VTK.as_bytes().to_vec()),
         ("vtk-unstructured", VTU.as_bytes().to_vec()),
+        // CalculiX: short format (I5 numbers, a tetrahedron, NDTEMP) and the
+        // long format with two increments of DISP and STRESS (self-made)
+        ("calculix-frd", FRD_SHORT.to_vec()),
+        ("calculix-frd", FRD_LONG.to_vec()),
     ]
+}
+
+const FRD_SHORT: &[u8] = include_bytes!("../fuzz/seeds/mesh/tetra.frd");
+const FRD_LONG: &[u8] = include_bytes!("fixtures/sim/beam.frd");
+
+/// What the FRD samples hold, so that a damaged copy that is accepted can
+/// be told apart from one that lost its results.
+#[test]
+fn the_frd_samples_carry_their_results() {
+    let short = mesh::read("calculix-frd", FRD_SHORT).unwrap();
+    assert_eq!(short.vertex_count(), 4);
+    assert_eq!(short.triangle_count(), 4, "the faces of one tetrahedron");
+    assert_eq!(short.fields.len(), 1);
+    assert_eq!(short.fields[0].name, "NDTEMP");
+    assert_eq!(short.fields[0].range(), (20.0, 30.0));
+    let long = mesh::read("calculix-frd", FRD_LONG).unwrap();
+    let names: Vec<&str> = long.fields.iter().map(|f| f.name.as_str()).collect();
+    assert_eq!(names, ["STRESS (von Mises)", "DISP (magnitude)"]);
+    // every damaged copy that is accepted keeps one value per vertex
+    for sample in [FRD_SHORT, FRD_LONG] {
+        damage(sample, 300, |d| {
+            if let Ok(m) = mesh::read("calculix-frd", d) {
+                for f in &m.fields {
+                    assert!(f.range().0 <= f.range().1, "{}", f.name);
+                }
+                m.check().unwrap();
+            }
+        });
+    }
 }
 
 /// The samples of the simple formats are valid meshes (so the damage tests
@@ -405,4 +438,258 @@ fn format_detection_survives_odd_names_and_heads() {
 fn gltf_accessor_index_out_of_range_is_an_error() {
     let bad = GLTF.replace("\"POSITION\":0", "\"POSITION\":7");
     assert!(mesh::read("gltf", bad.as_bytes()).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// SOLIDWORKS 2015+ sections: a container built by hand and the NIST files,
+// cut and damaged in the headers and inside the compressed data. A section
+// that is read must be exactly what was stored (size and CRC-32 checked):
+// damage may lose a section, never change it.
+// ---------------------------------------------------------------------------
+
+/// A section header: marker, DOS time and date, CRC-32, compressed size,
+/// size, name length (all `u32` LE) – then the name and the data.
+const SW_MARKER: [u8; 6] = [0x14, 0x00, 0x06, 0x00, 0x08, 0x00];
+const SW_FIXED: usize = 26;
+const SW_CRC: usize = 10;
+const SW_COMPRESSED: usize = 14;
+const SW_SIZE: usize = 18;
+const SW_NAME_LEN: usize = 22;
+const SW_MAX: u64 = 64 << 20;
+
+fn sw_section(name: &str, data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut e = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    e.write_all(data).unwrap();
+    let packed = e.finish().unwrap();
+    let mut out = SW_MARKER.to_vec();
+    out.extend_from_slice(&[0xc3, 0xf8, 0xf8, 0x33]);
+    for v in [
+        crc32fast::hash(data),
+        packed.len() as u32,
+        data.len() as u32,
+        name.len() as u32,
+    ] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend(name.bytes().map(|b| b.rotate_left(4)));
+    out.extend_from_slice(&packed);
+    out
+}
+
+const SW_TREE: &str = r#"<swSolidWorks><swHeader><swFile id="1" swPath="C:\p\Top.SLDASM"/><swFile id="2" swPath="C:\p\Bolt.SLDPRT"/></swHeader><swModelList><swModel id="10" swFileRef="2"/><swModel id="11" swFileRef="1"><swReference swModelRef="10" swIsVirtualComponent="NO"/></swModel></swModelList></swSolidWorks>"#;
+
+type Stored = Vec<(&'static str, Vec<u8>)>;
+
+/// The three sections TeamCraft reads, each after the per-file signature.
+fn sw_container() -> (Vec<u8>, Stored) {
+    let stored: Stored = vec![
+        (
+            swpart::PREVIEW_SECTION,
+            b"\x89PNG\r\n\x1a\n - not a picture, but bytes to inflate ".repeat(6),
+        ),
+        (swpart::COMPONENT_TREE_SECTION, SW_TREE.as_bytes().to_vec()),
+        (
+            swpart::CONTENT_MANAGER_SECTION,
+            b"C:\\p\\Bolt.SLDPRT ".repeat(4),
+        ),
+    ];
+    let mut file = vec![0x32, 0x34, 0x09, 0x2c, 0, 0, 0, 4, 0xc1];
+    for (name, data) in &stored {
+        file.extend_from_slice(&[0xda, 0x1f, 0x8b, 0xe1]);
+        file.extend_from_slice(&sw_section(name, data));
+    }
+    (file, stored)
+}
+
+/// The sections of a damaged file lie inside it, and every stored section
+/// that can still be read is unchanged. Returns how many could be read.
+fn sw_check(data: &[u8], stored: &[(&str, Vec<u8>)]) -> usize {
+    let Ok(Some(mut sw)) = swpart::SwContainer::open(Cursor::new(data)) else {
+        return 0;
+    };
+    let len = data.len() as u64;
+    for s in sw.sections() {
+        assert!(s.offset + s.compressed <= len, "{s:?} beyond {len} bytes");
+    }
+    let mut read = 0;
+    for (name, original) in stored {
+        if let Some(got) = sw.read(name, SW_MAX).unwrap() {
+            assert!(&got == original, "{name}: other data than stored");
+            read += 1;
+        }
+    }
+    read
+}
+
+/// Where the header, the data and the end of a section are in the file.
+fn sw_spans(s: &swpart::Section) -> (usize, usize, usize) {
+    let data = s.offset as usize;
+    (
+        data - SW_FIXED - s.name.len(),
+        data,
+        data + s.compressed as usize,
+    )
+}
+
+fn put_u32(file: &mut [u8], at: usize, v: u32) {
+    file[at..at + 4].copy_from_slice(&v.to_le_bytes());
+}
+
+#[test]
+fn a_solidworks_container_built_by_hand_survives_any_damage() {
+    let (file, stored) = sw_container();
+    // the valid side: every section found, confirmed and read back
+    let sw = swpart::SwContainer::open(Cursor::new(&file))
+        .unwrap()
+        .unwrap();
+    let names: Vec<&str> = sw.sections().iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, stored.iter().map(|(n, _)| *n).collect::<Vec<_>>());
+    assert!(sw.sections().iter().all(|s| s.confirmed));
+    let sections = sw.sections().to_vec();
+    assert_eq!(sw_check(&file, &stored), 3);
+    let refs = swpart::reference_data(Cursor::new(&file), SW_MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(refs.components, Some(vec![r"C:\p\Bolt.SLDPRT".to_string()]));
+
+    // every prefix: a section whose data is cut is lost
+    for n in 0..=file.len() {
+        let read = sw_check(&file[..n], &stored);
+        let complete = sections
+            .iter()
+            .filter(|s| (s.offset + s.compressed) as usize <= n)
+            .count();
+        assert!(
+            read <= complete,
+            "{n} bytes: {read} read, {complete} complete"
+        );
+    }
+    // random damage anywhere
+    damage(&file, 3000, |d| {
+        sw_check(d, &stored);
+        let _ = swpart::reference_data(Cursor::new(d), SW_MAX);
+    });
+    for (i, s) in sections.iter().enumerate() {
+        let (header, data, end) = sw_spans(s);
+        // every byte of the compressed data changed, one at a time
+        for at in data..end {
+            let mut d = file.clone();
+            d[at] ^= 0xA5;
+            sw_check(&d, &stored);
+        }
+        // the header lies about the data: CRC, size, a decompression bomb,
+        // more compressed data than the file has, a name length of 4 GiB
+        let lies: [(usize, u32); 6] = [
+            (SW_CRC, s.crc ^ 1),
+            (SW_SIZE, s.size as u32 + 1),
+            (SW_SIZE, s.size as u32 - 1),
+            (SW_SIZE, u32::MAX),
+            (SW_COMPRESSED, u32::MAX),
+            (SW_NAME_LEN, u32::MAX),
+        ];
+        for (field, value) in lies {
+            let mut d = file.clone();
+            put_u32(&mut d, header + field, value);
+            sw_check(&d, &stored);
+            let read = swpart::SwContainer::open(Cursor::new(&d))
+                .unwrap()
+                .map(|mut sw| sw.read(stored[i].0, SW_MAX).unwrap());
+            assert!(
+                matches!(read, None | Some(None)),
+                "{}: field at +{field} = {value:#x}, still read",
+                s.name
+            );
+        }
+    }
+}
+
+const NIST_SW: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/cad/nist/mtc-assembly/solidworks/"
+);
+
+/// The real files: a part (its preview) and the assembly (its component
+/// tree), cut around the section and damaged inside its compressed data.
+#[test]
+fn nist_solidworks_files_cut_and_damaged_in_their_sections() {
+    let cases = [
+        (
+            "nist_mtc_crada_polycarb-window.SLDPRT",
+            swpart::PREVIEW_SECTION,
+        ),
+        (
+            "nist_mtc_crada_assembly_rev-D.SLDASM",
+            swpart::COMPONENT_TREE_SECTION,
+        ),
+    ];
+    for (file, wanted) in cases {
+        let data = std::fs::read(format!("{NIST_SW}{file}")).unwrap();
+        let mut sw = swpart::SwContainer::open(Cursor::new(&data))
+            .unwrap()
+            .unwrap();
+        let section = sw
+            .sections()
+            .iter()
+            .find(|s| s.name == wanted && s.confirmed)
+            .cloned()
+            .unwrap_or_else(|| panic!("{file}: no confirmed {wanted}"));
+        let original = sw.read(wanted, SW_MAX).unwrap().unwrap();
+        let stored = vec![(wanted, original)];
+        let (header, start, end) = sw_spans(&section);
+
+        // cut before, in and right after the section
+        for n in [
+            header,
+            header + SW_SIZE,
+            start,
+            start + 1,
+            (start + end) / 2,
+            end - 1,
+            end,
+            data.len() - 1,
+        ] {
+            let read = sw_check(&data[..n], &stored);
+            assert!(
+                n >= end || read == 0,
+                "{file}: {wanted} read from {n} bytes"
+            );
+        }
+        // compressed data damaged: single bytes spread over the data, a
+        // zeroed block, the end of the Deflate stream
+        let mut variants: Vec<Vec<u8>> = (0..48)
+            .map(|k| {
+                let mut d = data.clone();
+                d[start + (end - start) * k / 48] ^= 0x5A;
+                d
+            })
+            .collect();
+        let mut zeroed = data.clone();
+        let block = start + (end - start) / 3;
+        zeroed[block..(block + 64).min(end)].fill(0);
+        variants.push(zeroed);
+        let mut tail = data.clone();
+        tail[end - 4..end].fill(0xFF);
+        variants.push(tail);
+        // the header: a wrong CRC and a decompression bomb
+        for (field, value) in [(SW_CRC, section.crc ^ 1), (SW_SIZE, u32::MAX)] {
+            let mut d = data.clone();
+            put_u32(&mut d, header + field, value);
+            variants.push(d);
+        }
+        for d in &variants {
+            sw_check(d, &stored);
+            let _ = swpart::reference_data(Cursor::new(d), SW_MAX);
+        }
+        // and what TeamCraft reads on top
+        let refs = swpart::reference_data(Cursor::new(&data), SW_MAX)
+            .unwrap()
+            .unwrap();
+        if wanted == swpart::COMPONENT_TREE_SECTION {
+            assert!(
+                refs.components.as_ref().is_some_and(|c| !c.is_empty()),
+                "{file}: {refs:?}"
+            );
+        }
+    }
 }
