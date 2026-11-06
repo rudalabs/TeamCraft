@@ -4329,10 +4329,14 @@
     }, function () { /* deleted or not visible: the old log stays unused */ });
   }
 
-  /** BOM lines for the parts the new assemblies reference (quantity 1). */
+  /** BOM lines for the parts the new items reference (quantity 1). Not only
+   * the items planned as assemblies: NX keeps parts and assemblies in the
+   * same `.prt` format (kind "model"), so an NX assembly is only recognised by
+   * the references the server found in its file. */
+  var REFERENCING_KINDS = ["assembly", "model"];
   function bomFromReferences(created, progress, failed) {
     var lines = 0;
-    var assemblies = created.filter(function (c) { return c.item.type === "assembly"; });
+    var assemblies = created.filter(function (c) { return c.item.type !== "document"; });
     return assemblies.reduce(function (chain, c, i) {
       return chain.then(function () {
         progress(i + 1, assemblies.length, "Structure of " + c.rev.item_number);
@@ -4340,7 +4344,7 @@
         return api("GET", base + "/references").then(function (refs) {
           var children = [];
           (refs.files || []).forEach(function (f) {
-            if (f.format_kind !== "assembly") return;
+            if (REFERENCING_KINDS.indexOf(f.format_kind) < 0) return;
             (f.references || []).forEach(function (r) {
               var m = (r.matches || []).filter(function (x) { return !x.same_revision; })[0];
               if (m && m.item_number !== c.rev.item_number && children.indexOf(m.item_number) < 0) children.push(m.item_number);
