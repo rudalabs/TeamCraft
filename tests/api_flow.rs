@@ -3786,7 +3786,7 @@ async fn favorites_searches_save_as_and_bom_compare() {
     let html = r.text();
     assert!(
         html.contains("1 added · 0 removed · 0 changed · 1 unchanged")
-            && html.contains("<th>Lvl</th>"),
+            && html.contains("<th scope=\"col\">Lvl</th>"),
         "all levels: {html}"
     );
     let r = app

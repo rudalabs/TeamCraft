@@ -421,17 +421,43 @@
     });
   });
 
-  // Toggle elements: <button data-toggle="id">.
+  // Toggle elements: <button data-toggle="id">. Esc inside an opened panel
+  // closes it again and returns focus to the button that opened it.
+  var openedBy = {};
+  function setExpanded(id, open) {
+    document.querySelectorAll('[data-toggle="' + id + '"][aria-expanded]').forEach(function (b) {
+      b.setAttribute("aria-expanded", String(open));
+    });
+  }
   document.querySelectorAll("[data-toggle]").forEach(function (btn) {
     btn.addEventListener("click", function () {
-      var target = document.getElementById(btn.getAttribute("data-toggle"));
+      var id = btn.getAttribute("data-toggle");
+      var target = document.getElementById(id);
       if (target) {
         target.classList.toggle("hidden");
-        if (btn.hasAttribute("aria-expanded")) btn.setAttribute("aria-expanded", String(!target.classList.contains("hidden")));
+        var open = !target.classList.contains("hidden");
+        setExpanded(id, open);
+        if (open) openedBy[id] = btn;
         var focus = target.querySelector("input:not([type=hidden]), textarea, select");
-        if (focus && !target.classList.contains("hidden")) focus.focus();
+        if (focus && open) focus.focus();
       }
     });
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Escape" || event.defaultPrevented) return;
+    var el = event.target;
+    while (el && el !== document.body) {
+      var opener = el.id && openedBy[el.id];
+      if (opener && !el.classList.contains("hidden")) {
+        el.classList.add("hidden");
+        setExpanded(el.id, false);
+        delete openedBy[el.id];
+        opener.focus();
+        event.preventDefault();
+        return;
+      }
+      el = el.parentElement;
+    }
   });
 
   // New item: name and type from the first chosen file
@@ -518,6 +544,7 @@
       if (event.key === "Escape" && menu.open) {
         menu.removeAttribute("open");
         menu.querySelector("summary").focus();
+        event.preventDefault(); // an enclosing toggled panel stays open
         return;
       }
       if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;

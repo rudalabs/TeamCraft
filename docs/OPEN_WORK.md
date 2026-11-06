@@ -129,8 +129,16 @@ feature milestone – the features in *What works* are enough; what is missing i
   SmartScreen and Gatekeeper
 - [ ] Desktop app run and tested on Windows x64/ARM64, macOS and Linux for each RC (a short manual test script in
   `docs/src/dev/release-checklist.md`)
-- [ ] Accessibility: keyboard use and screen-reader labels on the main web flows checked (WCAG 2.2 AA for contrast
-  is already tested)
+- [x] Accessibility: keyboard use and screen-reader labels on the main web flows checked (WCAG 2.2 AA for contrast
+  is already tested) – `every_rendered_page_is_accessible` checks labels, accessible names, `alt`, `tabindex`,
+  `lang`, heading levels and `<th scope>` on every rendered page; sign-in, new item, check-in, BOM and new change
+  request done with the keyboard in Chromium; toggled panels now close with Escape
+  ([docs](src/dev/accessibility.md))
+- [ ] Accessibility: a skip link to the main content (eight stops come before it on every page)
+- [ ] Accessibility: the HTML built by JavaScript (assistant sidebar, BOM tree controls, 3D viewer, upload progress)
+  and the desktop app's UI under the same checks as the templates
+- [ ] Accessibility: a text (visually hidden) for the 15 empty action column headers (`<th scope="col"></th>`)
+- [ ] Accessibility: the main flows once with a screen reader (NVDA or VoiceOver)
 
 *Documentation and project*
 

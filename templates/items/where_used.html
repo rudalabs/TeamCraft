@@ -27,7 +27,7 @@
   {% if rows %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th class="num">Level</th><th>Uses</th><th>Parent</th><th>Name</th><th>State</th><th class="num">Find no.</th><th class="num">Qty</th></tr></thead>
+    <thead><tr><th scope="col" class="num">Level</th><th scope="col">Uses</th><th scope="col">Parent</th><th scope="col">Name</th><th scope="col">State</th><th scope="col" class="num">Find no.</th><th scope="col" class="num">Qty</th></tr></thead>
     <tbody>
     {% for w in rows %}
       <tr data-tc-row="{{ w.parent_number }}">
@@ -68,7 +68,7 @@
   {% if plan.rows %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Assembly</th><th>Name</th><th>State</th><th class="num">Find no.</th><th class="num">Qty</th><th>Result</th></tr></thead>
+    <thead><tr><th scope="col">Assembly</th><th scope="col">Name</th><th scope="col">State</th><th scope="col" class="num">Find no.</th><th scope="col" class="num">Qty</th><th scope="col">Result</th></tr></thead>
     <tbody>
     {% for r in plan.rows %}
       <tr>

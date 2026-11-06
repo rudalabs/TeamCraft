@@ -18,7 +18,7 @@
   {% if webhooks %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Name</th><th>Receiver</th><th>Events</th><th>Project group</th><th>Status</th><th>Last delivery</th><th class="right">Waiting</th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Receiver</th><th scope="col">Events</th><th scope="col">Project group</th><th scope="col">Status</th><th scope="col">Last delivery</th><th scope="col" class="right">Waiting</th></tr></thead>
     <tbody>
     {% for w in webhooks %}
       <tr>

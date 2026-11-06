@@ -33,7 +33,7 @@
   {% if requests %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Number</th><th>Title</th><th>Reason</th><th>Priority</th><th>Status</th><th class="num">Items</th><th>Requested by</th><th>Assignee</th><th>Due</th><th>Created</th></tr></thead>
+    <thead><tr><th scope="col">Number</th><th scope="col">Title</th><th scope="col">Reason</th><th scope="col">Priority</th><th scope="col">Status</th><th scope="col" class="num">Items</th><th scope="col">Requested by</th><th scope="col">Assignee</th><th scope="col">Due</th><th scope="col">Created</th></tr></thead>
     <tbody>
     {% for r in requests %}
       <tr>

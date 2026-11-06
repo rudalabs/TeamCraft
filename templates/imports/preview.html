@@ -42,7 +42,7 @@
   <h2>Structure</h2>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Level</th><th class="num">Find no.</th><th>Part number (file)</th><th>Item in TeamCraft</th><th>Name</th><th class="num">Qty</th><th>Material</th><th class="num">Mass [kg]</th><th class="num">Row</th></tr></thead>
+    <thead><tr><th scope="col">Level</th><th scope="col" class="num">Find no.</th><th scope="col">Part number (file)</th><th scope="col">Item in TeamCraft</th><th scope="col">Name</th><th scope="col" class="num">Qty</th><th scope="col">Material</th><th scope="col" class="num">Mass [kg]</th><th scope="col" class="num">Row</th></tr></thead>
     <tbody>
     {% for r in rows %}
       <tr>
@@ -71,7 +71,7 @@
   <h2>Columns used</h2>
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Column in the file</th><th>Used as</th></tr></thead>
+    <thead><tr><th scope="col">Column in the file</th><th scope="col">Used as</th></tr></thead>
     <tbody>
     {% for c in plan.columns %}<tr><td>{{ c.header }}</td><td>{{ c.label }}</td></tr>{% endfor %}
     {% for c in plan.attribute_columns %}<tr><td>{{ c.header }}</td><td>Attribute “{{ c.label }}” <span class="mono small muted">{{ c.key }}</span></td></tr>{% endfor %}

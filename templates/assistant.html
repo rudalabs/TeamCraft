@@ -19,6 +19,7 @@
 
 {% if run %}
 <section class="card assistant-answer">
+  <h2 class="visually-hidden">Answer</h2>
   {% if form.question %}<p class="assistant-question"><span class="muted small">You asked</span><br>{{ form.question }}</p>{% endif %}
   <div class="assistant-text">{{ run.html|safe }}</div>
   {% if run.truncated %}<p class="notice">The answer was cut off at the length limit – ask a narrower question for the rest.</p>{% endif %}

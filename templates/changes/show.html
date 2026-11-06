@@ -107,7 +107,7 @@
     <h2>Reviewers</h2>
     {% if reviews %}
     <table>
-      <thead><tr><th>Reviewer</th><th>Decision</th><th>Comment</th>{% if can.modify %}<th></th>{% endif %}</tr></thead>
+      <thead><tr><th scope="col">Reviewer</th><th scope="col">Decision</th><th scope="col">Comment</th>{% if can.modify %}<th scope="col"></th>{% endif %}</tr></thead>
       <tbody>
       {% for r in reviews %}
         <tr>
@@ -160,7 +160,7 @@
   {% if items %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Revision</th><th>Name</th><th>State</th>{% if can.modify %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Revision</th><th scope="col">Name</th><th scope="col">State</th>{% if can.modify %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
     {% for i in items %}
       <tr>
@@ -213,7 +213,7 @@
   {% if readiness_rows %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th>Dependency</th><th>Name</th><th>Needed by</th><th>State</th>{% if can.modify %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Dependency</th><th scope="col">Name</th><th scope="col">Needed by</th><th scope="col">State</th>{% if can.modify %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
     {% for d in readiness_rows %}
       <tr>
@@ -253,7 +253,7 @@
     the ones that are not part of it are flagged for a check (dashboard, worklist).{% endif %}</p>
   <div class="table-wrap">
   <table>
-    <thead><tr><th class="num">Level</th><th>Item</th><th>Name</th><th>Depends on</th><th>State</th></tr></thead>
+    <thead><tr><th scope="col" class="num">Level</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Depends on</th><th scope="col">State</th></tr></thead>
     <tbody>
     {% for d in impact %}
       <tr>

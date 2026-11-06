@@ -26,9 +26,9 @@
   <div class="table-wrap">
   <table>
     <thead>
-      <tr><th>Change</th><th>Result</th><th>Load case</th>
-        <th class="num">{{ before.code }}</th><th class="num">{{ after.code }}</th><th>Unit</th>
-        <th class="num">Δ</th><th class="num">Δ %</th><th>Status {{ before.code }} → {{ after.code }}</th></tr>
+      <tr><th scope="col">Change</th><th scope="col">Result</th><th scope="col">Load case</th>
+        <th scope="col" class="num">{{ before.code }}</th><th scope="col" class="num">{{ after.code }}</th><th scope="col">Unit</th>
+        <th scope="col" class="num">Δ</th><th scope="col" class="num">Δ %</th><th scope="col">Status {{ before.code }} → {{ after.code }}</th></tr>
     </thead>
     <tbody>
     {% for d in diffs %}

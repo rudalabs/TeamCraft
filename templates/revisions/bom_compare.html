@@ -42,11 +42,11 @@
   <div class="table-wrap">
   <table>
     <thead>
-      <tr>{% if depth == "all" %}<th>Lvl</th>{% endif %}<th>Change</th><th>Item</th>{% if depth == "all" %}<th>Rev</th>{% endif %}<th>Name</th>
+      <tr>{% if depth == "all" %}<th scope="col">Lvl</th>{% endif %}<th scope="col">Change</th><th scope="col">Item</th>{% if depth == "all" %}<th scope="col">Rev</th>{% endif %}<th scope="col">Name</th>
         {# the codes name the columns unless both are the same (two items) #}
         {% set b = before.code if before.code != after.code else "before" %}{% set a = after.code if before.code != after.code else "after" %}
-        <th class="num" title="{{ before.item_number }}/{{ before.code }}">Find {{ b }}</th><th class="num" title="{{ after.item_number }}/{{ after.code }}">Find {{ a }}</th>
-        <th class="num" title="{{ before.item_number }}/{{ before.code }}">Qty {{ b }}</th><th class="num" title="{{ after.item_number }}/{{ after.code }}">Qty {{ a }}</th><th>Notes</th></tr>
+        <th scope="col" class="num" title="{{ before.item_number }}/{{ before.code }}">Find {{ b }}</th><th scope="col" class="num" title="{{ after.item_number }}/{{ after.code }}">Find {{ a }}</th>
+        <th scope="col" class="num" title="{{ before.item_number }}/{{ before.code }}">Qty {{ b }}</th><th scope="col" class="num" title="{{ after.item_number }}/{{ after.code }}">Qty {{ a }}</th><th scope="col">Notes</th></tr>
     </thead>
     <tbody>
     {% for d in diffs %}

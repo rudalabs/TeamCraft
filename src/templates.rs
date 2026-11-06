@@ -146,9 +146,19 @@ fn filter_label(value: Option<String>) -> String {
 }
 
 #[cfg(test)]
+mod accessibility;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::{json, Value};
+    use std::cell::RefCell;
+
+    thread_local! {
+        /// Every page [`render`] produced on this thread, for the checks that
+        /// run over all of them (`every_rendered_page_is_accessible`).
+        static RENDERED: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+    }
 
     const ME: &str = "11111111-1111-4111-8111-111111111111";
     const OTHER: &str = "22222222-2222-4222-8222-222222222222";
@@ -243,10 +253,36 @@ mod tests {
     }
 
     fn render(env: &Environment<'static>, name: &str, data: Value) -> String {
-        env.get_template(name)
+        let html = env
+            .get_template(name)
             .unwrap_or_else(|e| panic!("{name}: {e:#}"))
             .render(&data)
-            .unwrap_or_else(|e| panic!("{name}: {e:#}"))
+            .unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        RENDERED.with(|r| r.borrow_mut().push((name.to_string(), html.clone())));
+        html
+    }
+
+    /// Every page of `every_template_renders` – all templates in all the
+    /// states it renders – passes the accessibility checks
+    /// (`templates/accessibility.rs`).
+    #[test]
+    fn every_rendered_page_is_accessible() {
+        RENDERED.with(|r| r.borrow_mut().clear());
+        every_template_renders();
+        let pages = RENDERED.with(|r| r.take());
+        assert!(pages.len() > 60, "rendered pages: {}", pages.len());
+        let mut problems: Vec<String> = pages
+            .iter()
+            .flat_map(|(name, html)| accessibility::check(name, html))
+            .collect();
+        problems.sort();
+        problems.dedup();
+        assert!(
+            problems.is_empty(),
+            "{} accessibility problems:\n{}",
+            problems.len(),
+            problems.join("\n")
+        );
     }
 
     #[test]
@@ -453,7 +489,7 @@ mod tests {
         assert!(html.contains("1 added · 1 removed · 1 changed"));
         assert!(html.contains("bom-diff-removed") && html.contains("Bolt &lt;M6&gt;"));
         assert!(
-            !html.contains("<th>Lvl</th>"),
+            !html.contains("<th scope=\"col\">Lvl</th>"),
             "levels only over all levels"
         );
         let deep = render(
@@ -469,7 +505,7 @@ mod tests {
             })),
         );
         assert!(
-            deep.contains("<th>Lvl</th>")
+            deep.contains("<th scope=\"col\">Lvl</th>")
                 && deep.contains("indent-2")
                 && deep.contains("indent-deep")
         );
