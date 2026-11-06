@@ -18,8 +18,12 @@ check-outs and reviews, and a **local working folder**:
   scan first (nothing is uploaded), then one item per part or assembly with
   its drawings and exports; every file keeps its folder, so the working
   folder later looks like the original tree. An interrupted import continues
-  where it stopped; the app remembers per project group what it imported, so
-  the same folder can also be imported into another group. *Help → How to
+  where it stopped – an item whose files did not arrive is completed, none is
+  created twice; the app remembers per project group what it imported, so
+  the same folder can also be imported into another group. BOM lines come
+  from the references in the assembly files – for NX also from `.prt` files
+  (such an assembly is imported as a part item, NX does not tell parts and
+  assemblies apart by the file type). *Help → How to
   Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file
   names, check and release);
 * *Import BOM…* (in the *Structure* tab and the *More* menu of a revision you
