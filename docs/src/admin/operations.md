@@ -31,8 +31,13 @@ the machine that runs the command, in the server's major version or newer
 PostgreSQL installation on `PATH`). The database password is handed to the
 child process in `PGPASSWORD` only. The database is dumped first and the
 vault afterwards; blobs are append-only, so every file that the dump
-references is included. Stop the server for a consistent point in time. If
-a backup fails, delete the target directory before retrying.
+references is included. Every blob is checked against its SHA-256 while it
+is copied, and every file content the database refers to must be in the
+vault: a corrupt or a missing blob stops the backup (run `teamcraft vault
+check --verify-hashes` to find it). Stop the server for a consistent point
+in time. A failed backup removes what it wrote – the directory, if it
+created it – and the manifest is written last, so an interrupted backup is
+never taken for a complete one.
 
 Restore with the server stopped:
 
@@ -50,7 +55,11 @@ present. Start the server afterwards; it applies newer migrations.
 * The target database must exist; TeamCraft does not create it
   (`createdb -O teamcraft teamcraft` as the PostgreSQL superuser).
 * `pg_restore` runs in a single transaction: if it fails, the database is
-  unchanged.
+  unchanged, and the vault too (it is copied only after the database).
+* Large objects of the database travel with the dump. The `previews/` cache
+  is neither backed up nor touched by a restore; previews are made again.
+* A backup of an older version restores into an empty database; the next
+  start migrates it (tested with a v0.1.0 database).
 * `--force` replaces the objects contained in the backup; other objects in
   the database stay, so a fresh, empty database is preferable. **To roll
   back an upgrade**, restore into a fresh database and start the old

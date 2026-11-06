@@ -129,11 +129,6 @@ structure should not prevent translations later). They may land in 1.x minor rel
 The feature list is covered broadly since #65 (and #67); the weak spots are the processes that must never leave
 half a state behind. Prefer tests that fail on a real regression over tests that restate the code.
 
-- [ ] **Backup / restore** – beyond `tests/backup_restore.rs` and the argument/manifest tests in `src/backup.rs`:
-  restore of a backup from an older schema version (then migrate), a vault object missing or corrupt during
-  backup (refused, nothing written), interrupted backup leaves no directory that `verify` accepts, restore into a
-  non-empty target without `--force` is refused, `--force` failure leaves database *and* vault untouched (vault side
-  not covered yet), percent-encoded and `_FILE` credentials, large-object and preview-cache handling
 - [ ] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): the dry-run plan equals what the
   import writes (property test over generated tables), an error in row *n* rolls back rows 1…*n*-1, re-import of the
   same table is idempotent (no duplicate items or BOM lines), cycles and self-references refused, quantity/unit
@@ -331,6 +326,13 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
+- [x] **Backup / restore** proofed (`tests/backup_proofing.rs`, `tests/backup_errors.rs`): a corrupt or missing vault
+  object refuses the backup and nothing is left (two fixes: the backup now checks every object against its name and
+  every content the database refers to, and a failed backup removes what it wrote; the manifest is renamed into
+  place); a v0.1.0 backup with data restores into an empty database and migrates; a failing `restore --force`
+  leaves database and vault untouched; credentials from a fully percent-encoded URL and from `_FILE`; large objects
+  travel, the preview cache stays out and a target's cache is left alone; restore into a non-empty database needs
+  `--force` (`tests/backup_restore.rs`)
 - [x] **Atomic processes** proofed (`tests/atomic_processes.rs`): a trigger in the test database makes one step fail
   – with an error or by ending the connection (`pg_terminate_backend`) – and nothing is left (rows, counters, audit,
   notifications, webhook deliveries, check-out, review decision, visibility) for check-in, change order release,
