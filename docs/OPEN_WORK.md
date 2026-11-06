@@ -154,26 +154,35 @@ structure should not prevent translations later). They may land in 1.x minor rel
 The feature list is covered broadly since #65 (and #67); the weak spots are the processes that must never leave
 half a state behind. Prefer tests that fail on a real regression over tests that restate the code.
 
-- [ ] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): the dry-run plan equals what the
-  import writes (property test over generated tables), an error in row *n* rolls back rows 1…*n*-1, re-import of the
-  same table is idempotent (no duplicate items or BOM lines), cycles and self-references refused, quantity/unit
-  parsing edge cases (decimal comma, `1.1.2` positions with gaps, empty levels), malformed STEP (truncated, unknown
-  entities, `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`) never panics (fuzz-style corpus); desktop folder import resumes
-  after an interrupted run without duplicates
-- [ ] **Atomic processes** – the folder import per item is still open (with the import proofing); the rest is done,
-  see *Done*
+- [x] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): dry-run plan = import over generated
+  tables, rollback, idempotent re-import, cycles, quantity/unit/position edge cases, malformed STEP
+  (`tests/import_proofing.rs`, `tests/import_atomicity.rs`); desktop folder import per item and resumed after an
+  interruption (`tests/folder_import.rs`, the requests of `desktop/ui/app.js` against the server): an item whose
+  files did not arrive is completed by the next run instead of being skipped for good (fixed), none is created
+  twice. Open: an item whose *creation* answer was lost (network gone between the server's commit and the app's
+  log) is created again on the next run – that needs an idempotency key for `POST /items`
+- [x] **Atomic processes** – the folder import per item is covered too (see *Import*); the rest is done, see *Done*
 - [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
   make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
   with two failing integration tests; merge only with green checks
 
 **Parsers and CI gates**
 
-- [ ] Fuzz targets (`cargo fuzz`, own `fuzz/` crate outside the server build) for every reader of untrusted files:
+- [x] Fuzz targets (`cargo fuzz`, own `fuzz/` crate outside the server build) for every reader of untrusted files:
   `mesh` (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, point clouds), `simmesh` (VTK, VTU/VTP, FRD), `stepbom`, `swpart`,
-  `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex`; crashes found become regression unit tests with the
-  minimised input; a short fuzz run per parser in a scheduled CI job
-- [ ] No `unwrap`/`expect`/indexing panics on file input outside tests: audit `swpart`, `mesh`, `simmesh`, `config`,
-  then enable `clippy::unwrap_used`/`expect_used` for the parser modules
+  `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex` – entry points in `src/fuzz_harness.rs`, the stable corpus
+  test `tests/parser_corpus.rs` and the weekly *Fuzzing* workflow (`fuzz.yml`), merged with #94; crashes become
+  regression unit tests with the minimised input ([docs](src/dev/fuzzing.md)) – open: watch the first scheduled runs
+- [x] No `unwrap`/`expect`/indexing panics on file input outside tests: every reader of untrusted files – `swpart`,
+  `mesh` (with `mesh::step`, `p21`, `tessellated`), `simmesh`, `stepbom`, `nxpart`, `thumbnail`, `cadrefs`,
+  `bomtable`, `textindex`, `resultscan` – and `config` deny `clippy::unwrap_used`, `expect_used`, `indexing_slicing`,
+  `panic` and `unreachable` (`#![deny]` in each module; `clippy.toml` allows them in tests); reads go through bounded
+  helpers (`mesh::bytes_at`, `u32_le`, `range`, …) or `get`/slice patterns, also for `&str` cuts the lint does not
+  see; one reviewed `#[allow]` (`mesh::compose`, fixed arrays). **Two bugs found and fixed**: a 3DS vertex or face
+  list chunk of the minimum length at the end of the file read its count past the last byte (now skipped, test
+  `three_ds_list_chunks_without_their_count`); the reference scan cut a name inside a character when the extension
+  held a letter whose lower case is ASCII (the Kelvin sign `K` → `k`, test
+  `a_non_ascii_letter_in_the_extension_does_not_panic`)
 - [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
 - [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
 - [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
@@ -209,9 +218,11 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 
 - [ ] Solid Edge test files: none openly licensed found – create a part, a sheet metal part and an assembly with Solid
   Edge (Community Edition) and publish them under CC0
-- [ ] End-to-end test against the server with the fixtures: folder import of `tests/fixtures/cad/nist/mtc-assembly/nx`
-  and `…/solidworks` → items, files, references, BOM lines, check-ins, preview images, STEP preview (so far only the
-  request order of the import is tested, in `tests/concurrency.rs`)
+- [x] End-to-end test against the server with the fixtures: folder import of `tests/fixtures/cad/nist/mtc-assembly/nx`
+  and `…/solidworks` → items, files and their folder, references, BOM lines, check-ins (`tests/folder_import.rs`);
+  found and fixed: an NX folder got no BOM lines (NX assemblies are `.prt` files of the kind "model"); an NX
+  assembly is still imported as an item of type part
+- [ ] The same fixtures: preview images and the STEP preview of the imported files
 - [ ] One real project with hundreds of files each from Inventor, Solid Edge, SOLIDWORKS and NX: folder import, preview
   images, STEP export, BOMs – including the heuristics (CAD reference scan, BOM table columns, embedded previews)
 
