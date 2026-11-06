@@ -12,7 +12,12 @@ notices gets an entry under *Unreleased* in the same pull request.
 
 ## [Unreleased]
 
-Nothing merged since 0.2.0 yet.
+### Fixed
+
+- The reference scan cut a file name inside a character when its extension
+  held a letter whose lower case is ASCII (the Kelvin sign `K` → `k`) and
+  panicked; every reader of untrusted files now refuses `unwrap`, `expect` and
+  indexing at compile time (#108).
 
 ## [0.2.0] – 2026-11-06
 
