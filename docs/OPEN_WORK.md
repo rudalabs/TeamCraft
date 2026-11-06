@@ -50,7 +50,7 @@ feature milestone – the features in *What works* are enough; what is missing i
 - [ ] Backup/restore tested for every release in CI, including restore of an older version's backup; documented
   restore drill; `teamcraft vault check` finds and reports every inconsistency between database and vault
 - [ ] All multi-row mutations proven all-or-nothing and safe under concurrency (section 1, *Atomic processes*)
-- [ ] Upgrade guide in the docs (`docs/src/admin/upgrade.md`): before/after steps, rollback by restore, breaking
+- [x] Upgrade guide in the docs (`docs/src/admin/upgrade.md`): before/after steps, rollback by restore, breaking
   changes per version
 
 *Stable interfaces*
@@ -142,12 +142,12 @@ feature milestone – the features in *What works* are enough; what is missing i
 
 *Documentation and project*
 
-- [ ] `CHANGELOG.md` (Keep a Changelog) from 0.2 on, written per PR; release notes from it
+- [x] `CHANGELOG.md` (Keep a Changelog) from 0.2 on, written per PR; release notes from it
 - [ ] User guide, admin guide and API/MCP reference complete and checked against the 1.0 behaviour; screenshots
   current
-- [ ] Support and versioning policy: SemVer from 1.0, which versions get security fixes (e.g. the latest minor and
+- [x] Support and versioning policy: SemVer from 1.0, which versions get security fixes (e.g. the latest minor and
   the previous one for 6 months), how to report bugs
-- [ ] Release checklist (`docs/src/dev/release-checklist.md`): green main, RC soak time, version bump in both
+- [x] Release checklist (`docs/src/dev/release-checklist.md`): green main, RC soak time, version bump in both
   `Cargo.toml` files, tag, verify assets and checksums, image tags, announcement
 - [ ] Governance basics: maintainers, review rule (one approving review, green checks), code of conduct
 
@@ -170,7 +170,7 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   interruption (`tests/folder_import.rs`, the requests of `desktop/ui/app.js` against the server): an item whose
   files did not arrive is completed by the next run instead of being skipped for good (fixed), none is created
   twice. Open: an item whose *creation* answer was lost (network gone between the server's commit and the app's
-  log) is created again on the next run – that needs an idempotency key for `POST /items`
+  log) is created again on the next run – fixed in code with an idempotency key for `POST /items` (`tests/item_idempotency.rs`) – **database tests written, not yet run against a real database**
 - [x] **Atomic processes** – the folder import per item is covered too (see *Import*); the rest is done, see *Done*
 - [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
   make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
@@ -588,3 +588,7 @@ Rules for all of them: research open source first (licences compatible with MPL-
 MPL-2.0; LGPL only as a separately loaded component; no GPL/AGPL/SSPL, nothing proprietary), list used projects in the
 README licence table, follow the definition of done in `CLAUDE.md`. The docs are live at
 <https://rudalabs.github.io/TeamCraft/>.
+
+## Pending verification (2026-11-06)
+
+Written on `test/v0.2-proofing`; `--lib`, fmt and clippy are green, but the **database tests have not run yet** (no trust-auth PostgreSQL available to the agent): `tests/item_idempotency.rs`, `tests/upgrade_restore.rs`, `tests/concurrency_mutations.rs`, `tests/import_scale_and_concurrency.rs`, `tests/folder_import.rs`. Run `TEAMCRAFT_REQUIRE_DB_TESTS=1 TEAMCRAFT_REQUIRE_PG_TOOLS=1 cargo test` before merging into `main`. Also fix `operations.md`: restore over an upgraded database fails only when a newer table references a restored one.
