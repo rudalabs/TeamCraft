@@ -172,12 +172,19 @@ async fn userinfo() -> Json<Value> {
 
 /// A test app whose single sign-on points at `provider`.
 async fn app_with(provider: &Provider) -> Option<common::TestApp> {
+    app_with_secret(provider, "secret").await
+}
+
+async fn app_with_secret(
+    provider: &Provider,
+    client_secret: &'static str,
+) -> Option<common::TestApp> {
     let issuer: &'static str = Box::leak(provider.base.clone().into_boxed_str());
     let extra: &'static [(&'static str, &'static str)] = Box::leak(
         vec![
             ("TEAMCRAFT_OIDC_ISSUER_URL", issuer),
             ("TEAMCRAFT_OIDC_CLIENT_ID", CLIENT_ID),
-            ("TEAMCRAFT_OIDC_CLIENT_SECRET", "secret"),
+            ("TEAMCRAFT_OIDC_CLIENT_SECRET", client_secret),
         ]
         .into_boxed_slice(),
     );
@@ -342,7 +349,6 @@ async fn broken_id_tokens_never_sign_in() {
 }
 
 #[tokio::test]
-#[ignore = "a refused code becomes a 500 – fixed in the next commit"]
 async fn a_pkce_mismatch_or_a_used_code_is_refused_by_the_provider() {
     let provider = Provider::start().await;
     let Some(app) = app_with(&provider).await else {
@@ -368,6 +374,27 @@ async fn a_pkce_mismatch_or_a_used_code_is_refused_by_the_provider() {
     let second = start_login(&app).await;
     let r = callback(&app, &code, &second.state).await;
     refused(&app, &r, StatusCode::BAD_REQUEST, "refused the login").await;
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn a_misconfigured_client_stays_a_server_error() {
+    // `invalid_client` is the administrator's to fix, not the user's: it
+    // stays an internal error (logged and reported), and nobody signs in
+    let provider = Provider::start().await;
+    let Some(app) = app_with_secret(&provider, "not-the-secret").await else {
+        return;
+    };
+    let login = start_login(&app).await;
+    let code = provider.authorize(&login.nonce, &login.challenge, Tweak::None);
+    let r = callback(&app, &code, &login.state).await;
+    refused(
+        &app,
+        &r,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Internal server error",
+    )
+    .await;
     app.teardown().await;
 }
 
@@ -516,6 +543,9 @@ async fn personal_access_tokens_expire_are_revoked_and_die_with_the_account() {
     );
 
     // a made-up token is refused like an expired one
-    assert_eq!(ok("not-a-real-token".into()).await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        ok("not-a-real-token".into()).await,
+        StatusCode::UNAUTHORIZED
+    );
     app.teardown().await;
 }
