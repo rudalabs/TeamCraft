@@ -1,0 +1,2511 @@
+[
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Title must not be empty."
+      }
+    },
+    "status": 400,
+    "step": "create: empty title"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Title must be at most 200 characters."
+      }
+    },
+    "status": 400,
+    "step": "create: title too long"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Description must be at most 20000 characters."
+      }
+    },
+    "status": 400,
+    "step": "create: description too long"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "reason must be defect, improvement, cost, manufacturing, supplier, safety, customer or other."
+      }
+    },
+    "status": 400,
+    "step": "create: unknown reason"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "priority must be low, normal, high or critical."
+      }
+    },
+    "status": 400,
+    "step": "create: unknown priority"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Invalid due date '31.12.2026': use YYYY-MM-DD."
+      }
+    },
+    "status": 400,
+    "step": "create: bad due date"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "not_found",
+        "message": "Item 'PRT-999999' not found."
+      }
+    },
+    "status": 404,
+    "step": "create: unknown item"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "not_found",
+        "message": "Revision 'Z' not found."
+      }
+    },
+    "status": 404,
+    "step": "create: unknown revision"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Failed to deserialize the JSON body into the target type: invalid type: string \"just a string\", expected struct CreateRequest at line 1 column 15"
+      }
+    },
+    "status": 400,
+    "step": "create: body is a string"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Unknown status 'bogus'."
+      }
+    },
+    "status": 400,
+    "step": "list: unknown status"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "scope must be mine or assigned."
+      }
+    },
+    "status": 400,
+    "step": "list: unknown scope"
+  },
+  {
+    "reply": {
+      "change_requests": [],
+      "limit": 50,
+      "offset": 0,
+      "total": 0
+    },
+    "status": 200,
+    "step": "list: nothing yet"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": true
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000001",
+        "priority": "normal",
+        "reason": "other",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "new",
+        "title": "Duplicate items",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": null,
+          "revision_id": null,
+          "revision_state": null
+        }
+      ],
+      "watching": true
+    },
+    "status": 201,
+    "step": "create W: same item 101 times"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only the requester or an administrator can withdraw ECR-000001."
+      }
+    },
+    "status": 403,
+    "step": "withdraw W: not the requester"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": false,
+        "comment": true,
+        "decide": false,
+        "edit": false,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": "<time>",
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000001",
+        "priority": "normal",
+        "reason": "other",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "withdrawn",
+        "title": "Duplicate items",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": null,
+          "revision_id": null,
+          "revision_state": null
+        }
+      ],
+      "watching": true
+    },
+    "status": 200,
+    "step": "withdraw W: requester"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000001 is Withdrawn; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "withdraw W: again"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000001 is Withdrawn; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "triage W: withdrawn"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000001 is Withdrawn; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "decide W: withdrawn"
+  },
+  {
+    "reply": {
+      "author_id": "<id>",
+      "author_name": "erika (test)",
+      "body": "Ok",
+      "created_at": "<time>",
+      "id": "<id>"
+    },
+    "status": 201,
+    "step": "comment W: withdrawn"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000001 is Withdrawn; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "update W: withdrawn"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": true
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": "2026-12-01",
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "new",
+        "title": "Weld seam cracks",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": true
+    },
+    "status": 201,
+    "step": "create A: viewer, item twice"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "not_found",
+        "message": "Change request 'ECR-999999' not found."
+      }
+    },
+    "status": 404,
+    "step": "get: unknown number"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": false,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": "2026-12-01",
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "new",
+        "title": "Weld seam cracks",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "get A: other viewer"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": false,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": "2026-12-01",
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "new",
+        "title": "Weld seam cracks",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "get A: editor of another group"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only the requester (before the decision), CAD editors of the affected project groups or an administrator can edit ECR-000002."
+      }
+    },
+    "status": 403,
+    "step": "update A: not the requester"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Title must not be empty."
+      }
+    },
+    "status": 400,
+    "step": "update A: empty title"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Invalid due date 'tomorrow': use YYYY-MM-DD."
+      }
+    },
+    "status": 400,
+    "step": "update A: bad due date"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": true
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "new",
+        "title": "Weld seam cracks at the flange",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": true
+    },
+    "status": 200,
+    "step": "update A: requester"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Comment must not be empty."
+      }
+    },
+    "status": 400,
+    "step": "comment A: empty"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Comment must be at most 10000 characters."
+      }
+    },
+    "status": 400,
+    "step": "comment A: too long"
+  },
+  {
+    "reply": {
+      "author_id": "<id>",
+      "author_name": "olga (test)",
+      "body": "Same here.",
+      "created_at": "<time>",
+      "id": "<id>"
+    },
+    "status": 201,
+    "step": "comment A: other viewer"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "The item is already part of ECR-000002."
+      }
+    },
+    "status": 409,
+    "step": "add item A: listed already"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "not_found",
+        "message": "Item 'PRT-999999' not found."
+      }
+    },
+    "status": 404,
+    "step": "add item A: unknown"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can change the items of ECR-000002."
+      }
+    },
+    "status": 403,
+    "step": "add item A: not the requester"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can triage ECR-000002."
+      }
+    },
+    "status": 403,
+    "step": "triage A: viewer"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can triage ECR-000002."
+      }
+    },
+    "status": 403,
+    "step": "triage A: editor of another group"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": true,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": "<id>",
+        "assignee_name": "erika (test)",
+        "assignee_username": "erika",
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "in_triage",
+        "title": "Weld seam cracks at the flange",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [
+        {
+          "author_id": "<id>",
+          "author_name": "olga (test)",
+          "body": "Same here.",
+          "created_at": "<time>",
+          "id": "<id>"
+        }
+      ],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "triage A: editor of the group"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000002 is In Triage; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "triage A: again"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "not_found",
+        "message": "Unknown user 'nobody'."
+      }
+    },
+    "status": 404,
+    "step": "assign A: unknown user"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "vera (test) has the viewer role; assign a CAD editor or an admin."
+      }
+    },
+    "status": 400,
+    "step": "assign A: a viewer"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": true,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": "<id>",
+        "assignee_name": "otto (test)",
+        "assignee_username": "otto",
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "in_triage",
+        "title": "Weld seam cracks at the flange",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [
+        {
+          "author_id": "<id>",
+          "author_name": "olga (test)",
+          "body": "Same here.",
+          "created_at": "<time>",
+          "id": "<id>"
+        }
+      ],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "assign A: editor of another group"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can assign ECR-000002."
+      }
+    },
+    "status": 403,
+    "step": "assign A: by a viewer"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": true,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": "<id>",
+        "assignee_name": "rolf (test)",
+        "assignee_username": "rolf",
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "in_triage",
+        "title": "Weld seam cracks at the flange",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [
+        {
+          "author_id": "<id>",
+          "author_name": "olga (test)",
+          "body": "Same here.",
+          "created_at": "<time>",
+          "id": "<id>"
+        }
+      ],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "assign A: editor of the group"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": true,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "in_triage",
+        "title": "Weld seam cracks at the flange",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [
+        {
+          "author_id": "<id>",
+          "author_name": "olga (test)",
+          "body": "Same here.",
+          "created_at": "<time>",
+          "id": "<id>"
+        }
+      ],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "assign A: nobody"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "decision must be accept, reject or defer."
+      }
+    },
+    "status": 400,
+    "step": "decide A: unknown decision"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can decide on ECR-000002."
+      }
+    },
+    "status": 403,
+    "step": "decide A: viewer"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can decide on ECR-000002."
+      }
+    },
+    "status": 403,
+    "step": "decide A: editor of another group"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Please give a reason when you reject or defer a change request."
+      }
+    },
+    "status": 400,
+    "step": "decide A: defer without comment"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": true,
+        "edit": true,
+        "implement": false,
+        "reopen": true,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": "<time>",
+        "decided_by": "<id>",
+        "decided_by_name": "erika (test)",
+        "decision_comment": "After the test campaign.",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "deferred",
+        "title": "Weld seam cracks at the flange",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [
+        {
+          "author_id": "<id>",
+          "author_name": "olga (test)",
+          "body": "Same here.",
+          "created_at": "<time>",
+          "id": "<id>"
+        }
+      ],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "decide A: defer"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000002 is Deferred; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "decide A: deferred again"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can reopen ECR-000002."
+      }
+    },
+    "status": 403,
+    "step": "reopen A: viewer"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": true,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": "<time>",
+        "decided_by": "<id>",
+        "decided_by_name": "erika (test)",
+        "decision_comment": "After the test campaign.",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "in_triage",
+        "title": "Weld seam cracks at the flange",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [
+        {
+          "author_id": "<id>",
+          "author_name": "olga (test)",
+          "body": "Same here.",
+          "created_at": "<time>",
+          "id": "<id>"
+        }
+      ],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "reopen A: editor"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000002 is In Triage; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "reopen A: not deferred"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Please give a reason when you reject or defer a change request."
+      }
+    },
+    "status": 400,
+    "step": "decide A: reject without comment"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": false,
+        "comment": true,
+        "decide": false,
+        "edit": false,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": "<time>",
+        "created_at": "<time>",
+        "decided_at": "<time>",
+        "decided_by": "<id>",
+        "decided_by_name": "erika (test)",
+        "decision_comment": "Seam is within tolerance.",
+        "description": "Seen on 3 of 10 parts.",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000002",
+        "priority": "high",
+        "reason": "manufacturing",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "rejected",
+        "title": "Weld seam cracks at the flange",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [
+        {
+          "author_id": "<id>",
+          "author_name": "olga (test)",
+          "body": "Same here.",
+          "created_at": "<time>",
+          "id": "<id>"
+        }
+      ],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "flange",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": "A",
+          "revision_id": "<id>",
+          "revision_state": "in_work"
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "decide A: reject"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000002 is Rejected; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "decide A: decided already"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000002 is Rejected; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "reopen A: rejected"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000002 is Rejected; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "withdraw A: decided"
+  },
+  {
+    "reply": {
+      "author_id": "<id>",
+      "author_name": "olga (test)",
+      "body": "Ok.",
+      "created_at": "<time>",
+      "id": "<id>"
+    },
+    "status": 201,
+    "step": "comment A: after the decision"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000002 is Rejected; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "add item A: after rejection"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000002 is Rejected; this action is not possible in that state."
+      }
+    },
+    "status": 409,
+    "step": "update A: after rejection, requester"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000002 is Rejected; only accepted change requests get a change order."
+      }
+    },
+    "status": 409,
+    "step": "create change A: rejected"
+  },
+  {
+    "reply": {
+      "closed_at": null,
+      "created_at": "<time>",
+      "created_by": "<id>",
+      "created_by_name": "erika (test)",
+      "description": "",
+      "id": "<id>",
+      "number": "CHG-000001",
+      "priority": "normal",
+      "status": "draft",
+      "submitted_at": null,
+      "title": "Thread rework",
+      "updated_at": "<time>"
+    },
+    "status": 201,
+    "step": "change order: a draft to link"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": true
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000003",
+        "priority": "normal",
+        "reason": "defect",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "new",
+        "title": "Wrong thread",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": null,
+          "revision_id": null,
+          "revision_state": null
+        }
+      ],
+      "watching": true
+    },
+    "status": 201,
+    "step": "create B: viewer"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000003 is New; only accepted change requests get a change order."
+      }
+    },
+    "status": 409,
+    "step": "create change B: not accepted"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "ECR-000003 is New; only accepted change requests get a change order."
+      }
+    },
+    "status": 409,
+    "step": "link change B: not accepted"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": true,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": "<time>",
+        "decided_by": "<id>",
+        "decided_by_name": "erika (test)",
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000003",
+        "priority": "normal",
+        "reason": "defect",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "accepted",
+        "title": "Wrong thread",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": null,
+          "revision_id": null,
+          "revision_state": null
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "decide B: accept from new"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "not_found",
+        "message": "Change 'ECO-999999' not found."
+      }
+    },
+    "status": 404,
+    "step": "link change B: unknown change"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "not_found",
+        "message": "Change 'CHG-000001' not found."
+      }
+    },
+    "status": 404,
+    "step": "link change B: viewer"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": true,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": "<time>",
+        "decided_by": "<id>",
+        "decided_by_name": "erika (test)",
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000003",
+        "priority": "normal",
+        "reason": "defect",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "accepted",
+        "title": "Wrong thread",
+        "updated_at": "<time>"
+      },
+      "changes": [
+        {
+          "closed_at": null,
+          "created_at": "<time>",
+          "created_by": "<id>",
+          "created_by_name": "erika (test)",
+          "description": "",
+          "id": "<id>",
+          "number": "CHG-000001",
+          "priority": "normal",
+          "status": "draft",
+          "submitted_at": null,
+          "title": "Thread rework",
+          "updated_at": "<time>"
+        }
+      ],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": null,
+          "revision_id": null,
+          "revision_state": null
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "link change B: draft"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "conflict",
+        "message": "CHG-000001 is already linked to ECR-000003."
+      }
+    },
+    "status": 409,
+    "step": "link change B: linked already"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can implement ECR-000003."
+      }
+    },
+    "status": 403,
+    "step": "create change B: viewer"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can implement ECR-000003."
+      }
+    },
+    "status": 403,
+    "step": "create change B: editor of another group"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "priority must be low, normal, high or critical."
+      }
+    },
+    "status": 400,
+    "step": "create change B: bad priority"
+  },
+  {
+    "reply": {
+      "added": [
+        "PRT-000001/A"
+      ],
+      "change": {
+        "closed_at": null,
+        "created_at": "<time>",
+        "created_by": "<id>",
+        "created_by_name": "erika (test)",
+        "description": "Implements ECR-000003 – Wrong thread",
+        "id": "<id>",
+        "number": "CHG-000002",
+        "priority": "high",
+        "status": "draft",
+        "submitted_at": null,
+        "title": "Fix the thread",
+        "updated_at": "<time>"
+      },
+      "skipped": []
+    },
+    "status": 201,
+    "step": "create change B: editor"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": false,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": "<time>",
+        "decided_by": "<id>",
+        "decided_by_name": "erika (test)",
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000003",
+        "priority": "normal",
+        "reason": "defect",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "accepted",
+        "title": "Wrong thread",
+        "updated_at": "<time>"
+      },
+      "changes": [
+        {
+          "closed_at": null,
+          "created_at": "<time>",
+          "created_by": "<id>",
+          "created_by_name": "erika (test)",
+          "description": "Implements ECR-000003 – Wrong thread",
+          "id": "<id>",
+          "number": "CHG-000002",
+          "priority": "high",
+          "status": "draft",
+          "submitted_at": null,
+          "title": "Fix the thread",
+          "updated_at": "<time>"
+        }
+      ],
+      "comments": [],
+      "hidden_changes": 1,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": null,
+          "revision_id": null,
+          "revision_state": null
+        }
+      ],
+      "watching": true
+    },
+    "status": 200,
+    "step": "get B: requester"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": true,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": "<time>",
+        "decided_by": "<id>",
+        "decided_by_name": "erika (test)",
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000003",
+        "priority": "normal",
+        "reason": "defect",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "accepted",
+        "title": "Wrong thread",
+        "updated_at": "<time>"
+      },
+      "changes": [
+        {
+          "closed_at": null,
+          "created_at": "<time>",
+          "created_by": "<id>",
+          "created_by_name": "erika (test)",
+          "description": "",
+          "id": "<id>",
+          "number": "CHG-000001",
+          "priority": "normal",
+          "status": "draft",
+          "submitted_at": null,
+          "title": "Thread rework",
+          "updated_at": "<time>"
+        },
+        {
+          "closed_at": null,
+          "created_at": "<time>",
+          "created_by": "<id>",
+          "created_by_name": "erika (test)",
+          "description": "Implements ECR-000003 – Wrong thread",
+          "id": "<id>",
+          "number": "CHG-000002",
+          "priority": "high",
+          "status": "draft",
+          "submitted_at": null,
+          "title": "Fix the thread",
+          "updated_at": "<time>"
+        }
+      ],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000001",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Bracket",
+          "note": "",
+          "project_code": "ROCKET",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": null,
+          "revision_id": null,
+          "revision_state": null
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "get B: admin"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "The file is empty."
+      }
+    },
+    "status": 400,
+    "step": "attach B: empty"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Only images (PNG, JPEG, GIF, WebP) and PDF files can be attached."
+      }
+    },
+    "status": 400,
+    "step": "attach B: svg"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "bad_request",
+        "message": "Only images (PNG, JPEG, GIF, WebP) and PDF files can be attached."
+      }
+    },
+    "status": 400,
+    "step": "attach B: text"
+  },
+  {
+    "reply": {
+      "content_type": "image/png",
+      "filename": "crack .png",
+      "id": "<id>",
+      "request_id": "<id>",
+      "size_bytes": 16,
+      "uploaded_at": "<time>",
+      "uploaded_by": "<id>",
+      "uploaded_by_name": "vera (test)"
+    },
+    "status": 201,
+    "step": "attach B: png with a path in the name"
+  },
+  {
+    "reply": {
+      "content_type": "application/pdf",
+      "filename": "report.pdf",
+      "id": "<id>",
+      "request_id": "<id>",
+      "size_bytes": 13,
+      "uploaded_at": "<time>",
+      "uploaded_by": "<id>",
+      "uploaded_by_name": "olga (test)"
+    },
+    "status": 201,
+    "step": "attach B: pdf by another viewer"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "not_found",
+        "message": "Change request 'ECR-999999' not found."
+      }
+    },
+    "status": 404,
+    "step": "attach: unknown request"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": true
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 0,
+        "number": "ECR-000004",
+        "priority": "normal",
+        "reason": "other",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "new",
+        "title": "Lighter wheel",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [],
+      "watching": true
+    },
+    "status": 201,
+    "step": "create C: viewer, no items"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": false,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": true
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000004",
+        "priority": "normal",
+        "reason": "other",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "new",
+        "title": "Lighter wheel",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000002",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Wheel",
+          "note": "",
+          "project_code": "ROVER",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": null,
+          "revision_id": null,
+          "revision_state": null
+        }
+      ],
+      "watching": true
+    },
+    "status": 200,
+    "step": "add item C: other group's item, requester"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can decide on ECR-000004."
+      }
+    },
+    "status": 403,
+    "step": "decide C: editor of another group"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": true,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": "<time>",
+        "decided_by": "<id>",
+        "decided_by_name": "otto (test)",
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 1,
+        "number": "ECR-000004",
+        "priority": "normal",
+        "reason": "other",
+        "requested_by": "<id>",
+        "requested_by_name": "vera (test)",
+        "status": "accepted",
+        "title": "Lighter wheel",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [
+        {
+          "item_id": "<id>",
+          "item_number": "PRT-000002",
+          "item_type": "part",
+          "latest_code": "A",
+          "latest_revision_id": "<id>",
+          "latest_state": "in_work",
+          "name": "Wheel",
+          "note": "",
+          "project_code": "ROVER",
+          "project_id": "<id>",
+          "restricted": false,
+          "revision_code": null,
+          "revision_id": null,
+          "revision_state": null
+        }
+      ],
+      "watching": false
+    },
+    "status": 200,
+    "step": "decide C: editor of the group"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "ECR-000004 is Accepted: only members of the item's project group or an administrator can add it now."
+      }
+    },
+    "status": 403,
+    "step": "add item C: foreign item after decision"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "forbidden",
+        "message": "Only CAD editors of the affected project groups or an administrator can change the items of ECR-000004."
+      }
+    },
+    "status": 403,
+    "step": "add item C: member of the item's group"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": true,
+        "edit": true,
+        "implement": false,
+        "reopen": false,
+        "start_triage": true,
+        "withdraw": true
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": null,
+        "decided_by": null,
+        "decided_by_name": null,
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 0,
+        "number": "ECR-000005",
+        "priority": "normal",
+        "reason": "other",
+        "requested_by": "<id>",
+        "requested_by_name": "otto (test)",
+        "status": "new",
+        "title": "Lighter bracket",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [],
+      "watching": true
+    },
+    "status": 201,
+    "step": "create D: editor of another group, no items"
+  },
+  {
+    "reply": {
+      "attachments": [],
+      "can": {
+        "assign": true,
+        "attach": true,
+        "comment": true,
+        "decide": false,
+        "edit": true,
+        "implement": true,
+        "reopen": false,
+        "start_triage": false,
+        "withdraw": false
+      },
+      "change_request": {
+        "assignee": null,
+        "assignee_name": null,
+        "assignee_username": null,
+        "closed_at": null,
+        "created_at": "<time>",
+        "decided_at": "<time>",
+        "decided_by": "<id>",
+        "decided_by_name": "erika (test)",
+        "decision_comment": "",
+        "description": "",
+        "due_date": null,
+        "id": "<id>",
+        "item_count": 0,
+        "number": "ECR-000005",
+        "priority": "normal",
+        "reason": "other",
+        "requested_by": "<id>",
+        "requested_by_name": "otto (test)",
+        "status": "accepted",
+        "title": "Lighter bracket",
+        "updated_at": "<time>"
+      },
+      "changes": [],
+      "comments": [],
+      "hidden_changes": 0,
+      "items": [],
+      "watching": false
+    },
+    "status": 200,
+    "step": "decide D: any CAD editor"
+  },
+  {
+    "reply": {
+      "change_requests": [
+        {
+          "assignee": null,
+          "assignee_name": null,
+          "assignee_username": null,
+          "closed_at": null,
+          "created_at": "<time>",
+          "decided_at": "<time>",
+          "decided_by": "<id>",
+          "decided_by_name": "erika (test)",
+          "decision_comment": "",
+          "description": "",
+          "due_date": null,
+          "id": "<id>",
+          "item_count": 0,
+          "number": "ECR-000005",
+          "priority": "normal",
+          "reason": "other",
+          "requested_by": "<id>",
+          "requested_by_name": "otto (test)",
+          "status": "accepted",
+          "title": "Lighter bracket",
+          "updated_at": "<time>"
+        },
+        {
+          "assignee": null,
+          "assignee_name": null,
+          "assignee_username": null,
+          "closed_at": null,
+          "created_at": "<time>",
+          "decided_at": "<time>",
+          "decided_by": "<id>",
+          "decided_by_name": "otto (test)",
+          "decision_comment": "",
+          "description": "",
+          "due_date": null,
+          "id": "<id>",
+          "item_count": 1,
+          "number": "ECR-000004",
+          "priority": "normal",
+          "reason": "other",
+          "requested_by": "<id>",
+          "requested_by_name": "vera (test)",
+          "status": "accepted",
+          "title": "Lighter wheel",
+          "updated_at": "<time>"
+        },
+        {
+          "assignee": null,
+          "assignee_name": null,
+          "assignee_username": null,
+          "closed_at": null,
+          "created_at": "<time>",
+          "decided_at": "<time>",
+          "decided_by": "<id>",
+          "decided_by_name": "erika (test)",
+          "decision_comment": "",
+          "description": "",
+          "due_date": null,
+          "id": "<id>",
+          "item_count": 1,
+          "number": "ECR-000003",
+          "priority": "normal",
+          "reason": "defect",
+          "requested_by": "<id>",
+          "requested_by_name": "vera (test)",
+          "status": "accepted",
+          "title": "Wrong thread",
+          "updated_at": "<time>"
+        }
+      ],
+      "limit": 50,
+      "offset": 0,
+      "total": 3
+    },
+    "status": 200,
+    "step": "list: open"
+  },
+  {
+    "reply": {
+      "change_requests": [
+        {
+          "assignee": null,
+          "assignee_name": null,
+          "assignee_username": null,
+          "closed_at": null,
+          "created_at": "<time>",
+          "decided_at": "<time>",
+          "decided_by": "<id>",
+          "decided_by_name": "otto (test)",
+          "decision_comment": "",
+          "description": "",
+          "due_date": null,
+          "id": "<id>",
+          "item_count": 1,
+          "number": "ECR-000004",
+          "priority": "normal",
+          "reason": "other",
+          "requested_by": "<id>",
+          "requested_by_name": "vera (test)",
+          "status": "accepted",
+          "title": "Lighter wheel",
+          "updated_at": "<time>"
+        },
+        {
+          "assignee": null,
+          "assignee_name": null,
+          "assignee_username": null,
+          "closed_at": null,
+          "created_at": "<time>",
+          "decided_at": "<time>",
+          "decided_by": "<id>",
+          "decided_by_name": "erika (test)",
+          "decision_comment": "",
+          "description": "",
+          "due_date": null,
+          "id": "<id>",
+          "item_count": 1,
+          "number": "ECR-000003",
+          "priority": "normal",
+          "reason": "defect",
+          "requested_by": "<id>",
+          "requested_by_name": "vera (test)",
+          "status": "accepted",
+          "title": "Wrong thread",
+          "updated_at": "<time>"
+        },
+        {
+          "assignee": null,
+          "assignee_name": null,
+          "assignee_username": null,
+          "closed_at": "<time>",
+          "created_at": "<time>",
+          "decided_at": "<time>",
+          "decided_by": "<id>",
+          "decided_by_name": "erika (test)",
+          "decision_comment": "Seam is within tolerance.",
+          "description": "Seen on 3 of 10 parts.",
+          "due_date": null,
+          "id": "<id>",
+          "item_count": 1,
+          "number": "ECR-000002",
+          "priority": "high",
+          "reason": "manufacturing",
+          "requested_by": "<id>",
+          "requested_by_name": "vera (test)",
+          "status": "rejected",
+          "title": "Weld seam cracks at the flange",
+          "updated_at": "<time>"
+        },
+        {
+          "assignee": null,
+          "assignee_name": null,
+          "assignee_username": null,
+          "closed_at": "<time>",
+          "created_at": "<time>",
+          "decided_at": null,
+          "decided_by": null,
+          "decided_by_name": null,
+          "decision_comment": "",
+          "description": "",
+          "due_date": null,
+          "id": "<id>",
+          "item_count": 1,
+          "number": "ECR-000001",
+          "priority": "normal",
+          "reason": "other",
+          "requested_by": "<id>",
+          "requested_by_name": "vera (test)",
+          "status": "withdrawn",
+          "title": "Duplicate items",
+          "updated_at": "<time>"
+        }
+      ],
+      "limit": 50,
+      "offset": 0,
+      "total": 4
+    },
+    "status": 200,
+    "step": "list: mine"
+  },
+  {
+    "reply": {
+      "change_requests": [],
+      "limit": 50,
+      "offset": 0,
+      "total": 0
+    },
+    "status": 200,
+    "step": "list: assigned to rolf"
+  },
+  {
+    "reply": {
+      "change_requests": [
+        {
+          "assignee": null,
+          "assignee_name": null,
+          "assignee_username": null,
+          "closed_at": null,
+          "created_at": "<time>",
+          "decided_at": "<time>",
+          "decided_by": "<id>",
+          "decided_by_name": "erika (test)",
+          "decision_comment": "",
+          "description": "",
+          "due_date": null,
+          "id": "<id>",
+          "item_count": 1,
+          "number": "ECR-000003",
+          "priority": "normal",
+          "reason": "defect",
+          "requested_by": "<id>",
+          "requested_by_name": "vera (test)",
+          "status": "accepted",
+          "title": "Wrong thread",
+          "updated_at": "<time>"
+        },
+        {
+          "assignee": null,
+          "assignee_name": null,
+          "assignee_username": null,
+          "closed_at": "<time>",
+          "created_at": "<time>",
+          "decided_at": "<time>",
+          "decided_by": "<id>",
+          "decided_by_name": "erika (test)",
+          "decision_comment": "Seam is within tolerance.",
+          "description": "Seen on 3 of 10 parts.",
+          "due_date": null,
+          "id": "<id>",
+          "item_count": 1,
+          "number": "ECR-000002",
+          "priority": "high",
+          "reason": "manufacturing",
+          "requested_by": "<id>",
+          "requested_by_name": "vera (test)",
+          "status": "rejected",
+          "title": "Weld seam cracks at the flange",
+          "updated_at": "<time>"
+        },
+        {
+          "assignee": null,
+          "assignee_name": null,
+          "assignee_username": null,
+          "closed_at": "<time>",
+          "created_at": "<time>",
+          "decided_at": null,
+          "decided_by": null,
+          "decided_by_name": null,
+          "decision_comment": "",
+          "description": "",
+          "due_date": null,
+          "id": "<id>",
+          "item_count": 1,
+          "number": "ECR-000001",
+          "priority": "normal",
+          "reason": "other",
+          "requested_by": "<id>",
+          "requested_by_name": "vera (test)",
+          "status": "withdrawn",
+          "title": "Duplicate items",
+          "updated_at": "<time>"
+        }
+      ],
+      "limit": 50,
+      "offset": 0,
+      "total": 3
+    },
+    "status": 200,
+    "step": "list: by item"
+  },
+  {
+    "reply": {
+      "error": {
+        "code": "not_found",
+        "message": "Item 'PRT-999999' not found."
+      }
+    },
+    "status": 404,
+    "step": "list: unknown item"
+  }
+]

@@ -242,24 +242,33 @@ struct ServiceFn {
     calls: BTreeSet<String>,
 }
 
+/// The service module a file below `src/services` belongs to: the file stem
+/// (`items.rs` → `items`, `mod.rs` → `services`), or for a module split into
+/// a directory its name (`requests/triage.rs` → `requests`), so that
+/// `requests::decide` keeps its name whichever file of the split it is in.
+fn service_module(file: &Path) -> String {
+    let services = root().join("src/services");
+    let rel = file.strip_prefix(&services).unwrap_or(file);
+    let mut parts = rel.components();
+    let first = Path::new(parts.next().unwrap().as_os_str());
+    if parts.next().is_some() {
+        return first.to_string_lossy().to_string();
+    }
+    match first.file_stem().unwrap().to_string_lossy().as_ref() {
+        "mod" => "services".to_string(),
+        stem => stem.to_string(),
+    }
+}
+
 /// `module::function` → what it does, for every top-level function in
-/// `src/services` (the module is the file stem; `mod.rs` is its directory).
+/// `src/services` (the module as [`service_module`] names it).
 fn service_functions() -> BTreeMap<String, ServiceFn> {
     let item = Regex::new(r"(?m)^(pub(?:\([a-z]+\))? )?(?:async )?fn (\w+)").unwrap();
     let write = Regex::new(r"(?i)\b(INSERT INTO|DELETE FROM|UPDATE\s+\w+\s+SET)\b").unwrap();
     let call = Regex::new(r"\b(?:(\w+)::)?(\w+)\s*\(").unwrap();
     let mut functions = BTreeMap::new();
     for file in rust_files("src/services") {
-        let module = match file.file_stem().unwrap().to_string_lossy().as_ref() {
-            "mod" => file
-                .parent()
-                .unwrap()
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .to_string(),
-            stem => stem.to_string(),
-        };
+        let module = service_module(&file);
         let text = read(&file);
         let text = without_tests(&text);
         let starts: Vec<(usize, bool, String)> = item
@@ -375,6 +384,12 @@ fn the_audit_guard_follows_calls_between_services() {
     // accepting a result proposal audits through simulations::write_results
     let accept = &functions["result_proposals::accept"];
     assert!(accept.writes && accept.audits, "{accept:?}");
+    // a module split into a directory keeps its name, and calls between its
+    // files are followed: on_change_released (requests/implementation.rs)
+    // writes through set_status (requests/triage.rs)
+    let released = &functions["requests::on_change_released"];
+    assert!(released.writes && released.audits, "{released:?}");
+    assert!(functions["requests::decide"].public);
 }
 
 // ---------------------------------------------------------------------------
