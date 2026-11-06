@@ -9,6 +9,13 @@
 //! `TEAMCRAFT_ENV_FILE` if set, the local development file [`LOCAL_ENV_FILE`]
 //! (`secrets/.env`, git-ignored) and – only in package builds – the system
 //! file [`SYSTEM_ENV_FILE`].
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
@@ -1060,12 +1067,12 @@ fn parse_bool(raw: &str) -> Result<bool> {
 fn percent_decode(component: &str) -> String {
     let bytes = component.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
+    let hex = |b: Option<&u8>| b.and_then(|b| (*b as char).to_digit(16));
     let mut i = 0;
-    while i < bytes.len() {
-        let hex = |b: u8| (b as char).to_digit(16);
-        match (bytes[i], bytes.get(i + 1), bytes.get(i + 2)) {
-            (b'%', Some(&h), Some(&l)) if hex(h).is_some() && hex(l).is_some() => {
-                out.push((hex(h).unwrap() * 16 + hex(l).unwrap()) as u8);
+    while let Some(&b) = bytes.get(i) {
+        match (b, hex(bytes.get(i + 1)), hex(bytes.get(i + 2))) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
                 i += 3;
             }
             (b, _, _) => {
