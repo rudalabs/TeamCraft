@@ -74,6 +74,91 @@ Missed lines / lines and line coverage from CI (`b4cf014`).
 | `main.rs`, `lib.rs` (CLI, router) | 0.8k counted lines | 3 unit | 533 / 756 – 29.5 % | the CLI runs only in the CLI smoke test of the *tests* job, which the coverage job does not measure |
 | Desktop (`desktop/src`, own crate, not measured) | 9.1k lines | 72 unit | – | none (CI runs the desktop tests on Linux only) |
 
+## Feature to test map
+
+Every file in `tests/` (2026-11-06, `ab1abd9`), grouped by the feature it
+pins. The count is the number of `#[test]` / `#[tokio::test]` functions in the
+file (`grep -c "#\[test\]\|#\[tokio::test\]"`); it is a size hint, not a
+measure of quality. The CI numbers in the tables above are still from
+`b4cf014`.
+
+| Feature | Test files (count) |
+|---|---|
+| REST workflow, end to end | `api_flow` (24), `atomic_processes` (10), `service_refusals` (6) |
+| Items, numbering, lists | `numbering_and_watches` (1), `search_listing` (1), `working_folder` (1) |
+| Change orders and release | `change_orders` (6), `release_readiness` (2) |
+| Engineering change requests | `change_requests` (4), `change_request_paths` (1), `request_digests` (1) |
+| Files, vault, uploads, downloads | `uploads` (11), `range_downloads` (1), `domain_and_vault` (10), `audit_and_vault` (3), `concurrency` (6), `preview_limits` (5), `folder_import` (2) |
+| Product structure and BOM | `structure` (4), `bom_performance` (4), `bom_tree_view` (2), `insights` (3), `interchange` (2) |
+| BOM import | `import_atomicity` (4), `import_proofing` (7) |
+| CAD readers, previews, results | `cad_fixtures` (13), `parser_robustness` (16), `parser_corpus` (2), `step_export_names` (2), `similar_parts` (2), `result_values` (4), `result_proposals` (3) |
+| Custom attributes | `attributes` (2) |
+| Suggested reviewers | `reviewers` (1) |
+| Login, SSO, access control | `oidc_flow` (9), `read_permissions` (8), `no_unchecked_in_handlers` (2), `web_security` (7) |
+| Outgoing webhooks | `webhooks` (8), `webhook_ssrf` (4), `web_webhooks` (3) |
+| Error notifications | `notify` (1) |
+| Backup, restore, migrations | `backup_restore` (1), `backup_errors` (7), `backup_proofing` (5), `migrations` (6) |
+| Assistant, MCP, agent tools | `assistant` (3), `assistant_threads` (3), `agent_tools` (4), `mcp` (3), `mcp_contract` (2) |
+| Web UI | `web_ui` (16) |
+| Command line | `cli` (4) |
+| Architecture rules | `architecture_guards` (7, reads the sources, no database) |
+| Scale check | `scale.rs` (0 active, one `#[ignore]` test; `scale/seed.sql`) |
+| Shared helpers and data | `common/mod.rs` (test database per test), `fixtures/` (NIST CAD files, v0.1.0 seed) |
+
+Unit tests in `src/`, by feature (count of test functions in the module or
+its `tests` file):
+
+| Feature | Modules (count) |
+|---|---|
+| CAD and mesh readers | `mesh` (13), `mesh/p21` (5), `mesh/step` (4), `mesh/tessellated` (6), `simmesh` (19), `shape` (9), `stepbom` (13), `swpart` (14), `nxpart` (7), `thumbnail` (12), `bomtable` (20), `cadrefs` (21), `cadformat` (19), `textindex` (9), `pdftext` (5), `resultscan` (9), `fuzz_harness` (2) |
+| Previews, pages, HTTP ranges | `preview` (5), `httprange` (5), `pagecontext` (5), `assets` (8), `templates` (4), `templates/accessibility` (1) |
+| Pure rules and config | `domain/mod` (38), `models` (10), `config` (16), `util` (5) |
+| Vault, backup, database | `vault` (4), `backup` (9), `db` (1) |
+| Services with unit tests | `services/bom` (15), `services/bom_compare` (4), `services/imports` (6), `services/readiness` (6), `services/simulations` (5), `services/requests/tests` (5), `services/uploads` (5), `services/files` (3), `services/impacts` (3), `services/request_digests` (3), `services/webhooks` (4), `services/users` (2), `services/checkouts` (2), `services/reviewers` (2), `services/notifications` (2), `services/assistant_threads` (2), `services/desktop` (2), `services/similar` (1), `services/result_proposals` (1), `services/personal` (1), `services/access` (1) |
+| Web, auth, integrations | `web/mod` (2), `auth` (8), `oidc` (4), `webhooks` (9), `delivery` (4), `notify` (4), `assistant` (12), `mcp/mod` (2), `mcp/tools/tests` (14), `llm/anthropic` (5), `llm/http` (3), `llm/openai` (8), `main` (3) |
+
+Services and pages with **no** unit test (`services/items`, `changes`,
+`revisions`, `interchange`, `attributes`, `insights`, `projects`, `explorer`,
+`references`, `workset`, `save_as`, `package`, `stats`; every `web/*` and
+`api/*` module): they are covered through the HTTP tests above only.
+
+## Gaps
+
+Judged by the test counts above, the missed lines of the CI table and whether
+a failure path has a test. Ordered by risk.
+
+1. **Vault explorer** (`services/explorer.rs`, `web/explorer.rs`): no test file
+   of its own and no unit test; only `api_flow`, `web_ui` and `scale` touch it.
+2. **Projects and self-service groups** (`services/projects.rs`, 53 of 558
+   lines missed): no own file and no unit test; the failure paths (a refused
+   change by a non-manager, a removed member keeping access) are the ones to
+   pin, in a new `projects` file.
+3. **Simulations** (`services/simulations.rs` 85 missed, `web/simulations.rs`
+   74.6 %, `api/simulations.rs` 90.7 %): five unit tests and no own file.
+4. **Change requests triage** (`services/requests.rs`, 162 missed;
+   `web/requests.rs`, 131 missed at 75.1 %): one integration test for the
+   paths, the triage pages are untested except through `web_ui`.
+5. **Admin and account pages** (`web/admin.rs` 74.3 %, 110 missed;
+   `web/account.rs` 83.4 %; `web/personal.rs` 80.7 %): no own file, no unit
+   test.
+6. **Attributes and interchange** (2 integration tests each, no unit test;
+   `web/attributes.rs` 75 %, `web/interchange.rs` 88 %): the failure paths to
+   add are a refused edit by a non-administrator and a conflicting alternate.
+7. **Search, watches, reviewers** (1 to 2 tests each): the failure paths to
+   add are a filter that must not reveal a restricted item and a watch on a
+   removed item.
+8. **Identity and notifications with real servers**: `oidc.rs` 53.5 % (CI),
+   `notify.rs` 26 % (CI, before `tests/notify.rs`), no test against a real
+   SMTP or Mattermost server; `services/users.rs` 72.9 % (187 missed) for
+   deactivation and token revocation of a whole account.
+9. **Range downloads** (`tests/range_downloads.rs`, 1 test): `httprange` is at
+   100 % line coverage, but the file-level test count is the thinnest of the
+   download path; the failure path to add is a resume whose `If-Range` no
+   longer matches the stored object.
+
+Next tests come from these items in the order above, failure path first
+(refusal, conflict, rollback).
+
 ## Top 15: the thinnest high-risk spots
 
 Ranked by risk × thinness on 2026-11-05; the last two columns are today's
