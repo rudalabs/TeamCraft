@@ -469,6 +469,89 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<R
     revisions::get(pool, actor, created.revision_id).await
 }
 
+/// The longest idempotency key accepted.
+pub const MAX_IDEMPOTENCY_KEY: usize = 255;
+
+/// Validates a client-supplied idempotency key (printable ASCII, 1..=255).
+pub fn validate_idempotency_key(key: &str) -> AppResult<&str> {
+    let key = key.trim();
+    if key.is_empty()
+        || key.len() > MAX_IDEMPOTENCY_KEY
+        || !key.bytes().all(|b| (0x21..=0x7e).contains(&b))
+    {
+        return Err(AppError::BadRequest(format!(
+            "idempotency_key must be 1 to {MAX_IDEMPOTENCY_KEY} printable ASCII characters without spaces."
+        )));
+    }
+    Ok(key)
+}
+
+/// [`create`] with an idempotency key: the first request with a key creates
+/// the item; a repetition by the same user with the same `payload_hash`
+/// returns that item (second value `true`, nothing is created); the same key
+/// with another payload is a conflict (409).
+///
+/// # Invariants
+///
+/// * **Permission / locks / audit / data:** as [`create`]; a replay is a
+///   read: the original revision is returned only while the actor may read it.
+/// * **Atomic:** the key row is inserted first, in the creation's transaction.
+///   Two simultaneous requests with one key meet at the primary key: the
+///   second waits for the first to commit (replay) or roll back (it then
+///   creates the item itself), so exactly one item exists. A refused or
+///   failed creation leaves no key behind.
+pub async fn create_idempotent(
+    pool: &PgPool,
+    actor: &Actor,
+    input: NewItem,
+    key: &str,
+    payload_hash: &str,
+) -> AppResult<(Revision, bool)> {
+    let key = validate_idempotency_key(key)?;
+    let mut tx = pool.begin().await?;
+    let inserted = sqlx::query(
+        "INSERT INTO item_idempotency (user_id, key, payload_hash) VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, key) DO NOTHING",
+    )
+    .bind(actor.id)
+    .bind(key)
+    .bind(payload_hash)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if inserted == 0 {
+        let (hash, revision_id) = sqlx::query_as::<_, (String, Option<Uuid>)>(
+            "SELECT payload_hash, revision_id FROM item_idempotency WHERE user_id = $1 AND key = $2",
+        )
+        .bind(actor.id)
+        .bind(key)
+        .fetch_one(&mut *tx)
+        .await?;
+        drop(tx);
+        if hash != payload_hash {
+            return Err(AppError::Conflict(
+                "This idempotency key was used for a different request; use a new key for a different item.".into(),
+            ));
+        }
+        let revision_id = revision_id.ok_or_else(|| {
+            AppError::Conflict("The request with this idempotency key is still running.".into())
+        })?;
+        return Ok((revisions::get(pool, actor, revision_id).await?, true));
+    }
+    let created = create_tx(&mut tx, actor, input).await?;
+    sqlx::query("UPDATE item_idempotency SET revision_id = $3 WHERE user_id = $1 AND key = $2")
+        .bind(actor.id)
+        .bind(key)
+        .bind(created.revision_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok((
+        revisions::get(pool, actor, created.revision_id).await?,
+        false,
+    ))
+}
+
 /// Creates an item and stores its first files in the new revision – one
 /// transaction, so there is never an item without the files it was created
 /// with. The revision stays checked out by the creator.

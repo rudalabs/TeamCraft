@@ -54,6 +54,30 @@ Every answer contains only what the token's user may read (see
   `{"visibility": "restricted"}` restricts a group (managers of the group
   and admins).
 
+## Creating items, safely repeated
+
+`POST /items` takes `{item_type, name, project, number?, unit?, description?,
+material?, mass_kg?, unit_cost?, classification?, attributes?}` and answers
+**201** with the new revision `A`. A client that lost the answer (timeout,
+crash) cannot tell whether the item exists. With the optional
+**`idempotency_key`** (1 to 255 printable ASCII characters without spaces,
+chosen by the client) the request can be repeated safely:
+
+| Request                                          | Answer                                                         |
+|--------------------------------------------------|----------------------------------------------------------------|
+| first request with a key                         | **201**, the item is created                                   |
+| same key, same user, same fields again           | **200** with the original item (current state) and the header `Idempotent-Replay: true`; nothing is created |
+| same key, same user, any field different         | **409**; nothing is created                                    |
+| simultaneous identical requests                  | exactly one **201**, all others **200** with that item         |
+| same key from another user                       | independent: keys belong to the user                           |
+| invalid key                                      | **400**                                                        |
+
+The key is stored in the transaction that creates the item, so a refused
+request (403, 409, 400 …) leaves no key behind and may be repeated with the
+same key once it is valid. Without a key every request creates an item. The
+desktop's *Import CAD Folder…* sends a stable key per source item (group,
+folder and item), so a run after a lost answer finds the items it created.
+
 ## The check-out / check-in cycle
 
 ```sh
