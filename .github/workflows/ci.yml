@@ -97,6 +97,13 @@ jobs:
       - name: unit tests (the database tests run on Linux)
         run: cargo test --locked --lib
 
+  dependencies:
+    name: cargo deny (advisories, licences, sources)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+
   coverage:
     # Report only: no threshold yet (docs/src/dev/coverage.md). The unit and
     # the database tests run together, so the numbers include the services.

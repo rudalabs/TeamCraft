@@ -428,11 +428,15 @@ fn xml_text(xml: &[u8]) -> String {
     }
 }
 
-fn attr(e: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<String> {
+fn attr(e: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<String> {
     e.attributes()
         .flatten()
         .find(|a| a.key.local_name().as_ref() == name)
-        .and_then(|a| a.unescape_value().ok().map(|v| v.into_owned()))
+        .and_then(|a| {
+            a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .ok()
+                .map(|v| v.into_owned())
+        })
 }
 
 /// The files of the direct components of an assembly, from its component
@@ -467,32 +471,32 @@ pub fn components(xml: &[u8]) -> Vec<String> {
         };
         match &event {
             Event::Start(e) | Event::Empty(e) => match e.local_name().as_ref() {
-                b"swFile" => {
-                    if let (Some(id), Some(path)) = (attr(e, b"id"), attr(e, b"swPath")) {
+                "swFile" => {
+                    if let (Some(id), Some(path)) = (attr(e, "id"), attr(e, "swPath")) {
                         files.insert(id, path);
                     }
                 }
-                b"swModel" => {
-                    let id = attr(e, b"id").unwrap_or_default();
-                    if let Some(file) = attr(e, b"swFileRef") {
+                "swModel" => {
+                    let id = attr(e, "id").unwrap_or_default();
+                    if let Some(file) = attr(e, "swFileRef") {
                         model_file.insert(id.clone(), file);
                     }
                     if matches!(event, Event::Start(_)) {
                         current_model = Some(id);
                     }
                 }
-                b"swReference" => {
-                    let is_virtual = attr(e, b"swIsVirtualComponent")
+                "swReference" => {
+                    let is_virtual = attr(e, "swIsVirtualComponent")
                         .is_some_and(|v| v.eq_ignore_ascii_case("YES"));
                     if let (Some(parent), Some(target), false) =
-                        (current_model.clone(), attr(e, b"swModelRef"), is_virtual)
+                        (current_model.clone(), attr(e, "swModelRef"), is_virtual)
                     {
                         instances.push((parent, target));
                     }
                 }
                 _ => {}
             },
-            Event::End(e) if e.local_name().as_ref() == b"swModel" => current_model = None,
+            Event::End(e) if e.local_name().as_ref() == "swModel" => current_model = None,
             _ => {}
         }
         if instances.len() > 1_000_000 {

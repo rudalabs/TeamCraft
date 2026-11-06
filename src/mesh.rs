@@ -999,11 +999,15 @@ fn zip_entry(data: &[u8], wanted: impl Fn(&str) -> bool) -> Result<Option<Vec<u8
     Ok(Some(out))
 }
 
-fn attr(e: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Option<String> {
+fn attr(e: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<String> {
     e.attributes()
         .flatten()
         .find(|a| a.key.local_name().as_ref() == name)
-        .and_then(|a| a.unescape_value().ok().map(|v| v.into_owned()))
+        .and_then(|a| {
+            a.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+                .ok()
+                .map(|v| v.into_owned())
+        })
 }
 
 #[derive(Default)]
@@ -1047,23 +1051,23 @@ fn three_mf_model(xml: &[u8]) -> Result<Mesh> {
             .context("invalid 3MF XML")?;
         match &event {
             Event::Start(e) | Event::Empty(e) => match e.local_name().as_ref() {
-                b"object" => {
-                    let id = attr(e, b"id").unwrap_or_default();
+                "object" => {
+                    let id = attr(e, "id").unwrap_or_default();
                     objects.entry(id.clone()).or_default();
                     current = Some(id);
                 }
-                b"vertex" => {
+                "vertex" => {
                     if let Some(obj) = current.as_ref().and_then(|id| objects.get_mut(id)) {
-                        let c = |n: &[u8]| float(attr(e, n).as_deref().unwrap_or("0"));
-                        obj.mesh.vertex([c(b"x")?, c(b"y")?, c(b"z")?]);
+                        let c = |n: &str| float(attr(e, n).as_deref().unwrap_or("0"));
+                        obj.mesh.vertex([c("x")?, c("y")?, c("z")?]);
                     }
                 }
-                b"triangle" => {
+                "triangle" => {
                     if let Some(obj) = current.as_ref().and_then(|id| objects.get_mut(id)) {
                         let n = obj.mesh.vertex_count() as u32;
                         let mut t = [0u32; 3];
-                        for (k, name) in [b"v1", b"v2", b"v3"].iter().enumerate() {
-                            t[k] = attr(e, *name)
+                        for (k, name) in ["v1", "v2", "v3"].iter().enumerate() {
+                            t[k] = attr(e, name)
                                 .and_then(|v| v.parse().ok())
                                 .filter(|v| *v < n)
                                 .context("3MF triangle refers to a missing vertex")?;
@@ -1072,20 +1076,20 @@ fn three_mf_model(xml: &[u8]) -> Result<Mesh> {
                         check_triangles(obj.mesh.triangle_count())?;
                     }
                 }
-                b"component" => {
+                "component" => {
                     if let Some(obj) = current.as_ref().and_then(|id| objects.get_mut(id)) {
-                        let target = attr(e, b"objectid").unwrap_or_default();
+                        let target = attr(e, "objectid").unwrap_or_default();
                         obj.components
-                            .push((target, parse_transform(attr(e, b"transform").as_deref())?));
+                            .push((target, parse_transform(attr(e, "transform").as_deref())?));
                     }
                 }
-                b"item" => {
-                    let target = attr(e, b"objectid").unwrap_or_default();
-                    items.push((target, parse_transform(attr(e, b"transform").as_deref())?));
+                "item" => {
+                    let target = attr(e, "objectid").unwrap_or_default();
+                    items.push((target, parse_transform(attr(e, "transform").as_deref())?));
                 }
                 _ => {}
             },
-            Event::End(e) if e.local_name().as_ref() == b"object" => current = None,
+            Event::End(e) if e.local_name().as_ref() == "object" => current = None,
             Event::Eof => break,
             _ => {}
         }
@@ -1148,7 +1152,7 @@ fn amf(data: &[u8]) -> Result<Mesh> {
     let mut object = Mesh::default();
     let mut coord = [0f64; 3];
     let mut tri = [0u32; 3];
-    let mut field: Option<Vec<u8>> = None;
+    let mut field: Option<String> = None;
     let mut buf = Vec::new();
     loop {
         match reader
@@ -1156,31 +1160,31 @@ fn amf(data: &[u8]) -> Result<Mesh> {
             .context("invalid AMF XML")?
         {
             Event::Start(e) => {
-                let name = e.local_name().as_ref().to_vec();
-                if name == b"object" {
+                let name = e.local_name().as_ref().to_owned();
+                if name == "object" {
                     object = Mesh::default();
                 }
                 field = Some(name);
             }
             Event::Text(t) => {
-                let value = t.unescape().unwrap_or_default();
+                let value = t.xml_content(quick_xml::XmlVersion::Implicit1_0);
                 let value = value.trim();
                 match field.as_deref() {
-                    Some(b"x") => coord[0] = float(value)?,
-                    Some(b"y") => coord[1] = float(value)?,
-                    Some(b"z") => coord[2] = float(value)?,
-                    Some(b"v1") => tri[0] = value.parse().context("AMF triangle")?,
-                    Some(b"v2") => tri[1] = value.parse().context("AMF triangle")?,
-                    Some(b"v3") => tri[2] = value.parse().context("AMF triangle")?,
+                    Some("x") => coord[0] = float(value)?,
+                    Some("y") => coord[1] = float(value)?,
+                    Some("z") => coord[2] = float(value)?,
+                    Some("v1") => tri[0] = value.parse().context("AMF triangle")?,
+                    Some("v2") => tri[1] = value.parse().context("AMF triangle")?,
+                    Some("v3") => tri[2] = value.parse().context("AMF triangle")?,
                     _ => {}
                 }
             }
             Event::End(e) => {
                 match e.local_name().as_ref() {
-                    b"coordinates" => {
+                    "coordinates" => {
                         object.vertex(coord);
                     }
-                    b"triangle" => {
+                    "triangle" => {
                         let n = object.vertex_count() as u32;
                         if tri.iter().any(|i| *i >= n) {
                             bail!("AMF triangle refers to a missing vertex");
@@ -1188,7 +1192,7 @@ fn amf(data: &[u8]) -> Result<Mesh> {
                         object.indices.extend(tri);
                         check_triangles(out.triangle_count() + object.triangle_count())?;
                     }
-                    b"object" => {
+                    "object" => {
                         object.parts = 1;
                         out.append(std::mem::take(&mut object));
                     }

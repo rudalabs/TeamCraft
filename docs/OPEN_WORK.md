@@ -152,8 +152,7 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 - [ ] Property tests (`proptest`) for the pure rules in `domain.rs`: revision letter sequence, lifecycle transition
   table, numbering scheme expansion and counters, skin contrast
 - [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*, report only: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) – open: a floor that may not drop, once the numbers of a few PRs are known
-- [ ] `cargo deny` in CI: licences compatible with MPL-2.0 (see *Rules for all of them* below), security advisories,
-  duplicate major versions
+- [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
 - [ ] Branch protection on `main`: required checks (fmt/clippy, tests on PostgreSQL 16 and 18, builds, docs links)
 
 ### 2. Structure
