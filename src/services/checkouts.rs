@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::ids::RevisionId;
 use crate::{
     auth::Actor,
     domain::{self, BaseVersion, FileSyncState, ServerFile},
@@ -106,7 +107,7 @@ pub async fn file_status(
     revision_id: Uuid,
     client: &[ClientFile],
 ) -> AppResult<RevisionStatus> {
-    let rev = revisions::get(pool, actor, revision_id).await?;
+    let rev = revisions::get(pool, actor, RevisionId(revision_id)).await?;
     let (list, versions) = tokio::try_join!(
         files::list(pool, actor, revision_id),
         files::versions_of_revision(pool, revision_id)
@@ -263,7 +264,7 @@ pub async fn check_in_all(
             if mine.iter().any(|r| r.id == *id) {
                 continue;
             }
-            if let Ok(rev) = revisions::get(pool, actor, *id).await {
+            if let Ok(rev) = revisions::get(pool, actor, RevisionId(*id)).await {
                 outcomes.push(CheckInOutcome::of(
                     &rev,
                     Err(AppError::Conflict(format!(

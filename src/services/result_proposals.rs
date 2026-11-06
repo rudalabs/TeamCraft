@@ -14,6 +14,7 @@ use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
+use crate::ids::RevisionId;
 use crate::{
     auth::Actor,
     domain,
@@ -112,7 +113,7 @@ pub async fn list(
     revision_id: Uuid,
     status: Option<&str>,
 ) -> AppResult<Vec<Proposal>> {
-    revisions::get(pool, actor, revision_id).await?;
+    revisions::get(pool, actor, RevisionId(revision_id)).await?;
     Ok(sqlx::query_as::<_, Proposal>(&format!(
         "{SELECT} WHERE p.revision_id = $1 AND ($2::text IS NULL OR p.status = $2)
          ORDER BY (p.status <> 'pending'), p.created_at DESC, lower(p.name)"
@@ -130,7 +131,7 @@ pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Proposal> 
         .fetch_optional(pool)
         .await?
         .ok_or_else(not_found)?;
-    revisions::get(pool, actor, p.revision_id)
+    revisions::get(pool, actor, RevisionId(p.revision_id))
         .await
         .map_err(|_| not_found())?;
     Ok(p)

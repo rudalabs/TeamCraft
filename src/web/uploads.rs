@@ -22,6 +22,7 @@ use axum::{
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::ids::RevisionId;
 use crate::{
     api::{uploads_api, ApiJson},
     auth::WebUser,
@@ -45,7 +46,7 @@ pub(super) async fn create(
     ApiJson(body): ApiJson<CreateBody>,
 ) -> AppResult<Response> {
     // Unknown and unreadable revisions answer 404, like the revision page.
-    let rev = revisions::get(&st.db, &me, body.revision_id).await?;
+    let rev = revisions::get(&st.db, &me, RevisionId(body.revision_id)).await?;
     uploads_api::start(
         &st,
         &me,

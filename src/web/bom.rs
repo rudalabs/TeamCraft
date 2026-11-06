@@ -11,6 +11,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{finish, render, WebCtx};
+use crate::ids::RevisionId;
 use crate::{
     auth::WebUser,
     domain::{self, RevisionRule},
@@ -60,7 +61,7 @@ pub async fn show(
     Query(q): Query<ShowQuery>,
 ) -> AppResult<Response> {
     let me = &ctx.me;
-    let rev = revisions::get(&st.db, me, id).await?;
+    let rev = revisions::get(&st.db, me, RevisionId(id)).await?;
     let rule = q
         .rule
         .as_deref()
@@ -127,7 +128,7 @@ pub async fn csv(
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, &me, id).await?;
+    let rev = revisions::get(&st.db, &me, RevisionId(id)).await?;
     let rule = rule_of(&q);
     let tree = bom::tree(&st.db, &me, id, rule).await?;
     let filename = format!("{}_{}_bom_{}.csv", rev.item_number, rev.code, rule.as_str());
@@ -151,7 +152,7 @@ pub async fn xlsx(
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, &me, id).await?;
+    let rev = revisions::get(&st.db, &me, RevisionId(id)).await?;
     let rule = rule_of(&q);
     let tree = bom::tree(&st.db, &me, id, rule).await?;
     let filename = format!(
@@ -203,7 +204,7 @@ pub async fn add_line(
             find_number: parse_find_number(&form.find_number)?,
             notes: form.notes.clone(),
         };
-        let line = bom::add(&st.db, &ctx.me, id, input).await?;
+        let line = bom::add(&st.db, &ctx.me, RevisionId(id), input).await?;
         // a superseded child may be added on purpose – with a hint
         let superseded = interchange::superseded_among(&st.db, &ctx.me, &[line.child_item_id])
             .await?
@@ -327,7 +328,7 @@ pub async fn package(
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, &me, id).await?;
+    let rev = revisions::get(&st.db, &me, RevisionId(id)).await?;
     let rule = package_rule(q.rule.as_deref(), &rev.state);
     package_response(package::build(&st.db, &st.vault, &me, id, rule).await?)
 }

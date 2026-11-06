@@ -17,6 +17,7 @@ use super::{
     finish, is_user_error, pagination, parse_opt_uuid, redirect_flash, render,
     revisions::multipart_error, Flash, WebCtx, PER_PAGE,
 };
+use crate::ids::RevisionId;
 use crate::{
     auth::WebUser,
     domain::{Priority, RequestDecision, RequestReason, RequestStatus},
@@ -147,7 +148,7 @@ async fn render_new(
     error: Option<String>,
 ) -> AppResult<Response> {
     let revision = match parse_opt_uuid("Revision", Some(&form.revision_id)).unwrap_or(None) {
-        Some(id) => Some(revisions::get(&st.db, &ctx.me, id).await?),
+        Some(id) => Some(revisions::get(&st.db, &ctx.me, RevisionId(id)).await?),
         None => None,
     };
     render(
@@ -200,7 +201,7 @@ async fn affected_of(
     form: &RequestForm,
 ) -> AppResult<Option<AffectedItem>> {
     if let Some(rev_id) = parse_opt_uuid("Revision", Some(&form.revision_id))? {
-        let rev = revisions::get(&st.db, me, rev_id).await?;
+        let rev = revisions::get(&st.db, me, RevisionId(rev_id)).await?;
         return Ok(Some(AffectedItem {
             item_id: rev.item_id,
             revision_id: Some(rev.id),

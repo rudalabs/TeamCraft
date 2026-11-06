@@ -884,7 +884,8 @@ pub async fn remove_reviewer(
 }
 
 /// Submits a draft change for review and freezes its revisions.
-pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
+pub async fn submit(pool: &PgPool, actor: &Actor, change_id: ChangeId) -> AppResult<Change> {
+    let change_id = change_id.uuid();
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
@@ -1307,7 +1308,8 @@ async fn emit_review_events(
 }
 
 /// Pulls a change back from review into draft.
-pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
+pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: ChangeId) -> AppResult<Change> {
+    let change_id = change_id.uuid();
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;

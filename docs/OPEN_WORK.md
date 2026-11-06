@@ -201,10 +201,14 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   and sqlx, no `From<Uuid>`), `typed_id()` on `Item`, `Revision`, `Change`; typed in `changes::add_item`,
   `remove_item`, `remove_reviewer`, `interchange::remove_alternate`, `bom_compare::compare`,
   `personal::is_favorite` and the web routes `/changes/{id}/items/{revision_id}/remove` and
-  `/changes/{id}/reviewers/{user_id}/remove` (`Path<(ChangeId, RevisionId)>`).
-  Next: `ProjectId`/`UserId` (`projects::remove_member`, `notifications::is_watching`), the single-id services
-  (`revisions::get`, `bom::lines`, `items::open_revision` …), `ImportOptions`, `services::requests` (after its split),
-  then the `id` fields of the models themselves
+  `/changes/{id}/reviewers/{user_id}/remove` (`Path<(ChangeId, RevisionId)>`). Part 2: `ProjectId` and `UserId`
+  (`typed_id()` on `User`, `Project`, `Actor::user_id()`) in `projects::remove_member`, `notifications::is_watching`,
+  `changes::remove_reviewer`, `items::update_master`, `uploads::complete`; the single-id services `revisions::get`,
+  `items::get`, `projects::get`, `bom::add`, `changes::submit`, `changes::withdraw`, `interchange::supersede`,
+  `replace`, `clear_supersession` with their 70 callers. Next: the single-id services `src/mcp/` calls
+  (`bom::lines`, `bom::tree`, `items::open_revision`, `items::revisions`, `files::list`, `changes::get`,
+  `changes::items`, the `interchange` readers) once the MCP split is merged; `revisions::lock` and the other
+  transaction helpers; `ImportOptions`; `services::requests` (after its split); then the `id` fields of the models
 - [ ] Document the invariants per service function (permission check, rows locked, audit action, notifications and
   webhooks emitted) in its doc comment; `cargo doc` then is the reference for reviewers – started with an
   `# Invariants` section on `files::check_in`, `changes::review`, `interchange::replace`, `save_as::save_as`,

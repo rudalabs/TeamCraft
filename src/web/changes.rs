@@ -89,7 +89,7 @@ async fn render_new(
     error: Option<String>,
 ) -> AppResult<Response> {
     let revision = match parse_opt_uuid("Revision", Some(&form.revision_id)).unwrap_or(None) {
-        Some(id) => Some(revisions::get(&st.db, &ctx.me, id).await?),
+        Some(id) => Some(revisions::get(&st.db, &ctx.me, RevisionId(id)).await?),
         None => None,
     };
     render(
@@ -410,7 +410,7 @@ pub async fn submit(
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     let back = format!("/changes/{id}");
-    let result = changes::submit(&st.db, &ctx.me, id).await;
+    let result = changes::submit(&st.db, &ctx.me, ChangeId(id)).await;
     finish(&st, result, &back, |c| {
         (
             back.clone(),
@@ -456,7 +456,7 @@ pub async fn withdraw(
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     let back = format!("/changes/{id}");
-    let result = changes::withdraw(&st.db, &ctx.me, id).await;
+    let result = changes::withdraw(&st.db, &ctx.me, ChangeId(id)).await;
     finish(&st, result, &back, |c| {
         (back.clone(), format!("{} is a draft again", c.number))
     })

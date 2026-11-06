@@ -13,6 +13,7 @@ use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
+use crate::ids::RevisionId;
 use crate::{
     auth::Actor,
     cadformat::{self, CadFormat},
@@ -565,7 +566,7 @@ pub async fn ensure_can_attach(
     actor: &Actor,
     revision_id: Uuid,
 ) -> AppResult<Revision> {
-    let rev = revisions::get(pool, actor, revision_id).await?;
+    let rev = revisions::get(pool, actor, RevisionId(revision_id)).await?;
     revisions::ensure_editable(&rev, actor)?;
     Ok(rev)
 }
@@ -1034,7 +1035,7 @@ pub async fn check_in(
         .await?;
     }
     tx.commit().await?;
-    let rev = revisions::get(pool, actor, revision_id).await?;
+    let rev = revisions::get(pool, actor, RevisionId(revision_id)).await?;
     Ok((rev, stored))
 }
 

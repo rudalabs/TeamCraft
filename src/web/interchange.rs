@@ -106,7 +106,7 @@ pub async fn supersede(
 ) -> AppResult<Response> {
     let back = back_to(form.back.as_deref(), id);
     let number = form.item.trim().to_ascii_uppercase();
-    let result = interchange::supersede(&st.db, &ctx.me, id, &number, &form.note).await;
+    let result = interchange::supersede(&st.db, &ctx.me, ItemId(id), &number, &form.note).await;
     finish(&st, result, &back, |()| {
         (
             back.clone(),
@@ -124,7 +124,7 @@ pub async fn clear_supersession(
     Form(form): Form<super::items::BackForm>,
 ) -> AppResult<Response> {
     let back = back_to(form.back.as_deref(), id);
-    let result = interchange::clear_supersession(&st.db, &ctx.me, id).await;
+    let result = interchange::clear_supersession(&st.db, &ctx.me, ItemId(id)).await;
     finish(&st, result, &back, |()| {
         (back.clone(), "No longer superseded".to_string())
     })
@@ -155,7 +155,7 @@ pub async fn where_used(
     Query(q): Query<WhereUsedQuery>,
 ) -> AppResult<Response> {
     let me = &ctx.me;
-    let item = items::get(&st.db, me, id).await?;
+    let item = items::get(&st.db, me, ItemId(id)).await?;
     let levels = q
         .levels
         .unwrap_or(items::MAX_WHERE_USED_LEVELS)
@@ -227,7 +227,7 @@ pub async fn replace(
 ) -> AppResult<Response> {
     let number = form.with.trim().to_ascii_uppercase();
     let back = format!("/items/{id}/where-used?with={}", util::pct_encode(&number));
-    let result = interchange::replace(&st.db, &ctx.me, id, &number).await;
+    let result = interchange::replace(&st.db, &ctx.me, ItemId(id), &number).await;
     finish(&st, result, &back, |plan| {
         (
             back.clone(),

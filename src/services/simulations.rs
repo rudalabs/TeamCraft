@@ -29,6 +29,7 @@ use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
+use crate::ids::RevisionId;
 use crate::{
     auth::Actor,
     bomtable,
@@ -124,7 +125,9 @@ impl SimulationBasis {
 
 /// Fails with "not found" unless the actor may read the revision.
 async fn ensure_revision_visible(pool: &PgPool, actor: &Actor, revision_id: Uuid) -> AppResult<()> {
-    revisions::get(pool, actor, revision_id).await.map(|_| ())
+    revisions::get(pool, actor, RevisionId(revision_id))
+        .await
+        .map(|_| ())
 }
 
 const BASIS_SELECT: &str = "

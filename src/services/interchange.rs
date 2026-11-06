@@ -168,7 +168,7 @@ pub async fn add_alternate(
     input: NewAlternate,
 ) -> AppResult<()> {
     let note = domain::limit_text("Note", &input.note, 500)?;
-    let item = items::get(pool, actor, item_id).await?;
+    let item = items::get(pool, actor, ItemId(item_id)).await?;
     ensure_item_editable(actor, &item)?;
     let other = items::get_by_number(pool, actor, &input.number).await?;
     if other.id == item.id {
@@ -249,7 +249,6 @@ pub async fn remove_alternate(
     item_id: ItemId,
     alternate_item_id: ItemId,
 ) -> AppResult<u64> {
-    let (item_id, alternate_item_id) = (item_id.uuid(), alternate_item_id.uuid());
     let item = items::get(pool, actor, item_id).await?;
     ensure_item_editable(actor, &item)?;
     let other = items::get(pool, actor, alternate_item_id).await?;
@@ -377,7 +376,7 @@ pub async fn superseded_among(
 pub async fn supersede(
     pool: &PgPool,
     actor: &Actor,
-    item_id: Uuid,
+    item_id: ItemId,
     successor_number: &str,
     note: &str,
 ) -> AppResult<()> {
@@ -442,7 +441,7 @@ pub async fn supersede(
 }
 
 /// Withdraws the supersession of `item_id`.
-pub async fn clear_supersession(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<()> {
+pub async fn clear_supersession(pool: &PgPool, actor: &Actor, item_id: ItemId) -> AppResult<()> {
     let item = items::get(pool, actor, item_id).await?;
     ensure_item_editable(actor, &item)?;
     let mut tx = pool.begin().await?;
@@ -645,7 +644,7 @@ pub async fn plan_replace(
     old_item_id: Uuid,
     new_number: &str,
 ) -> AppResult<ReplacePlan> {
-    let old = items::get(pool, actor, old_item_id).await?;
+    let old = items::get(pool, actor, ItemId(old_item_id)).await?;
     let new = items::get_by_number(pool, actor, new_number).await?;
     let mut conn = pool.acquire().await?;
     load_plan(&mut conn, actor, &old, &new, false).await
@@ -672,11 +671,12 @@ pub async fn plan_replace(
 pub async fn replace(
     pool: &PgPool,
     actor: &Actor,
-    old_item_id: Uuid,
+    old_item_id: ItemId,
     new_number: &str,
 ) -> AppResult<ReplacePlan> {
+    let old_item_id = old_item_id.uuid();
     actor.require(Role::Editor)?;
-    let old = items::get(pool, actor, old_item_id).await?;
+    let old = items::get(pool, actor, ItemId(old_item_id)).await?;
     let new = items::get_by_number(pool, actor, new_number).await?;
     let mut tx = pool.begin().await?;
     let plan = load_plan(&mut tx, actor, &old, &new, true).await?;

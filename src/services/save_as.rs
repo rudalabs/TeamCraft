@@ -7,6 +7,7 @@ use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::ids::RevisionId;
 use crate::{
     auth::Actor,
     domain::{self, ItemType},
@@ -48,7 +49,7 @@ pub async fn save_as(
     source_revision_id: Uuid,
     input: SaveAs,
 ) -> AppResult<Revision> {
-    let src = revisions::get(pool, actor, source_revision_id).await?;
+    let src = revisions::get(pool, actor, RevisionId(source_revision_id)).await?;
     let item_type = ItemType::parse(&src.item_type)
         .ok_or_else(|| AppError::Other(anyhow::anyhow!("unknown item type {}", src.item_type)))?;
     let name = match input.name.trim() {
@@ -185,5 +186,5 @@ pub async fn save_as(
     )
     .await?;
     tx.commit().await?;
-    revisions::get(pool, actor, new_rev).await
+    revisions::get(pool, actor, RevisionId(new_rev)).await
 }

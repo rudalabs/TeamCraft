@@ -13,6 +13,7 @@ use crate::{
     auth::Actor,
     domain::{self, RevisionRule},
     error::{AppError, AppResult},
+    ids::RevisionId,
     models::{BomLine, Revision},
     services::{access, audit, items, revisions},
     util,
@@ -45,7 +46,7 @@ pub async fn lines(
     actor: &Actor,
     parent_revision_id: Uuid,
 ) -> AppResult<Vec<BomLine>> {
-    revisions::get(pool, actor, parent_revision_id).await?;
+    revisions::get(pool, actor, RevisionId(parent_revision_id)).await?;
     let mut rows = lines_unchecked(pool, parent_revision_id).await?;
     for l in &mut rows {
         if !actor.can_see_project(l.child_project_id) {
@@ -81,7 +82,7 @@ async fn line_unmasked(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<BomL
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| AppError::not_found("BOM line not found."))?;
-    revisions::get(pool, actor, l.parent_revision_id)
+    revisions::get(pool, actor, RevisionId(l.parent_revision_id))
         .await
         .map_err(|_| AppError::not_found("BOM line not found."))?;
     Ok(l)
@@ -136,9 +137,10 @@ pub struct NewBomLine {
 pub async fn add(
     pool: &PgPool,
     actor: &Actor,
-    parent_revision_id: Uuid,
+    parent_revision_id: RevisionId,
     input: NewBomLine,
 ) -> AppResult<BomLine> {
+    let parent_revision_id = parent_revision_id.uuid();
     let quantity = domain::validate_quantity(input.quantity)?;
     let notes = domain::limit_text("Notes", &input.notes, 500)?;
     if let Some(f) = input.find_number {
@@ -690,7 +692,7 @@ pub async fn tree(
     root_revision_id: Uuid,
     rule: RevisionRule,
 ) -> AppResult<BomTree> {
-    let root = revisions::get(pool, actor, root_revision_id).await?;
+    let root = revisions::get(pool, actor, RevisionId(root_revision_id)).await?;
     let (lines_by_rev, queries) = load_structure(pool, actor, root.id, rule).await?;
     let mut tree = assemble(
         rule,

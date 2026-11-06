@@ -10,6 +10,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{render, WebCtx};
+use crate::ids::RevisionId;
 use crate::{
     error::{AppError, AppResult},
     preview::PreviewFormat,
@@ -62,7 +63,7 @@ pub async fn show(
         None => None,
         Some(id) => {
             let (rev, file_list) = tokio::try_join!(
-                revisions::get(&st.db, &ctx.me, id),
+                revisions::get(&st.db, &ctx.me, RevisionId(id)),
                 files::list(&st.db, &ctx.me, id)
             )?;
             let me = &ctx.me;

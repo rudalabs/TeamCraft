@@ -11,6 +11,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{finish, parse_opt_uuid, render, xlsx_response, WebCtx};
+use crate::ids::RevisionId;
 use crate::{
     auth::Actor,
     domain::RevisionRule,
@@ -123,7 +124,7 @@ pub async fn save_as_form(
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     let (rev, projects, lines) = tokio::try_join!(
-        revisions::get(&st.db, &ctx.me, id),
+        revisions::get(&st.db, &ctx.me, RevisionId(id)),
         projects::editable_by(&st.db, &ctx.me),
         crate::services::bom::lines(&st.db, &ctx.me, id),
     )?;
@@ -242,7 +243,7 @@ async fn comparison(
     q: &CompareQuery,
 ) -> AppResult<Comparison> {
     let depth = q.depth()?;
-    let rev = revisions::get(&st.db, me, id).await?;
+    let rev = revisions::get(&st.db, me, RevisionId(id)).await?;
     let all = items::revisions(&st.db, me, rev.item_id).await?;
     let other_id = match parse_opt_uuid("Revision", q.with.as_deref())? {
         Some(other) => other,
@@ -260,7 +261,7 @@ async fn comparison(
                 ))
             })?,
     };
-    let other = revisions::get(&st.db, me, other_id).await?;
+    let other = revisions::get(&st.db, me, RevisionId(other_id)).await?;
     // two revisions of one item: the older one first; two items: this one
     // first, compared with the other
     let (before, after) = if other.item_id == rev.item_id && other.seq < rev.seq {

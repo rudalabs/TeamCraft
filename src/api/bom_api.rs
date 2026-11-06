@@ -211,7 +211,7 @@ pub(super) async fn add_bom_line(
     let line = bom::add(
         &st.db,
         &me,
-        rev.id,
+        rev.typed_id(),
         bom::NewBomLine {
             child_number: body.child,
             quantity: body.quantity,

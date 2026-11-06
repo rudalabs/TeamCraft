@@ -17,6 +17,7 @@ use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
+use crate::ids::RevisionId;
 use crate::{
     auth::Actor,
     cadformat,
@@ -76,7 +77,7 @@ async fn get_unmasked(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ItemR
         .fetch_optional(pool)
         .await?
         .ok_or_else(|| AppError::not_found("Reference not found."))?;
-    revisions::get(pool, actor, r.from_revision_id)
+    revisions::get(pool, actor, RevisionId(r.from_revision_id))
         .await
         .map_err(|_| AppError::not_found("Reference not found."))?;
     Ok(r)

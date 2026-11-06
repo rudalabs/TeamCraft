@@ -50,7 +50,7 @@ pub async fn project_show(
     Query(q): Query<ProjectQuery>,
 ) -> AppResult<Response> {
     let (project, members, can_manage) = tokio::try_join!(
-        projects::get(&st.db, &ctx.me, id),
+        projects::get(&st.db, &ctx.me, ProjectId(id)),
         projects::members(&st.db, id),
         projects::is_manager(&st.db, &ctx.me, id),
     )?;
@@ -555,7 +555,7 @@ pub async fn add_result_template(
 ) -> AppResult<Response> {
     let back = format!("/projects/{id}#result-templates");
     // a hidden group answers like a missing one before the form is looked at
-    projects::get(&st.db, &ctx.me, id).await?;
+    projects::get(&st.db, &ctx.me, ProjectId(id)).await?;
     let result = match form.input() {
         Ok(input) => result_templates::create(&st.db, &ctx.me, id, input).await,
         Err(e) => Err(e),

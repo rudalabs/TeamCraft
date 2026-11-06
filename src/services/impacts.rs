@@ -29,6 +29,7 @@ use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
+use crate::ids::RevisionId;
 use crate::{
     auth::Actor,
     domain::{self, NotificationKind, Role},
@@ -258,7 +259,7 @@ pub async fn acknowledge_all(
             "Say why the dependent needs no change (e.g. form, fit and function unchanged).".into(),
         )
     })?;
-    let rev = revisions::get(pool, actor, revision_id).await?;
+    let rev = revisions::get(pool, actor, RevisionId(revision_id)).await?;
     if !actor.can_edit_project(rev.project_id) {
         return Err(AppError::Forbidden(format!(
             "Only CAD editors of the project group {} (or admins) can acknowledge impacts on {}.",

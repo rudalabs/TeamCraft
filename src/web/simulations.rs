@@ -12,6 +12,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{finish, parse_opt_uuid, render, WebCtx};
+use crate::ids::RevisionId;
 use crate::{
     domain::{self, BasisRole},
     error::{AppError, AppResult},
@@ -224,7 +225,7 @@ pub async fn results_csv(
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, &ctx.me, id).await?;
+    let rev = revisions::get(&st.db, &ctx.me, RevisionId(id)).await?;
     let results = simulations::results(&st.db, &ctx.me, id).await?;
     let filename = format!("{}_{}_results.csv", rev.item_number, rev.code);
     Ok((
@@ -254,7 +255,7 @@ pub async fn compare(
     Path(id): Path<Uuid>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, &ctx.me, id).await?;
+    let rev = revisions::get(&st.db, &ctx.me, RevisionId(id)).await?;
     let all = items::revisions(&st.db, &ctx.me, rev.item_id).await?;
     let other_id = match parse_opt_uuid("Revision", q.with.as_deref())? {
         Some(other) => other,
@@ -271,7 +272,7 @@ pub async fn compare(
                 ))
             })?,
     };
-    let other = revisions::get(&st.db, &ctx.me, other_id).await?;
+    let other = revisions::get(&st.db, &ctx.me, RevisionId(other_id)).await?;
     let (before, after) = if other.seq < rev.seq {
         (other, rev.clone())
     } else {

@@ -112,7 +112,7 @@ pub(super) async fn supersede(
     ApiJson(body): ApiJson<Supersede>,
 ) -> AppResult<Json<Value>> {
     let item = items::get_by_number(&st.db, &me, &number).await?;
-    interchange::supersede(&st.db, &me, item.id, &body.item, &body.note).await?;
+    interchange::supersede(&st.db, &me, item.typed_id(), &body.item, &body.note).await?;
     Ok(Json(interchange_of(&st, &me, item.id).await?))
 }
 
@@ -122,7 +122,7 @@ pub(super) async fn clear_supersession(
     Path(number): Path<String>,
 ) -> AppResult<StatusCode> {
     let item = items::get_by_number(&st.db, &me, &number).await?;
-    interchange::clear_supersession(&st.db, &me, item.id).await?;
+    interchange::clear_supersession(&st.db, &me, item.typed_id()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -150,7 +150,7 @@ pub(super) async fn replace(
     ApiJson(body): ApiJson<ReplaceQuery>,
 ) -> AppResult<Response> {
     let item = items::get_by_number(&st.db, &me, &number).await?;
-    let plan = interchange::replace(&st.db, &me, item.id, &body.with).await?;
+    let plan = interchange::replace(&st.db, &me, item.typed_id(), &body.with).await?;
     let hidden = plan.hidden;
     Ok(with_hidden_count(Json(json!(plan)), hidden))
 }

@@ -8,6 +8,7 @@ use crate::{
     auth::Actor,
     domain::{self, LifecycleState, NotificationKind, Role, WebhookEvent},
     error::{AppError, AppResult},
+    ids::RevisionId,
     models::Revision,
     services::{
         access, attributes, audit, impacts,
@@ -74,7 +75,8 @@ pub(crate) async fn lock(conn: &mut PgConnection, id: Uuid) -> AppResult<Revisio
 }
 
 /// A revision the actor may read; hidden ones answer like missing ones.
-pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
+pub async fn get(pool: &PgPool, actor: &Actor, id: RevisionId) -> AppResult<Revision> {
+    let id = id.uuid();
     let rev = get_unchecked(pool, id).await?;
     access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
     Ok(rev)
@@ -237,7 +239,7 @@ pub async fn update(
     )
     .await?;
     tx.commit().await?;
-    get(pool, actor, id).await
+    get(pool, actor, RevisionId(id)).await
 }
 
 /// Takes the exclusive edit lock of an in-work revision.
@@ -265,7 +267,7 @@ pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
     )
     .await?;
     tx.commit().await?;
-    get(pool, actor, id).await
+    get(pool, actor, RevisionId(id)).await
 }
 
 /// Releases the edit lock without uploading anything ("cancel check-out").
@@ -332,7 +334,7 @@ pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResul
         notifications::notify(&mut tx, Some(actor), &[owner], &notice).await?;
     }
     tx.commit().await?;
-    get(pool, actor, id).await
+    get(pool, actor, RevisionId(id)).await
 }
 
 /// For pages: whether [`cancel_checkout`] would release the revision's lock.
@@ -521,7 +523,7 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     )
     .await?;
     tx.commit().await?;
-    get(pool, actor, new_id).await
+    get(pool, actor, RevisionId(new_id)).await
 }
 
 /// Marks a released revision as obsolete.
@@ -560,7 +562,7 @@ pub async fn obsolete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
     )
     .await?;
     tx.commit().await?;
-    get(pool, actor, id).await
+    get(pool, actor, RevisionId(id)).await
 }
 
 /// Moves a (locked) revision to another lifecycle state after validating

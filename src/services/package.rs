@@ -23,6 +23,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
+use crate::ids::RevisionId;
 use crate::{
     auth::Actor,
     domain::RevisionRule,
@@ -53,7 +54,7 @@ pub async fn build(
     root_revision_id: Uuid,
     rule: RevisionRule,
 ) -> AppResult<Package> {
-    let root = revisions::get(pool, actor, root_revision_id).await?;
+    let root = revisions::get(pool, actor, RevisionId(root_revision_id)).await?;
     let tree = bom::tree(pool, actor, root_revision_id, rule).await?;
 
     // Every revision of the structure once: the root, then depth first.

@@ -192,7 +192,7 @@ pub(super) async fn submit_change(
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
     let change = changes::get_by_number(&st.db, &me, &number).await?;
-    changes::submit(&st.db, &me, change.id).await?;
+    changes::submit(&st.db, &me, change.typed_id()).await?;
     Ok(Json(change_json(&st, &me, &number).await?))
 }
 
@@ -223,6 +223,6 @@ pub(super) async fn withdraw_change(
     Path(number): Path<String>,
 ) -> AppResult<Json<Value>> {
     let change = changes::get_by_number(&st.db, &me, &number).await?;
-    changes::withdraw(&st.db, &me, change.id).await?;
+    changes::withdraw(&st.db, &me, change.typed_id()).await?;
     Ok(Json(change_json(&st, &me, &number).await?))
 }

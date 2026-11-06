@@ -15,6 +15,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::ids::RevisionId;
 use crate::{
     auth::Actor,
     domain::RevisionRule,
@@ -96,7 +97,7 @@ pub async fn resolve(
     rule: RevisionRule,
     with_references: bool,
 ) -> AppResult<Workset> {
-    let root = revisions::get(pool, actor, root_revision_id).await?;
+    let root = revisions::get(pool, actor, RevisionId(root_revision_id)).await?;
     let (lines_by_rev, mut queries) = bom::load_structure(pool, actor, root.id, rule).await?;
     queries += 1;
     let structure = bom::structure_revisions(root.id, &lines_by_rev);

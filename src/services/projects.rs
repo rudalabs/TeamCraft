@@ -86,7 +86,8 @@ pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<Project>
 
 /// A project group the actor may see (restricted groups answer "not found"
 /// to non-members).
-pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Project> {
+pub async fn get(pool: &PgPool, actor: &Actor, id: ProjectId) -> AppResult<Project> {
+    let id = id.uuid();
     let project = get_unchecked(pool, id).await?;
     access::ensure_visible(actor, Some(project.id), access::not_found_project())?;
     Ok(project)
@@ -554,7 +555,7 @@ pub async fn add_member(
     username: &str,
     manager: bool,
 ) -> AppResult<ProjectMember> {
-    let project = get(pool, actor, project_id).await?;
+    let project = get(pool, actor, ProjectId(project_id)).await?;
     let user = users::find_by_username(pool, username)
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("Unknown user '{}'.", username.trim())))?;
@@ -608,8 +609,8 @@ pub async fn remove_member(
     project_id: ProjectId,
     user_id: UserId,
 ) -> AppResult<i64> {
-    let (project_id, user_id) = (project_id.uuid(), user_id.uuid());
     let project = get(pool, actor, project_id).await?;
+    let (project_id, user_id) = (project_id.uuid(), user_id.uuid());
     let mut tx = pool.begin().await?;
     // serialise membership changes of this group
     sqlx::query("SELECT id FROM projects WHERE id = $1 FOR UPDATE")

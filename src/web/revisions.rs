@@ -19,7 +19,7 @@ use crate::{
     domain::{self, BasisRole, ItemType, LifecycleState, ReferenceKind, COMMON_UNITS},
     error::{AppError, AppResult},
     httprange,
-    ids::RevisionId,
+    ids::{ItemId, RevisionId},
     models::{AttributeDef, FileRecord, Revision},
     preview::PreviewFormat,
     services::{
@@ -119,8 +119,8 @@ pub async fn show(
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     let me = &ctx.me;
-    let rev = revisions::get(&st.db, me, id).await?;
-    let item = items::get(&st.db, me, rev.item_id).await?;
+    let rev = revisions::get(&st.db, me, RevisionId(id)).await?;
+    let item = items::get(&st.db, me, ItemId(rev.item_id)).await?;
     // independent queries run concurrently
     let (
         all_revisions,
@@ -424,7 +424,7 @@ pub async fn edit_form(
     ctx: WebCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
-    let rev = revisions::get(&st.db, &ctx.me, id).await?;
+    let rev = revisions::get(&st.db, &ctx.me, RevisionId(id)).await?;
     revisions::ensure_editable(&rev, &ctx.me)?;
     let fields = attribute_fields(&st, &rev, None).await?;
     render(
@@ -492,7 +492,7 @@ pub async fn update(
         )),
         Err(e) if super::is_user_error(&e) => {
             // Re-render the form with the submitted values.
-            let mut rev = revisions::get(&st.db, &ctx.me, id).await?;
+            let mut rev = revisions::get(&st.db, &ctx.me, RevisionId(id)).await?;
             rev.name = form.name;
             rev.description = form.description;
             rev.material = form.material;
@@ -546,7 +546,7 @@ pub async fn checkin(
 ) -> AppResult<Response> {
     let back = back_of(id, &query);
     let result = async {
-        let rev = revisions::get(&st.db, &ctx.me, id).await?;
+        let rev = revisions::get(&st.db, &ctx.me, RevisionId(id)).await?;
         if rev.checked_out_by != Some(ctx.me.id) {
             return Err(AppError::Conflict(format!(
                 "You have not checked out {}.",
@@ -1040,7 +1040,7 @@ async fn preview_page(
     let format = preview_of(&file).ok_or_else(no_preview)?;
     let (versions, rev) = tokio::try_join!(
         files::versions(&st.db, &ctx.me, file.id),
-        revisions::get(&st.db, &ctx.me, file.revision_id)
+        revisions::get(&st.db, &ctx.me, RevisionId(file.revision_id))
     )?;
     let shown = versions
         .iter()

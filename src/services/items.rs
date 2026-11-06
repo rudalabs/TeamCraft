@@ -9,7 +9,7 @@ use crate::{
     auth::Actor,
     domain::{self, Classification, ItemType, LifecycleState, ProjectVisibility, Role},
     error::{AppError, AppResult},
-    ids::{ItemId, ProjectId},
+    ids::{ItemId, ProjectId, RevisionId},
     models::{Item, ItemSummary, Revision, WhereUsed, WhereUsedLevel},
     services::{access, attributes, audit, files, notifications, projects, revisions, Page},
 };
@@ -368,7 +368,8 @@ pub(crate) async fn open_revision_unchecked(
 }
 
 /// An item the actor may read; hidden items answer like missing ones.
-pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Item> {
+pub async fn get(pool: &PgPool, actor: &Actor, id: ItemId) -> AppResult<Item> {
+    let id = id.uuid();
     let item = get_unchecked(pool, id).await?;
     access::ensure_visible(actor, item.project_id, access::not_found_item())?;
     Ok(item)
@@ -450,7 +451,7 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<R
     let mut tx = pool.begin().await?;
     let created = create_tx(&mut tx, actor, input).await?;
     tx.commit().await?;
-    revisions::get(pool, actor, created.revision_id).await
+    revisions::get(pool, actor, RevisionId(created.revision_id)).await
 }
 
 /// Creates an item and stores its first files in the new revision – one
@@ -469,7 +470,7 @@ pub async fn create_with_files(
         files::store_uploads(&mut tx, actor, &rev, uploads, "").await?;
     }
     tx.commit().await?;
-    revisions::get(pool, actor, created.revision_id).await
+    revisions::get(pool, actor, RevisionId(created.revision_id)).await
 }
 
 /// What [`create_tx`] created.
@@ -775,7 +776,7 @@ pub async fn update_master(
     )
     .await?;
     tx.commit().await?;
-    get(pool, actor, item_id).await
+    get(pool, actor, ItemId(item_id)).await
 }
 
 /// Fails unless the actor may move or copy data out of the project group
