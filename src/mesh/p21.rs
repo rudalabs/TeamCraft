@@ -71,22 +71,37 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// A lexer over `data[start..end]`.
+    /// A lexer over `data[start..end]` (empty when `start` is past `end`).
     pub fn span(data: &'a [u8], start: usize, end: usize) -> Lexer<'a> {
+        let end = end.min(data.len());
         Lexer {
             data,
-            pos: start.min(data.len()),
-            end: end.min(data.len()),
+            pos: start.min(end),
+            end,
         }
+    }
+
+    /// The byte at `i`, if it is inside the lexer's range.
+    fn byte(&self, i: usize) -> Option<u8> {
+        if i < self.end {
+            self.data.get(i).copied()
+        } else {
+            None
+        }
+    }
+
+    /// `data[from..to]`, empty if the range is outside the data.
+    fn bytes(&self, from: usize, to: usize) -> &'a [u8] {
+        self.data.get(from..to).unwrap_or_default()
     }
 
     fn skip_space(&mut self) -> Result<()> {
         loop {
-            while self.pos < self.end && self.data[self.pos] <= b' ' {
+            while self.byte(self.pos).is_some_and(|b| b <= b' ') {
                 self.pos += 1;
             }
-            if self.data[self.pos..self.end].starts_with(b"/*") {
-                let body = &self.data[self.pos + 2..self.end];
+            if self.bytes(self.pos, self.end).starts_with(b"/*") {
+                let body = self.bytes(self.pos + 2, self.end);
                 match body.windows(2).position(|w| w == b"*/") {
                     Some(i) => self.pos += 2 + i + 2,
                     None => return Err(damaged("unterminated comment", self.pos)),
@@ -99,14 +114,14 @@ impl<'a> Lexer<'a> {
 
     fn take_while(&mut self, f: impl Fn(u8) -> bool) -> &'a [u8] {
         let start = self.pos;
-        while self.pos < self.end && f(self.data[self.pos]) {
+        while self.byte(self.pos).is_some_and(&f) {
             self.pos += 1;
         }
-        &self.data[start..self.pos]
+        self.bytes(start, self.pos)
     }
 
     fn peek_byte(&self) -> Option<u8> {
-        (self.pos < self.end).then(|| self.data[self.pos])
+        self.byte(self.pos)
     }
 
     /// The next token and the byte offset where it starts.
@@ -140,7 +155,7 @@ impl<'a> Lexer<'a> {
                         Some(_) => self.pos += 1,
                     }
                 }
-                let s = &self.data[body..self.pos];
+                let s = self.bytes(body, self.pos);
                 self.pos += 1;
                 Tok::Str(s)
             }
@@ -220,14 +235,14 @@ impl<'a> Lexer<'a> {
             if matches!(self.data.get(at), Some(b'+' | b'-')) {
                 at += 1;
             }
-            if at < self.end && self.data[at].is_ascii_digit() {
+            if self.byte(at).is_some_and(|b| b.is_ascii_digit()) {
                 real = true;
                 self.pos = at;
                 self.take_while(|c| c.is_ascii_digit());
             }
         }
         // ASCII by construction
-        let text = std::str::from_utf8(&self.data[start..self.pos]).unwrap_or("x");
+        let text = std::str::from_utf8(self.bytes(start, self.pos)).unwrap_or("x");
         if real {
             match text.parse::<f64>() {
                 Ok(v) if v.is_finite() => Ok(Tok::Real(v)),

@@ -105,9 +105,9 @@ async fn depth_and_group_views_keep_the_roll_up_of_the_whole_structure() {
         }
     };
 
-    // all levels: five lines, owner groups shown and linked, totals
+    // all levels: four lines (SUB, WHEEL, ENGINE, BOLT), owner groups shown and linked, totals
     let all = page("").await;
-    assert_eq!(rows_in(&all), 5, "{all}");
+    assert_eq!(rows_in(&all), 4, "{all}");
     assert!(all.contains("24.000"), "total mass");
     assert!(all.contains(">ROCKET</a>"));
     assert!(all.contains(&format!("href=\"/projects/{}\"", s.rocket_id)));
@@ -126,10 +126,10 @@ async fn depth_and_group_views_keep_the_roll_up_of_the_whole_structure() {
     assert!(one.contains("+2"), "two lines hidden below SUB");
     assert!(one.contains("CSV and Excel exports always contain every line"));
     let two = page("?depth=2&rule=latest").await;
-    assert_eq!(rows_in(&two), 5);
+    assert_eq!(rows_in(&two), 4);
     assert!(!two.contains("bom-hidden"));
     for odd in ["?depth=all", "?depth=", "?depth=0", "?depth=-3", "?depth=x"] {
-        assert_eq!(rows_in(&page(odd).await), 5, "{odd} shows everything");
+        assert_eq!(rows_in(&page(odd).await), 4, "{odd} shows everything");
     }
 
     // group filter: matching lines and the path to them
@@ -164,7 +164,7 @@ async fn depth_and_group_views_keep_the_roll_up_of_the_whole_structure() {
         )
         .await;
     assert_eq!(r.status, StatusCode::OK);
-    assert_eq!(r.text().lines().count(), 6, "header and five lines");
+    assert_eq!(r.text().lines().count(), 5, "header and four lines");
     app.teardown().await;
 }
 

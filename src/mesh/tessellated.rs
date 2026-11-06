@@ -70,12 +70,14 @@ pub fn shape_faces<'a>(
             continue;
         }
         for id in p21::references(data, inst)? {
-            let Some(&i) = by_id.get(&id) else { continue };
-            if is_face(&insts[i]) {
+            let Some((i, target)) = by_id.get(&id).and_then(|&i| Some((i, insts.get(i)?))) else {
+                continue;
+            };
+            if is_face(target) {
                 annotation.insert(i);
-            } else if !sets.contains(&i) && name_has(data, &insts[i], &[b"GEOMETRIC_SET"])? {
+            } else if !sets.contains(&i) && name_has(data, target, &[b"GEOMETRIC_SET"])? {
                 sets.insert(i);
-                for inner in p21::references(data, &insts[i])? {
+                for inner in p21::references(data, target)? {
                     if let Some(&j) = by_id.get(&inner) {
                         annotation.insert(j);
                     }
@@ -106,8 +108,9 @@ pub fn read(
     let groups = groups(data, insts, faces)?;
     let mut bodies = HashSet::new();
     for &f in faces {
+        let Some(inst) = insts.get(f) else { continue };
         let before = mesh.indices.len();
-        match face(data, insts, by_id, &insts[f], &mut mesh, &mut lists) {
+        match face(data, insts, by_id, inst, &mut mesh, &mut lists) {
             Ok(true) => {
                 shown += 1;
                 bodies.insert(groups.get(&f).copied().unwrap_or(f));
@@ -129,7 +132,10 @@ pub fn read(
 /// Face → the `TESSELLATED_SHELL` / `TESSELLATED_SOLID` it belongs to (a
 /// body of the viewer; a face outside of them is a body of its own).
 fn groups(data: &[u8], insts: &[Instance<'_>], faces: &[usize]) -> Result<HashMap<usize, usize>> {
-    let face_of: HashMap<u64, usize> = faces.iter().map(|&f| (insts[f].id, f)).collect();
+    let face_of: HashMap<u64, usize> = faces
+        .iter()
+        .filter_map(|&f| Some((insts.get(f)?.id, f)))
+        .collect();
     let mut out = HashMap::new();
     for (g, inst) in insts.iter().enumerate() {
         if inst.complex || !(inst.is("TESSELLATED_SHELL") || inst.is("TESSELLATED_SOLID")) {
@@ -183,8 +189,9 @@ fn face(
         None => {
             let read = by_id
                 .get(&coords)
-                .filter(|&&i| insts[i].is("COORDINATES_LIST"))
-                .map(|&i| coordinates(data, &insts[i], mesh))
+                .and_then(|&i| insts.get(i))
+                .filter(|list| list.is("COORDINATES_LIST"))
+                .map(|list| coordinates(data, list, mesh))
                 .transpose()
                 .unwrap_or(None);
             lists.insert(coords, read);
@@ -224,13 +231,12 @@ fn face(
                 strip.push(vertex(p.int()?)?);
                 Ok(())
             })?;
-            for k in 2..strip.len() {
-                let (a, b, c) = if k % 2 == 0 {
-                    (strip[k - 2], strip[k - 1], strip[k])
-                } else {
-                    (strip[k - 1], strip[k - 2], strip[k])
-                };
-                add(mesh, a, b, c);
+            for (j, w) in strip.windows(3).enumerate() {
+                if let [x, y, c] = *w {
+                    // every second triangle turns the other way
+                    let (a, b) = if j % 2 == 0 { (x, y) } else { (y, x) };
+                    add(mesh, a, b, c);
+                }
             }
             check_triangles(mesh.triangle_count())
         })?;
@@ -242,8 +248,12 @@ fn face(
                 strip.push(vertex(p.int()?)?);
                 Ok(())
             })?;
-            for k in 2..strip.len() {
-                add(mesh, strip[0], strip[k - 1], strip[k]);
+            if let Some((&first, rest)) = strip.split_first() {
+                for w in rest.windows(2) {
+                    if let [b, c] = *w {
+                        add(mesh, first, b, c);
+                    }
+                }
             }
             check_triangles(mesh.triangle_count())
         })?;
@@ -254,10 +264,10 @@ fn face(
                 strip.push(vertex(p.int()?)?);
                 Ok(())
             })?;
-            if strip.len() != 3 {
+            let [a, b, c] = *strip.as_slice() else {
                 bail!("a triangle needs three corners");
-            }
-            add(mesh, strip[0], strip[1], strip[2]);
+            };
+            add(mesh, a, b, c);
             check_triangles(mesh.triangle_count())
         })?;
     }
@@ -280,9 +290,9 @@ fn coordinates(data: &[u8], inst: &Instance<'_>, mesh: &mut Mesh) -> Result<(u32
                 point.push(p.real()?);
                 Ok(())
             })?;
-            if point.len() != 3 {
+            let [x, y, z] = *point.as_slice() else {
                 bail!("a point needs three coordinates");
-            }
+            };
             // the preview stores f32: 1E39 would become infinite and fail
             // the whole preview instead of this list
             if point.iter().any(|&v| !(v as f32).is_finite()) {
@@ -291,7 +301,7 @@ fn coordinates(data: &[u8], inst: &Instance<'_>, mesh: &mut Mesh) -> Result<(u32
             if mesh.vertex_count() >= u32::MAX as usize / 2 {
                 bail!("too many points");
             }
-            mesh.vertex([point[0], point[1], point[2]]);
+            mesh.vertex([x, y, z]);
             Ok(())
         })
     })();

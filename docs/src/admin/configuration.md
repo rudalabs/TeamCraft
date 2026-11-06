@@ -7,6 +7,15 @@ variable can also be read from a file by appending `_FILE`
 container secrets are passed. For local development TeamCraft also reads an
 optional, git-ignored `secrets/.env` file in the working directory.
 
+Configuration files are read on start, in this order; a variable that is
+already set (in the environment or by an earlier file) is kept:
+
+| File                                   | When                                                                                     |
+|----------------------------------------|------------------------------------------------------------------------------------------|
+| the file named by `TEAMCRAFT_ENV_FILE` | when the variable is set (e.g. a `teamcraft.env` outside the working directory)          |
+| `secrets/.env`                         | when it exists in the working directory (development)                                    |
+| the system file                        | only in package builds: its path is fixed at build time with `TEAMCRAFT_SYSTEM_CONFIG` (e.g. `/etc/teamcraft/teamcraft.env`); development builds never read one |
+
 In the [Docker installation](docker.md) the variables go into
 `teamcraft.env`; the image sets `TEAMCRAFT_BIND_ADDR=0.0.0.0:8080` and
 `TEAMCRAFT_VAULT_DIR=/var/lib/teamcraft/vault`, and `docker-compose.yml`
