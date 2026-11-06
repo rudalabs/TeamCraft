@@ -133,6 +133,18 @@ pub struct NewBomLine {
     pub notes: String,
 }
 
+/// Adds a BOM line to an in-work revision.
+///
+/// # Invariants
+///
+/// * **Permission:** the child item is visible ("not found" otherwise); the parent revision is
+///   checked out by the actor (409 otherwise) and editable (`revisions::ensure_editable`: in
+///   work, CAD editor of its group); the line creates no cycle (409) and its find number is
+///   free (409).
+/// * **Locks:** the parent revision row (`revisions::lock`).
+/// * **Audit:** `bom.add`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn add(
     pool: &PgPool,
     actor: &Actor,
@@ -242,6 +254,17 @@ pub struct BomLineUpdate {
     pub notes: String,
 }
 
+/// Changes quantity, find number and notes of a BOM line.
+///
+/// # Invariants
+///
+/// * **Permission:** the line's parent revision is visible ("not found" otherwise), checked out
+///   by the actor (409 otherwise) and editable (`revisions::ensure_editable`: in work, CAD
+///   editor of its group); the new find number is free (409).
+/// * **Locks:** the parent revision row (`revisions::lock`).
+/// * **Audit:** `bom.update`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn update(
     pool: &PgPool,
     actor: &Actor,
@@ -305,6 +328,17 @@ pub async fn update(
     line(pool, actor, line_id).await
 }
 
+/// Removes a BOM line from an in-work revision.
+///
+/// # Invariants
+///
+/// * **Permission:** the line's parent revision is visible ("not found" otherwise), checked out
+///   by the actor (409 otherwise) and editable (`revisions::ensure_editable`: in work, CAD
+///   editor of its group).
+/// * **Locks:** the parent revision row (`revisions::lock`).
+/// * **Audit:** `bom.remove`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn remove(pool: &PgPool, actor: &Actor, line_id: Uuid) -> AppResult<BomLine> {
     let existing = line_unmasked(pool, actor, line_id).await?;
     let mut tx = pool.begin().await?;

@@ -856,6 +856,23 @@ fn planned_item(
 
 /// Runs an import in one transaction. `source` (the STEP file, see
 /// [`step_file`]) is attached to a new top-level assembly.
+///
+/// # Invariants
+///
+/// * **Permission:** editor role (403). With a target revision: visible,
+///   checked out by the actor (409 otherwise) and editable
+///   (`revisions::ensure_editable`). The project group must exist and be
+///   visible (400), not archived (400) and the actor a member (403). A table
+///   without importable rows is a 400.
+/// * **Locks:** the target revision (`revisions::lock`), each new revision it
+///   fills, the project group row (`FOR SHARE`) and the number counters of
+///   the new items.
+/// * **Audit:** `item.create` per new item, `file.upload` for the attached
+///   STEP file, `bom.add` per line, then `import.bom` on the root revision.
+/// * **Notifications:** none; the importer only starts watching new items.
+/// * **Webhooks:** none.
+/// * **Atomic:** one transaction (`tests/import_atomicity.rs`); a refused or
+///   failing import leaves no item, line, counter step or audit entry.
 pub async fn run(
     pool: &PgPool,
     actor: &Actor,
@@ -1153,6 +1170,15 @@ pub async fn preview(
 }
 
 /// Runs a staged import and removes the upload (a second click finds nothing).
+///
+/// # Invariants
+///
+/// * **Permission:** as [`run`]; the staged upload must belong to the actor
+///   (otherwise "not found", like a used or expired one).
+/// * **Locks:** the staged row (`FOR UPDATE`), then those of [`run`].
+/// * **Audit / notifications / webhooks:** as [`run`].
+/// * **Atomic:** one transaction: the import and the removal of the staged
+///   upload commit together, so a second click finds nothing.
 pub async fn run_staged(
     pool: &PgPool,
     vault: &Vault,

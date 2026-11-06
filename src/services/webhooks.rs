@@ -228,6 +228,18 @@ async fn lock(conn: &mut PgConnection, id: Uuid) -> AppResult<(String, String, b
 
 /// Registers a webhook. Returns it and its secret – the only time the
 /// secret leaves the server.
+///
+/// # Invariants
+///
+/// * **Permission:** administrator (403). Name, URL (target policy), events
+///   and project group are validated (400).
+/// * **Locks:** the `webhooks` table (`SHARE ROW EXCLUSIVE`), so concurrent
+///   creations cannot pass the limit; at the limit 409.
+/// * **Data:** the secret is generated here and returned once; the audit
+///   record holds the host of the URL, never the full URL.
+/// * **Audit:** `webhook.create`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn create(
     pool: &PgPool,
     actor: &Actor,
@@ -284,6 +296,17 @@ pub async fn create(
 
 /// Changes name, URL, events, project group and the active flag. Pending
 /// deliveries of a webhook that is switched off are given up.
+///
+/// # Invariants
+///
+/// * **Permission:** administrator (403); unknown webhook is "not found";
+///   input is validated as in `create` (400).
+/// * **Locks:** the webhook row (`FOR UPDATE`).
+/// * **Data:** switching an active webhook off marks its pending deliveries
+///   as failed.
+/// * **Audit:** `webhook.update` (host of the URL, never the full URL).
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn update(
     pool: &PgPool,
     actor: &Actor,
@@ -347,6 +370,15 @@ pub async fn update(
 }
 
 /// Deletes a webhook together with its deliveries.
+///
+/// # Invariants
+///
+/// * **Permission:** administrator (403); unknown webhook is "not found".
+/// * **Locks:** the webhook row (`FOR UPDATE`).
+/// * **Data:** the deliveries of the webhook are deleted with it.
+/// * **Audit:** `webhook.delete`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn delete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<String> {
     actor.require(Role::Admin)?;
     let mut tx = pool.begin().await?;
@@ -376,6 +408,16 @@ pub async fn delete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<String>
 
 /// Replaces the secret. Returns the webhook and the new secret (shown once).
 /// Deliveries that are still pending are signed with the new secret.
+///
+/// # Invariants
+///
+/// * **Permission:** administrator (403); unknown webhook is "not found".
+/// * **Locks:** the webhook row (`FOR UPDATE`).
+/// * **Data:** the new secret is returned once; the audit record holds only
+///   its hint.
+/// * **Audit:** `webhook.rotate_secret`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn rotate_secret(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<(Webhook, String)> {
     actor.require(Role::Admin)?;
     let mut tx = pool.begin().await?;
@@ -406,6 +448,16 @@ pub async fn rotate_secret(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<
 
 /// Queues a `ping` delivery to an active webhook; returns its id (the
 /// caller may send it at once with `Dispatcher::deliver_now`).
+///
+/// # Invariants
+///
+/// * **Permission:** administrator (403); unknown webhook is "not found";
+///   an inactive webhook is refused (409).
+/// * **Locks:** the webhook row (`FOR UPDATE`).
+/// * **Audit:** `webhook.test`.
+/// * **Notifications / webhooks:** inserts one pending `ping` delivery (it
+///   does not go through `emit`).
+/// * **Atomic:** one transaction.
 pub async fn send_test(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Uuid> {
     actor.require(Role::Admin)?;
     let mut tx = pool.begin().await?;
@@ -453,6 +505,17 @@ pub async fn send_test(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Uuid
 
 /// Schedules a failed (or waiting) delivery again, now, with a fresh set of
 /// attempts. The delivery id stays the same, so receivers can deduplicate.
+///
+/// # Invariants
+///
+/// * **Permission:** administrator (403); unknown delivery is "not found";
+///   a delivery already sent (409) or of an inactive webhook (409) is
+///   refused.
+/// * **Locks:** the delivery row (`FOR UPDATE`).
+/// * **Data:** status back to pending, attempts reset to 0, due now.
+/// * **Audit:** `webhook.retry`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn retry(pool: &PgPool, actor: &Actor, delivery_id: Uuid) -> AppResult<Delivery> {
     actor.require(Role::Admin)?;
     let mut tx = pool.begin().await?;

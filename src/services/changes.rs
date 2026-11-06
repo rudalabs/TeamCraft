@@ -457,6 +457,16 @@ pub struct ChangeInput {
     pub priority: Priority,
 }
 
+/// Creates a draft change.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor.
+/// * **Locks:** the `change` counter row, held until commit, so concurrent creations get
+///   different numbers.
+/// * **Audit:** `change.create`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction; the number is stepped in it and is not used up when it fails.
 pub async fn create(pool: &PgPool, actor: &Actor, input: ChangeInput) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let id = create_in(&mut tx, actor, input).await?;
@@ -501,6 +511,16 @@ pub(crate) async fn create_in(
     Ok(id)
 }
 
+/// Changes title, description and priority of a change.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
+///   or rejected (409 otherwise); a change the actor cannot see answers "not found".
+/// * **Locks:** the change row (`FOR UPDATE`).
+/// * **Audit:** `change.update`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn update(
     pool: &PgPool,
     actor: &Actor,
@@ -537,6 +557,17 @@ pub async fn update(
 }
 
 /// Adds an in-work revision to a draft change.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
+///   (409); the revision is visible ("not found" otherwise) and in a group the actor may edit
+///   (403), in work and in no other open change (draft, in review or rejected), and every
+///   reviewer of the change can see it (409 each).
+/// * **Locks:** the change row (`FOR UPDATE`), then the revision row (`revisions::lock`).
+/// * **Audit:** `change.add_item`, only when the revision was not yet part of the change.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn add_item(
     pool: &PgPool,
     actor: &Actor,
@@ -685,6 +716,16 @@ const MAX_DEPENDENCY_ROUNDS: usize = 64;
 /// Adds the in-work revisions of all unreleased dependencies – and, level by
 /// level, their own unreleased dependencies – to a draft change, in one
 /// transaction. Returns the labels of the added revisions.
+///
+/// # Invariants
+///
+/// * **Permission:** as [`add_item`] for the change; a dependency in a group the actor may not
+///   edit is skipped (it stays a blocker), every other refusal of [`add_item`] aborts all.
+/// * **Locks:** the change row (`FOR UPDATE`), then each dependency revision
+///   (`revisions::lock`).
+/// * **Audit:** `change.add_item` per added revision.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction; all dependencies are added or none.
 pub async fn add_dependencies(
     pool: &PgPool,
     actor: &Actor,
@@ -724,6 +765,16 @@ pub async fn add_dependencies(
     Ok(added)
 }
 
+/// Removes a revision from a draft change.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
+///   (409); the revision is part of the change (404 otherwise).
+/// * **Locks:** the change row (`FOR UPDATE`), then the revision row (`revisions::lock`).
+/// * **Audit:** `change.remove_item`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn remove_item(
     pool: &PgPool,
     actor: &Actor,
@@ -763,6 +814,16 @@ pub async fn remove_item(
 }
 
 /// Assigns a reviewer. Authors cannot review their own change (four-eyes principle).
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
+///   (409) and the actor sees every item of it (403); the reviewer is an active user with at
+///   least the editor role (400), is not the author (400) and sees every item (409).
+/// * **Locks:** the change row (`FOR UPDATE`).
+/// * **Audit:** `change.add_reviewer`, only when the reviewer was not yet assigned.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn add_reviewer(
     pool: &PgPool,
     actor: &Actor,
@@ -843,6 +904,16 @@ pub async fn add_reviewer(
     Ok(())
 }
 
+/// Removes a reviewer from a draft change.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
+///   (409); the user is a reviewer of it (404 otherwise).
+/// * **Locks:** the change row (`FOR UPDATE`).
+/// * **Audit:** `change.remove_reviewer`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn remove_reviewer(
     pool: &PgPool,
     actor: &Actor,
@@ -881,6 +952,22 @@ pub async fn remove_reviewer(
 }
 
 /// Submits a draft change for review and freezes its revisions.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
+///   (409) and the actor sees every item (403); it has an item and a reviewer (409); every
+///   revision is in a group the actor may edit (403) and not checked out by someone else (409);
+///   no dependency is unreleased unless it is in the change (409).
+/// * **Locks:** the change row (`FOR UPDATE`), then every revision (`revisions::lock`) before
+///   its state changes.
+/// * **Audit:** `change.submit`.
+/// * **Notifications:** the reviewers (review requested) and the other watchers of the change;
+///   readers who may not see every item get a text without item names; never the actor.
+/// * **Webhooks:** `change.submitted`.
+/// * **Data:** the revisions go to in review (a check-out is cleared) and all reviews are reset
+///   to pending.
+/// * **Atomic:** one transaction.
 pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
@@ -1304,6 +1391,18 @@ async fn emit_review_events(
 }
 
 /// Pulls a change back from review into draft.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator); the change is in review
+///   (409).
+/// * **Locks:** the change row (`FOR UPDATE`), then every revision (`revisions::lock`) before
+///   its state changes.
+/// * **Audit:** `change.withdraw`.
+/// * **Notifications:** author, reviewers and watchers of the change, except the actor.
+/// * **Webhooks:** none.
+/// * **Data:** the revisions go back to in work and all reviews are reset to pending.
+/// * **Atomic:** one transaction.
 pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
@@ -1348,6 +1447,16 @@ pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResul
 }
 
 /// Turns a rejected change back into a draft so it can be fixed and resubmitted.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator); the change is rejected
+///   (409) and the actor sees every item (403).
+/// * **Locks:** the change row (`FOR UPDATE`).
+/// * **Audit:** `change.reopen`.
+/// * **Notifications / webhooks:** none.
+/// * **Data:** all reviews are reset to pending; the revisions are not touched.
+/// * **Atomic:** one transaction.
 pub async fn reopen(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
@@ -1375,6 +1484,17 @@ pub async fn reopen(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     get(pool, actor, change_id).await
 }
 
+/// Cancels a draft or rejected change.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
+///   or rejected (409).
+/// * **Locks:** the change row (`FOR UPDATE`).
+/// * **Audit:** `change.cancel`.
+/// * **Notifications:** author, reviewers and watchers of the change, except the actor.
+/// * **Webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn cancel(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;

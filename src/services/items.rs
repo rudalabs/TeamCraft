@@ -445,6 +445,23 @@ fn validate_unit(unit: &str) -> AppResult<String> {
 
 /// Creates an item together with its first revision `A` (in work) and
 /// returns that revision.
+///
+/// # Invariants
+///
+/// * **Permission:** editor role (403 otherwise); a project group is required
+///   (400), it must exist and be visible (400 "Unknown project"), not
+///   archived (400) and the actor a member of it (403).
+/// * **Locks:** the project group row (`FOR SHARE`, so a visibility change
+///   cannot move the counters meanwhile) and the number counter row, which
+///   stays locked until the commit.
+/// * **Audit:** `item.create`.
+/// * **Notifications:** none; the creator only starts watching the item.
+/// * **Webhooks:** none.
+/// * **Data:** a generated number steps the group's counter (numbers already
+///   taken are skipped); the first revision `A` is in work and checked out by
+///   the creator. A failed creation rolls the counter back with it.
+/// * **Atomic:** one transaction; concurrent creations get distinct numbers
+///   (`tests/numbering_and_watches.rs`).
 pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<Revision> {
     let mut tx = pool.begin().await?;
     let created = create_tx(&mut tx, actor, input).await?;
@@ -455,6 +472,17 @@ pub async fn create(pool: &PgPool, actor: &Actor, input: NewItem) -> AppResult<R
 /// Creates an item and stores its first files in the new revision – one
 /// transaction, so there is never an item without the files it was created
 /// with. The revision stays checked out by the creator.
+///
+/// # Invariants
+///
+/// * **Permission / locks / audit / data:** as [`create`], then the new
+///   revision is locked (`revisions::lock`) and the files are stored like in
+///   [`files::attach`] (`file.upload` per file).
+/// * **Notifications:** none; the creator only starts watching the item.
+/// * **Webhooks:** `simulation.result_added` when the item is a simulation
+///   and result values are read from the uploaded files (see
+///   [`files::attach`]); otherwise none.
+/// * **Atomic:** one transaction; a refused upload leaves no item behind.
 pub async fn create_with_files(
     pool: &PgPool,
     actor: &Actor,
@@ -689,6 +717,20 @@ pub(crate) async fn create_tx(
 
 /// Updates item master data. The unit can only change while nothing has
 /// been released yet, because released BOMs depend on it.
+///
+/// # Invariants
+///
+/// * **Permission:** editor role (403); the item is visible to the actor
+///   ("not found" otherwise) and the actor a member of its project group and
+///   of the target group (403). A missing target group is a 400. Moving out
+///   of a restricted group needs a manager of that group or an admin (403,
+///   `ensure_may_take_out`).
+/// * **Locks:** the item row (`FOR UPDATE`).
+/// * **Audit:** `item.update`.
+/// * **Notifications / webhooks:** none.
+/// * **Data:** the unit cannot change once a revision is in review, released
+///   or obsolete (409).
+/// * **Atomic:** one transaction.
 pub async fn update_master(
     pool: &PgPool,
     actor: &Actor,
@@ -804,6 +846,23 @@ pub(crate) async fn ensure_may_take_out(
 /// in-work revision, is not used in any BOM, not part of any change, no
 /// simulation basis and – in a restricted group – no affected item of a
 /// change request.
+///
+/// # Invariants
+///
+/// * **Permission:** editor role (403); the item is visible to the actor
+///   ("not found" otherwise); only its creator (as a member of the group) or
+///   an admin may delete it (403).
+/// * **Locks:** the item row (`FOR UPDATE`); the project group row
+///   (`FOR SHARE`) when the item has one.
+/// * **Audit:** `item.delete`; in an unrestricted group also
+///   `change_request.remove_item` for every change request that named the item.
+/// * **Notifications:** the people of those change requests (unrestricted
+///   groups only).
+/// * **Webhooks:** none.
+/// * **Refused with 409:** more than one revision or one not in work, used in
+///   a BOM, part of a change, basis of a simulation, or (restricted group)
+///   an affected item of a change request.
+/// * **Atomic:** one transaction.
 pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<String> {
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;

@@ -137,6 +137,17 @@ pub struct NewReference {
 }
 
 /// Adds a reference to a revision that is checked out by the actor.
+///
+/// # Invariants
+///
+/// * **Permission:** the target item is visible to the actor ("not found"
+///   otherwise); the revision is visible, checked out by the actor (409
+///   otherwise) and editable (`revisions::ensure_editable`: in work, CAD
+///   editor of its group). An item cannot reference itself (400).
+/// * **Locks:** the revision row (`revisions::lock`).
+/// * **Audit:** `reference.add`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction; a duplicate reference (unique key) is a 409.
 pub async fn add(
     pool: &PgPool,
     actor: &Actor,
@@ -198,6 +209,16 @@ pub async fn add(
 }
 
 /// Removes a reference from a revision that is checked out by the actor.
+///
+/// # Invariants
+///
+/// * **Permission:** the reference's revision is visible to the actor ("not
+///   found" otherwise), checked out by the actor (409 otherwise) and editable
+///   (`revisions::ensure_editable`: in work, CAD editor of its group).
+/// * **Locks:** the revision row (`revisions::lock`).
+/// * **Audit:** `reference.remove`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn remove(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ItemReference> {
     let existing = get_unmasked(pool, actor, id).await?;
     let mut tx = pool.begin().await?;

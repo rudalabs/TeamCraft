@@ -86,6 +86,18 @@ fn unique(e: sqlx::Error, input: &TemplateInput) -> AppError {
 }
 
 /// Creates a template (managers of the group, administrators).
+///
+/// # Invariants
+///
+/// * **Permission:** manager of the project group or administrator (403); a
+///   hidden group is a 404.
+/// * **Locks:** the project group row (`FOR UPDATE`), so the template count
+///   and the insert are one step.
+/// * **Data:** at most `MAX_TEMPLATES` per group (400); the same name and load
+///   case twice gets a 409.
+/// * **Audit:** `result_template.create`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn create(
     pool: &PgPool,
     actor: &Actor,
@@ -157,6 +169,16 @@ pub async fn create(
 }
 
 /// Replaces a template's settings.
+///
+/// # Invariants
+///
+/// * **Permission:** manager of the project group or administrator (403); a
+///   hidden template is a 404.
+/// * **Locks:** none beyond the row lock of the `UPDATE`; the same name and
+///   load case as another template gets a 409.
+/// * **Audit:** `result_template.update`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn update(
     pool: &PgPool,
     actor: &Actor,
@@ -211,6 +233,15 @@ pub async fn update(
 }
 
 /// Removes a template; values it extracted before stay.
+///
+/// # Invariants
+///
+/// * **Permission:** manager of the project group or administrator (403); a
+///   hidden template is a 404.
+/// * **Locks:** none beyond the row lock of the `DELETE`.
+/// * **Audit:** `result_template.delete`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn delete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ResultTemplate> {
     let existing = get(pool, actor, id).await?;
     let mut tx = pool.begin().await?;

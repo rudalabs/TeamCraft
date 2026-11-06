@@ -389,6 +389,26 @@ pub async fn chat(
 /// the user's rights, quotes the earlier messages of the conversation, runs
 /// the assistant with the user's *current* rights and stores the new
 /// question and answer. `page` is what the client sent, unresolved.
+///
+/// # Invariants
+///
+/// * **Permission:** any signed-in user; the assistant must be configured
+///   (otherwise the `Disabled` error) and a free run slot must exist (`Busy`).
+///   The page identifiers are hints and are resolved with the actor's rights,
+///   hidden ones are dropped like missing ones. The tools run with the actor's
+///   current rights; draft tools only when the question allows them and the
+///   actor may edit.
+/// * **Steps:** the run itself is not one transaction. The audit record is
+///   written after the run, in its own connection, for successful, failed and
+///   (by a drop guard) cancelled runs. The question and answer are stored
+///   afterwards in a second transaction (`threads::append`, only with
+///   `thread`); when that fails, it is logged and the answer is still
+///   returned.
+/// * **Audit:** `assistant.run` with provider, action, question length, the
+///   resolved ids and counts of the page, tools and token usage – never the
+///   question, the answer or the typed query text.
+/// * **Notifications / webhooks:** none from this function (draft tools have
+///   those of their own).
 pub async fn ask_with_page(
     st: &AppState,
     me: &Actor,

@@ -590,6 +590,18 @@ fn clean_mattermost_username(raw: Option<&str>) -> AppResult<Option<String>> {
     Ok(Some(name))
 }
 
+/// Saves the actor's own notification settings (channels, Mattermost name,
+/// muted kinds).
+///
+/// # Invariants
+///
+/// * **Permission:** any signed-in actor; only the actor's own row changes.
+///   An invalid Mattermost username or a kind that cannot be muted is
+///   refused (400).
+/// * **Locks:** none.
+/// * **Audit:** `user.notifications`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn update_settings(
     pool: &PgPool,
     actor: &Actor,
@@ -649,6 +661,16 @@ pub async fn update_settings(
 }
 
 /// Sends a test notification to the actor (checks e-mail and Mattermost).
+///
+/// # Invariants
+///
+/// * **Permission:** any signed-in actor; the actor is the only recipient.
+/// * **Locks:** none.
+/// * **Data:** the test kind is delivered even if the actor muted kinds;
+///   e-mail and Mattermost delivery are queued per the actor's settings.
+/// * **Audit:** none.
+/// * **Webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn send_test(pool: &PgPool, actor: &Actor) -> AppResult<()> {
     let mut tx = pool.begin().await?;
     let notice = Notice {

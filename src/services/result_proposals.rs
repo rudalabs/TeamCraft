@@ -161,6 +161,21 @@ async fn lock_visible(
 /// Stores proposals as drafts (all or none). Needs a simulation revision
 /// that is still in work and a CAD editor of its project group; the file
 /// must exist in the revision and the quote must stand in its text.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor in the project group; the revision is visible
+///   (404), belongs to a simulation (400) and is in work (409). No check-out
+///   is needed: a proposal is a draft, not a result value.
+/// * **Locks:** the simulation revision (`FOR UPDATE`).
+/// * **Data:** at most 50 values per call (400); the file must be in the
+///   revision and the quote in its current text (400). A newer proposal
+///   replaces a pending one of the same name and load case; more than 200
+///   pending proposals on the revision is a 400.
+/// * **Audit:** `simulation.proposal.create` per proposal, including the quote
+///   and the file version.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction; all proposals are stored or none.
 pub async fn propose(
     pool: &PgPool,
     actor: &Actor,
@@ -314,6 +329,21 @@ pub async fn propose(
 /// Makes a pending proposal a result value (same name and load case = update).
 /// The revision must be checked out to the actor, like for any change of its
 /// values.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor in the project group, simulation revision in
+///   work and checked out by the actor (403 / 409), as for a value typed in.
+///   A proposal that is not pending gets a 409.
+/// * **Locks:** the proposal row, then the simulation revision (both
+///   `FOR UPDATE`), so two accepts of one proposal cannot both succeed.
+/// * **Data:** the value is written by `simulations::write_results` with its
+///   source (file, version, proposer); the proposal becomes `accepted`.
+/// * **Audit:** `simulation.proposal.accept` (written by `write_results`).
+/// * **Notifications:** none.
+/// * **Webhooks:** `simulation.result_added`, in the same transaction.
+/// * **Atomic:** one transaction (`tests/result_proposals.rs`); a second accept
+///   gets a 409.
 pub async fn accept(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Proposal> {
     let existing = get(pool, actor, id).await?;
     let mut tx = pool.begin().await?;
@@ -368,6 +398,16 @@ pub async fn accept(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Proposa
 
 /// Rejects a pending proposal (no check-out needed: nothing changes in the
 /// revision).
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor in the project group; a proposal that is not
+///   pending gets a 409.
+/// * **Locks:** the proposal row, then the simulation revision (both
+///   `FOR UPDATE`).
+/// * **Audit:** `simulation.proposal.reject`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction (`tests/result_proposals.rs`).
 pub async fn reject(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Proposal> {
     let existing = get(pool, actor, id).await?;
     let mut tx = pool.begin().await?;

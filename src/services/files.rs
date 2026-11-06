@@ -204,6 +204,15 @@ async fn read_head(path: &std::path::Path, max: u64) -> Vec<u8> {
 /// Scans the current versions that were stored before reference tracking
 /// existed (or before their format was known) for referenced CAD files.
 /// Returns how many versions were scanned.
+///
+/// # Invariants
+///
+/// * **Permission:** none (maintenance task of the server, no actor).
+/// * **Locks:** none.
+/// * **Audit / notifications / webhooks:** none.
+/// * **Atomic:** one transaction per version (`references::store_file_references`
+///   stores the names and sets `references_scanned`), so an interrupted run
+///   can be repeated.
 pub async fn scan_unscanned_references(pool: &PgPool, vault: &Vault) -> AppResult<u64> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -241,6 +250,15 @@ pub async fn scan_unscanned_references(pool: &PgPool, vault: &Vault) -> AppResul
 /// Formats that are not scanned for references are skipped. Each version is
 /// replaced in its own transaction, so an interrupted run can simply be
 /// repeated. Returns how many versions were scanned.
+///
+/// # Invariants
+///
+/// * **Permission:** none (maintenance task of the server, no actor).
+/// * **Locks:** the file version row (`FOR UPDATE`) while its references are
+///   replaced.
+/// * **Audit / notifications / webhooks:** none.
+/// * **Atomic:** one transaction per version (delete of the old references and
+///   insert of the new ones go together).
 pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String]) -> AppResult<u64> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -344,6 +362,14 @@ pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<FileReco
 /// Classifies the files that have no format yet (files from before the
 /// format registry, or after `format` was reset to NULL). Returns how many
 /// were classified.
+///
+/// # Invariants
+///
+/// * **Permission:** none (maintenance task of the server, no actor).
+/// * **Locks:** none (the updates only touch rows whose format is still NULL).
+/// * **Audit / notifications / webhooks:** none.
+/// * **Atomic:** one transaction per file (file row and its default-typed
+///   versions).
 pub async fn classify_unclassified(pool: &PgPool, vault: &Vault) -> AppResult<u64> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -893,6 +919,17 @@ async fn move_to_folder(
 
 /// Changes the folder of a file (its place in the desktop working folder)
 /// while its revision is checked out by the actor.
+///
+/// # Invariants
+///
+/// * **Permission:** the file is visible to the actor ("not found" otherwise),
+///   its revision is checked out by the actor (409 otherwise) and editable
+///   (`revisions::ensure_editable`: in work, CAD editor of its group).
+/// * **Locks:** the revision row (`revisions::lock`) and the file row
+///   (`FOR UPDATE`).
+/// * **Audit:** `file.folder`, only when the folder actually changes.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn set_folder(
     pool: &PgPool,
     actor: &Actor,
@@ -930,6 +967,24 @@ pub async fn set_folder(
 }
 
 /// Adds files / new versions to a revision that is checked out by the actor.
+///
+/// # Invariants
+///
+/// * **Permission:** the revision is checked out by the actor (409 otherwise)
+///   and editable (`revisions::ensure_editable`: in work, CAD editor of its
+///   group); an empty upload list is a 400.
+/// * **Locks:** the revision row (`revisions::lock`) and the existing file
+///   rows of the uploaded names (`FOR UPDATE`); an upload with a base version
+///   is checked against the current file (409 if it moved on).
+/// * **Audit:** `file.upload` / `file.version` per changed file, `file.folder`
+///   per moved file; identical content stores nothing new. For a simulation
+///   revision, result values read from an exchange file or the group's
+///   templates add `simulation.result.exchange` / `simulation.result.template`.
+/// * **Notifications:** none.
+/// * **Webhooks:** `simulation.result_added`, only when such result values
+///   were added or updated.
+/// * **Atomic:** one transaction, together with those result values (a
+///   malformed exchange file refuses the whole upload).
 pub async fn attach(
     pool: &PgPool,
     actor: &Actor,
@@ -1039,6 +1094,20 @@ pub async fn check_in(
 }
 
 /// Rollback: makes the content of an older version the newest version.
+///
+/// # Invariants
+///
+/// * **Permission:** the file is visible to the actor ("not found" otherwise),
+///   its revision is checked out by the actor (409 otherwise) and editable
+///   (`revisions::ensure_editable`: in work, CAD editor of its group). An
+///   unknown version is "not found", the current one a 400.
+/// * **Locks:** the revision row (`revisions::lock`) and the file row
+///   (`FOR UPDATE`).
+/// * **Audit:** `file.restore`.
+/// * **Notifications / webhooks:** none.
+/// * **Data:** history is kept: a new version is appended (copy of the old
+///   content and its references), no version is changed or removed.
+/// * **Atomic:** one transaction.
 pub async fn restore_version(
     pool: &PgPool,
     actor: &Actor,
@@ -1125,6 +1194,16 @@ pub async fn restore_version(
 
 /// Removes a file (with all its versions) from an in-work revision. The
 /// blobs stay in the vault because other revisions may still reference them.
+///
+/// # Invariants
+///
+/// * **Permission:** the file is visible to the actor ("not found" otherwise),
+///   its revision is checked out by the actor (409 otherwise) and editable
+///   (`revisions::ensure_editable`: in work, CAD editor of its group).
+/// * **Locks:** the revision row (`revisions::lock`).
+/// * **Audit:** `file.delete`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn delete(pool: &PgPool, actor: &Actor, file_id: Uuid) -> AppResult<FileRecord> {
     let file = get(pool, actor, file_id).await?;
     let mut tx = pool.begin().await?;

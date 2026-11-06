@@ -141,6 +141,15 @@ fn clean(settings: &AttributeSettings, data_type: AttributeType) -> AppResult<Cl
 }
 
 /// Creates a definition (administrators).
+///
+/// # Invariants
+///
+/// * **Permission:** admin role (403 otherwise). Key, data type and settings
+///   are validated (400); an existing key is a 409.
+/// * **Locks:** none beyond the unique key of the definition.
+/// * **Audit:** `attribute.create`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn create(
     pool: &PgPool,
     actor: &Actor,
@@ -191,6 +200,15 @@ pub async fn create(
 
 /// Changes label, unit, choices, item types, order and the active flag
 /// (administrators). Key and data type stay.
+///
+/// # Invariants
+///
+/// * **Permission:** admin role (403 otherwise); an unknown definition is
+///   "not found".
+/// * **Locks:** the definition row (`FOR UPDATE`).
+/// * **Audit:** `attribute.update`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn update(
     pool: &PgPool,
     actor: &Actor,

@@ -114,6 +114,21 @@ struct Due {
 
 /// Queues the digests that are due (every `period_hours`; `0` = never).
 /// Returns how many were queued.
+///
+/// # Invariants
+///
+/// * **Permission:** none; a background task, not an actor. Only active
+///   editors and administrators with e-mail on, the kind not muted, who are
+///   members of an active group with new requests.
+/// * **Locks:** the digest row of the user and group (`FOR UPDATE`), so an
+///   overlapping run (or another server) finds the period covered.
+/// * **Data:** the digest lists only requests the user may read; the covered
+///   period moves on even when no digest text results.
+/// * **Audit:** none.
+/// * **Notifications:** one `request_digest` notification per due user and
+///   group, e-mail queued; **webhooks:** none.
+/// * **Atomic:** one transaction per user and group
+///   (`tests/request_digests.rs`).
 pub async fn run_once(pool: &PgPool, period_hours: u64) -> AppResult<u64> {
     if period_hours == 0 {
         return Ok(0);
