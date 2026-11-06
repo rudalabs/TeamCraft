@@ -355,6 +355,31 @@ impl TestApp {
         .expect("client configuration")
     }
 
+    /// The environment for the `teamcraft` binary on database `database`
+    /// of the test server with vault `vault_dir` (what an administrator
+    /// would put into the service's environment).
+    pub fn cli_env(&self, database: &str, vault_dir: &std::path::Path) -> Vec<(String, String)> {
+        let o = &self.admin_options;
+        let mut vars = vec![
+            ("TEAMCRAFT_DB_HOST".to_string(), o.get_host().to_string()),
+            ("TEAMCRAFT_DB_PORT".to_string(), o.get_port().to_string()),
+            (
+                "TEAMCRAFT_DB_USER".to_string(),
+                o.get_username().to_string(),
+            ),
+            ("TEAMCRAFT_DB_NAME".to_string(), database.to_string()),
+            (
+                "TEAMCRAFT_VAULT_DIR".to_string(),
+                vault_dir.to_string_lossy().to_string(),
+            ),
+            ("TEAMCRAFT_LOCAL_LOGIN".to_string(), "true".to_string()),
+        ];
+        if let Some(password) = &self.admin_password {
+            vars.push(("TEAMCRAFT_DB_PASSWORD".to_string(), password.clone()));
+        }
+        vars
+    }
+
     /// Creates an empty database next to the test database (dropped by
     /// `teardown` of the app returned by [`TestApp::open`]).
     pub async fn create_empty_database(&self, suffix: &str) -> String {
