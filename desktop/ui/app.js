@@ -1732,6 +1732,7 @@
       case "permission_done": donePermission(p.session + ":" + p.key); break;
       case "file_read": if (!p.ok) agentNote("Refused to read " + p.path + " (only the workspace folder is shared).", "warn"); break;
       case "notice": agentNote(p.text, "info"); break;
+      case "models": agent.running.models = p.models; schedulePaint(true); break;
       case "exited":
         agentNote(p.text, "error");
         endAgentPermissions();
@@ -1912,6 +1913,7 @@
       nav.appendChild(h("div.agent-nav", null, [
         h("div.row", null, [pick, start]),
         h("p.small", null, info),
+        agentModelPicker(),
         h("h3", { text: "Context" }),
         h("p.small", { text: agentContextLabel() || "None – open a revision or change order" }),
         h("h3", { text: "Quick prompts" }),
@@ -1920,6 +1922,44 @@
         h("h3", { text: "Tool calls" }), tools
       ]));
       nav.scrollTop = scroll;
+    });
+  }
+
+  /** The models the running agent offers (its own list – the agent brings
+   * provider and sign-in); nothing when it offers no choice. */
+  function agentModelPicker() {
+    var running = agent.running;
+    var models = running && running.models;
+    if (!models || !models.options || !models.options.length) return null;
+    var current = models.current;
+    var options = models.options.map(function (o) {
+      return h("option", { value: o.id, selected: o.id === current, title: o.description || o.id }, o.name);
+    });
+    if (current && !models.options.some(function (o) { return o.id === current; })) {
+      options.unshift(h("option", { value: current, selected: true }, current));
+    }
+    var select = h("select", {
+      "aria-label": "Model",
+      disabled: agent.busy || agent.switchingModel || models.options.length < 2,
+      title: agent.busy ? "Wait until the agent has finished its answer" : "The agent's model – remembered for its next start",
+      on: { change: function () { setAgentModel(running.session, select.value); } }
+    }, options);
+    return h("div.agent-model", null, [h("label.small", null, ["Model ", select])]);
+  }
+
+  function setAgentModel(session, model) {
+    agent.switchingModel = true;
+    schedulePaint(true);
+    call("agent_set_model", { session: session, model: model }).then(function (models) {
+      agent.switchingModel = false;
+      if (agent.running && agent.running.session === session) agent.running.models = models;
+      var picked = models.options.filter(function (o) { return o.id === models.current; })[0];
+      agentNote("Model: " + (picked ? picked.name : models.current || model), "info");
+      schedulePaint(true);
+    }, function (err) {
+      agent.switchingModel = false;
+      toast(errorText(err), "error");
+      schedulePaint(true); // back to the model in use
     });
   }
 

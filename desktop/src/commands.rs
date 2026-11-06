@@ -1063,6 +1063,8 @@ pub struct AgentState {
     pub info: acp::AgentInfo,
     /// A prompt turn is running.
     pub busy: bool,
+    /// The models the agent offers, if it offers a choice.
+    pub models: Option<acp::Models>,
 }
 
 fn describe(running: &RunningAgent) -> AgentState {
@@ -1071,6 +1073,7 @@ fn describe(running: &RunningAgent) -> AgentState {
         name: running.name.clone(),
         info: running.agent.info.clone(),
         busy: running.agent.busy(),
+        models: running.agent.models(),
     }
 }
 
@@ -1142,6 +1145,15 @@ pub async fn agent_start(
         agent.stop();
         return Err(ApiError::local("Another agent was started meanwhile."));
     }
+    // the model picked last for this agent, if it still offers it
+    let remembered = snapshot(&state).agent_models.get(&name).cloned();
+    if let (Some(model), Some(models)) = (remembered, agent.models()) {
+        let offered = models.options.iter().any(|o| o.id == model);
+        if offered && models.current.as_deref() != Some(model.as_str()) {
+            // a failure keeps the agent's default; the picker shows which
+            let _ = agent.set_model(&model).await;
+        }
+    }
     let _ = update_settings(&state, |s| s.agent = Some(name.clone()));
     let running = RunningAgent {
         session,
@@ -1193,6 +1205,29 @@ pub async fn agent_permission(
         .answer_permission(key, allow)
         .await
         .map_err(ApiError::local)
+}
+
+/// Switches the agent to one of the models it offers and remembers the pick
+/// for its next start. Named by session, like permission answers.
+#[tauri::command]
+pub async fn agent_set_model(
+    state: State<'_, AppState>,
+    session: u64,
+    model: String,
+) -> CmdResult<acp::Models> {
+    let (name, agent) = state
+        .agent
+        .lock()
+        .expect("agent lock")
+        .as_ref()
+        .filter(|r| r.session == session)
+        .map(|r| (r.name.clone(), r.agent.clone()))
+        .ok_or_else(|| ApiError::local("This agent is no longer running."))?;
+    let models = agent.set_model(&model).await.map_err(ApiError::local)?;
+    let _ = update_settings(&state, |s| {
+        s.agent_models.insert(name, model);
+    });
+    Ok(models)
 }
 
 /// Stops the running turn of the agent.
