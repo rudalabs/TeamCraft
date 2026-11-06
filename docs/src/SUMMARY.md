@@ -23,6 +23,7 @@
 - [Users, roles and single sign-on](admin/users.md)
 - [Read permissions and restricted groups](admin/permissions.md)
 - [Event webhooks](admin/webhooks.md)
+- [Upgrading and rolling back](admin/upgrade.md)
 - [Operations](admin/operations.md)
 
 # Reference
