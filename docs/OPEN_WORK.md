@@ -94,8 +94,8 @@ feature milestone – the features in *What works* are enough; what is missing i
   - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
   - [ ] F12: start the parser children with a cleared environment (no database URL, no keys)
   - [ ] F13: a cap on the unpacked size of XLSX/ODS tables, or read them in the isolated child
-  - [ ] F14: merge the no-panic lints (`test/parser-no-panics`, `-2`, with the 3DS fix); fuzz `simmesh`,
-    `pdftext` and `resultscan`
+  - [ ] F14: fuzz targets for `simmesh`, `pdftext` and `resultscan` (the no-panic lints and the 3DS and Kelvin
+    fixes are in `main` since #106/#108)
   - [ ] F15: prompt injection: confirmation of assistant drafts per write, or taint for MCP sessions as well
   - [ ] F16: per-user quota for the assistant and MCP (with the daily budget in section 2, *Assistant*)
   - [ ] F17: `teamcraft mcp`: no redirects, a warning (or refusal) for `http://` servers other than `localhost`

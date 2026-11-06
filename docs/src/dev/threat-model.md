@@ -4,7 +4,7 @@ What TeamCraft protects, from whom, where the trust boundaries are, and – per
 threat – what the code does about it and which test pins it. Every claim
 names the code (`file`, function) and the test; a threat without both is
 marked **open** and has an entry in `docs/OPEN_WORK.md` (section 2,
-*Security*). Written against TeamCraft 0.2.0 (`main` after #105); keep it in
+*Security*). Written against TeamCraft 0.2.0 (`main` after #108); keep it in
 step with the code – a change to a mitigation changes its row.
 
 Status words: **mitigated** (code and test), **partial** (code, but a gap
@@ -133,7 +133,7 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 | Memory exhaustion in the child | D | `RLIMIT_AS` 1 GiB on Unix (`src/preview.rs` `limit_memory`); **no memory limit on Windows**; a 3MF package entry may claim up to 2 GiB (`src/mesh.rs` `zip_entry`) | – | partial (F11) |
 | A compromised child reads the server's secrets | I | the child inherits the server's whole environment (database URL, keys); no sandbox beyond the process boundary | – | **open** (F12) |
 | Parsers that run inside the server process | D | CAD reference scan (`src/cadrefs.rs`, with `nxpart`, `swpart`), plain text index, thumbnails, BOM import (`stepbom`, `bomtable`) run on blocking threads with their own caps: scan 32 MiB, text 4 MiB / 200 000 characters, thumbnail stream 8 MiB, tables 20 MiB, STEP 200 MiB, Deflate sections bounded and CRC-checked (`src/swpart.rs`). A panic ends only the blocking task. **XLSX and ODS are unpacked by calamine in the server process without a cap on the unpacked size** (`src/bomtable.rs`), so a ZIP bomb under 20 MiB can exhaust memory | `tests/parser_robustness.rs` `damaged_bom_tables_never_panic`, `damaged_containers_never_panic`, `thumbnail_extraction_survives_damaged_files`, `claimed_sizes_beyond_the_file_are_refused` | partial (F13) |
-| Panics on hostile bytes | D | `catch_unwind` around third-party readers (truck STEP, glTF, pdf_oxide); nine `cargo fuzz` targets run weekly (`fuzz/`, `.github/workflows/fuzz.yml`, [Fuzzing](fuzzing.md)); the seed and fixture corpus runs in every CI run. Not fuzzed: `simmesh`, `pdftext`, `resultscan`. `#![deny(clippy::unwrap_used, indexing_slicing, …)]` on the parsers is on the branches `test/parser-no-panics` and `-2`, not yet in `main`; one panic they fix (a 3DS list chunk without its count) is still in `main` and only fails a preview there | `tests/parser_corpus.rs` `the_corpus_never_panics_a_reader`; `tests/parser_robustness.rs` | partial (F14) |
+| Panics on hostile bytes | D | `catch_unwind` around third-party readers (truck STEP, glTF, pdf_oxide); nine `cargo fuzz` targets run weekly (`fuzz/`, `.github/workflows/fuzz.yml`, [Fuzzing](fuzzing.md)); the seed and fixture corpus runs in every CI run. `#![deny(clippy::unwrap_used, expect_used, indexing_slicing, panic, unreachable)]` on the readers of untrusted files (`mesh`, `simmesh`, `swpart`, `nxpart`, `stepbom`, `bomtable`, `cadrefs`, `textindex`, `thumbnail`, `resultscan`; #106, #108), which fixed a 3DS and a reference-scan panic. Not fuzzed: `simmesh`, `pdftext`, `resultscan`; `pdftext` is not under the lint | `tests/parser_corpus.rs` `the_corpus_never_panics_a_reader`; `tests/parser_robustness.rs`; `src/mesh.rs` `three_ds_list_chunks_without_their_count`; `src/cadrefs.rs` `a_non_ascii_letter_in_the_extension_does_not_panic` | partial (F14) |
 | XML entity expansion / external entities | D, I | quick-xml (3MF, AMF, VTU/VTP, SOLIDWORKS component tree) neither loads DTDs nor expands custom entities | `tests/parser_robustness.rs` `component_trees_in_broken_xml_never_panic` (no DOCTYPE payload) | mitigated; no explicit test |
 | Names inside CAD files used as paths | T | references are normalised names stored in `file_references` and matched in SQL only, never opened (`src/cadrefs.rs`, `src/services/references.rs`) | `src/cadrefs.rs` `scan_file_reads_stored_files` | mitigated |
 
@@ -198,7 +198,7 @@ Each has an entry in `docs/OPEN_WORK.md` (section 2, *Security*).
 | F11 | No memory limit for the preview and text children on Windows; 3MF entries up to 2 GiB | parsers |
 | F12 | The parser children inherit the server's environment (secrets) | parsers |
 | F13 | XLSX/ODS are unpacked in the server process without a cap on the unpacked size | parsers |
-| F14 | No-panic lints not merged; `simmesh`, `pdftext`, `resultscan` not fuzzed; the 3DS panic is in `main` | parsers |
+| F14 | `simmesh`, `pdftext`, `resultscan` not fuzzed (the no-panic lints and the 3DS fix are in `main`, #106/#108) | parsers |
 | F15 | Prompt injection: the untrusted marker is advisory; no taint for external MCP clients | assistant / MCP |
 | F16 | No per-user quota or rate limit for the assistant and MCP | assistant / MCP |
 | F17 | The `teamcraft mcp` bridge follows redirects and accepts `http://` | MCP |
