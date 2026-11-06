@@ -114,6 +114,18 @@ pub async fn get_by_code(pool: &PgPool, actor: &Actor, code: &str) -> AppResult<
 
 /// Restricts a group to its members or opens it to all users again
 /// (managers of the group and administrators).
+///
+/// # Invariants
+///
+/// * **Permission:** the group is visible to the actor ("not found"
+///   otherwise) and the actor manages it (or is an administrator).
+/// * **Locks:** the group row (`FOR UPDATE`); item creation holds it
+///   `FOR SHARE`, so no number is drawn while the counters move.
+/// * **Data:** opening the group merges its private number counters back into
+///   the shared ones; the same visibility again changes nothing.
+/// * **Audit:** `project.visibility`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction (`tests/atomic_processes.rs`).
 pub async fn set_visibility(
     pool: &PgPool,
     actor: &Actor,

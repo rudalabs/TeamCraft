@@ -654,6 +654,19 @@ pub async fn plan_replace(
 /// checked out is changed directly (like check out, edit, check in); one
 /// checked out by the actor stays checked out. Fails when nothing can be
 /// replaced.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor; both items visible to the actor. Per line:
+///   the parent is in work, in a group the actor may edit, not checked out
+///   by somebody else and would not contain itself – otherwise the line is
+///   reported, not changed.
+/// * **Locks:** the parent revisions and their BOM lines (`FOR UPDATE`, in id
+///   order, so two replacements never deadlock).
+/// * **Audit:** `bom.replace` per replaced line.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction (`tests/atomic_processes.rs`); a second run at
+///   once finds nothing left and gets a 409.
 pub async fn replace(
     pool: &PgPool,
     actor: &Actor,
