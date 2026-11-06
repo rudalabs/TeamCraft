@@ -184,6 +184,16 @@ pub async fn append(conn: &mut PgConnection, me: &Actor, x: &Exchange<'_>) -> Ap
 }
 
 /// "New conversation": deletes the user's thread.
+///
+/// # Invariants
+///
+/// * **Permission:** the actor's own thread only (there is one per user).
+/// * **Locks:** none beyond the row locks of the `DELETE`.
+/// * **Audit:** `assistant.thread_reset`, only when a thread existed; the
+///   record has no content of the conversation (`tests/assistant_threads.rs`).
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction; without a thread nothing happens and no
+///   error is returned.
 pub async fn reset(pool: &PgPool, me: &Actor) -> AppResult<()> {
     let mut tx = pool.begin().await?;
     let done = sqlx::query("DELETE FROM assistant_threads WHERE user_id = $1")

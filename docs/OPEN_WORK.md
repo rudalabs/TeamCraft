@@ -167,7 +167,8 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 - [ ] Document the invariants per service function (permission check, rows locked, audit action, notifications and
   webhooks emitted) in its doc comment; `cargo doc` then is the reference for reviewers – started with an
   `# Invariants` section on `files::check_in`, `changes::review`, `interchange::replace`, `save_as::save_as`,
-  `uploads::finish` and `projects::set_visibility`; the other mutating functions follow
+  `uploads::finish` and `projects::set_visibility`, then on every other function in `src/services/` that writes in
+  a transaction or an audit record; still open: `services::requests` and `src/mcp/` (wait for their splits)
 - [x] Architecture decision records in `docs/src/dev/adr/`: access model (deny list on the actor, 404 for hidden),
   outbox for notifications and webhooks, content-addressed vault, no Node.js – each with context, decision,
   consequences, alternatives (or "not documented") and the code and tests that hold it

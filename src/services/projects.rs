@@ -243,6 +243,17 @@ pub(crate) async fn require_manager(
 
 /// Creates a project group. CAD editors and administrators may do so; a CAD
 /// editor becomes member and manager of the new group.
+///
+/// # Invariants
+///
+/// * **Permission:** editor role or higher (403 otherwise); linking an
+///   identity-provider group is for administrators only (403).
+/// * **Locks:** none; a duplicate code is refused by the unique index (409).
+/// * **Data:** a non-administrator creator is added as a manual member and
+///   manager; administrators manage every group and are not added.
+/// * **Audit:** `project.create`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn create(
     pool: &PgPool,
     actor: &Actor,
@@ -319,6 +330,18 @@ pub struct ProjectUpdate<'a> {
     pub oidc_group: Option<&'a str>,
 }
 
+/// Changes name, description, active flag and (administrators only) the
+/// linked identity-provider group of a project group.
+///
+/// # Invariants
+///
+/// * **Permission:** the group is visible to the actor ("not found"
+///   otherwise) and the actor manages it (or is an administrator; 403).
+/// * **Locks:** the group row (`FOR UPDATE`).
+/// * **Data:** for non-administrators the IdP group stays as it is.
+/// * **Audit:** `project.update`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn update(
     pool: &PgPool,
     actor: &Actor,
@@ -369,6 +392,15 @@ pub async fn update(
 /// Sets the numbering scheme of a project group (managers and admins); an
 /// empty scheme returns to the built-in `{TYPE}-{SEQ:6}`. Existing item
 /// numbers never change.
+///
+/// # Invariants
+///
+/// * **Permission:** the group is visible to the actor ("not found"
+///   otherwise) and the actor manages it (or is an administrator; 403).
+/// * **Locks:** the group row (`FOR UPDATE`).
+/// * **Audit:** `project.numbering` (scheme before and after).
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn set_number_scheme(
     pool: &PgPool,
     actor: &Actor,
@@ -546,6 +578,18 @@ pub async fn members(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<ProjectMe
 
 /// Adds a user to a project group (managers and admins); `manager` makes
 /// them a manager as well (an existing member is updated).
+///
+/// # Invariants
+///
+/// * **Permission:** the group is visible to the actor ("not found"
+///   otherwise) and the actor manages it (or is an administrator; 403); an
+///   unknown username is refused (400).
+/// * **Locks:** none; the membership upsert is atomic per row.
+/// * **Data:** an existing membership keeps its source (an IdP-synchronised
+///   one stays one) and is only ever raised to manager, never lowered.
+/// * **Audit:** `project.add_member`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn add_member(
     pool: &PgPool,
     actor: &Actor,
@@ -601,6 +645,21 @@ pub async fn add_member(
 /// Removes a member (managers and admins; everybody may leave a group).
 /// The last manager of a group cannot leave it – an admin can still remove them.
 /// Returns how many check-outs the user still holds in the group.
+///
+/// # Invariants
+///
+/// * **Permission:** the group is visible to the actor ("not found"
+///   otherwise); removing someone else needs a manager (or an administrator;
+///   403), leaving needs nothing more.
+/// * **Locks:** the group row (`FOR UPDATE`), so membership changes of one
+///   group are serialised.
+/// * **Data:** the last manager cannot be removed except by an
+///   administrator (409); a membership synchronised from the identity
+///   provider cannot be removed here (409); a non-member is "not found".
+///   Check-outs of the removed user are kept and only counted.
+/// * **Audit:** `project.remove_member`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn remove_member(
     pool: &PgPool,
     actor: &Actor,

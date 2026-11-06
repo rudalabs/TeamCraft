@@ -160,6 +160,19 @@ pub struct NewAlternate {
 }
 
 /// Declares `input.number` an alternate of `item_id`.
+///
+/// # Invariants
+///
+/// * **Permission:** both items visible to the actor ("not found" otherwise);
+///   CAD editor and member of the group of `item_id` (403). A two-way link
+///   also needs membership in the alternate's group (403). An item cannot be
+///   its own alternate (400).
+/// * **Locks:** none beyond the unique key of `item_alternates`
+///   (`ON CONFLICT DO NOTHING`); a link that exists in every requested
+///   direction is a 409.
+/// * **Audit:** `item.alternate.add`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction (both directions of a two-way link or none).
 pub async fn add_alternate(
     pool: &PgPool,
     actor: &Actor,
@@ -242,6 +255,17 @@ async fn insert_alternate(
 /// Removes the alternate `alternate_item_id` of `item_id` – both directions
 /// when the actor may also edit the alternate's group, otherwise only this
 /// one. Returns the number of directions removed.
+///
+/// # Invariants
+///
+/// * **Permission:** both items visible to the actor ("not found" otherwise);
+///   CAD editor and member of the group of `item_id` (403). The reverse
+///   direction is removed only when the actor may also edit the alternate's
+///   group. No such link is "not found".
+/// * **Locks:** none (plain deletes of the link rows).
+/// * **Audit:** `item.alternate.remove`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn remove_alternate(
     pool: &PgPool,
     actor: &Actor,
@@ -372,6 +396,19 @@ pub async fn superseded_among(
 
 /// Declares `item_id` superseded by `successor_number` (replacing an earlier
 /// successor).
+///
+/// # Invariants
+///
+/// * **Permission:** both items visible to the actor ("not found" otherwise);
+///   CAD editor and member of the group of `item_id` (403). An item cannot
+///   supersede itself (400).
+/// * **Locks:** the table `item_supersessions` (`SHARE ROW EXCLUSIVE`), so
+///   two concurrent supersessions cannot close a circle unseen; a circle is
+///   a 409.
+/// * **Audit:** `item.supersede`.
+/// * **Notifications / webhooks:** none.
+/// * **Data:** an earlier successor of the item is replaced.
+/// * **Atomic:** one transaction.
 pub async fn supersede(
     pool: &PgPool,
     actor: &Actor,
@@ -440,6 +477,16 @@ pub async fn supersede(
 }
 
 /// Withdraws the supersession of `item_id`.
+///
+/// # Invariants
+///
+/// * **Permission:** the item is visible to the actor ("not found"
+///   otherwise); CAD editor and member of its group (403). An item that is
+///   not superseded is "not found".
+/// * **Locks:** none (a single `DELETE ... RETURNING`).
+/// * **Audit:** `item.supersede.clear`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn clear_supersession(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<()> {
     let item = items::get(pool, actor, item_id).await?;
     ensure_item_editable(actor, &item)?;

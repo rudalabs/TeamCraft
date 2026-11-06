@@ -192,6 +192,17 @@ impl RevisionUpdate {
     }
 }
 
+/// Changes name, description, material, mass, cost and custom attributes of a revision.
+///
+/// # Invariants
+///
+/// * **Permission:** the revision is visible ("not found" otherwise), checked out by the actor
+///   (409 otherwise) and editable (`revisions::ensure_editable`: in work, CAD editor of its
+///   group).
+/// * **Locks:** the revision row (`revisions::lock`).
+/// * **Audit:** `revision.update`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn update(
     pool: &PgPool,
     actor: &Actor,
@@ -241,6 +252,16 @@ pub async fn update(
 }
 
 /// Takes the exclusive edit lock of an in-work revision.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor; the revision is visible ("not found" otherwise), in a group the
+///   actor may edit (403), in work and not checked out by someone else (409).
+/// * **Locks:** the revision row (`revisions::lock`); two check-outs at once give one winner and
+///   a 409.
+/// * **Audit:** `revision.checkout`; nothing when the actor already holds the check-out.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
@@ -273,6 +294,19 @@ pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
 /// group those of users who are no longer members (who cannot release them
 /// themselves once a restricted group hides the revision). A check-in with new file
 /// versions is `files::check_in`.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor; the revision is visible ("not found" otherwise). Nothing happens
+///   when it is not checked out. Another user's check-out may be released only by an
+///   administrator or by a manager of the group when that user is no longer a member (403
+///   otherwise).
+/// * **Locks:** the revision row (`revisions::lock`).
+/// * **Audit:** `revision.checkout_cancel`; `revision.checkout_forced_release` when the check-out
+///   was held by someone else.
+/// * **Notifications:** on a forced release the former holder; otherwise none.
+/// * **Webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
@@ -392,6 +426,19 @@ pub(crate) async fn tell_watchers(
 
 /// Creates the next revision of an item, copying attributes, files and BOM
 /// lines from revision `id`. Only possible when the item has no open revision.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor; the source revision is visible ("not found" otherwise) and in a
+///   group the actor may edit (403); the item has no revision in work or in review (409).
+/// * **Locks:** the source revision row (`revisions::lock`), then the item row (`FOR UPDATE`),
+///   which serialises concurrent revisions of the same item.
+/// * **Audit:** `revision.revise`.
+/// * **Notifications:** the watchers of the item.
+/// * **Webhooks:** none.
+/// * **Data:** the new revision is checked out by the actor and takes over attributes, files
+///   (as version 1), references, simulations and BOM lines.
+/// * **Atomic:** one transaction.
 pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;
@@ -525,6 +572,20 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
 }
 
 /// Marks a released revision as obsolete.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor; the revision is visible ("not found" otherwise) and in a group
+///   the actor may edit (403); it is released (409 otherwise).
+/// * **Locks:** the revision row (`revisions::lock`).
+/// * **Audit:** `revision.obsolete`; when it is the latest revision of its item, also
+///   `impact.flag` for its dependents (`impacts::on_obsolete`).
+/// * **Notifications:** the watchers of the item; when the latest revision became obsolete also
+///   the people responsible for the flagged dependents.
+/// * **Webhooks:** `revision.obsoleted`.
+/// * **Data:** when it is the latest revision, the open impacts on the item are resolved and
+///   its dependents are flagged.
+/// * **Atomic:** one transaction.
 pub async fn obsolete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
     actor.require(Role::Editor)?;
     let mut tx = pool.begin().await?;

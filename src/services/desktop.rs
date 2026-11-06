@@ -106,6 +106,17 @@ pub fn challenge_of(verifier: &str) -> String {
 
 /// The user allowed the sign-in: stores a one-time code and returns the
 /// callback URL that hands it to the app.
+///
+/// # Invariants
+///
+/// * **Permission:** any signed-in actor; the code belongs to the actor.
+/// * **Locks:** none.
+/// * **Data:** only the hash of the one-time code is stored, with the PKCE
+///   challenge and an expiry; the code itself appears only in the returned
+///   callback URL.
+/// * **Audit:** `desktop.authorize`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn approve(pool: &PgPool, actor: &Actor, req: &AuthorizeRequest) -> AppResult<String> {
     let code = auth::generate_token(CODE_PREFIX);
     let mut tx = pool.begin().await?;

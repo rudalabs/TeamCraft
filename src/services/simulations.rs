@@ -327,6 +327,19 @@ pub struct NewBasis {
 }
 
 /// Adds a basis link to a simulation revision checked out by the actor.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor in the project group of the simulation, which
+///   is in work and checked out by the actor (otherwise 403 / 409); the basis
+///   item and revision must be visible to the actor (looked up before the
+///   transaction, hidden = 404). A simulation cannot be based on itself (400).
+/// * **Locks:** the simulation revision (`FOR UPDATE`) and the basis item
+///   (`FOR SHARE`), so a concurrent `items::delete` cannot remove it.
+/// * **Audit:** `simulation.basis.add` (related to the basis item). A second
+///   identical link (same basis revision and role) gets a 409.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn add_basis(
     pool: &PgPool,
     actor: &Actor,
@@ -463,6 +476,16 @@ pub async fn add_basis(
 }
 
 /// Removes a basis link from a simulation revision checked out by the actor.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor in the project group, simulation revision in
+///   work and checked out by the actor (403 / 409); a link the actor cannot
+///   see is a 404.
+/// * **Locks:** the simulation revision (`FOR UPDATE`).
+/// * **Audit:** `simulation.basis.remove` (related to the basis item).
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn remove_basis(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<SimulationBasis> {
     let existing = get_basis_unmasked(pool, actor, id).await?;
     let mut tx = pool.begin().await?;
@@ -763,6 +786,19 @@ async fn count_results(conn: &mut PgConnection, revision_id: Uuid) -> AppResult<
 }
 
 /// Adds a result value to a simulation revision checked out by the actor.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor in the project group, revision of a
+///   simulation item (400 otherwise), in work and checked out by the actor
+///   (403 / 409); a hidden revision is a 404.
+/// * **Locks:** the simulation revision (`FOR UPDATE`).
+/// * **Data:** at most 2000 result values per revision (400); the same name
+///   and load case twice gets a 409.
+/// * **Audit:** `simulation.result.add`.
+/// * **Notifications:** none.
+/// * **Webhooks:** `simulation.result_added`, emitted in the same transaction.
+/// * **Atomic:** one transaction.
 pub async fn add_result(
     pool: &PgPool,
     actor: &Actor,
@@ -816,6 +852,17 @@ pub async fn add_result(
 }
 
 /// Changes a result value of a simulation revision checked out by the actor.
+///
+/// # Invariants
+///
+/// * **Permission:** as [`add_result`]; a value the actor cannot see is a 404.
+/// * **Locks:** the simulation revision (`FOR UPDATE`).
+/// * **Data:** a hand edit clears the value's `source` (the origin of an
+///   import or exchange file); the same name and load case as another value
+///   gets a 409.
+/// * **Audit:** `simulation.result.update` (with the previous value and unit).
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn update_result(
     pool: &PgPool,
     actor: &Actor,
@@ -881,6 +928,14 @@ pub async fn update_result(
 }
 
 /// Removes a result value from a simulation revision checked out by the actor.
+///
+/// # Invariants
+///
+/// * **Permission:** as [`add_result`]; a value the actor cannot see is a 404.
+/// * **Locks:** the simulation revision (`FOR UPDATE`).
+/// * **Audit:** `simulation.result.remove`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn remove_result(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<SimulationResult> {
     let existing = get_result(pool, actor, id).await?;
     let mut tx = pool.begin().await?;
@@ -923,6 +978,21 @@ pub struct ImportSummary {
 /// name and load case are updated, new ones appended. With `replace`, the
 /// values that are not in the set are removed (the set becomes the result
 /// table – what a solver script wants).
+///
+/// # Invariants
+///
+/// * **Permission:** as [`add_result`].
+/// * **Locks:** the simulation revision (`FOR UPDATE`); the existing values are
+///   read under that lock, so a value added concurrently is updated, not
+///   inserted twice.
+/// * **Data:** rows are validated first; a name and load case listed twice, or
+///   more than 2000 values (in the set or in the result table afterwards), is
+///   a 400 and nothing is written.
+/// * **Audit:** one `simulation.result.import` for the whole set.
+/// * **Notifications:** none.
+/// * **Webhooks:** one `simulation.result_added`, only when a value was added
+///   or updated.
+/// * **Atomic:** one transaction.
 pub async fn import_results(
     pool: &PgPool,
     actor: &Actor,

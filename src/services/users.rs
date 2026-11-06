@@ -184,6 +184,17 @@ pub async fn list_tokens(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<ApiToken
 }
 
 /// Creates a personal access token. The plaintext is returned exactly once.
+///
+/// # Invariants
+///
+/// * **Permission:** any signed-in actor; the token belongs to the actor.
+///   A lifetime outside 1 to 3650 days is refused (400).
+/// * **Locks:** none.
+/// * **Data:** only the hash and a short prefix are stored; the plaintext
+///   is not recoverable later.
+/// * **Audit:** `token.create`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn create_token(
     pool: &PgPool,
     actor: &Actor,
@@ -232,6 +243,16 @@ pub async fn create_token(
     Ok((record, token))
 }
 
+/// Deletes an API token (its owner, or an administrator).
+///
+/// # Invariants
+///
+/// * **Permission:** the token is the actor's own or the actor is an
+///   administrator ("not found" otherwise).
+/// * **Locks:** none; the row is deleted in one statement.
+/// * **Audit:** `token.revoke`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn revoke_token(pool: &PgPool, actor: &Actor, token_id: Uuid) -> AppResult<()> {
     let mut tx = pool.begin().await?;
     let name = sqlx::query_scalar::<_, String>(
@@ -313,6 +334,16 @@ pub struct NewLocalUser {
 
 /// Creates a local (password) account. `actor = None` is used by the CLI and
 /// the bootstrap logic.
+///
+/// # Invariants
+///
+/// * **Permission:** administrator (403); without an actor (CLI, bootstrap)
+///   no check.
+/// * **Locks:** none; a taken username is refused by the unique index (409).
+/// * **Data:** the password is validated and stored only as a hash.
+/// * **Audit:** `user.create`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn create_local(
     pool: &PgPool,
     actor: Option<&Actor>,
@@ -462,6 +493,17 @@ pub async fn update(pool: &PgPool, actor: &Actor, id: Uuid, upd: UserUpdate) -> 
 }
 
 /// Sets the password of a local account. `actor = None` is used by the CLI.
+///
+/// # Invariants
+///
+/// * **Permission:** administrator (403); without an actor (CLI) no check.
+///   Single-sign-on accounts have no local password (400).
+/// * **Locks:** none.
+/// * **Data:** the password is stored only as a hash; all sessions of the
+///   user are deleted.
+/// * **Audit:** `user.password`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn set_password(
     pool: &PgPool,
     actor: Option<&Actor>,
@@ -504,6 +546,15 @@ pub async fn set_password(
 }
 
 /// Changes the caller's own password after verifying the current one.
+///
+/// # Invariants
+///
+/// * **Permission:** the current password must be right (400).
+/// * **Locks:** none.
+/// * **Data:** the password is stored only as a hash; sessions stay.
+/// * **Audit:** `user.password`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn change_own_password(
     pool: &PgPool,
     actor: &Actor,
@@ -554,6 +605,18 @@ pub struct OidcIdentity {
 
 /// Finds or provisions the user for an OIDC identity and synchronises name,
 /// e-mail and role (derived from groups) on every login.
+///
+/// # Invariants
+///
+/// * **Permission:** a deactivated user is refused (403).
+/// * **Locks:** the existing user row (`FOR UPDATE`).
+/// * **Data:** the role always follows the IdP groups; a new user gets a free
+///   username (suffix `-2` to `-99`, else 409). Memberships from the IdP are
+///   added and dropped to match the groups; manual ones are kept.
+/// * **Audit:** `user.provision` for a new user, `user.role_sync` when the
+///   role changed.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn upsert_oidc_user(pool: &PgPool, ident: OidcIdentity) -> AppResult<User> {
     let email = clean_email(ident.email.as_deref()).unwrap_or(None);
     let display_name: String = ident.display_name.trim().chars().take(128).collect();

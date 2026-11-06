@@ -169,6 +169,17 @@ pub async fn open_for(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Impact>> {
 }
 
 /// Marks an open impact as checked: the dependent needs no change.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor; the impact is on an item the actor sees ("not found"
+///   otherwise) and in a group the actor may edit (403); a note is needed (400); the impact is
+///   open (409).
+/// * **Locks:** the impact row, through the `UPDATE ... WHERE resolved_at IS NULL`; when it was
+///   resolved in the meantime the actor gets a 409.
+/// * **Audit:** `impact.acknowledge`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn acknowledge(pool: &PgPool, actor: &Actor, id: Uuid, note: &str) -> AppResult<Impact> {
     actor.require(Role::Editor)?;
     let note = domain::require_text("Note", note, 2000).map_err(|_| {
@@ -245,6 +256,16 @@ pub struct Acknowledged {
 /// moment ago is not acknowledged unseen). Impacts resolved in the meantime
 /// are skipped; if none is left, nothing changes (conflict). Same rules as
 /// [`acknowledge`]; one transaction, one audit entry per impact.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor; the revision is visible ("not found" otherwise) and in a group
+///   the actor may edit (403); a note is needed (400); a given list is not empty and names only
+///   impacts on this revision (400); at least one impact is still open (409).
+/// * **Locks:** the open impact rows (`FOR UPDATE`), before they are resolved.
+/// * **Audit:** `impact.acknowledge` per impact.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction; impacts resolved in the meantime are skipped and counted.
 pub async fn acknowledge_all(
     pool: &PgPool,
     actor: &Actor,

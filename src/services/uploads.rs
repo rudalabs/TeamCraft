@@ -236,6 +236,18 @@ async fn load(
 /// Starts an upload into a revision the actor has checked out. Refuses it
 /// early when the file cannot be stored anyway: too large, not checked out,
 /// or a stated base that the server file has moved on from.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor in the project group with the revision in work
+///   and checked out by the actor (`files::ensure_can_attach`; hidden = 404,
+///   403 / 409 otherwise). The session belongs to the actor alone.
+/// * **Locks:** the actor's user row (`FOR NO KEY UPDATE`), which serialises the
+///   quota check: at most 16 unexpired sessions per user (409).
+/// * **Steps:** the staging file is created before the commit and removed again
+///   when the commit fails.
+/// * **Audit, notifications, webhooks:** none.
+/// * **Atomic:** one transaction for the session row.
 pub async fn create(
     pool: &PgPool,
     vault: &Vault,
@@ -330,6 +342,20 @@ pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<UploadSess
 /// Appends a chunk at `offset` (see [`check_chunk`]) and returns the
 /// updated session. The chunk is on disk before the new offset is
 /// confirmed, so an interruption at any point loses at most this chunk.
+///
+/// # Invariants
+///
+/// * **Permission:** the actor's own session (anybody else's, or an expired
+///   one, is a 404).
+/// * **Locks:** the session row (`FOR UPDATE`), so concurrent chunks of one
+///   session are serialised.
+/// * **Data:** the chunk must start at the confirmed offset (409 otherwise) and
+///   stay within the announced size (400); a session whose content is already
+///   verified takes no more chunks (409). Each chunk renews the expiry.
+/// * **Audit, notifications, webhooks:** none.
+/// * **Atomic:** the chunk is written to the staging file before the offset is
+///   updated in the transaction; when the update fails, the offset stays and
+///   the chunk is sent again.
 pub async fn append(
     pool: &PgPool,
     vault: &Vault,
@@ -385,6 +411,21 @@ pub async fn append(
 /// Calling it again after a failed attach (e.g. the database was briefly
 /// unavailable) reuses the stored content – nothing has to be re-sent.
 /// Content that fails verification resets the session to offset 0.
+///
+/// # Invariants
+///
+/// * **Permission:** the actor's own session (404 otherwise); `revision_id`,
+///   when given, must be the session's revision (400).
+/// * **Locks:** the session row (`FOR UPDATE`).
+/// * **Data:** all bytes must have arrived (409 otherwise). Size and announced
+///   SHA-256 are verified; a mismatch (400) or lost staging data (409) resets
+///   the session to offset 0 and commits that reset. The verified hash is
+///   recorded on the session, so a repeated call reuses the stored content.
+/// * **Steps:** the staged file moves into the vault before the transaction
+///   commits; a crash in between is recovered when the announced SHA-256 is in
+///   the vault. The session row stays until [`forget`] or [`abort`].
+/// * **Audit, notifications, webhooks:** none; nothing is registered in the
+///   database as a file.
 pub async fn complete(
     pool: &PgPool,
     vault: &Vault,
@@ -548,6 +589,15 @@ pub async fn finish(
 }
 
 /// Cancels an upload and deletes what was received.
+///
+/// # Invariants
+///
+/// * **Permission:** the actor's own session (404 otherwise).
+/// * **Locks:** the session row (`FOR UPDATE`).
+/// * **Steps:** the session row is deleted and committed first, then the staging
+///   file is removed; a failure in between leaves a staging file without a
+///   session, which `purge_expired` removes later.
+/// * **Audit, notifications, webhooks:** none.
 pub async fn abort(pool: &PgPool, vault: &Vault, actor: &Actor, id: Uuid) -> AppResult<()> {
     let mut tx = pool.begin().await?;
     load(&mut tx, actor, id, true).await?;
