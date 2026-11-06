@@ -147,8 +147,13 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   `mesh` (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, point clouds), `simmesh` (VTK, VTU/VTP, FRD), `stepbom`, `swpart`,
   `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex`; crashes found become regression unit tests with the
   minimised input; a short fuzz run per parser in a scheduled CI job
-- [ ] No `unwrap`/`expect`/indexing panics on file input outside tests: audit `swpart`, `mesh`, `simmesh`, `config`,
-  then enable `clippy::unwrap_used`/`expect_used` for the parser modules
+- [x] No `unwrap`/`expect`/indexing panics on file input outside tests: `swpart`, `mesh` (with `mesh::step`, `p21`,
+  `tessellated`), `simmesh` and `config` deny `clippy::unwrap_used`, `expect_used`, `indexing_slicing`, `panic` and
+  `unreachable` (`#![deny]` in each module; `clippy.toml` allows them in tests); reads go through bounded helpers
+  (`mesh::bytes_at`, `u32_le`, `range`, …) or `get`/slice patterns, one reviewed `#[allow]` (`mesh::compose`, fixed
+  arrays). **Bug found and fixed**: a 3DS vertex or face list chunk of the minimum length at the end of the file read
+  its count past the last byte (panic) – now skipped, regression test `three_ds_list_chunks_without_their_count`.
+  Open: the same lints for `stepbom`, `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex`, `resultscan`
 - [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
 - [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
 - [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move

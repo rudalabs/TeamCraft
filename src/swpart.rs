@@ -44,6 +44,13 @@
 //! inflating stops one byte after the stored size; sections larger than the
 //! caller's limit are not inflated at all (decompression bombs end there),
 //! and at most [`MAX_TRIES`] sections of one name are inflated.
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Seek, SeekFrom};
@@ -155,13 +162,13 @@ pub fn is_container(head: &[u8]) -> bool {
 }
 
 fn first_section_at(head: &[u8]) -> Option<usize> {
-    let window = &head[..head.len().min(FIRST_WITHIN + MARKER.len())];
+    let window = head.get(..FIRST_WITHIN + MARKER.len()).unwrap_or(head);
     let mut from = 0;
-    while let Some(i) = find_marker(&window[from..]) {
+    while let Some(i) = window.get(from..).and_then(find_marker) {
         let at = from + i;
         // The first records are header-like records without data; their
         // marker and name are enough to recognise the container.
-        if plausible_record(&head[at..]) {
+        if head.get(at..).is_some_and(plausible_record) {
             return Some(at);
         }
         from = at + 1;
@@ -184,8 +191,8 @@ fn plausible_record(buf: &[u8]) -> bool {
 fn read_at<R: Read + Seek>(reader: &mut R, pos: u64, buf: &mut [u8]) -> io::Result<usize> {
     reader.seek(SeekFrom::Start(pos))?;
     let mut n = 0;
-    while n < buf.len() {
-        match reader.read(&mut buf[n..]) {
+    while let Some(rest) = buf.get_mut(n..).filter(|r| !r.is_empty()) {
+        match reader.read(rest) {
             Ok(0) => break,
             Ok(k) => n += k,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -234,7 +241,7 @@ impl Window {
     /// Up to `len` bytes from `pos` (fewer only at the end of the file).
     fn get<R: Read + Seek>(&mut self, reader: &mut R, pos: u64, len: usize) -> io::Result<&[u8]> {
         let rest = self.rest(reader, pos, len)?;
-        Ok(&rest[..len.min(rest.len())])
+        Ok(rest.get(..len).unwrap_or(rest))
     }
 
     /// The buffered bytes from `pos` on, at least `min` of them (fewer only
@@ -328,10 +335,8 @@ impl<R: Read + Seek> SwContainer<R> {
                 continue;
             }
             let after = window.get(reader, end, SIGNATURE + MARKER.len())?;
-            if after.len() == SIGNATURE + MARKER.len()
-                && after[SIGNATURE..] == MARKER
-                && before.is_some_and(|b| after[..SIGNATURE] == b)
-            {
+            let (sig_after, marker_after) = after.split_at(SIGNATURE.min(after.len()));
+            if marker_after == MARKER && before.is_some_and(|b| sig_after == b) {
                 signature = before;
                 section.confirmed = true;
                 pos = end;
@@ -410,11 +415,12 @@ fn xml_text(xml: &[u8]) -> String {
     let utf16 = |bytes: &[u8], be: bool| {
         let units: Vec<u16> = bytes
             .chunks_exact(2)
+            .filter_map(|c| <[u8; 2]>::try_from(c).ok())
             .map(|c| {
                 if be {
-                    u16::from_be_bytes([c[0], c[1]])
+                    u16::from_be_bytes(c)
                 } else {
-                    u16::from_le_bytes([c[0], c[1]])
+                    u16::from_le_bytes(c)
                 }
             })
             .collect();
