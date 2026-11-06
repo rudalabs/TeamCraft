@@ -953,6 +953,21 @@ pub async fn attach(
 
 /// Check-in: stores the uploaded files as new versions **and** releases the
 /// check-out in one transaction – either both happen or neither.
+///
+/// # Invariants
+///
+/// * **Permission:** the revision is visible to the actor ("not found"
+///   otherwise), checked out by the actor (409 otherwise) and editable
+///   (`revisions::ensure_editable`: in work, CAD editor of its group).
+/// * **Locks:** the revision row (`revisions::lock`) and the existing file
+///   rows of the uploaded names (`FOR UPDATE`); every upload is checked
+///   against the version it is based on (409 if the file moved on).
+/// * **Audit:** `file.upload` / `file.version` per stored file, then
+///   `revision.checkin`.
+/// * **Notifications:** the item's watchers, when a file changed.
+/// * **Webhooks:** none.
+/// * **Atomic:** one transaction (`tests/atomic_processes.rs`); two check-ins
+///   at once give one winner and a 409.
 pub async fn check_in(
     pool: &PgPool,
     actor: &Actor,

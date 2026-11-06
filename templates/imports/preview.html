@@ -54,7 +54,8 @@
           {% elif r.number %}<span class="mono">{{ r.number }}</span> <span class="badge badge-in_work">new {{ r.type|lower }}</span>
           {% else %}<span class="muted">generated</span> <span class="badge badge-in_work">new {{ r.type|lower }}</span>{% endif %}
         </td>
-        <td>{{ r.name }}</td>
+        <td>{{ r.name }}{% if r.classification %} <span class="badge badge-member">{{ r.classification|lower }}</span>{% endif %}
+          {% if r.attributes %}<br><span class="small muted">{% for a in r.attributes %}{{ a.label }}: {{ a.value }}{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}</td>
         <td class="num nowrap">{{ r.quantity|num(4) }} {{ r.unit }}</td>
         <td>{{ r.material }}</td>
         <td class="num">{% if r.mass_kg is not none %}{{ r.mass_kg|num(4) }}{% endif %}</td>
@@ -73,9 +74,15 @@
     <thead><tr><th>Column in the file</th><th>Used as</th></tr></thead>
     <tbody>
     {% for c in plan.columns %}<tr><td>{{ c.header }}</td><td>{{ c.label }}</td></tr>{% endfor %}
+    {% for c in plan.attribute_columns %}<tr><td>{{ c.header }}</td><td>Attribute “{{ c.label }}” <span class="mono small muted">{{ c.key }}</span></td></tr>{% endfor %}
     </tbody>
   </table>
   </div>
-  <p class="hint">Column recognition is a heuristic – rename a column in the spreadsheet if it was not recognised and upload the file again.</p>
+  {% if plan.unused_columns %}
+  <p class="hint">Not imported: {% for c in plan.unused_columns %}<span class="mono">{{ c }}</span>{% if not loop.last %}, {% endif %}{% endfor %}.
+    {% if me.is_admin %}<a href="/admin/attributes">Define an attribute</a> with the column name as label or key to import such a column.{% else %}An administrator can define an attribute with the column name to import such a column.{% endif %}</p>
+  {% endif %}
+  <p class="hint">Column recognition is a heuristic – rename a column in the spreadsheet if it was not recognised and upload the file again.
+    New items take their classification (purchased, standard part) from a <em>BOM structure</em> or procurement column; existing items are not changed.</p>
 </section>
 {% endblock %}
