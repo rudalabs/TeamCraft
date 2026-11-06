@@ -283,7 +283,10 @@ async fn bom_health_finds_every_issue_and_keeps_hidden_lines_hidden() {
     assert_eq!(restricted[0].revision, None);
     let text = serde_json::to_string(&report).unwrap();
     for secret in [f.hidden.as_str(), "Secret gimbal", "gimbal.step"] {
-        assert!(!text.contains(secret), "{secret} leaks: {text}");
+        assert!(
+            !text.contains(secret),
+            "sensitive data leaked into report JSON"
+        );
     }
     let counts: BTreeMap<Issue, usize> = [
         (Issue::NotReleased, 4),
