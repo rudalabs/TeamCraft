@@ -61,7 +61,7 @@ An empty value counts as not set. The list of known names is
 
 | Variable                                          | Default                                          | Meaning                                                                |
 |---------------------------------------------------|--------------------------------------------------|------------------------------------------------------------------------|
-| `TEAMCRAFT_DATABASE_URL`                          | –                                                | `postgres://user:password@host:port/db`; alternatively the parts below |
+| `TEAMCRAFT_DATABASE_URL`                          | –                                                | `postgres://user:password@host:port/db` (or the plain `DATABASE_URL`); alternatively the parts below |
 | `TEAMCRAFT_DB_HOST` / `_PORT` / `_NAME` / `_USER` | `localhost` / `5432` / `teamcraft` / `teamcraft` | connection parts                                                       |
 | `TEAMCRAFT_DB_PASSWORD`                           | –                                                | password (not needed with trust authentication or `~/.pgpass`)         |
 | `TEAMCRAFT_DB_SSLMODE`                            | `prefer`                                         | `disable`, `prefer`, `require`, `verify-ca`, `verify-full`             |
@@ -240,11 +240,9 @@ machine, reads these. The server does not (see [MCP server](../reference/mcp.md)
 
 ## Other names
 
-These are read before or outside the server configuration and are not
-settings of the server itself:
+Besides the configuration files above (`TEAMCRAFT_ENV_FILE`,
+`TEAMCRAFT_SYSTEM_CONFIG`), these names belong to the installation, not to the server:
 
 | Variable                  | Meaning                                                                                              |
 |---------------------------|------------------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_ENV_FILE`      | an extra environment file read on start, before `secrets/.env` (variables already set win)           |
-| `TEAMCRAFT_SYSTEM_CONFIG` | at **build** time only: the system file a package build reads (`/etc/teamcraft/teamcraft.env`)       |
 | `TEAMCRAFT_VERSION`, `TEAMCRAFT_BIND` | image tag and published port of the Docker install, set in its `.env` ([Docker](docker.md)) |

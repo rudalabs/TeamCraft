@@ -539,3 +539,37 @@ fn the_documentation_scanner_understands_the_shorthands() {
         "{wildcards:?}"
     );
 }
+
+/// The central list behind the start-up check (`config::VARIABLES`, which
+/// warns about every other `TEAMCRAFT_*` name) is documented too.
+#[test]
+fn every_listed_configuration_variable_is_documented() {
+    let (documented, wildcards) = documented_variables();
+    let config = read(&root().join("docs/src/admin/configuration.md"));
+    let mut book = String::new();
+    let mut pages = Vec::new();
+    files(&root().join("docs/src"), "md", &mut pages);
+    for page in &pages {
+        book.push_str(&read(page));
+    }
+    let listed = teamcraft::config::VARIABLES
+        .iter()
+        .chain(teamcraft::config::OTHER_VARIABLES);
+    let missing: Vec<&&str> = listed
+        .filter(|name| {
+            let in_config = if name.starts_with("TEAMCRAFT_") {
+                documented.contains(**name)
+            } else {
+                config.contains(&format!("`{name}`"))
+            };
+            let by_wildcard = wildcards
+                .iter()
+                .any(|w| name.starts_with(w.as_str()) && book.contains(**name));
+            !in_config && !by_wildcard
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "listed in config::VARIABLES but not in docs/src/admin/configuration.md: {missing:?}"
+    );
+}
