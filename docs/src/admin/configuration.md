@@ -13,6 +13,31 @@ In the [Docker installation](docker.md) the variables go into
 sets the database connection with the password from a Docker secret
 (`TEAMCRAFT_DB_PASSWORD_FILE=/run/secrets/db_password`).
 
+## Checks on start
+
+The server and every command that works on the database or the vault
+(`migrate`, `user`, `backup`, `vault`, …) check the configuration first:
+
+- **An invalid value stops the start** with an error that names the
+  variable. Examples are a number that is not a number or is out of range, a
+  boolean other than `true`/`false`/`yes`/`no`/`on`/`off`/`1`/`0`, a URL without a host,
+  a database URL that is not `postgres://`, `TEAMCRAFT_VAULT_DIR` pointing to
+  a file, or an unreadable `NAME_FILE`. For example:
+  `error: invalid configuration: TEAMCRAFT_PUBLIC_URL must be an http:// or https:// URL with a host, got 'ftp://plm.example.org'`.
+- **Warnings** (in the log, the start goes on) for:
+  - a `TEAMCRAFT_*` name TeamCraft does not know, with the name it probably
+    is a typo of
+    (`TEAMCRAFT_DATABSE_URL is not a TeamCraft setting and is ignored – did you mean TEAMCRAFT_DATABASE_URL?`);
+  - a variable set together with its `_FILE` form (the file wins);
+  - a setting without effect, such as `TEAMCRAFT_MAIL_FROM` without
+    `TEAMCRAFT_SMTP_URL`, `TEAMCRAFT_OIDC_*` without
+    `TEAMCRAFT_OIDC_ISSUER_URL`, or `TEAMCRAFT_DB_HOST` next to a database URL.
+
+An empty value counts as not set. The list of known names is
+`config::VARIABLES` in the code. The names in [Tests](#tests),
+[MCP stdio bridge](#mcp-stdio-bridge-client-side) and
+[Other names](#other-names) are known too and never cause a warning.
+
 ## Server
 
 | Variable                  | Default                          | Meaning                                                                         |
@@ -191,6 +216,8 @@ answer – never the question or the answer).
 | `TEAMCRAFT_TEST_DATABASE_URL` | server for the integration tests (default: the configuration above); each test creates and drops its own `teamcraft_test_*` database |
 | `TEAMCRAFT_REQUIRE_DB_TESTS`  | fail instead of skipping when no database is reachable (CI)                                                                          |
 | `TEAMCRAFT_REQUIRE_PG_TOOLS`  | fail instead of skipping the backup/restore test when `pg_dump`/`pg_restore` are missing or older than the server (CI)              |
+| `TEAMCRAFT_WRITE_SIM_FIXTURES` | write the generated simulation result samples as files (unit tests of `simmesh`)                                                    |
+| `TEAMCRAFT_SCALE_DB`, `TEAMCRAFT_SCALE_RUNS`, `TEAMCRAFT_SCALE_BASELINE`, `TEAMCRAFT_SCALE_REPORT_DIR` | the scale check (`tests/scale.rs`, workflow *Scale check*): database, timed calls per step, baseline and report directory |
 
 ## MCP stdio bridge (client side)
 
@@ -201,3 +228,14 @@ machine, reads these. The server does not (see [MCP server](../reference/mcp.md)
 |--------------------|---------------------------------------------------------------------------------|
 | `TEAMCRAFT_SERVER` | base URL of the TeamCraft server (default `http://localhost:8080`)              |
 | `TEAMCRAFT_TOKEN`  | the user's personal access token (or `--token-file`); it is never printed |
+
+## Other names
+
+These are read before or outside the server configuration and are not
+settings of the server itself:
+
+| Variable                  | Meaning                                                                                              |
+|---------------------------|------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_ENV_FILE`      | an extra environment file read on start, before `secrets/.env` (variables already set win)           |
+| `TEAMCRAFT_SYSTEM_CONFIG` | at **build** time only: the system file a package build reads (`/etc/teamcraft/teamcraft.env`)       |
+| `TEAMCRAFT_VERSION`, `TEAMCRAFT_BIND` | image tag and published port of the Docker install, set in its `.env` ([Docker](docker.md)) |

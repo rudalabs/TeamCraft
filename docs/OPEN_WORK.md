@@ -59,7 +59,8 @@ feature milestone – the features in *What works* are enough; what is missing i
   description generated from the routes and checked in CI against the router; deprecation policy (an endpoint lives
   at least one minor version with a `Deprecation` header)
 - [ ] MCP tools and prompts: names and argument schemas frozen and versioned, contract tests per tool
-- [ ] Configuration: every variable documented and validated at start (unknown `TEAMCRAFT_*` variables warned),
+- [ ] Configuration: every variable documented and validated at start (unknown `TEAMCRAFT_*` variables warned – done:
+  `config::VARIABLES`, `environment_warnings`, errors name the variable),
   defaults reviewed; CLI commands and exit codes documented and frozen
 - [ ] Desktop app ↔ server compatibility: version handshake, the desktop tells the user when the server is too old
   or too new; a supported-versions table

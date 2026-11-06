@@ -289,6 +289,19 @@ fn init_tracing(format: LogFormat) {
 fn load_config() -> Result<Config> {
     let config = Config::from_env().context("invalid configuration")?;
     init_tracing(config.log_format);
+    // Typos and settings without effect (`vars_os`: `vars` panics on a
+    // variable that is not Unicode).
+    let vars: Vec<(String, String)> = std::env::vars_os()
+        .map(|(k, v)| {
+            (
+                k.to_string_lossy().into_owned(),
+                v.to_string_lossy().into_owned(),
+            )
+        })
+        .collect();
+    for warning in teamcraft::config::environment_warnings(&vars) {
+        tracing::warn!("configuration: {warning}");
+    }
     Ok(config)
 }
 

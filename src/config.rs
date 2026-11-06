@@ -23,6 +23,228 @@ pub const LOCAL_ENV_FILE: &str = "secrets/.env";
 /// so development builds never read a system file.
 pub const SYSTEM_ENV_FILE: Option<&str> = option_env!("TEAMCRAFT_SYSTEM_CONFIG");
 
+/// Every variable the server reads – each also as `NAME_FILE`. The start-up
+/// check ([`environment_warnings`]) warns about any other `TEAMCRAFT_*` name;
+/// a unit test keeps the list in line with the code, and
+/// `docs/src/admin/configuration.md` documents every entry.
+pub const VARIABLES: &[&str] = &[
+    "TEAMCRAFT_BIND_ADDR",
+    "TEAMCRAFT_PUBLIC_URL",
+    "TEAMCRAFT_INSTANCE_NAME",
+    "TEAMCRAFT_DATABASE_URL",
+    "DATABASE_URL",
+    "TEAMCRAFT_DB_HOST",
+    "TEAMCRAFT_DB_PORT",
+    "TEAMCRAFT_DB_NAME",
+    "TEAMCRAFT_DB_USER",
+    "TEAMCRAFT_DB_PASSWORD",
+    "TEAMCRAFT_DB_SSLMODE",
+    "TEAMCRAFT_DB_MAX_CONNECTIONS",
+    "TEAMCRAFT_VAULT_DIR",
+    "TEAMCRAFT_MAX_UPLOAD_MB",
+    "TEAMCRAFT_UPLOAD_CHUNK_MB",
+    "TEAMCRAFT_PREVIEW_MAX_RESULT_MB",
+    "TEAMCRAFT_PREVIEW_MAX_MESH_MB",
+    "TEAMCRAFT_PREVIEW_MAX_STEP_MB",
+    "TEAMCRAFT_PREVIEW_MAX_MEMORY_MB",
+    "TEAMCRAFT_SESSION_TTL_HOURS",
+    "TEAMCRAFT_COOKIE_SECURE",
+    "TEAMCRAFT_LOG_FORMAT",
+    "TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME",
+    "TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD",
+    "TEAMCRAFT_LOCAL_LOGIN",
+    "TEAMCRAFT_OIDC_ISSUER_URL",
+    "TEAMCRAFT_OIDC_CLIENT_ID",
+    "TEAMCRAFT_OIDC_CLIENT_SECRET",
+    "TEAMCRAFT_OIDC_SCOPES",
+    "TEAMCRAFT_OIDC_DISPLAY_NAME",
+    "TEAMCRAFT_OIDC_GROUPS_CLAIM",
+    "TEAMCRAFT_OIDC_USERNAME_CLAIM",
+    "TEAMCRAFT_OIDC_ADMIN_GROUP",
+    "TEAMCRAFT_OIDC_EDITOR_GROUP",
+    "TEAMCRAFT_OIDC_VIEWER_GROUP",
+    "MATTERMOST_ERROR_WEBHOOK",
+    "TEAMCRAFT_SMTP_URL",
+    "TEAMCRAFT_MAIL_FROM",
+    "TEAMCRAFT_REQUEST_DIGEST_HOURS",
+    "TEAMCRAFT_MATTERMOST_WEBHOOK",
+    "TEAMCRAFT_MATTERMOST_DIRECT",
+    "TEAMCRAFT_ASSISTANT_API_KEY",
+    "TEAMCRAFT_ANTHROPIC_API_KEY",
+    "TEAMCRAFT_ASSISTANT_PROVIDER",
+    "TEAMCRAFT_ASSISTANT_BASE_URL",
+    "TEAMCRAFT_ASSISTANT_MODEL",
+    "TEAMCRAFT_ASSISTANT_MAX_STEPS",
+    "TEAMCRAFT_ASSISTANT_MAX_TOKENS",
+    "TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT",
+    "TEAMCRAFT_ASSISTANT_RUN_TIMEOUT",
+    "TEAMCRAFT_ASSISTANT_MAX_CONCURRENT",
+    "TEAMCRAFT_ASSISTANT_RETENTION_DAYS",
+    "TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS",
+    "TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE",
+    "TEAMCRAFT_WEBHOOK_RETENTION_DAYS",
+];
+
+/// `TEAMCRAFT_*` names that are not configuration of the server and so no
+/// reason for a warning: the configuration file itself (read before the
+/// rest), the build of the packages, the `teamcraft mcp` bridge, the tests
+/// and scripts, and the `.env` of the Docker install (`deploy/`).
+pub const OTHER_VARIABLES: &[&str] = &[
+    "TEAMCRAFT_ENV_FILE",
+    "TEAMCRAFT_SYSTEM_CONFIG",
+    "TEAMCRAFT_SERVER",
+    "TEAMCRAFT_TOKEN",
+    "TEAMCRAFT_TEST_DATABASE_URL",
+    "TEAMCRAFT_REQUIRE_DB_TESTS",
+    "TEAMCRAFT_REQUIRE_PG_TOOLS",
+    "TEAMCRAFT_WRITE_SIM_FIXTURES",
+    "TEAMCRAFT_SCALE_DB",
+    "TEAMCRAFT_SCALE_RUNS",
+    "TEAMCRAFT_SCALE_BASELINE",
+    "TEAMCRAFT_SCALE_REPORT_DIR",
+    "TEAMCRAFT_VERSION",
+    "TEAMCRAFT_BIND",
+];
+
+/// Settings that only act together with another one: (setting, the
+/// variable it needs).
+const DEPENDS_ON: &[(&str, &str)] = &[
+    ("TEAMCRAFT_MAIL_FROM", "TEAMCRAFT_SMTP_URL"),
+    ("TEAMCRAFT_REQUEST_DIGEST_HOURS", "TEAMCRAFT_SMTP_URL"),
+    (
+        "TEAMCRAFT_MATTERMOST_DIRECT",
+        "TEAMCRAFT_MATTERMOST_WEBHOOK",
+    ),
+    (
+        "TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME",
+        "TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD",
+    ),
+    ("TEAMCRAFT_OIDC_CLIENT_ID", "TEAMCRAFT_OIDC_ISSUER_URL"),
+    ("TEAMCRAFT_OIDC_CLIENT_SECRET", "TEAMCRAFT_OIDC_ISSUER_URL"),
+    ("TEAMCRAFT_OIDC_SCOPES", "TEAMCRAFT_OIDC_ISSUER_URL"),
+    ("TEAMCRAFT_OIDC_DISPLAY_NAME", "TEAMCRAFT_OIDC_ISSUER_URL"),
+    ("TEAMCRAFT_OIDC_GROUPS_CLAIM", "TEAMCRAFT_OIDC_ISSUER_URL"),
+    ("TEAMCRAFT_OIDC_USERNAME_CLAIM", "TEAMCRAFT_OIDC_ISSUER_URL"),
+    ("TEAMCRAFT_OIDC_ADMIN_GROUP", "TEAMCRAFT_OIDC_ISSUER_URL"),
+    ("TEAMCRAFT_OIDC_EDITOR_GROUP", "TEAMCRAFT_OIDC_ISSUER_URL"),
+    ("TEAMCRAFT_OIDC_VIEWER_GROUP", "TEAMCRAFT_OIDC_ISSUER_URL"),
+];
+
+/// The parts of the database connection that a database URL replaces.
+const DB_PARTS: &[&str] = &[
+    "TEAMCRAFT_DB_HOST",
+    "TEAMCRAFT_DB_PORT",
+    "TEAMCRAFT_DB_NAME",
+    "TEAMCRAFT_DB_USER",
+    "TEAMCRAFT_DB_PASSWORD",
+    "TEAMCRAFT_DB_SSLMODE",
+];
+
+/// Edit distance (insertions, deletions, substitutions) of two names.
+fn distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut next = Vec::with_capacity(row.len());
+        next.push(i + 1);
+        for ((&cb, &diagonal), &above) in b.iter().zip(&row).zip(row.iter().skip(1)) {
+            let left = next.last().copied().unwrap_or(usize::MAX);
+            let substitute = diagonal + usize::from(ca != cb);
+            next.push(substitute.min(above + 1).min(left + 1));
+        }
+        row = next;
+    }
+    row.last().copied().unwrap_or(0)
+}
+
+/// The known name closest to `name`, if it is close enough to be a typo.
+fn did_you_mean(name: &str) -> Option<String> {
+    let (base, file) = match name.strip_suffix("_FILE") {
+        Some(base) => (base, "_FILE"),
+        None => (name, ""),
+    };
+    let (best, d) = VARIABLES
+        .iter()
+        .chain(if file.is_empty() {
+            OTHER_VARIABLES
+        } else {
+            &[]
+        })
+        .map(|known| (*known, distance(base, known)))
+        .min_by_key(|(_, d)| *d)?;
+    // two edits for long names, one for short ones
+    let allowed = if best.len() >= 16 { 2 } else { 1 };
+    (d <= allowed).then(|| format!("{best}{file}"))
+}
+
+/// Warnings about the environment at start-up (`vars`: every name and
+/// value): `TEAMCRAFT_*` names the server does not know (with the known name
+/// they are probably a typo of), a variable set together with its `_FILE`
+/// form (the file wins), and settings that have no effect without another
+/// one. An empty value counts as not set, like everywhere in this module.
+pub fn environment_warnings(vars: &[(String, String)]) -> Vec<String> {
+    let set = |name: &str| {
+        vars.iter()
+            .any(|(n, v)| (n == name || *n == format!("{name}_FILE")) && !v.trim().is_empty())
+    };
+    let mut warnings = Vec::new();
+    for (name, _) in vars {
+        let known = VARIABLES.contains(&name.as_str())
+            || OTHER_VARIABLES.contains(&name.as_str())
+            || name
+                .strip_suffix("_FILE")
+                .is_some_and(|base| VARIABLES.contains(&base));
+        if known {
+            continue;
+        }
+        let ours = name.starts_with("TEAMCRAFT_");
+        // a name of another program is only flagged when it is a typo of a
+        // TEAMCRAFT_ name (TEAMCRAF_PUBLIC_URL), not of DATABASE_URL
+        let suggestion = did_you_mean(name).filter(|s| ours || s.starts_with("TEAMCRAFT_"));
+        match (ours, suggestion) {
+            (_, Some(s)) => warnings.push(format!(
+                "{name} is not a TeamCraft setting and is ignored – did you mean {s}?"
+            )),
+            (true, None) => warnings.push(format!(
+                "{name} is not a TeamCraft setting and is ignored (see the configuration reference)"
+            )),
+            (false, None) => {}
+        }
+    }
+    for name in VARIABLES {
+        let file = format!("{name}_FILE");
+        let value = |n: &str| vars.iter().any(|(k, v)| k == n && !v.trim().is_empty());
+        if value(name) && value(&file) {
+            warnings.push(format!(
+                "{name} and {file} are both set – the value is read from {file}"
+            ));
+        }
+    }
+    for (setting, needs) in DEPENDS_ON {
+        if set(setting) && !set(needs) {
+            warnings.push(format!("{setting} has no effect without {needs}"));
+        }
+    }
+    if set("TEAMCRAFT_DATABASE_URL") || set("DATABASE_URL") {
+        for part in DB_PARTS.iter().filter(|p| set(p)) {
+            warnings.push(format!(
+                "{part} has no effect: the database URL (TEAMCRAFT_DATABASE_URL) is used"
+            ));
+        }
+    }
+    warnings
+}
+
+/// Checks an `http://` or `https://` URL with a host (the error names `name`).
+fn http_url(name: &str, value: &str) -> Result<()> {
+    let parsed = reqwest::Url::parse(value.trim())
+        .map_err(|e| anyhow!("{name} is not a valid URL ('{value}'): {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        bail!("{name} must be an http:// or https:// URL with a host, got '{value}'");
+    }
+    Ok(())
+}
+
 /// Loads [`LOCAL_ENV_FILE`] into the process environment if it exists.
 /// Variables that are already set take precedence. Returns whether a file was loaded.
 pub fn load_local_env_file() -> std::result::Result<bool, dotenvy::Error> {
@@ -526,6 +748,7 @@ impl Config {
         if !(public_url.starts_with("http://") || public_url.starts_with("https://")) {
             bail!("TEAMCRAFT_PUBLIC_URL must start with http:// or https://");
         }
+        http_url("TEAMCRAFT_PUBLIC_URL", &public_url)?;
 
         let instance_name = env
             .get("TEAMCRAFT_INSTANCE_NAME")?
@@ -542,6 +765,13 @@ impl Config {
             env.get("TEAMCRAFT_VAULT_DIR")?
                 .unwrap_or_else(|| "./data/vault".to_string()),
         );
+        // created on start when missing; a file in its place is a mistake
+        if vault_dir.exists() && !vault_dir.is_dir() {
+            bail!(
+                "TEAMCRAFT_VAULT_DIR must be a directory, but {} is a file",
+                vault_dir.display()
+            );
+        }
         let max_upload_mb = env.parse_or("TEAMCRAFT_MAX_UPLOAD_MB", 512u64)?;
         if max_upload_mb == 0 {
             bail!("TEAMCRAFT_MAX_UPLOAD_MB must be at least 1");
@@ -621,6 +851,7 @@ impl Config {
             if !(url.starts_with("https://") || url.starts_with("http://")) {
                 bail!("MATTERMOST_ERROR_WEBHOOK must be an http(s) URL");
             }
+            http_url("MATTERMOST_ERROR_WEBHOOK", url)?;
         }
 
         let smtp = match env.get("TEAMCRAFT_SMTP_URL")? {
@@ -647,6 +878,7 @@ impl Config {
                 if !(webhook.starts_with("https://") || webhook.starts_with("http://")) {
                     bail!("TEAMCRAFT_MATTERMOST_WEBHOOK must be an http(s) URL");
                 }
+                http_url("TEAMCRAFT_MATTERMOST_WEBHOOK", &webhook)?;
                 let direct = match env.get("TEAMCRAFT_MATTERMOST_DIRECT")? {
                     Some(v) => parse_bool(&v)
                         .context("TEAMCRAFT_MATTERMOST_DIRECT must be true or false")?,
@@ -745,6 +977,7 @@ fn oidc_config<F: Fn(&str) -> Option<String>>(env: &Env<F>) -> Result<Option<Oid
     if !(issuer_url.starts_with("https://") || issuer_url.starts_with("http://")) {
         bail!("TEAMCRAFT_OIDC_ISSUER_URL must be an http(s) URL");
     }
+    http_url("TEAMCRAFT_OIDC_ISSUER_URL", &issuer_url)?;
     let client_id = env
         .get("TEAMCRAFT_OIDC_CLIENT_ID")?
         .context("TEAMCRAFT_OIDC_CLIENT_ID is required when OIDC is enabled")?;
@@ -848,12 +1081,20 @@ fn database_options<F: Fn(&str) -> Option<String>>(
     env: &Env<F>,
 ) -> Result<(PgConnectOptions, String, Option<String>)> {
     let url = match env.get("TEAMCRAFT_DATABASE_URL")? {
-        Some(url) => Some(url),
-        None => env.get("DATABASE_URL")?,
+        Some(url) => Some(("TEAMCRAFT_DATABASE_URL", url)),
+        None => env.get("DATABASE_URL")?.map(|url| ("DATABASE_URL", url)),
     };
-    if let Some(url) = url {
+    if let Some((name, url)) = url {
+        // sqlx does not look at the scheme: mysql://… would pass until connecting
+        let scheme = url
+            .trim()
+            .split_once("://")
+            .map(|(s, _)| s.to_ascii_lowercase());
+        if !matches!(scheme.as_deref(), Some("postgres" | "postgresql")) {
+            bail!("{name} is not a valid postgres:// URL: it must start with postgres:// or postgresql://");
+        }
         let options = PgConnectOptions::from_str(&url)
-            .context("TEAMCRAFT_DATABASE_URL is not a valid postgres:// URL")?
+            .with_context(|| format!("{name} is not a valid postgres:// URL"))?
             .application_name("teamcraft");
         let display = format!(
             "{}:{}/{} (from URL)",
@@ -1543,6 +1784,272 @@ mod tests {
                 .is_err(),
                 "{key}={value}"
             );
+        }
+    }
+
+    fn vars(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn unknown_variables_are_warned_about_with_the_likely_name() {
+        let w = environment_warnings(&vars(&[
+            ("TEAMCRAFT_DATABSE_URL", "postgres://x"),
+            ("TEAMCRAFT_DB_PASWORD_FILE", "/run/secrets/db"),
+            ("TEAMCRAF_PUBLIC_URL", "https://plm.example.org"),
+            ("TEAMCRAFT_FROBNICATE", "1"),
+        ]));
+        let has =
+            |start: &str, part: &str| w.iter().any(|m| m.starts_with(start) && m.contains(part));
+        assert!(
+            has(
+                "TEAMCRAFT_DATABSE_URL",
+                "did you mean TEAMCRAFT_DATABASE_URL?"
+            ),
+            "{w:#?}"
+        );
+        assert!(
+            has(
+                "TEAMCRAFT_DB_PASWORD_FILE",
+                "did you mean TEAMCRAFT_DB_PASSWORD_FILE?"
+            ),
+            "{w:#?}"
+        );
+        assert!(
+            has("TEAMCRAF_PUBLIC_URL", "did you mean TEAMCRAFT_PUBLIC_URL?"),
+            "{w:#?}"
+        );
+        assert!(has("TEAMCRAFT_FROBNICATE", "is ignored (see"), "{w:#?}");
+        assert_eq!(w.len(), 4, "{w:#?}");
+    }
+
+    #[test]
+    fn known_and_foreign_variables_are_quiet() {
+        let w = environment_warnings(&vars(&[
+            (
+                "TEAMCRAFT_DATABASE_URL",
+                "postgres://teamcraft@localhost/teamcraft",
+            ),
+            ("TEAMCRAFT_DB_PASSWORD_FILE", ""),
+            ("TEAMCRAFT_OIDC_ISSUER_URL", "https://id.example.org"),
+            ("TEAMCRAFT_OIDC_CLIENT_SECRET_FILE", "/run/secrets/oidc"),
+            ("TEAMCRAFT_SMTP_URL", "smtp://mail.example.org:587"),
+            ("TEAMCRAFT_MAIL_FROM", "TeamCraft <teamcraft@example.org>"),
+            ("TEAMCRAFT_TEST_DATABASE_URL", "postgres://x"),
+            ("TEAMCRAFT_ENV_FILE", "/etc/teamcraft.env"),
+            ("TEAMCRAFT_BIND", "0.0.0.0:8080"),
+            ("PATH", "/usr/bin"),
+            // another program's variable, close to DATABASE_URL: not ours
+            ("DATABASE_URI", "x"),
+            ("RUST_LOG", "info"),
+        ]));
+        assert!(w.is_empty(), "{w:#?}");
+    }
+
+    #[test]
+    fn values_set_twice_and_settings_without_effect_are_warned_about() {
+        let w = environment_warnings(&vars(&[
+            ("TEAMCRAFT_DB_PASSWORD", "secret"),
+            ("TEAMCRAFT_DB_PASSWORD_FILE", "/run/secrets/db"),
+            (
+                "TEAMCRAFT_DATABASE_URL",
+                "postgres://teamcraft@db/teamcraft",
+            ),
+            ("TEAMCRAFT_MAIL_FROM", "TeamCraft <teamcraft@example.org>"),
+            ("TEAMCRAFT_OIDC_CLIENT_ID", "teamcraft"),
+            // empty = not set: no warning
+            ("TEAMCRAFT_MATTERMOST_DIRECT", " "),
+        ]));
+        let has = |part: &str| w.iter().any(|m| m.contains(part));
+        assert!(
+            has("TEAMCRAFT_DB_PASSWORD and TEAMCRAFT_DB_PASSWORD_FILE are both set"),
+            "{w:#?}"
+        );
+        assert!(
+            has("TEAMCRAFT_DB_PASSWORD has no effect: the database URL"),
+            "{w:#?}"
+        );
+        assert!(
+            has("TEAMCRAFT_MAIL_FROM has no effect without TEAMCRAFT_SMTP_URL"),
+            "{w:#?}"
+        );
+        assert!(
+            has("TEAMCRAFT_OIDC_CLIENT_ID has no effect without TEAMCRAFT_OIDC_ISSUER_URL"),
+            "{w:#?}"
+        );
+        assert_eq!(w.len(), 4, "{w:#?}");
+    }
+
+    #[test]
+    fn typo_suggestions() {
+        assert_eq!(distance("abc", "abc"), 0);
+        assert_eq!(distance("kitten", "sitting"), 3);
+        assert_eq!(distance("", "ab"), 2);
+        assert_eq!(
+            did_you_mean("TEAMCRAFT_PUBLIC_URLS").as_deref(),
+            Some("TEAMCRAFT_PUBLIC_URL")
+        );
+        assert_eq!(
+            did_you_mean("TEAMCRAFT_SMTP_URL_FILE").as_deref(),
+            Some("TEAMCRAFT_SMTP_URL_FILE"),
+            "a known name is its own nearest"
+        );
+        assert_eq!(did_you_mean("TEAMCRAFT_X"), None);
+        assert_eq!(did_you_mean("HOME"), None);
+    }
+
+    /// A variable, its invalid value, and other variables it needs.
+    type Case<'a> = (&'a str, &'a str, &'a [(&'a str, &'a str)]);
+
+    #[test]
+    fn invalid_values_are_errors_that_name_the_variable() {
+        let cases: &[Case] = &[
+            ("TEAMCRAFT_PUBLIC_URL", "https://", &[]),
+            ("TEAMCRAFT_PUBLIC_URL", "https://exa mple.org", &[]),
+            ("TEAMCRAFT_PUBLIC_URL", "ftp://plm.example.org", &[]),
+            ("TEAMCRAFT_MATTERMOST_WEBHOOK", "http://", &[]),
+            ("MATTERMOST_ERROR_WEBHOOK", "https://", &[]),
+            (
+                "TEAMCRAFT_OIDC_ISSUER_URL",
+                "https://",
+                &[
+                    ("TEAMCRAFT_OIDC_CLIENT_ID", "tc"),
+                    ("TEAMCRAFT_OIDC_CLIENT_SECRET", "s"),
+                ],
+            ),
+            ("DATABASE_URL", "mysql://x", &[]),
+            ("TEAMCRAFT_DB_PORT", "eighty", &[]),
+            ("TEAMCRAFT_COOKIE_SECURE", "maybe", &[]),
+            ("TEAMCRAFT_UPLOAD_CHUNK_MB", "0", &[]),
+            ("TEAMCRAFT_LOG_FORMAT", "xml", &[]),
+            ("TEAMCRAFT_REQUEST_DIGEST_HOURS", "-1", &[]),
+        ];
+        for (name, value, extra) in cases {
+            let mut pairs = vec![("TEAMCRAFT_DB_PASSWORD", "x"), (*name, *value)];
+            pairs.extend_from_slice(extra);
+            let err = match config_from(&pairs) {
+                Ok(_) => panic!("{name}={value} was accepted"),
+                Err(e) => format!("{e:#}"),
+            };
+            assert!(err.contains(name), "{name}={value}: {err}");
+        }
+        // DATABASE_URL is named as itself, not as TEAMCRAFT_DATABASE_URL
+        let err = format!(
+            "{:#}",
+            config_from(&[("DATABASE_URL", "mysql://x")]).err().unwrap()
+        );
+        assert!(err.starts_with("DATABASE_URL is not"), "{err}");
+    }
+
+    #[test]
+    fn valid_urls_are_kept_as_they_were() {
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            (
+                "TEAMCRAFT_PUBLIC_URL",
+                "https://plm.example.org:8443/teamcraft/",
+            ),
+            (
+                "TEAMCRAFT_MATTERMOST_WEBHOOK",
+                "https://chat.example.org/hooks/abc",
+            ),
+            (
+                "MATTERMOST_ERROR_WEBHOOK",
+                "http://localhost:8065/hooks/def",
+            ),
+        ])
+        .unwrap();
+        assert_eq!(cfg.public_url, "https://plm.example.org:8443/teamcraft");
+        assert!(cfg.mattermost.is_some() && cfg.mattermost_error_webhook.is_some());
+    }
+
+    #[test]
+    fn a_file_as_vault_dir_is_refused() {
+        let file =
+            std::env::temp_dir().join(format!("teamcraft-vault-file-{}", std::process::id()));
+        std::fs::write(&file, b"not a directory").unwrap();
+        let err = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_VAULT_DIR", file.to_str().unwrap()),
+        ])
+        .err()
+        .map(|e| format!("{e:#}"));
+        std::fs::remove_file(&file).ok();
+        assert!(
+            err.as_deref()
+                .is_some_and(|e| e.contains("TEAMCRAFT_VAULT_DIR must be a directory")),
+            "{err:?}"
+        );
+    }
+
+    /// The names in quotes in the source outside tests (`"TEAMCRAFT_…"`,
+    /// `"MATTERMOST_…"`, `"DATABASE_URL"`), with how often each occurs.
+    fn names_in_the_source() -> HashMap<String, usize> {
+        fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path, out);
+                } else if path.extension().is_some_and(|e| e == "rs")
+                    && path.file_name().is_some_and(|n| n != "tests.rs")
+                {
+                    out.push(path);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        walk(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut files,
+        );
+        let mut names = HashMap::new();
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            for (i, quoted) in code.split('"').enumerate() {
+                let name_like = !quoted.is_empty()
+                    && quoted
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+                let ours = quoted.starts_with("TEAMCRAFT_")
+                    || quoted.starts_with("MATTERMOST_")
+                    || quoted == "DATABASE_URL";
+                // odd pieces are inside quotes
+                if i % 2 == 1 && name_like && ours && !quoted.ends_with('_') {
+                    *names.entry(quoted.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+        names
+    }
+
+    #[test]
+    fn the_list_of_variables_is_the_code() {
+        let names = names_in_the_source();
+        assert!(names.len() > 40, "{names:?}");
+        let listed = |n: &str| VARIABLES.contains(&n) || OTHER_VARIABLES.contains(&n);
+        let missing: Vec<&String> = names.keys().filter(|n| !listed(n)).collect();
+        assert!(
+            missing.is_empty(),
+            "add these to config::VARIABLES (and docs/src/admin/configuration.md): {missing:?}"
+        );
+        // every listed setting is also read somewhere (not only listed)
+        let unread: Vec<&&str> = VARIABLES
+            .iter()
+            .filter(|v| names.get(**v).copied().unwrap_or(0) < 2)
+            .collect();
+        assert!(unread.is_empty(), "listed but never read: {unread:?}");
+        let mut unique = VARIABLES.to_vec();
+        unique.extend_from_slice(OTHER_VARIABLES);
+        let before = unique.len();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), before, "a name is listed twice");
+        for (setting, needs) in DEPENDS_ON {
+            assert!(VARIABLES.contains(setting) && VARIABLES.contains(needs));
         }
     }
 }
