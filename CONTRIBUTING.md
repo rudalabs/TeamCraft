@@ -216,6 +216,13 @@ code base. These are the most important rules:
   a new kind of path parameter needs a placeholder rule in its `fill()`.
 * **SQL** uses runtime queries (`sqlx::query_as::<_, T>` with `FromRow`), not
   the `query!` macros, so building needs no database.
+* **Architecture guards** (`tests/architecture_guards.rs`, no database) read
+  the sources and fail when a rule is broken: `sqlx` in `src/web`, `src/api`
+  or `src/mcp`; a public service function that writes without an audit entry
+  (itself or through the services it calls – personal data, caches and
+  housekeeping go on its `NOT_AUDITED` list with a reason); a template that
+  is not in `TEMPLATES` or not rendered by `every_template_renders`; a
+  `TEAMCRAFT_*` variable missing from `docs/src/admin/configuration.md`.
 * **Multi-row mutations** run in one transaction. `tests/atomic_processes.rs`
   shows how to prove it: `inject` puts a trigger on a table that makes one
   step fail (an error or a lost connection), and the `snapshot` before and

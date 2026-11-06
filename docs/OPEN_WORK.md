@@ -129,28 +129,37 @@ structure should not prevent translations later). They may land in 1.x minor rel
 The feature list is covered broadly since #65 (and #67); the weak spots are the processes that must never leave
 half a state behind. Prefer tests that fail on a real regression over tests that restate the code.
 
-- [ ] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): the dry-run plan equals what the
-  import writes (property test over generated tables), an error in row *n* rolls back rows 1…*n*-1, re-import of the
-  same table is idempotent (no duplicate items or BOM lines), cycles and self-references refused, quantity/unit
-  parsing edge cases (decimal comma, `1.1.2` positions with gaps, empty levels), malformed STEP (truncated, unknown
-  entities, `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`) never panics (fuzz-style corpus); desktop folder import resumes
-  after an interrupted run without duplicates
-- [ ] **Atomic processes** – the folder import per item is still open (with the import proofing); the rest is done,
-  see *Done*
+- [x] **Import** – BOM import (`services::imports`, `bomtable.rs`, `stepbom.rs`): dry-run plan = import over generated
+  tables, rollback, idempotent re-import, cycles, quantity/unit/position edge cases, malformed STEP
+  (`tests/import_proofing.rs`, `tests/import_atomicity.rs`); desktop folder import per item and resumed after an
+  interruption (`tests/folder_import.rs`, the requests of `desktop/ui/app.js` against the server): an item whose
+  files did not arrive is completed by the next run instead of being skipped for good (fixed), none is created
+  twice. Open: an item whose *creation* answer was lost (network gone between the server's commit and the app's
+  log) is created again on the next run – that needs an idempotency key for `POST /items`
+- [x] **Atomic processes** – the folder import per item is covered too (see *Import*); the rest is done, see *Done*
 - [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
   make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
   with two failing integration tests; merge only with green checks
 
 **Parsers and CI gates**
 
-- [ ] Fuzz targets (`cargo fuzz`, own `fuzz/` crate outside the server build) for every reader of untrusted files:
+- [x] Fuzz targets (`cargo fuzz`, own `fuzz/` crate outside the server build) for every reader of untrusted files:
   `mesh` (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, point clouds), `simmesh` (VTK, VTU/VTP, FRD), `stepbom`, `swpart`,
-  `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex`; crashes found become regression unit tests with the
-  minimised input; a short fuzz run per parser in a scheduled CI job
-- [ ] No `unwrap`/`expect`/indexing panics on file input outside tests: audit `swpart`, `mesh`, `simmesh`, `config`,
-  then enable `clippy::unwrap_used`/`expect_used` for the parser modules
+  `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex` – entry points in `src/fuzz_harness.rs`, the stable corpus
+  test `tests/parser_corpus.rs` and the weekly *Fuzzing* workflow (`fuzz.yml`), merged with #94; crashes become
+  regression unit tests with the minimised input ([docs](src/dev/fuzzing.md)) – open: watch the first scheduled runs
+- [x] No `unwrap`/`expect`/indexing panics on file input outside tests: every reader of untrusted files – `swpart`,
+  `mesh` (with `mesh::step`, `p21`, `tessellated`), `simmesh`, `stepbom`, `nxpart`, `thumbnail`, `cadrefs`,
+  `bomtable`, `textindex`, `resultscan` – and `config` deny `clippy::unwrap_used`, `expect_used`, `indexing_slicing`,
+  `panic` and `unreachable` (`#![deny]` in each module; `clippy.toml` allows them in tests); reads go through bounded
+  helpers (`mesh::bytes_at`, `u32_le`, `range`, …) or `get`/slice patterns, also for `&str` cuts the lint does not
+  see; one reviewed `#[allow]` (`mesh::compose`, fixed arrays). **Two bugs found and fixed**: a 3DS vertex or face
+  list chunk of the minimum length at the end of the file read its count past the last byte (now skipped, test
+  `three_ds_list_chunks_without_their_count`); the reference scan cut a name inside a character when the extension
+  held a letter whose lower case is ASCII (the Kelvin sign `K` → `k`, test
+  `a_non_ascii_letter_in_the_extension_does_not_panic`)
 - [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
-- [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*, report only: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) – open: a floor that may not drop, once the numbers of a few PRs are known
+- [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
 - [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
 - [ ] Branch protection on `main`: required checks (fmt/clippy, tests on PostgreSQL 16 and 18, builds, docs links)
 
@@ -160,18 +169,17 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   one file per area like `services/`), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
   skins,validation}.rs`) – domain done (`src/domain/*.rs`, re-exported), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`) – api done (`src/api/*_api.rs`, route table stays in `mod.rs`),
   `src/services/requests.rs` (~1900), `desktop/ui/app.js` (~4700 → ES modules per view, no bundler)
-- [ ] Guard tests for the architecture rules, like `tests/no_unchecked_in_handlers.rs`: no `sqlx` in `src/web`,
-  `src/api`, `src/mcp` (holds today – keep it that way); every mutation in `services::*` writes an audit entry (list
-  of audit actions checked against the mutating functions); every template in `TEMPLATES` and in
-  `every_template_renders`; every config variable in `docs/src/admin/configuration.md`
 - [ ] One request/response contract for web, REST and MCP where they do the same thing (e.g. BOM, where-used,
   change requests): shared view structs in `services::*` instead of three hand-built JSON/HTML shapes
 - [ ] Typed ids (`ItemId`, `RevisionId`, `ChangeId`, … as newtypes over `Uuid`) at the service boundary, so that ids
   cannot be swapped – start with the services that take several ids
 - [ ] Document the invariants per service function (permission check, rows locked, audit action, notifications and
-  webhooks emitted) in its doc comment; `cargo doc` then is the reference for reviewers
-- [ ] Architecture decision records in `docs/src/dev/` for the decisions that keep coming back: access model (deny
-  list on the actor, 404 for hidden), outbox for notifications and webhooks, content-addressed vault, no Node.js
+  webhooks emitted) in its doc comment; `cargo doc` then is the reference for reviewers – started with an
+  `# Invariants` section on `files::check_in`, `changes::review`, `interchange::replace`, `save_as::save_as`,
+  `uploads::finish` and `projects::set_visibility`; the other mutating functions follow
+- [x] Architecture decision records in `docs/src/dev/adr/`: access model (deny list on the actor, 404 for hidden),
+  outbox for notifications and webhooks, content-addressed vault, no Node.js – each with context, decision,
+  consequences, alternatives (or "not documented") and the code and tests that hold it
 
 ### 3. Fixes and verification
 
@@ -185,9 +193,11 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 
 - [ ] Solid Edge test files: none openly licensed found – create a part, a sheet metal part and an assembly with Solid
   Edge (Community Edition) and publish them under CC0
-- [ ] End-to-end test against the server with the fixtures: folder import of `tests/fixtures/cad/nist/mtc-assembly/nx`
-  and `…/solidworks` → items, files, references, BOM lines, check-ins, preview images, STEP preview (so far only the
-  request order of the import is tested, in `tests/concurrency.rs`)
+- [x] End-to-end test against the server with the fixtures: folder import of `tests/fixtures/cad/nist/mtc-assembly/nx`
+  and `…/solidworks` → items, files and their folder, references, BOM lines, check-ins (`tests/folder_import.rs`);
+  found and fixed: an NX folder got no BOM lines (NX assemblies are `.prt` files of the kind "model"); an NX
+  assembly is still imported as an item of type part
+- [ ] The same fixtures: preview images and the STEP preview of the imported files
 - [ ] One real project with hundreds of files each from Inventor, Solid Edge, SOLIDWORKS and NX: folder import, preview
   images, STEP export, BOMs – including the heuristics (CAD reference scan, BOM table columns, embedded previews)
 
@@ -232,7 +242,6 @@ real files and belong to section 3 once such files are at hand.
   desktop app
 - [ ] Numbering schemes: a separate scheme per item type within a group, an instance-wide default other than
   `{TYPE}-{SEQ:6}` (feature 4)
-- [ ] Change requests: e-mail digest of new requests per project group
 - [ ] Jira connector for change requests and change orders, one-way first (TeamCraft → Jira) – design and order of
   work in [docs/src/research/jira-connector.md](src/research/jira-connector.md)
 
@@ -242,9 +251,8 @@ real files and belong to section 3 once such files are at hand.
   read yet: complex instances, the quantities of `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE`; the geometry of the parts is
   not split into the new items, a STEP file imported *into* a checked-out revision is not attached to it (see *3c*)
 - [ ] CSV/Excel BOM import: test the column recognition with real exports (per CAD program below, also Fusion and
-  Creo); CATIA V5 *Bill of Material* text exports are not understood (see *3b*)
-- [ ] BOM import: map further columns (Inventor *BOM Structure = Purchased*, vendor …) to the classification and to
-  custom attributes (feature 5, second part; `bomtable` has to keep unmapped columns first)
+  Creo); CATIA V5 *Bill of Material* text exports are not understood (see *3b*); this includes the *BOM structure*
+  values and the attribute columns read since feature 5
 
 **3D preview**
 
@@ -324,6 +332,20 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
+- [x] **BOM tree view** for large structures (web UI only): lines with children fold and unfold (progressive
+  enhancement in `static/app.js`, all expanded without JavaScript), `?depth=n` shows the first n levels (a line at the
+  cut counts what is hidden below it), a *Group* column links each line's project group (restricted placeholders show
+  none), `?group=CODE` keeps the lines of a group with the path to them; roll-ups and totals always cover the whole
+  structure, CSV/Excel exports stay complete. Pure `bom::view_rows` with unit tests, `tests/bom_tree_view.rs`.
+  Not done: the desktop app's structure tab (own renderer in `desktop/ui/app.js`) has none of this yet
+- [x] CI gate for the API reference: the `fmt and clippy` job also runs `cargo doc --no-deps` with
+  `RUSTDOCFLAGS=-D warnings`; the 8 broken or private intra-doc links it found are fixed (doc comments only)
+- [x] Guard tests for the architecture rules (`tests/architecture_guards.rs`, no database, walk directories so module
+  splits do not break them): no `sqlx` in `src/web`, `src/api`, `src/mcp`; every public service function that
+  writes (itself or through the services it calls) records an audit entry, exceptions listed with a reason
+  (`NOT_AUDITED`: personal data, caches, sessions, staging, housekeeping); every template in `TEMPLATES` and rendered by
+  `every_template_renders`; every `TEAMCRAFT_*` variable in `docs/src/admin/configuration.md` (found: `TEAMCRAFT_ENV_FILE`
+  and the build-time `TEAMCRAFT_SYSTEM_CONFIG` were undocumented). A mutation check per rule made each guard fail once.
 - [x] **Backup / restore** proofed (`tests/backup_proofing.rs`, `tests/backup_errors.rs`): a corrupt or missing vault
   object refuses the backup and nothing is left (two fixes: the backup now checks every object against its name and
   every content the database refers to, and a failed backup removes what it wrote; the manifest is renamed into
@@ -389,6 +411,9 @@ real files and belong to section 3 once such files are at hand.
 - [x] Configurable numbering schemes per project group with preview (feature 4)
 - [x] Custom attributes per item type (text, number, yes/no, choice list; versioned per revision), classification
   in-house/purchased/standard part, attribute search in the item list, REST API, saved searches and MCP (feature 5)
+- [x] BOM import fills the classification (*BOM structure* / procurement column: Purchased, Kaufteil, Content Center …)
+  and custom attributes (columns named like an attribute) of new items; values that do not fit are skipped with a
+  warning (feature 5, second part)
 - [x] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts and multi-level where-used in API, MCP
   and web UI (feature 6) – alternates (two-way or one-way) and supersession per item, *Replace in assemblies* from the
   where-used page with a preview (in-work parents changed, released ones listed for a new revision), migration 0030
@@ -400,6 +425,10 @@ real files and belong to section 3 once such files are at hand.
   2026-11-05)
 - [x] Engineering change requests before the change order (web, API, desktop, attachments, triage, *Create change
   order*); MCP tools `create_change_request`, `comment_change_request` and the `triage_requests` prompt
+- [x] Change requests: e-mail digest of the new requests waiting for triage per project group – to its CAD editors
+  every `TEAMCRAFT_REQUEST_DIGEST_HOURS` (default 24), muted per user like every kind (`request_digest`), only when
+  something new came in, no second digest of a period after a restart (`request_digests`, migration 0035), checked
+  again at sending time (restricted groups); tested in `tests/request_digests.rs` with a recording mailer
 - [x] Simulation management v1 (item type `simulation`, basis links, out-of-date detection, result values, import,
   comparison, result file formats) and the 3D preview of VTK and CalculiX results (#43)
 - [x] Chunked resumable uploads in the API and the desktop app (feature 9, part)
@@ -485,8 +514,11 @@ Documented in the UI, keep in mind:
    (JSONB; versioned, copied by revise and *Save as*, part of the full-text search), the classification
    in-house/purchased/standard part as item master data (`items.classification`), filters `class`, `attr` + `value`
    (text contains, yes/no, `12`, `>=10`, `10..20`) in the item list, the REST API, saved searches and the MCP search.
-   Open: attributes per file type; the BOM import mapping further columns (e.g. Inventor *BOM Structure =
-   Purchased*, vendor) to the classification and attributes – `bomtable` drops unknown columns today.
+   The BOM import fills both for new items: the *BOM structure* / procurement column (Normal, Purchased,
+   Phantom, Kaufteil, Normteil, Content Center …) sets the classification, other columns whose header is the key
+   or label of an active attribute fill it (`bomtable` keeps unread columns in `extra_columns`); values that do
+   not fit are left out with a warning, existing items stay unchanged, the preview lists the attribute columns and
+   the columns that are not imported. Open: attributes per file type.
 6. **Item copy** ("Save as" with files and BOM), supersede/replace, alternate parts, multi-level where-used: done.
    Alternates (`item_alternates`, two-way by default) and supersession (`item_supersessions`, one successor, no
    circles) are item-level relations (`services::interchange`); *Replace in assemblies* on `/items/{id}/where-used`

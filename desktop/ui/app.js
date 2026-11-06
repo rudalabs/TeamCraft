@@ -1732,6 +1732,7 @@
       case "permission_done": donePermission(p.session + ":" + p.key); break;
       case "file_read": if (!p.ok) agentNote("Refused to read " + p.path + " (only the workspace folder is shared).", "warn"); break;
       case "notice": agentNote(p.text, "info"); break;
+      case "models": agent.running.models = p.models; schedulePaint(true); break;
       case "exited":
         agentNote(p.text, "error");
         endAgentPermissions();
@@ -1912,6 +1913,7 @@
       nav.appendChild(h("div.agent-nav", null, [
         h("div.row", null, [pick, start]),
         h("p.small", null, info),
+        agentModelPicker(),
         h("h3", { text: "Context" }),
         h("p.small", { text: agentContextLabel() || "None – open a revision or change order" }),
         h("h3", { text: "Quick prompts" }),
@@ -1920,6 +1922,44 @@
         h("h3", { text: "Tool calls" }), tools
       ]));
       nav.scrollTop = scroll;
+    });
+  }
+
+  /** The models the running agent offers (its own list – the agent brings
+   * provider and sign-in); nothing when it offers no choice. */
+  function agentModelPicker() {
+    var running = agent.running;
+    var models = running && running.models;
+    if (!models || !models.options || !models.options.length) return null;
+    var current = models.current;
+    var options = models.options.map(function (o) {
+      return h("option", { value: o.id, selected: o.id === current, title: o.description || o.id }, o.name);
+    });
+    if (current && !models.options.some(function (o) { return o.id === current; })) {
+      options.unshift(h("option", { value: current, selected: true }, current));
+    }
+    var select = h("select", {
+      "aria-label": "Model",
+      disabled: agent.busy || agent.switchingModel || models.options.length < 2,
+      title: agent.busy ? "Wait until the agent has finished its answer" : "The agent's model – remembered for its next start",
+      on: { change: function () { setAgentModel(running.session, select.value); } }
+    }, options);
+    return h("div.agent-model", null, [h("label.small", null, ["Model ", select])]);
+  }
+
+  function setAgentModel(session, model) {
+    agent.switchingModel = true;
+    schedulePaint(true);
+    call("agent_set_model", { session: session, model: model }).then(function (models) {
+      agent.switchingModel = false;
+      if (agent.running && agent.running.session === session) agent.running.models = models;
+      var picked = models.options.filter(function (o) { return o.id === models.current; })[0];
+      agentNote("Model: " + (picked ? picked.name : models.current || model), "info");
+      schedulePaint(true);
+    }, function (err) {
+      agent.switchingModel = false;
+      toast(errorText(err), "error");
+      schedulePaint(true); // back to the model in use
     });
   }
 
@@ -4300,6 +4340,12 @@
     try { window.localStorage.setItem(importLogKey(project, folder), JSON.stringify(log)); }
     catch (e) { /* the import still works, it just cannot be continued */ }
   }
+  /** An entry of the import log: the item number (done) or
+   * `{ number, pending: true }` – created, but its files did not arrive yet;
+   * the next run checks it out again and completes it instead of skipping it. */
+  function loggedNumber(entry) { return typeof entry === "string" ? entry : entry && entry.number; }
+  function loggedPending(entry) { return !!(entry && typeof entry === "object" && entry.pending); }
+  function importDone(log, key) { return !!log[key] && !loggedPending(log[key]); }
 
   /** Earlier versions kept one log per folder, without the project group. Such
    * a log is moved to the group of the items it lists (asked for its first
@@ -4310,7 +4356,7 @@
     try { old = JSON.parse(window.localStorage.getItem(oldKey)); } catch (e) { /* unreadable: ignored */ }
     var keys = old ? Object.keys(old) : [];
     if (!keys.length) return Promise.resolve();
-    return api("GET", "/items/" + enc(old[keys[0]])).then(function (r) {
+    return api("GET", "/items/" + enc(loggedNumber(old[keys[0]]))).then(function (r) {
       var project = r.item && r.item.project_code;
       if (!project) return;
       var log = importLog(project, folder);
@@ -4323,10 +4369,14 @@
     }, function () { /* deleted or not visible: the old log stays unused */ });
   }
 
-  /** BOM lines for the parts the new assemblies reference (quantity 1). */
+  /** BOM lines for the parts the new items reference (quantity 1). Not only
+   * the items planned as assemblies: NX keeps parts and assemblies in the
+   * same `.prt` format (kind "model"), so an NX assembly is only recognised by
+   * the references the server found in its file. */
+  var REFERENCING_KINDS = ["assembly", "model"];
   function bomFromReferences(created, progress, failed) {
     var lines = 0;
-    var assemblies = created.filter(function (c) { return c.item.type === "assembly"; });
+    var assemblies = created.filter(function (c) { return c.item.type !== "document"; });
     return assemblies.reduce(function (chain, c, i) {
       return chain.then(function () {
         progress(i + 1, assemblies.length, "Structure of " + c.rev.item_number);
@@ -4334,7 +4384,7 @@
         return api("GET", base + "/references").then(function (refs) {
           var children = [];
           (refs.files || []).forEach(function (f) {
-            if (f.format_kind !== "assembly") return;
+            if (REFERENCING_KINDS.indexOf(f.format_kind) < 0) return;
             (f.references || []).forEach(function (r) {
               var m = (r.matches || []).filter(function (x) { return !x.same_revision; })[0];
               if (m && m.item_number !== c.rev.item_number && children.indexOf(m.item_number) < 0) children.push(m.item_number);
@@ -4368,7 +4418,7 @@
    * the check-out taken when the item was created (same timestamp) counts:
    * an item someone checked out again later to work on it keeps its lock. */
   function releaseImported(log, failed) {
-    var numbers = Object.keys(log).map(function (k) { return log[k]; });
+    var numbers = Object.keys(log).map(function (k) { return loggedNumber(log[k]); });
     if (!numbers.length) return Promise.resolve();
     return refreshWorklistCount().then(function (w) {
       var ids = w.checkouts.filter(function (r) {
@@ -4411,7 +4461,8 @@
     function showPlan() {
       plan = planImport(scanned, kinds, options());
       var log = importLog(project.value, scannedPath);
-      var open = plan.items.filter(function (it) { return !log[it.key]; });
+      var open = plan.items.filter(function (it) { return !importDone(log, it.key); });
+      var unfinished = open.filter(function (it) { return loggedPending(log[it.key]); }).length;
       report.textContent = "";
       append(report, [
         h("p", null, [h("strong", { text: plan.files + " files" }), " → " + plan.items.length + " items (" +
@@ -4419,6 +4470,7 @@
           plan.items.filter(function (it) { return it.type === "part"; }).length + " parts, " +
           plan.items.filter(function (it) { return it.type === "document"; }).length + " documents)" +
           (plan.items.length - open.length ? " – " + (plan.items.length - open.length) + " already imported, skipped" : "") +
+          (unfinished ? " – " + unfinished + " created before without all files, completed now" : "") +
           (plan.ignored ? " · " + plan.ignored + " lock/backup files left out" : "") +
           (plan.extras && !extras.checked ? " · " + plan.extras + " other files not imported" : "")]),
         plan.duplicates.length ? h("div.notice", null, [h("strong", { text: plan.duplicates.length + " duplicate file names – only the first file of each name is imported. Rename them in the CAD program (TeamCraft recognises CAD references by file name):" }),
@@ -4449,21 +4501,40 @@
       if (running) return;
       if (!plan) { d.fail("Scan the folder first."); return; }
       var path = scannedPath, group = project.value, log = importLog(group, path);
-      var todo = plan.items.filter(function (it) { return !log[it.key]; });
+      var todo = plan.items.filter(function (it) { return !importDone(log, it.key); });
       var created = [], failed = [], files = 0, checkedIn = 0;
       running = true; stop = false;
       todo.reduce(function (chain, it, i) {
         return chain.then(function () {
           if (stop) return;
           progress(i + 1, todo.length, "Item " + (i + 1) + " of " + todo.length + ": " + it.name);
-          return api("POST", "/items", { item_type: it.type, name: it.name, project: group, number: it.number }).then(function (rev) {
-            // remembered at once, so a second run never creates it twice
-            log[it.key] = rev.item_number; saveImportLog(group, path, log);
+          // An item an earlier run created without all its files: checked out
+          // again and completed (its revision A is still in work).
+          var pendingNumber = loggedPending(log[it.key]) ? loggedNumber(log[it.key]) : null;
+          var start = pendingNumber
+            ? api("POST", "/items/" + enc(pendingNumber) + "/revisions/A/checkout").catch(function (err) {
+                // checked out to me already (e.g. the earlier run stopped before its check-in)
+                return api("GET", "/items/" + enc(pendingNumber) + "/revisions/A").then(function (r) {
+                  var rev = r.revision || r;
+                  if (rev.checked_out_by === state.me.id) return rev;
+                  throw err;
+                });
+              })
+            : api("POST", "/items", { item_type: it.type, name: it.name, project: group, number: it.number });
+          return start.then(function (rev) {
+            if (!pendingNumber) {
+              // remembered at once, so a second run never creates it twice –
+              // pending until its files are in
+              log[it.key] = { number: rev.item_number, pending: true }; saveImportLog(group, path, log);
+            }
             created.push({ rev: rev, item: it });
             return call("upload_files", { item: rev.item_number, code: rev.code, paths: it.files.map(function (f) { return f.path; }),
               comment: "Imported from " + scanned.folder_name, folders: importFolders(it.files, scanned.folder_name) })
-              .then(function () { files += it.files.length; },
-                function (err) { failed.push(rev.item_number + " (" + it.name + "): files not uploaded – " + errorText(err)); })
+              .then(function () {
+                files += it.files.length;
+                log[it.key] = rev.item_number; saveImportLog(group, path, log);
+              },
+                function (err) { failed.push(rev.item_number + " (" + it.name + "): files not uploaded – " + errorText(err) + " – scan and import again to complete it"); })
               // Checked in right away: an import that is interrupted (app closed,
               // sign-in expired, network gone, an error in a later step) never
               // leaves the items created so far in "My check-outs".

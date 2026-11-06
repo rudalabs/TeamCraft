@@ -21,6 +21,13 @@
 //! in its file after the component was removed is still found, and
 //! compressed sections of unknown containers are not read. The revision page
 //! therefore shows the names as "found in the file".
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::collections::HashSet;
 use std::io::{Read, Seek};
@@ -115,16 +122,17 @@ fn names_in(run: &str, exts: &[&str], out: &mut Vec<String>) {
         return; // exotic case mappings: not a file name we can handle
     }
     let mut i = 0;
-    while i < chars.len() {
-        if chars[i] != '.' {
+    while let Some(&ch) = chars.get(i) {
+        if ch != '.' {
             i += 1;
             continue;
         }
         // The longest extension that matches here and ends the name.
         let matched = exts.iter().find(|ext| {
             let end = i + 1 + ext.chars().count();
-            end <= lower.len()
-                && lower[i + 1..end].iter().copied().eq(ext.chars())
+            lower
+                .get(i + 1..end)
+                .is_some_and(|l| l.iter().copied().eq(ext.chars()))
                 && chars
                     .get(end)
                     .is_none_or(|c| !(c.is_alphanumeric() || *c == '_'))
@@ -136,21 +144,21 @@ fn names_in(run: &str, exts: &[&str], out: &mut Vec<String>) {
         let end = i + 1 + ext.chars().count();
         // Walk back to the start of the name (a single space may be part of it).
         let mut start = i;
-        while start > 0 {
-            let c = chars[start - 1];
-            if is_name_boundary(c) || (c == ' ' && start >= 2 && chars[start - 2] == ' ') {
+        while let Some(&c) = start.checked_sub(1).and_then(|s| chars.get(s)) {
+            let double_space = c == ' ' && start >= 2 && chars.get(start - 2) == Some(&' ');
+            if is_name_boundary(c) || double_space {
                 break;
             }
             start -= 1;
         }
-        let name: String = chars[start..end].iter().collect();
+        let name: String = chars.get(start..end).unwrap_or_default().iter().collect();
         let name = name
             .trim()
             .trim_start_matches(|c: char| !(c.is_alphanumeric() || c == '_'));
-        let stem_len = name.len().saturating_sub(ext.len() + 1);
-        if stem_len > 0
-            && name.len() <= MAX_NAME
-            && name[..stem_len].chars().any(char::is_alphanumeric)
+        // The stem in characters: the extension matched in lower case may
+        // have more bytes than `ext` (the Kelvin sign is three bytes).
+        let stem = name.chars().count().saturating_sub(ext.chars().count() + 1);
+        if stem > 0 && name.len() <= MAX_NAME && name.chars().take(stem).any(char::is_alphanumeric)
         {
             out.push(name.to_string());
         }
@@ -168,7 +176,9 @@ fn byte_runs(content: &[u8], skip: Option<&std::ops::Range<usize>>, mut f: impl 
             (true, None) => start = Some(i),
             (false, Some(s)) => {
                 if i - s >= 5 {
-                    f(&String::from_utf8_lossy(&content[s..i]));
+                    f(&String::from_utf8_lossy(
+                        content.get(s..i).unwrap_or_default(),
+                    ));
                 }
                 start = None;
             }
@@ -177,7 +187,9 @@ fn byte_runs(content: &[u8], skip: Option<&std::ops::Range<usize>>, mut f: impl 
     }
     if let Some(s) = start {
         if content.len() - s >= 5 {
-            f(&String::from_utf8_lossy(&content[s..]));
+            f(&String::from_utf8_lossy(
+                content.get(s..).unwrap_or_default(),
+            ));
         }
     }
 }
@@ -188,8 +200,8 @@ fn utf16_runs(content: &[u8], skip: Option<&std::ops::Range<usize>>, mut f: impl
     for align in 0..2 {
         let mut run = String::new();
         let mut i = align;
-        while i + 1 < content.len() {
-            let unit = u16::from_le_bytes([content[i], content[i + 1]]);
+        while let Some(&[lo, hi]) = content.get(i..i + 2) {
+            let unit = u16::from_le_bytes([lo, hi]);
             let printable = ((0x20..0x7f).contains(&unit) || (0xa0..0x180).contains(&unit))
                 && !skip.is_some_and(|s| s.contains(&i) || s.contains(&(i + 1)));
             if printable {
@@ -225,7 +237,7 @@ fn step_file_name_entity(content: &[u8]) -> Option<std::ops::Range<usize>> {
         .iter()
         .position(|b| !b.is_ascii_whitespace())
         .unwrap_or(content.len());
-    if !content[start..].starts_with(b"ISO-10303-21;") {
+    if !content.get(start..)?.starts_with(b"ISO-10303-21;") {
         return None;
     }
     let header = find_bytes(content, start, b"HEADER;")?;
@@ -234,13 +246,13 @@ fn step_file_name_entity(content: &[u8]) -> Option<std::ops::Range<usize>> {
     if name >= header_end {
         return None;
     }
-    let open = name + content[name..].iter().position(|&b| b == b'(')?;
+    let open = name + content.get(name..)?.iter().position(|&b| b == b'(')?;
     // Quoted strings may contain parentheses; `''` is an escaped quote.
     let mut depth = 0usize;
     let mut in_string = false;
     let mut i = open;
-    while i < content.len() {
-        match content[i] {
+    while let Some(&b) = content.get(i) {
+        match b {
             b'\'' if in_string && content.get(i + 1) == Some(&b'\'') => i += 1,
             b'\'' => in_string = !in_string,
             b'(' if !in_string => depth += 1,
@@ -625,5 +637,22 @@ mod tests {
             scan_file(&path, "frame.sldasm").await.is_empty(),
             "missing file"
         );
+    }
+
+    /// Regression: the extension is compared in lower case, and the Kelvin
+    /// sign `K` (U+212A, three bytes in UTF-8) lower-cases to an ASCII `k`.
+    /// The name's stem was then cut at a byte position inside that sign – a
+    /// panic on a file that holds such text.
+    #[test]
+    fn a_non_ascii_letter_in_the_extension_does_not_panic() {
+        let content = "board a.\u{212A}icad_pcb and other text".as_bytes();
+        let names = find(content, "x.kicad_pro");
+        assert!(names.iter().all(|n| n.starts_with('a')), "{names:?}");
+        // the same text as UTF-16 is not even read as a name (Latin only)
+        let utf16: Vec<u8> = "a.\u{212A}icad_pcb "
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        find(&utf16, "x.kicad_pro");
     }
 }

@@ -24,6 +24,13 @@
 //! Folder entries end in `/` and have no data. Anything that does not fit
 //! (short file, entry out of bounds) is skipped, never trusted. Files are
 //! read with seeks: only the directory and the requested streams.
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::io::{self, Read, Seek, SeekFrom};
 
@@ -114,7 +121,7 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// Header streams from the first bytes of a file.
 fn header_streams(head: &[u8], file_len: u64, out: &mut Vec<Stream>) {
-    if let Some(at) = find(&head[..head.len().min(256)], b"HEADER") {
+    if let Some(at) = find(head.get(..256).unwrap_or(head), b"HEADER") {
         block(head, at, b"HEADER", file_len, out);
     }
 }

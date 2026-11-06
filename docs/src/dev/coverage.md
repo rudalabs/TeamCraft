@@ -2,7 +2,9 @@
 
 Where the tests are, where they are thin, and what to write next. The page
 is the answer to *"which code can break without a test noticing?"* – it is
-meant to be updated, not admired. Last measured: 2026-11-05.
+meant to be updated, not admired. Last measured: 2026-11-06, from the CI
+job *coverage* on `main` at `b4cf014` (release 0.2.0; it contains #89–#95
+and the proofing tests).
 
 ## Method
 
@@ -12,10 +14,13 @@ meant to be updated, not admired. Last measured: 2026-11-05.
   module's own file (`src/simmesh/tests.rs` belongs to `simmesh.rs`).
 * **Integration tests** – `tests/*.rs` talk to the real router (HTTP), so the
   routes and services they reach are mapped by what the test asserts, not by
-  imports. The table below shows only tests that name the module directly
-  (`teamcraft::module::…`); the *HTTP* column of the area tables lists the
-  test files that drive the code through the API or the web UI.
-* **Measured line coverage** – `cargo llvm-cov` (0.9, `llvm-tools-preview`):
+  imports. The module table names only the test files that use a module
+  directly (`teamcraft::module::…`); the area tables list the test files that
+  drive the code through the API or the web UI.
+* **Measured line coverage** – `cargo llvm-cov` in the CI job *coverage*: the
+  complete test suite (unit, integration and database tests) against
+  PostgreSQL 16 with the client tools. Its per-file summary is the source of
+  the tables below. Locally, without a database, a quick check is:
 
   ```sh
   cargo install cargo-llvm-cov --locked && rustup component add llvm-tools-preview
@@ -24,185 +29,260 @@ meant to be updated, not admired. Last measured: 2026-11-05.
   cargo llvm-cov --html                          # report in target/llvm-cov/html
   ```
 
-  Two caveats. (1) Inline `#[cfg(test)]` code counts as covered lines, so the
-  percentage of a module with a large test section is too high – the number of
-  **missed lines** is the honest figure and is what the tables show.
-  (2) On a machine without PostgreSQL the database tests skip themselves, so
-  `services/*`, `web/*` and `api/*` show up as uncovered in the local numbers
-  although the integration tests exercise them. **The CI job *coverage* runs
-  everything against PostgreSQL 16** and uploads the real report (see
-  below); the tables here give the local, no-database numbers and name the
-  integration tests by hand.
+  Without PostgreSQL the database tests skip themselves, so `services/*`,
+  `web/*` and `api/*` look uncovered locally although CI exercises them. Inline
+  `#[cfg(test)]` code counts as covered lines, so the percentage of a module
+  with a large test section is too high – the number of **missed lines** is
+  the honest figure.
 * **Ranking** – *risk × thinness*. Risk: untrusted input (file parsers, HTTP
   bodies, tokens), data integrity (multi-row mutations, vault, backup,
-  migrations, imports, uploads), size of the code. Thinness: tests per 100
-  lines, missed lines, and whether failure paths (refusal, conflict,
-  rollback, damaged input) are tested at all and not only the happy path.
+  migrations, imports, uploads), size of the code. Thinness: missed lines, and
+  whether failure paths (refusal, conflict, rollback, damaged input) are
+  tested at all and not only the happy path.
 
 ## Coverage in CI
 
-The job *coverage (report only)* in `.github/workflows/ci.yml` runs
-`cargo llvm-cov` over the complete test suite with PostgreSQL 16 and the
-client tools, prints the per-file summary into the job summary and uploads
-the HTML report (`coverage-html`, 14 days) as an artifact. It has **no
-threshold yet**: when a few pull requests have shown the normal variation, a
-floor that may not drop is added (open item in `docs/OPEN_WORK.md`).
+The job *coverage* in `.github/workflows/ci.yml` runs `cargo llvm-cov` over
+the complete test suite with PostgreSQL 16 and the client tools, prints the
+per-file summary into the job summary and uploads the HTML report
+(`coverage-html`, 14 days) as an artifact.
+
+**The floor.** Since 2026-11-06 the job fails when the total line coverage
+drops below the value in `.github/coverage-floor`. The last runs on `main`
+were 91.48 % (6b7c95a), 91.52 % (e513b37), 91.53 % (5a39a85) and 91.65 %
+(0fcfa26, b4cf014): the variation between runs is about a tenth of a point,
+so the floor is the current value minus half a percentage point – **91.1 %**,
+about 280 missed lines more than today. Raise it when the coverage has grown
+for good; lowering it is a deliberate change of that file in the pull
+request, with the reason in its description.
 
 ## Areas
 
-Numbers are *missed lines* / lines, from `cargo llvm-cov` without a
-database (before this work → after, where tests were added).
+Missed lines / lines and line coverage from CI (`b4cf014`).
 
-| Area | Code | Tests | Measured (no DB) | HTTP / integration tests |
+| Area | Code | Tests | CI: missed / lines | HTTP / integration tests |
 |---|---|---|---|---|
-| File parsers (`mesh*`, `simmesh`, `stepbom`, `swpart`, `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex`, `cadformat`, `shape`) | 13.7k lines | 166 unit (incl. 19 in `simmesh/tests.rs`); `cad_fixtures`, `parser_robustness` | 4–130 missed per module, 91–99 % | `cad_fixtures` (real NIST files), `uploads`, `web_ui`, `parser_robustness` (new) |
-| `services/*` (business logic, the only writer) | 21.9k lines | 63 unit | not measurable without PostgreSQL (6–67 % of lines run in unit tests) | `api_flow`, `read_permissions`, `change_orders`, `change_requests`, `concurrency`, `uploads`, `webhooks`, `structure`, `numbering_and_watches`, `release_readiness`, `reviewers`, `audit_and_vault`, `interchange`, `working_folder`, `similar_parts`, `attributes`, `search_listing`, `scale`, `bom_performance`, `import_atomicity` (new), `service_refusals` (new), `migrations` (new) |
-| `web/*`, `api/*` (thin handlers) | 10.9k lines | 2 unit | – | `web_ui`, `api_flow`, `no_unchecked_in_handlers` (architecture guard) |
-| `domain.rs`, `config.rs`, `util.rs`, `error.rs` | 4.4k lines | 46 unit | 5–167 missed | all of them; `domain_and_vault` (new) |
-| `auth.rs`, `oidc.rs` | 0.9k lines | 10 unit | 97 / 180 missed (63 % / 53 %) | `api_flow`, `read_permissions` (tokens, sessions); OIDC has no integration test |
-| `vault.rs`, `backup.rs`, `db.rs` | 1.5k lines | 14 unit | vault 62 → 53, backup 142 → 113, db 85 of 105 missed | `audit_and_vault`, `uploads`, `backup_restore`, `backup_errors` (new), `migrations` (new) |
-| `webhooks.rs`, `delivery.rs`, `notify.rs` | 1.5k lines | 14 unit | 242 / 252 / 48 missed | `webhooks`, `api_flow` (e-mail outbox), no test against a real SMTP/Mattermost server |
-| `assistant.rs`, `llm/*`, `mcp/*` | 5.6k lines | 27 unit | mcp/tools 1197 of 2246 missed | `assistant`, `mcp`, `read_permissions` (owned by other work in progress, not touched here) |
-| Desktop (`desktop/src`, own crate, not measured: needs WebKitGTK) | 8.6k lines | 66 unit | estimate: pure helpers (`layout`, `abortable`, `api`, `settings`) tested, Tauri commands (`commands.rs` 1.2k lines, 3 tests), `workspace.rs` (1.5k, 6) and `acp.rs` (2k, 21) thin | none (CI runs the desktop tests on Linux only) |
+| File parsers (`mesh*`, `simmesh`, `stepbom`, `swpart`, `nxpart`, `thumbnail`, `cadrefs`, `bomtable`, `textindex`, `cadformat`, `shape`, `pdftext`, `resultscan`) | 10.1k counted lines | unit tests per module; property tests (#94) | 361 / 10,058 – 96.4 % | `cad_fixtures` (real NIST files), `uploads`, `web_ui`, `parser_robustness`, `parser_corpus`, `preview_limits` |
+| `services/*` (business logic, the only writer) | 17.0k counted lines | unit tests in a third of the modules | 1,165 / 16,999 – 93.1 % | `api_flow`, `read_permissions`, `change_orders`, `change_requests`, `concurrency`, `uploads`, `webhooks`, `structure`, `numbering_and_watches`, `release_readiness`, `reviewers`, `audit_and_vault`, `interchange`, `working_folder`, `similar_parts`, `attributes`, `search_listing`, `scale`, `bom_performance`, `import_atomicity`, `import_proofing`, `service_refusals`, `migrations`, `atomic_processes`, `result_values`, `result_proposals`, `assistant_threads`, `agent_tools` |
+| `web/*` (HTML handlers) | 5.6k counted lines | – | 891 / 5,613 – 84.1 % | `web_ui`, the feature tests that use the forms, `no_unchecked_in_handlers` |
+| `api/*` (REST handlers) | 2.9k counted lines | – | 305 / 2,878 – 89.4 % | `api_flow` and the feature tests, `range_downloads` |
+| `domain/*`, `config.rs`, `util.rs`, `error.rs` | 3.1k counted lines | unit and property tests | 87 / 3,068 – 97.2 % | all of them; `domain_and_vault` |
+| `auth.rs`, `oidc.rs` | 0.6k counted lines | 10 unit | 191 / 649 – 70.6 % (`oidc.rs` 53.5 %) | `api_flow`, `read_permissions` (tokens, sessions), `oidc_flow` (SSO against a fake provider, session and PAT lifetime; the CI numbers predate it) |
+| `vault.rs`, `backup.rs`, `db.rs` | 1.1k counted lines | unit tests in each | 101 / 1,148 – 91.2 % | `audit_and_vault`, `domain_and_vault`, `uploads`, `backup_restore`, `backup_errors`, `backup_proofing`, `migrations` |
+| `webhooks.rs`, `delivery.rs`, `notify.rs` | 1.0k counted lines | unit tests in each | 129 / 971 – 86.7 % (`notify.rs` 26 %) | `webhooks`, `webhook_ssrf`, `api_flow` (e-mail outbox), `atomic_processes`; no test against a real SMTP/Mattermost server |
+| `assistant.rs`, `llm/*`, `mcp/*` | 5.2k counted lines | unit tests in each | 306 / 5,236 – 94.2 % | `assistant`, `assistant_threads`, `mcp`, `agent_tools`, `read_permissions` |
+| `main.rs`, `lib.rs` (CLI, router) | 0.8k counted lines | 3 unit | 533 / 756 – 29.5 % | the CLI runs only in the CLI smoke test of the *tests* job, which the coverage job does not measure |
+| Desktop (`desktop/src`, own crate, not measured) | 9.1k lines | 72 unit | – | none (CI runs the desktop tests on Linux only) |
 
 ## Top 15: the thinnest high-risk spots
 
-Ranked by risk × thinness; *tests added* is what this change brought.
+Ranked by risk × thinness on 2026-11-05; the last two columns are today's
+state.
 
-| # | Spot | Why it is risky | Before | Tests added | What the new tests pin |
+| # | Spot | Why it is risky | Tests that pin it | CI missed / lines | Open |
 |---|---|---|---|---|---|
-| 1 | `services/imports.rs` (1.2k lines) + `bomtable`/`stepbom` import path | Multi-row write from untrusted tables; one transaction must hold | 6 unit, one happy-path HTTP flow | 4 DB tests in `tests/import_atomicity.rs` (+ the damage tests of #14) | refused import writes no row, counter step or audit entry (permissions, unreadable tables, unknown group); an injected database failure (trigger) while the third part is written rolls back parts, assembly, lines, counters and audit entries, and the retry succeeds; re-import creates no duplicate parts; dry-run plan equals what the import writes |
-| 2 | `db.rs` + `migrations/` | A bad upgrade destroys every installation | 1 unit test (server version) | 4 in `tests/migrations.rs` | numbering without duplicates, the known gap 0015; all files apply on an empty database; second run is a no-op and the schema equals the harness schema; a changed checksum stops the upgrade unless the version is in `EDITED_BEFORE_RELEASE`; a half-applied migration blocks |
-| 3 | `backup.rs` restore path | A restore is the last line of defence | 9 unit, one happy-path e2e, 142 missed lines | 7 in `tests/backup_errors.rs` (no database needed) | missing/interrupted backup (no manifest), damaged manifest fields, changed or missing dump, corrupt/extra/missing/misplaced vault objects, symlinks – every refusal happens before anything is written; a failed backup leaves no manifest and never reuses a non-empty directory |
-| 4 | `services/changes.rs` (1.4k lines, 0 unit) | Release of a change order flips many revisions at once | integration only | – | **open**: atomicity under an injected failure (see below) |
-| 5 | `services/files.rs` (1.1k lines, 3 unit), `services/uploads.rs` | Check-in, versions, chunked uploads: data loss on races | integration only (`concurrency`, `uploads`) | – | **open**: failure between file versions and lock release |
-| 6 | `services/items.rs`, `revisions.rs` (1.6k lines, 0 unit) | Creation, numbering, lifecycle | integration only | 3 DB tests in `tests/service_refusals.rs`, 7 DB-free in `tests/domain_and_vault.rs` | refused creation leaves no row/audit entry (duplicate number 409, read-only role, other group, bad type/group/name); concurrent creation with one number → one 201 and one 409; concurrent numbering gives distinct numbers; lifecycle table is exactly the documented four transitions; revision letters round-trip and skip I O Q S X Z; name/number/user/project/password boundaries |
-| 7 | `services/bom.rs` (1.4k lines) | Cycles and quantities corrupt every roll-up | 10 unit, `structure` | 2 DB tests in `service_refusals` | cycles (direct and via a sub-assembly), zero/negative quantity, unknown child: all refused, nothing written; one winner for two lines with the same position |
-| 8 | `services/checkouts.rs` | The lock is the integrity mechanism of the vault | 2 unit, `concurrency` | 1 DB test | three concurrent check-outs → one 200, two 409, one holder, audited |
-| 9 | `services/users.rs`, `auth.rs`, `oidc.rs` | Sessions, tokens, SSO – untrusted input, 6.7 % / 63 % / 53 % lines run in unit tests | 2 / 6 / 4 unit | – | **open**: OIDC callback state/nonce/PKCE failures, token expiry and revocation |
-| 10 | `webhooks.rs` + `services/webhooks.rs` (SSRF guard, signing) | Server-side requests to configurable URLs | 8 + 4 unit, `webhooks` | – | **open**: guard against private/link-local/IPv6-mapped targets and DNS rebinding |
-| 11 | `mesh.rs` readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, points, LAS) | Untrusted bytes, big allocations | 12 unit + fixtures, 130 missed | 7 in `tests/parser_robustness.rs` | every prefix and 400 corruptions of each sample never panic and yield only consistent meshes (indices in range, finite, survives the cache encoding); claimed sizes (4 billion triangles, 10⁹ vertices) are refused; random bodies behind the magic numbers; **bug found and fixed**: a glTF primitive naming a non-existent accessor panicked inside the glTF library |
-| 12 | `simmesh.rs` (2k lines, VTK/VTU/FRD) | Untrusted, 1.5k lines of hand-written parsing | 19 unit in `simmesh/tests.rs` | covered by the damage tests (VTK legacy, VTU) | prefixes and corruptions of VTK legacy and XML samples; FRD has no hand-made sample yet |
-| 13 | `swpart.rs`, `nxpart.rs`, `thumbnail.rs` (containers with offsets and Deflate) | Offsets, lengths, decompression bombs | 14 / 7 / 12 unit + NIST files | 3 tests | every prefix and corruption of an NX container, random bytes behind SOLIDWORKS/OLE/NX/PNG magics for the thumbnail reader, hostile component XML, `inflate` with a lying size |
-| 14 | `stepbom.rs`, `bomtable.rs`, `cadrefs.rs`, `textindex.rs`, `cadformat.rs` | Untrusted text/spreadsheets; heuristic | 13 / 19 / 18 / 9 / 19 unit | 6 tests | damaged CSV/TSV/XLSX/ODS and STEP structure (dangling and self references) never panic and keep quantities finite and levels ≥ 1; names found by the reference scan are bare file names; odd file names and heads in format detection |
-| 15 | `vault.rs` | Content-addressed storage: the bytes of every revision | 4 unit, 62 missed | 3 tests in `tests/domain_and_vault.rs` | a blob changed on disk fails `verify`, a missing blob is `NotFound`; hashes cannot escape the object tree; an upload over its limit is refused and leaves no object |
+| 1 | `services/imports.rs` + `bomtable`/`stepbom` import path | Multi-row write from untrusted tables; one transaction must hold | `import_atomicity` (refusals, injected failure, retry, no duplicates), `import_proofing` (7), damage tests | 62 / 860 | – |
+| 2 | `db.rs` + `migrations/` | A bad upgrade destroys every installation | `migrations` (6): numbering and the known gap, every migration one at a time ending at the fresh schema (constraints, indexes, triggers, functions), twice a no-op, checksum rule, a failed migration blocks, a v0.1.0 database with data upgrades without loss (#91) | 16 / 105 | – |
+| 3 | `backup.rs` | A restore is the last line of defence | `backup_errors` (7), `backup_proofing` (5, #93): corrupt or missing objects refuse the backup and nothing is left, a v0.1.0 backup is restored and migrated, a failing `--force` leaves database and vault untouched, credentials, large objects, preview cache | 55 / 719 | – |
+| 4 | `services/changes.rs` | Release of a change order flips many revisions at once | `atomic_processes` (#92): an injected failure (error or lost connection) at the second revision, the notifications or the webhook deliveries leaves nothing; two releases at once release once | 85 / 1,223 | – |
+| 5 | `services/files.rs`, `services/uploads.rs` | Check-in, versions, chunked uploads: data loss on races | `atomic_processes`: failure between the versions and the lock release, upload `finish` repeatable; two check-ins at once give one winner; `concurrency`, `uploads`, `range_downloads` | 45 / 935, 30 / 457 | – |
+| 6 | `services/items.rs`, `revisions.rs` | Creation, numbering, lifecycle | `service_refusals`, `domain_and_vault`, `atomic_processes` (12 parallel creations, the same number twice) | 54 / 724, 4 / 490 | – |
+| 7 | `services/bom.rs` | Cycles and quantities corrupt every roll-up | 10 unit, `structure`, `service_refusals` | 14 / 1,004 | – |
+| 8 | `services/checkouts.rs` | The lock is the integrity mechanism of the vault | `concurrency` | 10 / 240 | – |
+| 9 | `services/users.rs`, `auth.rs`, `oidc.rs` | Sessions, tokens, SSO – untrusted input | unit tests, `api_flow`, `read_permissions`, `oidc_flow` (8, fake identity provider in the test process): a good login provisions the account with the mapped role; a missing, forged or expired `state`, a replayed callback, an error from the provider, a wrong `nonce`, an old `exp`, another `aud` or `iss`, no subject sign nobody in; a PKCE mismatch and a used code are a login error (fixed, below), a wrong client secret stays an internal error; ID token signatures are not checked by design (pinned); sessions and PATs end on expiry, sign-out / revocation (owner or admin, audited) and deactivation | 187 / 690, 11 / 262, 180 / 387 (before `oidc_flow`) | – (a plain-HTTP issuer, below) |
+| 10 | `webhooks.rs` + `services/webhooks.rs` (SSRF guard, signing) | Server-side requests to configurable URLs | unit tests of the address rules (`internal_addresses`, `default_policy_blocks_internal_targets`, `allow_list_restricts_and_trusts_hosts`), HMAC vectors, `webhooks`, `atomic_processes`, `webhook_ssrf` (4) and `every_connection_checks_the_answer_it_uses`: a name that passes when saved and resolves to loopback, cloud metadata, an IPv4-mapped or unique-local address when used (DNS rebinding) is refused at connect time and every attempt resolves anew; mixed answers keep only public addresses; `localhost` via the system resolver and a stored IP literal are refused; a listed host is delivered (resolution injectable: `Dispatcher::with_lookup`) | 43 / 582, 25 / 679 | – |
+| 11 | `mesh.rs` readers | Untrusted bytes, big allocations | `parser_robustness`, `parser_corpus`, fuzz targets | 108 / 1,535 | – |
+| 12 | `simmesh.rs` (VTK/VTU/FRD) | Untrusted, hand-written parsing | 19 unit, damage tests | 81 / 1,465 | **an FRD sample in the damage tests** |
+| 13 | `swpart.rs`, `nxpart.rs`, `thumbnail.rs` | Offsets, lengths, decompression bombs | unit tests, NIST files, damage tests | 8 / 657, 3 / 262, 15 / 543 | **a SOLIDWORKS container built by hand** |
+| 14 | `stepbom.rs`, `bomtable.rs`, `cadrefs.rs`, `textindex.rs`, `cadformat.rs` | Untrusted text and spreadsheets; heuristic | unit tests, damage tests | 5 / 655, 10 / 747, 2 / 442, 2 / 200, 4 / 771 | – |
+| 15 | `vault.rs` | Content-addressed storage: the bytes of every revision | `domain_and_vault`; since #93 every backup hashes every object and requires every referenced one | 30 / 324 | – |
 
-Not in the top 15 but thin: `delivery.rs` (252 of 324 lines not run without a
-server), `services/requests.rs` (1.9k lines, 5 unit), `services/simulations.rs`,
-`services/notifications.rs`, `desktop/src/commands.rs`, `config.rs` error paths.
+Thin, outside the top 15: `notify.rs` (48 of 65 lines missed),
+`services/insights.rs` (83 of 187), `services/requests.rs` (162 of 1,587),
+`web/requests.rs`, `web/simulations.rs`, `web/attributes.rs`, `web/admin.rs`
+and `web/webhooks.rs` (a quarter of their lines missed each),
+`desktop/src/commands.rs`.
 
 ### Found while writing the tests
 
-* **Fixed** – `mesh::read("gltf", …)` panicked (index out of bounds inside
-  `gltf-json`) for a primitive whose `POSITION` points past the accessor list.
-  The preview runs in a child process, so the effect was a failed preview and a
-  log entry, but a library panic must not be reachable from an upload. The
-  library call is now wrapped in `catch_unwind` and yields an error;
-  regression test `gltf_accessor_index_out_of_range_is_an_error`.
-* **Observation, not a bug of its own** – `backup::backup` copies vault
-  objects without checking their hash; a corrupt object is found only when
-  the backup is verified (`restore`). `docs/OPEN_WORK.md` asks for "a vault
-  object missing or corrupt during backup (refused, nothing written)": that
-  needs `pg_dump` and a database, so it is left for a test in
-  `tests/backup_restore.rs`.
+* **Fixed** (2026-11-05) – `mesh::read("gltf", …)` panicked (index out of
+  bounds inside `gltf-json`) for a primitive whose `POSITION` points past the
+  accessor list. The library call is now wrapped in `catch_unwind` and yields
+  an error; regression test `gltf_accessor_index_out_of_range_is_an_error`.
+* **Fixed** (#93) – `backup::backup` copied vault objects without checking
+  their hash and did not require the objects the database refers to; a
+  corrupt or missing object was found only at restore time. The backup now
+  refuses both and removes what it wrote.
+* **No bug** (#92) – every multi-row mutation covered by `atomic_processes`
+  already ran in one transaction; a mutation check (a check-in split into two
+  transactions) makes those tests fail.
+* **Fixed** – a login code the identity provider refused (`invalid_grant`:
+  a code already used or expired, or a PKCE verifier that does not match –
+  an intercepted code) ended in a 500 page and an incident report. It is a
+  failed login attempt, not a server fault: it is now the login page with a
+  400 and "the identity provider refused the login code"; other token
+  endpoint errors (`invalid_client`, a 5xx, no connection) stay internal
+  errors because the administrator has to act. Regression tests
+  `a_pkce_mismatch_or_a_used_code_is_refused_by_the_provider` and
+  `a_misconfigured_client_stays_a_server_error`.
+* **Observation, decision left open** – ID token signatures are not
+  verified; that rests on the token coming straight from the token endpoint
+  over TLS (OIDC Core 3.1.3.7 step 6). `TEAMCRAFT_OIDC_ISSUER_URL` also
+  accepts `http://` (an internal identity provider without TLS); then
+  nothing protects the token on its way. Refusing `http://` outside of
+  `localhost`, or verifying the signature against the provider's JWKS when
+  the issuer is plain HTTP, would close that – not changed here because it
+  can break existing installations.
+* **No bug** – the SSRF check at connect time: the resolver filters every
+  answer for each new connection; a mutation that drops the filter fails the
+  four resolver-based tests.
 
 ### What to write next
 
-1. Atomicity under an injected failure for check-in, change-order release,
-   *Replace in assemblies*, Save As and chunked-upload `finish` (needs a
-   failure hook in the services or a trigger that raises in the test
-   database – `CREATE TRIGGER … RAISE EXCEPTION` on the last table written is
-   the cheap way).
-2. OIDC callback failure paths with a fake provider; token expiry/revocation.
-3. SSRF guard table test for webhooks (pure function, no database).
-4. FRD sample and a SOLIDWORKS container built by hand in the damage tests.
-5. ~~`cargo fuzz` targets for the parsers~~ – done: `fuzz/`, the weekly
-   *Fuzzing* workflow and `tests/parser_corpus.rs` (seeds and NIST files on
-   stable), see [Fuzzing the file readers](fuzzing.md).
-6. A floor for the CI coverage job once its numbers are stable.
+1. `services/insights.rs` (BOM health check, duplicates) and `notify.rs`.
+2. FRD sample and a SOLIDWORKS container built by hand in the damage tests.
+3. The CLI (`main.rs`, 511 of 643 lines missed): run the commands in-process in
+   a test instead of only in the smoke test, so the coverage job sees them.
+4. Done: atomicity under an injected failure (#92), a floor for the CI
+   coverage job (`.github/coverage-floor`), OIDC failure paths and the SSRF
+   check at connect time (`oidc_flow`, `webhook_ssrf`), `cargo fuzz` targets (see
+   [Fuzzing the file readers](fuzzing.md)).
 
 ## Per module
 
-`Missed` is *unit tests only / all tests that run without PostgreSQL* of the
-lines `cargo llvm-cov` counts (not the file length). *Integration* names the
-test files that use the module by name; the HTTP-driven coverage of
-`services/*` is in the area table above. `main.rs` is the CLI and is covered
-by the CLI smoke test in CI only.
+From the CI job *coverage* on `b4cf014`. *Integration* names the test files
+that use the module by name (`teamcraft::…`); the HTTP-driven coverage of
+`services/*`, `web/*` and `api/*` is in the area table above.
 
-| Module | LOC | Unit tests | Missed / counted lines | Integration (direct use) |
-|---|---|---|---|---|
-| `assets.rs` | 413 | 8 | 2 / 2 of 280 | web_ui |
-| `assistant.rs` | 1498 | 8 | 167 / 167 of 1024 | read_permissions |
-| `auth.rs` | 410 | 6 | 97 / 97 of 262 | api_flow,bom_performance |
-| `backup.rs` | 857 | 9 | 142 / 113 of 643 | backup_errors,backup_restore |
-| `bomtable.rs` | 912 | 19 | 8 / 8 of 699 | api_flow,parser_robustness |
-| `cadformat.rs` | 1372 | 19 | 4 / 4 of 771 | cad_fixtures,parser_robustness |
-| `cadrefs.rs` | 629 | 18 | 7 / 4 of 442 | cad_fixtures,parser_robustness |
-| `config.rs` | 1079 | 13 | 49 / 38 of 769 | api_flow,backup_errors,read_permissions +2 |
-| `db.rs` | 185 | 1 | 85 / 85 of 105 | api_flow,migrations,scale |
-| `delivery.rs` | 477 | 4 | 252 / 252 of 324 | api_flow,read_permissions |
-| `domain.rs` | 2980 | 28 | 167 / 162 of 1764 | api_flow,assistant,attributes +23 |
-| `error.rs` | 133 | 0 | 47 / 47 of 57 | change_orders,domain_and_vault,read_permissions |
-| `lib.rs` | 212 | 0 | 98 / 98 of 98 | – |
-| `llm/anthropic.rs` | 410 | 5 | 7 / 7 of 311 | – |
-| `llm/http.rs` | 84 | 0 | 58 / 58 of 58 | api_flow,assistant,attributes +22 |
-| `llm/mod.rs` | 227 | 0 | 7 / 7 of 47 | – |
-| `main.rs` | 902 | 3 | – | – |
-| `mcp/mod.rs` | 290 | 2 | 88 / 88 of 167 | – |
-| `mcp/tools.rs` | 3055 | 12 | 1197 / 1197 of 2246 | read_permissions |
-| `mesh.rs` | 1929 | 12 | 130 / 112 of 1526 | cad_fixtures,parser_robustness,web_ui |
-| `mesh/p21.rs` | 672 | 5 | 27 / 27 of 459 | – |
-| `mesh/step.rs` | 529 | 4 | 17 / 17 of 351 | – |
-| `mesh/tessellated.rs` | 438 | 6 | 11 / 9 of 359 | – |
-| `models.rs` | 586 | 0 | 79 / 79 of 79 | – |
-| `notify.rs` | 116 | 2 | 48 / 48 of 65 | – |
-| `nxpart.rs` | 397 | 7 | 4 / 3 of 262 | parser_robustness |
-| `oidc.rs` | 492 | 4 | 180 / 180 of 387 | – |
-| `preview.rs` | 722 | 3 | 118 / 118 of 515 | cad_fixtures |
-| `services/access.rs` | 159 | 1 | 30 / 30 of 61 | no_unchecked_in_handlers |
-| `services/assistant.rs` | 191 | 0 | 129 / 129 of 129 | read_permissions |
-| `services/attributes.rs` | 307 | 0 | 251 / 251 of 251 | – |
-| `services/audit.rs` | 322 | 0 | 242 / 242 of 242 | read_permissions |
-| `services/bom.rs` | 1435 | 10 | 388 / 388 of 1004 | bom_performance |
-| `services/bom_compare.rs` | 601 | 4 | 28 / 28 of 385 | – |
-| `services/changes.rs` | 1393 | 0 | 1223 / 1223 of 1223 | api_flow,change_orders,read_permissions |
-| `services/checkouts.rs` | 376 | 2 | 159 / 159 of 240 | concurrency |
-| `services/desktop.rs` | 234 | 2 | 69 / 69 of 146 | web_ui |
-| `services/explorer.rs` | 164 | 0 | 80 / 80 of 80 | – |
-| `services/files.rs` | 1128 | 3 | 763 / 763 of 874 | api_flow |
-| `services/impacts.rs` | 1173 | 3 | 655 / 655 of 786 | – |
-| `services/imports.rs` | 1197 | 6 | 721 / 721 of 860 | – |
-| `services/insights.rs` | 276 | 0 | 187 / 187 of 187 | – |
-| `services/interchange.rs` | 708 | 0 | 496 / 496 of 496 | – |
-| `services/items.rs` | 1023 | 0 | 724 / 724 of 724 | api_flow,bom_performance,read_permissions |
-| `services/mod.rs` | 86 | 0 | 27 / 27 of 27 | – |
-| `services/notifications.rs` | 838 | 2 | 430 / 430 of 544 | read_permissions |
-| `services/package.rs` | 181 | 0 | 121 / 121 of 121 | – |
-| `services/personal.rs` | 169 | 1 | 97 / 97 of 122 | – |
-| `services/projects.rs` | 688 | 0 | 558 / 558 of 558 | api_flow,read_permissions |
-| `services/readiness.rs` | 627 | 6 | 139 / 139 of 423 | – |
-| `services/references.rs` | 506 | 0 | 352 / 352 of 352 | – |
-| `services/requests.rs` | 1942 | 5 | 1426 / 1426 of 1587 | read_permissions |
-| `services/reviewers.rs` | 446 | 2 | 49 / 49 of 188 | – |
-| `services/revisions.rs` | 594 | 0 | 490 / 490 of 490 | – |
-| `services/save_as.rs` | 173 | 0 | 130 / 130 of 130 | – |
-| `services/similar.rs` | 677 | 1 | 365 / 365 of 434 | – |
-| `services/simulations.rs` | 1558 | 4 | 725 / 725 of 1176 | – |
-| `services/stats.rs` | 44 | 0 | 26 / 26 of 26 | – |
-| `services/uploads.rs` | 644 | 5 | 328 / 328 of 457 | uploads |
-| `services/users.rs` | 836 | 2 | 644 / 644 of 690 | api_flow,read_permissions,scale +1 |
-| `services/webhooks.rs` | 915 | 4 | 492 / 492 of 679 | read_permissions,webhooks |
-| `services/workset.rs` | 304 | 0 | 192 / 192 of 192 | bom_performance |
-| `shape.rs` | 1031 | 9 | 20 / 20 of 771 | cad_fixtures |
-| `simmesh.rs` | 1962 | 0 | 81 / 81 of 1455 | – |
-| `simmesh/tests.rs` | 981 | 19 | – | – |
-| `stepbom.rs` | 865 | 13 | 8 / 5 of 655 | parser_robustness |
-| `swpart.rs` | 974 | 14 | 8 / 8 of 653 | parser_robustness |
-| `templates.rs` | 1576 | 3 | 6 / 6 of 1230 | – |
-| `textindex.rs` | 293 | 9 | 1 / 1 of 195 | parser_robustness |
-| `thumbnail.rs` | 719 | 12 | 23 / 16 of 541 | cad_fixtures,parser_robustness |
-| `util.rs` | 156 | 5 | 1 / 1 of 104 | api_flow,web_ui |
-| `vault.rs` | 434 | 4 | 62 / 53 of 324 | domain_and_vault |
-| `webhooks.rs` | 930 | 8 | 242 / 242 of 582 | read_permissions,webhooks |
-
-`web/*` (22 files, 7.1k lines, plus `web/mod.rs`) and `api/*` (7 files, 3.7k lines) are left out: they are thin handlers over `services::*`, reached only through HTTP by `web_ui`, `api_flow` and the feature tests; without a database none of their lines run (0 %).
+| Module | LOC | Unit tests | CI missed / lines | Line coverage | Integration (direct use) |
+|---|---|---|---|---|---|
+| `api/bom_api.rs` | 261 | 0 | 7 of 191 | 96.3 % | – |
+| `api/change_requests.rs` | 425 | 0 | 46 of 306 | 85.0 % | – |
+| `api/changes_api.rs` | 228 | 0 | 18 of 179 | 89.9 % | – |
+| `api/concurrency_api.rs` | 64 | 0 | 1 of 36 | 97.2 % | – |
+| `api/files_api.rs` | 139 | 0 | 3 of 114 | 97.4 % | – |
+| `api/interchange_api.rs` | 156 | 0 | 2 of 105 | 98.1 % | – |
+| `api/items_api.rs` | 468 | 0 | 3 of 342 | 99.1 % | – |
+| `api/mod.rs` | 699 | 0 | 157 of 530 | 70.4 % | – |
+| `api/notifications_api.rs` | 142 | 0 | 1 of 109 | 99.1 % | – |
+| `api/personal.rs` | 222 | 0 | 17 of 143 | 88.1 % | – |
+| `api/projects_api.rs` | 135 | 0 | 1 of 91 | 98.9 % | – |
+| `api/references_api.rs` | 149 | 0 | 0 of 103 | 100.0 % | – |
+| `api/simulations.rs` | 406 | 0 | 28 of 301 | 90.7 % | – |
+| `api/uploads_api.rs` | 256 | 0 | 17 of 189 | 91.0 % | – |
+| `api/webhooks.rs` | 201 | 0 | 4 of 139 | 97.1 % | – |
+| `assets.rs` | 413 | 8 | 2 of 280 | 99.3 % | web_ui |
+| `assistant.rs` | 2094 | 12 | 71 of 1608 | 95.6 % | agent_tools, read_permissions, result_proposals |
+| `auth.rs` | 410 | 6 | 11 of 262 | 95.8 % | api_flow, bom_performance |
+| `backup.rs` | 961 | 9 | 55 of 719 | 92.4 % | backup_errors, backup_proofing, backup_restore |
+| `bomtable.rs` | 978 | 19 | 10 of 747 | 98.7 % | api_flow, import_proofing, parser_robustness |
+| `cadformat.rs` | 1372 | 19 | 4 of 771 | 99.5 % | cad_fixtures, parser_robustness |
+| `cadrefs.rs` | 629 | 18 | 2 of 442 | 99.5 % | cad_fixtures, parser_robustness |
+| `config.rs` | 1527 | 16 | 47 of 1108 | 95.8 % | api_flow, backup_errors, backup_proofing +3 |
+| `db.rs` | 185 | 1 | 16 of 105 | 84.8 % | api_flow, backup_proofing, migrations |
+| `delivery.rs` | 477 | 4 | 38 of 324 | 88.3 % | api_flow, read_permissions |
+| `domain/attributes.rs` | 289 | 0 | 8 of 184 | 95.7 % | – |
+| `domain/changes.rs` | 336 | 0 | 4 of 147 | 97.3 % | – |
+| `domain/concurrency.rs` | 173 | 0 | 6 of 97 | 93.8 % | – |
+| `domain/items.rs` | 324 | 0 | 0 of 209 | 100.0 % | – |
+| `domain/lifecycle.rs` | 155 | 0 | 0 of 66 | 100.0 % | – |
+| `domain/mod.rs` | 1021 | 38 | 7 of 663 | 98.9 % | api_flow, assistant, assistant_threads +28 |
+| `domain/notifications.rs` | 156 | 0 | 1 of 64 | 98.4 % | – |
+| `domain/references.rs` | 88 | 0 | 0 of 32 | 100.0 % | – |
+| `domain/roles.rs` | 96 | 0 | 5 of 39 | 87.2 % | – |
+| `domain/simulations.rs` | 130 | 0 | 0 of 74 | 100.0 % | – |
+| `domain/skins.rs` | 177 | 0 | 1 of 57 | 98.2 % | – |
+| `domain/validation.rs` | 220 | 0 | 1 of 167 | 99.4 % | – |
+| `error.rs` | 133 | 0 | 6 of 57 | 89.5 % | change_orders, preview_limits, read_permissions |
+| `fuzz_harness.rs` | 157 | 2 | 10 of 63 | 84.1 % | parser_corpus |
+| `httprange.rs` | 176 | 5 | 0 of 91 | 100.0 % | – |
+| `lib.rs` | 233 | 0 | 22 of 113 | 80.5 % | – |
+| `llm/anthropic.rs` | 389 | 5 | 4 of 289 | 98.6 % | – |
+| `llm/http.rs` | 204 | 3 | 4 of 153 | 97.4 % | – |
+| `llm/mod.rs` | 302 | 0 | 7 of 93 | 92.5 % | – |
+| `llm/openai.rs` | 550 | 8 | 11 of 425 | 97.4 % | – |
+| `main.rs` | 1032 | 3 | 511 of 643 | 20.5 % | – |
+| `mcp/mod.rs` | 291 | 2 | 7 of 167 | 95.8 % | read_permissions |
+| `mcp/tools.rs` | 3395 | 14 | 202 of 2501 | 91.9 % | read_permissions |
+| `mesh.rs` | 1933 | 12 | 108 of 1535 | 93.0 % | cad_fixtures, parser_robustness, web_ui |
+| `mesh/p21.rs` | 672 | 5 | 26 of 459 | 94.3 % | – |
+| `mesh/step.rs` | 529 | 4 | 17 of 351 | 95.2 % | – |
+| `mesh/tessellated.rs` | 438 | 6 | 9 of 359 | 97.5 % | – |
+| `models.rs` | 868 | 10 | 0 of 313 | 100.0 % | – |
+| `notify.rs` | 116 | 2 | 48 of 65 | 26.2 % | – |
+| `nxpart.rs` | 397 | 7 | 3 of 262 | 98.9 % | parser_robustness |
+| `oidc.rs` | 492 | 4 | 180 of 387 | 53.5 % | – |
+| `pagecontext.rs` | 400 | 5 | 4 of 272 | 98.5 % | – |
+| `pdftext.rs` | 321 | 5 | 36 of 241 | 85.1 % | – |
+| `preview.rs` | 941 | 5 | 111 of 651 | 82.9 % | cad_fixtures, preview_limits |
+| `resultscan.rs` | 863 | 9 | 15 of 600 | 97.5 % | – |
+| `services/access.rs` | 159 | 1 | 0 of 61 | 100.0 % | – |
+| `services/assistant.rs` | 470 | 0 | 53 of 359 | 85.2 % | – |
+| `services/assistant_threads.rs` | 264 | 2 | 1 of 175 | 99.4 % | assistant_threads |
+| `services/attributes.rs` | 307 | 0 | 23 of 251 | 90.8 % | – |
+| `services/audit.rs` | 322 | 0 | 2 of 242 | 99.2 % | read_permissions |
+| `services/bom.rs` | 1435 | 10 | 14 of 1004 | 98.6 % | – |
+| `services/bom_compare.rs` | 601 | 4 | 8 of 385 | 97.9 % | – |
+| `services/changes.rs` | 1393 | 0 | 85 of 1223 | 93.0 % | api_flow, change_orders, read_permissions |
+| `services/checkouts.rs` | 376 | 2 | 10 of 240 | 95.8 % | concurrency |
+| `services/desktop.rs` | 234 | 2 | 1 of 146 | 99.3 % | web_ui |
+| `services/explorer.rs` | 164 | 0 | 0 of 80 | 100.0 % | – |
+| `services/files.rs` | 1219 | 3 | 45 of 935 | 95.2 % | api_flow, backup_proofing |
+| `services/impacts.rs` | 1173 | 3 | 24 of 786 | 96.9 % | – |
+| `services/imports.rs` | 1197 | 6 | 62 of 860 | 92.8 % | – |
+| `services/insights.rs` | 276 | 0 | 83 of 187 | 55.6 % | – |
+| `services/interchange.rs` | 708 | 0 | 20 of 496 | 96.0 % | – |
+| `services/items.rs` | 1023 | 0 | 54 of 724 | 92.5 % | api_flow, bom_performance, read_permissions |
+| `services/mod.rs` | 89 | 0 | 0 of 27 | 100.0 % | api_flow, assistant_threads, backup_proofing +7 |
+| `services/notifications.rs` | 838 | 2 | 3 of 544 | 99.4 % | read_permissions |
+| `services/package.rs` | 181 | 0 | 4 of 121 | 96.7 % | – |
+| `services/personal.rs` | 169 | 1 | 3 of 122 | 97.5 % | – |
+| `services/projects.rs` | 688 | 0 | 53 of 558 | 90.5 % | api_flow, read_permissions |
+| `services/readiness.rs` | 627 | 6 | 4 of 423 | 99.1 % | – |
+| `services/references.rs` | 506 | 0 | 24 of 352 | 93.2 % | – |
+| `services/requests.rs` | 1942 | 5 | 162 of 1587 | 89.8 % | read_permissions |
+| `services/result_proposals.rs` | 424 | 1 | 16 of 303 | 94.7 % | – |
+| `services/result_templates.rs` | 234 | 0 | 15 of 196 | 92.3 % | – |
+| `services/reviewers.rs` | 446 | 2 | 12 of 188 | 93.6 % | – |
+| `services/revisions.rs` | 594 | 0 | 4 of 490 | 99.2 % | – |
+| `services/save_as.rs` | 173 | 0 | 3 of 130 | 97.7 % | – |
+| `services/similar.rs` | 677 | 1 | 43 of 434 | 90.1 % | – |
+| `services/simulations.rs` | 1769 | 5 | 85 of 1326 | 93.6 % | – |
+| `services/stats.rs` | 44 | 0 | 0 of 26 | 100.0 % | – |
+| `services/uploads.rs` | 644 | 5 | 30 of 457 | 93.4 % | uploads |
+| `services/users.rs` | 836 | 2 | 187 of 690 | 72.9 % | api_flow, backup_proofing, migrations +2 |
+| `services/webhooks.rs` | 915 | 4 | 25 of 679 | 96.3 % | – |
+| `services/workset.rs` | 304 | 0 | 7 of 192 | 96.4 % | – |
+| `shape.rs` | 1031 | 9 | 20 of 771 | 97.4 % | cad_fixtures |
+| `simmesh.rs` | 1968 | 19 | 81 of 1465 | 94.5 % | – |
+| `stepbom.rs` | 865 | 13 | 5 of 655 | 99.2 % | import_proofing, parser_robustness |
+| `swpart.rs` | 978 | 14 | 8 of 657 | 98.8 % | parser_robustness |
+| `templates.rs` | 1615 | 3 | 6 of 1263 | 99.5 % | – |
+| `textindex.rs` | 302 | 9 | 2 of 200 | 99.0 % | parser_robustness |
+| `thumbnail.rs` | 723 | 12 | 15 of 543 | 97.2 % | cad_fixtures, parser_robustness |
+| `util.rs` | 156 | 5 | 1 of 104 | 99.0 % | api_flow, web_ui |
+| `vault.rs` | 434 | 4 | 30 of 324 | 90.7 % | – |
+| `web/account.rs` | 192 | 0 | 24 of 145 | 83.4 % | – |
+| `web/admin.rs` | 585 | 0 | 110 of 428 | 74.3 % | – |
+| `web/assistant.rs` | 193 | 0 | 23 of 132 | 82.6 % | – |
+| `web/attributes.rs` | 170 | 0 | 34 of 136 | 75.0 % | – |
+| `web/auth_pages.rs` | 285 | 0 | 55 of 197 | 72.1 % | – |
+| `web/bom.rs` | 286 | 0 | 51 of 214 | 76.2 % | – |
+| `web/changes.rs` | 484 | 0 | 93 of 400 | 76.8 % | – |
+| `web/dashboard.rs` | 55 | 0 | 3 of 39 | 92.3 % | – |
+| `web/desktop.rs` | 85 | 0 | 1 of 40 | 97.5 % | – |
+| `web/explorer.rs` | 118 | 0 | 10 of 75 | 86.7 % | – |
+| `web/formats.rs` | 22 | 0 | 0 of 16 | 100.0 % | – |
+| `web/imports.rs` | 242 | 0 | 13 of 187 | 93.0 % | – |
+| `web/interchange.rs` | 241 | 0 | 20 of 168 | 88.1 % | – |
+| `web/items.rs` | 404 | 0 | 28 of 289 | 90.3 % | – |
+| `web/mod.rs` | 889 | 2 | 18 of 639 | 97.2 % | – |
+| `web/notifications.rs` | 176 | 0 | 5 of 148 | 96.6 % | – |
+| `web/personal.rs` | 324 | 0 | 39 of 202 | 80.7 % | – |
+| `web/references.rs` | 143 | 0 | 15 of 96 | 84.4 % | – |
+| `web/requests.rs` | 672 | 0 | 131 of 527 | 75.1 % | – |
+| `web/revisions.rs` | 1194 | 0 | 105 of 1014 | 89.6 % | – |
+| `web/simulations.rs` | 330 | 0 | 65 of 256 | 74.6 % | – |
+| `web/uploads.rs` | 90 | 0 | 0 of 49 | 100.0 % | – |
+| `web/webhooks.rs` | 271 | 0 | 48 of 216 | 77.8 % | – |
+| `webhooks.rs` | 930 | 8 | 43 of 582 | 92.6 % | read_permissions |

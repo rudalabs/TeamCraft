@@ -170,7 +170,7 @@ impl OidcClient {
         })?;
 
         let discovery = self.discovery().await?;
-        let tokens: TokenResponse = self
+        let response = self
             .http
             .post(&discovery.token_endpoint)
             .form(&[
@@ -183,7 +183,34 @@ impl OidcClient {
             ])
             .send()
             .await
-            .and_then(|r| r.error_for_status())
+            .map_err(|e| idp_error("exchanging the authorization code", e))?;
+        if response.status().is_client_error() {
+            // RFC 6749, 5.2: `invalid_grant` is this login attempt – a code
+            // that was already used or expired, or a PKCE verifier that does
+            // not match (an intercepted code). The user can simply try again;
+            // it is no server fault. Every other error (`invalid_client`, …)
+            // is the configuration and stays an internal error.
+            let status = response.status();
+            let error = response
+                .json::<Value>()
+                .await
+                .ok()
+                .and_then(|v| v["error"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            if error == "invalid_grant" {
+                tracing::warn!(%status, "the identity provider refused the authorization code");
+                return Err(AppError::BadRequest(
+                    "Single sign-on failed: the identity provider refused the login code. \
+                     Please try again."
+                        .into(),
+                ));
+            }
+            return Err(AppError::Other(anyhow::anyhow!(
+                "single sign-on failed while exchanging the authorization code: {status} {error}"
+            )));
+        }
+        let tokens: TokenResponse = response
+            .error_for_status()
             .map_err(|e| idp_error("exchanging the authorization code", e))?
             .json()
             .await

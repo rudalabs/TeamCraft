@@ -9,6 +9,13 @@
 //! `TEAMCRAFT_ENV_FILE` if set, the local development file [`LOCAL_ENV_FILE`]
 //! (`secrets/.env`, git-ignored) and – only in package builds – the system
 //! file [`SYSTEM_ENV_FILE`].
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use std::{net::SocketAddr, path::PathBuf, str::FromStr, time::Duration};
 
@@ -100,6 +107,9 @@ pub struct Config {
     pub mattermost_error_webhook: Option<String>,
     /// E-mail notifications via SMTP. `None` = no e-mails.
     pub smtp: Option<SmtpConfig>,
+    /// Hours between two e-mail digests of the change requests waiting for
+    /// triage (per user and project group); `0` = no digests.
+    pub request_digest_hours: u64,
     /// Notifications to Mattermost. `None` = disabled.
     pub mattermost: Option<MattermostConfig>,
     /// The built-in assistant (Anthropic or an OpenAI-compatible API). `None` = disabled.
@@ -635,6 +645,10 @@ impl Config {
             }
             None => None,
         };
+        let request_digest_hours = env.parse_or("TEAMCRAFT_REQUEST_DIGEST_HOURS", 24u64)?;
+        if request_digest_hours > 24 * 30 {
+            bail!("TEAMCRAFT_REQUEST_DIGEST_HOURS must be between 0 (off) and 720");
+        }
         let mattermost = match env.get("TEAMCRAFT_MATTERMOST_WEBHOOK")? {
             Some(webhook) => {
                 if !(webhook.starts_with("https://") || webhook.starts_with("http://")) {
@@ -690,6 +704,7 @@ impl Config {
             local_login,
             mattermost_error_webhook,
             smtp,
+            request_digest_hours,
             mattermost,
             assistant,
             webhooks,
@@ -699,7 +714,7 @@ impl Config {
     /// Password-free summary for the startup log.
     pub fn summary(&self) -> String {
         format!(
-            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} mattermost_notifications={} assistant={} webhook_targets={}",
+            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} request_digest={}h mattermost_notifications={} assistant={} webhook_targets={}",
             self.bind_addr,
             self.public_url,
             self.database_display,
@@ -712,6 +727,7 @@ impl Config {
             self.local_login,
             self.mattermost_error_webhook.is_some(),
             self.smtp.is_some(),
+            self.request_digest_hours,
             self.mattermost
                 .as_ref()
                 .map_or("off", |m| if m.direct { "direct" } else { "channel" }),
@@ -818,12 +834,12 @@ fn parse_bool(raw: &str) -> Result<bool> {
 fn percent_decode(component: &str) -> String {
     let bytes = component.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
+    let hex = |b: Option<&u8>| b.and_then(|b| (*b as char).to_digit(16));
     let mut i = 0;
-    while i < bytes.len() {
-        let hex = |b: u8| (b as char).to_digit(16);
-        match (bytes[i], bytes.get(i + 1), bytes.get(i + 2)) {
-            (b'%', Some(&h), Some(&l)) if hex(h).is_some() && hex(l).is_some() => {
-                out.push((hex(h).unwrap() * 16 + hex(l).unwrap()) as u8);
+    while let Some(&b) = bytes.get(i) {
+        match (b, hex(bytes.get(i + 1)), hex(bytes.get(i + 2))) {
+            (b'%', Some(h), Some(l)) => {
+                out.push((h * 16 + l) as u8);
                 i += 3;
             }
             (b, _, _) => {
@@ -921,6 +937,7 @@ mod tests {
         assert_eq!(cfg.public_url, "http://localhost:8080");
         assert_eq!(cfg.max_upload_bytes, 512 * 1024 * 1024);
         assert_eq!(cfg.upload_chunk_bytes, 16 * 1024 * 1024);
+        assert_eq!(cfg.request_digest_hours, 24, "daily digests");
         assert!(!cfg.cookie_secure);
         assert_eq!(cfg.log_format, LogFormat::Text);
         assert!(cfg.bootstrap_admin.is_none());
@@ -1245,6 +1262,17 @@ mod tests {
             ("TEAMCRAFT_COOKIE_SECURE", "maybe")
         ])
         .is_err());
+        assert!(config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_REQUEST_DIGEST_HOURS", "721")
+        ])
+        .is_err());
+        let off = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_REQUEST_DIGEST_HOURS", "0"),
+        ])
+        .unwrap();
+        assert_eq!(off.request_digest_hours, 0, "0 switches the digest off");
     }
 
     #[test]

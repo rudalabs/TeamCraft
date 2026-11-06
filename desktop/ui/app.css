@@ -969,6 +969,7 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 .agent-nav h3 { margin: 12px 0 0; }
 .agent-nav p { margin: 0; }
 .agent-nav select { flex: 1; min-width: 0; }
+.agent-model label { display: flex; gap: 8px; align-items: center; }
 .agent-plan { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: 12px; }
 .agent-plan .status-completed { color: var(--text-dim); text-decoration: line-through; }
 .agent-plan .status-in_progress { color: var(--text); font-weight: 600; }

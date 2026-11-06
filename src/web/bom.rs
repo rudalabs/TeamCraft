@@ -15,7 +15,7 @@ use crate::{
     auth::WebUser,
     domain::{self, RevisionRule},
     error::AppResult,
-    services::{bom, interchange, package, revisions},
+    services::{bom, interchange, package, projects, revisions},
     util, AppState,
 };
 
@@ -31,6 +31,23 @@ fn rule_of(q: &RuleQuery) -> RevisionRule {
         .unwrap_or_default()
 }
 
+/// Query of the BOM page: the exports take only `rule` and stay complete.
+#[derive(Deserialize)]
+pub struct ShowQuery {
+    rule: Option<String>,
+    /// Levels shown: a number, `all` or empty.
+    depth: Option<String>,
+    /// Project group code: keep its lines and their ancestors.
+    group: Option<String>,
+}
+
+/// `?depth=`: a positive number of levels; anything else (`all`, empty,
+/// junk) shows every level.
+pub(crate) fn parse_depth(raw: Option<&str>) -> Option<usize> {
+    raw.and_then(|d| d.trim().parse::<usize>().ok())
+        .filter(|d| *d >= 1)
+}
+
 /// Lines the BOM page and the BOM comparison list at most: a large product
 /// expands to tens of thousands (megabytes of HTML), the CSV and Excel
 /// downloads have them all.
@@ -40,15 +57,42 @@ pub async fn show(
     State(st): State<AppState>,
     ctx: WebCtx,
     Path(id): Path<Uuid>,
-    Query(q): Query<RuleQuery>,
+    Query(q): Query<ShowQuery>,
 ) -> AppResult<Response> {
     let me = &ctx.me;
     let rev = revisions::get(&st.db, me, id).await?;
-    let rule = rule_of(&q);
+    let rule = q
+        .rule
+        .as_deref()
+        .and_then(RevisionRule::parse)
+        .unwrap_or_default();
+    let depth = parse_depth(q.depth.as_deref());
+    let group_code = q.group.as_deref().map(str::trim).filter(|g| !g.is_empty());
+    // project codes are stored in upper case (`normalize_project_code`)
+    let group = match group_code {
+        Some(code) => Some(projects::get_by_code(&st.db, me, &code.to_ascii_uppercase()).await?),
+        None => None,
+    };
     let tree = bom::tree(&st.db, me, id, rule).await?;
-    let mut rows = bom::flatten(&tree.children);
-    // The roll-ups cover the whole structure; the page lists its first
-    // lines (depth first), the exports have all of them.
+    // The roll-ups cover the whole structure; the view only decides which
+    // lines are listed.
+    let mut rows = bom::view_rows(
+        &tree.children,
+        bom::ViewOptions {
+            depth,
+            group: group.as_ref().map(|g| g.id),
+        },
+    );
+    let codes = bom::project_codes(&st.db, &bom::tree_projects(&tree.children)).await?;
+    for row in &mut rows {
+        row.project_code = row.node.project_id.and_then(|p| codes.get(&p).cloned());
+    }
+    let mut groups: Vec<(Uuid, String)> = codes.into_iter().collect();
+    groups.sort_by(|a, b| a.1.cmp(&b.1));
+    let groups: Vec<_> = groups
+        .into_iter()
+        .map(|(id, code)| json!({ "id": id, "code": code }))
+        .collect();
     let rows_total = rows.len();
     rows.truncate(ROWS_SHOWN);
     render(
@@ -70,6 +114,9 @@ pub async fn show(
             },
             "rows": rows,
             "rows_total": rows_total,
+            "depth": depth,
+            "group": group.as_ref().map(|g| g.code.clone()),
+            "groups": groups,
         }),
     )
 }

@@ -106,6 +106,19 @@ mod tests {
             Some(Classification::Purchased)
         );
         assert_eq!(Classification::parse_field(Some(" ")).unwrap(), None);
+        for (raw, expected) in [
+            ("Normal", Some(Classification::Make)),
+            ("Phantom", Some(Classification::Make)),
+            ("Purchased", Some(Classification::Purchased)),
+            ("Kaufteil", Some(Classification::Purchased)),
+            ("Zukaufteil", Some(Classification::Purchased)),
+            ("Content Center", Some(Classification::Standard)),
+            ("Normteil", Some(Classification::Standard)),
+            ("", None),
+            ("Superpart", None),
+        ] {
+            assert_eq!(Classification::from_bom_structure(raw), expected, "{raw:?}");
+        }
         assert!(Classification::parse_field(Some("phantom")).is_err());
         for t in AttributeType::ALL {
             assert_eq!(AttributeType::parse(t.as_str()), Some(t));

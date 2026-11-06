@@ -7,6 +7,15 @@ variable can also be read from a file by appending `_FILE`
 container secrets are passed. For local development TeamCraft also reads an
 optional, git-ignored `secrets/.env` file in the working directory.
 
+Configuration files are read on start, in this order; a variable that is
+already set (in the environment or by an earlier file) is kept:
+
+| File                                   | When                                                                                     |
+|----------------------------------------|------------------------------------------------------------------------------------------|
+| the file named by `TEAMCRAFT_ENV_FILE` | when the variable is set (e.g. a `teamcraft.env` outside the working directory)          |
+| `secrets/.env`                         | when it exists in the working directory (development)                                    |
+| the system file                        | only in package builds: its path is fixed at build time with `TEAMCRAFT_SYSTEM_CONFIG` (e.g. `/etc/teamcraft/teamcraft.env`); development builds never read one |
+
 In the [Docker installation](docker.md) the variables go into
 `teamcraft.env`; the image sets `TEAMCRAFT_BIND_ADDR=0.0.0.0:8080` and
 `TEAMCRAFT_VAULT_DIR=/var/lib/teamcraft/vault`, and `docker-compose.yml`
@@ -96,9 +105,19 @@ limit still are). Every variable also exists as `NAME_FILE`.
 |--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
 | `TEAMCRAFT_SMTP_URL`           | SMTP server in lettre syntax: `smtps://user:password@host:465`, `smtp://host:587?tls=required`, `smtp://localhost:25` |
 | `TEAMCRAFT_MAIL_FROM`          | sender, `Name <address>` (required with SMTP)                                                                         |
+| `TEAMCRAFT_REQUEST_DIGEST_HOURS` | hours between two e-mail digests of the change requests waiting for triage, per CAD editor and project group (default `24`, `0` = off, at most `720`); only with SMTP |
 | `TEAMCRAFT_MATTERMOST_WEBHOOK` | incoming webhook for notifications                                                                                    |
 | `TEAMCRAFT_MATTERMOST_DIRECT`  | `true`: direct messages, `false` (default): mention in the webhook's channel – notifications about [restricted project groups](permissions.md) then show only a generic text and the link |
 | `MATTERMOST_ERROR_WEBHOOK`     | incoming webhook that receives internal server errors (rate limited)                                                  |
+
+The **change request digest** is an e-mail per project group to its CAD
+editors and admins with the requests raised since the previous digest that
+are still *New*, and how many older ones still wait for triage. Nothing is
+sent when no new request came in. Every user can mute it on the account page
+(*E-mail digest of new change requests …*). The server remembers per user
+and group up to when the digests reached (table `request_digests`), so a
+restart or a second server never sends a period twice; the e-mail goes
+through the same outbox, retries and access checks as every notification.
 
 ## Event webhooks
 
