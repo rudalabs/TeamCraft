@@ -27,7 +27,7 @@ sets the database connection with the password from a Docker secret
 | Variable                  | Default                          | Meaning                                                                         |
 |---------------------------|----------------------------------|---------------------------------------------------------------------------------|
 | `TEAMCRAFT_BIND_ADDR`     | `127.0.0.1:8080`                 | address to listen on (`0.0.0.0:8080` to serve the network)                      |
-| `TEAMCRAFT_PUBLIC_URL`    | `http://localhost:<port>`        | external URL: SSO redirects, CSRF origin check, `Secure` cookies for `https://` |
+| `TEAMCRAFT_PUBLIC_URL`    | `http://localhost:<port>`        | external URL: SSO redirects, CSRF origin check; for `https://` also `Secure` cookies and `Strict-Transport-Security` |
 | `TEAMCRAFT_INSTANCE_NAME` | `TeamCraft`                      | name in the header and page titles                                              |
 | `TEAMCRAFT_LOG_FORMAT`    | `text`                           | `text` or `json`                                                                |
 | `RUST_LOG`                | `info,tower_http=info,sqlx=warn` | log filter                                                                      |
