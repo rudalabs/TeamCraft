@@ -1007,6 +1007,25 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
 }
 
 /// Records the decision of a reviewer and finishes the change when possible.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor; the change is in review, the actor sees every
+///   affected item and is one of its reviewers with a pending decision (409
+///   when already decided); a rejection needs a comment.
+/// * **Locks:** the change row (`FOR UPDATE`); on release or rejection every
+///   affected revision (`revisions::lock`) before its state changes.
+/// * **Audit:** `change.approve` / `change.reject`; when the change finishes,
+///   `change.released` or `change.rejected`.
+/// * **Notifications:** author, reviewers and watchers of the change; on
+///   release also the watchers of the released items, and the dependents
+///   flagged by `impacts::on_release`.
+/// * **Webhooks:** `change.approved` / `change.rejected`; on release also
+///   `revision.released` and `change.released`.
+/// * **Release:** all revisions of the change or none, the impacts, the
+///   implemented change requests (`requests::on_change_released`), the
+///   notifications and the webhook deliveries in one transaction
+///   (`tests/atomic_processes.rs`); a second approval at once gets a 409.
 pub async fn review(
     pool: &PgPool,
     actor: &Actor,

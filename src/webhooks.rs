@@ -486,7 +486,7 @@ impl Dispatcher {
         )
     }
 
-    /// Sends the due deliveries (up to [`BATCH`] at once).
+    /// Sends the due deliveries (up to `BATCH` at once).
     pub async fn run_once(&self, pool: &PgPool) -> AppResult<Report> {
         let mut report = Report {
             failed: withhold(pool).await?,

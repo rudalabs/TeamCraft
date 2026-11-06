@@ -107,6 +107,9 @@ pub struct Config {
     pub mattermost_error_webhook: Option<String>,
     /// E-mail notifications via SMTP. `None` = no e-mails.
     pub smtp: Option<SmtpConfig>,
+    /// Hours between two e-mail digests of the change requests waiting for
+    /// triage (per user and project group); `0` = no digests.
+    pub request_digest_hours: u64,
     /// Notifications to Mattermost. `None` = disabled.
     pub mattermost: Option<MattermostConfig>,
     /// The built-in assistant (Anthropic or an OpenAI-compatible API). `None` = disabled.
@@ -642,6 +645,10 @@ impl Config {
             }
             None => None,
         };
+        let request_digest_hours = env.parse_or("TEAMCRAFT_REQUEST_DIGEST_HOURS", 24u64)?;
+        if request_digest_hours > 24 * 30 {
+            bail!("TEAMCRAFT_REQUEST_DIGEST_HOURS must be between 0 (off) and 720");
+        }
         let mattermost = match env.get("TEAMCRAFT_MATTERMOST_WEBHOOK")? {
             Some(webhook) => {
                 if !(webhook.starts_with("https://") || webhook.starts_with("http://")) {
@@ -697,6 +704,7 @@ impl Config {
             local_login,
             mattermost_error_webhook,
             smtp,
+            request_digest_hours,
             mattermost,
             assistant,
             webhooks,
@@ -706,7 +714,7 @@ impl Config {
     /// Password-free summary for the startup log.
     pub fn summary(&self) -> String {
         format!(
-            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} mattermost_notifications={} assistant={} webhook_targets={}",
+            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} request_digest={}h mattermost_notifications={} assistant={} webhook_targets={}",
             self.bind_addr,
             self.public_url,
             self.database_display,
@@ -719,6 +727,7 @@ impl Config {
             self.local_login,
             self.mattermost_error_webhook.is_some(),
             self.smtp.is_some(),
+            self.request_digest_hours,
             self.mattermost
                 .as_ref()
                 .map_or("off", |m| if m.direct { "direct" } else { "channel" }),
@@ -928,6 +937,7 @@ mod tests {
         assert_eq!(cfg.public_url, "http://localhost:8080");
         assert_eq!(cfg.max_upload_bytes, 512 * 1024 * 1024);
         assert_eq!(cfg.upload_chunk_bytes, 16 * 1024 * 1024);
+        assert_eq!(cfg.request_digest_hours, 24, "daily digests");
         assert!(!cfg.cookie_secure);
         assert_eq!(cfg.log_format, LogFormat::Text);
         assert!(cfg.bootstrap_admin.is_none());
@@ -1252,6 +1262,17 @@ mod tests {
             ("TEAMCRAFT_COOKIE_SECURE", "maybe")
         ])
         .is_err());
+        assert!(config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_REQUEST_DIGEST_HOURS", "721")
+        ])
+        .is_err());
+        let off = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_REQUEST_DIGEST_HOURS", "0"),
+        ])
+        .unwrap();
+        assert_eq!(off.request_digest_hours, 0, "0 switches the digest off");
     }
 
     #[test]

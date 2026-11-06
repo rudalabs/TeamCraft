@@ -11,8 +11,8 @@
 //! * CalculiX results (`.frd`, ASCII): nodes (`2C`), elements (`3C`) and the
 //!   nodal result blocks (`-4 DISP`, `-4 STRESS`, …).
 //!
-//! Every reader fills one [`Grid`] (points, cells, point and cell data);
-//! [`Grid::into_mesh`] turns it into the preview [`Mesh`]: volume cells
+//! Every reader fills one `Grid` (points, cells, point and cell data);
+//! `Grid::into_mesh` turns it into the preview [`Mesh`]: volume cells
 //! (tetrahedra, hexahedra, wedges, pyramids – quadratic ones by their corner
 //! nodes) contribute only their outer faces (faces used by exactly one cell),
 //! surface cells are drawn as they are, and interior points are dropped.

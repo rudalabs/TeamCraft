@@ -17,7 +17,7 @@
 //! from the request (with the in-work revisions of the affected items) or an
 //! existing open one that is linked. When a linked change order is released,
 //! the request becomes *implemented* in the same transaction
-//! ([`on_change_released`], called from `changes::review`).
+//! (`on_change_released`, called from `changes::review`).
 
 use chrono::NaiveDate;
 use serde::Serialize;
