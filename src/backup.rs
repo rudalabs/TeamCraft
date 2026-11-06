@@ -157,6 +157,11 @@ fn ssl_mode_str(mode: PgSslMode) -> &'static str {
 /// looks like a backup; the manifest is written last and renamed into place.
 pub async fn backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
     let created = prepare_target(dir)?;
+    // only the owner may enter it while the dump and the objects arrive
+    if let Err(error) = restrict_tree(dir) {
+        discard_partial(dir, created);
+        return Err(error.context("no backup was written"));
+    }
     match write_backup(config, dir).await {
         Ok(summary) => Ok(summary),
         Err(error) => {
@@ -209,6 +214,7 @@ async fn write_backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
         .with_context(|| format!("cannot write '{}'", partial.display()))?;
     fs::rename(&partial, &manifest_path)
         .with_context(|| format!("cannot write '{}'", manifest_path.display()))?;
+    restrict_tree(dir)?;
 
     Ok(BackupSummary {
         db_dump_bytes,
@@ -336,6 +342,39 @@ async fn ensure_database_empty(config: &Config, force: bool) -> Result<()> {
             "the database already contains {tables} table(s); run the restore with --force to replace them"
         );
     }
+    Ok(())
+}
+
+/// A backup holds password, session and token hashes and the webhook
+/// secrets: on Unix its directories become 0700 and its files 0600,
+/// whatever the umask (threat model F19). Windows has no mode bits – the
+/// files inherit the ACL of the folder the backup is written to, so choose
+/// one only the service account can read (docs/src/admin/operations.md).
+fn restrict_tree(root: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(path) = stack.pop() {
+            let meta = fs::symlink_metadata(&path)
+                .with_context(|| format!("cannot read '{}'", path.display()))?;
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            let mode = if meta.is_dir() { 0o700 } else { 0o600 };
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode))
+                .with_context(|| format!("cannot restrict the access to '{}'", path.display()))?;
+            if meta.is_dir() {
+                for entry in fs::read_dir(&path)
+                    .with_context(|| format!("cannot read '{}'", path.display()))?
+                {
+                    stack.push(entry?.path());
+                }
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = root;
     Ok(())
 }
 
@@ -805,6 +844,33 @@ mod tests {
             );
         }
         assert!(!args.iter().any(|arg| arg.contains("pw-secret")));
+    }
+
+    /// Threat model F19: a backup is readable by its owner only, whatever
+    /// the umask of the process.
+    #[test]
+    fn backups_are_readable_by_the_owner_only() {
+        let dir = temp_dir("modes");
+        let nested = dir.join(VAULT_DIR).join("objects").join("ab");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(dir.join(DUMP_FILE), b"dump").unwrap();
+        fs::write(nested.join("cd"), b"object").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // what a umask of 000 would give
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o777)).unwrap();
+            fs::set_permissions(dir.join(DUMP_FILE), fs::Permissions::from_mode(0o666)).unwrap();
+            restrict_tree(&dir).unwrap();
+            let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&dir), 0o700);
+            assert_eq!(mode(&nested), 0o700);
+            assert_eq!(mode(&dir.join(DUMP_FILE)), 0o600);
+            assert_eq!(mode(&nested.join("cd")), 0o600);
+        }
+        #[cfg(not(unix))]
+        restrict_tree(&dir).unwrap(); // documented, nothing to set
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

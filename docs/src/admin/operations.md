@@ -39,6 +39,14 @@ in time. A failed backup removes what it wrote – the directory, if it
 created it – and the manifest is written last, so an interrupted backup is
 never taken for a complete one.
 
+A backup holds password, session and token hashes and the webhook secrets,
+unencrypted. On Linux and macOS its directory and everything in it are made
+readable by the owner only (directories `0700`, files `0600`) before the
+dump starts, whatever the umask. Windows has no such mode bits: the files
+inherit the permissions of the folder they are written to, so write backups
+into a folder only the service account (and administrators) can read, and
+keep copies off the server encrypted.
+
 Restore with the server stopped:
 
 ```sh
