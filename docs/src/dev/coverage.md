@@ -67,9 +67,9 @@ Missed lines / lines and line coverage from CI (`b4cf014`).
 | `web/*` (HTML handlers) | 5.6k counted lines | – | 891 / 5,613 – 84.1 % | `web_ui`, the feature tests that use the forms, `no_unchecked_in_handlers` |
 | `api/*` (REST handlers) | 2.9k counted lines | – | 305 / 2,878 – 89.4 % | `api_flow` and the feature tests, `range_downloads` |
 | `domain/*`, `config.rs`, `util.rs`, `error.rs` | 3.1k counted lines | unit and property tests | 87 / 3,068 – 97.2 % | all of them; `domain_and_vault` |
-| `auth.rs`, `oidc.rs` | 0.6k counted lines | 10 unit | 191 / 649 – 70.6 % (`oidc.rs` 53.5 %) | `api_flow`, `read_permissions` (tokens, sessions); OIDC has no integration test |
+| `auth.rs`, `oidc.rs` | 0.6k counted lines | 10 unit | 191 / 649 – 70.6 % (`oidc.rs` 53.5 %) | `api_flow`, `read_permissions` (tokens, sessions), `oidc_flow` (SSO against a fake provider, session and PAT lifetime; the CI numbers predate it) |
 | `vault.rs`, `backup.rs`, `db.rs` | 1.1k counted lines | unit tests in each | 101 / 1,148 – 91.2 % | `audit_and_vault`, `domain_and_vault`, `uploads`, `backup_restore`, `backup_errors`, `backup_proofing`, `migrations` |
-| `webhooks.rs`, `delivery.rs`, `notify.rs` | 1.0k counted lines | unit tests in each | 129 / 971 – 86.7 % (`notify.rs` 26 %) | `webhooks`, `api_flow` (e-mail outbox), `atomic_processes`; no test against a real SMTP/Mattermost server |
+| `webhooks.rs`, `delivery.rs`, `notify.rs` | 1.0k counted lines | unit tests in each | 129 / 971 – 86.7 % (`notify.rs` 26 %) | `webhooks`, `webhook_ssrf`, `api_flow` (e-mail outbox), `atomic_processes`; no test against a real SMTP/Mattermost server |
 | `assistant.rs`, `llm/*`, `mcp/*` | 5.2k counted lines | unit tests in each | 306 / 5,236 – 94.2 % | `assistant`, `assistant_threads`, `mcp`, `agent_tools`, `read_permissions` |
 | `main.rs`, `lib.rs` (CLI, router) | 0.8k counted lines | 3 unit | 533 / 756 – 29.5 % | the CLI runs only in the CLI smoke test of the *tests* job, which the coverage job does not measure |
 | Desktop (`desktop/src`, own crate, not measured) | 9.1k lines | 72 unit | – | none (CI runs the desktop tests on Linux only) |
@@ -89,8 +89,8 @@ state.
 | 6 | `services/items.rs`, `revisions.rs` | Creation, numbering, lifecycle | `service_refusals`, `domain_and_vault`, `atomic_processes` (12 parallel creations, the same number twice) | 54 / 724, 4 / 490 | – |
 | 7 | `services/bom.rs` | Cycles and quantities corrupt every roll-up | 10 unit, `structure`, `service_refusals` | 14 / 1,004 | – |
 | 8 | `services/checkouts.rs` | The lock is the integrity mechanism of the vault | `concurrency` | 10 / 240 | – |
-| 9 | `services/users.rs`, `auth.rs`, `oidc.rs` | Sessions, tokens, SSO – untrusted input | unit tests, `api_flow`, `read_permissions` | 187 / 690, 11 / 262, 180 / 387 | **OIDC callback state/nonce/PKCE failures with a fake provider; token expiry and revocation** |
-| 10 | `webhooks.rs` + `services/webhooks.rs` (SSRF guard, signing) | Server-side requests to configurable URLs | unit tests of the address rules (`internal_addresses`, `default_policy_blocks_internal_targets`, `allow_list_restricts_and_trusts_hosts`), HMAC vectors, `webhooks`, `atomic_processes` | 43 / 582, 25 / 679 | **the check at connect time (DNS rebinding) has no test** |
+| 9 | `services/users.rs`, `auth.rs`, `oidc.rs` | Sessions, tokens, SSO – untrusted input | unit tests, `api_flow`, `read_permissions`, `oidc_flow` (8, fake identity provider in the test process): a good login provisions the account with the mapped role; a missing, forged or expired `state`, a replayed callback, an error from the provider, a wrong `nonce`, an old `exp`, another `aud` or `iss`, no subject sign nobody in; a PKCE mismatch and a used code are a login error (fixed, below), a wrong client secret stays an internal error; ID token signatures are not checked by design (pinned); sessions and PATs end on expiry, sign-out / revocation (owner or admin, audited) and deactivation | 187 / 690, 11 / 262, 180 / 387 (before `oidc_flow`) | – (a plain-HTTP issuer, below) |
+| 10 | `webhooks.rs` + `services/webhooks.rs` (SSRF guard, signing) | Server-side requests to configurable URLs | unit tests of the address rules (`internal_addresses`, `default_policy_blocks_internal_targets`, `allow_list_restricts_and_trusts_hosts`), HMAC vectors, `webhooks`, `atomic_processes`, `webhook_ssrf` (4) and `every_connection_checks_the_answer_it_uses`: a name that passes when saved and resolves to loopback, cloud metadata, an IPv4-mapped or unique-local address when used (DNS rebinding) is refused at connect time and every attempt resolves anew; mixed answers keep only public addresses; `localhost` via the system resolver and a stored IP literal are refused; a listed host is delivered (resolution injectable: `Dispatcher::with_lookup`) | 43 / 582, 25 / 679 | – |
 | 11 | `mesh.rs` readers | Untrusted bytes, big allocations | `parser_robustness`, `parser_corpus`, fuzz targets | 108 / 1,535 | – |
 | 12 | `simmesh.rs` (VTK/VTU/FRD) | Untrusted, hand-written parsing | 19 unit, damage tests | 81 / 1,465 | **an FRD sample in the damage tests** |
 | 13 | `swpart.rs`, `nxpart.rs`, `thumbnail.rs` | Offsets, lengths, decompression bombs | unit tests, NIST files, damage tests | 8 / 657, 3 / 262, 15 / 543 | **a SOLIDWORKS container built by hand** |
@@ -116,20 +116,36 @@ and `web/webhooks.rs` (a quarter of their lines missed each),
 * **No bug** (#92) – every multi-row mutation covered by `atomic_processes`
   already ran in one transaction; a mutation check (a check-in split into two
   transactions) makes those tests fail.
+* **Fixed** – a login code the identity provider refused (`invalid_grant`:
+  a code already used or expired, or a PKCE verifier that does not match –
+  an intercepted code) ended in a 500 page and an incident report. It is a
+  failed login attempt, not a server fault: it is now the login page with a
+  400 and "the identity provider refused the login code"; other token
+  endpoint errors (`invalid_client`, a 5xx, no connection) stay internal
+  errors because the administrator has to act. Regression tests
+  `a_pkce_mismatch_or_a_used_code_is_refused_by_the_provider` and
+  `a_misconfigured_client_stays_a_server_error`.
+* **Observation, decision left open** – ID token signatures are not
+  verified; that rests on the token coming straight from the token endpoint
+  over TLS (OIDC Core 3.1.3.7 step 6). `TEAMCRAFT_OIDC_ISSUER_URL` also
+  accepts `http://` (an internal identity provider without TLS); then
+  nothing protects the token on its way. Refusing `http://` outside of
+  `localhost`, or verifying the signature against the provider's JWKS when
+  the issuer is plain HTTP, would close that – not changed here because it
+  can break existing installations.
+* **No bug** – the SSRF check at connect time: the resolver filters every
+  answer for each new connection; a mutation that drops the filter fails the
+  four resolver-based tests.
 
 ### What to write next
 
-1. OIDC callback failure paths with a fake provider; token expiry and
-   revocation (`oidc.rs` is the least covered module that handles untrusted
-   input).
-2. The SSRF check at connect time (a resolver that answers a private address
-   for a public name).
-3. `services/insights.rs` (BOM health check, duplicates) and `notify.rs`.
-4. FRD sample and a SOLIDWORKS container built by hand in the damage tests.
-5. The CLI (`main.rs`, 511 of 643 lines missed): run the commands in-process in
+1. `services/insights.rs` (BOM health check, duplicates) and `notify.rs`.
+2. FRD sample and a SOLIDWORKS container built by hand in the damage tests.
+3. The CLI (`main.rs`, 511 of 643 lines missed): run the commands in-process in
    a test instead of only in the smoke test, so the coverage job sees them.
-6. Done: atomicity under an injected failure (#92), a floor for the CI
-   coverage job (`.github/coverage-floor`), `cargo fuzz` targets (see
+4. Done: atomicity under an injected failure (#92), a floor for the CI
+   coverage job (`.github/coverage-floor`), OIDC failure paths and the SSRF
+   check at connect time (`oidc_flow`, `webhook_ssrf`), `cargo fuzz` targets (see
    [Fuzzing the file readers](fuzzing.md)).
 
 ## Per module

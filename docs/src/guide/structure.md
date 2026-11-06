@@ -12,6 +12,34 @@ roll-up and three **revision rules**:
 | Latest released | its newest released revision                                                      |
 | As released     | the exact revision the parent was released with (e.g. the as-built configuration) |
 
+### Working with a large structure
+
+For a big product (hundreds or thousands of lines across several project
+groups) the BOM page offers:
+
+* **Fold and unfold** – every line that has lines below it has a ▾ / ▸ button
+  (keyboard operable, `aria-expanded`); *Collapse all* and *Expand all* sit
+  above the table. This needs JavaScript; without it every line stays
+  visible.
+* **Levels** – *Levels: 1, 2, 3, 4, 5, All* (`?depth=n`) lists only the first
+  n levels, also without JavaScript, and the link can be shared. A line at the
+  last level shown has a `+n` marker with the number of lines hidden below it.
+  Mass and cost always cover the whole structure, not just the levels shown.
+  It combines with the revision rule (`?rule=`).
+* **Group column** – the project group of each line, linked to the group page.
+  A line you may not see (a restricted group) stays a placeholder and shows no
+  group.
+* **Group filter** – *Group* (`?group=CODE`, only groups that occur in the
+  structure are offered) keeps the lines of that group (highlighted) and
+  the path from the top to them, so they stay in context; other lines
+  below a match are left out unless they lead to a match too. With a level
+  limit as well, the filter applies first. An unknown or hidden code gives
+  "not found".
+
+The CSV and Excel exports and Pack and Go ignore levels and group: they
+always contain every line. The desktop app's structure tab does not have
+these controls yet.
+
 Where-used shows the parents of an item; *All levels* on the revision page
 opens the where-used page, which walks up through the sub-assemblies (1, 2,
 3, 5 or all levels). Cycles are rejected. The BOM

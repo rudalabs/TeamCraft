@@ -411,6 +411,9 @@ pub struct BomNode {
     /// Placeholder for a child the reader may not see (no identity, not
     /// expanded, left out of the roll-ups).
     pub restricted: bool,
+    /// Project group of the item; `None` for a restricted placeholder (the
+    /// group of a hidden item is never revealed) and for ungrouped items.
+    pub project_id: Option<Uuid>,
     pub children: Vec<BomNode>,
 }
 
@@ -436,6 +439,7 @@ impl BomNode {
             cost_complete: self.cost_complete,
             cycle: self.cycle,
             restricted: self.restricted,
+            project_id: self.project_id,
             children: Vec::new(),
         }
     }
@@ -877,6 +881,11 @@ impl Builder<'_> {
                 cost_complete: cost_ok && !cycle,
                 cycle,
                 restricted: l.restricted,
+                project_id: if l.restricted {
+                    None
+                } else {
+                    l.child_project_id
+                },
                 children,
             });
         }
@@ -937,6 +946,101 @@ pub fn flatten(nodes: &[BomNode]) -> Vec<FlatBomRow> {
     }
     walk(nodes, &mut out);
     out
+}
+
+/// What the BOM page shows of the expanded structure (the totals always
+/// cover all of it).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ViewOptions {
+    /// Show the levels `1..=depth`; `None` = all levels.
+    pub depth: Option<usize>,
+    /// Keep only the lines of this project group and the path from the top
+    /// to them.
+    pub group: Option<Uuid>,
+}
+
+/// One row of the BOM page.
+#[derive(Clone, Debug, Serialize)]
+pub struct ViewRow {
+    pub level: usize,
+    /// The line has children in the structure (shown or not).
+    pub has_children: bool,
+    /// Lines below this one that the depth limit or the group filter left
+    /// out of this view.
+    pub hidden_below: usize,
+    /// The line belongs to the group of the filter.
+    pub group_match: bool,
+    /// Code of the project group (`None` for restricted placeholders).
+    pub project_code: Option<String>,
+    pub node: BomNode,
+}
+
+/// Rows of the BOM page (depth first): first the group filter – a line stays
+/// if it or a line below it is in the group, so the path from the top is
+/// kept, but lines of other groups below a match are not – then the depth
+/// cut. A line at the last level shown counts the lines hidden below it.
+/// Pure: roll-ups were computed on the whole tree and are not touched.
+pub fn view_rows(nodes: &[BomNode], opts: ViewOptions) -> Vec<ViewRow> {
+    fn filtered(nodes: &[BomNode], group: Option<Uuid>, out: &mut Vec<ViewRow>) {
+        for n in nodes {
+            let at = out.len();
+            out.push(ViewRow {
+                level: n.level,
+                has_children: !n.children.is_empty(),
+                hidden_below: 0,
+                group_match: group.is_some() && n.project_id == group,
+                project_code: None,
+                node: n.shallow(),
+            });
+            filtered(&n.children, group, out);
+            if group.is_some() && !out[at].group_match && out.len() == at + 1 {
+                out.pop();
+            }
+        }
+    }
+    let mut all = Vec::new();
+    filtered(nodes, opts.group, &mut all);
+    let Some(depth) = opts.depth else {
+        return all;
+    };
+    let mut out: Vec<ViewRow> = Vec::new();
+    for row in all {
+        if row.level <= depth {
+            out.push(row);
+        } else if let Some(last) = out.last_mut() {
+            // depth first: the row before is the one at the last level
+            // shown whose sub-tree this is
+            last.hidden_below += 1;
+        }
+    }
+    out
+}
+
+/// Codes of the project groups of the given ids (for display; the caller
+/// passes ids of lines the reader may see).
+pub async fn project_codes(pool: &PgPool, ids: &[Uuid]) -> AppResult<HashMap<Uuid, String>> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id, code FROM projects WHERE id = ANY($1)")
+            .bind(ids)
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// The distinct project groups of the lines of an expanded structure.
+pub fn tree_projects(nodes: &[BomNode]) -> Vec<Uuid> {
+    fn walk(nodes: &[BomNode], out: &mut HashSet<Uuid>) {
+        for n in nodes {
+            out.extend(n.project_id);
+            walk(&n.children, out);
+        }
+    }
+    let mut set = HashSet::new();
+    walk(nodes, &mut set);
+    set.into_iter().collect()
 }
 
 /// Exports the expanded BOM as CSV (comma separated, UTF-8).
@@ -1080,8 +1184,122 @@ mod tests {
             cost_complete: cost_ok,
             cycle: false,
             restricted: false,
+            project_id: None,
             children,
         }
+    }
+
+    /// A node of group `g` at `level` (its children sit one level lower).
+    fn gnode(name: &str, g: Option<Uuid>, level: usize, children: Vec<BomNode>) -> BomNode {
+        let mut n = node(Some(1.0), 1.0, children);
+        n.item_number = name.into();
+        n.project_id = g;
+        n.level = level;
+        n
+    }
+
+    fn names(rows: &[ViewRow]) -> Vec<&str> {
+        rows.iter().map(|r| r.node.item_number.as_str()).collect()
+    }
+
+    /// A (g1) > [B (g1) > [C (g2), D (g1)], E (g2) > [F (g2)], G (g1)]
+    fn sample(g1: Uuid, g2: Uuid) -> Vec<BomNode> {
+        vec![gnode(
+            "A",
+            Some(g1),
+            1,
+            vec![
+                gnode(
+                    "B",
+                    Some(g1),
+                    2,
+                    vec![
+                        gnode("C", Some(g2), 3, vec![]),
+                        gnode("D", Some(g1), 3, vec![]),
+                    ],
+                ),
+                gnode("E", Some(g2), 2, vec![gnode("F", Some(g2), 3, vec![])]),
+                gnode("G", Some(g1), 2, vec![]),
+            ],
+        )]
+    }
+
+    #[test]
+    fn view_without_options_is_the_whole_tree() {
+        let (g1, g2) = (Uuid::new_v4(), Uuid::new_v4());
+        let rows = view_rows(&sample(g1, g2), ViewOptions::default());
+        assert_eq!(names(&rows), ["A", "B", "C", "D", "E", "F", "G"]);
+        assert!(rows.iter().all(|r| r.hidden_below == 0 && !r.group_match));
+    }
+
+    #[test]
+    fn depth_cuts_levels_and_counts_what_is_hidden() {
+        let (g1, g2) = (Uuid::new_v4(), Uuid::new_v4());
+        let tree = sample(g1, g2);
+        let two = ViewOptions {
+            depth: Some(2),
+            group: None,
+        };
+        let rows = view_rows(&tree, two);
+        assert_eq!(names(&rows), ["A", "B", "E", "G"]);
+        let hidden: Vec<usize> = rows.iter().map(|r| r.hidden_below).collect();
+        assert_eq!(hidden, [0, 2, 1, 0]);
+        let one = ViewOptions {
+            depth: Some(1),
+            group: None,
+        };
+        let rows = view_rows(&tree, one);
+        assert_eq!(names(&rows), ["A"]);
+        assert_eq!(rows[0].hidden_below, 6);
+        assert!(rows[0].has_children);
+    }
+
+    #[test]
+    fn group_filter_keeps_matches_and_their_ancestors() {
+        let (g1, g2) = (Uuid::new_v4(), Uuid::new_v4());
+        let tree = sample(g1, g2);
+        let only = |group| ViewOptions {
+            depth: None,
+            group: Some(group),
+        };
+        let rows = view_rows(&tree, only(g2));
+        // A and B stay as the path to C; D and G belong to another group
+        assert_eq!(names(&rows), ["A", "B", "C", "E", "F"]);
+        let matches: Vec<bool> = rows.iter().map(|r| r.group_match).collect();
+        assert_eq!(matches, [false, false, true, true, true]);
+        assert!(view_rows(&tree, only(Uuid::new_v4())).is_empty());
+    }
+
+    #[test]
+    fn group_filter_and_depth_combine_and_the_roll_up_is_untouched() {
+        let (g1, g2) = (Uuid::new_v4(), Uuid::new_v4());
+        let tree = sample(g1, g2);
+        let rows = view_rows(
+            &tree,
+            ViewOptions {
+                depth: Some(2),
+                group: Some(g2),
+            },
+        );
+        // C is below the cut: its ancestor B stays and counts it
+        assert_eq!(names(&rows), ["A", "B", "E"]);
+        assert_eq!(rows[1].hidden_below, 1);
+        assert_eq!(rows[2].hidden_below, 1);
+        // the roll-up of the whole structure is what the rows carry
+        assert_eq!(rows[0].node.total_mass_kg, 7.0);
+    }
+
+    #[test]
+    fn a_restricted_placeholder_never_matches_a_group() {
+        let g1 = Uuid::new_v4();
+        let mut hidden = gnode("(restricted)", None, 2, vec![]);
+        hidden.restricted = true;
+        let tree = vec![gnode("A", Some(g1), 1, vec![hidden])];
+        let only = ViewOptions {
+            depth: None,
+            group: Some(g1),
+        };
+        assert_eq!(names(&view_rows(&tree, only)), ["A"]);
     }
 
     #[test]

@@ -334,6 +334,12 @@ real files and belong to section 3 once such files are at hand.
 
 ## Done
 
+- [x] **BOM tree view** for large structures (web UI only): lines with children fold and unfold (progressive
+  enhancement in `static/app.js`, all expanded without JavaScript), `?depth=n` shows the first n levels (a line at the
+  cut counts what is hidden below it), a *Group* column links each line's project group (restricted placeholders show
+  none), `?group=CODE` keeps the lines of a group with the path to them; roll-ups and totals always cover the whole
+  structure, CSV/Excel exports stay complete. Pure `bom::view_rows` with unit tests, `tests/bom_tree_view.rs`.
+  Not done: the desktop app's structure tab (own renderer in `desktop/ui/app.js`) has none of this yet
 - [x] CI gate for the API reference: the `fmt and clippy` job also runs `cargo doc --no-deps` with
   `RUSTDOCFLAGS=-D warnings`; the 8 broken or private intra-doc links it found are fixed (doc comments only)
 - [x] **Backup / restore** proofed (`tests/backup_proofing.rs`, `tests/backup_errors.rs`): a corrupt or missing vault
