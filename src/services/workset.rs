@@ -85,7 +85,7 @@ pub struct Workset {
 
 /// Resolves the working set below a revision.
 ///
-/// The BOM is read level by level ([`bom::load_structure`], one query per
+/// The BOM is read level by level (`bom::load_structure`, one query per
 /// BOM level) and walked without expanding shared sub-assemblies again;
 /// each round of CAD references takes three queries (names, holders, their
 /// revisions under the rule), whatever the number of files.

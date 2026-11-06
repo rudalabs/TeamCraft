@@ -13,9 +13,9 @@
 //!
 //! * rows with the same part number (or, without one, the same name) are one
 //!   item; repeated rows below the same parent are merged (quantities added),
-//! * `match_existing` [on]: a part number that is an item number in TeamCraft
+//! * `match_existing` \[on\]: a part number that is an item number in TeamCraft
 //!   uses that item – its own BOM is never changed by an import,
-//! * `numbers` [`file`]: new items get the part number of the file when it is
+//! * `numbers` \[`file`\]: new items get the part number of the file when it is
 //!   a valid, unused item number, otherwise a generated one (the CAD number
 //!   is then kept in the description); `generate` always generates numbers,
 //! * a sub-assembly takes its children from its first occurrence; when the
