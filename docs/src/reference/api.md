@@ -377,6 +377,8 @@ checked out by the caller.
 | `GET /items/{number}/simulations`                             | simulations whose latest revision is based on the item, with `out_of_date` and `open_impact_id`                               |
 | `GET/POST /projects/{code}/result-templates` | extraction templates of a group (read: whoever sees the group; write: its managers and admins): `{name, file_pattern, method: regex\|csv, pattern \| csv_column [csv_key_column, csv_key_value], pick?: first\|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?}` |
 | `PUT/DELETE /result-templates/{id}`                          | replace (same fields) or remove a template                                                                                     |
+| `GET …/revisions/{code}/simulation/proposals?status=` | values the assistant proposed from reports (`pending` default, `accepted`, `rejected`, `all`): `{proposals: [{name, value, unit, limits, load_case, source_file, source_version, quote, status, proposed_by_name}]}` |
+| `POST /simulation-proposals/{id}/accept`, `…/reject`  | CAD editors of the group; accepting makes it a result value (same name and load case = update) and needs the revision checked out |
 
 A solver script after a run:
 

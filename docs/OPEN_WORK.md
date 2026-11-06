@@ -277,6 +277,9 @@ real files and belong to section 3 once such files are at hand.
   done (#43)
 - [ ] `.sim` detection: verify the STAR-CCM+ marker with real files (heuristic: "STAR-CCM+" near the start)
 - [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded, audited, with source); never from big result files
+- [x] Result values proposed by the assistant from PDF/text reports (`propose_result_values`, drafts with a quote, accepted or rejected by a CAD editor); PDF text layer in `read_file_text`
+- [ ] `read_file_text` of plain-text files shows the search text, which drops decimal numbers (`textindex`): read the real text (bounded) for the assistant, so text and CSV reports work like PDFs
+- [ ] Scanned PDF reports (OCR) – not planned; attach a PDF with a text layer or the numbers by hand
 - [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
