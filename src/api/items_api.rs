@@ -94,6 +94,9 @@ pub(super) struct CreateItem {
     /// Custom attribute values by key, e.g. `{"vendor": "Bosch", "length_mm": 120}`.
     #[serde(default)]
     attributes: serde_json::Map<String, Value>,
+    /// Optional client-chosen key (per user): a repeated request returns the
+    /// original item (200) instead of creating a second one.
+    idempotency_key: Option<String>,
 }
 
 /// Custom attribute values of a request body as `key → text` changes.
@@ -120,26 +123,59 @@ pub(super) async fn create_item(
         Some(code) => Some(projects::get_by_code(&st.db, &me, code).await?.id),
         None => None,
     };
-    let rev = items::create(
-        &st.db,
-        &me,
-        items::NewItem {
-            number: body.number,
-            item_type,
-            unit: body.unit.unwrap_or_default(),
-            project_id,
-            name: body.name,
-            description: body.description,
-            material: body.material,
-            mass_kg: body.mass_kg,
-            unit_cost: body.unit_cost,
-            classification: domain::Classification::parse_field(body.classification.as_deref())?
-                .unwrap_or_default(),
-            attributes: attribute_changes(&body.attributes)?,
-        },
-    )
-    .await?;
-    Ok((StatusCode::CREATED, Json(json!(rev))).into_response())
+    let payload_hash = {
+        use sha2::{Digest, Sha256};
+        let fields = json!([
+            body.item_type,
+            body.name,
+            body.number,
+            body.unit,
+            body.project,
+            body.description,
+            body.material,
+            body.mass_kg,
+            body.unit_cost,
+            body.classification,
+            body.attributes
+        ]);
+        hex::encode(Sha256::digest(fields.to_string().as_bytes()))
+    };
+    let input = items::NewItem {
+        number: body.number,
+        item_type,
+        unit: body.unit.unwrap_or_default(),
+        project_id,
+        name: body.name,
+        description: body.description,
+        material: body.material,
+        mass_kg: body.mass_kg,
+        unit_cost: body.unit_cost,
+        classification: domain::Classification::parse_field(body.classification.as_deref())?
+            .unwrap_or_default(),
+        attributes: attribute_changes(&body.attributes)?,
+    };
+    match body.idempotency_key {
+        None => {
+            let rev = items::create(&st.db, &me, input).await?;
+            Ok((StatusCode::CREATED, Json(json!(rev))).into_response())
+        }
+        Some(key) => {
+            let (rev, replay) =
+                items::create_idempotent(&st.db, &me, input, &key, &payload_hash).await?;
+            let status = if replay {
+                StatusCode::OK
+            } else {
+                StatusCode::CREATED
+            };
+            let mut response = (status, Json(json!(rev))).into_response();
+            if replay {
+                response
+                    .headers_mut()
+                    .insert("idempotent-replay", "true".parse().unwrap());
+            }
+            Ok(response)
+        }
+    }
 }
 
 #[derive(Deserialize)]

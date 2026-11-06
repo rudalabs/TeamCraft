@@ -4266,6 +4266,16 @@
   }
   function folderOf(rel) { return rel.split("/").slice(0, -1).join("/"); }
 
+  /** Idempotency key of one source item of a folder import: stable for the
+   * same group, folder and item key ("folder-import:" + SHA-256 as hex). */
+  function importKey(group, path, itemKey) {
+    var text = [group, path, itemKey].join("\u0000");
+    if (!window.crypto || !crypto.subtle) return Promise.resolve("folder-import:" + encodeURIComponent(text).replace(/%/g, "~").slice(0, 200));
+    return crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)).then(function (buf) {
+      return "folder-import:" + Array.prototype.map.call(new Uint8Array(buf), function (b) { return ("0" + b.toString(16)).slice(-2); }).join("");
+    });
+  }
+
   /** File name → folder in the project group for the upload of imported
    * files: the scanned folder and the subfolders below it, so the working
    * folder mirrors the original structure (<group>/Rover/Parts/Wheel.ipt). */
@@ -4520,7 +4530,11 @@
                   throw err;
                 });
               })
-            : api("POST", "/items", { item_type: it.type, name: it.name, project: group, number: it.number });
+            : importKey(group, path, it.key).then(function (key) {
+                // the same key on every run: an item whose answer was lost is
+                // returned by the server, not created a second time
+                return api("POST", "/items", { item_type: it.type, name: it.name, project: group, number: it.number, idempotency_key: key });
+              });
           return start.then(function (rev) {
             if (!pendingNumber) {
               // remembered at once, so a second run never creates it twice –

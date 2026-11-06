@@ -253,10 +253,19 @@ async fn import_folder(
                         Method::POST,
                         "/api/v1/items",
                         token,
-                        Some(json!({ "item_type": it.item_type, "name": it.name, "project": project })),
+                        Some(json!({
+                            "item_type": it.item_type, "name": it.name, "project": project,
+                            // stable per source item (`importKey` in app.js)
+                            "idempotency_key": format!("folder-import:{project}:{folder}:{}", it.key)
+                        })),
                     )
                     .await;
-                assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+                // 200: the answer of an earlier run was lost, the item exists
+                assert!(
+                    r.status == StatusCode::CREATED || r.status == StatusCode::OK,
+                    "{}",
+                    r.text()
+                );
                 let n = r.json()["item_number"].as_str().unwrap().to_string();
                 log.items.insert(it.key.clone(), n.clone());
                 log.pending.insert(it.key.clone());
@@ -429,6 +438,55 @@ async fn the_nist_folders_import_with_structure_and_nothing_checked_out() {
         .unwrap();
         assert_eq!(folders, [folder.to_string()], "{folder}");
     }
+    app.teardown().await;
+}
+
+/// The creation answer (and with it the import log entry) was lost: the next
+/// run sends the same keys, so the server returns the items it created
+/// before instead of creating them again.
+#[tokio::test]
+async fn a_lost_creation_answer_does_not_create_the_item_again() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROVER"]).await;
+    let kinds = format_kinds(&app, &eng).await;
+    let dir = Path::new(FIXTURES).join("solidworks");
+    let plan = plan_import(&dir, &kinds);
+
+    // run 1 creates 3 items, then the log is gone (crash before it was saved)
+    let mut log = ImportLog::default();
+    let failed = import_folder(
+        &app,
+        &eng,
+        "ROVER",
+        &plan,
+        &mut log,
+        "solidworks",
+        None,
+        Some(3),
+    )
+    .await;
+    assert!(failed.is_empty(), "{failed:?}");
+    let first_numbers = log.items.clone();
+    let mut lost_log = ImportLog::default();
+
+    let failed = import_folder(
+        &app,
+        &eng,
+        "ROVER",
+        &plan,
+        &mut lost_log,
+        "solidworks",
+        None,
+        None,
+    )
+    .await;
+    assert!(failed.is_empty(), "{failed:?}");
+    let (items, _, _) = counts(&app, "ROVER").await;
+    assert_eq!(items, plan.len() as i64, "no duplicate items");
+    for (key, number) in &first_numbers {
+        assert_eq!(&lost_log.items[key], number, "the same item came back");
+    }
+    assert_eq!(checked_out(&app, &eng).await, 0);
     app.teardown().await;
 }
 
