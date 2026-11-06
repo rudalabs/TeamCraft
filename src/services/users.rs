@@ -405,27 +405,50 @@ pub struct UserUpdate {
 
 /// Updates a user (admin only). The role of OIDC users is managed through
 /// IdP groups and is overwritten at their next login.
+///
+/// # Invariants
+///
+/// * **Permission:** administrator (403); an unknown user is "not found".
+/// * **Locks:** the active administrators (`FOR UPDATE`, in id order), then
+///   the user's row. At least one active administrator remains: demoting or
+///   deactivating the last one is refused (409), also when two
+///   administrators remove each other at once (`tests/concurrency.rs`). The
+///   role sync of a single-sign-on login ([`upsert_oidc_user`]) follows the
+///   IdP groups and is not held to this rule; `teamcraft user create --role
+///   admin` adds an administrator again.
+/// * **Data:** deactivating a user deletes all their sessions.
+/// * **Audit:** `user.update`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
 pub async fn update(pool: &PgPool, actor: &Actor, id: Uuid, upd: UserUpdate) -> AppResult<User> {
     actor.require(Role::Admin)?;
-    let current = get(pool, id).await?;
     let display_name = domain::require_text("Display name", &upd.display_name, 128)?;
     let email = clean_email(upd.email.as_deref())?;
 
-    let was_admin = current.active && current.role == Role::Admin.as_str();
-    let stays_admin = upd.active && upd.role == Role::Admin;
     let mut tx = pool.begin().await?;
-    if was_admin && !stays_admin {
-        let other_admins = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND active AND id <> $1",
-        )
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
-        if other_admins == 0 {
-            return Err(AppError::Conflict(
-                "At least one active administrator must remain.".into(),
-            ));
-        }
+    // The active administrators first, locked in a fixed order: two updates
+    // that could each remove an administrator run one after the other, and
+    // the second counts without the first one's (no deadlock either, as
+    // every update takes these locks before the user's row).
+    let admins: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE role = 'admin' AND active ORDER BY id FOR UPDATE",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let current = sqlx::query_as::<_, User>(&format!(
+        "SELECT {USER_COLUMNS} FROM users WHERE id = $1 FOR UPDATE"
+    ))
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::not_found("User not found."))?;
+
+    let was_admin = admins.contains(&id);
+    let stays_admin = upd.active && upd.role == Role::Admin;
+    if was_admin && !stays_admin && admins.len() == 1 {
+        return Err(AppError::Conflict(
+            "At least one active administrator must remain.".into(),
+        ));
     }
     let user = sqlx::query_as::<_, User>(&format!(
         "UPDATE users SET display_name = $2, email = $3, role = $4, active = $5

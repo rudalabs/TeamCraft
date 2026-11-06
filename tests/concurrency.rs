@@ -466,3 +466,62 @@ async fn folder_import_sequence_leaves_nothing_checked_out() {
     );
     app.teardown().await;
 }
+
+/// Two administrators who demote or deactivate each other at the same time:
+/// one of them must stay an active administrator, the other request is
+/// refused with a 409. A trigger slows every update of a user down, so both
+/// requests overlap between the check "another administrator remains" and
+/// the update.
+#[tokio::test]
+async fn the_last_two_administrators_cannot_remove_each_other_at_once() {
+    use teamcraft::services::users::{self, UserUpdate};
+
+    let app = app_or_skip!();
+    sqlx::raw_sql(
+        "CREATE FUNCTION tc_test_slow() RETURNS trigger LANGUAGE plpgsql AS $f$
+         BEGIN PERFORM pg_sleep(0.5); RETURN NEW; END $f$;
+         CREATE TRIGGER tc_test_slow BEFORE UPDATE ON users
+         FOR EACH ROW EXECUTE FUNCTION tc_test_slow();",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    // (demote, deactivate): the change one administrator makes to the other
+    for (round, (role, active)) in [(Role::Editor, true), (Role::Admin, false)]
+        .into_iter()
+        .enumerate()
+    {
+        let (anna, _) = app.user(&format!("anna{round}"), Role::Admin).await;
+        let (bert, _) = app.user(&format!("bert{round}"), Role::Admin).await;
+        // the earlier rounds' administrators no longer count
+        sqlx::query("UPDATE users SET active = FALSE WHERE role = 'admin' AND id <> ALL($1)")
+            .bind(vec![anna.id, bert.id])
+            .execute(&app.pool)
+            .await
+            .unwrap();
+        let change = || UserUpdate {
+            display_name: "Removed".into(),
+            email: None,
+            role,
+            active,
+        };
+        let (r1, r2) = tokio::join!(
+            users::update(&app.pool, &anna, bert.id, change()),
+            users::update(&app.pool, &bert, anna.id, change()),
+        );
+        let admins: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE role = 'admin' AND active")
+                .fetch_one(&app.pool)
+                .await
+                .unwrap();
+        assert_eq!(admins, 1, "round {round}: one administrator remains");
+        let refused: Vec<_> = [&r1, &r2].into_iter().filter(|r| r.is_err()).collect();
+        assert_eq!(refused.len(), 1, "round {round}: {r1:?} / {r2:?}");
+        assert!(
+            matches!(refused[0], Err(teamcraft::error::AppError::Conflict(_))),
+            "round {round}: {:?}",
+            refused[0]
+        );
+    }
+    app.teardown().await;
+}
