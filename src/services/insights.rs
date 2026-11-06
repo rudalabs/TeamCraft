@@ -241,13 +241,18 @@ pub struct DuplicateFile {
 
 /// Files of the latest revisions whose content (SHA-256) also belongs to the
 /// latest revision of another item – copies that drift apart over time. With
-/// `revision_id`, only the contents of that revision's files.
+/// `revision_id`, only the contents of that revision's files; a revision the
+/// actor may not see is "not found" (otherwise the answer would tell which
+/// visible files share its content).
 pub async fn duplicate_files(
     pool: &PgPool,
     actor: &Actor,
     revision_id: Option<Uuid>,
     limit: i64,
 ) -> AppResult<Vec<DuplicateFile>> {
+    if let Some(id) = revision_id {
+        revisions::get(pool, actor, id).await?;
+    }
     Ok(sqlx::query_as::<_, DuplicateFile>(&format!(
         "WITH latest AS (
              SELECT f.sha256, f.filename, f.size_bytes, i.number AS item_number, r.item_id,
