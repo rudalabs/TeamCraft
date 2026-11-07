@@ -57,7 +57,12 @@ Every answer contains only what the token's user may read (see
   carry `visibility` (`internal` or `restricted`). `POST /api/v1/projects`
   takes an optional `visibility`; `PUT /api/v1/projects/{code}/visibility`
   `{"visibility": "restricted"}` restricts a group (managers of the group
-  and admins).
+  and admins). `GET`/`PUT /api/v1/projects/{code}/policy`
+  (`{"admin_read": "implicit"|"with_reason"|"none"}`, managers and admins)
+  read and set how administrators read a restricted group;
+  `POST /api/v1/projects/{code}/elevations` `{"reason"}` (admins, policy
+  `with_reason`) opens 60 minutes of access, `DELETE` on it ends it. See
+  [Read permissions](../admin/permissions.md#need-to-know-administrator-access).
 
 ## Creating items, safely repeated
 

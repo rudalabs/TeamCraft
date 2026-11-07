@@ -17,6 +17,17 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Need-to-know project groups, step 1 (#151): a restricted group can limit
+  administrator access (`project_policies`, migration 0043): `with_reason`
+  (time-limited, audited elevation with a written reason; managers are
+  notified) or `none` (administrators manage but do not read). Web form on
+  the group page and `GET`/`PUT /api/v1/projects/{code}/policy`,
+  `POST`/`DELETE /api/v1/projects/{code}/elevations`. Nothing changes for
+  groups without a policy. Migration 0044 keeps the elevation history when an
+  account is deleted. While a policy is in force an administrator who is no
+  manager member cannot loosen it, open the group, link an IdP group or add
+  themselves; `/admin/audit` and webhooks honour the rule.
+
 - Wider separation of duties (#152, step 1): a reviewer must not have created
   the change, submitted it (an administrator acting for the author) or changed
   the revisions under review (revision creator, file uploader, logged edits).

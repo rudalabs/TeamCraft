@@ -11,10 +11,10 @@ use uuid::Uuid;
 
 use super::{finish, pagination, render, WebCtx, PER_PAGE};
 use crate::{
-    domain::{self, ProjectVisibility, Role},
+    domain::{self, AdminRead, ProjectVisibility, Role},
     error::{AppError, AppResult},
     resultscan::TemplateInput,
-    services::{audit, projects, result_templates, users, Page},
+    services::{audit, project_policy, projects, result_templates, users, Page},
     util, AppState,
 };
 
@@ -27,7 +27,7 @@ fn roles() -> Value {
 }
 
 pub async fn projects(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
-    let list = projects::list(&st.db, &ctx.me, false).await?;
+    let list = projects::list_managed(&st.db, &ctx.me).await?;
     render(
         &st,
         &ctx,
@@ -49,7 +49,7 @@ pub async fn project_show(
     Query(q): Query<ProjectQuery>,
 ) -> AppResult<Response> {
     let (project, members, can_manage) = tokio::try_join!(
-        projects::get(&st.db, &ctx.me, id),
+        projects::get_for_management(&st.db, &ctx.me, id),
         projects::members(&st.db, id),
         projects::is_manager(&st.db, &ctx.me, id),
     )?;
@@ -65,7 +65,23 @@ pub async fn project_show(
             ),
             Err(e) => return Err(e),
         };
-    let templates = result_templates::list(&st.db, &ctx.me, id).await?;
+    // An administrator whose need-to-know policy hides the group maintains
+    // it here but reads nothing of its content.
+    let readable = ctx.me.can_see_project(Some(id));
+    let templates = if readable {
+        result_templates::list(&st.db, &ctx.me, id).await?
+    } else {
+        Vec::new()
+    };
+    let policy = if can_manage && project.visibility == "restricted" {
+        Some(project_policy::get(&st.db, &ctx.me, id).await?)
+    } else {
+        None
+    };
+    let admin_modes: Vec<Value> = [AdminRead::Implicit, AdminRead::WithReason, AdminRead::None]
+        .iter()
+        .map(|m| json!({ "value": m.as_str(), "label": m.label() }))
+        .collect();
     let all_users = if can_manage {
         users::list(&st.db)
             .await?
@@ -86,6 +102,10 @@ pub async fn project_show(
             "is_member": ctx.me.projects.contains(&id),
             "can_edit": ctx.me.can_edit_project(Some(id)),
             "can_manage": can_manage,
+            "readable": readable,
+            "policy": policy,
+            "admin_modes": admin_modes,
+            "elevation_minutes": project_policy::ELEVATION_MINUTES,
             "result_templates": templates,
             "oidc_enabled": st.config.oidc.is_some(),
             "numbering": numbering,
@@ -198,6 +218,73 @@ pub async fn update_project(
     .await;
     finish(&st, result, &back, |p| {
         (back.clone(), format!("Saved project group {}", p.code))
+    })
+}
+
+#[derive(Deserialize)]
+pub struct PolicyForm {
+    #[serde(default)]
+    admin_read: String,
+}
+
+/// `POST /projects/{id}/policy` – managers of the group, admins.
+pub async fn update_policy(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<PolicyForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = match AdminRead::parse(&form.admin_read) {
+        Some(m) => project_policy::set_admin_read(&st.db, &ctx.me, id, m).await,
+        None => Err(AppError::BadRequest(
+            "Choose how administrators read the group.".into(),
+        )),
+    };
+    finish(&st, result, &back, |p| {
+        (
+            back.clone(),
+            format!("Administrator access: {}", p.admin_read.label()),
+        )
+    })
+}
+
+#[derive(Deserialize)]
+pub struct ElevateForm {
+    #[serde(default)]
+    reason: String,
+}
+
+/// `POST /projects/{id}/elevate` – administrators, policy `with_reason`.
+pub async fn elevate(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<ElevateForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = project_policy::elevate(&st.db, &ctx.me, id, &form.reason).await;
+    finish(&st, result, &back, |e| {
+        (
+            back.clone(),
+            format!(
+                "Administrator access opened until {}",
+                e.expires_at.format("%H:%M UTC")
+            ),
+        )
+    })
+}
+
+/// `POST /projects/{id}/elevate/end` – ends the running elevation early.
+pub async fn end_elevation(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = project_policy::end_elevation(&st.db, &ctx.me, id).await;
+    finish(&st, result, &back, |()| {
+        (back.clone(), "Administrator access ended".to_string())
     })
 }
 
@@ -480,8 +567,13 @@ pub async fn audit(
         action: clean(&q.action),
     };
     let page_no = q.page.unwrap_or(1).max(1);
-    let (entries, total) =
-        audit::list(&st.db, &filter, Page::from_page_number(Some(page_no), 100)).await?;
+    let (entries, total) = audit::list(
+        &st.db,
+        &ctx.me,
+        &filter,
+        Page::from_page_number(Some(page_no), 100),
+    )
+    .await?;
     let base_query = [
         ("entity_type", filter.entity_type.as_deref()),
         ("username", filter.username.as_deref()),

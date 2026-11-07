@@ -56,6 +56,48 @@ impl Role {
     }
 }
 
+/// How administrators who are not members read a restricted group (the
+/// need-to-know policy, `project_policies.admin_read`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdminRead {
+    /// Administrators read every restricted group (the default).
+    Implicit,
+    /// The group is hidden from an administrator until they open a
+    /// time-limited, audited elevation with a written reason.
+    WithReason,
+    /// Administrators manage the group but read nothing in it unless they
+    /// are members.
+    None,
+}
+
+impl AdminRead {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AdminRead::Implicit => "implicit",
+            AdminRead::WithReason => "with_reason",
+            AdminRead::None => "none",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AdminRead::Implicit => "Administrators read the group",
+            AdminRead::WithReason => "Administrators need a reason (time-limited, audited)",
+            AdminRead::None => "Administrators manage but cannot read",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<AdminRead> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "implicit" => Some(AdminRead::Implicit),
+            "with_reason" => Some(AdminRead::WithReason),
+            "none" => Some(AdminRead::None),
+            _ => None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Project group visibility
 // ---------------------------------------------------------------------------

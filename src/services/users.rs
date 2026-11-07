@@ -13,21 +13,21 @@ use crate::{
     domain::{self, Role},
     error::{AppError, AppResult},
     models::{ApiToken, User, USER_COLUMNS},
-    services::audit,
+    services::{access, audit},
 };
 
 /// Columns (of `users u`) needed to build an [`Actor`], including the
-/// project groups the user belongs to and the restricted groups the user
-/// may not read (none for admins; archived groups count too).
-const ACTOR_COLUMNS: &str = "u.id, u.username, u.display_name, u.role, u.skin,
+/// project groups the user belongs to and the groups the user may not read
+/// (see [`access::hidden_of_user`]; archived groups count too).
+fn actor_columns() -> String {
+    format!(
+        "u.id, u.username, u.display_name, u.role, u.skin,
     COALESCE((SELECT array_agg(pm.project_id) FROM project_members pm WHERE pm.user_id = u.id),
-             '{}'::uuid[]) AS projects,
-    CASE WHEN u.role = 'admin' THEN '{}'::uuid[] ELSE
-      COALESCE((SELECT array_agg(p.id) FROM projects p
-                WHERE p.visibility = 'restricted'
-                  AND NOT EXISTS (SELECT 1 FROM project_members pm
-                                  WHERE pm.project_id = p.id AND pm.user_id = u.id)),
-               '{}'::uuid[]) END AS hidden_projects";
+             '{{}}'::uuid[]) AS projects,
+    {} AS hidden_projects",
+        access::hidden_of_user("u")
+    )
+}
 
 #[derive(sqlx::FromRow)]
 struct ActorRow {
@@ -56,14 +56,13 @@ impl From<ActorRow> for Actor {
 
 /// Loads the full actor (incl. project memberships) for a user id.
 pub async fn actor(pool: &PgPool, user_id: Uuid) -> AppResult<Actor> {
-    sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {ACTOR_COLUMNS} FROM users u WHERE u.id = $1"
-    ))
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?
-    .map(Actor::from)
-    .ok_or_else(|| AppError::not_found("User not found."))
+    let cols = actor_columns();
+    sqlx::query_as::<_, ActorRow>(&format!("SELECT {cols} FROM users u WHERE u.id = $1"))
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?
+        .map(Actor::from)
+        .ok_or_else(|| AppError::not_found("User not found."))
 }
 
 /// The actor of an active user as it is now (memberships and hidden groups
@@ -71,8 +70,9 @@ pub async fn actor(pool: &PgPool, user_id: Uuid) -> AppResult<Actor> {
 /// on behalf of a user (the assistant's tool loop) calls this per step, so
 /// a lost membership or a newly restricted group applies at once.
 pub async fn active_actor(pool: &PgPool, user_id: Uuid) -> AppResult<Option<Actor>> {
+    let cols = actor_columns();
     Ok(sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {ACTOR_COLUMNS} FROM users u WHERE u.id = $1 AND u.active"
+        "SELECT {cols} FROM users u WHERE u.id = $1 AND u.active"
     ))
     .bind(user_id)
     .fetch_optional(pool)
@@ -85,8 +85,9 @@ pub async fn active_actor(pool: &PgPool, user_id: Uuid) -> AppResult<Option<Acto
 // ---------------------------------------------------------------------------
 
 pub async fn actor_for_session(pool: &PgPool, token: &str) -> AppResult<Option<Actor>> {
+    let cols = actor_columns();
     let row = sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {ACTOR_COLUMNS}
+        "SELECT {cols}
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = $1 AND s.expires_at > now() AND u.active"
     ))
@@ -98,8 +99,9 @@ pub async fn actor_for_session(pool: &PgPool, token: &str) -> AppResult<Option<A
 
 pub async fn actor_for_api_token(pool: &PgPool, token: &str) -> AppResult<Option<Actor>> {
     let token_hash = auth::hash_token(token);
+    let cols = actor_columns();
     let row = sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {ACTOR_COLUMNS}
+        "SELECT {cols}
          FROM api_tokens t JOIN users u ON u.id = t.user_id
          WHERE t.token_hash = $1 AND (t.expires_at IS NULL OR t.expires_at > now()) AND u.active"
     ))

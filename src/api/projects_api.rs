@@ -1,6 +1,7 @@
 //! Project groups: list, create, members, visibility and numbering.
 
 use super::*;
+use crate::domain::Role;
 
 // ---------------------------------------------------------------------------
 // Projects
@@ -59,7 +60,7 @@ pub(super) async fn set_project_visibility(
     Path(code): Path<String>,
     ApiJson(body): ApiJson<SetVisibility>,
 ) -> AppResult<Json<Value>> {
-    let project = projects::get_by_code(&st.db, &me, &code).await?;
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
     let visibility = parse_visibility(&body.visibility)?;
     Ok(Json(json!(
         projects::set_visibility(&st.db, &me, project.id, visibility).await?
@@ -71,7 +72,7 @@ pub(super) async fn project_members(
     ApiUser(me): ApiUser,
     Path(code): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let project = projects::get_by_code(&st.db, &me, &code).await?;
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
     Ok(Json(json!(projects::members(&st.db, project.id).await?)))
 }
 
@@ -88,7 +89,7 @@ pub(super) async fn add_project_member(
     Path(code): Path<String>,
     ApiJson(body): ApiJson<AddMember>,
 ) -> AppResult<Response> {
-    let project = projects::get_by_code(&st.db, &me, &code).await?;
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
     let member =
         projects::add_member(&st.db, &me, project.id, &body.username, body.manager).await?;
     Ok((StatusCode::CREATED, Json(json!(member))).into_response())
@@ -132,4 +133,69 @@ pub(super) async fn set_project_numbering(
     .await?;
     let preview = projects::numbering_preview(&st.db, &project, None).await?;
     Ok(Json(json!({ "project": project, "numbering": preview })))
+}
+
+/// `GET /api/v1/projects/{code}/policy` – managers and admins: how
+/// administrators read the group, and the elevation history.
+pub(super) async fn project_policy_get(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
+    Ok(Json(json!(
+        project_policy::get(&st.db, &me, project.id).await?
+    )))
+}
+
+#[derive(Deserialize)]
+pub(super) struct SetPolicy {
+    admin_read: String,
+}
+
+/// `PUT /api/v1/projects/{code}/policy` – managers and admins.
+pub(super) async fn project_policy_set(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    ApiJson(body): ApiJson<SetPolicy>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
+    let mode = AdminRead::parse(&body.admin_read).ok_or_else(|| {
+        AppError::BadRequest("admin_read must be implicit, with_reason or none.".into())
+    })?;
+    Ok(Json(json!(
+        project_policy::set_admin_read(&st.db, &me, project.id, mode).await?
+    )))
+}
+
+#[derive(Deserialize)]
+pub(super) struct Elevate {
+    reason: String,
+}
+
+/// `POST /api/v1/projects/{code}/elevations` – administrators, policy
+/// `with_reason`: opens a time-limited, audited access.
+pub(super) async fn project_elevate(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    ApiJson(body): ApiJson<Elevate>,
+) -> AppResult<Response> {
+    me.require(Role::Admin)?;
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
+    let e = project_policy::elevate(&st.db, &me, project.id, &body.reason).await?;
+    Ok((StatusCode::CREATED, Json(json!(e))).into_response())
+}
+
+/// `DELETE /api/v1/projects/{code}/elevations` – ends the running elevation.
+pub(super) async fn project_elevation_end(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+) -> AppResult<StatusCode> {
+    me.require(Role::Admin)?;
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
+    project_policy::end_elevation(&st.db, &me, project.id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
