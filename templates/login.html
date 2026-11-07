@@ -2,8 +2,12 @@
 {% block title %}Sign in{% endblock %}
 {% block content %}
 <div class="login">
+  {% if branding and branding.wide %}
+  <img class="login-logo" src="/branding/wide?v={{ branding.wide }}" alt="{{ instance_name }}">
+  {% else %}
   <img class="login-logo on-dark" src="/static/media/logos/TeamCraft_Logo_White.svg?v={{ assets }}" alt="TeamCraft">
   <img class="login-logo on-light" src="/static/media/logos/TeamCraft_Logo_Blue.svg?v={{ assets }}" alt="TeamCraft">
+  {% endif %}
   {% if setup %}
   <div class="card">
     <p class="meta">{{ instance_name }} · first start</p>

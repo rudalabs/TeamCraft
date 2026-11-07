@@ -12,7 +12,11 @@
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#101216">
   {%- endif %}
   <title>{% block title %}{% endblock %} · {{ instance_name }}</title>
+  {%- if branding and branding.square %}
+  <link rel="icon" href="/branding/square?v={{ branding.square }}">
+  {%- else %}
   <link rel="icon" href="/static/media/logos/TeamCraft_Icon.svg?v={{ assets }}" type="image/svg+xml">
+  {%- endif %}
   <link rel="stylesheet" href="/static/shared/css/skins.css?v={{ assets }}">
   <link rel="stylesheet" href="/static/style.css?v={{ assets }}">
   {%- if me and assistant_enabled %}
@@ -26,9 +30,13 @@
 <header class="topbar">
   <div class="topbar-inner">
     <a class="brand" href="/" title="Dashboard">
+      {%- if branding and branding.wide %}
+      <img class="brand-wide" src="/branding/wide?v={{ branding.wide }}" alt="{{ instance_name }}">
+      {%- else %}
       <img src="/static/media/logos/TeamCraft_Icon.svg?v={{ assets }}" alt="">
       <span class="brand-name">{{ instance_name }}</span>
       <span class="brand-sub">PLM</span>
+      {%- endif %}
     </a>
     <nav class="nav" aria-label="Main">
       <a href="/" class="{% block nav_home %}{% endblock %}">Dashboard</a>
@@ -45,6 +53,7 @@
         <a href="/admin/users" class="{% block nav_users %}{% endblock %}">Users</a>
         <a href="/admin/attributes" class="{% block nav_attributes %}{% endblock %}" title="Custom attributes of items">Attributes</a>
         <a href="/admin/webhooks" class="{% block nav_webhooks %}{% endblock %}" title="Send events to CI, ERP or chat">Webhooks</a>
+        <a href="/admin/branding" class="{% block nav_branding %}{% endblock %}" title="Replace the logos">Branding</a>
         <a href="/admin/audit" class="{% block nav_audit %}{% endblock %}">Audit log</a>
       </div>
     </details>
@@ -101,7 +110,7 @@
 <aside id="assistant-drawer" hidden data-module="/static/shared/v/{{ assets }}/js/assistant.js" data-can-edit="{% if me.can_edit %}1{% else %}0{% endif %}" data-privacy="{{ assistant_destination }}"></aside>
 {% endif %}
 <footer>
-  <img class="footer-mark" src="/static/media/logos/TeamCraft_Icon.svg?v={{ assets }}" alt="">
+  {% if branding and branding.square %}<img class="footer-mark" src="/branding/square?v={{ branding.square }}" alt="">{% else %}<img class="footer-mark" src="/static/media/logos/TeamCraft_Icon.svg?v={{ assets }}" alt="">{% endif %}
   TeamCraft {{ version }} · <span title="Work in progress: no official release yet, provided as is, without warranty of any kind">pre-release, no warranty</span> · open-source product lifecycle management · <a href="/formats">file formats</a> · MPL-2.0
 </footer>
 </body>

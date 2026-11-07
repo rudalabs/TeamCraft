@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Branding{% endblock %}
+{% block nav_branding %}active{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Branding</h1>
+    <p class="subtitle">
+      Replace the TeamCraft logos with your own. The wide logo is shown top left (web header, login page, desktop title bar),
+      the square logo bottom left (web footer, browser tab icon, desktop navigation rail). Without an upload the built-in logos stay.
+    </p>
+  </div>
+</div>
+
+<div class="logo-slots">
+  {% for s in slots %}
+  <section class="card logo-slot" id="logo-{{ s.kind }}">
+    <h2>{{ s.label }}</h2>
+    <p class="hint">{{ s.hint }}</p>
+    <div class="logo-preview {{ s.kind }}">
+      {% if s.custom %}
+      <img src="/branding/{{ s.kind }}?v={{ s.custom }}" alt="Current {{ s.kind }} logo">
+      {% else %}
+      <img src="/static/media/logos/TeamCraft_Icon.svg?v={{ assets }}" alt="Built-in logo">
+      {% endif %}
+    </div>
+    <p class="meta">{% if s.custom %}Custom logo in use.{% else %}Built-in logo in use.{% endif %}</p>
+    <form class="stack" method="post" action="/admin/branding/{{ s.kind }}" enctype="multipart/form-data">
+      <label>New {{ s.kind }} logo <span class="hint">PNG, JPEG, WebP or SVG, up to {{ max_kib }} KiB, at most {{ max_pixels }} px per side</span>
+        <input type="file" name="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" required>
+      </label>
+      <button class="primary" type="submit">Upload</button>
+    </form>
+    {% if s.custom %}
+    <form method="post" action="/admin/branding/{{ s.kind }}/reset">
+      <button type="submit">Use the built-in logo</button>
+    </form>
+    {% endif %}
+  </section>
+  {% endfor %}
+</div>
+<p class="hint">SVG files must not contain scripts, animations or links to other files. The desktop app shows the new logos the next time it starts or reconnects.</p>
+{% endblock %}
