@@ -98,7 +98,7 @@ feature milestone – the features in *What works* are enough; what is missing i
   - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
   - [x] F12: start the parser children with a cleared environment (no database URL, no keys)
   - [ ] F13: a cap on the unpacked size of XLSX/ODS tables, or read them in the isolated child
-  - [ ] F14: fuzz targets for `simmesh` and `pdftext` (`resultscan` and `cadformat` have theirs since #SOLVERPR; the
+  - [ ] F14: fuzz targets for `simmesh` and `pdftext` (`resultscan` and `cadformat` have theirs since #156; the
     no-panic lints and the 3DS and Kelvin fixes are in `main` since #106/#108)
   - [ ] F15: prompt injection: confirmation of assistant drafts per write, or taint for MCP sessions as well
   - [ ] F16: per-user quota for the assistant and MCP (with the daily budget in section 2, *Assistant*)
@@ -345,16 +345,16 @@ real files and belong to section 3 once such files are at hand.
   rule is a hypothesis until it is checked with real files – the heads (1–4 KB) of STAR-CCM+ `.sim` files of two or
   three versions, NX 1980+ and older `.sim`/`.fem`/`.afm`, a Fluent `report-file-0.out` and `.trn`, a Simcenter 3D
   Nastran `.dat` and `.f06`, openly licensed or self-made, as fixtures
-  - [x] Step 1 – detection (`src/cadformat.rs`, #SOLVERPR): `SPLMSSTR` as positive NX test for `.sim`/`.fem`/`.afm`,
+  - [x] Step 1 – detection (`src/cadformat.rs`, #156): `SPLMSSTR` as positive NX test for `.sim`/`.fem`/`.afm`,
     text `.fem` = OptiStruct deck, `.dat` with Nastran markers = Nastran deck, `.f04`/`.pch`, text `.op2` refused,
     Fluent `.msh`/`.msh.h5`/`.cas.gz`/`.dat.gz`/`.msh.gz` (HDF5 signature at 0 or 512, gzip magic), `.flprj`,
     `.cdat`, `.jou`, `.trn`, report files (`.out` with quoted title and header), STAR-CCM+ `.simh` and macros (`.java`
     naming STAR-CCM+), Gmsh `.msh`; fuzz target `cadformat`
   - [ ] Step 1, open question: label a `.sim` with neither marker as "uncertain" in the UI instead of the NX fallback
-  - [ ] Files stored before #SOLVERPR keep their old format and search text: a one-time re-detection of the
+  - [ ] Files stored before #156 keep their old format and search text: a one-time re-detection of the
     changed extensions (`.sim` `.fem` `.afm` `.dat` `.msh` `.out` `.java` `.jou` `.trn` `.f04` `.pch`, the Fluent
     `.h5`/`.gz` names) and re-indexing at startup – not in a migration, `files.format` of v0.1.0 data must stay as it is
-  - [x] Step 2 – text (#SOLVERPR): `trn`, `f06`, `f04`, `pch`, `jou`, `java` scannable and plain text (search,
+  - [x] Step 2 – text (#156): `trn`, `f06`, `f04`, `pch`, `jou`, `java` scannable and plain text (search,
     `read_file_text` – with the last 64 KiB of a larger file after a marker); templates with `pick = last` read the
     last 2 MB of a larger file first; new template method `table` (Fluent report files, migration 0040); fuzz target
     `resultscan`
