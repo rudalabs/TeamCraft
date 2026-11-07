@@ -151,7 +151,7 @@ pub async fn extract_file(path: &Path, filename: &str) -> String {
     if kind_of(filename) == Kind::None {
         return String::new();
     }
-    let Ok(file) = tokio::fs::File::open(path).await else {
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
         return String::new();
     };
     match kind_of(filename) {
@@ -161,11 +161,16 @@ pub async fn extract_file(path: &Path, filename: &str) -> String {
     }
     let len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
     let mut content = Vec::new();
-    if file.take(MAX_READ).read_to_end(&mut content).await.is_err() {
+    if (&mut file)
+        .take(MAX_READ)
+        .read_to_end(&mut content)
+        .await
+        .is_err()
+    {
         return String::new();
     }
     let tail = if kind_of(filename) == Kind::PlainText && len > 2 * TAIL_READ {
-        read_tail(path, TAIL_READ).await
+        read_tail(&mut file, TAIL_READ).await
     } else {
         Vec::new()
     };
@@ -225,14 +230,12 @@ fn with_tail(head_text: String, tail: &[u8]) -> String {
     out
 }
 
-/// The last `max` bytes of a file, starting at a line: the first, cut line
-/// is dropped (unless the whole file fits). Never reads more than `max`
-/// bytes, whatever the file's size; empty on any error.
-pub async fn read_tail(path: &Path, max: u64) -> Vec<u8> {
+/// The last `max` bytes of an open file, starting at a line: the first, cut
+/// line is dropped (unless the whole file fits). Never reads more than `max`
+/// bytes, whatever the file's size; empty on any error. It takes the file
+/// the caller already opened (seeking it), so a file is opened once.
+pub async fn read_tail(file: &mut tokio::fs::File, max: u64) -> Vec<u8> {
     use tokio::io::AsyncSeekExt;
-    let Ok(mut file) = tokio::fs::File::open(path).await else {
-        return Vec::new();
-    };
     let Ok(len) = file.metadata().await.map(|m| m.len()) else {
         return Vec::new();
     };
@@ -552,12 +555,12 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("run.trn");
         std::fs::write(&path, b"first line\nsecond line\nthird\n").unwrap();
-        assert_eq!(read_tail(&path, 12).await, b"third\n");
+        let open = || async { tokio::fs::File::open(&path).await.unwrap() };
+        assert_eq!(read_tail(&mut open().await, 12).await, b"third\n");
         assert_eq!(
-            read_tail(&path, 1000).await,
+            read_tail(&mut open().await, 1000).await,
             b"first line\nsecond line\nthird\n"
         );
-        assert!(read_tail(&dir.join("missing"), 10).await.is_empty());
         // a large file: the text keeps the beginning and the end
         let mut big = "x 1.5\n".repeat(1_000_000);
         big.push_str("solution is converged\n");

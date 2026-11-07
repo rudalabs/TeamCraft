@@ -171,12 +171,12 @@ impl Upload {
             Ok(path) => {
                 let html = crate::htmltext::is_html(&filename);
                 if crate::resultscan::scannable(&filename) && !html {
-                    scan_head = read_head(&path, crate::resultscan::SCAN_MAX_BYTES).await;
-                    if blob.size > crate::resultscan::SCAN_MAX_BYTES {
-                        scan_tail =
-                            crate::textindex::read_tail(&path, crate::resultscan::SCAN_MAX_BYTES)
-                                .await;
-                    }
+                    (scan_head, scan_tail) = read_head_and_tail(
+                        &path,
+                        crate::resultscan::SCAN_MAX_BYTES,
+                        blob.size > crate::resultscan::SCAN_MAX_BYTES,
+                    )
+                    .await;
                 }
                 let format = cadformat::detect_stored(&path, &filename).await;
                 let references = match format {
@@ -221,15 +221,22 @@ fn head_of(text: &str, max: u64) -> Vec<u8> {
     text.as_bytes().get(..end).unwrap_or_default().to_vec()
 }
 
-/// The first `max` bytes of a file (never more, whatever its size).
-async fn read_head(path: &std::path::Path, max: u64) -> Vec<u8> {
+/// The first `max` bytes of a file (never more, whatever its size) and,
+/// with `tail`, its last `max` bytes starting at a line
+/// ([`crate::textindex::read_tail`]); the file is opened once.
+async fn read_head_and_tail(path: &std::path::Path, max: u64, tail: bool) -> (Vec<u8>, Vec<u8>) {
     use tokio::io::AsyncReadExt;
-    let Ok(file) = tokio::fs::File::open(path).await else {
-        return Vec::new();
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
+        return (Vec::new(), Vec::new());
     };
     let mut head = Vec::new();
-    let _ = file.take(max).read_to_end(&mut head).await;
-    head
+    let _ = (&mut file).take(max).read_to_end(&mut head).await;
+    let tail = if tail {
+        crate::textindex::read_tail(&mut file, max).await
+    } else {
+        Vec::new()
+    };
+    (head, tail)
 }
 
 /// Scans the current versions that were stored before reference tracking
