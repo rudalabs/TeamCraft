@@ -34,6 +34,9 @@ Changes on `main` since the `v0.2.0` tag.
 - Accessibility: an automated check runs on every rendered page; keyboard
   flows were completed and the Escape key closes panels.
 - The MCP tools are split by area (`src/mcp/tools.rs`); no behaviour change.
+- The desktop UI is split into ES modules per view (`desktop/ui/js/`, no build
+  step) instead of one 5,000-line `app.js`; CI checks that every module's
+  imports are complete (`scripts/check-desktop-modules.mjs`). No behaviour change.
 - The service functions for requests are split into smaller modules; no
   behaviour change.
 - The invariants of the remaining mutating service functions are documented.

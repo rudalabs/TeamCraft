@@ -255,14 +255,14 @@ mod tests {
     /// server's templates); it must name the same skins and logos.
     #[test]
     fn desktop_app_knows_every_skin() {
-        let app = include_str!("../../desktop/ui/app.js");
+        let app = include_str!("../../desktop/ui/js/core.js");
         for skin in SKINS {
             assert!(
                 app.contains(&format!(
                     "id: \"{}\", name: \"{}\", logo: \"{}\"",
                     skin.id, skin.name, skin.logo
                 )),
-                "desktop/ui/app.js SKINS: {} ({}, {})",
+                "desktop/ui/js/core.js SKINS: {} ({}, {})",
                 skin.id,
                 skin.name,
                 skin.logo
@@ -806,7 +806,7 @@ mod tests {
         );
         assert_eq!(RequestDecision::parse("approve"), None);
         // the desktop app has its own copy of the reasons
-        let app = include_str!("../../desktop/ui/app.js");
+        let app = include_str!("../../desktop/ui/js/core.js");
         for r in RequestReason::ALL {
             assert!(
                 app.contains(&format!(
@@ -814,7 +814,7 @@ mod tests {
                     r.as_str(),
                     r.label()
                 )),
-                "desktop/ui/app.js lists the reason {}",
+                "desktop/ui/js/core.js lists the reason {}",
                 r.as_str()
             );
         }
