@@ -108,5 +108,10 @@ jobs:
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
+      env:
+        # Rust only: our model pack (.github/codeql/extensions/teamcraft-models,
+        # barriers for vault paths). Advanced setup does not pick it up by
+        # itself, so it is passed to `codeql database analyze`.
+        CODEQL_ACTION_EXTRA_OPTIONS: ${{ matrix.language == 'rust' && '{"database":{"analyze":["--additional-packs=.github/codeql/extensions","--model-packs=rudalabs/teamcraft-rust-models"]}}' || '' }}
       with:
         category: "/language:${{matrix.language}}"
