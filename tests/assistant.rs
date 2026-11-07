@@ -1,5 +1,6 @@
 //! The built-in assistant: disabled without an API key (API, web UI,
-//! capabilities), and request validation when a key is configured. No test
+//! capabilities), request validation when a key is configured, and the company
+//! AI staying on with `TEAMCRAFT_LOCAL_AGENTS=off`. No test
 //! talks to the Anthropic API – the tool loop is unit-tested with a fake
 //! transport in `src/assistant.rs`.
 
@@ -192,5 +193,71 @@ async fn assistant_with_a_local_openai_compatible_server_needs_no_key() {
         "the AI provider configured by your administrator (openai-compatible, 127.0.0.1)"
     ));
     assert!(!page.text().contains("sent to Anthropic"));
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn local_agents_off_keeps_the_company_ai() {
+    // The enterprise case: local agents off, the company AI configured – the
+    // switch closes MCP but never the server's own assistant.
+    let Some(app) = common::setup_with(&[
+        ("TEAMCRAFT_ANTHROPIC_API_KEY", "test-key-never-sent"),
+        ("TEAMCRAFT_ASSISTANT_MODEL", "claude-opus-5-5"),
+        ("TEAMCRAFT_LOCAL_AGENTS", "off"),
+    ])
+    .await
+    else {
+        return;
+    };
+    let (_, token) = app.user("vera", Role::Viewer).await;
+
+    let r = app.api(Method::GET, "/api/v1/me", &token, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    let caps = &r.json()["capabilities"];
+    assert_eq!(caps["assistant"], true, "{caps}");
+    assert_eq!(caps["local_agents"], false, "{caps}");
+    assert_eq!(caps["mcp"], false, "{caps}");
+
+    // MCP is closed …
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/mcp",
+            &token,
+            Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+    let message = r.json()["error"]["message"].as_str().unwrap().to_string();
+    assert!(message.contains("Company AI"), "{message}");
+
+    // … the company AI is not: enabled, and a request reaches validation
+    let r = app
+        .api(Method::GET, "/api/v1/assistant", &token, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["enabled"], true);
+    let r = app
+        .api(Method::POST, "/api/v1/assistant", &token, Some(json!({})))
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    assert!(r.json()["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("Type a question"));
+
+    // the web UI keeps Ask TeamCraft
+    let cookie = app.login("vera").await;
+    let page = app.get_page("/", Some(&cookie)).await;
+    assert!(page.text().contains("id=\"assistant-drawer\""));
+
+    // Admin → AI says what users get
+    app.user("ada", Role::Admin).await;
+    let cookie = app.login("ada").await;
+    let page = app.get_page("/admin/ai", Some(&cookie)).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text());
+    let html = page.text();
+    assert!(html.contains("Company AI only"), "{html}");
+    assert!(html.contains("company AI (no local option)"), "{html}");
     app.teardown().await;
 }

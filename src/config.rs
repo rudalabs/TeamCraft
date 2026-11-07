@@ -94,6 +94,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_DB_USER",
     "TEAMCRAFT_ENV_FILE",
     "TEAMCRAFT_INSTANCE_NAME",
+    "TEAMCRAFT_LOCAL_AGENTS",
     "TEAMCRAFT_LOCAL_LOGIN",
     "TEAMCRAFT_LOG_FORMAT",
     "TEAMCRAFT_MAIL_FROM",
@@ -279,6 +280,10 @@ pub struct Config {
     pub mattermost: Option<MattermostConfig>,
     /// The built-in assistant (Anthropic or an OpenAI-compatible API). `None` = disabled.
     pub assistant: Option<AssistantConfig>,
+    /// Whether users may connect their own local agents (the desktop app's
+    /// *Agent* view, ACP) to TeamCraft's tools (`TEAMCRAFT_LOCAL_AGENTS`).
+    /// `Off` leaves only the server-side assistant. See [`LocalAgents`].
+    pub local_agents: LocalAgents,
     /// Which targets outgoing event webhooks may reach.
     pub webhooks: WebhookConfig,
 }
@@ -308,6 +313,56 @@ impl Default for WebhookConfig {
             allow_private: false,
             retention_days: DEFAULT_WEBHOOK_RETENTION_DAYS,
         }
+    }
+}
+
+/// `TEAMCRAFT_LOCAL_AGENTS`: may users connect their own local AI agents
+/// (the desktop app's *Agent* view, an ACP client for Claude Code, Gemini
+/// CLI …) to TeamCraft's tools?
+///
+/// `Off` turns `POST /api/v1/mcp` off for every token (the built-in assistant
+/// calls the tools in-process, so it is not affected) and is reported to
+/// clients (`GET /api/v1/me` → `capabilities.local_agents` and `mcp`), so the
+/// desktop app's Agent view runs on the server-side assistant (or shows that
+/// AI is off without one). [`LOCAL_AGENT_HEADER`], which the desktop
+/// adds to the MCP connection it hands to an agent, only picks the refusal
+/// message. The REST API stays open to a user's own token – limiting that
+/// needs scoped tokens.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LocalAgents {
+    /// The default: the desktop app's *Agent* view may run a local agent.
+    #[default]
+    Allowed,
+    /// Only the server-side assistant (*Ask TeamCraft*; in the desktop app
+    /// the *Agent* view's company AI).
+    Off,
+}
+
+/// Header the desktop app adds to the MCP connection it hands to a local
+/// agent (value [`LOCAL_AGENT_HEADER_VALUE`]).
+pub const LOCAL_AGENT_HEADER: &str = "x-teamcraft-client";
+/// Value of [`LOCAL_AGENT_HEADER`] on a local agent's MCP calls.
+pub const LOCAL_AGENT_HEADER_VALUE: &str = "desktop-agent";
+
+impl LocalAgents {
+    /// Parses `allowed` or `off` (case-insensitive, surrounding blanks ignored).
+    pub fn parse(raw: &str) -> Result<LocalAgents> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "allowed" => Ok(LocalAgents::Allowed),
+            "off" => Ok(LocalAgents::Off),
+            other => bail!("TEAMCRAFT_LOCAL_AGENTS must be 'allowed' or 'off', got '{other}'"),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LocalAgents::Allowed => "allowed",
+            LocalAgents::Off => "off",
+        }
+    }
+
+    pub fn allowed(self) -> bool {
+        self == LocalAgents::Allowed
     }
 }
 
@@ -838,6 +893,10 @@ impl Config {
             None => None,
         };
         let assistant = assistant_config(&env)?;
+        let local_agents = match env.get("TEAMCRAFT_LOCAL_AGENTS")? {
+            Some(raw) => LocalAgents::parse(&raw)?,
+            None => LocalAgents::Allowed,
+        };
 
         let webhooks = WebhookConfig {
             allowed_hosts: match env.get("TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS")? {
@@ -883,6 +942,7 @@ impl Config {
             request_digest_hours,
             mattermost,
             assistant,
+            local_agents,
             webhooks,
         })
     }
@@ -890,7 +950,7 @@ impl Config {
     /// Password-free summary for the startup log.
     pub fn summary(&self) -> String {
         format!(
-            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} request_digest={}h mattermost_notifications={} assistant={} webhook_targets={}",
+            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} request_digest={}h mattermost_notifications={} assistant={} local_agents={} webhook_targets={}",
             self.bind_addr,
             self.public_url,
             self.database_display,
@@ -908,6 +968,7 @@ impl Config {
                 .as_ref()
                 .map_or("off", |m| if m.direct { "direct" } else { "channel" }),
             self.assistant.as_ref().map_or_else(|| "off".to_string(), |a| a.label()),
+            self.local_agents.as_str(),
             match (
                 self.webhooks.allowed_hosts.is_empty(),
                 self.webhooks.allow_private
@@ -1487,6 +1548,52 @@ mod tests {
         ] {
             assert!(config_from(&[("TEAMCRAFT_DB_PASSWORD", "x"), bad]).is_err());
         }
+    }
+
+    #[test]
+    fn local_agents_switch() {
+        let base = ("TEAMCRAFT_DB_PASSWORD", "x");
+        // the default changes nothing: local agents are allowed
+        let cfg = config_from(&[base]).unwrap();
+        assert_eq!(cfg.local_agents, LocalAgents::Allowed);
+        assert!(cfg.summary().contains("local_agents=allowed"));
+        for (raw, want) in [
+            ("allowed", LocalAgents::Allowed),
+            ("off", LocalAgents::Off),
+            (" OFF ", LocalAgents::Off),
+            ("Allowed", LocalAgents::Allowed),
+            // an empty value counts as unset, like for every variable
+            ("", LocalAgents::Allowed),
+        ] {
+            let cfg = config_from(&[base, ("TEAMCRAFT_LOCAL_AGENTS", raw)]).unwrap();
+            assert_eq!(cfg.local_agents, want, "{raw:?}");
+        }
+        let off = config_from(&[base, ("TEAMCRAFT_LOCAL_AGENTS", "off")]).unwrap();
+        assert!(!off.local_agents.allowed());
+        assert!(off.summary().contains("local_agents=off"));
+        // a typo must not silently leave agents allowed: refused at start
+        for bad in ["false", "no", "disabled", "on", "of"] {
+            let err = config_from(&[base, ("TEAMCRAFT_LOCAL_AGENTS", bad)])
+                .err()
+                .unwrap_or_else(|| panic!("{bad:?} accepted"));
+            assert!(err.to_string().contains("TEAMCRAFT_LOCAL_AGENTS"), "{err}");
+        }
+    }
+
+    #[test]
+    fn local_agents_file_variant() {
+        let dir = std::env::temp_dir().join(format!("tc-local-agents-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("local_agents");
+        std::fs::write(&file, "off\n").unwrap();
+        let path = file.to_string_lossy().to_string();
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_LOCAL_AGENTS_FILE", &path),
+        ])
+        .unwrap();
+        assert_eq!(cfg.local_agents, LocalAgents::Off);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn assistant_from(pairs: &[(&str, &str)]) -> Result<Option<AssistantConfig>> {

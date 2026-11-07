@@ -602,7 +602,10 @@ async fn me(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<
     body["auth_source"] = json!(users::get(&st.db, me.id).await?.auth_source);
     body["capabilities"] = json!({
         "assistant": crate::services::assistant::enabled(&st),
-        "mcp": true,
+        // TEAMCRAFT_LOCAL_AGENTS=off refuses POST /api/v1/mcp for every token
+        // and the desktop's Agent view then runs on the server-side assistant
+        "mcp": st.config.local_agents.allowed(),
+        "local_agents": st.config.local_agents.allowed(),
     });
     Ok(Json(body))
 }

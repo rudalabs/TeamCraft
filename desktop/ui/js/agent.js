@@ -1,19 +1,28 @@
 // SPDX-License-Identifier: MPL-2.0
-// TeamCraft Desktop – Agent: a local ACP agent.
+// TeamCraft Desktop – Agent: the one AI view, on the company AI (the
+// server's assistant) or on a local ACP agent.
 // Part of the desktop UI (ES modules, no build step; js/main.js starts it).
 
 import { $, api, append, call, clear, dialog, errorText, field, h, label, setStatus, state, toast, tool } from "./core.js";
 import { refreshWorklistCount } from "./shell.js";
 import { navHead, selectView } from "./navigator.js";
-import { findTab, openTab } from "./tabs.js";
-import { markdownLite } from "./assistant.js";
+import { findTab, openTab, renderActive } from "./tabs.js";
+import { assistantContext, companyAi, companyAiBusy, companyAiWhere, companyPanel, markdownLite } from "./assistant.js";
 import { openWorkspaceFolder } from "./workspace.js";
 
 // ======================================================================
-// Agent (ACP) – a local agent the user configured (Claude Code through its
-// ACP adapter, Gemini CLI …). Rust (src/acp.rs) runs it in the workspace
-// folder and hands it TeamCraft's MCP server with the user's sign-in; here:
-// the conversation, tool calls, the plan and permission prompts.
+// Agent – one view, two backends. Which one the server's policy and the
+// user's pick decide in Rust (agent_policy, src/acp.rs choose_backend):
+//   company  the server's assistant (POST /api/v1/assistant) – the provider
+//            key stays on the server; assistant.js mounts the shared panel
+//   local    a local agent the user configured (Claude Code through its
+//            ACP adapter, Gemini CLI …). Rust runs it in the workspace
+//            folder and hands it TeamCraft's MCP server with the user's
+//            sign-in; here: the conversation, tool calls, the plan and
+//            permission prompts
+//   off      neither (local agents off, no company AI): a notice
+// Each backend keeps its own conversation – the server's is stored and
+// audited there, the agent's session lives in its process.
 // ======================================================================
 
 // The MCP prompts of the server (src/mcp/tools.rs), sent as the message.
@@ -43,7 +52,11 @@ export var agent = {
   toolOrder: [],
   plan: [],
   permissions: {},
-  contextKey: null, // the revision or change tab the agent is told about
+  allowed: true,    // the server allows local agents (TEAMCRAFT_LOCAL_AGENTS)
+  backend: null,    // "company", "local" or "off"; null until the policy is known
+  available: [],    // the backends the user may switch between
+  switching: false,
+  contextKey: null, // the revision, change or request tab the AI is told about
   paint: false,
   navDirty: false,
   dirtyBlocks: []
@@ -54,17 +67,138 @@ export function agentProfiles() {
   return call("agent_profiles").then(function (p) { agent.profiles = p; return p; });
 }
 
+/** Local agents are allowed unless the server says otherwise
+ * (`capabilities.local_agents` of GET /me; Rust checks it again on start). */
+export function localAgentsAllowed() {
+  var caps = state.me && state.me.capabilities;
+  return agent.allowed && !(caps && caps.local_agents === false);
+}
+
+/** Takes over what Rust decided (agent_policy, set_agent_backend). */
+export function setAiPolicy(p) {
+  agent.allowed = p.allowed !== false;
+  agent.backend = p.backend || "off";
+  agent.available = p.available || [];
+  if (!agent.allowed) endLocalAgent(); // Rust ended the agent process
+}
+
+/** Local agents were turned off while one ran: the process is ended. */
+export function endLocalAgent() {
+  if (!agent.running && !agent.busy) return;
+  endAgentPermissions();
+  agent.running = null;
+  agent.busy = false;
+  agentNote("Your administrator turned local agents off (TEAMCRAFT_LOCAL_AGENTS=off) – the agent was ended.", "warn");
+  updateAgentControls();
+}
+
+function policyKey() {
+  return [agent.allowed, agent.backend, agent.available.join(",")].join("|");
+}
+
+var policyAsk = null;
+
+/** Asks Rust for the server's policy (it ends a running agent when local
+ * agents are off) and the Agent view's backend; redraws the view when that
+ * changed, or always with `force`. Called at sign-in, when the Agent view
+ * opens, after a refused start or message, and every minute (shell.js), so
+ * a changed TEAMCRAFT_LOCAL_AGENTS or company AI is followed without a
+ * restart. */
+export function applyAiPolicy(force) {
+  if (policyAsk) return force ? policyAsk.then(refreshAgentView) : policyAsk;
+  // the user's switch answers with the policy itself
+  if (agent.switching) return Promise.resolve();
+  var before = policyKey();
+  policyAsk = call("agent_policy").then(setAiPolicy, function () {
+    // server not reachable: keep what is known – an unknown backend stays
+    // "Asking the server …" until a later ask succeeds; Rust's pick (the
+    // remembered choice, a set-up agent) is never guessed here. Only a local
+    // agent that GET /me at sign-in already forbade is ended.
+    var caps = (state.me && state.me.capabilities) || {};
+    if (caps.local_agents !== false) return;
+    // agent_policy did not run, so Rust did not end a running agent: do it
+    // here, or the UI would forget a child process that keeps running
+    call("agent_stop").catch(function () {});
+    agent.allowed = false;
+    agent.available = agent.available.filter(function (b) { return b !== "local"; });
+    if (agent.backend === "local") agent.backend = null;
+    endLocalAgent();
+  }).then(function () {
+    policyAsk = null;
+    if (force || policyKey() !== before) refreshAgentView();
+  });
+  return policyAsk;
+}
+
+/** Redraws the Agent tab and navigator after the backend changed. */
+export function refreshAgentView() {
+  if (state.active === "agent") renderActive();
+  if (state.view === "agent") renderAgentNav();
+}
+
+/** The user switches between the company AI and the local agent; Rust
+ * checks it against the server and remembers it per server and user. */
+export function switchBackend(backend) {
+  if (backend === agent.backend || agent.switching) return;
+  agent.switching = true;
+  renderAgentToolbar();
+  call("set_agent_backend", { backend: backend }).then(function (p) {
+    agent.switching = false;
+    setAiPolicy(p);
+    refreshAgentView();
+  }, function (err) {
+    agent.switching = false;
+    toast(errorText(err), "error");
+    applyAiPolicy(true); // the server's policy may have changed meanwhile
+  });
+}
+
+export var BACKEND_NAMES = { company: "Company AI", local: "Local agent" };
+
+/** No AI at all: local agents are off and the server has no assistant. */
+export function noAiText() {
+  return "AI is switched off by your administrator: local agents are turned off (TEAMCRAFT_LOCAL_AGENTS=off) and no company AI is configured on this TeamCraft server.";
+}
+
+/** Why there is no local agent: the administrator turned them off, and
+ * whether the organisation's own AI is there instead. */
+export function localAgentsOffText() {
+  return agent.available.indexOf("company") >= 0
+    ? "Your organisation provides its AI centrally: local agents are turned off by the administrator (TEAMCRAFT_LOCAL_AGENTS=off), so the Agent view uses the company AI – with your rights and the server's audit and limits."
+    : noAiText();
+}
+
+/** View → Agent (Ctrl/Cmd+4), the rail and the Agent buttons of revisions
+ * and changes: the one AI view, on whichever backend applies. */
 export function openAgent() {
   if (state.view !== "agent") selectView("agent");
   if (state.active !== "agent") openTab({ key: "agent", kind: "agent", title: "Agent" });
+  // the server's policy may have changed since sign-in
+  applyAiPolicy();
 }
 
-/** What the user looks at: the last revision or change tab. */
+/** The tab the AI is told about: the last revision, change or request tab. */
+export function contextTab() {
+  return (agent.contextKey && findTab(agent.contextKey)) || null;
+}
+
+/** The local agent's context (ACP has no change requests). */
 export function agentContext() {
-  var tab = agent.contextKey && findTab(agent.contextKey);
-  if (!tab || !tab.data) return null;
+  var tab = contextTab();
+  if (!tab || !tab.data || tab.kind === "request") return null;
   if (tab.kind === "change") return { change: tab.data.change.number, title: tab.data.change.title };
   return { item: tab.data.rev.item_number, revision: tab.data.rev.code, title: tab.data.rev.name };
+}
+
+/** The company AI's page context (shared/js/assistant.js, getContext). */
+export function companyContext() {
+  return assistantContext(contextTab());
+}
+
+export function companyContextLabel() {
+  var c = companyContext();
+  if (c.item) return c.item + "/" + c.revision + (c.view && c.view !== "overview" ? " · " + String(c.view).replace(/-/g, " ") : "");
+  return c.change || c.request || "None – open a revision, change order or change request";
 }
 
 export function agentContextLabel() {
@@ -302,6 +436,7 @@ export function startAgent(name) {
     agent.early = [];
     agentNote(errorText(err), "error");
     schedulePaint(true);
+    applyAiPolicy(); // refused because local agents are off: company AI or the notice
   });
 }
 
@@ -340,6 +475,7 @@ export function sendAgent(text, shown) {
   }, function (err) {
     finishTurn(null);
     agentNote(errorText(err), "error");
+    applyAiPolicy(); // refused because local agents are off: company AI or the notice
   });
   return true;
 }
@@ -380,8 +516,16 @@ export function quickPrompt(p) {
 
 export function renderAgentNav() {
   if (state.view !== "agent") return Promise.resolve();
+  if (agent.backend !== "local") {
+    var nav = $("navigator");
+    clear(nav);
+    nav.appendChild(navHead("Agent", []));
+    nav.appendChild(h("div.agent-nav", null, agent.backend === "company" ? companyNav()
+      : [h("p.hint", { text: agent.backend ? noAiText() : "Asking the server which AI it provides …" })]));
+    return Promise.resolve();
+  }
   return agentProfiles().then(function (p) {
-    if (state.view !== "agent") return;
+    if (state.view !== "agent" || agent.backend !== "local") return;
     var nav = $("navigator");
     var scroll = nav.scrollTop;
     clear(nav);
@@ -480,13 +624,20 @@ export function setAgentModel(session, model) {
   });
 }
 
-/** Toolbar button of a revision or change: opens the agent with it as context. */
+/** Toolbar button of a revision or change: opens the Agent view with it as
+ * context – on the company AI or the local agent, whichever applies. */
 export function agentButton(tab) {
-  if (!agent.profiles || !agent.profiles.agents.length) return null;
+  var backend = agent.backend;
+  if (backend === "local" && (!agent.profiles || !agent.profiles.agents.length)) return null;
+  if (backend !== "local" && backend !== "company") return null;
   return tool("Agent", "agent", function () {
     agent.contextKey = tab.key;
     openAgent();
-  }, { title: "Work on this with your local agent (" + (agent.running ? agent.running.name : "not started") + ")" });
+  }, {
+    title: backend === "company"
+      ? "Ask the company AI about this (Agent, Ctrl+4): release notes, release check, review briefing or any question"
+      : "Work on this with your local agent (" + (agent.running ? agent.running.name : "not started") + ")"
+  });
 }
 
 /** The rail's Agent view: controls in the navigator, the conversation as a tab. */
@@ -495,9 +646,29 @@ export function renderAgentView() {
   return renderAgentNav();
 }
 
+/** Company AI | Local agent – only when the server offers both; still while
+ * either one is answering (each keeps its own conversation). */
+export function backendSwitch() {
+  if (agent.available.length < 2) return null;
+  var busy = agent.switching || agent.starting || agent.busy || companyAiBusy();
+  return h("div.tool-group.agent-switch", { role: "group", "aria-label": "Where your questions go" }, agent.available.map(function (b) {
+    return h("button.tool", {
+      type: "button",
+      "aria-pressed": agent.backend === b ? "true" : "false",
+      disabled: busy,
+      title: busy ? "Wait until the answer is finished"
+        : b === "company" ? "The company AI: configured by your administrator on the server – the key stays there, every question is audited"
+          : "Your local agent (ACP) on this computer, with its own AI provider",
+      on: { click: function () { switchBackend(b); } }
+    }, BACKEND_NAMES[b] || b);
+  }));
+}
+
 export function renderAgentToolbar() {
   var toolbar = $("toolbar");
   clear(toolbar);
+  append(toolbar, backendSwitch());
+  if (agent.backend !== "local") return; // the company panel has its own Cancel and New conversation
   append(toolbar, [
     tool("Cancel", "cancel", cancelAgent, { disabled: !agent.busy, danger: agent.busy, title: "Stop the running turn (session/cancel)" }),
     tool("Clear", "refresh", function () {
@@ -509,12 +680,50 @@ export function renderAgentToolbar() {
   ]);
 }
 
+/** The Agent tab: the backend's conversation (or why there is none). */
 export function renderAgentTab(body) {
+  if (agent.backend === "company") {
+    var fresh = !companyAi.host;
+    body.appendChild(companyPanel(companyContext, function () {
+      if (state.active === "agent") renderAgentToolbar();
+    }));
+    if (companyAi.panel) companyAi.panel.contextChanged();
+    // the navigator names provider and model once GET /assistant answered
+    if (fresh && companyAi.ready) companyAi.ready.then(function () { if (state.view === "agent") renderAgentNav(); });
+    renderAgentToolbar();
+    return;
+  }
+  if (agent.backend !== "local") {
+    body.appendChild(agent.backend === "off"
+      ? h("div.agent-empty", null, [
+        h("h3", { text: "No AI available" }),
+        h("p", { text: noAiText() }),
+        h("p.hint", { text: "Ask your administrator if your organisation provides an AI for TeamCraft." })
+      ])
+      : h("p.loading", { text: "Asking the server which AI it provides …" }));
+    renderAgentToolbar();
+    return;
+  }
   body.appendChild(ensureAgentPanel());
   renderAgentToolbar();
   updateAgentControls();
   scrollAgent();
   if (agent.running && !agent.busy) agent.input.focus();
+}
+
+/** The navigator of the company AI: where questions go, the rules, the context. */
+export function companyNav() {
+  var info = companyAi.info || {};
+  var where = companyAiWhere();
+  return [
+    h("p", null, [h("span.badge.badge-released", { text: "Company AI" }), " ", where || "configured by your administrator"]),
+    info.model ? h("p.small", { text: "Model: " + info.model }) : null,
+    h("p.hint", { text: "Answers with your rights in TeamCraft, read-only unless you allow drafts – it never submits, approves or releases. The provider key stays on the server, and every question is recorded in the audit log." }),
+    agent.allowed ? null : h("p.hint", { text: localAgentsOffText() }),
+    h("h3", { text: "Context" }),
+    h("p.small", { text: companyContextLabel() }),
+    h("p.hint", { text: "The last revision, change order or change request tab you opened; remove it in the panel to ask without it." })
+  ];
 }
 
 export var AGENT_PRESETS = [

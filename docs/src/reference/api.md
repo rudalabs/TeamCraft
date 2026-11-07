@@ -49,6 +49,10 @@ Every answer contains only what the token's user may read (see
   in `restricted_projects`, those of them that are restricted. It never
   names groups the user is not a member of. `auth_source` is `local` or
   `oidc`; only local accounts have a password to change.
+  `capabilities` says what the server offers: `assistant` (Ask TeamCraft
+  is configured), `mcp` and `local_agents` (both `false` when the
+  administrator set `TEAMCRAFT_LOCAL_AGENTS=off`: `POST /api/v1/mcp` then
+  refuses every token and clients offer no local agent).
 * `GET /api/v1/projects` lists only the groups the user may see; projects
   carry `visibility` (`internal` or `restricted`). `POST /api/v1/projects`
   takes an optional `visibility`; `PUT /api/v1/projects/{code}/visibility`
