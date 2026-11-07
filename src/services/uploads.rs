@@ -29,7 +29,7 @@ use crate::{
     domain::{self, BaseVersion},
     error::{AppError, AppResult},
     models::Revision,
-    services::files,
+    services::{files, retention},
     vault::{StoredBlob, Vault},
 };
 
@@ -662,13 +662,45 @@ pub async fn abort(pool: &PgPool, vault: &Vault, actor: &Actor, id: Uuid) -> App
 }
 
 /// Removes expired sessions with their data, and staging files that have no
-/// session any more (e.g. after a crash between the two). Returns the number
-/// of sessions removed.
+/// session any more (e.g. after a crash between the two). Content that was
+/// verified and moved into the vault but never became a file version goes
+/// too – unless something else refers to it or it was stored again within
+/// [`retention::IN_FLIGHT_GRACE`]; such a session stays (expired, unusable)
+/// until the next run. Returns the number of sessions removed.
 pub async fn purge_expired(pool: &PgPool, vault: &Vault) -> AppResult<u64> {
-    let expired: Vec<Uuid> =
-        sqlx::query_scalar("DELETE FROM upload_sessions WHERE expires_at <= now() RETURNING id")
-            .fetch_all(pool)
-            .await?;
+    let mut expired: Vec<Uuid> = sqlx::query_scalar(
+        "DELETE FROM upload_sessions WHERE expires_at <= now() AND stored_sha256 IS NULL
+         RETURNING id",
+    )
+    .fetch_all(pool)
+    .await?;
+    let stored: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM upload_sessions WHERE expires_at <= now() AND stored_sha256 IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+    for id in stored {
+        let mut tx = pool.begin().await?;
+        // the blob is released as seen without this session
+        let Some(sha256) = sqlx::query_scalar::<_, String>(
+            "DELETE FROM upload_sessions WHERE id = $1 AND expires_at <= now()
+             RETURNING stored_sha256",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        else {
+            continue;
+        };
+        if retention::release_blob(&mut tx, vault, &sha256, retention::IN_FLIGHT_GRACE).await?
+            == retention::Release::Recent
+        {
+            tx.rollback().await?;
+        } else {
+            tx.commit().await?;
+            expired.push(id);
+        }
+    }
     for id in &expired {
         vault.remove_staged(*id).await?;
     }

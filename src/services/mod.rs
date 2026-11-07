@@ -37,6 +37,7 @@ pub mod request_digests;
 pub mod requests;
 pub mod result_proposals;
 pub mod result_templates;
+pub mod retention;
 pub mod reviewers;
 pub mod revisions;
 pub mod save_as;

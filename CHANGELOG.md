@@ -17,6 +17,22 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Data retention and cleanup: the hourly housekeeping now also removes the
+  blobs of expired staged imports and upload sessions, trims the preview
+  cache (`TEAMCRAFT_PREVIEW_CACHE_MAX_MB`, default no limit) and applies an
+  optional audit log retention (`TEAMCRAFT_AUDIT_RETENTION_DAYS`, default
+  keep for ever; one `audit.purge` entry per removal). New command
+  `teamcraft vault gc` (dry run unless `--apply`) lists and removes vault
+  blobs nothing refers to.
+- Retention for large result files: a file can be set to *keep only the
+  latest version* (`files.retention = 'latest'`, migration 0052; revision
+  page menu, `PATCH /api/v1/files/{id}` `{"retention"}`, audit
+  `file.retention`). Superseded versions are removed after
+  `TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS` (default 7) by the housekeeping and
+  by `teamcraft vault purge-versions` (dry run unless `--apply`) – never the
+  newest version and never anything of a revision that is not in work;
+  audited as `file.purge_versions`. The default stays `all`.
+
 - Item owner and hand-over (#152 step 7, migration 0050): `items.owner_id`
   (default: the creator) is shown on the item page and changed by the
   managers of the group and administrators (`item.owner`). Administrators

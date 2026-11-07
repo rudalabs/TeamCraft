@@ -282,6 +282,7 @@
         <td class="nowrap">
           v{{ f.version }}
           {% if f.versions|length > 1 %}<button class="xs ghost" type="button" data-toggle="versions-{{ f.id }}" aria-expanded="false">History</button>{% endif %}
+          {% if f.retention == 'latest' %}<span class="badge" title="Only the latest version is kept; older versions are removed after the grace period.">latest only</span>{% endif %}
         </td>
         <td class="num">{{ f.size_bytes|filesize }}</td>
         <td class="nowrap muted">{{ m.time(f.uploaded_at) }} · {{ f.uploaded_by_name }}</td>
@@ -298,6 +299,16 @@
                          title="Folder inside {{ rev.project_code or 'the project group' }}, e.g. chassis/brackets">
                 </label>
                 <button class="small" type="submit">Move</button>
+              </form>
+              <form class="menu-form" method="post" action="/files/{{ f.id }}/retention">
+                <input type="hidden" name="back" value="{{ back }}#files">
+                {% if f.retention == 'latest' %}
+                <input type="hidden" name="retention" value="all">
+                <button class="small" type="submit" title="Only the latest version is kept; older versions are removed after the grace period. Click to keep every version again.">Keep all versions</button>
+                {% else %}
+                <input type="hidden" name="retention" value="latest">
+                <button class="small" type="submit" title="Remove older versions after the grace period while the revision is in work (for large result files). Released revisions are never touched.">Keep only the latest version</button>
+                {% endif %}
               </form>
               <div class="menu-sep" role="separator"></div>
               {% endif %}

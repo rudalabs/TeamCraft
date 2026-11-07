@@ -1348,6 +1348,43 @@ pub async fn set_file_folder(
     })
 }
 
+#[derive(Deserialize)]
+pub struct RetentionForm {
+    retention: String,
+    back: Option<String>,
+}
+
+/// Keeps every version of a file or only the latest one (the housekeeping
+/// removes older versions after a grace period) while the revision is
+/// checked out.
+pub async fn set_file_retention(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<RetentionForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = match crate::domain::FileRetention::parse(&form.retention) {
+        Some(retention) => files::set_retention(&st.db, &ctx.me, id, retention).await,
+        None => Err(AppError::BadRequest(
+            "The retention is all or latest.".into(),
+        )),
+    };
+    finish(&st, result, &back, |file| {
+        (
+            format!("/revisions/{}#files", file.revision_id),
+            if file.retention == "latest" {
+                format!(
+                    "{}: only the latest version is kept, older versions are removed after the grace period",
+                    file.filename
+                )
+            } else {
+                format!("{}: every version is kept", file.filename)
+            },
+        )
+    })
+}
+
 pub async fn delete_file(
     State(st): State<AppState>,
     ctx: WebCtx,
