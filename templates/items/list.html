@@ -35,6 +35,15 @@
       {% for s in states %}<option value="{{ s.value }}" {% if filter.state == s.value %}selected{% endif %}>{{ s.label }}</option>{% endfor %}
     </select>
   </label>
+  <label>Result values <span class="hint" title="Simulations: the latest revision has a result value in this state against its limits">?</span>
+    <select name="result">
+      <option value="">Any</option>
+      {% for f in result_filters %}<option value="{{ f.value }}" {% if filter.result == f.value %}selected{% endif %}>{{ f.label }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Result name
+    <input type="text" name="result_name" value="{{ filter.result_name }}" placeholder="e.g. stress">
+  </label>
   <label>CAD program <a class="hint" href="/formats">formats</a>
     <select name="system">
       <option value="">Any files</option>

@@ -17,6 +17,11 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Result values in the item search and on the dashboard: filters
+  `result` (`failed`, `passed`, `above_limit`, `below_limit`) and
+  `result_name` on the item list, `GET /api/v1/items` and the web filter bar,
+  and a dashboard card *Simulations to check* (failed values or out-of-date
+  basis). Restricted groups stay out of results and totals. No migration.
 - Solver summary per file version, step 3 of `docs/src/research/solver-files.md`
   (migration 0045, nullable `file_versions.solver_summary`; the number will be
   renumbered at merge): for Fluent transcripts and report files, Nastran `.f06`

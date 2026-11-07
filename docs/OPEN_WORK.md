@@ -445,7 +445,7 @@ real files and belong to section 3 once such files are at hand.
   the extracted text ([#141](https://github.com/rudalabs/TeamCraft/issues/141))
 - [ ] HTML reports: MHTML (`.mht`) and ZIP-packed multi-file reports (unpacking needs its own caps, see F13); text hidden
   by a style sheet (not inline) is not detected
-- [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
+- [x] Result values in the item search (failed, passed, above/below limit, by name) and a dashboard card for failing or out-of-date simulations; left: an *out of date* search filter, the `result` filter in the MCP `search_items` tool and in saved searches
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
 - [ ] Retention for large result files (`files.retention = 'latest'`), now that chunked resumable uploads exist

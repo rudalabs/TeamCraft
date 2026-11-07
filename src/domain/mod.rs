@@ -854,6 +854,19 @@ mod tests {
     }
 
     #[test]
+    fn result_filter_names_round_trip() {
+        for f in ResultFilter::ALL {
+            assert_eq!(ResultFilter::parse(f.as_str()), Some(f));
+            assert!(!f.label().is_empty());
+        }
+        assert_eq!(ResultFilter::parse(" failed "), Some(ResultFilter::Failed));
+        assert_eq!(ResultFilter::parse("fail"), None);
+        assert_eq!(ResultFilter::parse_field(None).unwrap(), None);
+        assert_eq!(ResultFilter::parse_field(Some("  ")).unwrap(), None);
+        assert!(ResultFilter::parse_field(Some("nope")).is_err());
+    }
+
+    #[test]
     fn result_pass_fail() {
         use ResultStatus::{Fail, Pass};
         assert_eq!(result_status(5.0, None, None), ResultStatus::NoLimits);

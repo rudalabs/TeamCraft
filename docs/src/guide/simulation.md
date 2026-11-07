@@ -314,6 +314,30 @@ card of the revision.
 revisions of the simulation side by side – matched by name and load case,
 with the difference, the relative change and the pass/fail status of both.
 
+## Finding simulations by their results
+
+The item list (*Result values* and *Result name* in the filter bar, `result=`
+and `result_name=` in the URL and in `GET /api/v1/items`) looks at the result
+values of the **latest revision** of simulations:
+
+| `result` | Matches simulations with at least one value that |
+|---|---|
+| `failed` | is outside its limits |
+| `passed` | has limits and is within them |
+| `above_limit` | is above its upper limit |
+| `below_limit` | is below its lower limit |
+
+`result_name` is a case-insensitive "contains" on the value name and can be
+combined with `result` (the same value must match both), the type, project,
+state and text filters. An unknown `result` is refused by the REST API.
+Only items the user may read are found and counted: restricted groups stay
+out of the list and its total.
+
+The dashboard shows a card *Simulations to check*: simulations the user may
+read whose latest revision (not obsolete) has a failed value or is out of
+date (see above), ten at a time, with a link to the search. Bases the user may
+not see never make a simulation appear out of date.
+
 ## Limits of version 1
 
 * Result values are not extracted from solver result files (by design:
