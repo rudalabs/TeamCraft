@@ -98,11 +98,11 @@ async fn insert_item(
     Ok((inserted > 0).then_some(label))
 }
 
-/// Rejects a list of more than [`MAX_ITEMS`] affected items. Callers that
-/// resolve item references one by one (the REST API) check this first, so a
-/// long list costs no lookups; [`create`] checks it again, because
-/// `insert_item` counts distinct rows and repeated items would never reach
-/// its limit.
+/// Rejects a list of more than [`MAX_ITEMS`] distinct affected items.
+/// Callers that resolve item references one by one (the REST API) drop
+/// repeated references and check this first, so a long list costs no
+/// lookups; [`create`] drops repeated items (one row per item, the first
+/// mention wins) and checks again.
 pub fn check_item_count(len: usize) -> AppResult<()> {
     if len > MAX_ITEMS as usize {
         return Err(AppError::BadRequest(format!(
@@ -120,6 +120,11 @@ pub async fn create(
     input: RequestInput,
     affected: Vec<AffectedItem>,
 ) -> AppResult<ChangeRequest> {
+    let mut seen = std::collections::HashSet::new();
+    let affected: Vec<AffectedItem> = affected
+        .into_iter()
+        .filter(|a| seen.insert(a.item_id))
+        .collect();
     check_item_count(affected.len())?;
     let text = clean(&input)?;
     let mut tx = pool.begin().await?;

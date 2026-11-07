@@ -384,7 +384,7 @@ comments on them; CAD editors of the project groups of the affected items
 (and admins) triage and decide. `GET /change-requests/{number}` returns the
 request with its `items`, `comments`, `attachments`, linked `changes`,
 `history` and `can` (the actions the caller may take). A request names at
-most 100 affected `items` (repeats count; a longer list is refused with 400
+most 100 affected `items` (an item named twice is listed once; more distinct items are refused with 400
 before any item is looked up). See
 [Change requests](../guide/changes.md) for the flow.
 
