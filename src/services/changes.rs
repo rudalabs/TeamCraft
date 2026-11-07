@@ -25,7 +25,7 @@ use crate::{
         Role, WebhookEvent,
     },
     error::{AppError, AppResult},
-    models::{Change, ChangeItem, ChangeReview},
+    models::{Change, ChangeItem, ChangeReview, ChangeReviewRound},
     services::{
         access, as_built, audit, impacts, next_counter,
         notifications::{self, Notice},
@@ -204,13 +204,51 @@ pub(crate) async fn items_unchecked(pool: &PgPool, change_id: Uuid) -> AppResult
     .await?)
 }
 
+/// The reviews of the current round. A pending reviewer who can no longer
+/// decide (deactivated, below the editor role, blind to an affected item) is
+/// flagged in `absent`.
 pub async fn reviews(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeReview>> {
-    Ok(sqlx::query_as::<_, ChangeReview>(
+    Ok(sqlx::query_as::<_, ChangeReview>(&format!(
         "SELECT cr.reviewer_id, u.username AS reviewer_username, u.display_name AS reviewer_name,
-                cr.decision, cr.comment, cr.decided_at
+                cr.decision, cr.comment, cr.decided_at,
+                CASE WHEN cr.decision <> 'pending' THEN NULL
+                     WHEN NOT u.active THEN 'deactivated'
+                     WHEN u.role NOT IN ('editor', 'admin') THEN 'not_editor'
+                     WHEN EXISTS (SELECT 1 FROM change_items ci
+                                  JOIN revisions r ON r.id = ci.revision_id
+                                  JOIN items i ON i.id = r.item_id
+                                  WHERE ci.change_id = cr.change_id AND NOT {})
+                          THEN 'cannot_see_items'
+                END AS absent
          FROM change_reviews cr JOIN users u ON u.id = cr.reviewer_id
          WHERE cr.change_id = $1
          ORDER BY u.display_name",
+        access::user_sees_project("u", "i.project_id")
+    ))
+    .bind(change_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// The current review round (1 for a change that was never sent back).
+pub async fn review_round(pool: &PgPool, change_id: Uuid) -> AppResult<i32> {
+    Ok(
+        sqlx::query_scalar::<_, i32>("SELECT review_round FROM changes WHERE id = $1")
+            .bind(change_id)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(1),
+    )
+}
+
+/// The reviews of the earlier rounds, newest round first.
+pub async fn earlier_rounds(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeReviewRound>> {
+    Ok(sqlx::query_as::<_, ChangeReviewRound>(
+        "SELECT rr.round, rr.reviewer_id, u.username AS reviewer_username,
+                u.display_name AS reviewer_name, rr.decision, rr.comment, rr.decided_at, rr.closed_at
+         FROM change_review_rounds rr JOIN users u ON u.id = rr.reviewer_id
+         WHERE rr.change_id = $1
+         ORDER BY rr.round DESC, u.display_name",
     )
     .bind(change_id)
     .fetch_all(pool)
@@ -342,6 +380,7 @@ const PREPARE_ACTIONS: &[&str] = &[
     "change.remove_item",
     "change.add_reviewer",
     "change.remove_reviewer",
+    "change.replace_reviewer",
     "change.update",
     "change.submit",
     "change.reopen",
@@ -434,7 +473,31 @@ async fn touch(conn: &mut PgConnection, change_id: Uuid) -> AppResult<()> {
     Ok(())
 }
 
+/// Resets all reviews to pending. When somebody had decided, the round is
+/// archived in `change_review_rounds` first and the next round starts.
 async fn reset_reviews(conn: &mut PgConnection, change_id: Uuid) -> AppResult<()> {
+    let decided = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM change_reviews WHERE change_id = $1 AND decision <> 'pending')",
+    )
+    .bind(change_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if decided {
+        sqlx::query(
+            "INSERT INTO change_review_rounds (change_id, round, reviewer_id, decision, comment, decided_at)
+             SELECT cr.change_id, c.review_round, cr.reviewer_id, cr.decision, cr.comment, cr.decided_at
+             FROM change_reviews cr JOIN changes c ON c.id = cr.change_id
+             WHERE cr.change_id = $1
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(change_id)
+        .execute(&mut *conn)
+        .await?;
+        sqlx::query("UPDATE changes SET review_round = review_round + 1 WHERE id = $1")
+            .bind(change_id)
+            .execute(&mut *conn)
+            .await?;
+    }
     sqlx::query(
         "UPDATE change_reviews SET decision = 'pending', comment = '', decided_at = NULL WHERE change_id = $1",
     )
@@ -1004,6 +1067,144 @@ pub async fn add_reviewer(
         )
         .await?;
     }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Replaces a reviewer who has not decided yet while the change is in review
+/// (typically one who is absent: deactivated, demoted or blind to an item).
+/// The other decisions are kept.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator) and sees every item
+///   (403); the change is in review (409); `old` is a reviewer with a pending decision (404 /
+///   409); the substitute is an active user with at least the editor role (400), not yet a
+///   reviewer (409), conflict-free under the four-eyes rule (400) and sees every item (409).
+/// * **Locks:** the change row (`FOR UPDATE`).
+/// * **Audit:** `change.replace_reviewer`.
+/// * **Notifications:** the substitute (review requested); webhooks: none.
+/// * **Atomic:** one transaction.
+pub async fn replace_reviewer(
+    pool: &PgPool,
+    actor: &Actor,
+    change_id: Uuid,
+    old_reviewer_id: Uuid,
+    username: &str,
+) -> AppResult<()> {
+    let substitute = users::find_by_username(pool, username)
+        .await?
+        .ok_or_else(|| AppError::BadRequest(format!("Unknown user '{}'.", username.trim())))?;
+    if !substitute.active {
+        return Err(AppError::BadRequest(format!(
+            "{} is deactivated.",
+            substitute.display_name
+        )));
+    }
+    if Role::parse(&substitute.role).unwrap_or(Role::Viewer) < Role::Editor {
+        return Err(AppError::BadRequest(format!(
+            "{} has the viewer role and cannot review changes.",
+            substitute.display_name
+        )));
+    }
+    let mut tx = pool.begin().await?;
+    let change = lock(&mut tx, actor, change_id).await?;
+    ensure_owner(&change, actor)?;
+    ensure_status(&change, &[ChangeStatus::InReview])?;
+    ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
+    let current = sqlx::query_as::<_, (String, String)>(
+        "SELECT cr.decision, u.display_name FROM change_reviews cr
+         JOIN users u ON u.id = cr.reviewer_id
+         WHERE cr.change_id = $1 AND cr.reviewer_id = $2",
+    )
+    .bind(change_id)
+    .bind(old_reviewer_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::not_found("This user is not a reviewer of the change."))?;
+    if current.0 != Decision::Pending.as_str() {
+        return Err(AppError::Conflict(format!(
+            "{} has already decided; only a pending reviewer can be replaced.",
+            current.1
+        )));
+    }
+    let already = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM change_reviews WHERE change_id = $1 AND reviewer_id = $2)",
+    )
+    .bind(change_id)
+    .bind(substitute.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if already {
+        return Err(AppError::Conflict(format!(
+            "{} is already a reviewer of {}.",
+            substitute.display_name, change.number
+        )));
+    }
+    let four_eyes = sqlx::query_scalar::<_, bool>("SELECT four_eyes FROM changes WHERE id = $1")
+        .bind(change_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if let Some(conflict) =
+        review_conflict(&mut tx, &change, substitute.id, Some(actor.id), !four_eyes).await?
+    {
+        return Err(AppError::BadRequest(format!(
+            "{} cannot review {}: they {} (four-eyes principle).",
+            substitute.display_name,
+            change.number,
+            conflict.describe()
+        )));
+    }
+    let blind = sqlx::query_scalar::<_, bool>(&format!(
+        "SELECT EXISTS(SELECT 1 FROM change_items ci
+                       JOIN revisions r ON r.id = ci.revision_id
+                       JOIN items i ON i.id = r.item_id
+                       JOIN users u ON u.id = $2
+                       WHERE ci.change_id = $1 AND NOT {})",
+        access::user_sees_project("u", "i.project_id")
+    ))
+    .bind(change_id)
+    .bind(substitute.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if blind {
+        return Err(AppError::Conflict(format!(
+            "{} cannot see every item of {} (not a member of a restricted project group).",
+            substitute.display_name, change.number
+        )));
+    }
+    sqlx::query(
+        "UPDATE change_reviews SET reviewer_id = $3 WHERE change_id = $1 AND reviewer_id = $2",
+    )
+    .bind(change_id)
+    .bind(old_reviewer_id)
+    .bind(substitute.id)
+    .execute(&mut *tx)
+    .await?;
+    touch(&mut tx, change_id).await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "change.replace_reviewer",
+        "change",
+        Some(change_id),
+        format!(
+            "Replaced reviewer {} by {} on {}",
+            current.1, substitute.display_name, change.number
+        ),
+        json!({ "old_reviewer_id": old_reviewer_id, "reviewer_id": substitute.id }),
+    )
+    .await?;
+    tell(
+        &mut tx,
+        actor,
+        &change,
+        NotificationKind::ReviewRequested,
+        &[substitute.id],
+        format!("Review requested: {} – {}", change.number, change.title),
+        format!("{} asks you to review this change.", actor.display_name),
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }

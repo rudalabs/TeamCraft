@@ -17,6 +17,15 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Review rounds and absent reviewers (#152, steps 5 and 6): withdrawing or
+  reopening a change after decisions keeps them as an earlier round
+  (`change_review_rounds`, `changes.review_round`, migration 0045; the number
+  will be renumbered at merge if needed). The change page and
+  `GET /api/v1/changes/{number}` show earlier rounds and flag pending
+  reviewers who cannot decide (deactivated, demoted, blind to an item). The
+  author or an administrator replaces a pending reviewer while the change is in
+  review (`POST /api/v1/changes/{number}/reviewers/{old}/replace`, audited
+  `change.replace_reviewer`); other decisions are kept.
 - Review policy per project group, step 2 of #152 (migration 0045, to be
   renumbered at merge): minimum approvals (default all), required reviewers and
   an optional role group (e.g. QA) whose member must approve. `submit` refuses a
