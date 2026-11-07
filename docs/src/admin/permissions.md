@@ -80,8 +80,62 @@ is part of the actor's hidden groups (`access::hidden_of_user`), so every
 guard, the audit feed, change orders, notifications and the assistant honour
 it without a check of their own. This is step 1 of
 [#151](https://github.com/rudalabs/TeamCraft/issues/151); conditions on
-membership, interface switches, a read log, an access review and token scopes
-are not built yet (see `docs/OPEN_WORK.md`).
+membership, an access review and token scopes are not built yet (see
+`docs/OPEN_WORK.md`); steps 3 and 4 follow below.
+
+### Interface switches and the read log (need to know, steps 3 and 4)
+
+A restricted group can also close channels through which its data could
+leave the web UI, and can log who reads it (*Project groups → the group →
+Need to know: interfaces and read log*, managers and administrators;
+`PUT /api/v1/projects/{code}/policy`). Everything is allowed and nothing is
+logged by default; the switches build on a restricted group and are inert
+when the group is opened.
+
+| Switch | Denied: the group looks non-existent to … |
+|---|---|
+| `api_tokens` | REST requests, MCP and the desktop app that sign in with a personal access token (the browser session still works) |
+| `mcp` | MCP tools (also through `teamcraft mcp`, which uses a token) |
+| `assistant` | the built-in assistant, including the page context of a question |
+| `webhooks` | outgoing webhooks: no webhook receives events of the group, scoped or not; an event that mentions the group in a change order is sent without the change |
+| `packages` | Pack and Go and BOM downloads (CSV, Excel): the root item's group answers 403, items of such groups inside a structure are left out like restricted items of non-members |
+
+`{"interfaces": {"mcp": false, "webhooks": false}, "read_log": true,
+"log_retention_days": 365}` – every field is optional. Switching an
+interface off or the log on is open to managers and administrators; allowing
+an interface again, switching the log off or changing the retention is, while
+administrators are limited by the administrator policy above, for the
+managers (like loosening that policy). Every change is audited
+(`project.interfaces`, old and new values) and notifies the other managers.
+Not covered yet: e-mail and chat notification content, an external LLM
+provider list (`external_llm`) and the desktop working folder as separate
+switches (the desktop app follows `api_tokens`).
+
+**Read and download log.** With `read_log` on, the group writes `access_log`
+entries (separate from the audit log): who (user name kept as text), when,
+channel (`web` or `api`), kind (`view` of an item or revision page,
+`download` of a file or file version, `package` for Pack and Go, `export` for
+a BOM CSV or Excel file), the object (number or file name, kept as text) and
+the client address (with the same reverse-proxy rule as the sign-in
+throttle). Repeated reads of the same object by the same user through the
+same channel within five minutes are one entry, so a resumed or ranged
+download is logged once. A read that cannot be logged does not happen. Groups
+that do not log write nothing. A Pack and Go or BOM export writes one
+entry for every logging group inside the structure, not only for the root
+item's group; a refused one writes nothing. The managers and administrators
+read the log, but only while they may read the group (an administrator shut
+out by `admin_read` gets "not found"; the labels are item content). They read the
+newest entries on the group page, or `GET
+/api/v1/projects/{code}/access-log?user=&kind=&since=&until=&limit=`. Not
+logged yet: MCP and assistant tool reads, desktop Get, thumbnails and
+previews.
+
+**Retention and purge.** `log_retention_days` (1 to 36500, empty = keep) is
+applied by `teamcraft access-log purge` (run it from cron or a timer):
+without options each group's own retention, `--project CODE` limits it to one
+group, `--older-than-days N` deletes everything older than that instead.
+Every run is audited (`access_log.purge`, with the count). The database
+backup contains the log.
 
 Moving an item out of a restricted group, or copying it with *Save As*
 into another group, needs a manager of the source group or an administrator

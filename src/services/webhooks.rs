@@ -694,7 +694,12 @@ pub async fn emit(
            -- the webhook as a reader: its own group and the internal groups
            AND NOT EXISTS (SELECT 1 FROM projects rp
                            WHERE rp.id = ANY($4) AND rp.visibility = 'restricted'
-                             AND rp.id IS DISTINCT FROM w.project_id)",
+                             AND rp.id IS DISTINCT FROM w.project_id)
+           -- a group that switched webhooks off sends nothing, scoped or not
+           AND NOT EXISTS (SELECT 1 FROM project_policies wp
+                           JOIN projects wpp ON wpp.id = wp.project_id
+                           WHERE wp.project_id = ANY($4) AND wpp.visibility = 'restricted'
+                             AND NOT wp.webhooks)",
     )
     .bind(event_id)
     .bind(event.as_str())
@@ -745,11 +750,19 @@ pub(crate) async fn emit_each(
          CROSS JOIN LATERAL (
              SELECT EXISTS (SELECT 1 FROM projects cp
                             WHERE cp.id = ANY($5) AND cp.visibility = 'restricted'
-                              AND cp.id IS DISTINCT FROM w.project_id) AS strip
+                              AND cp.id IS DISTINCT FROM w.project_id)
+                    OR EXISTS (SELECT 1 FROM project_policies wp
+                               JOIN projects wpp ON wpp.id = wp.project_id
+                               WHERE wp.project_id = ANY($5) AND wpp.visibility = 'restricted'
+                                 AND NOT wp.webhooks) AS strip
          ) s
          WHERE NOT EXISTS (SELECT 1 FROM projects rp
                            WHERE rp.id = e.project_id AND rp.visibility = 'restricted'
-                             AND rp.id IS DISTINCT FROM w.project_id)",
+                             AND rp.id IS DISTINCT FROM w.project_id)
+           AND NOT EXISTS (SELECT 1 FROM project_policies wp
+                           JOIN projects wpp ON wpp.id = wp.project_id
+                           WHERE wp.project_id = e.project_id AND wpp.visibility = 'restricted'
+                             AND NOT wp.webhooks)",
     )
     .bind(event.as_str())
     .bind(&ids)

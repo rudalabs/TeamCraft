@@ -964,6 +964,17 @@ fn count_lines(nodes: &[BomNode]) -> (usize, usize) {
     })
 }
 
+/// The root and every resolved revision of a tree (for the read log).
+pub fn tree_revision_ids(tree: &BomTree) -> Vec<Uuid> {
+    let mut ids = vec![tree.root.id];
+    ids.extend(
+        flatten(&tree.children)
+            .iter()
+            .filter_map(|r| r.node.revision.as_ref().map(|v| v.id)),
+    );
+    ids
+}
+
 /// Flattens the tree into display rows (depth first).
 pub fn flatten(nodes: &[BomNode]) -> Vec<FlatBomRow> {
     let mut out = Vec::new();

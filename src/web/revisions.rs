@@ -25,12 +25,37 @@ use crate::{
     models::{AttributeDef, FileRecord, Revision},
     preview::PreviewFormat,
     services::{
+        access_log::{self, AccessCtx},
         as_built, attributes, audit, bom, changes, files, impacts, interchange, items,
         notifications, ownership, projects, references, requests, result_proposals, revisions,
         similar, simulations, uploads,
     },
     thumbnail, util, AppState,
 };
+
+/// Logs a file download when the file's group keeps a read log.
+async fn log_file(
+    st: &AppState,
+    log: &AccessCtx,
+    me: &Actor,
+    file_id: Uuid,
+    filename: &str,
+) -> AppResult<()> {
+    let project_id = access_log::project_of_file(&st.db, file_id).await?;
+    access_log::record(
+        &st.db,
+        log,
+        me,
+        access_log::Subject {
+            kind: access_log::Kind::Download,
+            project_id,
+            object_type: "file",
+            object_id: Some(file_id),
+            label: filename,
+        },
+    )
+    .await
+}
 
 /// A stored attribute value as text for display and form fields
 /// (`true` → `yes`, `12.0` → `12`).
@@ -119,10 +144,12 @@ const WHERE_USED_SHOWN: usize = 200;
 pub async fn show(
     State(st): State<AppState>,
     ctx: WebCtx,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     let me = &ctx.me;
     let rev = revisions::get(&st.db, me, id).await?;
+    access_log::record_revision(&st.db, &log, me, &rev, access_log::Kind::View).await?;
     let item = items::get(&st.db, me, rev.item_id).await?;
     // independent queries run concurrently
     let (
@@ -949,10 +976,12 @@ pub(crate) async fn blob_response_ranged(
 pub(crate) async fn file_response(
     st: &AppState,
     me: &Actor,
+    log: &AccessCtx,
     file_id: Uuid,
     headers: &HeaderMap,
 ) -> AppResult<Response> {
     let f = files::get(&st.db, me, file_id).await?;
+    log_file(st, log, me, f.id, &f.filename).await?;
     blob_response_ranged(
         st,
         &f.sha256,
@@ -969,10 +998,12 @@ pub(crate) async fn file_response(
 pub(crate) async fn version_response(
     st: &AppState,
     me: &Actor,
+    log: &AccessCtx,
     version_id: Uuid,
     headers: &HeaderMap,
 ) -> AppResult<Response> {
     let (v, filename) = files::get_version(&st.db, me, version_id).await?;
+    log_file(st, log, me, v.file_id, &filename).await?;
     let versioned = match filename.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => format!("{stem}.v{}.{ext}", v.version),
         _ => format!("{filename}.v{}", v.version),
@@ -991,10 +1022,11 @@ pub(crate) async fn version_response(
 pub async fn download(
     State(st): State<AppState>,
     WebUser(me): WebUser,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    file_response(&st, &me, id, &headers).await
+    file_response(&st, &me, &log, id, &headers).await
 }
 
 /// The thumbnail of a format that is rendered from its 3D preview (NX
@@ -1120,10 +1152,11 @@ pub async fn thumbnail(
 pub async fn download_version(
     State(st): State<AppState>,
     WebUser(me): WebUser,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    version_response(&st, &me, id, &headers).await
+    version_response(&st, &me, &log, id, &headers).await
 }
 
 /// 3D preview page of the current version of a file.

@@ -132,6 +132,14 @@ fn the_sqlx_guard_sees_sqlx() {
 /// names why.
 const NOT_AUDITED: &[(&str, &str)] = &[
     (
+        "access_log::record",
+        "the read log itself: one entry per read, separate from the audit log",
+    ),
+    (
+        "access_log::record_revision",
+        "the read log itself: one entry per read, separate from the audit log",
+    ),
+    (
         "assistant_threads::append",
         "the user's own conversation; the question is audited by services::assistant",
     ),

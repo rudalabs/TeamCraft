@@ -57,10 +57,11 @@ pub(super) async fn restore_file(
 pub(super) async fn download_version(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
     headers: axum::http::HeaderMap,
 ) -> AppResult<Response> {
-    web::version_response(&st, &me, id, &headers).await
+    web::version_response(&st, &me, &log, id, &headers).await
 }
 
 /// 3D preview mesh of the current version (binary `TCMESH01`, see `mesh`).
@@ -114,10 +115,11 @@ pub(super) async fn update_file(
 pub(super) async fn download(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
     headers: axum::http::HeaderMap,
 ) -> AppResult<Response> {
-    web::file_response(&st, &me, id, &headers).await
+    web::file_response(&st, &me, &log, id, &headers).await
 }
 
 /// The preview image embedded in an Inventor, Solid Edge or SolidWorks file.

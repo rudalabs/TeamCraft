@@ -14,7 +14,9 @@ use crate::{
     domain::{self, AdminRead, ProjectVisibility, Role},
     error::{AppError, AppResult},
     resultscan::TemplateInput,
-    services::{audit, ownership, project_policy, projects, result_templates, users, Page},
+    services::{
+        access_log, audit, ownership, project_policy, projects, result_templates, users, Page,
+    },
     util, AppState,
 };
 
@@ -78,6 +80,26 @@ pub async fn project_show(
     } else {
         None
     };
+    let interface_rows: Vec<Value> = match &policy {
+        Some(p) => project_policy::Interface::ALL
+            .iter()
+            .map(|i| {
+                json!({ "name": i.as_str(), "label": i.label(),
+                        "allowed": p.access.interfaces.allowed(*i) })
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let access_entries = match &policy {
+        Some(_) if readable => {
+            let filter = access_log::Filter {
+                limit: Some(50),
+                ..Default::default()
+            };
+            access_log::list(&st.db, &ctx.me, id, &filter).await?
+        }
+        _ => Vec::new(),
+    };
     let review_policy = if can_manage {
         Some(project_policy::get_review_policy(&st.db, &ctx.me, id).await?)
     } else {
@@ -111,6 +133,8 @@ pub async fn project_show(
             "policy": policy,
             "review_policy": review_policy,
             "admin_modes": admin_modes,
+            "interface_rows": interface_rows,
+            "access_entries": access_entries,
             "elevation_minutes": project_policy::ELEVATION_MINUTES,
             "result_templates": templates,
             "oidc_enabled": st.config.oidc.is_some(),
@@ -252,6 +276,64 @@ pub async fn update_policy(
             back.clone(),
             format!("Administrator access: {}", p.admin_read.label()),
         )
+    })
+}
+
+#[derive(Deserialize)]
+pub struct AccessForm {
+    #[serde(default)]
+    api_tokens: Option<String>,
+    #[serde(default)]
+    mcp: Option<String>,
+    #[serde(default)]
+    assistant: Option<String>,
+    #[serde(default)]
+    webhooks: Option<String>,
+    #[serde(default)]
+    packages: Option<String>,
+    #[serde(default)]
+    read_log: Option<String>,
+    #[serde(default)]
+    retention_days: String,
+}
+
+/// `POST /projects/{id}/access` – managers of the group, admins: interface
+/// switches (a ticked box allows the interface) and the read log.
+pub async fn update_access(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<AccessForm>,
+) -> AppResult<Response> {
+    use project_policy::Interface;
+    let back = format!("/projects/{id}");
+    let retention = form.retention_days.trim();
+    let days = if retention.is_empty() {
+        Ok(None)
+    } else {
+        retention.parse::<i32>().map(Some).map_err(|_| {
+            AppError::BadRequest("The retention is a number of days (or empty).".into())
+        })
+    };
+    let result = match days {
+        Ok(days) => {
+            let update = project_policy::AccessUpdate {
+                interfaces: vec![
+                    (Interface::ApiTokens, form.api_tokens.is_some()),
+                    (Interface::Mcp, form.mcp.is_some()),
+                    (Interface::Assistant, form.assistant.is_some()),
+                    (Interface::Webhooks, form.webhooks.is_some()),
+                    (Interface::Packages, form.packages.is_some()),
+                ],
+                read_log: Some(form.read_log.is_some()),
+                log_retention_days: Some(days),
+            };
+            project_policy::set_access(&st.db, &ctx.me, id, update).await
+        }
+        Err(e) => Err(e),
+    };
+    finish(&st, result, &back, |_| {
+        (back.clone(), "Interfaces and read log saved.".to_string())
     })
 }
 
