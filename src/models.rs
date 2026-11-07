@@ -469,6 +469,23 @@ pub struct ChangeReview {
     pub decision: String,
     pub comment: String,
     pub decided_at: Option<DateTime<Utc>>,
+    /// Why a pending reviewer can no longer decide (`deactivated`, `not_editor`,
+    /// `cannot_see_items`); `None` when they can, and for decided reviews.
+    #[sqlx(default)]
+    pub absent: Option<String>,
+}
+
+/// A review of an earlier round of a change (kept when a new round starts).
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct ChangeReviewRound {
+    pub round: i32,
+    pub reviewer_id: Uuid,
+    pub reviewer_username: String,
+    pub reviewer_name: String,
+    pub decision: String,
+    pub comment: String,
+    pub decided_at: Option<DateTime<Utc>>,
+    pub closed_at: DateTime<Utc>,
 }
 
 /// An engineering change request (ECR).

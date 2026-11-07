@@ -331,8 +331,8 @@ real files and belong to section 3 once such files are at hand.
 - [ ] Step 2: review policy per project group (min approvals, required reviewers, role group).
 - [ ] Step 3: obsolete and supersede through a change order (per-group setting), supersede notifies watchers.
 - [ ] Step 4: token scopes (`approve`) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`).
-- [ ] Step 5: keep review rounds in `change_reviews`.
-- [ ] Step 6: flag and replace absent reviewers, substitutes.
+- [x] Step 5: keep review rounds (`change_review_rounds`, `changes.review_round`; change page and API show earlier rounds).
+- [x] Step 6: flag and replace absent reviewers (substitutes per user: still open).
 - [ ] Step 7: item owner and admin handover of a leaving user's work.
 - [ ] Step 8: approvals in the package manifest, audit log export, hash chain.
 - [ ] Step 9: requester cannot triage own request; separate approval of *use as is* deviations.

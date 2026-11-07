@@ -1208,7 +1208,12 @@ mod tests {
                     "items": [{ "revision_id": OTHER, "item_id": ME, "item_number": "PRT-000001", "code": "A",
                                 "name": "Bracket", "state": "in_work", "checked_out_by_name": "Erika" }],
                     "reviews": [{ "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
-                                  "decision": "approved", "comment": "ok", "decided_at": TS }],
+                                  "decision": "approved", "comment": "ok", "decided_at": TS, "absent": null },
+                                 { "reviewer_id": ME, "reviewer_username": "gone", "reviewer_name": "Gone <G>",
+                                  "decision": "pending", "comment": "", "decided_at": null, "absent": "deactivated" }],
+                    "replacements": [user()], "review_round": 2,
+                    "earlier_rounds": [{ "round": 1, "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
+                                         "decision": "rejected", "comment": "<too thin>", "decided_at": TS, "closed_at": TS }],
                     "candidates": [user()], "history": [audit_entry()], "priorities": ["low", "normal"],
                     "suggested": [{ "user_id": OTHER, "username": "max", "display_name": "Max <M>", "role": "editor",
                                     "score": 7, "reasons": ["edited PRT-000001 3 times in the last 90 days",
@@ -1218,8 +1223,15 @@ mod tests {
                                  "revision_state": "released", "relation": "bom", "via_number": "PRT-000001",
                                  "in_change": false }],
                     "can": { "modify": true, "edit_text": true, "submit": true, "withdraw": true, "reopen": true,
-                             "cancel": true, "review": true },
+                             "cancel": true, "review": true, "replace_reviewer": true },
                 })),
+            );
+            assert!(
+                html.contains("Earlier rounds")
+                    && html.contains("Cannot decide: deactivated")
+                    && html.contains("&lt;too thin&gt;")
+                    && html.contains("/reviewers/"),
+                "{status}: rounds and absent reviewers"
             );
             assert!(
                 html.contains("Impact analysis") && html.contains("uses PRT-000001 in its BOM"),

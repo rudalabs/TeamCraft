@@ -291,6 +291,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/changes/{id}/reviewers/{user_id}/remove",
             post(changes::remove_reviewer),
         )
+        .route(
+            "/changes/{id}/reviewers/{user_id}/replace",
+            post(changes::replace_reviewer),
+        )
         .route("/changes/{id}/submit", post(changes::submit))
         .route("/changes/{id}/review", post(changes::review))
         .route("/changes/{id}/withdraw", post(changes::withdraw))

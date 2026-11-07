@@ -377,6 +377,16 @@ assigned reviewers never are. It only reads – add a suggestion with
 [Suggested reviewers](../guide/changes.md#suggested-reviewers) for the
 sources and points.
 
+### Review rounds and absent reviewers
+
+`GET /changes/{number}` returns `review_round`, `earlier_rounds` (reviews of
+the rounds before) and, per entry of `reviews`, `absent` (`deactivated`,
+`not_editor`, `cannot_see_items` or `null`; set only for a pending reviewer
+who cannot decide). `POST /changes/{number}/reviewers/{old_username}/replace`
+with `{"username": "<substitute>"}` replaces a pending reviewer while the
+change is in review (author or admin; 409 when it is not in review or the
+reviewer has decided).
+
 ## Change requests (ECR)
 
 Every signed-in user – viewers included – raises change requests and

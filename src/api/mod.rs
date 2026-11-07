@@ -320,6 +320,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{number}", get(get_change))
         .route("/changes/{number}/items", post(add_change_item))
         .route("/changes/{number}/reviewers", post(add_change_reviewer))
+        .route(
+            "/changes/{number}/reviewers/{username}/replace",
+            post(replace_change_reviewer),
+        )
         .route("/changes/{number}/readiness", get(change_readiness))
         .route(
             "/changes/{number}/suggested-reviewers",
@@ -572,6 +576,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/changes/{number}/impact                   impact analysis: items that depend on its revisions",
             "POST   /api/v1/changes/{number}/items                    {item, revision?}",
             "POST   /api/v1/changes/{number}/reviewers                {username}",
+            "POST   /api/v1/changes/{number}/reviewers/{old}/replace  {username}: replace a pending reviewer while in review",
             "GET    /api/v1/changes/{number}/suggested-reviewers?limit=  ranked reviewer suggestions with reasons (never assigns)",
             "GET    /api/v1/changes/{number}/readiness                release readiness: unreleased (blocking) and obsolete or file-scan (warning) dependencies",
             "POST   /api/v1/changes/{number}/dependencies             add the in-work revisions of all unreleased dependencies, level by level",

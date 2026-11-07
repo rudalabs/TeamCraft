@@ -17,6 +17,16 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Review rounds and absent reviewers (#152, steps 5 and 6): withdrawing or
+  reopening a change after decisions keeps them as an earlier round
+  (`change_review_rounds`, `changes.review_round`, migration 0045; the number
+  will be renumbered at merge if needed). The change page and
+  `GET /api/v1/changes/{number}` show earlier rounds and flag pending
+  reviewers who cannot decide (deactivated, demoted, blind to an item). The
+  author or an administrator replaces a pending reviewer while the change is in
+  review (`POST /api/v1/changes/{number}/reviewers/{old}/replace`, audited
+  `change.replace_reviewer`); other decisions are kept.
+
 - Need-to-know project groups, step 1 (#151): a restricted group can limit
   administrator access (`project_policies`, migration 0043): `with_reason`
   (time-limited, audited elevation with a written reason; managers are
