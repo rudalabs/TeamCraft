@@ -109,6 +109,7 @@ limit still are). Every variable also exists as `NAME_FILE`.
 | `TEAMCRAFT_COOKIE_SECURE`                          | `true` for `https://` public URLs | force the `Secure` cookie flag                                                 |
 | `TEAMCRAFT_LOCAL_LOGIN`                            | `true` without SSO                | username/password accounts                                                     |
 | `TEAMCRAFT_SIGNIN_MAX_FAILURES`                    | `10`                              | failed password sign-ins per username in 15 minutes before 429 (5× per client address; `0` = off) |
+| `TEAMCRAFT_METRICS_TOKEN`                          | – (endpoint off)                  | enables `GET /metrics` (Prometheus text format); the scraper sends this value (at least 16 characters) as `Authorization: Bearer …`. Request counts and latency, database pool, pending webhook deliveries, e-mails and chat messages, 3D preview queue |
 | `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME`, `TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD` | `admin` / –                       | create this administrator on start when there are no accounts (public servers) |
 | `TEAMCRAFT_OIDC_*`                                 | –                                 | single sign-on, see [Users, roles and SSO](users.md)                           |
 
@@ -224,6 +225,7 @@ answer – never the question or the answer).
 | `TEAMCRAFT_TEST_DATABASE_URL` | server for the integration tests (default: the configuration above); each test creates and drops its own `teamcraft_test_*` database |
 | `TEAMCRAFT_REQUIRE_DB_TESTS`  | fail instead of skipping when no database is reachable (CI)                                                                          |
 | `TEAMCRAFT_REQUIRE_PG_TOOLS`  | fail instead of skipping the backup/restore test when `pg_dump`/`pg_restore` are missing or older than the server (CI)              |
+| `TEAMCRAFT_WRITE_SIM_FIXTURES`  | `1` lets the ignored test `write_sim_fixtures` regenerate `tests/fixtures/sim` (developers only)                                      |
 
 ## MCP stdio bridge (client side)
 

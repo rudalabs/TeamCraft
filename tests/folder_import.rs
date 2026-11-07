@@ -1,7 +1,7 @@
 //! The desktop *Import CAD Folder…* against the server, with the openly
 //! licensed NIST CAD fixtures (`tests/fixtures/cad/nist/mtc-assembly/{nx,
 //! solidworks}`): the same grouping and the same requests as
-//! `desktop/ui/app.js` (`planImport`, `importNow`, `bomFromReferences`) –
+//! `desktop/ui/js/folder-import.js` (`planImport`, `importNow`, `bomFromReferences`) –
 //! one item per part/assembly file with the files of the same base name,
 //! files uploaded into the folder of the scanned tree, checked in right
 //! away, BOM lines from the CAD references, nothing left checked out.
@@ -70,6 +70,17 @@ async fn format_kinds(app: &common::TestApp, token: &str) -> HashMap<String, Str
         }
     }
     kinds
+}
+
+/// `importKey` of app.js: "folder-import:" + SHA-256 (hex) of group, folder
+/// and item key joined by NUL – stable per source item, always a valid key.
+fn import_key(group: &str, folder: &str, item_key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let text = [group, folder, item_key].join("\0");
+    format!(
+        "folder-import:{}",
+        hex::encode(Sha256::digest(text.as_bytes()))
+    )
 }
 
 fn split_name(name: &str) -> (String, String) {
@@ -256,7 +267,7 @@ async fn import_folder(
                         Some(json!({
                             "item_type": it.item_type, "name": it.name, "project": project,
                             // stable per source item (`importKey` in app.js)
-                            "idempotency_key": format!("folder-import:{project}:{folder}:{}", it.key)
+                            "idempotency_key": import_key(project, folder, &it.key)
                         })),
                     )
                     .await;
@@ -266,8 +277,32 @@ async fn import_folder(
                     "{}",
                     r.text()
                 );
-                let n = r.json()["item_number"].as_str().unwrap().to_string();
+                let rev = r.json();
+                let n = rev["item_number"].as_str().unwrap().to_string();
                 log.items.insert(it.key.clone(), n.clone());
+                // `resumeReplayed` of app.js: a replayed item an earlier run
+                // checked in is done when all its files are there, otherwise
+                // it is checked out again and completed
+                if r.status == StatusCode::OK && rev["checked_out_by"].is_null() {
+                    let base = format!("/api/v1/items/{n}/revisions/A");
+                    let have: Vec<String> = app.api(Method::GET, &base, token, None).await.json()
+                        ["files"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|f| f["filename"].as_str().unwrap().to_lowercase())
+                        .collect();
+                    let complete = it.files.iter().all(|p| {
+                        have.contains(&p.file_name().unwrap().to_str().unwrap().to_lowercase())
+                    });
+                    if complete {
+                        continue;
+                    }
+                    let r = app
+                        .api(Method::POST, &format!("{base}/checkout"), token, None)
+                        .await;
+                    assert!(r.status.is_success(), "{}", r.text());
+                }
                 log.pending.insert(it.key.clone());
                 n
             }

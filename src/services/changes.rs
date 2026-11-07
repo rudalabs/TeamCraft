@@ -27,7 +27,7 @@ use crate::{
     error::{AppError, AppResult},
     models::{Change, ChangeItem, ChangeReview},
     services::{
-        access, audit, impacts, next_counter,
+        access, as_built, audit, impacts, next_counter,
         notifications::{self, Notice},
         readiness, requests, revisions, users, webhooks, Page,
     },
@@ -1000,6 +1000,9 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
         let rev = revisions::lock(&mut tx, *id).await?;
         // Membership may have changed since the revision was added.
         revisions::ensure_project_access(&rev, actor)?;
+        // An as-built revision needs its build record and a disposition
+        // for every deviation before it goes into review.
+        as_built::ensure_ready(&mut tx, &rev).await?;
         if let Some(owner) = rev.checked_out_by {
             if owner != actor.id {
                 return Err(AppError::Conflict(format!(

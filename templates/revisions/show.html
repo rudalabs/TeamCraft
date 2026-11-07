@@ -559,6 +559,99 @@
 </section>
 {% endif %}
 
+{% if as_built %}
+{% set rec = as_built.record %}
+<section class="card" id="as-built">
+  <div class="card-head">
+    <h2>Built to</h2>
+    {% if rec and rec.newer_design %}<span class="badge badge-out_of_date" title="{{ rec.newer_design }}">Newer design</span>{% endif %}
+    {% if rec and not rec.restricted %}<div class="actions"><a class="button small" href="/revisions/{{ rec.design_revision_id }}/bom/compare?with={{ rev.id }}" title="The design's BOM compared with the as-built BOM">Compare BOM with the design</a></div>{% endif %}
+  </div>
+  <p class="hint">The design revision this physical unit was built to. What was really installed is the BOM of this revision; how the unit departs from the design are its deviations.</p>
+  {% if rec %}
+  <dl class="props cols-2">
+    <dt>Design</dt><dd>{% if rec.restricted %}{{ m.restricted() }}{% else %}<a class="mono" href="/revisions/{{ rec.design_revision_id }}">{{ rec.design_number }}/{{ rec.design_code }}</a> {{ rec.design_name }} {{ m.badge(rec.design_state) }}{% endif %}</dd>
+    <dt>Serial / lot</dt><dd class="mono">{% if rec.serial_number %}{{ rec.serial_number }}{% else %}<span class="muted">—</span>{% endif %}</dd>
+    <dt>Built on</dt><dd>{% if rec.built_on %}{{ rec.built_on }}{% else %}<span class="muted">—</span>{% endif %}</dd>
+    <dt>Recorded</dt><dd>{{ m.time(rec.updated_at) }} by {{ rec.updated_by_name }}</dd>
+    {% if rec.note %}<dt>Note</dt><dd>{{ rec.note }}</dd>{% endif %}
+  </dl>
+  {% if rec.newer_design %}<p class="hint">{{ rec.newer_design }}. The unit stays what it was built to; record a retrofit as a new revision of this unit.</p>{% endif %}
+  {% else %}<p class="empty">No build record yet – enter the design revision this unit was built to.</p>{% endif %}
+  {% if can.edit %}
+  <h3>{% if rec %}Change the build record{% else %}Set the build record{% endif %}</h3>
+  <form class="inline fields" method="post" action="/revisions/{{ rev.id }}/as-built/record">
+    <label>Design <input class="item-no" type="text" name="design" value="{% if rec and not rec.restricted %}{{ rec.design_number }}{% endif %}" placeholder="e.g. ASM-000003" required></label>
+    <label>Revision <input class="find" type="text" name="design_revision" value="{% if rec and not rec.restricted %}{{ rec.design_code }}{% endif %}" placeholder="latest"></label>
+    <label>Serial / lot <input type="text" name="serial_number" value="{% if rec %}{{ rec.serial_number }}{% endif %}" maxlength="100"></label>
+    <label>Built on <input type="date" name="built_on" value="{% if rec and rec.built_on %}{{ rec.built_on }}{% endif %}"></label>
+    <label class="grow">Note <input type="text" name="note" value="{% if rec %}{{ rec.note }}{% endif %}" maxlength="2000" placeholder="optional"></label>
+    <button type="submit">Save</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card" id="deviations">
+  <div class="card-head">
+    <h2>Deviations from the design</h2>
+    {% if as_built.summary.open %}<span class="badge badge-out_of_date">{{ as_built.summary.open }} open</span>{% elif as_built.summary.total %}<span class="badge badge-up_to_date">All decided</span>{% endif %}
+  </div>
+  <p class="hint">How this unit departs from its design and what was decided. The revision cannot be submitted for release while a deviation is open.</p>
+  {% if as_built.deviations %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Kind</th><th scope="col">Feature</th><th scope="col">As designed</th><th scope="col">As built</th><th scope="col">Disposition</th><th scope="col">Note</th>{% if can.edit %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for d in as_built.deviations %}
+      <tr>
+        {% if can.edit %}
+        <td>
+          <form id="deviation-{{ d.id }}" class="inline" method="post" action="/as-built-deviations/{{ d.id }}">
+            <input type="hidden" name="back" value="{{ back }}#deviations">
+            <select name="kind" aria-label="Kind">{% for k in as_built.kinds %}<option value="{{ k.value }}" {% if k.value == d.kind %}selected{% endif %}>{{ k.label }}</option>{% endfor %}</select>
+          </form>
+        </td>
+        <td><input form="deviation-{{ d.id }}" type="text" name="feature" value="{{ d.feature }}" maxlength="200" required aria-label="Feature"></td>
+        <td><input form="deviation-{{ d.id }}" type="text" name="designed" value="{{ d.designed }}" maxlength="200" aria-label="As designed"></td>
+        <td><input form="deviation-{{ d.id }}" type="text" name="built" value="{{ d.built }}" maxlength="200" aria-label="As built"></td>
+        <td><select form="deviation-{{ d.id }}" name="disposition" aria-label="Disposition">{% for o in as_built.dispositions %}<option value="{{ o.value }}" {% if o.value == d.disposition %}selected{% endif %}>{{ o.label }}</option>{% endfor %}</select></td>
+        <td><input form="deviation-{{ d.id }}" type="text" name="note" value="{{ d.note }}" maxlength="2000" aria-label="Note"></td>
+        <td class="right nowrap">
+          <button form="deviation-{{ d.id }}" class="small" type="submit">Save</button>
+          <form class="inline" method="post" action="/as-built-deviations/{{ d.id }}/delete">
+            <input type="hidden" name="back" value="{{ back }}#deviations">
+            <button class="small danger" type="submit">Remove</button>
+          </form>
+        </td>
+        {% else %}
+        <td class="small nowrap">{% for k in as_built.kinds %}{% if k.value == d.kind %}{{ k.label }}{% endif %}{% endfor %}</td>
+        <td>{{ d.feature }}</td>
+        <td class="mono small">{% if d.designed %}{{ d.designed }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="mono small">{% if d.built %}{{ d.built }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="nowrap">{% for o in as_built.dispositions %}{% if o.value == d.disposition %}<span class="badge {% if o.value == "open" %}badge-out_of_date{% elif o.value == "scrap" %}badge-fail{% else %}badge-pass{% endif %}">{{ o.label }}</span>{% endif %}{% endfor %}</td>
+        <td class="small">{{ d.note }}</td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No deviation recorded – the unit was built to its design.</p>{% endif %}
+  {% if can.edit %}
+  <h3>Add deviation</h3>
+  <form class="inline" method="post" action="/revisions/{{ rev.id }}/as-built/deviations">
+    <select name="kind" aria-label="Kind">{% for k in as_built.kinds %}<option value="{{ k.value }}">{{ k.label }}</option>{% endfor %}</select>
+    <input type="text" name="feature" placeholder="Feature, e.g. Bore Ø12 H7" maxlength="200" required aria-label="Feature">
+    <input type="text" name="designed" placeholder="As designed, e.g. 12.000 +0.018/0" maxlength="200" aria-label="As designed">
+    <input type="text" name="built" placeholder="As built, e.g. 12.035" maxlength="200" aria-label="As built">
+    <select name="disposition" aria-label="Disposition">{% for o in as_built.dispositions %}<option value="{{ o.value }}">{{ o.label }}</option>{% endfor %}</select>
+    <input type="text" name="note" placeholder="Note" maxlength="2000" aria-label="Note">
+    <button type="submit">Add</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
 {% if not simulation or lines %}
 <section class="card" id="bom">
   <div class="card-head">
@@ -741,6 +834,47 @@
   </ul>
   {% endif %}
 </section>
+
+{% if can_be_built_to %}
+<section class="card" id="built-units">
+  <h2>Built units</h2>
+  {% if built_units %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Unit</th><th scope="col">Serial / lot</th><th scope="col">Name</th><th scope="col">State</th><th scope="col">Built to</th><th scope="col">Built on</th><th scope="col">Deviations</th></tr></thead>
+    <tbody>
+    {% for u in built_units %}
+      <tr>
+        <td class="mono nowrap"><a href="/revisions/{{ u.unit_revision_id }}">{{ u.unit_number }}/{{ u.unit_code }}</a></td>
+        <td class="mono">{% if u.serial_number %}{{ u.serial_number }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>{{ u.unit_name }}</td>
+        <td>{{ m.badge(u.unit_state) }}</td>
+        <td class="small nowrap"><a class="mono" href="/revisions/{{ u.design_revision_id }}">{{ u.design_code }}</a>{% if u.newer_design %} <span class="badge badge-out_of_date" title="{{ u.newer_design }}">Older revision</span>{% endif %}</td>
+        <td class="small nowrap">{% if u.built_on %}{{ u.built_on }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="small nowrap">{% if u.open_count %}<span class="badge badge-out_of_date">{{ u.open_count }} open</span> of {{ u.deviation_count }}{% elif u.deviation_count %}{{ u.deviation_count }}, all decided{% else %}<span class="muted">none</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% elif not hidden.units %}<p class="empty">No unit of {{ rev.item_number }} was recorded as built yet.</p>{% endif %}
+  {{ m.hidden_count(hidden.units, "units") }}
+  {% if projects %}
+  <h3>Record a built unit</h3>
+  <form class="inline fields" method="post" action="/revisions/{{ rev.id }}/built-units">
+    <label>Serial / lot <input type="text" name="serial_number" maxlength="100" placeholder="e.g. SN-0042"></label>
+    <label>Built on <input type="date" name="built_on"></label>
+    <label>Project group <select name="project">
+      {% for p in projects %}<option value="{{ p.id }}" {% if p.id == item.project_id %}selected{% endif %}>{{ p.code }}</option>{% endfor %}
+    </select></label>
+    <label>Number <input class="item-no" type="text" name="number" placeholder="generated"></label>
+    {% if lines %}<label class="check"><input type="checkbox" name="with_bom" value="1" checked> Copy the BOM of {{ rev.code }}</label>{% endif %}
+    <button type="submit">Record unit</button>
+  </form>
+  <p class="hint">Creates an item of type As-built built to {{ rev.item_number }}/{{ rev.code }}; then edit its BOM and deviations to what was really built.</p>
+  {% endif %}
+</section>
+{% endif %}
 
 {% if not simulation and (based_simulations or rev.item_type in ["part", "assembly"]) %}
 <section class="card" id="simulations">

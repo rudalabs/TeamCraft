@@ -103,6 +103,7 @@ end-to-end tests against a real PostgreSQL.
 
 - **Simulation management** – FEA/CFD items linked to the exact revisions they analysed, flagged *out of date* when the design changes.
 - **Result values** – key values with limits and pass/fail, CSV/Excel import and comparison between revisions.
+- **As-built records** – one item per physical unit: the design revision it was built to, serial number, as-built BOM and deviations with a disposition (use as is, rework, repair, scrap).
 
 **Teams and administration**
 

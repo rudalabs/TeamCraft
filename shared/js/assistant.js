@@ -104,7 +104,7 @@ function store(key, value) {
 // HTML for the full page; here nothing is ever parsed as HTML)
 // ---------------------------------------------------------------------
 
-var ITEM_NUMBER = /\b(?:PRT|ASM|DOC|SW)-\d{3,}\b/g;
+var ITEM_NUMBER = /\b(?:PRT|ASM|DOC|SW|SIM)-\d{3,}\b/g;
 
 function itemNodes(text, link) {
   if (!link) return [text];

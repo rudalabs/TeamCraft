@@ -56,7 +56,18 @@ pub(super) async fn get_notification_settings(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
 ) -> AppResult<Json<Value>> {
-    Ok(Json(json!(notifications::settings(&st.db, me.id).await?)))
+    let settings = notifications::settings(&st.db, me.id).await?;
+    let mut out = json!(settings);
+    // what a client needs to draw the settings form (additive fields)
+    out["kinds"] = json!(crate::domain::NotificationKind::MUTABLE
+        .iter()
+        .map(|k| json!({ "value": k.as_str(), "label": k.label(),
+                         "on": !settings.muted.iter().any(|m| m == k.as_str()) }))
+        .collect::<Vec<_>>());
+    out["email_enabled"] = json!(st.config.smtp.is_some());
+    out["mattermost_enabled"] = json!(st.config.mattermost.is_some());
+    out["mattermost_direct"] = json!(st.config.mattermost.as_ref().is_some_and(|m| m.direct));
+    Ok(Json(out))
 }
 
 #[derive(Deserialize)]

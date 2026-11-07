@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/static/shared/css/assistant.css">
   <link rel="stylesheet" href="app.css">
   <script src="/static/shared/js/viewer.js" defer></script>
-  <script src="app.js" defer></script>
+  <script type="module" src="js/main.js"></script>
 </head>
 <body>
 <div class="app-glow" aria-hidden="true"></div>
@@ -24,11 +24,13 @@
       <label>TeamCraft server
         <input id="server-url" type="text" placeholder="localhost:8080 or plm.example.org" autocomplete="url" spellcheck="false" required>
       </label>
+      <p id="server-http-warning" class="notice warn small hidden" role="status">This address uses plain <code>http://</code>: your sign-in token and all data would cross the network unencrypted. Use <code>https://</code> unless the server runs on this computer.</p>
       <button class="primary" type="submit">Connect</button>
     </form>
 
     <div id="signin-step" class="stack hidden">
       <p class="small muted">Server: <strong id="signin-server"></strong> · <button type="button" class="link" id="change-server">change</button></p>
+      <p id="signin-http-warning" class="notice warn small hidden" role="status">Unencrypted connection (<code>http://</code>): the token and all data can be read on the network. Ask your administrator for the <code>https://</code> address.</p>
       <button id="signin-browser" class="primary big" type="button">Sign in with the browser</button>
       <p id="signin-wait" class="hint hidden">Confirm the sign-in in your browser … <button type="button" class="link" id="signin-cancel">cancel</button></p>
       <details class="token-login">
@@ -41,6 +43,7 @@
         </form>
       </details>
     </div>
+    <p id="connect-notice" class="notice warn hidden" role="status"></p>
     <p id="connect-error" class="notice error hidden" role="alert"></p>
   </div>
 </section>
@@ -117,6 +120,7 @@
     <span id="status-server" class="status-server"></span>
     <span id="status-msg" class="status-msg" role="status"></span>
     <span id="status-get" class="status-get hidden" role="status"><progress id="status-get-bar" max="1" value="0"></progress><span id="status-get-text" class="status-get-text"></span><button id="status-get-cancel" type="button" title="Stop after the current part of the file – the files copied so far stay; the next Get continues">Cancel</button></span>
+    <span id="status-update" class="status-update hidden"><button id="status-update-open" type="button" title="Opens the release page in the browser – the app installs nothing itself"></button><button id="status-update-dismiss" type="button" title="Hide this notice until the next version" aria-label="Hide the update notice">×</button></span>
     <button id="status-zoom" class="status-zoom hidden" type="button" title="Zoom – Ctrl + mouse wheel, Ctrl + + / − / 0; click for 100 %"></button>
     <span id="status-ws" class="status-ws"></span>
   </footer>

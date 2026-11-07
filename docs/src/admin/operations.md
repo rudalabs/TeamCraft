@@ -168,3 +168,43 @@ requests – and uploads the report as the artifact `scale-report`:
 `report.md` (the timing table: queries per request, slowest statement,
 sequential scans on big tables), `plans.md` (every plan) and `results.json`.
 How to run it locally is described in `CONTRIBUTING.md`.
+
+## Metrics for Prometheus
+
+Set `TEAMCRAFT_METRICS_TOKEN` (at least 16 characters, also as `_FILE`) and
+scrape `GET /metrics` with that value as bearer token. Without the variable
+the endpoint answers 404. Example scrape configuration:
+
+```yaml
+scrape_configs:
+  - job_name: teamcraft
+    authorization: { credentials_file: /etc/prometheus/teamcraft-token }
+    static_configs: [{ targets: ["plm.example.org"] }]
+```
+
+| Metric | Meaning |
+|--------|---------|
+| `teamcraft_http_requests_total{class}` | answered requests by status class (`2xx` … `5xx`) since the start |
+| `teamcraft_http_request_duration_seconds` | latency histogram: time until the response headers are ready; the streaming of a body (file downloads) is not included |
+| `teamcraft_db_pool_connections`, `teamcraft_db_pool_idle_connections` | database pool |
+| `teamcraft_webhook_deliveries_pending` | webhook outbox backlog |
+| `teamcraft_notification_emails_pending`, `teamcraft_notification_chat_pending` | notification outbox backlogs |
+| `teamcraft_preview_conversions_running`, `teamcraft_preview_conversions_waiting` | 3D preview queue: conversions running now (at most 2 per server) and conversions waiting for a free slot |
+| `teamcraft_build_info{version}` | the running version |
+
+`/metrics` lies outside `/api/v1` and accepts only the metrics token, no
+personal access token or session. Its answers carry `Cache-Control: no-store`.
+If a backlog cannot be counted (database unreachable), its gauge shows `NaN`
+and the server logs a warning.
+
+**Several replicas:** scrape every instance. Request counters, latency, the
+database pool and the preview queue belong to the instance and can be summed
+with `sum()`. The outbox gauges (`teamcraft_webhook_deliveries_pending`,
+`teamcraft_notification_*_pending`) count rows in the shared database, so every
+instance reports the same number: aggregate them with `max()`, never `sum()`.
+
+Useful alerts: a rising `teamcraft_webhook_deliveries_pending` or
+`teamcraft_notification_*_pending` (a receiver or the mail server is down),
+`teamcraft_db_pool_idle_connections` at 0 for minutes,
+`teamcraft_preview_conversions_waiting` above 0 for many minutes (previews pile
+up behind slow conversions), and a share of `5xx` above 1 % of the requests.

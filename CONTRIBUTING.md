@@ -75,7 +75,10 @@ must never be committed.
 
 ## Checks before a pull request
 
-CI runs these checks on every pull request, on Linux, macOS and Windows.
+CI runs these checks on every pull request: the tests against PostgreSQL 16
+and 18 on Linux (with coverage on one leg), the server build on Windows, the
+desktop app on Linux, macOS and Windows; `main` adds the macOS server build and
+more desktop runners (`.github/workflows/`).
 Run them locally first:
 
 ```sh

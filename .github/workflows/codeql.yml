@@ -14,10 +14,19 @@ name: "CodeQL Advanced"
 on:
   push:
     branches: [ "main" ]
+    paths-ignore: [ "**.md", "docs/**", "platforms/**", "media/screenshots/**" ]
+  # docs-only pull requests have nothing to analyse; the weekly run still
+  # covers everything
   pull_request:
     branches: [ "main" ]
+    paths-ignore: [ "**.md", "docs/**", "platforms/**", "media/screenshots/**" ]
   schedule:
     - cron: '34 0 * * 6'
+
+# a newer push to a pull request replaces its running analysis
+concurrency:
+  group: codeql-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:

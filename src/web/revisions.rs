@@ -16,14 +16,18 @@ use super::{finish, items::BackForm, render, WebCtx};
 use crate::{
     auth::{Actor, WebUser},
     cadformat::FormatKind,
-    domain::{self, BasisRole, ItemType, LifecycleState, ReferenceKind, COMMON_UNITS},
+    domain::{
+        self, BasisRole, DeviationKind, Disposition, ItemType, LifecycleState, ReferenceKind,
+        COMMON_UNITS,
+    },
     error::{AppError, AppResult},
     httprange,
     models::{AttributeDef, FileRecord, Revision},
     preview::PreviewFormat,
     services::{
-        attributes, audit, bom, changes, files, impacts, interchange, items, notifications,
-        projects, references, requests, result_proposals, revisions, similar, simulations, uploads,
+        as_built, attributes, audit, bom, changes, files, impacts, interchange, items,
+        notifications, projects, references, requests, result_proposals, revisions, similar,
+        simulations, uploads,
     },
     thumbnail, util, AppState,
 };
@@ -355,6 +359,35 @@ pub async fn show(
     } else {
         simulations::based_on_item(&st.db, me, item.id).await?
     };
+    // As-built: the build record and deviations of an as-built revision;
+    // for a design (part, assembly, software) the units built to it.
+    let as_built = if rev.item_type == ItemType::AsBuilt.as_str() {
+        let (record, deviations) = tokio::try_join!(
+            as_built::record(&st.db, me, id),
+            as_built::deviations(&st.db, me, id)
+        )?;
+        json!({
+            "record": record,
+            "summary": as_built::summarize(&deviations),
+            "deviations": deviations,
+            "kinds": DeviationKind::ALL
+                .iter()
+                .map(|k| json!({ "value": k.as_str(), "label": k.label() }))
+                .collect::<Vec<_>>(),
+            "dispositions": Disposition::ALL
+                .iter()
+                .map(|d| json!({ "value": d.as_str(), "label": d.label() }))
+                .collect::<Vec<_>>(),
+        })
+    } else {
+        serde_json::Value::Null
+    };
+    let can_be_built_to = ItemType::parse(&rev.item_type).is_some_and(ItemType::can_be_built_to);
+    let (built_units, hidden_units) = if can_be_built_to {
+        as_built::built_units(&st.db, me, item.id).await?
+    } else {
+        (Vec::new(), 0)
+    };
     let rev_attributes = rev.attributes.clone();
     render(
         &st,
@@ -378,6 +411,7 @@ pub async fn show(
                 "incoming": hidden_incoming,
                 "changes": hidden_changes,
                 "simulations": hidden_simulations,
+                "units": hidden_units,
             },
             "references": {
                 "outgoing": outgoing,
@@ -390,6 +424,9 @@ pub async fn show(
             "impact_groups": impacts::group_by_dependent(open_impacts),
             "simulation": simulation,
             "based_simulations": based_simulations,
+            "as_built": as_built,
+            "built_units": built_units,
+            "can_be_built_to": can_be_built_to,
             "watching": watching,
             "favorite": favorite,
             "resolved_impacts": resolved_impacts,

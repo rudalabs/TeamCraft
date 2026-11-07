@@ -17,6 +17,27 @@ Changes on `main` since the `v0.2.0` tag.
 
 ### Added
 
+- The desktop app tells the user when its version does not fit the server
+  (version handshake, see the support policy).
+- The desktop settings dialog has the notification settings of the web account
+  page (what to be told about, e-mail, Mattermost, send a test);
+  `GET /api/v1/notifications/settings` also returns the form description.
+- The desktop settings have *Change password…* (`POST /api/v1/me/password`;
+  hidden for single-sign-on accounts, `GET /api/v1/me` has `auth_source`).
+  Wrong current passwords of the own password change, in the web form and over
+  REST, count like failed sign-ins (429 with `Retry-After`) and are audited as
+  `user.password_failed`.
+- Administrators can replace the wide logo (top left) and the square logo
+  (bottom left, tab icon) under *Admin → Branding*; the desktop app shows them
+  too. See [Branding](https://rudalabs.github.io/TeamCraft/admin/branding.html).
+- `GET /metrics` in the Prometheus text format (request counts and latency,
+  database pool, outbox backlogs, 3D preview queue), enabled by
+  `TEAMCRAFT_METRICS_TOKEN`.
+- As-built records: an item type `as_built` for one physical unit (or lot) with
+  the design revision it was built to, serial number, as-built BOM and
+  deviations from the design with a disposition; REST, MCP and web UI. Units
+  are not recorded against obsolete design revisions; build records are not
+  part of the Pack and Go ZIP.
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.
@@ -27,17 +48,28 @@ Changes on `main` since the `v0.2.0` tag.
 - 3D preview and thumbnail of NX assemblies, put together from the previews
   of their part files (found by file name, sub-assemblies included);
   components on layers the assembly hides are left out, as in NX.
+- Desktop app: an update notice. At most once a day the app asks GitHub for
+  the latest release and shows a link to it in the status bar; it never
+  downloads or installs anything. *Settings → Updates* switches it off.
 
 ### Changed
 
 - Accessibility: an automated check runs on every rendered page; keyboard
   flows were completed and the Escape key closes panels.
 - The MCP tools are split by area (`src/mcp/tools.rs`); no behaviour change.
+- The desktop UI is split into ES modules per view (`desktop/ui/js/`, no build
+  step) instead of one 5,000-line `app.js`; CI checks that every module's
+  imports are complete (`scripts/check-desktop-modules.mjs`). No behaviour change.
 - The service functions for requests are split into smaller modules; no
   behaviour change.
 - The invariants of the remaining mutating service functions are documented.
 
 ### Fixed
+
+- Desktop app: the assistant answer hung when a whole line looked like an item
+  number to the folder import (two variables of the same name), and item
+  numbers in answers were never links. Simulation numbers (`SIM-…`) are links
+  now as well, in the web UI too.
 
 - The reference scan records the names of STEP exports as a second name, and
   no longer reports noise for JT files.
@@ -54,5 +86,10 @@ Changes on `main` since the `v0.2.0` tag.
 - The file readers for untrusted uploads (CAD, mesh, point-cloud and BOM
   table files) no longer panic on malformed input.
 - The child processes that convert files start with a cleared environment.
+- Desktop app: the sign-in token is kept in the OS keychain (Windows
+  Credential Manager, macOS Keychain, Secret Service on Linux); the token file
+  of earlier versions moves there at the next start. Without a keychain the
+  app keeps the private file and shows a warning. Server addresses with plain
+  `http://` to another computer get a warning.
 
 [Unreleased]: https://github.com/rudalabs/TeamCraft/compare/v0.2.0...HEAD

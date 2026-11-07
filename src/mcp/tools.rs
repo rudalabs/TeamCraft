@@ -24,8 +24,9 @@ use crate::{
     error::{AppError, AppResult},
     models::{BomLine, Change, ChangeRequest, FileRecord, Impact, Revision},
     services::{
-        audit, bom, changes, files, impacts, insights, interchange, items, notifications, projects,
-        references, requests, result_proposals, reviewers, revisions, similar, simulations, Page,
+        as_built, audit, bom, changes, files, impacts, insights, interchange, items, notifications,
+        projects, references, requests, result_proposals, reviewers, revisions, similar,
+        simulations, Page,
     },
     AppState,
 };

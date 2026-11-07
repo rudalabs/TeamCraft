@@ -9,10 +9,12 @@
 
 mod account;
 mod admin;
+mod as_built;
 mod assistant;
 mod attributes;
 mod auth_pages;
 mod bom;
+mod branding;
 mod changes;
 mod dashboard;
 mod desktop;
@@ -31,6 +33,7 @@ mod uploads;
 mod webhooks;
 
 pub(crate) use bom::{package_response, package_rule};
+pub(crate) use branding::image as branding_image;
 pub(crate) use imports::{options_from as import_options, receive as receive_import};
 pub(crate) use requests::{attachment_response, receive_attachment};
 pub(crate) use revisions::{
@@ -201,6 +204,24 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/revisions/{id}/impacts/acknowledge",
             post(references::acknowledge_all),
         )
+        // as-built: build record, deviations, recording a unit of a design
+        .route(
+            "/revisions/{id}/as-built/record",
+            post(as_built::set_record),
+        )
+        .route(
+            "/revisions/{id}/as-built/deviations",
+            post(as_built::add_deviation),
+        )
+        .route(
+            "/as-built-deviations/{id}",
+            post(as_built::update_deviation),
+        )
+        .route(
+            "/as-built-deviations/{id}/delete",
+            post(as_built::delete_deviation),
+        )
+        .route("/revisions/{id}/built-units", post(as_built::record_unit))
         // simulations: basis links, result values, comparison
         .route(
             "/revisions/{id}/simulation/bases",
@@ -339,6 +360,15 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/admin/audit", get(admin::audit))
+        .route("/admin/branding", get(branding::page))
+        .route(
+            "/admin/branding/{kind}",
+            post(branding::upload).layer(DefaultBodyLimit::max(
+                crate::services::branding::MAX_LOGO_BYTES + 64 * 1024,
+            )),
+        )
+        .route("/admin/branding/{kind}/reset", post(branding::reset))
+        .route("/branding/{kind}", get(branding::logo))
         .route(
             "/admin/attributes",
             get(attributes::list).post(attributes::create),
@@ -463,6 +493,8 @@ pub struct WebCtx {
     pub me: Actor,
     pub flash: Option<Flash>,
     pub unread: i64,
+    /// Replaced logos for the header and footer.
+    pub branding: crate::services::branding::Branding,
     /// Path and query of this request: the `back` target of the forms in the
     /// header (appearance), so they return here without JavaScript too.
     pub here: String,
@@ -477,10 +509,12 @@ impl FromRequestParts<AppState> for WebCtx {
     ) -> Result<Self, Self::Rejection> {
         let WebUser(me) = WebUser::from_request_parts(parts, state).await?;
         let unread = crate::services::notifications::unread_count(&state.db, &me).await?;
+        let branding = crate::services::branding::current(&state.db).await?;
         Ok(WebCtx {
             me,
             flash: read_flash(&parts.headers),
             unread,
+            branding,
             here: parts
                 .uri
                 .path_and_query()
@@ -543,6 +577,7 @@ pub(crate) fn render(
         map.insert("skin".into(), json!(ctx.me.skin));
         map.insert("unread_notifications".into(), json!(ctx.unread));
         map.insert("here".into(), json!(ctx.here));
+        map.insert("branding".into(), json!(ctx.branding));
         map.insert(
             "assistant_enabled".into(),
             json!(crate::services::assistant::enabled(st)),
@@ -617,6 +652,7 @@ pub(crate) fn is_user_error(e: &AppError) -> bool {
             | AppError::NotFound(_)
             | AppError::PayloadTooLarge(_)
             | AppError::Unavailable(_)
+            | AppError::TooManyRequests { .. }
     )
 }
 
@@ -729,11 +765,21 @@ async fn html_errors(State(st): State<AppState>, req: Request, next: Next) -> Re
         };
         return redirect(&to);
     }
+    // the replaced logos, as on the other pages; not for server errors, whose
+    // cause may be the database itself (then the built-in logos are shown)
+    let branding = if info.status.is_server_error() {
+        crate::services::branding::Branding::default()
+    } else {
+        crate::services::branding::current(&st.db)
+            .await
+            .unwrap_or_default()
+    };
     let data = json!({
         "status": info.status.as_u16(),
         "reason": info.status.canonical_reason().unwrap_or("Error"),
         "message": info.message,
         "skin": skin,
+        "branding": branding,
     });
     match render_public(&st, "error.html", data, None) {
         Ok(mut page) => {

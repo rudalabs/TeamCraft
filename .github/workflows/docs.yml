@@ -40,7 +40,8 @@ permissions:
 # pending run of one pull request never replaces the pending run of another.
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('docs-{0}', github.ref) || 'pages' }}
-  cancel-in-progress: false
+  # superseded pull request runs are cancelled; a Pages deploy never is
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
