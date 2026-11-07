@@ -1313,10 +1313,18 @@ async fn new_item_form_takes_chunked_files() {
         &[("uploads", &uploads_field)],
     )
     .await;
+    // A scripted refusal goes back to the revision page, not to a success page.
+    if let Some(location) = r.json().get("location").and_then(|l| l.as_str()) {
+        assert!(
+            location.starts_with(&format!("/revisions/{rev_id}")),
+            "{location}"
+        );
+    }
+    // Refused: the revision stays checked out to max, nothing is stored.
+    let r = app.api(Method::GET, REV, &max, None).await;
     assert!(
-        r.status.is_client_error() || r.json().get("location").is_some(),
-        "{}",
-        r.text()
+        !r.json()["revision"]["checked_out_by"].is_null(),
+        "the check-in was refused, the lock stays"
     );
     assert!(
         file_named(&app, &max, "Gearbox.bin").await.is_null(),
@@ -1383,11 +1391,35 @@ async fn new_item_form_takes_chunked_files() {
         ],
     )
     .await;
+    let location = r.json()["location"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     assert!(
-        !r.text().contains("Created "),
-        "a revision session must not join a new item: {}",
+        location.starts_with("/items/new"),
+        "a revision session must not join a new item: {location} {}",
         r.text()
     );
+    // An unknown session id goes back to the form as well, keeping the input.
+    let unknown = json!(["00000000-0000-0000-0000-000000000000"]).to_string();
+    let r = web_form(
+        &app,
+        "/items",
+        &cookie,
+        &[],
+        &[
+            ("item_type", "part"),
+            ("project_id", &rover),
+            ("name", "Unknown session"),
+            ("uploads", &unknown),
+        ],
+    )
+    .await;
+    let location = r.json()["location"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(location.starts_with("/items/new?type=part"), "{location}");
     let items = app.get_page("/items", Some(&cookie)).await.text();
     assert!(!items.contains("Should not exist"));
     app.teardown().await;

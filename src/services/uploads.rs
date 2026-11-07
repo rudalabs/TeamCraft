@@ -242,9 +242,12 @@ async fn load(
 ///
 /// # Invariants
 ///
-/// * **Permission:** CAD editor in the project group with the revision in work
-///   and checked out by the actor (`files::ensure_can_attach`; hidden = 404,
-///   403 / 409 otherwise). The session belongs to the actor alone.
+/// * **Permission:** with a revision: CAD editor in the project group with the
+///   revision in work and checked out by the actor (`files::ensure_can_attach`;
+///   hidden = 404, 403 / 409 otherwise). Without one (new-item session): only
+///   the editor role, no `base` allowed; the session can only join
+///   `items::create_with_files`, which checks the project group (including
+///   restricted groups). The session belongs to the actor alone.
 /// * **Locks:** the actor's user row (`FOR NO KEY UPDATE`), which serialises the
 ///   quota check: at most 16 unexpired sessions per user (409).
 /// * **Steps:** the staging file is created before the commit and removed again
@@ -429,7 +432,9 @@ pub async fn append(
 /// # Invariants
 ///
 /// * **Permission:** the actor's own session (404 otherwise); `revision_id`,
-///   when given, must be the session's revision (400).
+///   when given, must be the session's revision (400). [`complete_in`] applies the [`Scope`]
+///   rules: `NewItem` accepts only sessions without a revision, `Revision(id)`
+///   only that revision, `Any` whatever the session allows.
 /// * **Locks:** the session row (`FOR UPDATE`).
 /// * **Data:** all bytes must have arrived (409 otherwise). Size and announced
 ///   SHA-256 are verified; a mismatch (400) or lost staging data (409) resets
@@ -598,6 +603,7 @@ pub async fn forget(pool: &PgPool, vault: &Vault, ids: &[Uuid]) {
 ///
 /// * **Permission:** the actor's own session; storing then has the checks of
 ///   [`files::check_in`] or [`files::attach`] (checked out by the actor).
+///   Sessions without a revision are refused (400).
 /// * **Steps:** completing the session (size and SHA-256 verified) and storing
 ///   it are two transactions. When storing fails, the verified content stays
 ///   in the session and `finish` can be repeated without sending the bytes

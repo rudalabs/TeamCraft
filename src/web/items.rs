@@ -280,6 +280,8 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
     let mut received = received;
     // Large files sent before in chunks by app.js (field `uploads`): sessions
     // without a revision, which only join the creation of an item.
+    let early_form: NewItemForm =
+        serde_json::from_value(json!(received.fields)).unwrap_or_default();
     let sessions = match super::revisions::take_session_uploads(
         &st,
         &ctx.me,
@@ -290,7 +292,20 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
     {
         Ok(ids) => ids,
         Err(e) if is_user_error(&e) => {
-            return render_new(&st, &ctx, &NewItemForm::default(), Some(e.public_message())).await;
+            let message = e.public_message();
+            if scripted {
+                let back = format!(
+                    "/items/new?type={}&project={}",
+                    util::pct_encode(&early_form.item_type),
+                    util::pct_encode(&early_form.project_id)
+                );
+                return Ok(super::redirect_flash(
+                    &st,
+                    &back,
+                    super::Flash::error(message),
+                ));
+            }
+            return render_new(&st, &ctx, &early_form, Some(message)).await;
         }
         Err(e) => return Err(e),
     };
