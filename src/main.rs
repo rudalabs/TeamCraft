@@ -191,6 +191,19 @@ enum VaultCommand {
         #[arg(long, default_value_t = services::retention::DEFAULT_GC_GRACE_HOURS)]
         grace_hours: u64,
     },
+    /// List the superseded versions of files whose retention is `latest`
+    /// (set per file) that the housekeeping would remove; remove them only
+    /// with --apply. Only revisions in work are touched, the newest version
+    /// of a file is never removed.
+    PurgeVersions {
+        /// Remove the versions found (default: a dry run that only lists them).
+        #[arg(long)]
+        apply: bool,
+        /// Remove a version this many days after a newer version replaced it
+        /// (default: TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS, at least 1).
+        #[arg(long)]
+        grace_days: Option<u32>,
+    },
     /// Compute the missing shape signatures of the similar part search from
     /// the cached 3D previews (each in the isolated preview process).
     Signatures {
@@ -364,6 +377,7 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     teamcraft::delivery::spawn(pool.clone(), delivery);
     let webhook_retention_days = config.webhooks.retention_days;
     let audit_retention_days = config.audit_retention_days;
+    let latest_grace_days = config.retention_latest_grace_days;
     let preview_cache_max_bytes = config.preview_cache_max_bytes;
     let thread_retention_days = config.assistant.as_ref().map(|a| a.retention_days);
     let state = AppState::new(config, pool.clone()).await?;
@@ -431,6 +445,26 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "assistant conversation cleanup failed"),
+            }
+            if latest_grace_days > 0 {
+                match services::retention::purge_superseded_versions(
+                    &pool,
+                    &vault,
+                    latest_grace_days,
+                    true,
+                )
+                .await
+                {
+                    Ok(p) if !p.files.is_empty() => tracing::info!(
+                        files = p.files.len(),
+                        versions = p.versions(),
+                        bytes = p.bytes(),
+                        blobs_removed = p.blobs_removed,
+                        "removed superseded versions of latest-only files"
+                    ),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "version retention failed"),
+                }
             }
             if audit_retention_days > 0 {
                 match services::audit::purge_older_than(&pool, audit_retention_days).await {
@@ -739,6 +773,9 @@ async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
         VaultCommand::Check { verify_hashes } => verify_hashes,
         VaultCommand::Signatures { convert, jobs } => return shape_signatures(convert, jobs).await,
         VaultCommand::Gc { apply, grace_hours } => return vault_gc(apply, grace_hours).await,
+        VaultCommand::PurgeVersions { apply, grace_days } => {
+            return vault_purge_versions(apply, grace_days).await
+        }
     };
     let config = load_config()?;
     let pool = db::connect(&config).await?;
@@ -805,6 +842,50 @@ async fn vault_gc(apply: bool, grace_hours: u64) -> Result<ExitCode> {
         let (n, bytes) = report.removed();
         println!("removed {n} blob(s) ({:.1} MiB)", mib(bytes));
     } else if !report.orphans.is_empty() {
+        println!("dry run: nothing removed (use --apply to remove them)");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `teamcraft vault purge-versions`: lists (with `apply`: removes) the
+/// superseded versions of files with the retention `latest`.
+async fn vault_purge_versions(apply: bool, grace_days: Option<u32>) -> Result<ExitCode> {
+    let config = load_config()?;
+    let grace_days = match (grace_days, config.retention_latest_grace_days) {
+        (Some(days), _) => days,
+        // the automatic removal is off; the command needs a period
+        (None, 0) => services::retention::DEFAULT_LATEST_GRACE_DAYS,
+        (None, days) => days,
+    };
+    let pool = db::connect(&config).await?;
+    let vault = teamcraft::vault::Vault::open(&config.vault_dir).await?;
+    let report =
+        services::retention::purge_superseded_versions(&pool, &vault, grace_days, apply).await?;
+    let what = if apply { "REMOVED" } else { "SUPERSEDED" };
+    for f in &report.files {
+        let versions: Vec<String> = f.versions.iter().map(|v| format!("v{v}")).collect();
+        println!(
+            "{what}  {} {}  {}  {} ({} bytes)",
+            f.item_number,
+            f.revision,
+            f.filename,
+            versions.join(" "),
+            f.bytes
+        );
+    }
+    let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+    println!(
+        "{} version(s) of {} file(s) replaced for more than {grace_days} day(s) ({:.1} MiB)",
+        report.versions(),
+        report.files.len(),
+        mib(report.bytes()),
+    );
+    if apply {
+        println!(
+            "removed {} vault blob(s) nothing refers to",
+            report.blobs_removed
+        );
+    } else if !report.files.is_empty() {
         println!("dry run: nothing removed (use --apply to remove them)");
     }
     Ok(ExitCode::SUCCESS)

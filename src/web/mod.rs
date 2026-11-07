@@ -155,6 +155,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/files/{id}/thumbnail", get(revisions::thumbnail))
         .route("/files/{id}/delete", post(revisions::delete_file))
         .route("/files/{id}/folder", post(revisions::set_file_folder))
+        .route("/files/{id}/retention", post(revisions::set_file_retention))
         .route("/files/{id}/restore", post(revisions::restore_version))
         .route("/files/{id}/preview", get(revisions::preview))
         .route("/files/{id}/mesh", get(revisions::mesh))

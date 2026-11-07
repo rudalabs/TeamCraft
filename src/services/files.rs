@@ -17,7 +17,7 @@ use crate::{
     auth::Actor,
     cadformat::{self, CadFormat},
     cadrefs,
-    domain::{self, BaseConflict, BaseVersion, ServerFile},
+    domain::{self, BaseConflict, BaseVersion, FileRetention, ServerFile},
     error::{AppError, AppResult},
     models::{FileRecord, FileVersion, Revision},
     services::{access, audit, references, revisions},
@@ -28,7 +28,7 @@ use crate::{
 const FILE_SELECT: &str = "
     SELECT f.id, f.revision_id, f.filename, f.content_type, f.size_bytes, f.sha256,
            f.uploaded_by, u.display_name AS uploaded_by_name, f.uploaded_at,
-           f.current_version AS version, COALESCE(f.format, '') AS format, f.folder
+           f.current_version AS version, COALESCE(f.format, '') AS format, f.folder, f.retention
     FROM files f JOIN users u ON u.id = f.uploaded_by";
 
 const VERSION_SELECT: &str = "
@@ -1041,6 +1041,74 @@ pub async fn set_folder(
             .bind(rev.id)
             .execute(&mut *tx)
             .await?;
+    }
+    tx.commit().await?;
+    get(pool, actor, file_id).await
+}
+
+/// Chooses what happens to the old versions of a file: `all` keeps every
+/// version, `latest` lets the housekeeping remove the versions a newer one
+/// replaced (see `services::retention::purge_superseded_versions`).
+///
+/// # Invariants
+///
+/// * **Permission:** the file is visible to the actor ("not found" otherwise),
+///   its revision is checked out by the actor (409 otherwise) and editable
+///   (`revisions::ensure_editable`: in work, CAD editor of its group).
+/// * **Locks:** the revision row (`revisions::lock`) and the file row
+///   (`FOR UPDATE`).
+/// * **Audit:** `file.retention`, only when the setting actually changes.
+/// * **Data:** nothing is removed here; the removal is the housekeeping's.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
+pub async fn set_retention(
+    pool: &PgPool,
+    actor: &Actor,
+    file_id: Uuid,
+    retention: FileRetention,
+) -> AppResult<FileRecord> {
+    let file = get(pool, actor, file_id).await?;
+    let mut tx = pool.begin().await?;
+    let rev = revisions::lock(&mut tx, file.revision_id).await?;
+    revisions::ensure_editable(&rev, actor)?;
+    let current =
+        sqlx::query_scalar::<_, String>("SELECT retention FROM files WHERE id = $1 FOR UPDATE")
+            .bind(file_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if current != retention.as_str() {
+        sqlx::query("UPDATE files SET retention = $2 WHERE id = $1")
+            .bind(file_id)
+            .bind(retention.as_str())
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE revisions SET updated_at = now() WHERE id = $1")
+            .bind(rev.id)
+            .execute(&mut *tx)
+            .await?;
+        audit::record(
+            &mut tx,
+            Some(actor),
+            "file.retention",
+            "revision",
+            Some(rev.id),
+            format!(
+                "{} of {}: {}",
+                file.filename,
+                revisions::label(&rev),
+                match retention {
+                    FileRetention::All => "keep every version",
+                    FileRetention::Latest => "keep only the latest version",
+                }
+            ),
+            json!({
+                "item_id": rev.item_id,
+                "file_id": file_id,
+                "from": current,
+                "to": retention.as_str(),
+            }),
+        )
+        .await?;
     }
     tx.commit().await?;
     get(pool, actor, file_id).await

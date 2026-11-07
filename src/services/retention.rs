@@ -1,7 +1,9 @@
 //! Data retention: which vault blobs the database still refers to, the
 //! removal of blobs nothing refers to (`teamcraft vault gc`, and the blobs of
 //! expired staged imports and upload sessions) and the trimming of the
-//! preview cache. The audit log retention is `audit::purge_older_than`.
+//! preview cache, and the removal of superseded versions of `latest` files
+//! ([`purge_superseded_versions`]). The audit log retention is
+//! `audit::purge_older_than`.
 //!
 //! **Referenced content is never removed.** A blob is removed only when no
 //! column of [`BLOB_COLUMNS`] names it *and* it was not written or stored
@@ -19,7 +21,16 @@ use std::{
 
 use sqlx::{PgConnection, PgPool};
 
-use crate::{error::AppResult, preview, vault::Vault};
+use serde_json::json;
+use uuid::Uuid;
+
+use crate::{
+    domain::FileRetention,
+    error::{AppError, AppResult},
+    preview,
+    services::{audit, revisions},
+    vault::Vault,
+};
 
 /// Every column that may name a vault blob by its SHA-256 – the files and
 /// their versions, change request attachments, staged STEP imports and
@@ -294,6 +305,189 @@ async fn remove_cache_file(path: &Path, size: u64, purge: &mut PreviewPurge) -> 
         // gone already, or open on Windows: the next run tries again
         Err(_) => false,
     }
+}
+
+/// Default grace period before a superseded version of a `latest` file is
+/// removed (`TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS`).
+pub const DEFAULT_LATEST_GRACE_DAYS: u32 = 7;
+
+/// Longest grace period accepted (ten years).
+pub const MAX_LATEST_GRACE_DAYS: u32 = 3650;
+
+/// The superseded versions of one file that [`purge_superseded_versions`]
+/// removed (or, in a dry run, would remove).
+#[derive(Clone, Debug)]
+pub struct PurgedFile {
+    pub item_number: String,
+    pub revision: String,
+    pub filename: String,
+    pub file_id: Uuid,
+    pub versions: Vec<i32>,
+    pub bytes: u64,
+}
+
+/// Outcome of [`purge_superseded_versions`].
+#[derive(Clone, Debug, Default)]
+pub struct VersionPurge {
+    pub files: Vec<PurgedFile>,
+    /// Vault blobs removed because nothing referred to them any more (always
+    /// 0 in a dry run; content other files still use stays).
+    pub blobs_removed: u64,
+}
+
+impl VersionPurge {
+    pub fn versions(&self) -> u64 {
+        self.files.iter().map(|f| f.versions.len() as u64).sum()
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.files.iter().map(|f| f.bytes).sum()
+    }
+}
+
+/// Removes the old versions of files whose retention is `latest`: a version
+/// goes when a newer version replaced it at least `grace_days` ago (the time
+/// of the next version's upload counts, so a rollback or a mistaken upload
+/// can still be undone within the grace period). The blobs nothing refers to
+/// afterwards are removed from the vault. Without `apply` it only reports.
+///
+/// # Invariants
+///
+/// * **Permission:** none – the server's housekeeping and
+///   `teamcraft vault purge-versions` (an operator with the configuration),
+///   no actor ("system").
+/// * **Locks:** per file one transaction with the revision row and the file
+///   row (`FOR UPDATE`), the same order as an upload; the conditions are
+///   checked again under the locks.
+/// * **Data:** only files with `retention = 'latest'` whose revision is
+///   *in work*: nothing of an in-review, released or obsolete revision, which
+///   is therefore never touched; the current version is never removed; a
+///   grace period of 0 days is refused (400).
+/// * **Audit:** one `file.purge_versions` entry per file, in the transaction
+///   of the removal, naming the versions and hashes.
+/// * **Atomic:** per file; the vault blobs are removed after the commit
+///   (checked against every reference and the in-flight grace period).
+pub async fn purge_superseded_versions(
+    pool: &PgPool,
+    vault: &Vault,
+    grace_days: u32,
+    apply: bool,
+) -> AppResult<VersionPurge> {
+    if grace_days == 0 || grace_days > MAX_LATEST_GRACE_DAYS {
+        return Err(AppError::BadRequest(format!(
+            "The grace period must be between 1 and {MAX_LATEST_GRACE_DAYS} days."
+        )));
+    }
+    let days = i32::try_from(grace_days).unwrap_or(i32::MAX);
+    let candidates: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT f.id FROM files f JOIN revisions r ON r.id = f.revision_id
+         WHERE f.retention = 'latest' AND r.state = 'in_work' AND f.current_version > 1
+         ORDER BY f.id",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut out = VersionPurge::default();
+    let mut shas = Vec::new();
+    for file_id in candidates {
+        let mut tx = pool.begin().await?;
+        let revision_id: Option<Uuid> =
+            sqlx::query_scalar("SELECT revision_id FROM files WHERE id = $1")
+                .bind(file_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some(revision_id) = revision_id else {
+            continue;
+        };
+        let rev = match revisions::lock(&mut tx, revision_id).await {
+            Ok(rev) => rev,
+            Err(AppError::NotFound(_)) => continue,
+            Err(e) => return Err(e),
+        };
+        let current: Option<(i32, String, String)> = sqlx::query_as(
+            "SELECT current_version, retention, filename FROM files WHERE id = $1 FOR UPDATE",
+        )
+        .bind(file_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((current, retention, filename)) = current else {
+            continue;
+        };
+        if retention != FileRetention::Latest.as_str() || rev.state != "in_work" {
+            continue;
+        }
+        let old: Vec<(i32, String, i64)> = sqlx::query_as(
+            "WITH s AS (
+                 SELECT version, sha256, size_bytes,
+                        lead(uploaded_at) OVER (ORDER BY version) AS superseded_at
+                 FROM file_versions WHERE file_id = $1
+             )
+             SELECT version, sha256, size_bytes FROM s
+             WHERE version < $2 AND superseded_at < now() - make_interval(days => $3)
+             ORDER BY version",
+        )
+        .bind(file_id)
+        .bind(current)
+        .bind(days)
+        .fetch_all(&mut *tx)
+        .await?;
+        if old.is_empty() {
+            continue;
+        }
+        let versions: Vec<i32> = old.iter().map(|(v, _, _)| *v).collect();
+        let bytes: u64 = old
+            .iter()
+            .map(|(_, _, size)| u64::try_from(*size).unwrap_or_default())
+            .sum();
+        if apply {
+            sqlx::query("DELETE FROM file_versions WHERE file_id = $1 AND version = ANY($2)")
+                .bind(file_id)
+                .bind(&versions)
+                .execute(&mut *tx)
+                .await?;
+            audit::record(
+                &mut tx,
+                None,
+                "file.purge_versions",
+                "revision",
+                Some(rev.id),
+                format!(
+                    "Removed {} superseded version(s) of {filename} from {} (retention: latest)",
+                    versions.len(),
+                    revisions::label(&rev)
+                ),
+                json!({
+                    "item_id": rev.item_id,
+                    "file_id": file_id,
+                    "filename": filename,
+                    "versions": versions,
+                    "sha256": old.iter().map(|(_, sha, _)| sha.as_str()).collect::<Vec<_>>(),
+                    "bytes": bytes,
+                    "grace_days": grace_days,
+                    "kept_version": current,
+                }),
+            )
+            .await?;
+            shas.extend(old.iter().map(|(_, sha, _)| sha.clone()));
+        }
+        tx.commit().await?;
+        out.files.push(PurgedFile {
+            item_number: rev.item_number.clone(),
+            revision: rev.code.clone(),
+            filename,
+            file_id,
+            versions,
+            bytes,
+        });
+    }
+    shas.sort();
+    shas.dedup();
+    for sha256 in shas {
+        let mut conn = pool.acquire().await?;
+        if release_blob(&mut conn, vault, &sha256, IN_FLIGHT_GRACE).await? == Release::Removed {
+            out.blobs_removed += 1;
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

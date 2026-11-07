@@ -120,6 +120,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_PREVIEW_MAX_STEP_MB",
     "TEAMCRAFT_PUBLIC_URL",
     "TEAMCRAFT_REQUEST_DIGEST_HOURS",
+    "TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS",
     "TEAMCRAFT_SERVER",
     "TEAMCRAFT_SESSION_TTL_HOURS",
     "TEAMCRAFT_SIGNIN_MAX_FAILURES",
@@ -264,6 +265,11 @@ pub struct Config {
     /// ever). Older entries are removed by the hourly housekeeping, which
     /// records the removal as one entry.
     pub audit_retention_days: u32,
+    /// Days after which the old versions of files with the retention `latest`
+    /// are removed by the hourly housekeeping
+    /// (`TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS`; 0 = only the CLI removes
+    /// them). Files keep every version unless someone sets `latest`.
+    pub retention_latest_grace_days: u32,
     /// Failed password sign-ins per username within 15 minutes before sign-in
     /// is refused (`TEAMCRAFT_SIGNIN_MAX_FAILURES`; five times as many per
     /// client address; 0 = off). See [`crate::auth::SignInThrottle`].
@@ -849,6 +855,17 @@ impl Config {
             );
         }
 
+        let retention_latest_grace_days = env.parse_or(
+            "TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS",
+            crate::services::retention::DEFAULT_LATEST_GRACE_DAYS,
+        )?;
+        if retention_latest_grace_days > crate::services::retention::MAX_LATEST_GRACE_DAYS {
+            bail!(
+                "TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS must be between 0 (no automatic removal) and {}",
+                crate::services::retention::MAX_LATEST_GRACE_DAYS
+            );
+        }
+
         let cookie_secure = match env.get("TEAMCRAFT_COOKIE_SECURE")? {
             Some(v) => parse_bool(&v).context("TEAMCRAFT_COOKIE_SECURE must be true or false")?,
             None => public_url.starts_with("https://"),
@@ -964,6 +981,7 @@ impl Config {
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
             audit_retention_days,
+            retention_latest_grace_days,
             signin_max_failures,
             metrics_token,
             cookie_secure,
@@ -1581,6 +1599,30 @@ mod tests {
             ("TEAMCRAFT_PREVIEW_MAX_STEP_MB", "0"),
         ] {
             assert!(config_from(&[("TEAMCRAFT_DB_PASSWORD", "x"), bad]).is_err());
+        }
+    }
+
+    #[test]
+    fn latest_retention_grace_days() {
+        let d = config_from(&[("TEAMCRAFT_DB_PASSWORD", "x")]).unwrap();
+        assert_eq!(d.retention_latest_grace_days, 7);
+        for (raw, want) in [("0", 0), ("1", 1), ("3650", 3650)] {
+            let c = config_from(&[
+                ("TEAMCRAFT_DB_PASSWORD", "x"),
+                ("TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS", raw),
+            ])
+            .unwrap();
+            assert_eq!(c.retention_latest_grace_days, want, "{raw}");
+        }
+        for bad in ["3651", "-1", "x"] {
+            assert!(
+                config_from(&[
+                    ("TEAMCRAFT_DB_PASSWORD", "x"),
+                    ("TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS", bad)
+                ])
+                .is_err(),
+                "{bad}"
+            );
         }
     }
 

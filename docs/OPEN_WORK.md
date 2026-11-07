@@ -122,7 +122,7 @@ feature milestone – the features in *What works* are enough; what is missing i
   lines, 50 concurrent users – page and API p95 times written down and guarded in a scheduled CI job
 - [ ] Production install paths tested end to end per release: Docker Compose (`deploy/`), Linux packages (systemd
   unit), behind a reverse proxy with TLS; documented sizing and PostgreSQL versions (16–18)
-- [ ] Data retention and cleanup: old previews, staged uploads, expired sessions, audit log retention setting
+- [x] Data retention and cleanup: old previews, staged uploads, expired sessions, audit log retention setting
 - [x] Preview safety: size caps per kind and a memory limit for the preview process (`TEAMCRAFT_PREVIEW_MAX_*`); big result files are stored, never parsed
 
 *Clients and packaging*
@@ -431,7 +431,7 @@ real files and belong to section 3 once such files are at hand.
 - [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
-- [ ] Retention for large result files (`files.retention = 'latest'`), now that chunked resumable uploads exist
+- [x] Retention for large result files (`files.retention = 'latest'`): per file, old versions removed after a grace period, never for released revisions (`teamcraft vault purge-versions`); left: a size-based default for new files
 - [ ] Save As of a simulation: copy basis links and result values
 
 **All CAD programs**

@@ -200,7 +200,10 @@ sent without one keep their folder (new files: the top). Folders are
 normalised (`\` → `/`, no leading or trailing `/`) and refused with 400 if
 they contain `..`, a drive letter or names invalid on Windows.
 `PATCH /files/{id}` with `{"folder": "chassis/brackets"}` moves a file while
-you hold the check-out (no new version; recorded in the history). File lists
+you hold the check-out (no new version; recorded in the history);
+`{"retention": "latest"}` (or `"all"`) lets the housekeeping remove superseded
+versions of that file after a grace period, see
+[Data retention](../admin/operations.md#data-retention). File lists
 and `file-status` return the `folder`.
 
 ```sh

@@ -179,6 +179,9 @@ pub struct FileRecord {
     /// Folder inside the project group (`chassis/brackets`, `""` = top);
     /// the desktop working folder mirrors it.
     pub folder: String,
+    /// `all` keeps every version, `latest` lets the housekeeping remove
+    /// superseded versions (see `services::retention`).
+    pub retention: String,
     /// Label, CAD program and kind of the format; filled by `files::list` / `files::get`.
     #[sqlx(skip)]
     pub format_info: Option<crate::cadformat::FormatInfo>,
