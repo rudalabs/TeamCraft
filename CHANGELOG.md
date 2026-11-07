@@ -17,6 +17,7 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+
 - Scoped personal access tokens (threat model F2, #151 step 6, #152 step 4):
   a token gets a scope when it is created (account page, `POST /api/v1/tokens`,
   `teamcraft user create-token --scope`). `full` = read, write and approve
@@ -29,6 +30,9 @@ Changes on `main` since the `v0.2.5` tag.
   without use (renewed on every use) instead of a fixed 90 days; existing
   desktop tokens keep their fixed expiry.
   Migration `0045` (renumbered at merge).
+- The web *New item* form sends files above 32 MiB in chunks too (resumable, like the revision page); the
+  upload sessions may now have no revision and only join the creation of an item. Without JavaScript the form still
+  submits all files in one request.
 - Need-to-know project groups, step 1 (#151): a restricted group can limit
   administrator access (`project_policies`, migration 0043): `with_reason`
   (time-limited, audited elevation with a written reason; managers are
