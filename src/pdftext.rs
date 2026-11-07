@@ -9,7 +9,7 @@
 //! characters. There is no OCR: a scanned PDF has no text.
 //!
 //! The same child reads HTML reports (`--format html`, see [`crate::htmltext`]);
-//! [`extract_isolated`] runs either.
+//! `extract_isolated` runs either.
 
 use std::{
     path::Path,
