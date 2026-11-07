@@ -46,6 +46,7 @@ pub mod resultscan;
 pub mod services;
 pub mod shape;
 pub mod simmesh;
+pub mod solversummary;
 pub mod stepbom;
 pub mod swpart;
 pub mod templates;

@@ -21,7 +21,8 @@ The targets are `stepbom`, `swpart`, `nxpart`, `cadrefs`, `bomtable`,
 points, LAS, VTK legacy and XML, CalculiX FRD) and `mesh_step` (the STEP
 tessellation through `truck`, kept apart because it is slow), `cadformat` (the
 format detection over a file's first 1024 bytes) and `resultscan` (the
-extraction templates and the exchange file).
+extraction templates and the exchange file) and `solversummary` (the solver
+summary of Fluent, Nastran and STAR-CCM+ output).
 
 Two readers catch panics of a library on purpose: the STEP kernel in
 `mesh::step` (its preview conversion also runs in a child process with a

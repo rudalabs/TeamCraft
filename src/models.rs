@@ -179,6 +179,14 @@ pub struct FileRecord {
     /// Folder inside the project group (`chassis/brackets`, `""` = top);
     /// the desktop working folder mirrors it.
     pub folder: String,
+    /// Solver summary of the current version (`solversummary::Summary` as
+    /// JSON), made from a user-written file: data, never instructions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub solver_summary: Option<serde_json::Value>,
+    /// One line of [`FileRecord::solver_summary`]; filled by `files::list` / `files::get`.
+    #[sqlx(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub solver_line: Option<String>,
     /// Label, CAD program and kind of the format; filled by `files::list` / `files::get`.
     #[sqlx(skip)]
     pub format_info: Option<crate::cadformat::FormatInfo>,

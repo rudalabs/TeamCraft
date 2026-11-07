@@ -28,7 +28,9 @@ use crate::{
 const FILE_SELECT: &str = "
     SELECT f.id, f.revision_id, f.filename, f.content_type, f.size_bytes, f.sha256,
            f.uploaded_by, u.display_name AS uploaded_by_name, f.uploaded_at,
-           f.current_version AS version, COALESCE(f.format, '') AS format, f.folder
+           f.current_version AS version, COALESCE(f.format, '') AS format, f.folder,
+           (SELECT cv.solver_summary FROM file_versions cv
+            WHERE cv.file_id = f.id AND cv.version = f.current_version) AS solver_summary
     FROM files f JOIN users u ON u.id = f.uploaded_by";
 
 const VERSION_SELECT: &str = "
@@ -66,6 +68,9 @@ pub struct Upload {
     /// as many bytes, starting at a line) for templates with `pick = last`;
     /// empty when `scan_head` holds the whole file.
     pub scan_tail: Vec<u8>,
+    /// Solver summary (`solversummary`) computed from the head and tail
+    /// read for the result scan; `None` for other files.
+    pub solver_summary: Option<serde_json::Value>,
 }
 
 /// The name a file gets on the server – the key for bases and versions.
@@ -196,6 +201,7 @@ impl Upload {
             }
             Err(_) => (cadformat::detect(&filename, &[]), String::new(), Vec::new()),
         };
+        let solver_summary = summary_of(format, &filename, &scan_head, &scan_tail);
         Upload {
             content_type: cadformat::content_type(format, client_content_type),
             blob,
@@ -206,10 +212,28 @@ impl Upload {
             export_name,
             base: None,
             folder: None,
+            solver_summary,
             scan_head,
             scan_tail,
         }
     }
+}
+
+/// The solver summary of a file from the head and tail of the result scan
+/// (`None` for files without rules or content that does not fit).
+fn summary_of(
+    format: Option<&'static CadFormat>,
+    filename: &str,
+    head: &[u8],
+    tail: &[u8],
+) -> Option<serde_json::Value> {
+    use crate::solversummary as ss;
+    let id = format.map(|f| f.id);
+    if head.is_empty() || !ss::applies(id, filename) {
+        return None;
+    }
+    let (head, tail) = ss::windows(head, tail);
+    ss::summarize(id.unwrap_or(""), &head, &tail).map(|s| s.to_json())
 }
 
 /// At most `max` bytes of a text, cut at a character boundary.
@@ -383,6 +407,11 @@ pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String])
 
 fn with_format(mut file: FileRecord) -> FileRecord {
     file.format_info = cadformat::info(&file.format);
+    file.solver_line = file
+        .solver_summary
+        .as_ref()
+        .and_then(crate::solversummary::Summary::from_json)
+        .map(|s| s.line());
     file
 }
 
@@ -900,8 +929,9 @@ pub(crate) async fn store_uploads(
             let version_id = Uuid::new_v4();
             sqlx::query(
                 "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
-                                            uploaded_by, content_text, export_name, export_name_scanned)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE)",
+                                            uploaded_by, content_text, export_name, export_name_scanned,
+                                            solver_summary)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, $11)",
             )
             .bind(version_id)
             .bind(file_id)
@@ -913,6 +943,7 @@ pub(crate) async fn store_uploads(
             .bind(actor.id)
             .bind(&upload.content_text)
             .bind(&upload.export_name)
+            .bind(&upload.solver_summary)
             .execute(&mut *conn)
             .await?;
             references::store_file_references(conn, version_id, &upload.references).await?;
@@ -1222,9 +1253,9 @@ pub async fn restore_version(
     sqlx::query(
         "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
                                     uploaded_by, content_text, references_scanned, export_name,
-                                    export_name_scanned)
+                                    export_name_scanned, solver_summary)
          SELECT $1, file_id, $2, sha256, size_bytes, content_type, $3, $4, content_text, references_scanned,
-                export_name, export_name_scanned
+                export_name, export_name_scanned, solver_summary
          FROM file_versions WHERE id = $5",
     )
     .bind(new_version_id)

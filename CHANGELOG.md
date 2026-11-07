@@ -17,6 +17,14 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Solver summary per file version, step 3 of `docs/src/research/solver-files.md`
+  (migration 0045, nullable `file_versions.solver_summary`; the number will be
+  renumbered at merge): for Fluent transcripts and report files, Nastran `.f06`
+  and decks, STAR-CCM+ macros and batch logs, one line with solver, version, how
+  the run ended, last iteration and FATAL/WARNING counts of the first and last
+  64 KiB. Shown on the file row and the simulation page, in the REST file list and
+  the MCP `get_revision` files (marked untrusted). The rules are unverified
+  against real files.
 - Need-to-know project groups, step 1 (#151): a restricted group can limit
   administrator access (`project_policies`, migration 0043): `with_reason`
   (time-limited, audited elevation with a written reason; managers are
