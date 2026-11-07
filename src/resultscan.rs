@@ -543,14 +543,16 @@ pub fn extract_with_tail(
     applicable.sort_by_key(|t| t.name.to_lowercase());
     let head_lines = lines_of(head);
     let tail_lines = tail_lines_of(tail);
+    let html = crate::htmltext::is_html(filename);
     let mut out = Vec::new();
     for t in applicable {
         let from_tail = (t.pick != "first" && !tail_lines.is_empty())
-            .then(|| find(t, &head_lines, Some(&tail_lines)))
+            .then(|| find(t, &head_lines, Some(&tail_lines), html))
             .flatten()
             .map(|(value, i)| (value, Place::FromEnd(tail_lines.len().saturating_sub(i))));
-        let found = from_tail
-            .or_else(|| find(t, &head_lines, None).map(|(value, i)| (value, Place::Line(i + 1))));
+        let found = from_tail.or_else(|| {
+            find(t, &head_lines, None, html).map(|(value, i)| (value, Place::Line(i + 1)))
+        });
         if let Some((value, place)) = found {
             out.push(ResultInput {
                 name: t.name.clone(),
@@ -575,11 +577,17 @@ pub fn extract_with_tail(
 
 /// One template over the head, or over the tail rows (`tail`) with the
 /// table header from the head: the value and the 0-based index of its line
-/// in the lines searched.
-fn find(t: &ResultTemplate, head: &[String], tail: Option<&[String]>) -> Option<(f64, usize)> {
+/// in the lines searched. `html`: the text of an HTML report (see
+/// [`find_csv`]).
+fn find(
+    t: &ResultTemplate,
+    head: &[String],
+    tail: Option<&[String]>,
+    html: bool,
+) -> Option<(f64, usize)> {
     match Method::parse(&t.method)? {
         Method::Regex => find_regex(tail.unwrap_or(head), t),
-        Method::Csv => find_csv(head, tail, t),
+        Method::Csv => find_csv(head, tail, t, html),
         Method::Table => find_table(head, tail, t),
     }
 }
@@ -603,7 +611,7 @@ fn find_regex(lines: &[String], t: &ResultTemplate) -> Option<(f64, usize)> {
 }
 
 /// The delimiter of a CSV text: the one that occurs most often in the first
-/// lines.
+/// lines (the text of an HTML report always uses `|`, see [`find_csv`]).
 fn delimiter(lines: &[String]) -> u8 {
     let head = lines.iter().take(20);
     let mut best = (b',', 0usize);
@@ -633,6 +641,23 @@ fn csv_cells(line: &str, delim: u8) -> Vec<String> {
         .has_headers(false)
         .flexible(true)
         .delimiter(delim)
+        .from_reader(line.as_bytes());
+    reader
+        .records()
+        .next()
+        .and_then(Result::ok)
+        .map(|r| r.iter().map(|c| c.trim().to_string()).collect())
+        .unwrap_or_default()
+}
+
+/// The cells of a table row in the text of an HTML report: always `|`,
+/// quotes are plain characters.
+fn html_cells(line: &str, _delim: u8) -> Vec<String> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .delimiter(b'|')
+        .quoting(false)
         .from_reader(line.as_bytes());
     reader
         .records()
@@ -723,8 +748,18 @@ fn table_value(
     pick(matching, &t.pick)
 }
 
-fn find_csv(head: &[String], tail: Option<&[String]>, t: &ResultTemplate) -> Option<(f64, usize)> {
-    table_value(head, tail, csv_cells, |_| true, t)
+/// A CSV template on a table. For an HTML report (`html`) the text has one
+/// table row per line with the cells separated by ` | `, so `|` is the
+/// delimiter whatever the title and paragraphs above the table contain, and
+/// quotes are plain characters (a `"` in a cell never joins cells).
+fn find_csv(
+    head: &[String],
+    tail: Option<&[String]>,
+    t: &ResultTemplate,
+    html: bool,
+) -> Option<(f64, usize)> {
+    let cells: Cells = if html { html_cells } else { csv_cells };
+    table_value(head, tail, cells, |_| true, t)
 }
 
 /// `table`: a whitespace-separated table with a header of quoted column
@@ -974,6 +1009,21 @@ mod tests {
                     <tr><td>Max. stress</td><td>152.4</td></tr></table>";
         let text = crate::htmltext::extract(html.as_bytes()).unwrap();
         assert_eq!(extract("r.htm", text.as_bytes(), &[t])[0].value, 152.4);
+        // a real report: a title and a paragraph with commas above the table,
+        // an empty top-left header cell, a quote in a cell
+        let mut t = template("csv", "*.html", "");
+        t.csv_column = "Max".into();
+        let html = "<h1>Bracket, static, LC1</h1><p>Mesh: 12,345 nodes, 6,789 elements, \
+                    solver: a, b, c, d, e, f, g, h.</p>\
+                    <table><tr><th></th><th>Min</th><th>Max</th></tr>\
+                    <tr><td>Stress \"von Mises</td><td>1.0</td><td>152.4</td></tr></table>";
+        let text = crate::htmltext::extract(html.as_bytes()).unwrap();
+        let found = extract("report.html", text.as_bytes(), std::slice::from_ref(&t));
+        assert_eq!(found.len(), 1, "{text}");
+        assert_eq!(found[0].value, 152.4, "the Max column, not Min: {text}");
+        assert_eq!(found[0].source, "report.html:6", "{text}");
+        t.csv_column = "Min".into();
+        assert_eq!(extract("report.html", text.as_bytes(), &[t])[0].value, 1.0);
     }
 
     #[test]

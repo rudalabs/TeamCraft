@@ -6,7 +6,7 @@
 //! * Plain text formats (txt, md, csv, json, xml, yaml, log, Teamcenter PLM XML,
 //!   OpenSCAD, motor thrust curves, …): the text itself, line by line, with its
 //!   decimal numbers – a text or CSV report reads like a PDF one (charset: byte
-//!   order mark, UTF-8, else Windows-1252).
+//!   order mark, (mostly valid) UTF-8, else Windows-1252).
 //! * Geometry as text (ASCII STL, OBJ, KiCad boards and symbols): the words
 //!   without the decimal numbers (coordinates are noise in a search).
 //! * PDF: the text layer, read in an isolated process (see `pdftext`); scanned
@@ -409,6 +409,14 @@ mod tests {
             "non-ASCII text is kept"
         );
         assert_eq!(extract("a.log", b"85\xB0C"), "85°C", "Windows-1252");
+        assert_eq!(
+            extract(
+                "solve.log",
+                &["T = 85 °C, 3 µm, Düse\n".as_bytes(), b"\xFF step 12\n"].concat()
+            ),
+            "T = 85 °C, 3 µm, Düse\n\u{fffd} step 12",
+            "UTF-8 with one stray byte stays UTF-8"
+        );
         let mut utf16 = vec![0xFF, 0xFE];
         for u in "p 1.5".encode_utf16() {
             utf16.extend_from_slice(&u.to_le_bytes());

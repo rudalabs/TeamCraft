@@ -64,9 +64,12 @@ most 256 open elements are tracked (deeper ones are flattened) and the output
 stops at 200 000 characters.
 
 **Templates:** the per-group extraction templates of an `.html` file now run
-on the text the child extracted (the first 2 MB of it), not on the raw bytes –
+on the text the child extracted (at most 200 000 characters), not on the raw
+bytes –
 `Maximum stress \| ([0-9.]+)` works, and a `csv` template reads the ` | `
-separated rows.
+separated rows (`|` is always the delimiter of an HTML file, quotes are plain
+characters, an empty cell keeps its column). The line of a value's source
+(`report.html:12`) is the line in the extracted text, not in the HTML file.
 
 **Plain text**, fixed at the same time: text and CSV reports keep their lines
 and decimal numbers in the stored text (`read_file_text` used to show the

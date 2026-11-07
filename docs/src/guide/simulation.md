@@ -152,7 +152,8 @@ not read as markup: the template sees the text TeamCraft extracted from it
 (see below), one line per table row with the cells separated by ` | `, so
 `Maximum stress \| ([-+0-9.eE]+) \| MPa` finds the row
 `Maximum stress | 152.4 | MPa`, and a `csv` template reads such a table
-with `|` as the separator.
+with `|` as the separator (always for an HTML file, whatever the title and
+paragraphs above the table contain; an empty header cell keeps its column).
 
 | Field | Meaning |
 |---|---|
@@ -166,7 +167,9 @@ with `|` as the separator.
 Example: `Pressure drop:\s*([-+0-9.eE]+)\s*Pa` on `*.log`. Regular
 expressions run in linear time (no backtracking) and are limited in size, so a
 hostile pattern or file cannot hang the server. The value is shown with its
-source (`solver.log:412`) in the *Solver* column. A template that does not
+source (`solver.log:412`) in the *Solver* column. For an HTML report the line
+number refers to the extracted text – the text `read_file_text` shows –, not
+to the line in the HTML file. A template that does not
 match does nothing; templates belong to one group and apply to simulations of
 that group only. Values typed in by hand are overwritten by a template or the
 exchange file with the same name and load case on the next check-in.
