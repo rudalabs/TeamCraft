@@ -72,6 +72,17 @@ async fn format_kinds(app: &common::TestApp, token: &str) -> HashMap<String, Str
     kinds
 }
 
+/// `importKey` of app.js: "folder-import:" + SHA-256 (hex) of group, folder
+/// and item key joined by NUL – stable per source item, always a valid key.
+fn import_key(group: &str, folder: &str, item_key: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let text = [group, folder, item_key].join("\0");
+    format!(
+        "folder-import:{}",
+        hex::encode(Sha256::digest(text.as_bytes()))
+    )
+}
+
 fn split_name(name: &str) -> (String, String) {
     match name.rfind('.') {
         Some(dot) if dot > 0 => (name[..dot].to_string(), name[dot + 1..].to_lowercase()),
@@ -256,7 +267,7 @@ async fn import_folder(
                         Some(json!({
                             "item_type": it.item_type, "name": it.name, "project": project,
                             // stable per source item (`importKey` in app.js)
-                            "idempotency_key": format!("folder-import:{project}:{folder}:{}", it.key)
+                            "idempotency_key": import_key(project, folder, &it.key)
                         })),
                     )
                     .await;

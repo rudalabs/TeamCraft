@@ -528,7 +528,7 @@ async fn a_backup_from_before_the_newest_migrations_restores_and_migrates() {
 
     // restore the old backup into a fresh database: it is the old schema,
     // with all of the data
-    let database = app.create_empty_database("restored-old").await;
+    let database = app.create_empty_database("restored_old").await;
     let vault = temp_dir("upgrade-vault");
     let target = app.client_config(&database, &vault);
     backup::restore(&target, &backup_dir, false)
@@ -620,7 +620,7 @@ async fn a_damaged_backup_is_refused_and_the_database_stays_unchanged() {
     bytes[middle] ^= 0xff;
     std::fs::write(&dump, bytes).unwrap();
 
-    let database = app.create_empty_database("dmg-target").await;
+    let database = app.create_empty_database("dmg_target").await;
     let vault = temp_dir("damaged-vault");
     let target = app.client_config(&database, &vault);
     let err = backup::restore(&target, &backup_dir, false)

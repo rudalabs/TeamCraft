@@ -196,6 +196,14 @@ async fn two_users_checking_out_at_once_have_one_winner() {
     let (_, erika) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
     let (_, max) = app.user_in("max", Role::Editor, &["ROCKET"]).await;
     let part = new_part(&app, &erika, "Bracket").await;
+    // a new item is checked out to its author; free it so both start equal
+    post_ok(
+        &app,
+        &erika,
+        &format!("/api/v1/items/{part}/revisions/A/cancel-checkout"),
+        json!({}),
+    )
+    .await;
     let uri = format!("/api/v1/items/{part}/revisions/A/checkout");
     let (r1, r2) = tokio::join!(
         post(&app, &erika, &uri, json!({})),
@@ -277,7 +285,7 @@ async fn concurrent_revisions_never_repeat_a_letter() {
     assert_eq!(audit_count(&app.pool, "revision.revise").await, 1);
 
     // release B, then revise from A (obsolete it first) and from B at once
-    app.release("erika", ("ada", &ada), &[&part]).await;
+    app.release(&erika, ("ada", &ada), &[&part]).await;
     let r = post(
         &app,
         &erika,
@@ -507,42 +515,58 @@ async fn withdraw_and_final_approval_at_once_agree() {
 }
 
 #[tokio::test]
-async fn submitting_two_changes_with_the_same_revisions_has_one_winner() {
+async fn adding_one_revision_to_two_changes_at_once_has_one_winner() {
+    // A revision belongs to at most one open change, so two drafts can never
+    // hold the same revision: the race is in adding it, not in submitting.
     let app = app_or_skip!();
     let (_, erika) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
     let (_, _rita) = app.user_in("rita", Role::Editor, &["ROCKET"]).await;
-    // opposite item order: a lock order that differs per change deadlocks
     for round in 0..8 {
         let a = new_part(&app, &erika, &format!("Bracket {round}")).await;
-        let b = new_part(&app, &erika, &format!("Clamp {round}")).await;
-        let c1 = draft_change(&app, &erika, &[&a, &b], &["rita"]).await;
-        let c2 = draft_change(&app, &erika, &[&b, &a], &["rita"]).await;
+        let c1 = draft_change(&app, &erika, &[], &["rita"]).await;
+        let c2 = draft_change(&app, &erika, &[], &["rita"]).await;
         let (u1, u2) = (
-            format!("/api/v1/changes/{c1}/submit"),
-            format!("/api/v1/changes/{c2}/submit"),
+            format!("/api/v1/changes/{c1}/items"),
+            format!("/api/v1/changes/{c2}/items"),
         );
         let (x, y) = tokio::join!(
-            post(&app, &erika, &u1, json!({})),
-            post(&app, &erika, &u2, json!({}))
+            post(&app, &erika, &u1, json!({ "item": a })),
+            post(&app, &erika, &u2, json!({ "item": a }))
         );
+        let ok = [&x, &y].iter().filter(|r| r.status.is_success()).count();
+        let refused = [&x, &y]
+            .iter()
+            .filter(|r| r.status == StatusCode::CONFLICT)
+            .count();
         assert_eq!(
-            sorted(&[&x, &y]),
-            [200, 409],
+            (ok, refused),
+            (1, 1),
             "round {round}: {}",
             describe(&[&x, &y])
         );
-        assert_eq!(revision_state(&app.pool, &a, "A").await, "in_review");
-        assert_eq!(revision_state(&app.pool, &b, "A").await, "in_review");
-        let submitted = count(
-            &app.pool,
-            "SELECT COUNT(*) FROM changes WHERE status = 'in_review'",
+        let holders: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM change_items ci
+             JOIN revisions r ON r.id = ci.revision_id JOIN items i ON i.id = r.item_id
+             WHERE i.number = $1",
+        )
+        .bind(&a)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+        assert_eq!(holders, 1, "round {round}: the revision is in one change");
+        // the winner can be submitted; the loser stays an empty draft
+        let winner = if x.status.is_success() { &c1 } else { &c2 };
+        let loser = if winner == &c1 { &c2 } else { &c1 };
+        post_ok(
+            &app,
+            &erika,
+            &format!("/api/v1/changes/{winner}/submit"),
+            json!({}),
         )
         .await;
-        assert_eq!(submitted, round + 1, "one submitted change per round");
-        assert_eq!(audit_count(&app.pool, "change.submit").await, round + 1);
-        // the loser stays a draft the author can still edit
-        let loser = if x.status == StatusCode::OK { &c2 } else { &c1 };
+        assert_eq!(revision_state(&app.pool, &a, "A").await, "in_review");
         assert_eq!(change_status(&app.pool, loser).await, "draft");
+        assert_eq!(audit_count(&app.pool, "change.submit").await, round + 1);
     }
     app.teardown().await;
 }
