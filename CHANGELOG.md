@@ -17,6 +17,9 @@ Changes on `main` since the `v0.2.0` tag.
 
 ### Added
 
+- Administrators can replace the wide logo (top left) and the square logo
+  (bottom left, tab icon) under *Admin → Branding*; the desktop app shows them
+  too. See [Branding](https://rudalabs.github.io/TeamCraft/admin/branding.html).
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.

@@ -35,6 +35,8 @@ struct LoginPage<'a> {
     skin: &'a str,
     /// Offer the "create the administrator" form instead of the login.
     setup: bool,
+    /// Replaced logos (the built-in ones when empty).
+    branding: &'a crate::services::branding::Branding,
 }
 
 fn render_login(st: &AppState, page: LoginPage<'_>) -> AppResult<Response> {
@@ -47,6 +49,7 @@ fn render_login(st: &AppState, page: LoginPage<'_>) -> AppResult<Response> {
         "username": page.username,
         "skin": page.skin,
         "setup": page.setup,
+        "branding": page.branding,
     });
     render_public(st, "login.html", data, page.flash)
 }
@@ -106,6 +109,7 @@ pub async fn setup_submit(
                     username: form.username.trim(),
                     skin: skin_from_cookie(&headers),
                     setup: setup_open(&st).await?,
+                    branding: &crate::services::branding::current(&st.db).await?,
                 },
             )?;
             *page.status_mut() = e.status();
@@ -136,6 +140,7 @@ pub async fn login_page(
             username: "",
             skin: skin_from_cookie(&headers),
             setup: setup_open(&st).await?,
+            branding: &crate::services::branding::current(&st.db).await?,
         },
     )
 }
@@ -173,6 +178,9 @@ pub async fn login_submit(
     }
     let client = auth::client_address(&headers, peer.map(|Extension(ConnectInfo(a))| a.ip()));
     let keys = auth::SignInThrottle::keys(&form.username, client);
+    let branding = crate::services::branding::current(&st.db)
+        .await
+        .unwrap_or_default();
     let login_error = |message: String, status: StatusCode| -> AppResult<Response> {
         let mut page = render_login(
             &st,
@@ -183,6 +191,7 @@ pub async fn login_submit(
                 username: form.username.trim(),
                 skin: skin_from_cookie(&headers),
                 setup: false,
+                branding: &branding,
             },
         )?;
         *page.status_mut() = status;
@@ -273,6 +282,9 @@ pub async fn oidc_callback(
         .as_ref()
         .ok_or_else(|| AppError::NotFound("Single sign-on is not configured.".into()))?;
     let skin = skin_from_cookie(&headers);
+    let branding = crate::services::branding::current(&st.db)
+        .await
+        .unwrap_or_default();
     let error_page = |message: String| {
         render_login(
             &st,
@@ -283,6 +295,7 @@ pub async fn oidc_callback(
                 username: "",
                 skin,
                 setup: false,
+                branding: &branding,
             },
         )
     };

@@ -277,6 +277,8 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 }
 .brand { display: flex; align-items: center; gap: 8px; width: calc(var(--rail) + var(--nav-width) - 16px); flex: none; }
 .brand img { width: 22px; height: 22px; }
+.brand.has-wide > :not(.brand-wide) { display: none; }
+.brand img.brand-wide { width: auto; height: 26px; max-width: 100%; object-fit: contain; }
 .brand-name { font-family: var(--display); font-weight: 600; font-size: 15px; }
 .brand-sub { font-size: 12px; color: var(--text-dim); }
 .global-search {
@@ -331,7 +333,7 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
   color: var(--on-primary); background: var(--primary); border-radius: 999px;
 }
 .rail-spacer { flex: 1; }
-.rail-mark { width: 24px; margin: 0 auto 6px; }
+.rail-mark { width: 28px; height: 28px; object-fit: contain; margin: 0 auto 6px; }
 
 .navigator {
   grid-row: 2; grid-column: 2;

@@ -43,6 +43,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "admin/attribute_edit.html",
     "admin/webhooks.html",
     "admin/webhook_edit.html",
+    "admin/branding.html",
     "desktop/authorize.html",
     "formats.html",
     "imports/upload.html",
@@ -249,6 +250,10 @@ mod tests {
         map.insert("local_login".into(), json!(true));
         map.insert("skin".into(), json!("arch"));
         map.insert("skin_scheme".into(), json!("dark"));
+        map.insert(
+            "branding".into(),
+            json!({ "wide": "aaaabbbbcccc", "square": "ddddeeeeffff" }),
+        );
         data
     }
 
@@ -1331,6 +1336,29 @@ mod tests {
                 "delivered_at": if status == "sent" { json!(TS) } else { json!(null) },
             })
         };
+        let html = render(
+            &env,
+            "admin/branding.html",
+            with_common(json!({
+                "slots": [
+                    { "kind": "wide", "label": "Wide logo", "custom": "aaaabbbbcccc", "hint": "h" },
+                    { "kind": "square", "label": "Square logo", "custom": null, "hint": "h" },
+                ],
+                "max_kib": 512, "max_pixels": 4096,
+            })),
+        );
+        assert!(
+            html.contains("/branding/wide?v=aaaabbbbcccc"),
+            "custom wide logo in the header"
+        );
+        assert!(
+            html.contains("/admin/branding/wide/reset"),
+            "reset offered for a custom logo"
+        );
+        assert!(
+            !html.contains("/admin/branding/square/reset"),
+            "no reset for the built-in logo"
+        );
         let html = render(
             &env,
             "admin/webhook_edit.html",
