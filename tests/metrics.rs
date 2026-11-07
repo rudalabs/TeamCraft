@@ -35,7 +35,9 @@ async fn metrics_need_the_token_and_count_requests() {
     let Some(app) = common::setup_with(&[("TEAMCRAFT_METRICS_TOKEN", TOKEN)]).await else {
         return;
     };
-    assert_eq!(scrape(&app, None).await.status, StatusCode::UNAUTHORIZED);
+    let refused = scrape(&app, None).await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(refused.header("cache-control").as_deref(), Some("no-store"));
     assert_eq!(
         scrape(&app, Some("wrong-token-0123456789")).await.status,
         StatusCode::UNAUTHORIZED
@@ -49,6 +51,19 @@ async fn metrics_need_the_token_and_count_requests() {
         .header("content-type")
         .unwrap()
         .starts_with("text/plain; version=0.0.4"));
+    assert_eq!(r.header("cache-control").as_deref(), Some("no-store"));
+    // the scheme name is case-insensitive
+    let lower = app
+        .send(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/metrics")
+                .header(header::AUTHORIZATION, format!("bearer {TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(lower.status, StatusCode::OK);
     let text = r.text();
     assert!(text.contains("teamcraft_build_info{version=\""));
     assert!(text.contains("teamcraft_http_requests_total{class=\"2xx\"}"));
@@ -58,6 +73,8 @@ async fn metrics_need_the_token_and_count_requests() {
         "{text}"
     );
     assert!(text.contains("teamcraft_notification_emails_pending 0"));
+    assert!(text.contains("teamcraft_preview_conversions_running 0"));
+    assert!(text.contains("teamcraft_preview_conversions_waiting 0"));
     let count = |class: &str| -> u64 {
         text.lines()
             .find_map(|l| {

@@ -18,7 +18,8 @@ Changes on `main` since the `v0.2.0` tag.
 ### Added
 
 - `GET /metrics` in the Prometheus text format (request counts and latency,
-  database pool, outbox backlogs), enabled by `TEAMCRAFT_METRICS_TOKEN`.
+  database pool, outbox backlogs, 3D preview queue), enabled by
+  `TEAMCRAFT_METRICS_TOKEN`.
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.

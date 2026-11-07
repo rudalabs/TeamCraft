@@ -67,7 +67,7 @@ impl Metrics {
         }
         let _ = writeln!(
             out,
-            "# HELP teamcraft_http_request_duration_seconds Time to answer a request."
+            "# HELP teamcraft_http_request_duration_seconds Time until the response headers were sent (a streamed body is not included)."
         );
         let _ = writeln!(
             out,
@@ -101,9 +101,13 @@ impl Metrics {
 }
 
 /// Compares the presented bearer token with the configured one without
-/// stopping at the first difference.
+/// stopping at the first difference. The scheme name is case-insensitive
+/// (RFC 7235), so `bearer …` works as well.
 pub fn token_matches(header: Option<&str>, expected: &str) -> bool {
-    let Some(given) = header.and_then(|h| h.strip_prefix("Bearer ")) else {
+    let Some(given) = header.and_then(|h| {
+        let (scheme, rest) = h.split_at_checked(7)?;
+        scheme.eq_ignore_ascii_case("Bearer ").then_some(rest)
+    }) else {
         return false;
     };
     let (a, b) = (given.as_bytes(), expected.as_bytes());
@@ -154,6 +158,12 @@ mod tests {
     #[test]
     fn token_comparison() {
         assert!(token_matches(Some("Bearer s3cret"), "s3cret"));
+        assert!(token_matches(Some("bearer s3cret"), "s3cret"));
+        assert!(token_matches(Some("BEARER s3cret"), "s3cret"));
+        assert!(!token_matches(Some("Basic  s3cret"), "s3cret"));
+        assert!(!token_matches(Some("Bear"), "s3cret"));
+        // a multi-byte character across the scheme boundary is no panic
+        assert!(!token_matches(Some("Bearerä s3cret"), "s3cret"));
         assert!(!token_matches(Some("Bearer s3cret2"), "s3cret"));
         assert!(!token_matches(Some("Bearer s3cre"), "s3cret"));
         assert!(!token_matches(Some("s3cret"), "s3cret"));
