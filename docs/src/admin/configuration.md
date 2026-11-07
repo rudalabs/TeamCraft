@@ -296,8 +296,8 @@ writes, or another MCP client or agent that wraps the REST API with that
 token, still reads and writes with that user's rights and can hand what it
 reads to an AI provider of the user's choice. Nor can a server stop
 anyone from copying what they see into another tool. The complement is scoped personal access
-tokens (read-only, no API), which are planned (`docs/OPEN_WORK.md`, F2).
-Until then, a written usage policy, the token list of each user
+tokens: give an agent a `read_only` or `mcp_only` token (see
+[API reference](../reference/api.md#token-scopes)). A written usage policy, the token list of each user
 (*Account → API tokens*, revocable by administrators) and the audit log
 (writes are recorded under the user's name) are the controls for the rest.
 

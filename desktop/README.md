@@ -87,7 +87,7 @@ in [platforms/windows.md](../platforms/windows.md).
 On the first start enter the server address (`localhost:8080` for a local
 server, `host:port` otherwise) and click **Sign in with the browser**: the browser asks you to
 confirm the sign-in for this computer, the app receives a personal access
-token (valid 90 days, revocable on your account page in the web UI).
+token (expires after 30 days without use, every use renews it; revocable on your account page in the web UI).
 When the server runs a version the app does not fit (before 1.0: another
 `major.minor`; from 1.0: another major version or an older minor version), the
 sign-in screen – or, if you are already signed in, a toast in the main window –

@@ -1249,3 +1249,178 @@ async fn web_uploads_check_origin_rights_and_ownership() {
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
     app.teardown().await;
 }
+
+/// The "New item" form sends large files in chunks (sessions without a
+/// revision) and then lists them in `uploads`; the item is created with them
+/// in one transaction. Such a session joins nothing else.
+#[tokio::test]
+async fn new_item_form_takes_chunked_files() {
+    let app = app_or_skip!();
+    let (_, max) = app.user_in("max", Role::Editor, &["ROVER"]).await;
+    app.user_in("vic", Role::Viewer, &["ROVER"]).await;
+    item(&app, &max).await;
+    let rev = app.api(Method::GET, REV, &max, None).await.json();
+    let rev_id = rev["revision"]["id"].as_str().unwrap().to_string();
+    let rover = app.project_id("ROVER").await.to_string();
+    let cookie = app.login("max").await;
+    let content = b"0123456789abcdefghij";
+
+    // The form marks itself for app.js; the plain multipart form stays the
+    // fallback without JavaScript.
+    let page = app.get_page("/items/new", Some(&cookie)).await.text();
+    assert!(page.contains("data-chunked=\"new-item\""));
+    assert!(page.contains("enctype=\"multipart/form-data\""));
+
+    // Viewers cannot start such an upload.
+    let viewer = app.login("vic").await;
+    let r = web_start(
+        &app,
+        &viewer,
+        json!({ "revision_id": null, "filename": "a.bin", "size": 1 }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+
+    // Start without a revision, send in two chunks.
+    let r = web_start(
+        &app,
+        &cookie,
+        json!({ "revision_id": null, "filename": "Gearbox.bin", "size": content.len() }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let session = r.json();
+    assert!(session["revision_id"].is_null());
+    let id = session["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        web_patch(&app, &cookie, &id, 0, &content[..12])
+            .await
+            .status,
+        StatusCode::OK
+    );
+    let r = web_get(&app, &cookie, &id).await;
+    assert_eq!(r.json()["offset"], 12, "resume point");
+    let r = web_patch(&app, &cookie, &id, 12, &content[12..]).await;
+    assert_eq!(r.json()["complete"], true);
+
+    // It cannot join a revision's check-in, nor be finished through the API.
+    let uploads_field = json!([id]).to_string();
+    let r = web_form(
+        &app,
+        &format!("/revisions/{rev_id}/checkin"),
+        &cookie,
+        &[],
+        &[("uploads", &uploads_field)],
+    )
+    .await;
+    // A scripted refusal goes back to the revision page, not to a success page.
+    if let Some(location) = r.json().get("location").and_then(|l| l.as_str()) {
+        assert!(
+            location.starts_with(&format!("/revisions/{rev_id}")),
+            "{location}"
+        );
+    }
+    // Refused: the revision stays checked out to max, nothing is stored.
+    let r = app.api(Method::GET, REV, &max, None).await;
+    assert!(
+        !r.json()["revision"]["checked_out_by"].is_null(),
+        "the check-in was refused, the lock stays"
+    );
+    assert!(
+        file_named(&app, &max, "Gearbox.bin").await.is_null(),
+        "nothing was stored in the other revision"
+    );
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/uploads/{id}/finish"),
+            &max,
+            Some(json!({})),
+        )
+        .await;
+    assert!(r.status.is_client_error(), "{} {}", r.status, r.text());
+    // The session survives those refusals.
+    assert_eq!(web_get(&app, &cookie, &id).await.status, StatusCode::OK);
+
+    // The form: one small file next to the chunked one, name from the first file.
+    let r = web_form(
+        &app,
+        "/items",
+        &cookie,
+        &[("notes.txt", b"small file")],
+        &[
+            ("item_type", "part"),
+            ("project_id", &rover),
+            ("name", "Gearbox"),
+            ("uploads", &uploads_field),
+        ],
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let target = r.json()["location"].as_str().unwrap().to_string();
+    assert!(target.starts_with("/revisions/"), "{target}");
+    let page = app.get_page(&target, Some(&cookie)).await.text();
+    assert!(page.contains("Gearbox.bin"), "chunked file is stored");
+    assert!(page.contains("notes.txt"), "small file is stored");
+    // The session is gone.
+    assert_eq!(
+        web_get(&app, &cookie, &id).await.status,
+        StatusCode::NOT_FOUND
+    );
+
+    // A session of a revision cannot create an item.
+    let r = web_start(
+        &app,
+        &cookie,
+        json!({ "revision_id": rev_id, "filename": "x.bin", "size": 4 }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let foreign = r.json()["id"].as_str().unwrap().to_string();
+    web_patch(&app, &cookie, &foreign, 0, b"data").await;
+    let r = web_form(
+        &app,
+        "/items",
+        &cookie,
+        &[],
+        &[
+            ("item_type", "part"),
+            ("project_id", &rover),
+            ("name", "Should not exist"),
+            ("uploads", &json!([foreign]).to_string()),
+        ],
+    )
+    .await;
+    let location = r.json()["location"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        location.starts_with("/items/new"),
+        "a revision session must not join a new item: {location} {}",
+        r.text()
+    );
+    // An unknown session id goes back to the form as well, keeping the input.
+    let unknown = json!(["00000000-0000-0000-0000-000000000000"]).to_string();
+    let r = web_form(
+        &app,
+        "/items",
+        &cookie,
+        &[],
+        &[
+            ("item_type", "part"),
+            ("project_id", &rover),
+            ("name", "Unknown session"),
+            ("uploads", &unknown),
+        ],
+    )
+    .await;
+    let location = r.json()["location"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(location.starts_with("/items/new?type=part"), "{location}");
+    let items = app.get_page("/items", Some(&cookie)).await.text();
+    assert!(!items.contains("Should not exist"));
+    app.teardown().await;
+}

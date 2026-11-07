@@ -81,7 +81,9 @@ feature milestone – the features in *What works* are enough; what is missing i
     429 with `Retry-After`)
   - [x] F1 (rest): wrong current passwords of the own password change (web form and `POST /api/v1/me/password`)
     count like failed sign-ins (429 with `Retry-After`, audited as `user.password_failed`)
-  - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
+  - [x] F2: scoped PATs (`full` = read+write+approve, `write` = no approving, `read_only`, `mcp_only`;
+    existing and desktop tokens stay `full`; a token cannot mint a wider one). Left: a narrower desktop token by default,
+    per-group scopes, sign-off re-authentication (#152 step 4)
     (also the complement of `TEAMCRAFT_LOCAL_AGENTS=off`, which closes the MCP endpoint for every token but
     not the REST API: a read-only token would narrow what an agent holding a user's own token can do there)
   - [x] F3: sign-in, failed sign-in and sign-out in the audit log (`user.sign_in`, `user.sign_in_failed`,
@@ -199,6 +201,18 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   `a_non_ascii_letter_in_the_extension_does_not_panic`)
 - [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
 - [x] Coverage measured per PR (`cargo llvm-cov`, PostgreSQL 18 leg of the CI job *tests*, before 2026-11-07 its own job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
+- [ ] Mutation testing (`cargo mutants`, [research](src/research/mutation-testing.md), [how to](src/dev/mutation-testing.md)):
+  `.cargo/mutants.toml` examines the pure modules with `cargo test --lib` (no PostgreSQL); workflow `mutants.yml`
+  runs `--in-diff` on pull requests (report-only) and a weekly sharded full run. Done: `httprange` (0 missed) and
+  `util` (3 missed → 0, `byte_sizes_stop_at_tib`), plus the field mutants of `resultscan::TemplateInput::validated`
+  (7 missed → 0, `template_input_is_stored_normalised`). Next, in this order: `pagecontext` (58 mutants, 5 tests),
+  `src/domain/**` (~500, the rules – lifecycle, roles, revisions, validation; the unit tests sit in `domain/mod.rs`,
+  several submodules have none of their own), `cadformat` (287), `htmltext` (263), `resultscan` (193), `cadrefs`
+  (189), `bomtable` (166), `stepbom` (155) – read the first weekly report, fix or document every missed mutant per
+  module. Then: make the PR job blocking once the examined modules are clean; add `llm/anthropic.rs`,
+  `llm/openai.rs`, `mesh/*` readers and `simmesh`; decide whether services with database tests are worth a second,
+  PostgreSQL-backed run (`--test-package`/integration tests – hours per run); speed up the slowest lib tests
+  (18 s of each mutant's ~30 s is the lib test run)
 - [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
 - [ ] Branch protection on `main` (**maintainer action**, needs admin rights): a ruleset with required checks – fmt and
   clippy, tests on PostgreSQL 16 and 18, build (windows-latest), cargo deny (Cargo.toml), local links and images.
@@ -328,15 +342,18 @@ real files and belong to section 3 once such files are at hand.
 **Ownership and approval rules ([#152](https://github.com/rudalabs/TeamCraft/issues/152))**
 
 - [x] Step 1: wider separation of duties (editors and the acting admin cannot review; suggester excludes them).
-- [ ] Step 2: review policy per project group (min approvals, required reviewers, role group).
+- [x] Step 2: review policy per project group (min approvals, required reviewers, role group). Left: show the policy on the change page, notify when a role group has no eligible reviewer. (After submit only the parts the assigned reviewers can meet count, instead of a frozen snapshot.)
 - [ ] Step 3: obsolete and supersede through a change order (per-group setting), supersede notifies watchers.
 - [ ] Step 4: token scopes (`approve`) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`).
+- [x] Step 5: keep review rounds (`change_review_rounds`, `changes.review_round`; change page and API show earlier rounds).
+- [x] Step 6: flag and replace absent reviewers (substitutes per user: still open).
+- [ ] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`, open).
 - [ ] Step 5: keep review rounds in `change_reviews`.
 - [ ] Step 6: flag and replace absent reviewers, substitutes.
-- [ ] Step 7: item owner and admin handover of a leaving user's work.
+- [x] Step 7: item owner and admin handover of a leaving user's work (owner on the item page; notifying the new owner and a CLI command are not done).
 - [ ] Step 8: approvals in the package manifest, audit log export, hash chain.
 - [ ] Step 9: requester cannot triage own request; separate approval of *use as is* deviations.
-- [ ] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
+- [x] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
 
 **Desktop app**
 
@@ -354,8 +371,8 @@ real files and belong to section 3 once such files are at hand.
 
 - [ ] Browser check (no console errors, no overflow at 390 px) of `/requests`, `/requests/new` and `/requests/{id}`,
   and the desktop request tab
-- [ ] Chunked uploads from the *New item* form of the web UI – it still sends its files in one request (the revision
-  exists only afterwards); the attach and check-in forms use `/uploads` (feature 9)
+- [x] Chunked uploads from the *New item* form of the web UI: sessions without a revision (migration 0045) that only
+  join the creation of an item; the attach and check-in forms use `/uploads` (feature 9)
 - [ ] Custom attributes per file type (feature 5, items are done)
 - [ ] Feature 6 leftovers: local substitutes per BOM line, a warning when a superseded item is added to a BOM in the
   desktop app
@@ -402,7 +419,7 @@ real files and belong to section 3 once such files are at hand.
     `read_file_text` – with the last 64 KiB of a larger file after a marker); templates with `pick = last` read the
     last 2 MB of a larger file first; new template method `table` (Fluent report files, migration 0040); fuzz target
     `resultscan`
-  - [ ] Step 3 – solver summary per file version: pure `src/solversummary.rs` over head and tail (64 KiB each):
+  - [x] Step 3 (this PR, rules unverified against real files) – solver summary per file version: pure `src/solversummary.rs` over head and tail (64 KiB each):
     Fluent banner/convergence/last iteration, report file columns and last row, `.f06` version, `END OF JOB` and
     FATAL/WARNING window counts, Nastran `SOL`, STAR-CCM+ macro version and stopping criterion; a nullable JSONB
     column on file versions, one line on the file row and the simulation page, data (untrusted) for the MCP tools
@@ -428,7 +445,7 @@ real files and belong to section 3 once such files are at hand.
   the extracted text ([#141](https://github.com/rudalabs/TeamCraft/issues/141))
 - [ ] HTML reports: MHTML (`.mht`) and ZIP-packed multi-file reports (unpacking needs its own caps, see F13); text hidden
   by a style sheet (not inline) is not detected
-- [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
+- [x] Result values in the item search (failed, passed, above/below limit, by name) and a dashboard card for failing or out-of-date simulations; left: an *out of date* search filter, the `result` filter in the MCP `search_items` tool and in saved searches
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
 - [x] Retention for large result files (`files.retention = 'latest'`): per file, old versions removed after a grace period, never for released revisions (`teamcraft vault purge-versions`); left: a size-based default for new files

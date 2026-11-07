@@ -13,9 +13,11 @@
 //! | requester of a change request this change implements              | 1                 |
 //!
 //! Each source is capped per candidate so that one busy source cannot drown
-//! the others. Only users who may review are suggested: active CAD editors
-//! and admins (as `changes::add_reviewer` requires), never the author of the
-//! change and never someone who is already a reviewer. Ties are broken by
+//! the others. Candidates are active CAD editors and admins (as
+//! `changes::add_reviewer` requires), never the author of the change and
+//! never someone who is already a reviewer. People who changed the affected
+//! revisions know the item best but may not review it (four-eyes): they are
+//! listed after the real candidates with `cannot_review`, as information. Ties are broken by
 //! name, so the same data always gives the same order.
 //!
 //! The whole lookup is one statement whose parts are bounded (affected
@@ -77,6 +79,9 @@ pub struct Suggestion {
     pub display_name: String,
     pub role: String,
     pub score: i64,
+    /// Knows the item but changed it, so the four-eyes principle forbids
+    /// the review: shown as information, not offered as a reviewer.
+    pub cannot_review: bool,
     /// Most important first, e.g. "edited PRT-000005 3 times in the last 90 days".
     pub reasons: Vec<String>,
 }
@@ -97,6 +102,8 @@ pub(crate) struct Signal {
     /// For `review`: the decision; for `dependent`: the relation.
     pub detail: String,
     pub n: i64,
+    /// Changed the affected revisions: knows the item but may not review it.
+    pub editor: bool,
 }
 
 /// Latest, not obsolete revision of an item (SQL condition on `pr`).
@@ -209,6 +216,7 @@ pub async fn suggest(
          -- the users late in the alphabet
          eligible AS (
              SELECT s.*, u.username, u.display_name, u.role,
+                    u.id IN (SELECT e.user_id FROM ({editors}) e WHERE e.user_id IS NOT NULL) AS editor,
                     CASE s.kind WHEN 'edit' THEN 3 + LEAST(s.n, 7)
                                 WHEN 'review' THEN CASE WHEN s.detail IN ('approved', 'rejected')
                                                         THEN 4 ELSE 2 END
@@ -218,7 +226,6 @@ pub async fn suggest(
              FROM signals s JOIN users u ON u.id = s.user_id
              WHERE u.active AND u.role IN ('editor', 'admin') AND u.id <> $2
                AND ($12::uuid IS NULL OR u.id <> $12)
-               AND u.id NOT IN (SELECT e.user_id FROM ({editors}) e WHERE e.user_id IS NOT NULL)
                AND NOT EXISTS (SELECT 1 FROM change_reviews x
                                WHERE x.change_id = $1 AND x.reviewer_id = u.id)
                AND NOT EXISTS (SELECT 1 FROM change_items sci
@@ -231,7 +238,7 @@ pub async fn suggest(
                                             ORDER BY e.points DESC, e.subject, e.via) AS pos
              FROM eligible e
          )
-         SELECT user_id, username, display_name, role, kind, subject, via, detail, n
+         SELECT user_id, username, display_name, role, editor, kind, subject, via, detail, n
          FROM ranked
          WHERE pos <= $9
          ORDER BY points DESC, username, kind, subject, via
@@ -337,11 +344,13 @@ pub(crate) fn rank(signals: Vec<Signal>, limit: usize) -> Vec<Suggestion> {
                 display_name: sig.display_name.clone(),
                 role: sig.role.clone(),
                 score: 0,
+                cannot_review: false,
                 reasons: Vec::new(),
             },
             per_kind: BTreeMap::new(),
             reasons: Vec::new(),
         });
+        acc.s.cannot_review |= sig.editor;
         if acc.reasons.iter().any(|(_, r)| *r == reason) {
             continue;
         }
@@ -367,8 +376,9 @@ pub(crate) fn rank(signals: Vec<Signal>, limit: usize) -> Vec<Suggestion> {
         })
         .collect();
     out.sort_by(|a, b| {
-        b.score
-            .cmp(&a.score)
+        a.cannot_review
+            .cmp(&b.cannot_review)
+            .then_with(|| b.score.cmp(&a.score))
             .then_with(|| a.display_name.cmp(&b.display_name))
             .then_with(|| a.username.cmp(&b.username))
     });
@@ -391,6 +401,7 @@ mod tests {
             via: "PRT-000001".into(),
             detail: detail.into(),
             n,
+            editor: false,
         }
     }
 
@@ -422,6 +433,23 @@ mod tests {
         assert_eq!(out[3].score, 2);
         assert_eq!(out[3].reasons, ["owns ASM-000003, which uses PRT-000001"]);
         assert_eq!(rank(Vec::new(), 5), Vec::new());
+    }
+
+    #[test]
+    fn editors_are_listed_last_and_flagged() {
+        let mut editor = sig(1, "Anna", "edit", "PRT-000001", "", 5);
+        editor.editor = true;
+        let out = rank(vec![editor, sig(2, "Zed", "manager", "ROVER", "", 1)], 5);
+        let names: Vec<(&str, bool)> = out
+            .iter()
+            .map(|s| (s.display_name.as_str(), s.cannot_review))
+            .collect();
+        assert_eq!(names, [("Zed", false), ("Anna", true)]);
+        // the limit cuts the editors first
+        let mut editor = sig(1, "Anna", "edit", "PRT-000001", "", 5);
+        editor.editor = true;
+        let out = rank(vec![editor, sig(2, "Zed", "manager", "ROVER", "", 1)], 1);
+        assert_eq!(out[0].display_name, "Zed");
     }
 
     #[test]

@@ -1054,6 +1054,35 @@ mod tests {
         assert!(t.validated().is_err());
     }
 
+    /// What `validated` returns is what gets stored: trimmed text, the
+    /// method's canonical name and the default pick – not the raw form input
+    /// (found by cargo-mutants: deleting any of these fields from the result,
+    /// so that `..self` passed the raw value through, went unnoticed).
+    #[test]
+    fn template_input_is_stored_normalised() {
+        let t = TemplateInput {
+            name: "  dp  ".into(),
+            file_pattern: " *.csv\t".into(),
+            method: " csv ".into(),
+            csv_column: " dp ".into(),
+            pick: "  ".into(),
+            unit: " bar ".into(),
+            load_case: " LC1 ".into(),
+            solver: " Fluent ".into(),
+            ..Default::default()
+        }
+        .validated()
+        .unwrap();
+        assert_eq!(t.name, "dp");
+        assert_eq!(t.file_pattern, "*.csv");
+        assert_eq!(t.method, "csv");
+        assert_eq!(t.csv_column, "dp");
+        assert_eq!(t.pick, "last", "no pick means the last match");
+        assert_eq!(t.unit, "bar");
+        assert_eq!(t.load_case, "LC1");
+        assert_eq!(t.solver, "Fluent");
+    }
+
     /// A Fluent report file as written by the report definitions.
     const FLUENT_REPORT: &str = "\"report-def-0-rfile\"\n\
         \"Iteration\" \"pressure-drop\" \"flow-time\"\n\

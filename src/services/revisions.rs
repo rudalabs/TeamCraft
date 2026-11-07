@@ -499,11 +499,11 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     sqlx::query(
         "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
                                     uploaded_by, uploaded_at, content_text, references_scanned,
-                                    export_name, export_name_scanned)
+                                    export_name, export_name_scanned, solver_summary)
          SELECT gen_random_uuid(), f.id, 1, f.sha256, f.size_bytes, f.content_type,
                 'Taken over from revision ' || $2, f.uploaded_by, f.uploaded_at,
                 COALESCE(ov.content_text, ''), COALESCE(ov.references_scanned, FALSE), ov.export_name,
-                COALESCE(ov.export_name_scanned, FALSE)
+                COALESCE(ov.export_name_scanned, FALSE), ov.solver_summary
          FROM files f
          LEFT JOIN files ofl ON ofl.revision_id = $3 AND ofl.filename = f.filename
          LEFT JOIN file_versions ov ON ov.file_id = ofl.id AND ov.version = ofl.current_version

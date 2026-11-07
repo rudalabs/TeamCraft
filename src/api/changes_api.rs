@@ -66,7 +66,12 @@ pub(super) async fn change_json(st: &AppState, me: &Actor, number: &str) -> AppR
     let change = changes::get_by_number(&st.db, me, number).await?;
     let affected = changes::items(&st.db, me, change.id).await?;
     let reviews = changes::reviews(&st.db, change.id).await?;
-    Ok(json!({ "change": change, "items": affected, "reviews": reviews }))
+    let round = changes::review_round(&st.db, change.id).await?;
+    let earlier = changes::earlier_rounds(&st.db, change.id).await?;
+    Ok(json!({
+        "change": change, "items": affected, "reviews": reviews,
+        "review_round": round, "earlier_rounds": earlier,
+    }))
 }
 
 pub(super) async fn get_change(
@@ -133,6 +138,27 @@ pub(super) async fn add_change_reviewer(
         )));
     }
     changes::add_reviewer(&st.db, &me, change.id, &body.username).await?;
+    Ok(Json(change_json(&st, &me, &number).await?))
+}
+
+#[derive(Deserialize)]
+pub(super) struct ReplaceReviewer {
+    /// Username of the substitute.
+    username: String,
+}
+
+/// Replaces a reviewer who has not decided yet while the change is in review.
+pub(super) async fn replace_change_reviewer(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, old)): Path<(String, String)>,
+    ApiJson(body): ApiJson<ReplaceReviewer>,
+) -> AppResult<Json<Value>> {
+    let change = changes::get_by_number(&st.db, &me, &number).await?;
+    let old = users::find_by_username(&st.db, &old)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Unknown user '{old}'.")))?;
+    changes::replace_reviewer(&st.db, &me, change.id, old.id, &body.username).await?;
     Ok(Json(change_json(&st, &me, &number).await?))
 }
 

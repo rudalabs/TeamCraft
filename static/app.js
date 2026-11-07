@@ -33,7 +33,8 @@
   // button that stops the transfer at once. Without JavaScript the form is
   // simply submitted.
   //
-  // On forms with data-chunked="<revision id>", files above CHUNKED_ABOVE
+  // On forms with data-chunked="<revision id>" (or "new-item" on the New item
+  // form, whose sessions have no revision yet), files above CHUNKED_ABOVE
   // go first in chunks to /uploads (the sessions of /api/v1/uploads, see
   // src/web/uploads.rs); the form then lists them in its `uploads` field and
   // stores them with the other files in one transaction. A broken connection
@@ -41,6 +42,7 @@
   // same files again resumes where the server stopped (the session ids are
   // remembered per revision and file in localStorage).
   var CHUNKED_ABOVE = 32 * 1024 * 1024; // the desktop app's limit (desktop/src/api.rs)
+  var NEW_ITEM = "new-item"; // data-chunked of the New item form
   var RETRIES = 6; // per chunk, waiting 1, 2, 4, … s
 
   function formatBytes(n) {
@@ -150,7 +152,7 @@
       var resumed = known
         ? job.send("GET", "/uploads/" + encodeURIComponent(known)).then(function (xhr) {
           var s = xhr.status === 200 ? jsonOf(xhr) : null;
-          if (s && s.revision_id === revision && s.size === file.size) return s;
+          if (s && (s.revision_id || NEW_ITEM) === revision && s.size === file.size) return s;
           remember(key, null); // finished, cancelled or expired meanwhile
           return null;
         }, function (e) {
@@ -161,7 +163,7 @@
       return resumed.then(function (s) {
         if (s) return s;
         var body = JSON.stringify({
-          revision_id: revision,
+          revision_id: revision === NEW_ITEM ? null : revision,
           filename: file.name,
           size: file.size,
           content_type: file.type || null

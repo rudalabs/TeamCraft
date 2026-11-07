@@ -87,6 +87,65 @@ impl ResultStatus {
     }
 }
 
+/// Which result values the item search looks for (latest revision of a
+/// simulation): within or outside their limits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResultFilter {
+    /// At least one value outside its limits.
+    Failed,
+    /// At least one value with limits, and within them.
+    Passed,
+    /// At least one value above its upper limit.
+    AboveLimit,
+    /// At least one value below its lower limit.
+    BelowLimit,
+}
+
+impl ResultFilter {
+    pub const ALL: [ResultFilter; 4] = [
+        ResultFilter::Failed,
+        ResultFilter::Passed,
+        ResultFilter::AboveLimit,
+        ResultFilter::BelowLimit,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResultFilter::Failed => "failed",
+            ResultFilter::Passed => "passed",
+            ResultFilter::AboveLimit => "above_limit",
+            ResultFilter::BelowLimit => "below_limit",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ResultFilter::Failed => "A value fails its limits",
+            ResultFilter::Passed => "A value passes its limits",
+            ResultFilter::AboveLimit => "A value is above its limit",
+            ResultFilter::BelowLimit => "A value is below its limit",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ResultFilter> {
+        ResultFilter::ALL
+            .into_iter()
+            .find(|f| f.as_str() == s.trim())
+    }
+
+    /// Parses an optional request field: empty = no filter, unknown = 400.
+    pub fn parse_field(s: Option<&str>) -> Result<Option<ResultFilter>, AppError> {
+        match s.map(str::trim).filter(|s| !s.is_empty()) {
+            None => Ok(None),
+            Some(s) => ResultFilter::parse(s).map(Some).ok_or_else(|| {
+                AppError::BadRequest(format!(
+                    "Unknown result filter '{s}' (failed, passed, above_limit, below_limit)."
+                ))
+            }),
+        }
+    }
+}
+
 /// Pass when `lower <= value <= upper` (limits inclusive, either may be
 /// missing), fail otherwise; [`ResultStatus::NoLimits`] without limits.
 pub fn result_status(value: f64, lower: Option<f64>, upper: Option<f64>) -> ResultStatus {

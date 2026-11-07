@@ -406,9 +406,15 @@ async fn a_v0_1_0_database_with_data_upgrades_without_loss() {
 
     // and the current server reads the old data
     let actor = other.actor("erika").await;
-    let (_, token) = teamcraft::services::users::create_token(&other.pool, &actor, "upgrade", None)
-        .await
-        .expect("token");
+    let (_, token) = teamcraft::services::users::create_token(
+        &other.pool,
+        &actor,
+        "upgrade",
+        teamcraft::services::users::TokenLifetime::Unlimited,
+        teamcraft::domain::TokenScope::Full,
+    )
+    .await
+    .expect("token");
     let r = other
         .api(
             axum::http::Method::GET,

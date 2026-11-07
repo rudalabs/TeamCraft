@@ -16,6 +16,7 @@ mod references;
 mod roles;
 mod simulations;
 mod skins;
+mod tokens;
 mod validation;
 
 pub use as_built::*;
@@ -29,6 +30,7 @@ pub use references::*;
 pub use roles::*;
 pub use simulations::*;
 pub use skins::*;
+pub use tokens::*;
 pub use validation::*;
 
 #[cfg(test)]
@@ -620,6 +622,107 @@ mod tests {
     }
 
     #[test]
+    fn review_policy_outcomes() {
+        use uuid::Uuid;
+        use Decision::*;
+        let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let none = ReviewRequirement::default();
+        // the default equals the old rule
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Pending)], &none),
+            ReviewOutcome::Pending
+        );
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Approved)], &none),
+            ReviewOutcome::Approved
+        );
+        assert_eq!(review_outcome_with(&[], &none), ReviewOutcome::Pending);
+        // two of three
+        let two = ReviewRequirement {
+            min_approvals: Some(2),
+            ..Default::default()
+        };
+        let votes = [(a, Approved), (b, Approved), (c, Pending)];
+        assert_eq!(review_outcome_with(&votes, &two), ReviewOutcome::Approved);
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Pending), (c, Pending)], &two),
+            ReviewOutcome::Pending
+        );
+        // a rejection still rejects
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Approved), (c, Rejected)], &two),
+            ReviewOutcome::Rejected
+        );
+        // a required person
+        let need_c = ReviewRequirement {
+            min_approvals: Some(1),
+            required_users: vec![(c, "Carl".into())],
+            ..Default::default()
+        };
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (c, Pending)], &need_c),
+            ReviewOutcome::Pending
+        );
+        assert_eq!(
+            review_outcome_with(&[(a, Pending), (c, Approved)], &need_c),
+            ReviewOutcome::Approved
+        );
+        // a role group
+        let qa = ReviewRequirement {
+            min_approvals: Some(1),
+            role_groups: vec![RoleRequirement {
+                label: "QA".into(),
+                members: vec![b],
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Pending)], &qa),
+            ReviewOutcome::Pending
+        );
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Approved)], &qa),
+            ReviewOutcome::Approved
+        );
+        // min larger than the reviewers is capped (submit refuses it earlier)
+        let ten = ReviewRequirement {
+            min_approvals: Some(10),
+            ..Default::default()
+        };
+        assert_eq!(
+            review_outcome_with(&[(a, Approved)], &ten),
+            ReviewOutcome::Approved
+        );
+    }
+
+    #[test]
+    fn review_policy_combination_and_shortfalls() {
+        use uuid::Uuid;
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        assert_eq!(combine_min_approvals(&[]), None);
+        assert_eq!(combine_min_approvals(&[Some(2), None]), None);
+        assert_eq!(combine_min_approvals(&[Some(2), Some(3)]), Some(3));
+        let req = ReviewRequirement {
+            min_approvals: Some(3),
+            required_users: vec![(b, "Bea".into())],
+            role_groups: vec![RoleRequirement {
+                label: "QA".into(),
+                members: vec![b],
+            }],
+        };
+        let s = policy_shortfalls(&[a], &req);
+        assert_eq!(s.len(), 3, "{s:?}");
+        assert!(s[0].contains("3 approvals") && s[0].contains("only 1 reviewer is"));
+        assert!(s[1].contains("Bea"));
+        assert!(s[2].contains("QA"));
+        assert!(policy_shortfalls(&[a, b, Uuid::from_u128(3)], &req).is_empty());
+        assert!(policy_shortfalls(&[], &ReviewRequirement::default()).is_empty());
+        let rest = attainable(&req, &[a]);
+        assert!(rest.required_users.is_empty() && rest.role_groups.is_empty());
+        assert_eq!(attainable(&req, &[a, b]), req);
+    }
+
+    #[test]
     fn item_numbers() {
         let ctx = |t| NumberContext {
             project: "ROVER",
@@ -748,6 +851,19 @@ mod tests {
         assert_eq!(BasisRole::parse("Load-Case"), Some(BasisRole::LoadCase));
         assert_eq!(BasisRole::parse("load case"), Some(BasisRole::LoadCase));
         assert_eq!(BasisRole::parse("sketch"), None);
+    }
+
+    #[test]
+    fn result_filter_names_round_trip() {
+        for f in ResultFilter::ALL {
+            assert_eq!(ResultFilter::parse(f.as_str()), Some(f));
+            assert!(!f.label().is_empty());
+        }
+        assert_eq!(ResultFilter::parse(" failed "), Some(ResultFilter::Failed));
+        assert_eq!(ResultFilter::parse("fail"), None);
+        assert_eq!(ResultFilter::parse_field(None).unwrap(), None);
+        assert_eq!(ResultFilter::parse_field(Some("  ")).unwrap(), None);
+        assert!(ResultFilter::parse_field(Some("nope")).is_err());
     }
 
     #[test]

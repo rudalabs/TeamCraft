@@ -46,7 +46,9 @@ setting can and cannot enforce.
 
 Create a personal access token under **Account → API tokens**. Give it an
 expiry, and give each assistant or machine its own token so you can revoke
-it on its own.
+it on its own. Prefer a scoped token: `read_only` (only the read-only tools),
+`write` (all tools, but no approving on the REST API) or `mcp_only` (see
+[Token scopes](api.md#token-scopes)).
 
 ### Claude Code
 
