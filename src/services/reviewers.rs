@@ -51,7 +51,7 @@ const MAX_ROWS: i64 = 5000;
 const MAX_PER_SOURCE: i64 = 6;
 
 /// Audit actions on a revision that count as editing it.
-const EDIT_ACTIONS: &[&str] = &[
+pub(crate) const EDIT_ACTIONS: &[&str] = &[
     "revision.checkin",
     "revision.update",
     "revision.revise",
@@ -214,6 +214,8 @@ pub async fn suggest(
                                 ELSE 1 END AS points
              FROM signals s JOIN users u ON u.id = s.user_id
              WHERE u.active AND u.role IN ('editor', 'admin') AND u.id <> $2
+               AND u.id <> $11
+               AND u.id NOT IN (SELECT e.user_id FROM ({editors}) e WHERE e.user_id IS NOT NULL)
                AND NOT EXISTS (SELECT 1 FROM change_reviews x
                                WHERE x.change_id = $1 AND x.reviewer_id = u.id)
                AND NOT EXISTS (SELECT 1 FROM change_items sci
@@ -236,6 +238,7 @@ pub async fn suggest(
         vis_c = access::change_visible("c", 11, 10),
         vis_rq = access::request_visible("rq", 11, 10),
         sees = access::user_sees_project("u", "si.project_id"),
+        editors = changes::editors_sql(6),
     );
     let signals = sqlx::query_as::<_, Signal>(&sql)
         .bind(change_id)

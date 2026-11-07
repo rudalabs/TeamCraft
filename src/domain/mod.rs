@@ -565,6 +565,29 @@ mod tests {
     }
 
     #[test]
+    fn separation_of_duties() {
+        use uuid::Uuid;
+        let (author, admin, editor, other) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let editors = [editor];
+        let check = |who, submitter| conflicting_reviewer(who, author, submitter, &editors);
+        assert_eq!(check(author, None), Some(ReviewConflict::Author));
+        assert_eq!(check(editor, None), Some(ReviewConflict::Editor));
+        assert_eq!(check(admin, Some(admin)), Some(ReviewConflict::Submitter));
+        assert_eq!(check(admin, None), None);
+        assert_eq!(check(other, Some(admin)), None);
+        // the author wins over the other reasons
+        assert_eq!(
+            conflicting_reviewer(author, author, Some(author), &[author]),
+            Some(ReviewConflict::Author)
+        );
+    }
+
+    #[test]
     fn review_outcomes() {
         use Decision::*;
         assert_eq!(review_outcome(&[]), ReviewOutcome::Pending);

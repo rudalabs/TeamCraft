@@ -171,7 +171,7 @@ there is no separate enterprise edition.
 
 - **Company AI only** ([#154](https://github.com/rudalabs/TeamCraft/pull/154)) – administrators can switch off the desktop app's own local AI agents, so employees use the organisation's configured AI instead of their own tools (data-loss prevention).
 - **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – stricter access and interface control per project group.
-- **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – wider separation of duties, review policies per project group, sign-off and handover.
+- **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – wider separation of duties (reviewers must not have edited the data or acted as the author; done in the open pull request), review policies per project group, sign-off and handover (open).
 - **Scoped access tokens** – personal access tokens limited to read-only or MCP-only use.
 
 TeamCraft is a community project without commercial support or a service

@@ -95,7 +95,7 @@ pub const LIFECYCLE_RULES: [TransitionRule; 4] = [
         from: LifecycleState::InReview,
         to: LifecycleState::Released,
         how: "Automatically when every reviewer of the change has approved; all its revisions are released together.",
-        who: "The assigned reviewers: CAD editors or admins, never the author (four-eyes principle).",
+        who: "The assigned reviewers: CAD editors or admins, never the author, the submitter or anyone who changed the revisions (four-eyes principle).",
     },
     TransitionRule {
         from: LifecycleState::InReview,

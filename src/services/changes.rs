@@ -303,6 +303,58 @@ pub async fn drafts(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Change>> {
     .await?)
 }
 
+/// SQL listing the users who changed the revisions of the change in `$1`:
+/// creators of the revisions, uploaders of their files and everybody with a
+/// logged edit (`reviewers::EDIT_ACTIONS`, bound as placeholder `actions`).
+/// A column `user_id`; the caller filters NULLs out.
+pub(crate) fn editors_sql(actions: usize) -> String {
+    format!(
+        "SELECT r.created_by AS user_id
+         FROM change_items ci JOIN revisions r ON r.id = ci.revision_id
+         WHERE ci.change_id = $1
+         UNION
+         SELECT f.uploaded_by
+         FROM change_items ci JOIN files f ON f.revision_id = ci.revision_id
+         WHERE ci.change_id = $1
+         UNION
+         SELECT a.user_id
+         FROM change_items ci
+         JOIN audit_log a ON a.entity_type = 'revision' AND a.entity_id = ci.revision_id
+         WHERE ci.change_id = $1 AND a.user_id IS NOT NULL AND a.action = ANY(${actions})"
+    )
+}
+
+/// Everybody who changed the affected revisions of a change order.
+pub(crate) async fn change_editors(
+    conn: &mut PgConnection,
+    change_id: Uuid,
+) -> AppResult<Vec<Uuid>> {
+    Ok(sqlx::query_scalar::<_, Uuid>(&editors_sql(2))
+        .bind(change_id)
+        .bind(crate::services::reviewers::EDIT_ACTIONS)
+        .fetch_all(&mut *conn)
+        .await?)
+}
+
+/// Separation of duties for one reviewer: not the author, not the person who
+/// submitted the change and nobody who changed the data. Checked when a
+/// reviewer is added, when the change is submitted and again when the
+/// reviewer decides, because people can edit while the change is a draft.
+async fn review_conflict(
+    conn: &mut PgConnection,
+    change: &Change,
+    reviewer: Uuid,
+    submitter: Option<Uuid>,
+) -> AppResult<Option<domain::ReviewConflict>> {
+    let editors = change_editors(conn, change.id).await?;
+    Ok(domain::conflicting_reviewer(
+        reviewer,
+        change.created_by,
+        submitter,
+        &editors,
+    ))
+}
+
 fn ensure_owner(change: &Change, actor: &Actor) -> AppResult<()> {
     actor.require(Role::Editor)?;
     if change.created_by == actor.id || actor.is_admin() {
@@ -853,10 +905,13 @@ pub async fn add_reviewer(
     // The check below looks at every item; for items the actor cannot see
     // it would tell who is a member of their group.
     ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
-    if reviewer.id == change.created_by {
-        return Err(AppError::BadRequest(
-            "The author of a change cannot review it (four-eyes principle).".into(),
-        ));
+    if let Some(conflict) = review_conflict(&mut tx, &change, reviewer.id, Some(actor.id)).await? {
+        return Err(AppError::BadRequest(format!(
+            "{} cannot review {}: they {} (four-eyes principle).",
+            reviewer.display_name,
+            change.number,
+            conflict.describe()
+        )));
     }
     // A reviewer must see everything they approve.
     let blind = sqlx::query_scalar::<_, bool>(&format!(
@@ -996,6 +1051,24 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
             "Assign at least one reviewer before submitting the change.".into(),
         ));
     }
+    // Separation of duties again: people may have edited since they were added.
+    let reviewers = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT cr.reviewer_id, u.display_name FROM change_reviews cr
+         JOIN users u ON u.id = cr.reviewer_id WHERE cr.change_id = $1 ORDER BY u.username",
+    )
+    .bind(change_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (reviewer, name) in &reviewers {
+        if let Some(conflict) = review_conflict(&mut tx, &change, *reviewer, Some(actor.id)).await?
+        {
+            return Err(AppError::Conflict(format!(
+                "{name} cannot review {}: they {} (four-eyes principle). Remove them as reviewer first.",
+                change.number,
+                conflict.describe()
+            )));
+        }
+    }
     for id in &item_ids {
         let rev = revisions::lock(&mut tx, *id).await?;
         // Membership may have changed since the revision was added.
@@ -1027,9 +1100,10 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     let labels = transition_items(&mut tx, change_id, LifecycleState::InReview).await?;
     reset_reviews(&mut tx, change_id).await?;
     sqlx::query(
-        "UPDATE changes SET status = 'in_review', submitted_at = now(), updated_at = now() WHERE id = $1",
+        "UPDATE changes SET status = 'in_review', submitted_at = now(), submitted_by = $2, updated_at = now() WHERE id = $1",
     )
     .bind(change_id)
+    .bind(actor.id)
     .execute(&mut *tx)
     .await?;
     // The labels name every item of the change: readers who see the change
@@ -1147,6 +1221,18 @@ pub async fn review(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::Forbidden(format!("You are not a reviewer of {}.", change.number)))?;
+    let submitter =
+        sqlx::query_scalar::<_, Option<Uuid>>("SELECT submitted_by FROM changes WHERE id = $1")
+            .bind(change_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if let Some(conflict) = review_conflict(&mut tx, &change, actor.id, submitter).await? {
+        return Err(AppError::Forbidden(format!(
+            "You cannot decide on {}: you {} (four-eyes principle).",
+            change.number,
+            conflict.describe()
+        )));
+    }
     if current != Decision::Pending.as_str() {
         return Err(AppError::Conflict(
             "You have already decided on this change.".into(),

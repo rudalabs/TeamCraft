@@ -17,6 +17,13 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Wider separation of duties (#152, step 1): a reviewer must not have created
+  the change, submitted it (an administrator acting for the author) or changed
+  the revisions under review (revision creator, file uploader, logged edits).
+  Checked when adding a reviewer, on submit and on every decision. The
+  reviewer suggestions never offer such users. Migration `0040` adds
+  `changes.submitted_by`.
+
 - HTML reports of FEA/CFD tools (`.html`, `.htm`) are read as text for the
   search, `read_file_text` and `propose_result_values` (#141): table rows as
   lines with ` | ` between the cells, numbers and units as written, entities

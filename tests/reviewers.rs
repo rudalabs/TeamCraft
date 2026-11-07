@@ -92,8 +92,9 @@ async fn reviewers_are_suggested_from_history() {
         .await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
 
-    // history: max edited the part 3 times recently (and once long ago),
-    // the viewer and the deactivated user edited it more, the author too
+    // history: max edited the part 3 times recently (and once long ago) and
+    // so cannot review it (separation of duties); the viewer and the
+    // deactivated user edited it more, the author too
     edits(&app, max.id, part_rev, 3, 5).await;
     edits(&app, max.id, part_rev, 1, 400).await;
     edits(&app, vera.id, part_rev, 6, 1).await;
@@ -197,33 +198,31 @@ async fn reviewers_are_suggested_from_history() {
     };
     let v = get(None).await;
     assert_eq!(v["change"], chg.as_str());
-    // ranked: edits (3+3) > earlier review (4) > manager (3) > dependent (2) > request (1)
-    assert_eq!(usernames(&v), ["max", "rolf", "anna", "olga", "carl"]);
+    // ranked: earlier review (4) > manager (3) > dependent (2) > request (1);
+    // max edited the affected revision and is never suggested
+    assert_eq!(usernames(&v), ["rolf", "anna", "olga", "carl"]);
     let reasons = |i: usize| v["suggestions"][i]["reasons"].clone();
+    assert_eq!(reasons(0), json!(["reviewed ECO-900001 (same items)"]));
+    assert_eq!(reasons(1), json!(["manager of ROCKET"]));
     assert_eq!(
-        reasons(0),
-        json!([format!("edited {part} 3 times in the last 90 days")])
-    );
-    assert_eq!(reasons(1), json!(["reviewed ECO-900001 (same items)"]));
-    assert_eq!(reasons(2), json!(["manager of ROCKET"]));
-    assert_eq!(
-        reasons(3),
+        reasons(2),
         json!([format!("owns {asm}, which uses {part}")])
     );
     assert_eq!(
-        reasons(4),
+        reasons(3),
         json!(["raised ECR-900001, implemented by this change"])
     );
+    assert_eq!(v["suggestions"][0]["score"], 4);
     assert_eq!(v["suggestions"][0]["score"], 6);
 
     // limit, and a hostile limit is clamped
-    assert_eq!(usernames(&get(Some(2)).await), ["max", "rolf"]);
+    assert_eq!(usernames(&get(Some(2)).await), ["rolf", "anna"]);
     assert_eq!(
         get(Some(4_000_000_000)).await["suggestions"]
             .as_array()
             .unwrap()
             .len(),
-        5
+        4
     );
     let r = app
         .api(
@@ -243,7 +242,7 @@ async fn reviewers_are_suggested_from_history() {
     assert_eq!(page.status, StatusCode::OK);
     let html = page.text();
     assert!(html.contains("Suggested reviewers"), "{html}");
-    assert!(html.contains("name=\"username\" value=\"max\""));
+    assert!(html.contains("name=\"username\" value=\"rolf\""));
     assert!(html.contains("manager of ROCKET"));
 
     // MCP: read-only tool with the same ranking
@@ -258,10 +257,10 @@ async fn reviewers_are_suggested_from_history() {
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     let result = r.json()["result"]["structuredContent"].clone();
-    assert_eq!(usernames(&result), ["max", "rolf", "anna"]);
-    assert_eq!(result["suggestions"][0]["name"], "max (test)");
+    assert_eq!(usernames(&result), ["rolf", "anna", "olga"]);
+    assert_eq!(result["suggestions"][0]["name"], "rolf (test)");
 
-    // an assigned reviewer drops out of the suggestions
+    // someone who edited the revision cannot be assigned
     let r = app
         .api(
             Method::POST,
@@ -270,11 +269,19 @@ async fn reviewers_are_suggested_from_history() {
             Some(json!({ "username": "max" })),
         )
         .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+
+    // an assigned reviewer drops out of the suggestions
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/changes/{chg}/reviewers"),
+            &author,
+            Some(json!({ "username": "rolf" })),
+        )
+        .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
-    assert_eq!(
-        usernames(&get(None).await),
-        ["rolf", "anna", "olga", "carl"]
-    );
+    assert_eq!(usernames(&get(None).await), ["anna", "olga", "carl"]);
 
     app.teardown().await;
 }
