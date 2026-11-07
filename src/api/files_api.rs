@@ -97,19 +97,39 @@ pub(super) async fn file_meta(
 #[derive(Deserialize)]
 pub(super) struct UpdateFile {
     /// Folder inside the project group (`""` = top).
-    folder: String,
+    folder: Option<String>,
+    /// `all` (keep every version) or `latest` (keep only the newest one).
+    retention: Option<String>,
 }
 
-/// Changes the folder of a file while its revision is checked out.
+/// Changes the folder and / or the version retention of a file while its
+/// revision is checked out.
 pub(super) async fn update_file(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     Path(id): Path<Uuid>,
     ApiJson(body): ApiJson<UpdateFile>,
 ) -> AppResult<Json<Value>> {
-    Ok(Json(json!(
-        files::set_folder(&st.db, &me, id, &body.folder).await?
-    )))
+    if body.folder.is_none() && body.retention.is_none() {
+        return Err(AppError::BadRequest(
+            "Give a folder and / or a retention (all or latest).".into(),
+        ));
+    }
+    let retention = match body.retention.as_deref() {
+        Some(raw) => Some(
+            crate::domain::FileRetention::parse(raw)
+                .ok_or_else(|| AppError::BadRequest("The retention is all or latest.".into()))?,
+        ),
+        None => None,
+    };
+    let mut file = None;
+    if let Some(folder) = &body.folder {
+        file = Some(files::set_folder(&st.db, &me, id, folder).await?);
+    }
+    if let Some(retention) = retention {
+        file = Some(files::set_retention(&st.db, &me, id, retention).await?);
+    }
+    Ok(Json(json!(file)))
 }
 
 pub(super) async fn download(

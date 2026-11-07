@@ -592,7 +592,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/files",
             "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases', 'folder' (in the project group) or 'folders' = {\"name\": \"folder\"}",
             "GET    /api/v1/files/{id}",
-            "PATCH  /api/v1/files/{id}                                {folder} – its place in the working folder (revision checked out by you)",
+            "PATCH  /api/v1/files/{id}                                {folder?, retention?} – its place in the working folder; retention all | latest (old versions of a latest file are removed after a grace period) – revision checked out by you",
             "GET    /api/v1/files/{id}/content                   resumable: Range: bytes=N- with If-Range: \"<sha256>\" (ETag) → 206",
             "GET    /api/v1/files/{id}/thumbnail                      preview image stored in Inventor, Solid Edge and SolidWorks files (PNG or BMP, 404 if none)",
             "GET    /api/v1/files/{id}/versions",

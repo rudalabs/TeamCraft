@@ -18,7 +18,7 @@ Changes on `main` since the `v0.2.5` tag.
 ### Added
 
 - Need-to-know project groups, step 5 (#151): access review of a restricted
-  group (migration 0052, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
+  group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
   administrators: members with role, group role, source (manual or identity
   provider), account state and last sign-in (stale after 90 days), the
   administrator policy and elevations, and a "reviewed" confirmation with an
@@ -27,6 +27,22 @@ Changes on `main` since the `v0.2.5` tag.
   `GET /api/v1/projects/{code}/access-review?format=csv`) or JSON, plus
   `POST` to confirm and `GET .../access-review/{id}` for the stored member list.
   The shorter session age for restricted groups (step 2) is not part of this.
+- Data retention and cleanup: the hourly housekeeping now also removes the
+  blobs of expired staged imports and upload sessions, trims the preview
+  cache (`TEAMCRAFT_PREVIEW_CACHE_MAX_MB`, default no limit) and applies an
+  optional audit log retention (`TEAMCRAFT_AUDIT_RETENTION_DAYS`, default
+  keep for ever; one `audit.purge` entry per removal). New command
+  `teamcraft vault gc` (dry run unless `--apply`) lists and removes vault
+  blobs nothing refers to.
+- Retention for large result files: a file can be set to *keep only the
+  latest version* (`files.retention = 'latest'`, migration 0052; revision
+  page menu, `PATCH /api/v1/files/{id}` `{"retention"}`, audit
+  `file.retention`). Superseded versions are removed after
+  `TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS` (default 7) by the housekeeping and
+  by `teamcraft vault purge-versions` (dry run unless `--apply`) – never the
+  newest version and never anything of a revision that is not in work;
+  audited as `file.purge_versions`. The default stays `all`.
+
 - Item owner and hand-over (#152 step 7, migration 0050): `items.owner_id`
   (default: the creator) is shown on the item page and changed by the
   managers of the group and administrators (`item.owner`). Administrators

@@ -62,6 +62,7 @@ pub(crate) const EDIT_ACTIONS: &[&str] = &[
     "file.restore",
     "file.delete",
     "file.folder",
+    "file.retention",
     "bom.add",
     "bom.update",
     "bom.remove",

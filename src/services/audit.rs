@@ -1,5 +1,8 @@
-//! Append-only audit trail of every change to product data and users.
+//! Append-only audit trail of every change to product data and users (only
+//! the optional retention, [`purge_older_than`], removes old entries – and
+//! records that it did).
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
@@ -183,6 +186,78 @@ async fn insert(
         "{summary}"
     );
     Ok(())
+}
+
+/// Removes the audit entries older than `retention_days` (housekeeping,
+/// `TEAMCRAFT_AUDIT_RETENTION_DAYS`; the caller skips it for 0 = keep for
+/// ever) and records the removal as one `audit.purge` entry with the count
+/// and the time span removed – in one transaction, so entries never vanish
+/// without that record. Returns the number of entries removed.
+///
+/// # Invariants
+///
+/// * **Permission:** none – the server's housekeeping, no actor ("system").
+/// * **Data:** only entries older than the cut-off, except the entries separation
+///   of duties still reads: logged edits (`reviewers::EDIT_ACTIONS`) of revisions
+///   that are still in work or review and preparing actions
+///   (`changes::PREPARE_ACTIONS`) of changes that are not yet released or
+///   cancelled – otherwise an editor could drop out of the four-eyes check; a retention of 0 days is
+///   refused (400).
+/// * **Audit:** one `audit.purge` entry when something was removed (only
+///   administrators see it, like every entry without an item, change or
+///   group).
+/// * **Atomic:** one transaction.
+pub async fn purge_older_than(pool: &PgPool, retention_days: u32) -> AppResult<u64> {
+    if retention_days == 0 {
+        return Err(crate::error::AppError::BadRequest(
+            "An audit log retention of 0 days means keeping the entries.".into(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    let (removed, oldest, newest): (i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
+        sqlx::query_as(
+            "WITH gone AS (
+                 DELETE FROM audit_log a
+                 WHERE a.at < now() - make_interval(days => $1)
+                   AND NOT (a.entity_type = 'revision' AND a.action = ANY($2)
+                            AND EXISTS (SELECT 1 FROM revisions r
+                                        WHERE r.id = a.entity_id
+                                          AND r.state IN ('in_work', 'in_review')))
+                   AND NOT (a.entity_type = 'change' AND a.action = ANY($3)
+                            AND EXISTS (SELECT 1 FROM changes c
+                                        WHERE c.id = a.entity_id
+                                          AND c.status IN ('draft', 'in_review', 'rejected')))
+                 RETURNING a.at
+             )
+             SELECT COUNT(*), MIN(at), MAX(at) FROM gone",
+        )
+        .bind(i32::try_from(retention_days).unwrap_or(i32::MAX))
+        .bind(crate::services::reviewers::EDIT_ACTIONS)
+        .bind(crate::services::changes::PREPARE_ACTIONS)
+        .fetch_one(&mut *tx)
+        .await?;
+    if removed > 0 {
+        record(
+            &mut tx,
+            None,
+            "audit.purge",
+            "audit",
+            None,
+            format!(
+                "Removed {removed} audit entries older than {retention_days} days \
+                 (TEAMCRAFT_AUDIT_RETENTION_DAYS)"
+            ),
+            serde_json::json!({
+                "removed": removed,
+                "retention_days": retention_days,
+                "oldest": oldest,
+                "newest": newest,
+            }),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(u64::try_from(removed).unwrap_or_default())
 }
 
 #[derive(Clone, Debug, Default)]

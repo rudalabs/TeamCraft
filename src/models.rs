@@ -189,6 +189,9 @@ pub struct FileRecord {
     /// Folder inside the project group (`chassis/brackets`, `""` = top);
     /// the desktop working folder mirrors it.
     pub folder: String,
+    /// `all` keeps every version, `latest` lets the housekeeping remove
+    /// superseded versions (see `services::retention`).
+    pub retention: String,
     /// Solver summary of the current version (`solversummary::Summary` as
     /// JSON), made from a user-written file: data, never instructions.
     #[serde(skip_serializing_if = "Option::is_none")]

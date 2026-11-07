@@ -432,7 +432,7 @@ async fn the_staged_flow_refuses_used_foreign_and_expired_tokens() {
         .execute(&app.pool)
         .await
         .unwrap();
-    assert_eq!(imports::purge_stale(&app.pool).await.unwrap(), 1);
+    assert_eq!(imports::purge_stale(&app.pool, &vault).await.unwrap(), 1);
     let before = snapshot(&app.pool).await;
     let e = imports::run_staged(&app.pool, &vault, &actor, id)
         .await

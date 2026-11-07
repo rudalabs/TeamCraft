@@ -381,6 +381,11 @@ impl Previews {
         }
     }
 
+    /// The cache directory (`<vault>/previews`), also of the thumbnails.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     /// The preview queue: conversions running now and conversions waiting
     /// for a free slot (at most [`MAX_PARALLEL`] run at a time).
     pub fn queue(&self) -> (usize, usize) {
@@ -794,6 +799,77 @@ async fn run_in_process(job: &Job) -> Result<(), String> {
     }
 }
 
+/// What a file in the preview cache (`previews/ab/…`) is, by its name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheEntry<'a> {
+    /// A cache file of the current versions, for the blob with this SHA-256.
+    Current(&'a str),
+    /// A cache file of an older cache, mesh or thumbnail version.
+    Stale,
+    /// A file being written (or left behind by an interrupted conversion).
+    Temporary,
+    /// Not a name the cache writes: left alone.
+    Unknown,
+}
+
+/// Classifies a file name of the preview cache: the meshes and failures of
+/// this module (`<sha256>.v<N>.tcm|err`), their shape signatures
+/// (`<sha256>.v<N>.s<M>.json`) and the thumbnails of [`crate::thumbnail`]
+/// (`<sha256>.thumb.v<N>.png|bmp|jpg|none`); every temporary name ends in
+/// `.tmp`.
+pub fn cache_entry(name: &str) -> CacheEntry<'_> {
+    let Some((sha256, rest)) = name.split_at_checked(64) else {
+        return CacheEntry::Unknown;
+    };
+    let Some(rest) = rest.strip_prefix('.') else {
+        return CacheEntry::Unknown;
+    };
+    if !sha256
+        .bytes()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return CacheEntry::Unknown;
+    }
+    if rest.ends_with(".tmp") {
+        return CacheEntry::Temporary;
+    }
+    // composed assembly previews: `asm-<hex key>.v<N>.tcm`
+    if let Some((key, tail)) = rest.strip_prefix("asm-").and_then(|r| r.split_once('.')) {
+        if !key.is_empty() && key.bytes().all(|b| b.is_ascii_hexdigit()) {
+            if let Some(n) = tail.strip_prefix('v').and_then(|t| t.strip_suffix(".tcm")) {
+                if n == CACHE_VERSION.to_string() {
+                    return CacheEntry::Current(sha256);
+                }
+                if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) {
+                    return CacheEntry::Stale;
+                }
+            }
+        }
+    }
+    let mesh = format!("v{CACHE_VERSION}.");
+    let thumb = format!("thumb.v{}.", crate::thumbnail::CACHE_VERSION);
+    let current = match rest.strip_prefix(&mesh) {
+        Some(kind) => kind == "tcm" || kind == "err" || kind == format!("s{}.json", shape::VERSION),
+        None => rest
+            .strip_prefix(&thumb)
+            .is_some_and(|ext| matches!(ext, "png" | "bmp" | "jpg" | "none")),
+    };
+    if current {
+        return CacheEntry::Current(sha256);
+    }
+    // an older version of one of the names above
+    let version = |s: &str| {
+        s.strip_prefix('v')
+            .and_then(|s| s.split_once('.'))
+            .is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    if version(rest) || rest.strip_prefix("thumb.").is_some_and(version) {
+        CacheEntry::Stale
+    } else {
+        CacheEntry::Unknown
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -975,6 +1051,57 @@ mod tests {
         )
         .is_err());
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn cache_names_are_classified() {
+        let sha = "ab".repeat(32);
+        let previews = Previews {
+            dir: PathBuf::from("/vault/previews"),
+            worker: None,
+            slots: Semaphore::new(1),
+            waiting: AtomicUsize::new(0),
+            limits: PreviewLimits::default(),
+            running: Mutex::new(HashMap::new()),
+        };
+        let (mesh, err) = previews.paths(&sha).unwrap();
+        let asm = previews.assembly_path(&sha, "0123abcd").unwrap();
+        let sig = previews.signature_path(&sha).unwrap();
+        for path in [&mesh, &err, &sig, &asm] {
+            let name = path.file_name().unwrap().to_str().unwrap();
+            assert_eq!(cache_entry(name), CacheEntry::Current(&sha), "{name}");
+        }
+        for ext in ["png", "bmp", "jpg", "none"] {
+            let name = format!("{sha}.thumb.v{}.{ext}", crate::thumbnail::CACHE_VERSION);
+            assert_eq!(cache_entry(&name), CacheEntry::Current(&sha), "{name}");
+        }
+        let old = CACHE_VERSION + 7;
+        for name in [
+            format!("{sha}.v{old}.tcm"),
+            format!("{sha}.v{old}.err"),
+            format!("{sha}.v{CACHE_VERSION}.s{}.json", shape::VERSION + 7),
+            format!("{sha}.thumb.v{old}.png"),
+            format!("{sha}.asm-0123abcd.v{old}.tcm"),
+        ] {
+            assert_eq!(cache_entry(&name), CacheEntry::Stale, "{name}");
+        }
+        for name in [
+            format!("{sha}.0123abcd.tmp"),
+            format!("{sha}.0123abcd.sig.tmp"),
+            format!("{sha}.thumb.v{CACHE_VERSION}.png.4711.tmp"),
+        ] {
+            assert_eq!(cache_entry(&name), CacheEntry::Temporary, "{name}");
+        }
+        for name in [
+            "README".to_string(),
+            format!("{}.v2.tcm", "AB".repeat(32)),
+            format!("{sha}v2.tcm"),
+            format!("{sha}.notes.txt"),
+            format!("{}.v2.tcm", "ab".repeat(31)),
+            "é".repeat(40),
+        ] {
+            assert_eq!(cache_entry(&name), CacheEntry::Unknown, "{name}");
+        }
     }
 
     #[tokio::test]
