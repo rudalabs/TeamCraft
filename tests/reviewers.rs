@@ -260,6 +260,7 @@ async fn reviewers_are_suggested_from_history() {
     let result = r.json()["result"]["structuredContent"].clone();
     assert_eq!(usernames(&result), ["rolf", "anna", "olga"]);
     assert_eq!(result["suggestions"][0]["name"], "rolf (test)");
+    assert_eq!(result["suggestions"][0]["cannot_review"], false);
 
     // someone who edited the revision cannot be assigned
     let r = app

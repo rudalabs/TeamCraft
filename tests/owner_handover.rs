@@ -121,7 +121,10 @@ async fn owner_defaults_to_the_creator_and_managers_change_it() {
         .get_page(&format!("/revisions/{rev}"), Some(&cookie))
         .await;
     let html = page.text();
-    assert!(html.contains("anna (test)"), "owner shown");
+    assert!(
+        html.contains("<dt>Owner</dt><dd>anna (test)"),
+        "owner row shows the owner"
+    );
     assert!(html.contains("id=\"owner-form\""), "manager may change it");
 
     app.teardown().await;
@@ -275,7 +278,7 @@ async fn hand_over_moves_everything_and_lists_what_stays() {
         .await
         .contains(&"user.handover".to_string()));
 
-    // the page lists the result
+    // the POST redirects (flash) instead of rendering the result
     let cookie = app.login("root").await;
     let origin = "http://localhost:8080";
     let r = app
@@ -286,8 +289,7 @@ async fn hand_over_moves_everything_and_lists_what_stays() {
             &[("to", &heir.id.to_string())],
         )
         .await;
-    assert_eq!(r.status, axum::http::StatusCode::OK, "{}", r.text());
-    assert!(r.text().contains("Hand-over of"));
+    assert!(r.status.is_redirection(), "POST redirects: {}", r.status);
 
     app.teardown().await;
 }
@@ -312,5 +314,71 @@ async fn four_eyes_keeps_a_review_with_the_leaver() {
     assert!(report.moved.is_empty());
     assert_eq!(report.skipped.len(), 1);
     assert!(report.skipped[0].reason.contains("four-eyes"));
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn report_hides_numbers_the_acting_admin_may_not_read() {
+    let app = app_or_skip!();
+    let (leaver, token) = app
+        .user_in("leaver", Role::Editor, &["ROCKET", "ARM"])
+        .await;
+    let (heir, _) = app.user_in("heir", Role::Editor, &["ROCKET", "ARM"]).await;
+    let (_, _) = app.user("root", Role::Admin).await;
+    let secret = app
+        .create_item(
+            &token,
+            json!({ "item_type": "part", "name": "Secret", "project": "ARM" }),
+        )
+        .await;
+    let item_id: Uuid = sqlx::query_scalar("SELECT id FROM items WHERE number = $1")
+        .bind(&secret)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    let request = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO change_requests (id, number, title, status, requested_by, assignee)
+         VALUES ($1, 'ECR-910003', 'Hidden', 'accepted', $2, $2)",
+    )
+    .bind(request)
+    .bind(leaver.id)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO change_request_items (request_id, item_id) VALUES ($1, $2)")
+        .bind(request)
+        .bind(item_id)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE projects SET visibility = 'restricted' WHERE code = 'ARM'")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO project_policies (project_id, admin_read)
+         SELECT id, 'with_reason' FROM projects WHERE code = 'ARM'",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+
+    // root is no member of ARM and has no elevation
+    let root = app.actor("root").await;
+    let report = ownership::hand_over(&app.pool, &root, leaver.id, heir.id)
+        .await
+        .unwrap();
+    assert_eq!(report.count("item"), 1);
+    assert_eq!(report.count("request"), 1);
+    for e in report.moved.iter().chain(report.skipped.iter()) {
+        assert_ne!(e.number, secret, "{e:?}");
+        assert_ne!(e.number, "ECR-910003", "{e:?}");
+    }
+    assert!(report
+        .moved
+        .iter()
+        .all(|e| e.number == teamcraft::services::access::RESTRICTED_LABEL));
+    assert_eq!(owner_of(&app, &secret).await, heir.id);
     app.teardown().await;
 }

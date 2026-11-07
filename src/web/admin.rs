@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::{finish, is_user_error, pagination, redirect_flash, render, Flash, WebCtx, PER_PAGE};
+use super::{finish, pagination, render, WebCtx, PER_PAGE};
 use crate::{
     domain::{self, AdminRead, ProjectVisibility, Role},
     error::{AppError, AppResult},
@@ -710,19 +710,31 @@ pub async fn handover(
     Form(form): Form<HandoverForm>,
 ) -> AppResult<Response> {
     let back = format!("/admin/users/{id}");
-    match ownership::hand_over(&st.db, &ctx.me, id, form.to).await {
-        Ok(report) => {
-            let user = users::get(&st.db, id).await?;
-            render(
-                &st,
-                &ctx,
-                "admin/handover.html",
-                json!({ "user": user, "report": report }),
-            )
+    let result = ownership::hand_over(&st.db, &ctx.me, id, form.to).await;
+    finish(&st, result, &back, |report| {
+        (back.clone(), handover_summary(&report))
+    })
+}
+
+/// Flash text of a hand-over: counts and the first objects that stayed.
+fn handover_summary(report: &ownership::HandoverReport) -> String {
+    let mut text = format!(
+        "Handed over the work of {} to {}: {} items, {} changes, {} requests, {} reviews.",
+        report.from_name,
+        report.to_name,
+        report.count("item"),
+        report.count("change"),
+        report.count("request"),
+        report.count("review"),
+    );
+    if !report.skipped.is_empty() {
+        text.push_str(&format!(" {} not moved:", report.skipped.len()));
+        for e in report.skipped.iter().take(4) {
+            text.push_str(&format!(" {} {} ({});", e.kind, e.number, e.reason));
         }
-        Err(e) if is_user_error(&e) => {
-            Ok(redirect_flash(&st, &back, Flash::error(e.public_message())))
-        }
-        Err(e) => Err(e),
     }
+    if report.truncated {
+        text.push_str(" More remains: run the hand-over again.");
+    }
+    text
 }

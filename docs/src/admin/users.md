@@ -67,12 +67,13 @@ work**. In one transaction TeamCraft moves to the chosen person:
 | change requests assigned to the user | not closed (new, in triage, accepted, deferred) |
 | pending reviews of the user | the change order is a draft or in review |
 
-The result page lists every moved object and, separately, what stayed with
-the old user and why: the receiver cannot read the object (restricted
+A message after the run gives the counts and the first objects that stayed with
+the old user and why (numbers of groups the administrator may not read are
+shown as "restricted item"): the receiver cannot read the object (restricted
 project group), already reviews the change order, or may not review it under
 the four-eyes principle (author, preparer or someone who changed the
 revisions). Every moved object gets its own audit entry (`item.owner`,
 `change.handover`, `change_request.handover`, `change.review_handover`) plus
 one `user.handover` entry with the counts. Decisions already made, released
 changes and closed requests keep the original names. One run moves at most
-1000 objects of each kind; the result page says when to run it again.
+1000 objects of each kind; the message says when to run it again.

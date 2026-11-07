@@ -154,6 +154,52 @@ async fn blind_to_request(conn: &mut PgConnection, user: Uuid, request: Uuid) ->
     .await?)
 }
 
+/// Number of a change as the acting administrator may see it (need-to-know).
+async fn change_label(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    id: Uuid,
+    number: &str,
+) -> AppResult<String> {
+    let visible = sqlx::query_scalar::<_, bool>(&format!(
+        "SELECT {} FROM changes c WHERE c.id = $1",
+        access::change_visible("c", 2, 3)
+    ))
+    .bind(id)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(if visible {
+        number.to_string()
+    } else {
+        access::RESTRICTED_LABEL.to_string()
+    })
+}
+
+/// Number of a change request as the acting administrator may see it.
+async fn request_label(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    id: Uuid,
+    number: &str,
+) -> AppResult<String> {
+    let visible = sqlx::query_scalar::<_, bool>(&format!(
+        "SELECT {} FROM change_requests r WHERE r.id = $1",
+        access::request_visible("r", 2, 3)
+    ))
+    .bind(id)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(if visible {
+        number.to_string()
+    } else {
+        access::RESTRICTED_LABEL.to_string()
+    })
+}
+
 /// Changes the owner of an item.
 ///
 /// # Invariants
@@ -302,10 +348,15 @@ pub async fn hand_over(
     .await?;
     report.truncated |= owned.len() as i64 >= MAX_PER_KIND;
     for (id, number, project_id) in owned {
+        let shown = if actor.can_see_project(project_id) {
+            number.clone()
+        } else {
+            access::RESTRICTED_LABEL.to_string()
+        };
         if !user_sees(&mut tx, to, project_id).await? {
             report.skipped(
                 "item",
-                &number,
+                &shown,
                 format!(
                     "{} cannot read it (restricted project group)",
                     target.display_name
@@ -332,7 +383,7 @@ pub async fn hand_over(
             details.clone(),
         )
         .await?;
-        report.moved("item", &number);
+        report.moved("item", &shown);
     }
 
     // 2. draft and rejected changes of the author
@@ -347,6 +398,7 @@ pub async fn hand_over(
     .await?;
     report.truncated |= authored.len() as i64 >= MAX_PER_KIND;
     for (id, number) in authored {
+        let shown = change_label(&mut tx, actor, id, &number).await?;
         let reviewing = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM change_reviews WHERE change_id = $1 AND reviewer_id = $2)",
         )
@@ -357,7 +409,7 @@ pub async fn hand_over(
         if reviewing {
             report.skipped(
                 "change",
-                &number,
+                &shown,
                 format!(
                     "{} is a reviewer of it (author and reviewer must differ)",
                     target.display_name
@@ -368,7 +420,7 @@ pub async fn hand_over(
         if blind_to_change(&mut tx, to, id).await? {
             report.skipped(
                 "change",
-                &number,
+                &shown,
                 format!("{} cannot read all its items", target.display_name),
             );
             continue;
@@ -391,7 +443,7 @@ pub async fn hand_over(
             details.clone(),
         )
         .await?;
-        report.moved("change", &number);
+        report.moved("change", &shown);
     }
 
     // 3. open change requests
@@ -406,10 +458,11 @@ pub async fn hand_over(
     .await?;
     report.truncated |= assigned.len() as i64 >= MAX_PER_KIND;
     for (id, number) in assigned {
+        let shown = request_label(&mut tx, actor, id, &number).await?;
         if blind_to_request(&mut tx, to, id).await? {
             report.skipped(
                 "request",
-                &number,
+                &shown,
                 format!("{} cannot read all its items", target.display_name),
             );
             continue;
@@ -432,7 +485,7 @@ pub async fn hand_over(
             details.clone(),
         )
         .await?;
-        report.moved("request", &number);
+        report.moved("request", &shown);
     }
 
     // 4. pending reviews
@@ -455,6 +508,10 @@ pub async fn hand_over(
         .bind(change_id)
         .fetch_one(&mut *tx)
         .await?;
+        if !matches!(change.status.as_str(), "draft" | "in_review") {
+            continue;
+        }
+        let shown = change_label(&mut tx, actor, change_id, &change.number).await?;
         let already = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM change_reviews WHERE change_id = $1 AND reviewer_id = $2)",
         )
@@ -465,7 +522,7 @@ pub async fn hand_over(
         if already {
             report.skipped(
                 "review",
-                &change.number,
+                &shown,
                 format!("{} is already a reviewer", target.display_name),
             );
             continue;
@@ -473,7 +530,7 @@ pub async fn hand_over(
         if let Some(conflict) = changes::review_conflict(&mut tx, &change, to, None, false).await? {
             report.skipped(
                 "review",
-                &change.number,
+                &shown,
                 format!(
                     "{} {} (four-eyes principle)",
                     target.display_name,
@@ -485,12 +542,12 @@ pub async fn hand_over(
         if blind_to_change(&mut tx, to, change_id).await? {
             report.skipped(
                 "review",
-                &change.number,
+                &shown,
                 format!("{} cannot read all its items", target.display_name),
             );
             continue;
         }
-        sqlx::query(
+        let moved = sqlx::query(
             "UPDATE change_reviews SET reviewer_id = $3
              WHERE change_id = $1 AND reviewer_id = $2 AND decision = 'pending'",
         )
@@ -498,7 +555,12 @@ pub async fn hand_over(
         .bind(from)
         .bind(to)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+        if moved == 0 {
+            // decided or removed since the first look: nothing moved
+            continue;
+        }
         sqlx::query("UPDATE changes SET updated_at = now() WHERE id = $1")
             .bind(change_id)
             .execute(&mut *tx)
@@ -516,7 +578,7 @@ pub async fn hand_over(
             details.clone(),
         )
         .await?;
-        report.moved("review", &change.number);
+        report.moved("review", &shown);
     }
 
     audit::record(

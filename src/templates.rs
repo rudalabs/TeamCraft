@@ -38,7 +38,6 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "files/preview.html",
     "admin/users.html",
     "admin/user_edit.html",
-    "admin/handover.html",
     "admin/audit.html",
     "admin/attributes.html",
     "admin/attribute_edit.html",
@@ -1392,25 +1391,6 @@ mod tests {
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
                              "last_used_at": null, "expires_at": TS }],
             })),
-        );
-        let handover = |skipped: Value| {
-            with_common(json!({
-                "user": user(),
-                "report": { "from_name": "Erika", "to_name": "Max <M>", "truncated": true,
-                            "moved": [{ "kind": "item", "number": "PRT-000001", "reason": "" },
-                                      { "kind": "change", "number": "CHG-000001", "reason": "" },
-                                      { "kind": "request", "number": "REQ-000001", "reason": "" },
-                                      { "kind": "review", "number": "CHG-000002", "reason": "" }],
-                            "skipped": skipped },
-            }))
-        };
-        render(&env, "admin/handover.html", handover(json!([])));
-        render(
-            &env,
-            "admin/handover.html",
-            handover(
-                json!([{ "kind": "review", "number": "CHG-000003", "reason": "Max is already a reviewer" }]),
-            ),
         );
         render(
             &env,

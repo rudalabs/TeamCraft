@@ -22,9 +22,11 @@ Changes on `main` since the `v0.2.5` tag.
   managers of the group and administrators (`item.owner`). Administrators
   hand over a leaving user's item ownerships, draft and rejected change
   orders, open change requests and pending reviews to another user in one
-  transaction on *Users* → user → *Hand over work*; the result page lists
-  what moved and what stayed (restricted group, already a reviewer,
-  four-eyes) and every object has its own audit entry.
+  transaction on *Users* → user → *Hand over work*; a message after the
+  redirect gives the counts and the first objects that stayed (restricted
+  group, already a reviewer, four-eyes); numbers the acting administrator
+  may not read (need-to-know) are shown as "restricted item"; every object
+  has its own audit entry.
 - Reviewer suggestions show people who changed the affected revisions as
   *knows the item, cannot review* (`cannot_review` in the REST and MCP
   answers, desktop app, change page) instead of hiding them.
