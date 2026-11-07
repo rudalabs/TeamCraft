@@ -11,14 +11,18 @@ on:
       - "desktop/**"
       - "static/**"
       - "shared/**"
-      - "media/**"
+      - "media/logos/**"
+      - "media/icons/**"
       - ".github/workflows/desktop.yml"
+  schedule:
+    - cron: "41 4 * * 1"
   pull_request:
     paths:
       - "desktop/**"
       - "static/**"
       - "shared/**"
-      - "media/**"
+      - "media/logos/**"
+      - "media/icons/**"
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
 
@@ -26,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: desktop-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 env:
@@ -66,13 +70,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-26.04
-          - ubuntu-24.04
-          - ubuntu-24.04-arm
-          - macos-latest # ARM64
-          - windows-latest
-          - windows-11-arm
+        # Pull requests: one leg per release architecture (the cfgs in
+        # desktop/src; Windows ARM64 still reports only, see above). Main,
+        # the weekly run and manual runs add the newer Ubuntu (WebKitGTK
+        # drift).
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04", "ubuntu-24.04-arm", "macos-latest", "windows-latest", "windows-11-arm"]' || '["ubuntu-26.04", "ubuntu-24.04", "ubuntu-24.04-arm", "macos-latest", "windows-latest", "windows-11-arm"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Linux build dependencies
@@ -86,10 +88,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop
-      - name: fmt, clippy, tests
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # formatting does not depend on the platform
+      - name: fmt
+        if: matrix.os == 'ubuntu-24.04'
+        working-directory: desktop
+        run: cargo fmt --all -- --check
+      - name: clippy, tests
         working-directory: desktop
         shell: bash
         run: |
+          cargo clippy|
           cargo fmt --all -- --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked

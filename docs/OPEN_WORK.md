@@ -1,7 +1,7 @@
 # Open work
 
 The to-do list of TeamCraft, in order of priority, then what is done, then details on the open features.
-Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-11-05.
+Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-11-07.
 
 ## Direction
 
@@ -61,8 +61,9 @@ feature milestone – the features in *What works* are enough; what is missing i
 - [ ] MCP tools and prompts: names and argument schemas frozen and versioned, contract tests per tool
 - [ ] Configuration: every variable documented and validated at start (unknown `TEAMCRAFT_*` variables warned),
   defaults reviewed; CLI commands and exit codes documented and frozen
-- [ ] Desktop app ↔ server compatibility: version handshake, the desktop tells the user when the server is too old
-  or too new; a supported-versions table
+- [x] Desktop app ↔ server compatibility: version handshake, the desktop tells the user when the server is too old
+  or too new; a supported-versions table – done in #133 (`desktop/src/compat.rs`; table under *Desktop app and
+  server versions* in [support policy](src/admin/support-policy.md))
 
 *Assistant*
 
@@ -194,9 +195,40 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   held a letter whose lower case is ASCII (the Kelvin sign `K` → `k`, test
   `a_non_ascii_letter_in_the_extension_does_not_panic`)
 - [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
-- [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
+- [x] Coverage measured per PR (`cargo llvm-cov`, PostgreSQL 18 leg of the CI job *tests*, before 2026-11-07 its own job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
 - [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
-- [ ] Branch protection on `main`: required checks (fmt/clippy, tests on PostgreSQL 16 and 18, builds, docs links)
+- [ ] Branch protection on `main` (**maintainer action**, needs admin rights): a ruleset with required checks – fmt and
+  clippy, tests on PostgreSQL 16 and 18, build (windows-latest), cargo deny (Cargo.toml), local links and images.
+  None exists today (the API answers 404 for the protection and `[]` for rulesets); that is how #65 and #137 were
+  merged with red database tests
+- [x] CI review (2026-11-07, every job checked against its run history, each cut challenged twice): runner minutes
+  are free for this public repository, the scarce resource is concurrency (20 jobs, 5 macOS; PR jobs waited up to
+  29 min). Done: `timeout-minutes` on every CI job (two runs held a runner for the 6 h default); coverage runs in the
+  PostgreSQL 18 test leg instead of its own job (PostgreSQL 16 stays the plain leg with the CLI smoke test); the
+  macOS server build runs on `main` only (no macOS server is shipped), Windows on every PR but without linking the
+  63 integration-test binaries (`cargo check --all-targets`); PR runs read the Rust caches of `main` but no longer
+  write their own (the cache was at 10.95 GB of 10 GB); `cargo deny` also checks `desktop/Cargo.lock` (report-only
+  for now) and runs weekly; desktop PRs run one leg per release architecture (Ubuntu 24.04 x64 and ARM64, macOS,
+  Windows x64 and ARM64 – the last report-only while the runner is a preview), `main`, a weekly run and manual runs
+  add Ubuntu 26.04, and `cargo fmt` runs once
+  instead of six times; screenshot-only commits no longer start desktop builds; superseded PR runs of the docs and
+  CodeQL are cancelled, CodeQL skips docs-only PRs
+- [ ] `cargo deny` for `desktop/Cargo.lock`: look at the first findings, fix or ignore them with a reason in
+  `deny.toml`, then make the job blocking (`continue-on-error` in `ci.yml`)
+- [ ] Flaky desktop test on macOS: `resume::tests::a_wrong_part_is_started_over_and_a_complete_one_only_renamed`
+  (`desktop/src/resume.rs`, the assertion on the recorded `Range` headers) fails in about 2 of 15 runs – record the
+  header before the test server answers, or compare the set of ranges instead of their order
+- [ ] Decide the release builds on `main` (disputed in the CI review, so not changed): today every push to `main`
+  builds all 14 release jobs (server, desktop installers, Flatpak, image; ~110–170 runner-min, ~50 min wall clock)
+  and a newer push cancels the run, so cancelled commits get no `:edge` image. Options: (a) keep as is; (b) image +
+  Docker smoke test per push, the other artifacts nightly, on tags and by hand; (c) per push only when packaging
+  inputs change. Either way: add `packaging/**` and `desktop/tauri.conf.json` to the PR paths of `release.yml`, so a
+  Flatpak or bundle change is built before it is merged
+- [ ] Run `fuzz.yml` and `scale.yml` once by hand – their schedules have never fired yet – and make a failing
+  scheduled run open an issue instead of only an e-mail
+- [ ] Triage the 46 open CodeQL alerts (path injection, cleartext logging/storage, hard-coded crypto value,
+  uncontrolled allocation size): fix or dismiss each with a reason; until then the PR annotations are noise
+- [ ] Dependabot (or Renovate) for Cargo and GitHub Actions, and a `Cargo.lock` for `fuzz/`
 
 ### 2. Structure
 
@@ -311,6 +343,9 @@ real files and belong to section 3 once such files are at hand.
 - [x] Result values proposed by the assistant from PDF/text reports (`propose_result_values`, drafts with a quote, accepted or rejected by a CAD editor); PDF text layer in `read_file_text`
 - [ ] `read_file_text` of plain-text files shows the search text, which drops decimal numbers (`textindex`): read the real text (bounded) for the assistant, so text and CSV reports work like PDFs
 - [ ] Scanned PDF reports (OCR) – not planned; attach a PDF with a text layer or the numbers by hand
+- [ ] HTML reports of commercial FEA/CFD tools: today `.html` is indexed as plain text (tags kept, decimal numbers
+  dropped), so `read_file_text` and `propose_result_values` cannot use them – an HTML-to-text reader in the isolated
+  `text-extract` child with tables kept as rows ([#141](https://github.com/rudalabs/TeamCraft/issues/141))
 - [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
@@ -589,6 +624,16 @@ MPL-2.0; LGPL only as a separately loaded component; no GPL/AGPL/SSPL, nothing p
 README licence table, follow the definition of done in `CLAUDE.md`. The docs are live at
 <https://rudalabs.github.io/TeamCraft/>.
 
-## Pending verification (2026-11-06)
+## Pending verification (2026-11-07)
 
-Open PRs #122 (idempotency key, `tests/item_idempotency.rs`), #123 (`tests/upgrade_restore.rs`, upgrade guide), #124 (unknown config variables), #125 (`tests/concurrency_mutations.rs` and lock ordering), #126 (`tests/import_scale_and_concurrency.rs`), #127 and #128 (docs). Their database tests were written without access to a database; **CI is the first real run** – fix failures there before merging, and tick the items above (idempotency key, upgrade tests) only once green.
+- The database tests of #122–#126 got their first real runs in CI: #137 and #138 fixed the failures (test bugs, plus
+  one desktop bug – a folder import resumed after a lost creation answer re-uploaded files of an item that was already
+  checked in). Tick the idempotency key and the upgrade tests above once `main` is green.
+- #144 (as-built records, metrics endpoint, desktop notification settings and password change, desktop UI as ES
+  modules – the squashed #132, #134, #135, #136, #143): its new database tests (`tests/as_built.rs`,
+  `tests/api_password.rs`, `tests/notification_settings_api.rs`, the metrics tests) run for the first time in its CI.
+- GA items started but not yet in a pull request (work kept in local worktrees): assistant budget (phase 4, F16),
+  scoped tokens (F2), download hardening (F8, F10), upload quotas (F9), retention and cleanup, parser hardening (F11,
+  F13, F14), MCP hardening (F15, F17), backup hardening (F19), OIDC hardening (F6, F7), OpenAPI description; not
+  started: MCP versioning, CLI and configuration freeze, accessibility leftovers, SBOM and attestations, upgrade
+  proofs per release, scale targets, JSON logs.
