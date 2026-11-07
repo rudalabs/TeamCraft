@@ -1001,6 +1001,11 @@ pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<St
                 .into(),
         ));
     }
+    if crate::services::as_built::item_is_design(&mut tx, item_id).await? {
+        return Err(AppError::Conflict(
+            "Units were recorded as built to the item; it stays for their traceability.".into(),
+        ));
+    }
     // A request is hidden while it names a hidden item; deleting an item of
     // a restricted group (the row would cascade) would silently declassify
     // the request. Items of internal groups hide no request, so their rows

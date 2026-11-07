@@ -32,7 +32,8 @@
     { value: "assembly", label: "Assembly" },
     { value: "document", label: "Document" },
     { value: "software", label: "Software" },
-    { value: "simulation", label: "Simulation" }
+    { value: "simulation", label: "Simulation" },
+    { value: "as_built", label: "As-built" }
   ];
 
   var state = {
@@ -850,7 +851,7 @@
   }
 
   function typeIcon(type) {
-    return { part: "◆", assembly: "▣", document: "▤", software: "◇", simulation: "◎" }[type] || "•";
+    return { part: "◆", assembly: "▣", document: "▤", software: "◇", simulation: "◎", as_built: "◈" }[type] || "•";
   }
 
   function renderHome() {

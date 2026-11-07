@@ -5,6 +5,7 @@
 //! The rules are split by area; everything is re-exported here, so callers
 //! keep using `crate::domain::Name`.
 
+mod as_built;
 mod attributes;
 mod changes;
 mod concurrency;
@@ -17,6 +18,7 @@ mod simulations;
 mod skins;
 mod validation;
 
+pub use as_built::*;
 pub use attributes::*;
 pub use changes::*;
 pub use concurrency::*;

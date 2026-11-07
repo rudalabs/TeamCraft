@@ -17,6 +17,9 @@ Changes on `main` since the `v0.2.0` tag.
 
 ### Added
 
+- As-built records: an item type `as_built` for one physical unit (or lot) with
+  the design revision it was built to, serial number, as-built BOM and
+  deviations from the design with a disposition; REST, MCP and web UI.
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.
