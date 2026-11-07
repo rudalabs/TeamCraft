@@ -32,6 +32,7 @@ pub mod httprange;
 pub mod llm;
 pub mod mcp;
 pub mod mesh;
+pub mod metrics;
 pub mod models;
 pub mod notify;
 pub mod nxpart;
@@ -91,6 +92,8 @@ pub struct AppState {
     pub webhooks: webhooks::Dispatcher,
     /// Failed password sign-ins per username and client address.
     pub sign_in: Arc<auth::SignInThrottle>,
+    /// Request counters for `GET /metrics`.
+    pub metrics: Arc<metrics::Metrics>,
 }
 
 impl AppState {
@@ -138,6 +141,7 @@ impl AppState {
         Ok(AppState {
             db,
             sign_in,
+            metrics: Arc::default(),
             config: Arc::new(config),
             templates: Arc::new(templates),
             vault,
@@ -161,6 +165,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics_endpoint))
         .nest("/api/v1", api::router(&state))
         .merge(web::router(&state))
         .layer(SetResponseHeaderLayer::if_not_present(
@@ -190,6 +195,7 @@ pub fn router(state: AppState) -> Router {
             )
         })))
         .layer(CatchPanicLayer::custom(panic_response))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), count_requests))
         .layer(
             // One INFO line per request. Only the path is recorded: query
             // strings can carry one-time OIDC codes and search terms.
@@ -244,4 +250,89 @@ fn panic_response(err: Box<dyn Any + Send + 'static>) -> Response {
         Json(json!({ "error": { "code": "internal", "message": "Internal server error." } })),
     )
         .into_response()
+}
+
+/// Prometheus metrics: 404 unless `TEAMCRAFT_METRICS_TOKEN` is set, 401
+/// without that token as bearer token (see `metrics`).
+async fn metrics_endpoint(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let Some(expected) = state.config.metrics_token.as_deref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let given = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if !metrics::token_matches(given, expected) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer")],
+            "metrics token required\n",
+        )
+            .into_response();
+    }
+    let count = |sql: &'static str| {
+        let pool = state.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sql)
+                .fetch_one(&pool)
+                .await
+                .map_or(f64::NAN, |n| n as f64)
+        }
+    };
+    let (webhooks, mail, chat) = tokio::join!(
+        count("SELECT COUNT(*) FROM webhook_deliveries WHERE status = 'pending'"),
+        count("SELECT COUNT(*) FROM notifications WHERE email_state = 'pending'"),
+        count("SELECT COUNT(*) FROM notifications WHERE chat_state = 'pending'"),
+    );
+    let gauges = [
+        (
+            "teamcraft_db_pool_connections",
+            "Open database connections.",
+            f64::from(state.db.size()),
+        ),
+        (
+            "teamcraft_db_pool_idle_connections",
+            "Idle database connections.",
+            state.db.num_idle() as f64,
+        ),
+        (
+            "teamcraft_webhook_deliveries_pending",
+            "Webhook deliveries waiting to be sent.",
+            webhooks,
+        ),
+        (
+            "teamcraft_notification_emails_pending",
+            "E-mails waiting to be sent.",
+            mail,
+        ),
+        (
+            "teamcraft_notification_chat_pending",
+            "Chat messages waiting to be sent.",
+            chat,
+        ),
+    ];
+    (
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        state.metrics.render(env!("CARGO_PKG_VERSION"), &gauges),
+    )
+        .into_response()
+}
+
+/// Counts every answered request for `/metrics`.
+async fn count_requests(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+    state
+        .metrics
+        .record(response.status().as_u16(), started.elapsed());
+    response
 }

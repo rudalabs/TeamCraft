@@ -179,6 +179,12 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 | Restore of a tampered or broken backup | T | manifest, dump checksum, object count and every object hash are checked before anything is written; a non-empty database needs `--force`; `pg_restore` runs in one transaction (`src/backup.rs` `verify_backup`, `ensure_database_empty`) | `tests/backup_errors.rs`, `tests/backup_proofing.rs` `a_failing_forced_restore_leaves_database_and_vault_untouched`, `tests/backup_restore.rs` | mitigated; the manifest is not signed (whoever can write the backup can rewrite both) |
 | The backup leaks credentials | I | the dump holds password, session and token hashes and the webhook secrets; files are written with the process umask (no restrictive mode), not encrypted; the database password goes only through `PGPASSWORD` (`src/backup.rs`) | `src/backup.rs` `commands_keep_the_password_out_of_the_arguments` | partial (F19) |
 
+## Metrics endpoint
+
+| Threat | STRIDE | Mitigation | Tests | Status |
+|---|---|---|---|---|
+| Metrics read by outsiders | I | off unless `TEAMCRAFT_METRICS_TOKEN` (at least 16 characters) is set; bearer token compared without early exit; no label comes from a request (no paths, no users) (`src/metrics.rs`, `src/lib.rs` `metrics_endpoint`) | `src/metrics.rs` `token_comparison`; `tests/metrics.rs` | mitigated; a reverse proxy should not expose `/metrics` publicly |
+
 ## Open findings
 
 Each open one has an entry in `docs/OPEN_WORK.md` (section 2, *Security*);

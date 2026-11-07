@@ -112,7 +112,7 @@ feature milestone – the features in *What works* are enough; what is missing i
 
 *Operations*
 
-- [ ] Metrics endpoint (Prometheus) for requests, latency, outbox backlogs (notifications, webhooks), preview
+- [~] Metrics endpoint (Prometheus) for requests, latency, outbox backlogs (notifications, webhooks), preview
   queue, database pool; structured JSON logs; documented alerts
 - [ ] Performance targets met and checked by the scale harness (#47): e.g. 1 M files, 100 k items, BOMs of 10 k
   lines, 50 concurrent users – page and API p95 times written down and guarded in a scheduled CI job
