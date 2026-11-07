@@ -164,7 +164,8 @@ impl Upload {
         let mut export_name = None;
         let (format, content_text, references) = match vault.object_path(&blob.sha256) {
             Ok(path) => {
-                if crate::resultscan::scannable(&filename) {
+                let html = crate::htmltext::is_html(&filename);
+                if crate::resultscan::scannable(&filename) && !html {
                     scan_head = read_head(&path, crate::resultscan::SCAN_MAX_BYTES).await;
                 }
                 let format = cadformat::detect_stored(&path, &filename).await;
@@ -175,11 +176,13 @@ impl Upload {
                 if format.is_some_and(|f| f.id == "step") {
                     export_name = cadrefs::scan_export_name(&path, &filename).await;
                 }
-                (
-                    format,
-                    crate::textindex::extract_file(&path, &filename).await,
-                    references,
-                )
+                let text = crate::textindex::extract_file(&path, &filename).await;
+                if html && crate::resultscan::scannable(&filename) {
+                    // templates see the text extracted in the isolated child,
+                    // never the markup
+                    scan_head = head_of(&text, crate::resultscan::SCAN_MAX_BYTES);
+                }
+                (format, text, references)
             }
             Err(_) => (cadformat::detect(&filename, &[]), String::new(), Vec::new()),
         };
@@ -196,6 +199,15 @@ impl Upload {
             scan_head,
         }
     }
+}
+
+/// At most `max` bytes of a text, cut at a character boundary.
+fn head_of(text: &str, max: u64) -> Vec<u8> {
+    let mut end = text.len().min(usize::try_from(max).unwrap_or(usize::MAX));
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.as_bytes().get(..end).unwrap_or_default().to_vec()
 }
 
 /// The first `max` bytes of a file (never more, whatever its size).

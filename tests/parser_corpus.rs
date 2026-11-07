@@ -15,6 +15,7 @@ use teamcraft::fuzz_harness::TARGETS;
 fn fixture_types(target: &str) -> Option<&'static [&'static str]> {
     Some(match target {
         "stepbom" | "textindex" => &["stp", "step", "txt", "tsv"],
+        "htmltext" => &["html", "htm", "txt", "tsv"],
         "swpart" => &["sldprt", "sldasm", "slddrw"],
         "nxpart" => &["prt"],
         "thumbnail" => &[
@@ -60,6 +61,7 @@ fn inputs(target: &str) -> Vec<PathBuf> {
     files_in(&root.join("fuzz/seeds").join(target), &mut seeds);
     let mut fixtures = Vec::new();
     files_in(&root.join("tests/fixtures/cad"), &mut fixtures);
+    files_in(&root.join("tests/fixtures/reports"), &mut fixtures);
     fixtures.retain(|p| {
         let small = p.metadata().map(|m| m.len()).unwrap_or(0) <= MESH_STEP_MAX;
         match fixture_types(target) {

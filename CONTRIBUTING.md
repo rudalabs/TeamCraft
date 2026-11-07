@@ -145,14 +145,17 @@ always show the same demo data. The script needs a running TeamCraft with an
 **empty** database that listens on localhost. It creates the administrator
 through the first-start page and two editors, the project group ROVER, parts
 and assemblies with the NIST files from `tests/fixtures/cad`, a multi-level
-BOM, a released and a pending change order, check-outs and notifications. It
-then drives headless Chrome through chromedriver's WebDriver API (with `curl`
-and `jq`, no Node or Python) and saves the pages as PNGs: 1440 × 900 for the
-desktop and 390 pixels wide for the phone, each in the light scheme
-(`NAME.png`, the names the README uses) and again in the dark scheme
-(`NAME-dark.png`; Chrome emulates `prefers-color-scheme`, the demo user keeps
-the System skin). The passwords and API tokens are generated for each run
-and never printed.
+BOM, a released and a pending change order, check-outs and notifications,
+and after the main pages a change request, two simulations with results, an
+NX model of the enclosure (the assembly with its eight part files in one
+revision), an as-built unit of the sensor mast with two deviations and a
+restricted project group. It then drives headless Chrome through
+chromedriver's WebDriver API (with `curl` and `jq`, no Node or Python) and
+saves the pages as PNGs: 1440 × 900 for the desktop and 390 pixels wide for
+the phone, each in the light scheme (`NAME.png`, the names the README uses)
+and again in the dark scheme (`NAME-dark.png`; Chrome emulates
+`prefers-color-scheme`, the demo user keeps the System skin). The passwords
+and API tokens are generated for each run and never printed.
 
 With `DESKTOP_APP` set to a built TeamCraft Desktop binary (Linux), the script
 also captures the desktop app, once with *TeamCraft Light* (`desktop-*.png`)
@@ -172,7 +175,10 @@ coordinates in `desktop_run`.
    the script or the workflow. It builds the release binary and the desktop
    app, starts the server against an empty PostgreSQL 17 and runs the script.
 2. Download the `screenshots` artifact of the run (kept for 30 days), for
-   example with `gh run download <run-id> -n screenshots -D media/screenshots`.
+   example with `gh run download <run-id> -n screenshots -D <scratch folder>`.
+   It holds more images than the README shows (the `-dark` variants and
+   extra images for checking); copy only the ones the README uses into
+   `media/screenshots/`.
 3. Look at every image, then commit the PNGs in `media/screenshots/`. The
    workflow never commits anything itself.
 4. Commit the images **in the same pull request** as the README lines that

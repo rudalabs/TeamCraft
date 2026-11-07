@@ -96,12 +96,15 @@ enum Command {
         #[arg(long)]
         addr: Option<String>,
     },
-    /// Extract the text of a PDF (used by the server, which never parses a PDF
-    /// in its own process: time, size and memory limits).
+    /// Extract the text of a PDF or an HTML report (used by the server, which
+    /// never parses them in its own process: time, size and memory limits).
     #[command(hide = true)]
     TextExtract {
-        /// Read at most this much of the PDF on standard input (more is refused);
-        /// the text goes to standard output.
+        /// pdf or html
+        #[arg(long, default_value = "pdf")]
+        format: String,
+        /// Read at most this much of the file on standard input (a bigger PDF is
+        /// refused, a bigger HTML file is cut); the text goes to standard output.
         #[arg(long, default_value_t = teamcraft::pdftext::MAX_PDF_BYTES)]
         max_input_bytes: u64,
         /// Limit the address space of this process (0 = unlimited).
@@ -211,6 +214,7 @@ fn main() -> ExitCode {
         );
     }
     if let Some(Command::TextExtract {
+        format,
         max_input_bytes,
         max_memory_bytes,
     }) = &cli.command
@@ -218,7 +222,12 @@ fn main() -> ExitCode {
         teamcraft::preview::limit_memory(*max_memory_bytes);
         // the parser's panic messages are not meant for users
         std::panic::set_hook(Box::new(|_| {}));
-        return match teamcraft::pdftext::run_job(
+        let Some(format) = teamcraft::pdftext::TextFormat::parse(format) else {
+            eprintln!("Error: unknown format {format:?} (pdf or html)");
+            return ExitCode::FAILURE;
+        };
+        return match teamcraft::pdftext::run_job_as(
+            format,
             std::io::stdin().lock(),
             std::io::stdout().lock(),
             *max_input_bytes,

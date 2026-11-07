@@ -123,7 +123,13 @@ checked out.
 **Extraction templates.** Managers of a project group (and administrators)
 define templates on the group's page, or through the REST API. A template
 finds one number in a small *text* file (`.txt`, `.csv`, `.log`, `.out`,
-`.dat`, `.rpt`, `.html`, … – only the first 2 MB are read):
+`.dat`, `.rpt`, `.html`, … – only the first 2 MB are read). An HTML report is
+not read as markup: the template sees the text TeamCraft extracted from it
+(see below), one line per table row with the cells separated by ` | `, so
+`Maximum stress \| ([-+0-9.eE]+) \| MPa` finds the row
+`Maximum stress | 152.4 | MPa`, and a `csv` template reads such a table
+with `|` as the separator (always for an HTML file, whatever the title and
+paragraphs above the table contain; an empty header cell keeps its column).
 
 | Field | Meaning |
 |---|---|
@@ -137,17 +143,40 @@ finds one number in a small *text* file (`.txt`, `.csv`, `.log`, `.out`,
 Example: `Pressure drop:\s*([-+0-9.eE]+)\s*Pa` on `*.log`. Regular
 expressions run in linear time (no backtracking) and are limited in size, so a
 hostile pattern or file cannot hang the server. The value is shown with its
-source (`solver.log:412`) in the *Solver* column. A template that does not
+source (`solver.log:412`) in the *Solver* column. For an HTML report the line
+number refers to the extracted text – the text `read_file_text` shows –, not
+to the line in the HTML file. A template that does not
 match does nothing; templates belong to one group and apply to simulations of
 that group only. Values typed in by hand are overwritten by a template or the
 exchange file with the same name and load case on the next check-in.
 
 ### Values from a report (assistant)
 
-A CFD or FEA report is usually a PDF. TeamCraft reads the text layer of PDFs
-when they are uploaded (in an isolated process with a time, size and memory
-limit: at most 32 MB, 100 pages and 200 000 characters; scanned PDFs have no
-text, there is no OCR), so the assistant can read it with `read_file_text`.
+A CFD or FEA report is usually a PDF or an HTML page. TeamCraft reads the text
+of both when they are uploaded, so the assistant can read it with
+`read_file_text`:
+
+* **PDF:** the text layer, in an isolated process with a time, size and memory
+  limit: at most 32 MB, 100 pages and 200 000 characters. Scanned PDFs have no
+  text; there is no OCR.
+* **HTML** (`.html`, `.htm` – the report generators of many FEA/CFD tools write
+  them): the readable text, in the same isolated process and with the same
+  limits (the first 16 MB of the file, 200 000 characters). A table row becomes
+  one line with the cells separated by ` | `
+  (`Equivalent (von Mises) stress | 0.0213 | 152.4 | MPa`); numbers, signs,
+  exponents and units stay as written, character references (`&deg;`,
+  `&nbsp;`, `&#176;`) are decoded. Scripts, styles, comments, embedded
+  (base64) images and **hidden elements** (`hidden`, `aria-hidden="true"`,
+  inline `display:none` / `visibility:hidden`) are skipped – hidden text is
+  not part of the report and could carry instructions for the assistant. The
+  charset comes from a byte order mark or `<meta charset>`, else UTF-8, else
+  Windows-1252. Only the HTML file itself is read: images, style sheets and
+  linked pages (a report with a `report_files/` folder) are never fetched or
+  followed – attach a sub-page as its own file if its numbers are needed.
+  MHTML (`.mht`) and ZIP-packed reports are not read.
+* **Text** (`.txt`, `.csv`, `.tsv`, `.log`, `.md`, …): the text itself, line by
+  line with its decimal numbers (the first 4 MB, 200 000 characters).
+
 The quick action **Fill result values from the report** on the simulation page
 (drafts must be allowed) – or the MCP tool `propose_result_values` – proposes
 the key numbers the report states. A proposal is a **draft**: it names the

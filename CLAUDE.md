@@ -109,8 +109,12 @@ src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs + PN refinement mesh/pn.rs) → TCMESH01
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
-src/textindex.rs   text extraction from uploads for the full-text search (PDF via pdftext)
-src/pdftext.rs     text layer of PDF reports in the isolated `teamcraft text-extract` child (size, page, time, memory limits)
+src/textindex.rs   text extraction from uploads for the full-text search (plain text with its numbers, STEP/IGES strings;
+                   PDF via pdftext, HTML via htmltext – both in the isolated `text-extract` child)
+src/pdftext.rs     text layer of PDF reports and the isolated `teamcraft text-extract [--format pdf|html]` child
+                   (size, page, time, memory limits; MAX_CHARS of the extracted text)
+src/htmltext.rs    text of HTML reports (FEA/CFD report generators): own bounded tokenizer, table rows as ` | ` lines,
+                   scripts/styles/hidden elements skipped, charset sniffing; run in `text-extract --format html`
 src/resultscan.rs result values from `teamcraft-results.json|csv` and per-group extraction templates (pure, bounded)
 src/cadformat.rs   file formats of CAD/BIM/DCC/mesh/point-cloud programs, stored in files.format
 src/cadrefs.rs     file names referenced inside CAD files (assemblies, drawings, STEP, KiCad) for reference tracking

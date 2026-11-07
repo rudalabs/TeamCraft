@@ -95,6 +95,13 @@ pub fn textindex(data: &[u8]) {
     }
 }
 
+/// HTML report text (charset detection, tokenizer, tables) and the plain
+/// text decoding of `textindex`.
+pub fn htmltext(data: &[u8]) {
+    let _ = crate::htmltext::extract(data);
+    let _ = crate::htmltext::decode(data, false);
+}
+
 /// Every mesh and simulation result reader except STEP.
 pub fn mesh(data: &[u8]) {
     for format in MESH_FORMATS {
@@ -120,6 +127,7 @@ pub const TARGETS: &[Target] = &[
     ("bomtable", bomtable),
     ("thumbnail", thumbnail),
     ("textindex", textindex),
+    ("htmltext", htmltext),
     ("mesh", mesh),
     ("mesh_step", mesh_step),
 ];

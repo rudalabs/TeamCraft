@@ -194,3 +194,59 @@ fn the_pdf_text_process_is_bounded() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The same process reads HTML reports (`--format html`): the text of the
+/// table on stdout, a big file cut at the cap (not refused, no hang),
+/// hostile nesting answered quickly, an unknown format refused.
+#[test]
+fn the_html_text_process_is_bounded() {
+    let dir = temp_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |input: &std::path::Path, format: &str, max_input: u64| {
+        Command::new(env!("CARGO_BIN_EXE_teamcraft"))
+            .arg("text-extract")
+            .args(["--format", format])
+            .args(["--max-input-bytes", &max_input.to_string()])
+            .stdin(std::fs::File::open(input).unwrap())
+            .output()
+            .unwrap()
+    };
+    let report = dir.join("report.html");
+    std::fs::write(
+        &report,
+        "<script>9.9</script><table><tr><td>Pressure drop</td><td>388.25</td><td>Pa</td></tr></table>",
+    )
+    .unwrap();
+    let out = run(&report, "html", 16 * MIB);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "Pressure drop | 388.25 | Pa"
+    );
+
+    // a huge (sparse, NUL) file: only the cap is read, and it has no text
+    let big = dir.join("big.html");
+    std::fs::File::create(&big)
+        .unwrap()
+        .set_len(16 * 1024 * MIB)
+        .unwrap();
+    let started = std::time::Instant::now();
+    let out = run(&big, "html", 8 * MIB);
+    assert!(out.status.success(), "{out:?}");
+    assert!(out.stdout.is_empty());
+    assert!(started.elapsed().as_secs() < 30);
+
+    // 100 000 nested elements and 100 000 unclosed cells
+    let hostile = dir.join("hostile.html");
+    let mut html = "<div>".repeat(100_000);
+    html.push_str(&"<td>1.5".repeat(100_000));
+    std::fs::write(&hostile, html).unwrap();
+    let out = run(&hostile, "html", 16 * MIB);
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("1.5 | 1.5"));
+
+    let out = run(&report, "docx", 16 * MIB);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unknown format"));
+    std::fs::remove_dir_all(&dir).ok();
+}

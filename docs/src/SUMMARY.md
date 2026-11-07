@@ -56,6 +56,7 @@
 
 - [Research notes](research/index.md)
     - [3D preview of NX parts](research/nx-jt-preview.md)
+    - [Text from HTML reports](research/html-report-text.md)
     - [Text from PDF reports](research/pdf-text-extraction.md)
     - [One provider interface for the assistant](research/agent-interface.md)
     - [Sharing UI code between web and desktop](research/shared-ui.md)
@@ -67,3 +68,4 @@
     - [Openly licensed CAD files for end-to-end tests](research/cad-test-files.md)
     - [Read permissions for project groups](research/read-permissions.md)
     - [As-built records](research/as-built.md)
+    - [Fluent, STAR-CCM+ and Simcenter 3D files](research/solver-files.md)

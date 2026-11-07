@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [stepbom, swpart, nxpart, cadrefs, bomtable, thumbnail, textindex, mesh, mesh_step]
+        target: [stepbom, swpart, nxpart, cadrefs, bomtable, thumbnail, textindex, htmltext, mesh, mesh_step]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -61,6 +61,7 @@ jobs:
             "fuzz/corpus/${{ matrix.target }}" \
             "fuzz/seeds/${{ matrix.target }}" \
             tests/fixtures/cad/nist \
+            tests/fixtures/reports \
             -- -max_total_time="$SECONDS_PER_TARGET" -max_len=1048576 \
                -timeout=60 -rss_limit_mb=2560
       - name: Crash inputs
