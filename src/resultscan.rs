@@ -484,7 +484,7 @@ fn lines_of(bytes: &[u8]) -> Vec<String> {
 }
 
 /// The last [`SCAN_MAX_LINES`] lines of a file's end (see
-/// [`crate::util::read_tail`]: it starts at a line).
+/// [`crate::textindex::read_tail`]: it starts at a line).
 fn tail_lines_of(bytes: &[u8]) -> Vec<String> {
     let text = String::from_utf8_lossy(bytes);
     let count = text.lines().count();
@@ -518,16 +518,21 @@ pub fn extract(filename: &str, bytes: &[u8], templates: &[ResultTemplate]) -> Ve
 /// template with `pick = last` looks at the tail first – a solver writes its
 /// final values at the end – and falls back to the head; table headers
 /// (`csv`, `table`) always come from the head. `pick = first` reads the
-/// head only.
+/// head only. A tail holding a NUL (zero padding) is ignored. For a file
+/// below twice [`SCAN_MAX_BYTES`] head and tail overlap: a value found in
+/// the overlap is labelled by its line from the end, not its line number.
 pub fn extract_with_tail(
     filename: &str,
     head: &[u8],
     tail: &[u8],
     templates: &[ResultTemplate],
 ) -> Vec<ResultInput> {
-    if head.contains(&0) || tail.contains(&0) {
+    if head.contains(&0) {
         return Vec::new();
     }
+    // a NUL in the end only (zero padding of a crashed or preallocated log):
+    // the templates fall back to the head
+    let tail: &[u8] = if tail.contains(&0) { &[] } else { tail };
     let mut applicable: Vec<&ResultTemplate> = templates
         .iter()
         .filter(|t| t.enabled && glob_matches(&t.file_pattern, filename))
@@ -1129,11 +1134,27 @@ mod tests {
         c.csv_key_value = "2".into();
         let found = extract_with_tail("m.csv", csv_head.as_bytes(), b"700,1.5\n701,1.25\n", &[c]);
         assert_eq!((found[0].value, found[0].source.as_str()), (4.0, "m.csv:3"));
-        // NUL in the tail: a binary file, nothing
+        // NUL in the tail (zero padding): the tail is ignored, the head used
         let t = template("regex", "*.trn", r"Pressure drop:\s*([-+0-9.eE]+)");
-        assert!(
-            extract_with_tail("run.trn", head.as_bytes(), b"\0Pressure drop: 1\n", &[t]).is_empty()
+        assert!(extract_with_tail(
+            "run.trn",
+            head.as_bytes(),
+            b"\0Pressure drop: 1\n",
+            std::slice::from_ref(&t)
+        )
+        .is_empty());
+        let found = extract_with_tail(
+            "run.trn",
+            head2.as_bytes(),
+            b"Pressure drop: 7 Pa\n\0\0\0\0",
+            std::slice::from_ref(&t),
         );
+        assert_eq!(
+            (found[0].value, found[0].source.as_str()),
+            (1.0, "run.trn:1")
+        );
+        // NUL in the head: a binary file, nothing
+        assert!(extract_with_tail("run.trn", b"bin\0", b"Pressure drop: 1\n", &[t]).is_empty());
     }
 
     #[test]

@@ -144,7 +144,9 @@ fn is_decimal_number(word: &str) -> bool {
 /// Reads (the beginning of) a stored file and extracts its text. A large
 /// plain-text file (solver log, print output) keeps its end as well: the
 /// text of the beginning, the marker [`TAIL_MARK`] and the text of the last
-/// [`TAIL_READ`] bytes – where a solver writes its status and final values.
+/// `TAIL_READ` (64 KiB) bytes – where a solver writes its status and final
+/// values. The end is only added when the beginning was text and the end is
+/// text in the same encoding (no NUL, no UTF-16 byte order mark at the start).
 pub async fn extract_file(path: &Path, filename: &str) -> String {
     if kind_of(filename) == Kind::None {
         return String::new();
@@ -173,7 +175,7 @@ pub async fn extract_file(path: &Path, filename: &str) -> String {
     tokio::task::spawn_blocking(move || {
         let text = extract(&filename, &content);
         let cut = len > MAX_READ || text.chars().count() >= MAX_TEXT;
-        if cut && !tail.is_empty() {
+        if cut && tail_usable(&content, &text, &tail) {
             with_tail(text, &tail)
         } else {
             text
@@ -185,6 +187,17 @@ pub async fn extract_file(path: &Path, filename: &str) -> String {
 
 /// Bytes read from the end of a large plain-text file.
 const TAIL_READ: u64 = 64 * 1024;
+
+/// Whether the end of a file may follow the text of its beginning: the
+/// beginning gave text (a binary file gives none), the end holds no NUL
+/// (binary data, zero padding, UTF-16), and the beginning has no byte order
+/// mark other than UTF-8's – the end has no mark of its own and would be
+/// decoded in another encoding.
+fn tail_usable(head: &[u8], head_text: &str, tail: &[u8]) -> bool {
+    let same_encoding = encoding_rs::Encoding::for_bom(head)
+        .is_none_or(|(encoding, _)| encoding == encoding_rs::UTF_8);
+    !tail.is_empty() && !head_text.is_empty() && !tail.contains(&0) && same_encoding
+}
 
 /// Between the beginning and the end of a file whose middle was left out.
 pub const TAIL_MARK: &str = "\n[… middle of the file left out …]\n";
@@ -506,6 +519,23 @@ mod tests {
         assert_eq!(with_tail("head".into(), b""), "head");
         assert_eq!(from_next_line(b"cut line\nwhole\n".to_vec()), b"whole\n");
         assert!(from_next_line(b"no line break".to_vec()).is_empty());
+    }
+
+    #[test]
+    fn the_end_follows_only_a_text_beginning_in_the_same_encoding() {
+        assert!(tail_usable(b"Iteration 1\n", "Iteration 1", b"converged\n"));
+        assert!(
+            tail_usable(b"\xEF\xBB\xBFlog\n", "log", b"converged\n"),
+            "UTF-8 BOM"
+        );
+        // binary file: the beginning gave no text
+        assert!(!tail_usable(b"\x7fELF\x02\x01\x00", "", b"converged\n"));
+        // the end holds binary data or zero padding
+        assert!(!tail_usable(b"log\n", "log", b"end\x00\x00\x00"));
+        // UTF-16: the end has no byte order mark of its own
+        assert!(!tail_usable(b"\xFF\xFEl\x00", "l", b"e\x00n\x00d\x00"));
+        assert!(!tail_usable(b"\xFE\xFF\x00l", "l", b"end"));
+        assert!(!tail_usable(b"log\n", "log", b""));
     }
 
     #[tokio::test]

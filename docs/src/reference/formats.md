@@ -157,7 +157,7 @@ Extensions that other programs use too are decided by the file content:
   Nastran or Simcenter (Simcenter 3D writes its decks as `.dat`); all other
   `.dat` files stay unclassified.
 * `.msh` is a Fluent mesh with Fluent's sections (`(0 `, `(1 `, `(2 `,
-  `(10 `) and a Gmsh mesh with ``; otherwise, and by name alone,
+  `(10 `) and a Gmsh mesh with `$MeshFormat`; otherwise, and by name alone,
   it stays unclassified.
 * `.cas.h5`, `.dat.h5` and `.msh.h5` need the HDF5 signature (at offset 0 or
   512), `.cas.gz`, `.dat.gz` and `.msh.gz` the gzip magic. The HDF5 files are
