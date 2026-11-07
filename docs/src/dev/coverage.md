@@ -42,8 +42,9 @@ and the proofing tests).
 
 ## Coverage in CI
 
-The job *coverage* in `.github/workflows/ci.yml` runs `cargo llvm-cov` over
-the complete test suite with PostgreSQL 16 and the client tools, prints the
+The PostgreSQL 18 leg of the job *tests* in `.github/workflows/ci.yml` (until
+2026-11-07 a separate job *coverage*) runs `cargo llvm-cov` over
+the complete test suite with PostgreSQL 18 and the client tools, prints the
 per-file summary into the job summary and uploads the HTML report
 (`coverage-html`, 14 days) as an artifact.
 
