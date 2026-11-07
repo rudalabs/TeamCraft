@@ -115,6 +115,8 @@ src/resultscan.rs result values from `teamcraft-results.json|csv` and per-group 
 src/cadformat.rs   file formats of CAD/BIM/DCC/mesh/point-cloud programs, stored in files.format
 src/cadrefs.rs     file names referenced inside CAD files (assemblies, drawings, STEP, KiCad) for reference tracking
 src/nxpart.rs      NX part stream container (SPLMSSTR): directory, reference streams, preview stream – read with seeks
+src/nxasm.rs       NX assemblies: components + placements from /Root/FastLoad/Structure (OM objects, hash map instance→record);
+                   services/assemblies.rs composes the assembly preview from the parts' previews (found by file name)
 src/swpart.rs      SOLIDWORKS 2015+ section container: Deflate sections (bounded, CRC-checked), PreviewPNG, component tree (COMPINSTANCETREE)
 src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/;
                    NX parts: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)

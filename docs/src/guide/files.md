@@ -55,17 +55,23 @@ several fields, a selector – see [Simulations](simulation.md#results-in-3d).
 Native CAD files (Inventor, Solid Edge, SolidWorks, NX, Creo, CATIA, …) are
 proprietary; TeamCraft does not read their exact geometry (see
 [Research: previews of native CAD files](../research/cad-previews.md)).
-The one exception are **NX parts**: NX saves a tessellation of every part
-in a documented format (JT 9) into the file, and TeamCraft shows it in the
-3D viewer, refined along the exact surface normals stored with it, so round
-faces stay round (see [Research: 3D preview of NX parts](../research/nx-jt-preview.md)).
-NX assemblies and drawings have no such tessellation. For the rest
-TeamCraft shows what other PLM systems show:
+The one exception is **NX**: NX saves a tessellation of every part in a
+documented format (JT 9) into the file, and TeamCraft shows it in the 3D
+viewer, refined along the exact surface normals stored with it, so round
+faces stay round. An **NX assembly** is put together from its part files:
+check the parts in (in the assembly's revision or as items of their own,
+under their NX file names) and the assembly shows every component in its
+place, sub-assemblies included (see
+[Research: 3D preview of NX parts](../research/nx-jt-preview.md)).
+Components that are not in TeamCraft are left out. For the rest TeamCraft
+shows what other PLM systems show:
 
-* **A picture of the 3D preview** for NX parts: the small JPEG NX stores
-  is replaced by an image rendered from the tessellation (512 × 512 PNG,
-  transparent background), drawn once and cached. NX assemblies and
-  drawings keep their stored JPEG.
+* **A picture of the 3D preview** for NX parts and assemblies: the small
+  JPEG NX stores is replaced by an image rendered from the 3D preview
+  (512 × 512 PNG, transparent background), drawn once and cached; an
+  assembly's picture is drawn again when one of its parts changes. NX
+  drawings, and assemblies none of whose parts are in TeamCraft, keep the
+  stored JPEG.
 * **The preview image stored in the file.** Inventor (`.ipt`, `.iam`,
   `.idw`, `.ipn`), Solid Edge (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`), NX assemblies and drawings (`.prt`, a JPEG) and
   SolidWorks files (up to 2014 in their OLE container, from 2015 on in a

@@ -52,8 +52,44 @@ Implement: `src/mesh/jt.rs` reads LOD 0 of the JT stream of NX parts
 the 3D preview; assemblies and drawings keep their preview image.
 
 Not now: stand-alone `.jt` files (the NIST assembly's is JT 10.5 with a
-different element layout and a scene graph with transforms), assemblies
-(their components' meshes placed by the assembly), the Parasolid block.
+different element layout and a scene graph with transforms), the Parasolid
+block.
+
+## Addendum 2026-11-07: assemblies and thumbnails
+
+The JPEG NX stores in a file is small (about 240 × 180 px) and poor for
+assemblies. NX parts therefore get a thumbnail rendered from their 3D
+preview, and assemblies a 3D preview put together from their parts:
+
+* An NX assembly has no `/Root/FastLoad/JT` of its own. Its
+  `/Root/FastLoad/Structure` stream is an NX object serialisation ("OM":
+  header, object table of offsets and tags). The largest object holds the
+  placement records (two rotation rows and the translation in mm, numbers
+  as a tag byte plus a shortened big-endian double, all divided by 4), the
+  component names (the file names without `.prt`, upper case) and the name
+  index of every instance. Another object is a hash map from instance to
+  record; instances without a record sit at the origin.
+* Verified against the JT 10.5 export of the NIST assembly (scene graph,
+  property table and transform attributes decoded for this): all 36
+  instances match in part, rotation and translation (differences below
+  0.00001 mm). A real assembly with two levels of sub-assemblies (a pintle
+  injector, 59 placed parts, 0.63 million triangles) renders correctly.
+* Sub-assemblies keep their placements in their own file (same format);
+  placements compose as row vectors (`p · R + t`).
+* The component files are found by file name like file references; their
+  saved folders are in `/Root/FastLoad/ExternalReferences`, but inside
+  TeamCraft the name match is what counts.
+* Two of three exploration agents worked out the mapping independently
+  (one from the JT ground truth, one from the `.prt` alone); a third ruled
+  out the other streams (`RMFastLoad`: attributes and mass properties,
+  `UG_PART`: the same transforms keyed by internal object maps).
+
+Decision: `src/nxasm.rs` reads the components, `services::assemblies`
+composes the preview from the parts' previews (cache key = content hashes
+of everything used), the thumbnail of parts and assemblies is drawn from the
+3D preview (`mesh/render.rs`). Not known yet: NX's "hidden component"
+flags (NX's own picture may leave out components the preview shows) and
+units of assemblies modelled in inches (all files seen are in mm).
 
 ## Sources
 

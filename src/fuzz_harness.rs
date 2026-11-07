@@ -67,6 +67,7 @@ pub fn nxpart(data: &[u8]) {
     let _ = crate::nxpart::reference_streams_in(data);
     let _ = crate::nxpart::reference_streams(Cursor::new(data), LIMIT);
     let _ = crate::mesh::read("nx-part", data);
+    let _ = crate::nxasm::components(data);
 }
 
 /// Referenced file names (every container and the text heuristic).

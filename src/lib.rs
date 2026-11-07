@@ -34,6 +34,7 @@ pub mod mcp;
 pub mod mesh;
 pub mod models;
 pub mod notify;
+pub mod nxasm;
 pub mod nxpart;
 pub mod oidc;
 pub mod pagecontext;

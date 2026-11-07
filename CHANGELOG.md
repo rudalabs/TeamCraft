@@ -24,6 +24,8 @@ Changes on `main` since the `v0.2.0` tag.
   file, refined along its exact surface normals so round faces stay round.
   The thumbnail of an NX part is rendered from it instead of the small JPEG
   stored in the file.
+- 3D preview and thumbnail of NX assemblies, put together from the previews
+  of their part files (found by file name, sub-assemblies included).
 
 ### Changed
 

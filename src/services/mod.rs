@@ -5,6 +5,7 @@
 //! are enforced identically for both.
 
 pub mod access;
+pub mod assemblies;
 pub mod assistant;
 pub mod assistant_threads;
 pub mod attributes;

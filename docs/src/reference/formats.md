@@ -31,8 +31,15 @@ its reference streams (not from the save history), the preview image from
 `/Root/FastLoad/JT`: a JT 9 file whose finest level of detail
 (topologically compressed tri-strip sets, `src/mesh/jt.rs`) is refined
 along its stored surface normals up to 3 × 3 (`src/mesh/pn.rs`, at most
-about 500 000 triangles) and shown in millimetres. Assemblies and drawings
-carry no such stream; stand-alone `.jt` files (JT 10) are not previewed yet.
+about 500 000 triangles) and shown in millimetres. Assemblies carry no
+such stream: their 3D preview is put together from the previews of their
+part files (`src/nxasm.rs` reads the components and placements from
+`/Root/FastLoad/Structure`, `src/services/assemblies.rs` places the parts).
+Components are found by file name, like file references – in the
+assembly's revision first, otherwise in the latest revision of another
+item – and sub-assemblies are followed up to 8 levels deep; components
+that are not in TeamCraft are left out. Drawings have no 3D preview;
+stand-alone `.jt` files (JT 10) are not previewed yet.
 
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018

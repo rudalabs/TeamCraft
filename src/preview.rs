@@ -386,6 +386,17 @@ impl Previews {
         ))
     }
 
+    /// Where the composed preview of an assembly is cached: next to the
+    /// blob's own preview, named by the components it was built from
+    /// (`key`, hex), so a changed component gives a new file.
+    pub fn assembly_path(&self, sha256: &str, key: &str) -> AppResult<PathBuf> {
+        if key.is_empty() || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(AppError::BadRequest("Invalid assembly key.".into()));
+        }
+        let (mesh, _) = self.paths(sha256)?;
+        Ok(mesh.with_file_name(format!("{sha256}.asm-{key}.v{CACHE_VERSION}.tcm")))
+    }
+
     /// The cached shape signature (or the reason why there is none).
     fn signature_path(&self, sha256: &str) -> AppResult<PathBuf> {
         let (mesh, _) = self.paths(sha256)?;

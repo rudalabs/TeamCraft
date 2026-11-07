@@ -3630,6 +3630,97 @@ async fn nx_part_thumbnails_are_rendered_from_the_3d_preview() {
     app.teardown().await;
 }
 
+/// An NX assembly has no tessellation of its own: its 3D preview is put
+/// together from the previews of its part files, found by file name and
+/// placed as the assembly says (the NIST assembly: 36 instances of 8
+/// parts). Its thumbnail is drawn from that preview.
+#[tokio::test]
+async fn nx_assemblies_are_put_together_from_their_parts() {
+    // the NIST parts have up to 4 MB; the test default allows 1 MiB uploads
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "assembly", "name": "Crada", "project": "GEARBOX" })),
+    )
+    .await;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/cad/nist/mtc-assembly/nx");
+    let names = [
+        "NIST mtc crada assembly.prt",
+        "NIST mtc crada box.prt",
+        "NIST mtc crada cover.prt",
+        "NIST mtc crada plate.prt",
+        "NIST mtc crada polycarb.prt",
+        "90591A141 HEX NUT.prt",
+        "91274A118 SHCS.prt",
+        "91274A141 SHCS.prt",
+        "91304A112 FHSCS.prt",
+    ];
+    // one upload per file: together they exceed the test's upload limit
+    let mut asm_id = String::new();
+    for name in names {
+        let data = std::fs::read(dir.join(name)).unwrap();
+        let files = app
+            .api_multipart(
+                "/api/v1/items/ASM-000001/revisions/A/files",
+                &eng,
+                &[(name, data.as_slice())],
+                &[],
+            )
+            .await;
+        assert_eq!(
+            files.status,
+            StatusCode::CREATED,
+            "{name}: {}",
+            files.text()
+        );
+        if name == "NIST mtc crada assembly.prt" {
+            asm_id = files.json()[0]["id"].as_str().unwrap().to_string();
+        }
+    }
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{asm_id}/mesh"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.parts, 36, "every instance placed");
+    let b = mesh.bounds();
+    // the box is 152.4 × 101.6 mm; screws stand out on top
+    assert!((b[3] - b[0] - 152.4).abs() < 1.0, "{b:?}");
+    assert!((b[4] - b[1] - 101.6).abs() < 1.0, "{b:?}");
+    let again = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{asm_id}/mesh"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(again.body, r.body, "cached");
+
+    let thumb = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{asm_id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
+    assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
+    app.teardown().await;
+}
+
 /// The most used Teamcenter working features: favorites, saved
 /// searches, Save As and the BOM comparison.
 #[tokio::test]
