@@ -17,6 +17,17 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Wider separation of duties (#152, step 1): a reviewer must not have created
+  the change, submitted it (an administrator acting for the author) or changed
+  the revisions under review (revision creator, file uploader, logged edits).
+  Checked when adding a reviewer, on submit and on every decision. The
+  reviewer suggestions never offer such users. An administrator who prepared
+  the draft for the author (items, reviewers, edits, submit; read from the
+  audit log) cannot review it either. Migrations `0041`/`0042` add
+  `changes.submitted_by` and `changes.four_eyes`. Upgrade: changes already in
+  review keep working (only the author is refused); the editor and preparer
+  checks apply to drafts and to every later submit.
+
 - Company AI instead of shadow AI (data-loss prevention):
   `TEAMCRAFT_LOCAL_AGENTS=off` lets administrators turn off local AI agents
   (the desktop app's *Agent* view, ACP), so that AI use goes through the
