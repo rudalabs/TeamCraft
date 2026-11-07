@@ -5,4 +5,4 @@
 ALTER TABLE file_versions
     ADD COLUMN solver_summary JSONB,
     ADD CONSTRAINT file_versions_solver_summary_object
-        CHECK (solver_summary IS NULL OR jsonb_typeof(solver_summary) = 'object');
+        CHECK (solver_summary IS NULL OR jsonb_typeof(solver_summary) = 'object') NOT VALID;

@@ -132,11 +132,11 @@ impl Summary {
 }
 
 /// Whether [`summarize`] has rules for a file: its format id, or none for an
-/// unclassified `.log` / `.txt` (a STAR-CCM+ batch log has no format).
+/// unclassified or plain-text `.log` / `.txt` (a STAR-CCM+ batch log has no format).
 pub fn applies(format_id: Option<&str>, filename: &str) -> bool {
     match format_id {
-        Some(id) => FORMATS.contains(&id),
-        None => {
+        Some(id) if id != "text" => FORMATS.contains(&id),
+        _ => {
             let lower = filename.to_ascii_lowercase();
             lower.ends_with(".log") || lower.ends_with(".txt")
         }
@@ -705,6 +705,8 @@ mod tests {
     fn applies_to_known_formats_and_plain_logs() {
         assert!(applies(Some("fluent-transcript"), "a.trn"));
         assert!(applies(None, "run.LOG"));
+        assert!(applies(Some("text"), "run.txt"));
+        assert!(!applies(Some("text"), "notes.md"));
         assert!(!applies(None, "a.step"));
         assert!(!applies(Some("step"), "a.step"));
     }

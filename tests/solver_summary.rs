@@ -1,6 +1,6 @@
 //! Solver summary of a file version (`solversummary`, migration 0045): made
-//! at check-in from solver output, served with the file list, kept when a
-//! version is restored, absent for other files.
+//! at check-in from solver output, served with the file list, absent for
+//! other files.
 
 mod common;
 
@@ -18,6 +18,8 @@ macro_rules! app_or_skip {
 }
 
 const TRN: &[u8] = b"Welcome to ANSYS Fluent 2023 R1\nWarning: low quality cells\n  310  1.2e-04 3.4e-05 1.0e-03   0:00:12  190\n! 311 solution is converged\n";
+const BDF: &[u8] = b"$ Simcenter Nastran 2212 translator\nSOL 101\nCEND\nBEGIN BULK\nGRID,1\n";
+const STAR: &[u8] = b"STAR-CCM+ 18.02.008\nStopping criterion satisfied\n";
 const F06: &[u8] = b"1    Simcenter Nastran 2212  JAN 1, 2023  PAGE 1\n*** USER FATAL MESSAGE 9050\n * * * END OF JOB * * *\n";
 
 #[tokio::test]
@@ -37,6 +39,8 @@ async fn solver_output_gets_a_summary_other_files_do_not() {
             &[
                 ("run.trn", TRN),
                 ("run.f06", F06),
+                ("model.bdf", BDF),
+                ("batch.txt", STAR),
                 ("notes.txt", b"nothing about a solver here\n"),
             ],
             &[("comment", "solver output")],
@@ -72,6 +76,8 @@ async fn solver_output_gets_a_summary_other_files_do_not() {
     let f06 = by("run.f06");
     assert_eq!(f06["solver_summary"]["status"], "fatal");
     assert_eq!(f06["solver_summary"]["fatal"], 1);
+    assert_eq!(by("model.bdf")["solver_summary"]["solver"], "Nastran");
+    assert_eq!(by("batch.txt")["solver_summary"]["solver"], "STAR-CCM+");
     assert!(by("notes.txt").get("solver_summary").is_none());
 
     app.teardown().await;

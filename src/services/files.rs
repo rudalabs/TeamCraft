@@ -171,6 +171,8 @@ impl Upload {
     ) -> Upload {
         let mut scan_head = Vec::new();
         let mut scan_tail = Vec::new();
+        let mut sum_head = Vec::new();
+        let mut sum_tail = Vec::new();
         let mut export_name = None;
         let (format, content_text, references) = match vault.object_path(&blob.sha256) {
             Ok(path) => {
@@ -184,6 +186,15 @@ impl Upload {
                     .await;
                 }
                 let format = cadformat::detect_stored(&path, &filename).await;
+                if scan_head.is_empty()
+                    && !html
+                    && crate::solversummary::applies(format.map(|f| f.id), &filename)
+                {
+                    // solver decks (.bdf, .nas) are not result-scannable: read only
+                    // the summary windows
+                    let w = crate::solversummary::WINDOW as u64;
+                    (sum_head, sum_tail) = read_head_and_tail(&path, w, blob.size > w).await;
+                }
                 let references = match format {
                     Some(f) if cadrefs::scans(f.id) => cadrefs::scan_file(&path, &filename).await,
                     _ => Vec::new(),
@@ -201,7 +212,12 @@ impl Upload {
             }
             Err(_) => (cadformat::detect(&filename, &[]), String::new(), Vec::new()),
         };
-        let solver_summary = summary_of(format, &filename, &scan_head, &scan_tail);
+        let (sh, st) = if scan_head.is_empty() {
+            (&sum_head, &sum_tail)
+        } else {
+            (&scan_head, &scan_tail)
+        };
+        let solver_summary = summary_of(format, &filename, sh, st);
         Upload {
             content_type: cadformat::content_type(format, client_content_type),
             blob,
@@ -233,6 +249,7 @@ fn summary_of(
         return None;
     }
     let (head, tail) = ss::windows(head, tail);
+    let id = id.filter(|i| *i != "text");
     ss::summarize(id.unwrap_or(""), &head, &tail).map(|s| s.to_json())
 }
 
