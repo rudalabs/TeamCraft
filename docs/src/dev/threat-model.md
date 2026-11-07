@@ -165,8 +165,9 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 | Threat | STRIDE | Mitigation | Tests | Status |
 |---|---|---|---|---|
 | Sign-in code intercepted | S | browser flow to a loopback callback with PKCE S256 and state; one-time code (hashed, 5 minutes, deleted on any exchange attempt); the result is a PAT (90 days), audited `desktop.authorize` (`src/services/desktop.rs`, `desktop/src/signin.rs`) | `tests/web_ui.rs` `desktop_sign_in_through_the_browser`; `src/services/desktop.rs` `pkce_s256`, `requests_are_validated`; `desktop/src/signin.rs` `pkce_matches_rfc_7636`, `loopback_round_trip` | mitigated |
-| Token read from the user's disk | I | a plain file `token` in the app's config folder, mode 0600 on Unix, the profile folder's permissions on Windows; no OS keychain (`desktop/src/settings.rs`) | `desktop/src/settings.rs` `settings_and_token_round_trip` (mode 0600) | partial (F18) |
-| Token sent in clear text | I | rustls with certificate validation; API paths are checked so the token goes only to the configured server (`desktop/src/api.rs` `check_path`); an `http://` server URL is accepted without a warning | – | partial (F18) |
+| Token read from the user's disk | I | the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service), written and read back before it counts; a token file of older versions moves into it at the next start. Without a keychain: the file `token` in the app's config folder (mode 0600 on Unix, the profile folder's permissions on Windows) and a warning at the start and in *Settings* (`desktop/src/settings.rs`) | `desktop/src/settings.rs` `settings_and_keychain_token_round_trip`, `without_a_keychain_the_token_falls_back_to_a_private_file` (mode 0600), `a_token_file_moves_into_the_keychain`, `a_keychain_that_loses_the_token_counts_as_none`, `sign_out_fails_when_the_keychain_keeps_the_token` | mitigated (F18) |
+| Token sent in clear text | I | rustls with certificate validation; API paths are checked so the token goes only to the configured server (`desktop/src/api.rs` `check_path`); an `http://` server URL to another computer is accepted but warned about in the connect dialog, on the sign-in step and in *Settings* (`desktop/src/settings.rs` `insecure_http`) | `desktop/src/settings.rs` `insecure_http_spares_https_and_loopback` | mitigated (F18): warned, the user decides |
+| Update notice abused | T / I | the daily release check (opt-out) asks only `api.github.com` for the latest release, without redirects and with a 10 s timeout; a version from the answer is used only if it is a plain `x.y.z`; the notice opens a fixed release page – the app downloads and installs nothing. GitHub sees the address and app version once a day (`desktop/src/update.rs`) | `desktop/src/update.rs` `newer_versions`, `tags`, `at_most_daily` | mitigated |
 | Server writes outside the working folder | T | every server-supplied name goes through `safe_name` / `normalize_folder` (no `..`, no separators, reserved Windows names) before `join_rel` (`desktop/src/layout.rs` `local_rel`) | `desktop/src/layout.rs` `names`, `folders_like_the_server`, `layout_mapping` | mitigated |
 | Old desktop app against a newer server | T | none: no version handshake | – | **open** (OPEN_WORK *desktop ↔ server compatibility*) |
 
@@ -211,7 +212,7 @@ fixed ones are struck through and name the change.
 | F15 | Prompt injection: the untrusted marker is advisory; no taint for external MCP clients | assistant / MCP |
 | F16 | No per-user quota or rate limit for the assistant and MCP | assistant / MCP |
 | F17 | The `teamcraft mcp` bridge follows redirects and accepts `http://` | MCP |
-| F18 | Desktop token in a plain file (no keychain, no Windows ACL); `http://` server URLs accepted | desktop |
+| F18 | ~~Desktop token in a plain file; `http://` server URLs accepted~~ – fixed (`ga/desktop-security`): OS keychain with a warned file fallback, a warning for `http://` servers | desktop |
 | F19 | Backups are written with the process umask, unencrypted, with an unsigned manifest | backup |
 
 Fixed while writing this model: a password change kept the user's other

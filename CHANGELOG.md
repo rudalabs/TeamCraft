@@ -23,6 +23,9 @@ Changes on `main` since the `v0.2.0` tag.
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.
+- Desktop app: an update notice. At most once a day the app asks GitHub for
+  the latest release and shows a link to it in the status bar; it never
+  downloads or installs anything. *Settings → Updates* switches it off.
 
 ### Changed
 
@@ -50,5 +53,10 @@ Changes on `main` since the `v0.2.0` tag.
 - The file readers for untrusted uploads (CAD, mesh, point-cloud and BOM
   table files) no longer panic on malformed input.
 - The child processes that convert files start with a cleared environment.
+- Desktop app: the sign-in token is kept in the OS keychain (Windows
+  Credential Manager, macOS Keychain, Secret Service on Linux); the token file
+  of earlier versions moves there at the next start. Without a keychain the
+  app keeps the private file and shows a warning. Server addresses with plain
+  `http://` to another computer get a warning.
 
 [Unreleased]: https://github.com/rudalabs/TeamCraft/compare/v0.2.0...HEAD

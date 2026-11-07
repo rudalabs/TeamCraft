@@ -376,6 +376,10 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .status-get-text { overflow: hidden; text-overflow: ellipsis; max-width: 34rem; }
 .status-get button { height: 18px; font-size: 12px; padding: 0 6px; }
 .status-server::before { content: '●'; color: var(--st-ok-fg); margin-right: 6px; }
+/* the update notice: a link to the release page and a close button, never a download */
+.status-update { display: inline-flex; align-items: center; gap: 2px; }
+.status-update button { height: 18px; font-size: 12px; padding: 0 6px; }
+#status-update-open { color: var(--link); }
 
 /* ---------------------------------------------------------------- navigator */
 
@@ -715,6 +719,9 @@ table.grid td.actions button { height: var(--ctl-h-sm); padding: 0 8px; font-siz
 .notice.error { box-shadow: inset 3px 0 0 var(--st-danger-fg); background: var(--surface); border: 1px solid var(--border); }
 .notice.ok { box-shadow: inset 3px 0 0 var(--st-ok-fg); background: var(--surface); border: 1px solid var(--border); }
 .notice.info { background: var(--surface-2); }
+/* a risk the user should know about: an unencrypted server address, the token
+   outside the OS keychain */
+.notice.warn { box-shadow: inset 3px 0 0 var(--st-review-fg); background: var(--surface); border: 1px solid var(--border); }
 
 /* 3D viewer */
 .viewer-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; }
