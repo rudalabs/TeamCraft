@@ -277,8 +277,32 @@ async fn import_folder(
                     "{}",
                     r.text()
                 );
-                let n = r.json()["item_number"].as_str().unwrap().to_string();
+                let rev = r.json();
+                let n = rev["item_number"].as_str().unwrap().to_string();
                 log.items.insert(it.key.clone(), n.clone());
+                // `resumeReplayed` of app.js: a replayed item an earlier run
+                // checked in is done when all its files are there, otherwise
+                // it is checked out again and completed
+                if r.status == StatusCode::OK && rev["checked_out_by"].is_null() {
+                    let base = format!("/api/v1/items/{n}/revisions/A");
+                    let have: Vec<String> = app.api(Method::GET, &base, token, None).await.json()
+                        ["files"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|f| f["filename"].as_str().unwrap().to_lowercase())
+                        .collect();
+                    let complete = it.files.iter().all(|p| {
+                        have.contains(&p.file_name().unwrap().to_str().unwrap().to_lowercase())
+                    });
+                    if complete {
+                        continue;
+                    }
+                    let r = app
+                        .api(Method::POST, &format!("{base}/checkout"), token, None)
+                        .await;
+                    assert!(r.status.is_success(), "{}", r.text());
+                }
                 log.pending.insert(it.key.clone());
                 n
             }

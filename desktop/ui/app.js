@@ -4515,6 +4515,22 @@
   }
 
   /** Check-in of an imported item without new files (releases the lock). */
+  /** An item the server returned for an idempotency key of an earlier run
+   * (its answer was lost): still checked out to me → continue as new; checked
+   * in with all its files → done; checked in without them → checked out again
+   * and completed. */
+  function resumeReplayed(rev, it) {
+    if (rev.checked_out_by === state.me.id) return rev;
+    var base = "/items/" + enc(rev.item_number) + "/revisions/" + enc(rev.code);
+    return api("GET", base).then(function (r) {
+      var have = {};
+      (r.files || []).forEach(function (f) { have[String(f.filename).toLowerCase()] = true; });
+      var complete = it.files.every(function (f) { return have[String(f.name).toLowerCase()]; });
+      if (complete) { rev.done = true; return rev; }
+      return api("POST", base + "/checkout").then(function () { return rev; });
+    });
+  }
+
   function checkInImported(rev) {
     return api("POST", "/items/" + enc(rev.item_number) + "/revisions/" + enc(rev.code) + "/checkin");
   }
@@ -4630,8 +4646,14 @@
                 // the same key on every run: an item whose answer was lost is
                 // returned by the server, not created a second time
                 return api("POST", "/items", { item_type: it.type, name: it.name, project: group, number: it.number, idempotency_key: key });
-              });
+              }).then(function (rev) { return pendingNumber ? rev : resumeReplayed(rev, it); });
           return start.then(function (rev) {
+            if (rev.done) {
+              // created and checked in completely by an earlier run whose log was lost
+              log[it.key] = rev.item_number; saveImportLog(group, path, log);
+              created.push({ rev: rev, item: it });
+              return;
+            }
             if (!pendingNumber) {
               // remembered at once, so a second run never creates it twice –
               // pending until its files are in
