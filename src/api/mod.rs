@@ -10,6 +10,7 @@ mod change_requests;
 mod interchange_api;
 mod personal;
 mod simulations;
+mod tokens_api;
 pub(crate) mod uploads_api;
 mod webhooks;
 
@@ -69,6 +70,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/me", get(me))
         .route("/me/password", post(change_password))
         .route("/desktop/token", post(desktop_token))
+        .route(
+            "/tokens",
+            get(tokens_api::list_tokens).post(tokens_api::create_token),
+        )
+        .route("/tokens/{id}", delete(tokens_api::revoke_token))
         .route("/worklist", get(worklist))
         .route("/worklist/checkin-all", post(checkin_all))
         .route("/mcp", post(crate::mcp::http).get(crate::mcp::http_get))
@@ -85,6 +91,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route(
             "/projects/{code}/policy",
             get(project_policy_get).put(project_policy_set),
+        )
+        .route(
+            "/projects/{code}/review-policy",
+            get(review_policy_get).put(review_policy_set),
         )
         .route(
             "/projects/{code}/elevations",
@@ -447,15 +457,20 @@ async fn index() -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
-            "GET    /api/v1/me",
+            "GET    /api/v1/me                                        the caller, its groups and token_scope",
             "POST   /api/v1/me/password                            {current_password, new_password} – change own password (throttled; ends web sessions)",
             "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts, and grouped by dependent revision as impact_groups), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
+            "GET    /api/v1/tokens                                    your personal access tokens (name, prefix, scope, expiry; never the value)",
+            "POST   /api/v1/tokens                                    {name, expires_in_days?: 1..3650 (absent = never), scope?: full|write|read_only|mcp_only} – the value is answered once",
+            "DELETE /api/v1/tokens/{id}                               revoke a token (your own; admins: any)",
             "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
             "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
             "PUT    /api/v1/projects/{code}/policy                   {admin_read: implicit|with_reason|none} how administrators read a restricted group – managers and admins",
+            "GET    /api/v1/projects/{code}/review-policy            review policy: min approvals, required reviewers, role group",
+            "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?} – managers and admins",
             "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
             "DELETE /api/v1/projects/{code}/elevations               ends the administrator's running access",
             "GET    /api/v1/projects/{code}/members",
@@ -610,11 +625,15 @@ async fn index() -> Json<Value> {
     }))
 }
 
-async fn me(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
+async fn me(
+    State(st): State<AppState>,
+    crate::auth::ApiCaller { actor: me, scope }: crate::auth::ApiCaller,
+) -> AppResult<Json<Value>> {
     // `hidden_projects` is never serialized; the client learns only which of
     // its own groups are restricted (for a badge).
     let mut body = json!(me);
     body["restricted_projects"] = json!(projects::restricted_memberships(&st.db, &me).await?);
+    body["token_scope"] = json!(scope);
     // "local" or "oidc": a client offers "Change password" only for local accounts
     body["auth_source"] = json!(users::get(&st.db, me.id).await?.auth_source);
     body["capabilities"] = json!({

@@ -345,6 +345,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/projects/{id}/numbering", post(admin::update_numbering))
         .route("/projects/{id}/visibility", post(admin::update_visibility))
         .route("/projects/{id}/policy", post(admin::update_policy))
+        .route(
+            "/projects/{id}/review-policy",
+            post(admin::update_review_policy),
+        )
         .route("/projects/{id}/elevate", post(admin::elevate))
         .route("/projects/{id}/elevate/end", post(admin::end_elevation))
         .route("/projects/{id}/members", post(admin::add_member))
