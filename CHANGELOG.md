@@ -17,7 +17,7 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
-- Item owner and hand-over (#152 step 7, migration 0045): `items.owner_id`
+- Item owner and hand-over (#152 step 7, migration 0050): `items.owner_id`
   (default: the creator) is shown on the item page and changed by the
   managers of the group and administrators (`item.owner`). Administrators
   hand over a leaving user's item ownerships, draft and rejected change
@@ -36,8 +36,7 @@ Changes on `main` since the `v0.2.5` tag.
   and a dashboard card *Simulations to check* (failed values or out-of-date
   basis). Restricted groups stay out of results and totals. No migration.
 - Solver summary per file version, step 3 of `docs/src/research/solver-files.md`
-  (migration 0045, nullable `file_versions.solver_summary`; the number will be
-  renumbered at merge): for Fluent transcripts and report files, Nastran `.f06`
+  (migration 0049, nullable `file_versions.solver_summary`): for Fluent transcripts and report files, Nastran `.f06`
   and decks, STAR-CCM+ macros and batch logs, one line with solver, version, how
   the run ended, last iteration and FATAL/WARNING counts of the first and last
   64 KiB. Shown on the file row and the simulation page, in the REST file list and
@@ -45,15 +44,13 @@ Changes on `main` since the `v0.2.5` tag.
   against real files.
 - Review rounds and absent reviewers (#152, steps 5 and 6): withdrawing or
   reopening a change after decisions keeps them as an earlier round
-  (`change_review_rounds`, `changes.review_round`, migration 0045; the number
-  will be renumbered at merge if needed). The change page and
+  (`change_review_rounds`, `changes.review_round`, migration 0048). The change page and
   `GET /api/v1/changes/{number}` show earlier rounds and flag pending
   reviewers who cannot decide (deactivated, demoted, blind to an item). The
   author or an administrator replaces a pending reviewer while the change is in
   review (`POST /api/v1/changes/{number}/reviewers/{old}/replace`, audited
   `change.replace_reviewer`); other decisions are kept.
-- Review policy per project group, step 2 of #152 (migration 0045, to be
-  renumbered at merge): minimum approvals (default all), required reviewers and
+- Review policy per project group, step 2 of #152 (migration 0047): minimum approvals (default all), required reviewers and
   an optional role group (e.g. QA) whose member must approve. `submit` refuses a
   change that cannot meet the policy of every affected group; the review outcome
   uses it. Form on the group page, `GET`/`PUT /api/v1/projects/{code}/review-policy`.
@@ -73,7 +70,7 @@ Changes on `main` since the `v0.2.5` tag.
   rights than its own. The desktop app's new tokens now expire after 30 days
   without use (renewed on every use) instead of a fixed 90 days; existing
   desktop tokens keep their fixed expiry.
-  Migration `0045` (renumbered at merge).
+  Migration `0046`.
 - The web *New item* form sends files above 32 MiB in chunks too (resumable, like the revision page); the
   upload sessions may now have no revision and only join the creation of an item. Without JavaScript the form still
   submits all files in one request.

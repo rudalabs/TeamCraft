@@ -1,4 +1,4 @@
-//! Solver summary of a file version (`solversummary`, migration 0045): made
+//! Solver summary of a file version (`solversummary`, migration 0049): made
 //! at check-in from solver output, served with the file list, absent for
 //! other files.
 
