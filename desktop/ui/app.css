@@ -263,7 +263,7 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 
 .shell {
   display: grid;
-  grid-template-columns: var(--rail) var(--nav-width) 1px minmax(0, 1fr) auto;
+  grid-template-columns: var(--rail) var(--nav-width) 1px minmax(0, 1fr);
   grid-template-rows: 40px minmax(0, 1fr) 24px;
   height: 100vh;
 }
@@ -354,12 +354,6 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .workarea > .tabs { order: 1; }
 .workarea > .toolbar { order: 2; }
 .workarea > .tab-body { order: 3; }
-
-/* Ask TeamCraft: a drawer beside the tabs (shared/css/assistant.css, shared/js/assistant.js). */
-#assistant-drawer { grid-row: 2; grid-column: 5; }
-@media (max-width: 960px) {
-  #assistant-drawer { position: fixed; z-index: 30; top: 40px; bottom: 24px; right: 0; max-width: 92vw; box-shadow: var(--shadow-pop); }
-}
 
 .statusbar {
   grid-column: 1 / -1;
@@ -984,6 +978,11 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 .agent-plan .status-in_progress { color: var(--text); font-weight: 600; }
 
 .tab-body > .agent-panel { height: 100%; }
+/* the company AI in the Agent tab: the shared assistant panel in inline mode */
+.tab-body > .tc-assistant.tc-a-inline { height: 100%; max-width: 980px; margin: 0 auto; }
+/* the backend switch in the Agent toolbar: Company AI | Local agent */
+.toolbar .agent-switch .tool[aria-pressed="true"] { background: var(--selected); border-color: var(--selected); font-weight: 600; }
+.agent-company { display: grid; gap: 6px; }
 .agent-panel { display: flex; flex-direction: column; gap: 12px; max-width: 980px; margin: 0 auto; min-height: 0; }
 .agent-log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 4px 12px; }
 .agent-empty { max-width: 640px; margin: 32px auto; color: var(--text-muted); }

@@ -817,6 +817,40 @@ mod tests {
         assert_eq!(clamp_zoom(9.0), ZOOM_RANGE.1);
         assert_eq!(clamp_zoom(f64::NAN), 1.0);
     }
+
+    #[test]
+    fn only_an_offered_agent_backend_can_be_picked() {
+        use acp::AgentBackend::{Company, Local};
+        assert!(check_backend(Company, &[Company, Local]).is_ok());
+        assert!(check_backend(Local, &[Local]).is_ok());
+        let off = check_backend(Local, &[Company]).unwrap_err();
+        assert!(off.contains("TEAMCRAFT_LOCAL_AGENTS=off"), "{off}");
+        let none = check_backend(Company, &[Local]).unwrap_err();
+        assert!(none.contains("no company AI"), "{none}");
+        assert!(check_backend(Local, &[]).is_err());
+    }
+
+    #[test]
+    fn the_policy_names_backend_and_choices() {
+        let mut s = Settings {
+            server_url: Some("https://plm.example.org".into()),
+            ..Settings::default()
+        };
+        let me = json!({ "username": "lina", "capabilities": { "assistant": true, "local_agents": true } });
+        // both offered, no agent set up, nothing picked: the company AI
+        let p = policy_of(&me, &s);
+        assert!(p.allowed && p.company);
+        assert_eq!(p.backend, "company");
+        assert_eq!(p.available, ["company", "local"]);
+        s.remember_agent_backend("lina", acp::AgentBackend::Local);
+        assert_eq!(policy_of(&me, &s).backend, "local");
+        // the administrator turns local agents off: the pick no longer counts
+        let off = json!({ "username": "lina", "capabilities": { "assistant": true, "local_agents": false } });
+        let p = policy_of(&off, &s);
+        assert!(!p.allowed && p.message.is_some());
+        assert_eq!(p.backend, "company");
+        assert_eq!(p.available, ["company"]);
+    }
 }
 
 /// Uploads local files into a revision the user has checked out: the files
@@ -1192,31 +1226,79 @@ pub fn agent_status(state: State<'_, AppState>) -> Option<AgentState> {
         .map(describe)
 }
 
-/// Whether the server lets this user run local agents.
+/// What the Agent view may use: the server's policy and the user's pick.
 #[derive(Serialize)]
 pub struct AgentPolicy {
+    /// The server lets this user run local agents.
     pub allowed: bool,
-    /// Why not, naming the administrator setting.
+    /// The server runs its assistant – the company AI.
+    pub company: bool,
+    /// The Agent view's backend: `company`, `local` or `off` (no AI).
+    pub backend: &'static str,
+    /// The backends the user may switch between (company first).
+    pub available: Vec<&'static str>,
+    /// Why local agents are not allowed, naming the administrator setting.
     pub message: Option<String>,
 }
 
-/// Asks the server whether local agents are allowed
-/// (`TEAMCRAFT_LOCAL_AGENTS`) and ends a running agent when they are not.
-/// The user interface calls it after sign-in and then routes *View → Agent*
-/// (`Ctrl/Cmd+4`) to *Ask TeamCraft*, the company AI, or to a notice;
-/// `agent_start` checks again on its own.
+fn policy_of(me: &Value, s: &Settings) -> AgentPolicy {
+    let gate = acp::local_agents_gate(me);
+    let user = me["username"].as_str().unwrap_or_default();
+    let (backend, available) =
+        acp::choose_backend(me, !s.agents.is_empty(), s.stored_agent_backend(user));
+    AgentPolicy {
+        allowed: gate.is_ok(),
+        company: acp::company_ai(me),
+        backend: backend.as_str(),
+        available: available.iter().map(|b| b.as_str()).collect(),
+        message: gate.err(),
+    }
+}
+
+/// May the user pick `wanted`? Only a backend the policy offers.
+fn check_backend(wanted: acp::AgentBackend, available: &[acp::AgentBackend]) -> Result<(), String> {
+    if available.contains(&wanted) {
+        return Ok(());
+    }
+    Err(match wanted {
+        acp::AgentBackend::Local => acp::LOCAL_AGENTS_OFF.to_string(),
+        _ => "This TeamCraft server has no company AI configured.".to_string(),
+    })
+}
+
+/// Asks the server what the Agent view may use – local agents
+/// (`TEAMCRAFT_LOCAL_AGENTS`) and the company AI (the server's assistant) –
+/// and ends a running agent when local agents are off. The user interface
+/// calls it after sign-in; with local agents off the Agent view runs on the
+/// company AI, or shows a notice without one. `agent_start` checks again.
 #[tauri::command]
 pub async fn agent_policy(state: State<'_, AppState>) -> CmdResult<AgentPolicy> {
     let api = signed_in_api(&state)?;
     let me = api.json(Method::GET, "/me", None).await?;
-    let gate = acp::local_agents_gate(&me);
-    if gate.is_err() {
+    if acp::local_agents_gate(&me).is_err() {
         stop_agent(&state);
     }
-    Ok(AgentPolicy {
-        allowed: gate.is_ok(),
-        message: gate.err(),
-    })
+    Ok(policy_of(&me, &snapshot(&state)))
+}
+
+/// The user switches the Agent view between the company AI and the local
+/// agent; remembered per server and user. The server is asked again, so a
+/// backend the policy does not offer (any more) is refused.
+#[tauri::command]
+pub async fn set_agent_backend(
+    state: State<'_, AppState>,
+    backend: String,
+) -> CmdResult<AgentPolicy> {
+    let wanted = acp::AgentBackend::parse(&backend)
+        .ok_or_else(|| ApiError::local(format!("Unknown agent backend “{backend}”.")))?;
+    let api = signed_in_api(&state)?;
+    let me = api.json(Method::GET, "/me", None).await?;
+    let has_agents = !snapshot(&state).agents.is_empty();
+    let (_, available) = acp::choose_backend(&me, has_agents, None);
+    check_backend(wanted, &available).map_err(ApiError::local)?;
+    let user = me["username"].as_str().unwrap_or_default().to_string();
+    let s = update_settings(&state, |s| s.remember_agent_backend(&user, wanted))?;
+    Ok(policy_of(&me, &s))
 }
 
 /// Starts a configured agent in the workspace folder and opens a session

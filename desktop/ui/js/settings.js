@@ -6,7 +6,7 @@ import { $, SKINS, TAURI, api, call, dialog, errorText, field, h, label, state, 
 import { applySkin } from "./skins.js";
 import { checkServerUrl, showConnect } from "./connect.js";
 import { checkUpdate } from "./shell.js";
-import { resetAssistant } from "./assistant.js";
+import { resetCompanyAi } from "./assistant.js";
 import { agent, agentSettingsDialog, endAgentPermissions, localAgentsAllowed, localAgentsOffText } from "./agent.js";
 
 export function openSettings() {
@@ -172,11 +172,13 @@ export function signOut(changeServer) {
     state.tabs = [];
     state.active = null;
     state.me = null;
-    resetAssistant();
+    resetCompanyAi();
     endAgentPermissions();
     agent.running = null; // signing out stops the agent (src/commands.rs)
     agent.busy = false;
     agent.contextKey = null;
+    agent.backend = null; // the next sign-in asks the server again (agent_policy)
+    agent.available = [];
     showConnect(changeServer ? "server" : "signin");
   }, function (e) { toast(errorText(e), "error"); });
 }

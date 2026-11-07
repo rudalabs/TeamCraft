@@ -40,24 +40,30 @@ CAD generation:
   below), the assistant raises the request; otherwise it shows what the
   request should contain.
 
-Open it with the sparkle icon in the top bar (desktop app: **Ask** in the
-rail). You can add your own words to a quick action, e.g. "focus on the weld
+Open it with the sparkle icon in the top bar (desktop app: the **Agent**
+view on *Company AI*, `Ctrl/Cmd+4`). You can add your own words to a quick action, e.g. "focus on the weld
 seams". The answer shows the tools that the assistant used. Item numbers in
 the answer link to the item. The assistant remembers the conversation: see
 [The sidebar](#the-sidebar).
 
 ## The sidebar
 
-*Ask TeamCraft* lives in a **sidebar** on every page. The **sparkle icon** in
-the top bar (desktop app: **Ask** in the navigation rail, `Ctrl/Cmd+5`)
-unfolds a drawer on the right. It stays open while you move around, **Esc**
-closes it, and your browser remembers whether it was open (a small
-`localStorage` entry, nothing is sent to the server for that). Drag the left
-edge or use the arrow keys on it to change its width. On a phone it is a
-full-screen sheet.
+*Ask TeamCraft* lives in a **sidebar** on every page of the web UI. The
+**sparkle icon** in the top bar unfolds a drawer on the right. It stays
+open while you move around, **Esc** closes it, and your browser remembers
+whether it was open (a small `localStorage` entry, nothing is sent to the
+server for that). Drag the left edge or use the arrow keys on it to change
+its width. On a phone it is a full-screen sheet.
 
 The icon is only there when an administrator has configured the
 assistant.
+
+In the **desktop app** the same conversation is the *Company AI* backend of
+the **Agent** view (`Ctrl/Cmd+4`; see
+[ACP agents](#acp-agents-in-the-desktop-app)): a panel in the Agent tab
+instead of a drawer, with the same context chip, quick actions, drafts
+checkbox and conversation. Its context is the last revision, change order
+or change request tab you opened.
 
 ### It knows the page you are on
 
@@ -221,10 +227,19 @@ When the AI service is overloaded or busy it answers `503`.
 
 ## ACP agents in the desktop app
 
-*Ask TeamCraft* runs on the server with the administrator's provider and key. The
-desktop app has a second option: it can work with an **agent on your own
-computer**. The [Agent Client Protocol](https://agentclientprotocol.com)
-(ACP) connects clients to such agents, for example Claude Code (through
+*Ask TeamCraft* runs on the server with the administrator's provider and key.
+In the desktop app it is one of two backends of the **Agent** view
+(*Company AI*); the other is an **agent on your own computer** (*Local
+agent*). When the server offers both, *Company AI* / *Local agent* in the
+Agent toolbar switches between them. Each keeps its own conversation: the
+company AI's is stored and audited on the server, the local agent's lives
+in its process on your computer. The app remembers the choice per server
+and user and starts with the local agent if you have set one up, otherwise
+with the company AI.
+
+The local agent speaks the [Agent Client
+Protocol](https://agentclientprotocol.com) (ACP), which connects clients to
+agents on your computer, for example Claude Code (through
 its ACP adapter) or Gemini CLI. The desktop app is the ACP client. The
 server needs no API key for this. The agent uses its own sign-in or key
 with its own provider.
@@ -237,11 +252,11 @@ own (data-loss prevention: the organisation's provider and contract, the
 key only on the server, every question in the audit log and within the
 assistant's limits). The server then refuses every MCP client, also one
 you set up with your own token, and the desktop app ends a running agent
-and refuses to start one. **Agent** disappears from the rail; *View →
-Agent* (`Ctrl/Cmd+4`) opens *Ask TeamCraft* with a short note that your
-organisation provides its AI centrally – or, if no assistant is
-configured, tells you that local agents are off and no company AI is set
-up.
+and refuses to start one. The **Agent** view (`Ctrl/Cmd+4`) then runs on
+the company AI, automatically and without a local option, with a short
+note that your organisation provides its AI centrally – or, if no
+assistant is configured, says that AI is switched off by the administrator
+(local agents off, no company AI).
 
 ### Set it up
 
@@ -260,8 +275,9 @@ up.
    program is not found, enter its absolute path, for example
    `/opt/homebrew/bin/gemini`. Package names change: check the adapter's
    own documentation if `npx` reports an unknown package.
-3. Open **Agent** (rail, **View → Agent**, `Ctrl+4`), pick the agent and
-   press **Start**.
+3. Open **Agent** (rail, **View → Agent**, `Ctrl+4`; if it shows the company
+   AI, click **Local agent** in its toolbar), pick the agent and press
+   **Start**.
 
 ### Working with it
 

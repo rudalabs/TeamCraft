@@ -1500,15 +1500,32 @@ mod tests {
             retention_days: 30,
         };
         use crate::config::LocalAgents;
-        for (agents, assistant, says) in [
-            (LocalAgents::Off, Some(&company_ai), "Company AI only"),
-            (LocalAgents::Off, None, "users have no AI in TeamCraft"),
+        // the notice, and what the desktop app's Agent view runs on
+        for (agents, assistant, says, desktop) in [
+            (
+                LocalAgents::Off,
+                Some(&company_ai),
+                "Company AI only",
+                "company AI (no local option)",
+            ),
+            (
+                LocalAgents::Off,
+                None,
+                "users have no AI in TeamCraft",
+                "a notice that AI is switched off",
+            ),
             (
                 LocalAgents::Allowed,
                 Some(&company_ai),
                 "TEAMCRAFT_LOCAL_AGENTS=off",
+                "the user chooses: company AI or local agent",
             ),
-            (LocalAgents::Allowed, None, "No assistant is configured"),
+            (
+                LocalAgents::Allowed,
+                None,
+                "No assistant is configured",
+                "<dd>local agent</dd>",
+            ),
         ] {
             let html = render(
                 &env,
@@ -1518,6 +1535,7 @@ mod tests {
                 )),
             );
             assert!(html.contains(says), "{agents:?}: {says}");
+            assert!(html.contains(desktop), "{agents:?}: {desktop}");
             assert!(!html.contains("sk-ant-never-shown"), "the key leaked");
             if assistant.is_some() {
                 assert!(html.contains("claude-opus-5-5"), "model shown");

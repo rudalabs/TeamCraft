@@ -849,7 +849,7 @@ pub use crate::compat::{LOCAL_AGENT_HEADER, LOCAL_AGENT_HEADER_VALUE};
 
 /// Shown when the server's administrator turned local agents off.
 pub const LOCAL_AGENTS_OFF: &str = "Local agents are turned off on this TeamCraft server: the administrator \
-set TEAMCRAFT_LOCAL_AGENTS=off, so AI use goes through the company AI (Ask TeamCraft) where the server provides one.";
+set TEAMCRAFT_LOCAL_AGENTS=off, so the Agent view runs on the company AI where the server provides one.";
 
 /// May the desktop start a local agent, by the server's `GET /api/v1/me`?
 /// `capabilities.local_agents == false` refuses; a server too old to report
@@ -859,6 +859,30 @@ pub fn local_agents_gate(me: &Value) -> Result<(), String> {
         Some(false) => Err(LOCAL_AGENTS_OFF.to_string()),
         _ => Ok(()),
     }
+}
+
+pub use crate::compat::AgentBackend;
+
+/// Does the server run its assistant – the company AI – for this user?
+/// Only a plain `true` in `capabilities.assistant` counts.
+pub fn company_ai(me: &Value) -> bool {
+    me["capabilities"]["assistant"].as_bool() == Some(true)
+}
+
+/// The Agent view's backend by the server's `GET /api/v1/me`, whether the
+/// user has set up a local agent and the user's stored pick (only a
+/// preference: the policy wins) – see [`crate::compat::choose_backend`].
+pub fn choose_backend(
+    me: &Value,
+    has_agents: bool,
+    stored: Option<AgentBackend>,
+) -> (AgentBackend, Vec<AgentBackend>) {
+    crate::compat::choose_backend(
+        local_agents_gate(me).is_ok(),
+        company_ai(me),
+        has_agents,
+        stored,
+    )
 }
 
 // ---------------------------------------------------------------- session
@@ -1836,6 +1860,50 @@ mod tests {
         assert!(local_agents_gate(&json!({ "username": "lina" })).is_ok());
         // anything but a plain false does not turn agents off by accident
         assert!(local_agents_gate(&json!({ "capabilities": { "local_agents": "off" } })).is_ok());
+    }
+
+    #[test]
+    fn the_agent_backend_follows_the_server() {
+        use AgentBackend::{Company, Local, Off};
+        let me = |assistant: Value, local: Value| json!({ "username": "lina", "capabilities": { "assistant": assistant, "local_agents": local } });
+        // off + company AI: the company AI, a stored local pick does not count
+        assert_eq!(
+            choose_backend(&me(json!(true), json!(false)), true, Some(Local)),
+            (Company, vec![Company])
+        );
+        // off + no company AI: no AI
+        assert_eq!(
+            choose_backend(&me(json!(false), json!(false)), true, None),
+            (Off, vec![])
+        );
+        // both: the stored pick, else the local agent when one is set up
+        let both = me(json!(true), json!(true));
+        assert_eq!(
+            choose_backend(&both, true, Some(Company)),
+            (Company, vec![Company, Local])
+        );
+        assert_eq!(choose_backend(&both, true, None).0, Local);
+        assert_eq!(choose_backend(&both, false, None).0, Company);
+        // allowed, no company AI: local only, a stale company pick ignored
+        assert_eq!(
+            choose_backend(&me(json!(false), json!(true)), false, Some(Company)),
+            (Local, vec![Local])
+        );
+        // an older server without `local_agents`: allowed as before
+        assert_eq!(
+            choose_backend(
+                &json!({ "capabilities": { "assistant": false } }),
+                true,
+                None
+            ),
+            (Local, vec![Local])
+        );
+        // only a plain true is a company AI
+        assert!(!company_ai(&me(json!("yes"), json!(true))));
+        assert_eq!(
+            choose_backend(&me(json!("yes"), json!(false)), true, None),
+            (Off, vec![])
+        );
     }
 
     #[tokio::test]

@@ -69,26 +69,36 @@ check-outs and reviews, and a **local working folder**:
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.
-* *Ask* (rail, *View → Ask TeamCraft*, `Ctrl/Cmd+5`, or *Ask…* in a
-  revision or change tab) unfolds the [Ask TeamCraft](assistant.md#the-sidebar)
-  sidebar beside the tabs when the server has the assistant enabled. It
-  knows the tab you are on (revision and its section, BOM with revision
-  rule, change order, change request, or the search and list in the
-  navigator), offers quick actions that fit it, and keeps one conversation
-  on the server that survives tab changes and restarts.
-* *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`) works with a local AI agent
-  that you set up under *Settings → Agents…*, for example Claude Code
-  through its ACP adapter or Gemini CLI. None is set up by default. The app
-  starts the agent in the workspace folder and gives it TeamCraft's tools
-  with your rights. The conversation streams in a tab of its own, with tool
-  calls, the agent's plan, permission prompts (*Allow once* / *Reject*),
-  *Cancel* and quick prompts (release notes, release check, change review,
-  worklist triage). Through the app the agent may only read text files in
-  the workspace folder; it gets no write access and no terminal. If the
+* *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`, or *Agent* in a revision or
+  change tab) is the app's one place for AI. It runs on one of two
+  backends, decided by the server's policy and your choice:
+  * **Company AI** – the server's assistant, configured by the
+    administrator (the key stays on the server). It is the
+    [Ask TeamCraft](assistant.md) conversation of the web UI, inline in the
+    Agent tab: it knows the last revision (and its section, BOM with
+    revision rule), change order or change request tab you opened, offers
+    quick actions that fit it (*Draft release notes*, *Check before
+    release*, *Brief me for this review* …), has the *Allow drafting*
+    checkbox, *Cancel* and *New conversation*, and keeps one conversation on
+    the server that survives restarts.
+  * **Local agent** – an AI agent on your computer that you set up under
+    *Settings → Agents…*, for example Claude Code through its ACP adapter
+    or Gemini CLI. None is set up by default. The app starts the agent in
+    the workspace folder and gives it TeamCraft's tools with your rights.
+    The conversation streams in the tab, with tool calls, the agent's plan,
+    permission prompts (*Allow once* / *Reject*), *Cancel* and quick
+    prompts (release notes, release check, change review, worklist triage).
+    Through the app the agent may only read text files in the workspace
+    folder; it gets no write access and no terminal.
+
+  When the server offers both, *Company AI* / *Local agent* in the Agent
+  toolbar switches between them (each keeps its own conversation); the app
+  remembers the choice per server and user, and starts with the local agent
+  if you have set one up, otherwise with the company AI. If the
   administrator turned local agents off (`TEAMCRAFT_LOCAL_AGENTS=off`), the
-  app refuses to start one and *View → Agent* (`Ctrl/Cmd+4`) opens *Ask
-  TeamCraft*, the company AI, instead (or a notice when the server has no
-  assistant). See
+  Agent view runs on the company AI only, the app ends a running agent and
+  refuses to start one; with no company AI configured either, the view
+  says that AI is switched off by the administrator. See
   [ACP agents](assistant.md#acp-agents-in-the-desktop-app).
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a
@@ -136,7 +146,7 @@ back, and *Check in…* is highlighted.
 * revision tab: **Lock** (*Check out*, or *Check in…* and *Cancel check-out*
   / *Force unlock* while checked out) · **Work** (*Edit*, *Get…*, *Open
   folder*) · **Lifecycle** (*Release…*, *Revise*) · **Collaborate**
-  (*Request change…*, *Watch*, *Ask…*, *Agent*);
+  (*Request change…*, *Watch*, *Agent*);
 * change tab: **Review** (*Approve change* highlighted, *Reject* – the comment field
   of *Your review* goes with it, required for a rejection) while your review
   is pending · **Lifecycle** (*Submit for review*, highlighted on your draft,

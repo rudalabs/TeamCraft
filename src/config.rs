@@ -323,16 +323,18 @@ impl Default for WebhookConfig {
 /// `Off` turns `POST /api/v1/mcp` off for every token (the built-in assistant
 /// calls the tools in-process, so it is not affected) and is reported to
 /// clients (`GET /api/v1/me` → `capabilities.local_agents` and `mcp`), so the
-/// desktop app hides its Agent view. [`LOCAL_AGENT_HEADER`], which the desktop
+/// desktop app's Agent view runs on the server-side assistant (or shows that
+/// AI is off without one). [`LOCAL_AGENT_HEADER`], which the desktop
 /// adds to the MCP connection it hands to an agent, only picks the refusal
 /// message. The REST API stays open to a user's own token – limiting that
 /// needs scoped tokens.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LocalAgents {
-    /// The default: the desktop app offers its *Agent* view.
+    /// The default: the desktop app's *Agent* view may run a local agent.
     #[default]
     Allowed,
-    /// Only the server-side assistant (*Ask TeamCraft*).
+    /// Only the server-side assistant (*Ask TeamCraft*; in the desktop app
+    /// the *Agent* view's company AI).
     Off,
 }
 

@@ -14,11 +14,11 @@
 </div>
 
 {% if mode == "company-ai" %}
-<p class="notice">Company AI only: users ask <em>Ask TeamCraft</em>, which runs on the provider configured below with each user's rights, per-question audit records and the server's limits. Local agents and the MCP endpoint are off; the desktop app's <strong>Agent</strong> entry leads to <em>Ask TeamCraft</em>.</p>
+<p class="notice">Company AI only: users ask <em>Ask TeamCraft</em>, which runs on the provider configured below with each user's rights, per-question audit records and the server's limits. Local agents and the MCP endpoint are off; the desktop app's <strong>Agent</strong> view runs on the company AI, with no local option.</p>
 {% elif mode == "no-ai" %}
 <p class="notice">Local agents are off and no assistant is configured: users have no AI in TeamCraft. Set <span class="mono">TEAMCRAFT_ASSISTANT_PROVIDER</span> and its key to offer the company AI.</p>
 {% elif mode == "both" %}
-<p class="notice">Users can ask <em>Ask TeamCraft</em> and may also connect their own local agents with their own AI provider. Set <span class="mono">TEAMCRAFT_LOCAL_AGENTS=off</span> to keep AI use on the company AI.</p>
+<p class="notice">Users can ask <em>Ask TeamCraft</em> and may also connect their own local agents with their own AI provider (in the desktop app's <strong>Agent</strong> view they choose between both). Set <span class="mono">TEAMCRAFT_LOCAL_AGENTS=off</span> to keep AI use on the company AI.</p>
 {% else %}
 <p class="notice">No assistant is configured; users may connect their own local agents with their own AI provider.</p>
 {% endif %}
@@ -32,7 +32,7 @@
     <dt>MCP endpoint</dt>
     <dd>{% if local_agents_allowed %}open to every personal access token{% else %}closed for every token (<span class="mono">403</span>){% endif %}</dd>
     <dt>Desktop Agent view</dt>
-    <dd>{% if local_agents_allowed %}available{% elif assistant %}leads to Ask TeamCraft{% else %}shows that local agents are off{% endif %}</dd>
+    <dd>{% if local_agents_allowed and assistant %}the user chooses: company AI or local agent{% elif local_agents_allowed %}local agent{% elif assistant %}company AI (no local option){% else %}a notice that AI is switched off{% endif %}</dd>
   </dl>
   {% if not local_agents_allowed %}
   <p class="hint">Cooperative enforcement: the REST API stays open to a user's own personal access token, so a program the user writes can still read with that user's rights until scoped tokens exist.</p>

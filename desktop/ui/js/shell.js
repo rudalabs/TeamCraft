@@ -6,8 +6,7 @@ import { $, ICONS, api, badge, call, clear, dialog, enc, errorText, fmtDate, fmt
 import { checkServerVersion, showConnect } from "./connect.js";
 import { navHead, selectView } from "./navigator.js";
 import { activeTab, closeTab, renderActive, renderTabs } from "./tabs.js";
-import { initAssistant } from "./assistant.js";
-import { agent, agentProfiles, applyAgentPolicy, localAgentsAllowed, openAgent, schedulePaint, updateAgentControls } from "./agent.js";
+import { agent, agentProfiles, applyAiPolicy, localAgentsAllowed, openAgent, schedulePaint, updateAgentControls } from "./agent.js";
 import { openRevision } from "./revision.js";
 import { impactGroups } from "./references.js";
 import { SYNC_LABEL, checkWorkspaceLayout } from "./workspace.js";
@@ -100,15 +99,15 @@ export function enterShell() {
     $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
     checkServerVersion();
     applyBranding();
-    initAssistant();
     selectView(state.view);
     renderTabs();
     renderActive();
     refreshWorklistCount();
     pollNotifications(true);
-    // the administrator may have turned local agents off (TEAMCRAFT_LOCAL_AGENTS);
-    // otherwise: an agent that kept running while the window reloaded
-    applyAgentPolicy().then(function () {
+    // the Agent view's backend: the server's policy (TEAMCRAFT_LOCAL_AGENTS, the
+    // company AI) and the user's pick; then an agent that kept running while
+    // the window reloaded
+    applyAiPolicy().then(function () {
       if (!localAgentsAllowed()) return null;
       return agentProfiles().then(function () { return call("agent_status"); });
     }).then(function (s) {

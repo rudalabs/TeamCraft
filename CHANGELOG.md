@@ -24,11 +24,12 @@ Changes on `main` since the `v0.2.5` tag.
   organisation configured (Anthropic, OpenAI/Azure, or a local
   OpenAI-compatible server), its per-question audit and its limits; the key
   never reaches a client. `GET /api/v1/me` reports
-  `capabilities.local_agents`; the desktop app hides the Agent rail button,
-  ends a running agent and refuses to start one, and *View → Agent*
-  (`Ctrl/Cmd+4`) opens *Ask TeamCraft* with a short explanation instead (or,
-  without a configured assistant, a notice that local agents are off and no
-  company AI is configured);
+  `capabilities.local_agents`; the desktop app ends a running agent and
+  refuses to start one, and its *Agent* view (`Ctrl/Cmd+4`) runs on the
+  company AI automatically, with no local option (or, without a configured
+  assistant, shows that AI is switched off by the administrator). When the
+  server offers both, *Company AI* / *Local agent* in the Agent toolbar
+  switches between them, remembered per server and user;
   `POST /api/v1/mcp` refuses every call with `403`, for every token (also
   the `teamcraft mcp` bridge, agents set up by hand and older desktop apps;
   the built-in assistant calls the tools inside the server and is not
@@ -48,6 +49,13 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Changed
 
+- Desktop: *Ask TeamCraft* and *Agent* are one view. The company AI (the
+  server's assistant, with page context, quick actions, the drafts checkbox
+  and the conversation kept on the server) is a backend of the *Agent* view
+  (`Ctrl/Cmd+4`, the *Agent* button of revision and change tabs); the *Ask*
+  rail button, the drawer beside the tabs, *View → Ask TeamCraft*
+  (`Ctrl/Cmd+5`) and the *Ask…* toolbar buttons are gone. The web UI keeps
+  its sidebar.
 - Extraction templates for `.html` files run on the extracted text instead of
   the raw markup.
 - Text and CSV files keep their lines and decimal numbers in the stored text,

@@ -54,3 +54,50 @@ fn local_agent_header_matches_the_server() {
     // a valid header name, as the HTTP stack of the agent needs it
     assert!(axum::http::HeaderName::from_bytes(compat::LOCAL_AGENT_HEADER.as_bytes()).is_ok());
 }
+
+#[test]
+fn agent_backend_follows_the_policy_then_the_users_pick() {
+    use compat::AgentBackend::{Company, Local, Off};
+    // off + company AI: the company AI only, whatever was picked before
+    for stored in [None, Some(Local), Some(Company)] {
+        assert_eq!(
+            compat::choose_backend(false, true, true, stored),
+            (Company, vec![Company])
+        );
+    }
+    // off + no company AI: no AI at all
+    assert_eq!(
+        compat::choose_backend(false, false, true, Some(Local)),
+        (Off, vec![])
+    );
+    // both: the stored pick, else a set-up local agent, else the company AI
+    assert_eq!(
+        compat::choose_backend(true, true, true, Some(Company)),
+        (Company, vec![Company, Local])
+    );
+    assert_eq!(
+        compat::choose_backend(true, true, false, Some(Local)),
+        (Local, vec![Company, Local])
+    );
+    assert_eq!(compat::choose_backend(true, true, true, None).0, Local);
+    assert_eq!(compat::choose_backend(true, true, false, None).0, Company);
+    // allowed, no company AI: the local agent (today's behaviour), even
+    // with a stale pick of the company AI
+    assert_eq!(
+        compat::choose_backend(true, false, false, Some(Company)),
+        (Local, vec![Local])
+    );
+}
+
+#[test]
+fn agent_backend_names_round_trip() {
+    use compat::AgentBackend;
+    for b in [AgentBackend::Company, AgentBackend::Local] {
+        assert_eq!(AgentBackend::parse(b.as_str()), Some(b));
+    }
+    // "off" is a state, never a pick
+    assert_eq!(AgentBackend::Off.as_str(), "off");
+    assert_eq!(AgentBackend::parse("off"), None);
+    assert_eq!(AgentBackend::parse("Company"), None);
+    assert_eq!(AgentBackend::parse(""), None);
+}

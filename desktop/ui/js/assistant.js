@@ -1,24 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
-// TeamCraft Desktop – Ask TeamCraft (the shared assistant drawer).
+// TeamCraft Desktop – the company AI: the Agent view's server backend (the
+// shared assistant of the web UI's "Ask TeamCraft" sidebar, inline), and the
+// markdown-lite the local agent's answers are rendered with.
 // Part of the desktop UI (ES modules, no build step; js/main.js starts it).
 
-import { $, api, append, call, errorText, h, state, toast } from "./core.js";
+// (`$` only for scripts/check-desktop-modules.mjs, which reads the `$` of the
+// regular expressions below as a use)
+import { $, api, append, call, errorText, h, toast } from "./core.js";
 import { canEdit, refreshWorklistCount } from "./shell.js";
-import { activeTab, table } from "./tabs.js";
 import { openRevision } from "./revision.js";
 
 // ======================================================================
-// Revision tab
+// Answers as DOM nodes (never as HTML), item numbers as links
 // ======================================================================
-
-// ======================================================================
-// Assistant ("Ask TeamCraft") – the server runs Claude with the MCP tools
-// and the user's rights; shown only when the server has it enabled.
-// ======================================================================
-
-export function assistantEnabled() {
-  return !!(state.me && state.me.capabilities && state.me.capabilities.assistant);
-}
 
 export var ITEM_NUMBER_IN_TEXT = /\b(?:PRT|ASM|DOC|SW|SIM)-\d{3,}\b/g;
 
@@ -121,17 +115,23 @@ export function markdownLite(text) {
 }
 
 // ----------------------------------------------------------------------
-// The Ask TeamCraft sidebar: the shared drawer (shared/js/assistant.js, the
-// same module as the web UI) beside the tabs. Where the user is comes from
-// the active tab; the conversation lives on the server (one per user).
+// The company AI: the shared assistant (shared/js/assistant.js, the same
+// module as the web UI's sidebar) inline in the Agent tab, when the Agent
+// view's backend is the server (src/acp.rs, choose_backend). The provider
+// key stays on the server; the conversation lives there (one per user).
 // ----------------------------------------------------------------------
 
-export var assistantDrawer = null, assistantPending = null;
+export var companyAi = {
+  host: null,    // the panel's element, kept across renders of the Agent tab
+  panel: null,   // the mounted shared module
+  ready: null,   // Promise of the panel
+  info: null     // GET /assistant: provider, model, host
+};
 
-/** Where the user is: the active tab, else the navigator view. Identifiers
- * only – the server checks every one with the user's rights. */
-export function assistantContext() {
-  var tab = activeTab();
+/** What the user looks at: a revision, change or request tab (the last one
+ * opened before the Agent tab), else the dashboard. Identifiers only – the
+ * server checks every one with the user's rights. */
+export function assistantContext(tab) {
   if (tab && tab.kind === "revision") {
     var sub = tab.sub || "overview";
     var ctx = {
@@ -145,12 +145,7 @@ export function assistantContext() {
   }
   if (tab && tab.kind === "change") return { kind: "change", change: tab.number };
   if (tab && tab.kind === "request") return { kind: "request", request: tab.number };
-  switch (state.view) {
-    case "search": return { kind: "search", query: state.query || undefined, shown: state.searchShown || [] };
-    case "changes": return { kind: "changes", filters: { status: state.changesFilter } };
-    case "notifications": return { kind: "notifications" };
-    default: return { kind: "dashboard" };
-  }
+  return { kind: "dashboard" };
 }
 
 /** Errors reach the shared module as Error objects with a message. */
@@ -178,80 +173,63 @@ export function assistantSend(body, signal) {
   });
 }
 
-export function ensureAssistant() {
-  if (assistantDrawer) return Promise.resolve(assistantDrawer);
-  if (!assistantPending) {
-    assistantPending = Promise.all([
-      import("/static/shared/js/assistant.js"),
-      api("GET", "/assistant").catch(function () { return null; })
-    ]).then(function (r) {
-      var info = r[1] || {};
-      var where = info.provider ? " (" + info.provider + (info.host ? ", " + info.host : "") + ")" : "";
-      assistantDrawer = r[0].mount($("assistant-drawer"), {
-        opener: $("rail-assistant"),
-        canEdit: canEdit(),
-        privacy: "the AI provider configured by your administrator" + where,
-        getContext: assistantContext,
-        link: itemLink,
-        api: {
-          thread: function () { return api("GET", "/assistant/thread").catch(function (e) { throw assistantError(e); }); },
-          send: assistantSend,
-          reset: function () { return api("DELETE", "/assistant/thread").catch(function (e) { throw assistantError(e); }); }
-        },
-        onToggle: function (open) {
-          var button = $("rail-assistant");
-          button.classList.toggle("active", open);
-          button.setAttribute("aria-expanded", String(open));
-        },
-        onDraftsMayHaveChanged: refreshWorklistCount
-      });
-      return assistantDrawer;
-    }, function (err) { assistantPending = null; throw err; });
-  }
-  return assistantPending;
+/** Where the questions go, for the panel's privacy line and the navigator. */
+export function companyAiWhere() {
+  var info = companyAi.info || {};
+  return info.provider ? info.provider + (info.host ? ", " + info.host : "") : "";
 }
 
-/** Opens (or toggles) the sidebar; `onlyOpen` never closes it. */
-export function openAssistant(onlyOpen) {
-  if (!assistantEnabled()) return;
-  ensureAssistant().then(function (d) { if (onlyOpen) d.open(); else d.toggle(); },
-    function (err) { toast(errorText(err), "error"); });
+/** The company AI panel of the Agent tab, mounted once per sign-in.
+ * `getContext` gives the page context, `onBusy(busy)` follows a question. */
+export function companyPanel(getContext, onBusy) {
+  if (companyAi.host) return companyAi.host;
+  var host = companyAi.host = h("section");
+  companyAi.ready = Promise.all([
+    import("/static/shared/js/assistant.js"),
+    api("GET", "/assistant").catch(function () { return null; })
+  ]).then(function (r) {
+    if (companyAi.host !== host) return null; // signed out meanwhile
+    companyAi.info = r[1] || {};
+    var where = companyAiWhere();
+    companyAi.panel = r[0].mount(host, {
+      inline: true,
+      title: "Company AI",
+      canEdit: canEdit(),
+      privacy: "the AI provider configured by your administrator" + (where ? " (" + where + ")" : ""),
+      getContext: getContext,
+      link: itemLink,
+      api: {
+        thread: function () { return api("GET", "/assistant/thread").catch(function (e) { throw assistantError(e); }); },
+        send: assistantSend,
+        reset: function () { return api("DELETE", "/assistant/thread").catch(function (e) { throw assistantError(e); }); }
+      },
+      onBusy: onBusy,
+      onDraftsMayHaveChanged: refreshWorklistCount
+    });
+    return companyAi.panel;
+  }, function (err) {
+    // the next render of the Agent tab tries again
+    if (companyAi.host === host) { companyAi.host = null; companyAi.ready = null; }
+    toast(errorText(err), "error");
+    return null;
+  });
+  return host;
 }
 
-/** The rail icon exists for servers with the assistant; the sidebar stays open across tabs. */
-export function initAssistant() {
-  var button = $("rail-assistant");
-  button.classList.toggle("hidden", !assistantEnabled());
-  if (!assistantEnabled()) {
-    if (assistantDrawer) assistantDrawer.close(false);
-    return;
-  }
-  if (!button.dataset.ready) {
-    button.dataset.ready = "1";
-    button.addEventListener("click", function () { openAssistant(false); });
-  }
-  var wasOpen = false;
-  try { wasOpen = window.localStorage.getItem("tc.assistant.open") === "1"; } catch (e) { /* blocked storage */ }
-  if (wasOpen) ensureAssistant().then(function (d) { d.open(false); }, function () {});
+/** A question to the company AI is running. */
+export function companyAiBusy() {
+  return !!(companyAi.panel && companyAi.panel.isBusy());
 }
 
-/** Signing out: the next user starts with a fresh drawer (no conversation of the last one). */
-export function resetAssistant() {
-  var host = $("assistant-drawer");
-  var fresh = document.createElement("aside");
-  fresh.id = "assistant-drawer";
-  fresh.hidden = true;
-  host.replaceWith(fresh);
-  assistantDrawer = null;
-  assistantPending = null;
-  document.documentElement.classList.remove("tc-assistant-open");
-  var button = $("rail-assistant");
-  button.classList.add("hidden");
-  button.classList.remove("active");
-  button.setAttribute("aria-expanded", "false");
+/** Signing out: the next user starts with a fresh panel (no conversation of the last one). */
+export function resetCompanyAi() {
+  companyAi.host = null;
+  companyAi.panel = null;
+  companyAi.ready = null;
+  companyAi.info = null;
 }
 
-/** The tab or view changed: the drawer re-reads where the user is. */
+/** The tab or view changed: the panel re-reads where the user is. */
 export function assistantContextChanged() {
-  if (assistantDrawer) assistantDrawer.contextChanged();
+  if (companyAi.panel) companyAi.panel.contextChanged();
 }

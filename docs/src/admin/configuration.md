@@ -234,7 +234,8 @@ organisation can turn local agents off and offer its own AI centrally:
 the provider configured under [Assistant](#assistant-optional) – Anthropic,
 OpenAI or Azure OpenAI with the company's contract and key, or a model
 server inside the network (Ollama, vLLM …). Users then work with *Ask
-TeamCraft* in the web UI and the desktop app; the key stays on the server
+TeamCraft* in the web UI and with the **Agent** view of the desktop app,
+which runs on that assistant (*Company AI*); the key stays on the server
 and never reaches a client. Every question runs with the user's rights,
 is recorded in the audit log (`assistant.run`, without the question or
 the answer) and is bounded by the assistant's limits (steps, tokens, time,
@@ -244,7 +245,7 @@ host and limits – never the key, only whether one is set.
 
 | Variable                 | Default   | Meaning                                                                                                                                                        |
 |--------------------------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_LOCAL_AGENTS` | `allowed` | `allowed` or `off`. `off`: the MCP endpoint is closed for every token and the desktop app routes its *Agent* view to *Ask TeamCraft*, the company AI. Any other value stops the server at startup |
+| `TEAMCRAFT_LOCAL_AGENTS` | `allowed` | `allowed` or `off`. `off`: the MCP endpoint is closed for every token and the desktop app's *Agent* view runs on the company AI (the assistant), or says that AI is off when none is configured. Any other value stops the server at startup |
 
 Like every variable it also works as `TEAMCRAFT_LOCAL_AGENTS_FILE`. The
 startup log shows `local_agents=allowed|off`. Changing it needs a restart
@@ -262,16 +263,16 @@ What `off` does:
   endpoint. Refusals are not written to the audit log (they change
   nothing).
 * `GET /api/v1/me` reports `capabilities.local_agents: false` and
-  `capabilities.mcp: false`. The desktop app then hides **Agent** in the
-  rail and the toolbar buttons, ends an agent that is still running and
-  refuses to start one (in the app's Rust code, not only in the user
-  interface). *View → Agent* (`Ctrl/Cmd+4`) leads to the company AI
-  instead: with an assistant configured it opens *Ask TeamCraft* and says
-  that the organisation provides its AI centrally; without one it shows a
-  notice that local agents are off and no company AI is configured.
-  *Settings → Agents* shows the same explanation. A
-  desktop app older than this setting does not hide the view, but its
-  agent gets no TeamCraft tools: the endpoint refuses it.
+  `capabilities.mcp: false`. The desktop app then ends an agent that is
+  still running and refuses to start one (in the app's Rust code, not only
+  in the user interface). Its **Agent** view – the app's one place for AI –
+  runs on the company AI instead: with an assistant configured
+  (`TEAMCRAFT_ASSISTANT_*`), questions go to the server's assistant
+  automatically, with no local option shown (the key never reaches the
+  app); without one the view says that AI is switched off by the
+  administrator. *Settings → Agents* shows the same explanation. A
+  desktop app older than this setting still offers its local agent, but
+  the agent gets no TeamCraft tools: the endpoint refuses it.
 * The desktop app marks the MCP connection it hands to a local agent with
   the header `X-TeamCraft-Client: desktop-agent`. It only picks the
   wording of the refusal; leaving it out does not get a call through.
