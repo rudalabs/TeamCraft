@@ -784,8 +784,10 @@ mod tests {
 
     #[test]
     fn password_policy() {
-        assert!(validate_password("short").is_err());
-        assert!(validate_password("long enough pw").is_ok());
+        // generated at the boundary, not literal phrases: a password literal
+        // reads as a hard-coded credential (CodeQL) and says less about the rule
+        assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN - 1)).is_err());
+        assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN)).is_ok());
     }
 
     #[test]

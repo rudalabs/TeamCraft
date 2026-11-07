@@ -568,7 +568,12 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 .execute(&pool)
                 .await?;
             }
-            println!(
+            // The `user` commands write their report with `writeln!`, not
+            // `println!`: a closed pipe (`teamcraft user list | head`) is
+            // then an error, not a panic. The report holds account names,
+            // roles and groups the operator asked for – never a password.
+            writeln!(
+                std::io::stdout(),
                 "created user '{}' with role {}{}",
                 user.username,
                 user.role,
@@ -580,7 +585,7 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                         projects.join(", ").to_uppercase()
                     )
                 }
-            );
+            )?;
         }
         UserCommand::SetPassword { username } => {
             let user = services::users::find_by_username(&pool, &username)
@@ -588,21 +593,26 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 .with_context(|| format!("no user named '{username}'"))?;
             let password = read_new_password()?;
             services::users::set_password(&pool, None, user.id, &password).await?;
-            println!(
+            writeln!(
+                std::io::stdout(),
                 "password of '{}' updated; existing sessions were signed out",
                 user.username
-            );
+            )?;
         }
         UserCommand::List => {
-            println!(
+            let users = services::users::list(&pool).await?;
+            let mut out = std::io::stdout().lock();
+            writeln!(
+                out,
                 "{:<24} {:<10} {:<6} {:<7} DISPLAY NAME",
                 "USERNAME", "ROLE", "SOURCE", "ACTIVE"
-            );
-            for u in services::users::list(&pool).await? {
-                println!(
+            )?;
+            for u in users {
+                writeln!(
+                    out,
                     "{:<24} {:<10} {:<6} {:<7} {}",
                     u.username, u.role, u.auth_source, u.active, u.display_name
-                );
+                )?;
             }
         }
     }

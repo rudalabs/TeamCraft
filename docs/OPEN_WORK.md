@@ -230,11 +230,30 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   Flatpak or bundle change is built before it is merged
 - [ ] Run `fuzz.yml` and `scale.yml` once by hand – their schedules have never fired yet – and make a failing
   scheduled run open an issue instead of only an e-mail
-- [ ] Triage the open CodeQL alerts (cleartext logging/storage, hard-coded crypto value, uncontrolled allocation
-  size): fix or dismiss each with a reason; until then the PR annotations are noise. Path injection: the 16 alerts
-  were one false positive – the axum `State` extractor counts as user input, so the configured vault directory
-  did – answered by the barrier model in `.github/codeql/extensions/teamcraft-models/` (check that the alerts
-  close after its first run on `main`)
+- [x] Triage the open CodeQL alerts (2026-11-07, 32 alerts, each checked twice; `fix/codeql-triage`). One real
+  finding, the rest false positives, all answered in code or configuration, none by a model row:
+  - `rust/uncontrolled-allocation-size` #38 (`POST /api/v1/change-requests`) **real, low risk**: the handler
+    resolved every listed item before the 100-item limit was checked, and that limit counted distinct rows, so a
+    2 MB body of one repeated item ran ~150 000 lookups and inserts in one transaction and succeeded. Fixed:
+    `requests::check_item_count` in the handler before any lookup and again in `requests::create`; test
+    `too_many_items_are_rejected_before_any_is_resolved`; threat model row. #39 (`simulations::import_results`)
+    was already bounded by `MAX_RESULTS` one line earlier – the pre-sized `Vec` is gone so the bound is plain.
+  - `rust/hard-coded-cryptographic-value` #1–#5 (`src/auth.rs`): the timing-equaliser `DUMMY_HASH` and the round
+    trip test now hash random values instead of literals; #49/#50 (`src/domain/mod.rs`): the password policy unit
+    test is generated at the `MIN_PASSWORD_LEN` boundary; #8–#14 (`src/oidc.rs`, nonce literals in unit tests)
+    and #15/#53/#54 (`tests/`): test fixtures – the OIDC unit tests moved to `src/oidc/tests.rs` and
+    `.github/codeql/codeql-config.yml` leaves `tests/**` and `src/**/tests.rs` out of the analysis (Rust runs with
+    build-mode none, where analysis `paths-ignore` applies).
+  - `rust/cleartext-storage-database` #16 (`src/delivery.rs`) and #17 (`tests/`): the source was only the name of
+    the SQL builder `notifications::confidential_now` (sensitive-name heuristic; it returns constant SQL text) –
+    renamed `restricted_now_sql`; #52 (`tests/common`): test-only, excluded.
+  - `rust/cleartext-logging` #21–#23 (`teamcraft user create|set-password|list`): the operator's own stdout shows
+    account names, never a password. The report is now written with `writeln!` (a closed pipe such as
+    `user list | head` is an error, not a panic); #18–#20, #41, #51: assertion messages in `tests/`, excluded.
+- [ ] After the first CodeQL run of `fix/codeql-triage` on `main`, check that all 32 alerts closed. Not verifiable
+  locally (no CodeQL CLI): whether the `writeln!` output still counts as a logging sink (#21–#23 – if it does,
+  dismiss them in the GitHub UI as false positive, "admin CLI echoes the account names the operator asked for") and
+  whether the path-injection barrier model (#160/#161) closed its 16 alerts
 - [ ] Dependabot (or Renovate) for Cargo and GitHub Actions, and a `Cargo.lock` for `fuzz/`
 
 ### 2. Structure

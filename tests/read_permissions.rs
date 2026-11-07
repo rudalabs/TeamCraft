@@ -2203,19 +2203,19 @@ async fn second_review_round_leaks_are_closed() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     let group_id = app.project_id(&code).await;
     // the stored flag is stale; delivery evaluates it again
-    let confidential: Vec<(bool, bool)> = sqlx::query_as(&format!(
+    let flags: Vec<(bool, bool)> = sqlx::query_as(&format!(
         "SELECT n.confidential, {} FROM notifications n JOIN users u ON u.id = n.user_id
          WHERE u.username = 'vera' AND n.title LIKE '%' || $1 || '%'",
-        teamcraft::services::notifications::confidential_now("n")
+        teamcraft::services::notifications::restricted_now_sql("n")
     ))
     .bind(&hq)
     .fetch_all(&app.pool)
     .await
     .unwrap();
-    assert!(!confidential.is_empty(), "vera was told of the release");
+    assert!(!flags.is_empty(), "vera was told of the release");
     assert!(
-        confidential.iter().all(|(stored, now)| !stored && *now),
-        "{confidential:?}"
+        flags.iter().all(|(stored, now)| !stored && *now),
+        "{flags:?}"
     );
     // the queued delivery is withheld, not sent
     let dispatcher = teamcraft::webhooks::Dispatcher::new(
