@@ -48,7 +48,9 @@
     active: null,
     worklist: null,
     viewer: null,
-    zoom: 1
+    zoom: 1,
+    update: null, // the newer release the status bar tells about: {version, current}
+    tokenFileWarned: false // the "no keychain" warning shows once per start
   };
 
   // ======================================================================
@@ -435,9 +437,25 @@
     err.textContent = error || "";
     err.classList.toggle("hidden", !error);
     if (step === "server") $("server-url").focus();
+    checkServerUrl($("server-url").value, $("server-http-warning"));
+    checkServerUrl(state.session.server_url || "", $("signin-http-warning"));
+  }
+
+  /** Shows the warning while an address would reach another computer over
+   * plain http:// (src/settings.rs, insecure_http). Per warning, the answer
+   * to the newest address wins. */
+  function checkServerUrl(url, warning) {
+    var mine = warning.checkSeq = (warning.checkSeq || 0) + 1;
+    if (!url.trim()) { warning.classList.add("hidden"); return; }
+    invoke("server_url_insecure", { url: url }).then(function (insecure) {
+      if (mine === warning.checkSeq) warning.classList.toggle("hidden", !insecure);
+    }, function () { if (mine === warning.checkSeq) warning.classList.add("hidden"); });
   }
 
   function initConnect() {
+    $("server-url").addEventListener("input", function () {
+      checkServerUrl($("server-url").value, $("server-http-warning"));
+    });
     $("server-form").addEventListener("submit", function (e) {
       e.preventDefault();
       var url = $("server-url").value;
@@ -534,12 +552,57 @@
         if (s && !agent.running) { agent.running = s; agent.busy = s.busy; updateAgentControls(); schedulePaint(true); }
       }, function () {});
       checkWorkspaceLayout();
+      checkTokenStorage();
+      checkUpdate();
     }).catch(function (err) {
       if (!(err && err.status === 401)) showConnect("signin", errorText(err));
     });
   }
 
+  /** Where the sign-in landed: without an OS keychain the token is in a file
+   * (src/settings.rs) – say so once per start; Settings shows it too. */
+  function checkTokenStorage() {
+    invoke("session").then(function (s) {
+      state.session.token_storage = s.token_storage;
+      if (s.token_storage === "file" && !state.tokenFileWarned) {
+        state.tokenFileWarned = true;
+        toast("No keychain available: your sign-in is stored in a file only you can read. Details in Settings.", "error");
+      }
+    }, function () {});
+  }
+
+  // ======================================================================
+  // Update notice: a newer release on GitHub (src/update.rs) – a link to the
+  // release page in the status bar, never a download or an installation
+  // ======================================================================
+
+  function checkUpdate() {
+    if (!state.session.update_check) { showUpdate(null); return; }
+    invoke("check_update").then(showUpdate, function () {});
+  }
+
+  function showUpdate(notice) {
+    state.update = notice || null;
+    $("status-update").classList.toggle("hidden", !notice);
+    if (notice) $("status-update-open").textContent = "TeamCraft " + notice.version + " is available (you have " + notice.current + ")";
+  }
+
+  function initUpdateNotice() {
+    $("status-update-open").addEventListener("click", function () {
+      call("open_release_page").catch(function (e) { toast(errorText(e), "error"); });
+    });
+    $("status-update-dismiss").addEventListener("click", function () {
+      var notice = state.update;
+      showUpdate(null);
+      if (notice) call("dismiss_update", { version: notice.version }).catch(function (e) { toast(errorText(e), "error"); });
+    });
+    // the app may run for days: look again now and then (Rust asks GitHub
+    // at most once a day)
+    setInterval(function () { if (state.me) checkUpdate(); }, 6 * 3600 * 1000);
+  }
+
   function initShell() {
+    initUpdateNotice();
     if (/Mac/.test(navigator.platform)) $("search-kbd").textContent = "⌘F"; // the View → Search shortcut
     document.querySelectorAll(".rail button[data-view]").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -4663,6 +4726,15 @@
   function openSettings() {
     var current = document.documentElement.getAttribute("data-skin");
     var ws = h("input", { type: "text", value: state.session.workspace_dir, spellcheck: "false" });
+    var updateCheck = h("input", { type: "checkbox", checked: !!state.session.update_check, on: { change: function () {
+      var on = updateCheck.checked;
+      call("set_update_check", { enabled: on }).then(function () {
+        state.session.update_check = on;
+        checkUpdate();
+      }, function (e) { updateCheck.checked = !on; toast(errorText(e), "error"); });
+    } } });
+    var serverInsecure = h("p.notice.warn.small.hidden", { text: "This server is reached over plain http:// – the token and all data cross the network unencrypted. Ask your administrator for the https:// address." });
+    checkServerUrl(state.session.server_url || "", serverInsecure);
     var skins = h("div.skin-grid", null, SKINS.map(function (s) {
       return h("button.skin-card" + (s.id === current ? ".selected" : ""), {
         type: "button", "data-skin": s.id, title: s.description,
@@ -4690,8 +4762,15 @@
         h("span.hint", { text: "Local AI agents (ACP) that work with TeamCraft's tools – none until you add one." }),
         h("button", { type: "button", on: { click: function () { dlg.close(); agentSettingsDialog(); } } }, "Agents…")
       ]),
+      h("h3", { text: "Updates" }),
+      h("label.check", null, [updateCheck, "Tell me when a new version is out"]),
+      h("p.hint", { text: "Asks GitHub for the latest TeamCraft release at most once a day and shows a link in the status bar. Nothing is downloaded or installed by the app." }),
       h("h3", { text: "Account" }),
       h("p", null, ["Signed in to ", h("strong", { text: state.session.server_url }), " as ", h("strong", { text: state.me.display_name }), " (" + label(state.me.role) + ") on ", h("span", { text: state.session.device })]),
+      state.session.token_storage === "file"
+        ? h("p.notice.warn.small", { text: "No keychain available: the sign-in token is stored in a file in the app's settings folder that only your user account can read, not in the system keychain. On Linux, start a Secret Service (GNOME Keyring or KWallet) and restart the app – the token then moves into the keychain." })
+        : h("p.hint", { text: "The sign-in token is kept in the system keychain." }),
+      serverInsecure,
       h("div.row", null, [
         h("button.danger", { type: "button", on: { click: function () { dlg.close(); signOut(); } } }, "Sign out"),
         h("button", { type: "button", on: { click: function () { dlg.close(); signOut(true); } } }, "Change server")

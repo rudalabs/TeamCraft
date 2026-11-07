@@ -21,8 +21,8 @@ use crate::{
     acp,
     api::{self, Api, ApiError, Transfer},
     bomimport, cadexport, folderimport, layout,
-    settings::{self, Settings},
-    signin, workspace, AppState,
+    settings::{self, Settings, TokenStorage},
+    signin, update, workspace, AppState,
 };
 
 type CmdResult<T> = Result<T, ApiError>;
@@ -86,12 +86,18 @@ pub struct Session {
     pub device: String,
     /// Zoom factor of the user interface.
     pub zoom: f64,
+    /// Where the token is kept: `file` makes the UI warn (no OS keychain).
+    pub token_storage: Option<TokenStorage>,
+    /// The daily check for a newer release is switched on.
+    pub update_check: bool,
 }
 
 #[tauri::command]
 pub fn session(app: AppHandle, state: State<'_, AppState>) -> Session {
     let s = snapshot(&state);
     Session {
+        token_storage: s.token.as_ref().and(s.token_storage),
+        update_check: s.update_check != Some(false),
         server_url: s.server_url.clone(),
         signed_in: s.token.is_some(),
         skin: s.skin.clone().unwrap_or_else(|| "teamcraft".into()),
@@ -100,6 +106,13 @@ pub fn session(app: AppHandle, state: State<'_, AppState>) -> Session {
         device: crate::device_name(),
         zoom: s.zoom.unwrap_or(1.0),
     }
+}
+
+/// Would this address (as typed) reach another computer over plain
+/// `http://`? The connect dialog warns while the user types.
+#[tauri::command]
+pub fn server_url_insecure(url: String) -> bool {
+    settings::normalize_server_url(&url).is_ok_and(|base| settings::insecure_http(&base))
 }
 
 /// Checks that the address is a TeamCraft server and stores it.
@@ -691,6 +704,63 @@ pub fn open_web(app: AppHandle, state: State<'_, AppState>, path: String) -> Cmd
     let base = api_of(&state)?.base;
     app.opener()
         .open_url(format!("{base}{path}"), None::<&str>)
+        .map_err(|e| ApiError::local(format!("The browser could not be opened: {e}")))
+}
+
+/// A newer release than this app (the update notice).
+#[derive(Serialize)]
+pub struct UpdateNotice {
+    pub version: String,
+    pub current: &'static str,
+}
+
+/// Looks for a newer release – on GitHub at most once a day, otherwise from
+/// the last answer – unless the user switched the check off. Failures (no
+/// network, rate limit) show no notice; the next try is a day later.
+#[tauri::command]
+pub async fn check_update(state: State<'_, AppState>) -> CmdResult<Option<UpdateNotice>> {
+    let s = snapshot(&state);
+    if s.update_check == Some(false) {
+        return Ok(None);
+    }
+    let mut latest = s.update_latest.clone();
+    let now = update::now_secs();
+    if update::due(s.update_checked_at, now) {
+        // stamped first: a window reload meanwhile does not ask again
+        update_settings(&state, |s| s.update_checked_at = Some(now))?;
+        if let Ok(found) = update::latest_release().await {
+            latest = found.clone();
+            update_settings(&state, |s| s.update_latest = found)?;
+        }
+    }
+    let current = env!("CARGO_PKG_VERSION");
+    Ok(latest
+        .filter(|v| update::is_newer(v, current) && s.update_dismissed.as_ref() != Some(v))
+        .map(|version| UpdateNotice { version, current }))
+}
+
+/// Hides the notice of this release version (a newer one shows again).
+#[tauri::command]
+pub fn dismiss_update(state: State<'_, AppState>, version: String) -> CmdResult<()> {
+    let version = update::tag_version(&version)
+        .ok_or_else(|| ApiError::local(format!("'{version}' is not a version.")))?;
+    update_settings(&state, |s| s.update_dismissed = Some(version))?;
+    Ok(())
+}
+
+/// Switches the daily release check on or off.
+#[tauri::command]
+pub fn set_update_check(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    update_settings(&state, |s| s.update_check = Some(enabled))?;
+    Ok(())
+}
+
+/// Opens the release page in the default browser (a fixed address – the app
+/// itself never downloads or installs anything).
+#[tauri::command]
+pub fn open_release_page(app: AppHandle) -> CmdResult<()> {
+    app.opener()
+        .open_url(update::RELEASES_PAGE, None::<&str>)
         .map_err(|e| ApiError::local(format!("The browser could not be opened: {e}")))
 }
 
