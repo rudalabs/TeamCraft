@@ -229,6 +229,12 @@ async fn the_dashboard_card_lists_failed_and_outdated_simulations() {
     let page = app.get_page("/", Some(&cookie)).await.text();
     assert!(page.contains("Simulations to check") && page.contains(&failing));
     assert!(page.contains("1 of 1 failed"));
-    assert!(!page.contains(&fine));
+    // other dashboard cards (recent items) may list the fine simulation; look at the card only
+    let card = page
+        .split("id=\"simulations\"")
+        .nth(1)
+        .and_then(|rest| rest.split("</section>").next())
+        .expect("the simulations card");
+    assert!(card.contains(&failing) && !card.contains(&fine));
     app.teardown().await;
 }
