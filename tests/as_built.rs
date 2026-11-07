@@ -792,7 +792,8 @@ async fn concurrent_units_with_one_serial_number_record_exactly_one() {
         assert_eq!(stored, 1, "round {round}");
         // the refused transaction left no as-built item behind
         let units = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM items WHERE item_type = 'as_built' AND name LIKE $1",
+            "SELECT COUNT(DISTINCT i.id) FROM items i JOIN revisions r ON r.item_id = i.id
+             WHERE i.item_type = 'as_built' AND r.name LIKE $1",
         )
         .bind(format!("% – SN {serial}"))
         .fetch_one(&app.pool)
