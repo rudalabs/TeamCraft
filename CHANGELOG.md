@@ -25,7 +25,9 @@ Changes on `main` since the `v0.2.5` tag.
   order, deciding a change request, making a revision obsolete), `read_only` =
   GET/HEAD and the read-only MCP tools, `mcp_only` = only `POST /api/v1/mcp`.
   Refusals are 403 and write nothing; a token cannot mint a token with more
-  rights than its own. Sliding lifetime (`idle_days`) for the desktop token.
+  rights than its own. The desktop app's new tokens now expire after 30 days
+  without use (renewed on every use) instead of a fixed 90 days; existing
+  desktop tokens keep their fixed expiry.
   Migration `0045` (renumbered at merge).
 - Need-to-know project groups, step 1 (#151): a restricted group can limit
   administrator access (`project_policies`, migration 0043): `with_reason`
