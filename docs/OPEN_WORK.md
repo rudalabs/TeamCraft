@@ -209,7 +209,8 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   63 integration-test binaries (`cargo check --all-targets`); PR runs read the Rust caches of `main` but no longer
   write their own (the cache was at 10.95 GB of 10 GB); `cargo deny` also checks `desktop/Cargo.lock` (report-only
   for now) and runs weekly; desktop PRs run one leg per release architecture (Ubuntu 24.04 x64 and ARM64, macOS,
-  Windows x64), `main`, a weekly run and manual runs add Ubuntu 26.04 and Windows ARM64, and `cargo fmt` runs once
+  Windows x64 and ARM64 – the last report-only while the runner is a preview), `main`, a weekly run and manual runs
+  add Ubuntu 26.04, and `cargo fmt` runs once
   instead of six times; screenshot-only commits no longer start desktop builds; superseded PR runs of the docs and
   CodeQL are cancelled, CodeQL skips docs-only PRs
 - [ ] `cargo deny` for `desktop/Cargo.lock`: look at the first findings, fix or ignore them with a reason in

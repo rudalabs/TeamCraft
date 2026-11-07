@@ -70,11 +70,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Pull requests: one leg per release architecture and OS family
-        # (the cfgs in desktop/src). Main, the weekly run and manual runs
-        # add the newer Ubuntu (WebKitGTK drift) and the ARM64 Windows
-        # preview runner.
-        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04", "ubuntu-24.04-arm", "macos-latest", "windows-latest"]' || '["ubuntu-26.04", "ubuntu-24.04", "ubuntu-24.04-arm", "macos-latest", "windows-latest", "windows-11-arm"]') }}
+        # Pull requests: one leg per release architecture (the cfgs in
+        # desktop/src; Windows ARM64 still reports only, see above). Main,
+        # the weekly run and manual runs add the newer Ubuntu (WebKitGTK
+        # drift).
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-24.04", "ubuntu-24.04-arm", "macos-latest", "windows-latest", "windows-11-arm"]' || '["ubuntu-26.04", "ubuntu-24.04", "ubuntu-24.04-arm", "macos-latest", "windows-latest", "windows-11-arm"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Linux build dependencies
