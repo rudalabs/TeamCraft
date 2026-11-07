@@ -88,6 +88,9 @@ Workflow *Mutation testing* (`.github/workflows/mutants.yml`):
   warnings on the changed lines, in the job summary and in the artifact
   *mutants-pr*; the check stays green. A broken run (the unmutated tests
   fail, a diff that does not match, a tool error) fails the job.
+  `--in-place` runs one mutant at a time (about 30 s each), so the run is
+  stopped after 80 minutes with a warning and partial results; check a large
+  diff locally.
 * **Weekly and by hand** (Actions → Mutation testing → Run workflow): every
   examined file, split over 16 shards (`--shard k/16`), each shard with its
   own baseline, at most 8 shards at a time (a single run at a time, weekly or
