@@ -4663,6 +4663,8 @@
   function openSettings() {
     var current = document.documentElement.getAttribute("data-skin");
     var ws = h("input", { type: "text", value: state.session.workspace_dir, spellcheck: "false" });
+    var notifyBox = h("div.stack");
+    var notify = notificationSettings(notifyBox);
     var skins = h("div.skin-grid", null, SKINS.map(function (s) {
       return h("button.skin-card" + (s.id === current ? ".selected" : ""), {
         type: "button", "data-skin": s.id, title: s.description,
@@ -4690,6 +4692,8 @@
         h("span.hint", { text: "Local AI agents (ACP) that work with TeamCraft's tools – none until you add one." }),
         h("button", { type: "button", on: { click: function () { dlg.close(); agentSettingsDialog(); } } }, "Agents…")
       ]),
+      h("h3", { text: "Notifications" }),
+      notifyBox,
       h("h3", { text: "Account" }),
       h("p", null, ["Signed in to ", h("strong", { text: state.session.server_url }), " as ", h("strong", { text: state.me.display_name }), " (" + label(state.me.role) + ") on ", h("span", { text: state.session.device })]),
       h("div.row", null, [
@@ -4701,16 +4705,74 @@
       { label: "Close", onClick: function (d) { d.close(); } },
       {
         label: "Save", primary: true, submit: true, onClick: function (d) {
-          if (ws.value.trim() === String(state.session.workspace_dir)) { d.close(); return; }
-          call("set_workspace_dir", { dir: ws.value.trim() }).then(function () {
-            state.session.workspace_dir = ws.value.trim();
-            $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
+          var workspaceChanged = ws.value.trim() !== String(state.session.workspace_dir);
+          var saveWorkspace = workspaceChanged
+            ? call("set_workspace_dir", { dir: ws.value.trim() }).then(function () {
+              state.session.workspace_dir = ws.value.trim();
+              $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
+            })
+            : Promise.resolve();
+          saveWorkspace.then(function () { return notify.save(); }).then(function (saved) {
             d.close();
-            toast("Workspace folder saved");
+            if (workspaceChanged || saved) toast("Settings saved");
           }, function (err) { d.fail(err); });
         }
       }
     ], { wide: true });
+    notify.load();
+  }
+
+  /**
+   * The notification settings of the account (same as the web account page:
+   * what to be told about, e-mail, Mattermost) in the settings dialog.
+   * `save()` resolves to true when something was sent to the server.
+   */
+  function notificationSettings(box) {
+    var model = null, boxes = [], email, mm, mmUser, dirty = false;
+    function touch() { dirty = true; }
+    function check(text, on, onChange) {
+      var input = h("input", { type: "checkbox", on: { change: function () { touch(); if (onChange) onChange(); } } });
+      input.checked = !!on;
+      return { input: input, node: h("label.check", null, [input, " " + text]) };
+    }
+    function draw() {
+      boxes = model.kinds.map(function (k) { var c = check(k.label, k.on); c.value = k.value; return c; });
+      email = check("by e-mail" + (model.email_address ? " to " + model.email_address : ""), model.email);
+      mm = check("to Mattermost" + (model.mattermost_direct ? " (direct message)" : " (mention in the TeamCraft channel)"), model.mattermost);
+      mmUser = h("input", { type: "text", value: model.mattermost_username || "", maxlength: "64", spellcheck: "false", placeholder: state.me.username, on: { input: touch } });
+      var notes = [];
+      if (!model.email_enabled) notes.push(h("p.hint", { text: "E-mail is not configured on this server." }));
+      else if (!model.email_address) notes.push(h("p.hint", { text: "Your account has no e-mail address." }));
+      if (!model.mattermost_enabled) notes.push(h("p.hint", { text: "Mattermost is not configured on this server." }));
+      box.replaceChildren(
+        h("strong", { text: "Tell me about" }),
+        h("div.stack", null, boxes.map(function (c) { return c.node; })),
+        h("strong", { text: "Also send it" }),
+        email.node, mm.node,
+        field("Mattermost username", mmUser, "empty = your login"),
+        h("div.stack", null, notes),
+        h("div.row", null, [h("button", { type: "button", title: "Creates a notification for you and sends it through every channel you use", on: { click: function () {
+          call("api", { method: "POST", path: "/notifications/test", body: null }).then(function () { toast("Test notification sent"); }, function (e) { toast(errorText(e), "error"); });
+        } } }, "Send a test")])
+      );
+    }
+    return {
+      load: function () {
+        box.replaceChildren(h("p.hint", { text: "Loading …" }));
+        api("GET", "/notifications/settings").then(function (m) { model = m; draw(); }, function (e) {
+          box.replaceChildren(h("p.hint", { text: "Not available: " + errorText(e) }));
+        });
+      },
+      save: function () {
+        if (!model || !dirty) return Promise.resolve(false);
+        var muted = boxes.filter(function (c) { return !c.input.checked; }).map(function (c) { return c.value; });
+        var user = mmUser.value.trim();
+        return api("PUT", "/notifications/settings", {
+          email: email.input.checked, mattermost: mm.input.checked,
+          mattermost_username: user === "" ? null : user, muted: muted
+        }).then(function () { dirty = false; return true; });
+      }
+    };
   }
 
   function signOut(changeServer) {

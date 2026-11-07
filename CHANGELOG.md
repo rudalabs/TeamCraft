@@ -17,6 +17,9 @@ Changes on `main` since the `v0.2.0` tag.
 
 ### Added
 
+- The desktop settings dialog has the notification settings of the web account
+  page (what to be told about, e-mail, Mattermost, send a test);
+  `GET /api/v1/notifications/settings` also returns the form description.
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.
