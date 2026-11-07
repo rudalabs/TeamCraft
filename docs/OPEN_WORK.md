@@ -354,8 +354,8 @@ real files and belong to section 3 once such files are at hand.
 
 - [ ] Browser check (no console errors, no overflow at 390 px) of `/requests`, `/requests/new` and `/requests/{id}`,
   and the desktop request tab
-- [ ] Chunked uploads from the *New item* form of the web UI – it still sends its files in one request (the revision
-  exists only afterwards); the attach and check-in forms use `/uploads` (feature 9)
+- [x] Chunked uploads from the *New item* form of the web UI: sessions without a revision (migration 0045) that only
+  join the creation of an item; the attach and check-in forms use `/uploads` (feature 9)
 - [ ] Custom attributes per file type (feature 5, items are done)
 - [ ] Feature 6 leftovers: local substitutes per BOM line, a warning when a superseded item is added to a BOM in the
   desktop app

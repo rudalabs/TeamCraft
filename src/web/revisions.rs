@@ -590,7 +590,8 @@ pub async fn checkin(
         }
         let mut received = receive_uploads(&st, &mut multipart).await?;
         // Large files sent before in chunks by app.js (field `uploads`).
-        let sessions = take_session_uploads(&st, &ctx.me, id, &mut received).await?;
+        let sessions =
+            take_session_uploads(&st, &ctx.me, uploads::Scope::Revision(id), &mut received).await?;
         let result =
             files::check_in(&st.db, &ctx.me, id, &received.uploads, &received.comment).await;
         if result.is_ok() {
@@ -744,7 +745,13 @@ pub(crate) async fn upload_files(
 ) -> AppResult<Vec<files::Stored>> {
     files::ensure_can_attach(&st.db, actor, revision_id).await?;
     let mut received = receive_uploads(st, multipart).await?;
-    let sessions = take_session_uploads(st, actor, revision_id, &mut received).await?;
+    let sessions = take_session_uploads(
+        st,
+        actor,
+        uploads::Scope::Revision(revision_id),
+        &mut received,
+    )
+    .await?;
     let stored = files::attach(
         &st.db,
         actor,
@@ -767,7 +774,7 @@ pub(crate) async fn upload_files(
 pub(crate) async fn take_session_uploads(
     st: &AppState,
     actor: &Actor,
-    revision_id: Uuid,
+    scope: uploads::Scope,
     received: &mut Received,
 ) -> AppResult<Vec<Uuid>> {
     let Some(raw) = received.fields.get("uploads") else {
@@ -783,8 +790,7 @@ pub(crate) async fn take_session_uploads(
         received.fields.get("folders").map(String::as_str),
     )?;
     for id in &ids {
-        let mut upload =
-            uploads::complete(&st.db, &st.vault, actor, *id, Some(revision_id)).await?;
+        let mut upload = uploads::complete_in(&st.db, &st.vault, actor, *id, scope).await?;
         let key = files::stored_name(&upload.filename).to_lowercase();
         if upload.base.is_none() {
             upload.base = bases.get(&key).cloned();

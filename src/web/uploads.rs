@@ -6,7 +6,7 @@
 //! check-in form, so they are stored in the same transaction as the form.
 //!
 //! ```text
-//! POST   /uploads        {revision_id, filename, size, content_type?}
+//! POST   /uploads        {revision_id (null: a new item), filename, size, content_type?}
 //! GET    /uploads/{id}   state and offset to resume from (also HEAD)
 //! PATCH  /uploads/{id}   Upload-Offset: <n>, body = the next chunk
 //! DELETE /uploads/{id}   cancel
@@ -32,7 +32,9 @@ use crate::{
 
 #[derive(Deserialize)]
 pub(super) struct CreateBody {
-    revision_id: Uuid,
+    /// Absent or null: the file joins a new item (the "New item" form).
+    #[serde(default)]
+    revision_id: Option<Uuid>,
     filename: String,
     size: u64,
     #[serde(default)]
@@ -45,12 +47,15 @@ pub(super) async fn create(
     ApiJson(body): ApiJson<CreateBody>,
 ) -> AppResult<Response> {
     // Unknown and unreadable revisions answer 404, like the revision page.
-    let rev = revisions::get(&st.db, &me, body.revision_id).await?;
+    let revision_id = match body.revision_id {
+        Some(id) => Some(revisions::get(&st.db, &me, id).await?.id),
+        None => None,
+    };
     uploads_api::start(
         &st,
         &me,
         NewSession {
-            revision_id: rev.id,
+            revision_id,
             filename: body.filename,
             size: body.size,
             sha256: None,
