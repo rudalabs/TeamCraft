@@ -492,7 +492,7 @@ pub fn extract(filename: &str, bytes: &[u8], templates: &[ResultTemplate]) -> Ve
     for t in applicable {
         let found = match Method::parse(&t.method) {
             Some(Method::Regex) => find_regex(&lines, t),
-            Some(Method::Csv) => find_csv(&lines, t),
+            Some(Method::Csv) => find_csv(&lines, t, crate::htmltext::is_html(filename)),
             None => None,
         };
         if let Some((value, line)) = found {
@@ -532,7 +532,7 @@ fn find_regex(lines: &[String], t: &ResultTemplate) -> Option<(f64, usize)> {
 }
 
 /// The delimiter of a CSV text: the one that occurs most often in the first
-/// lines.
+/// lines (the text of an HTML report always uses `|`, see [`find_csv`]).
 fn delimiter(lines: &[String]) -> u8 {
     let head = lines.iter().take(20);
     let mut best = (b',', 0usize);
@@ -548,8 +548,12 @@ fn delimiter(lines: &[String]) -> u8 {
     best.0
 }
 
-fn find_csv(lines: &[String], t: &ResultTemplate) -> Option<(f64, usize)> {
-    let delim = delimiter(lines);
+/// A CSV template on a table. For an HTML report (`html`) the text has one
+/// table row per line with the cells separated by ` | `, so `|` is the
+/// delimiter whatever the title and paragraphs above the table contain, and
+/// quotes are plain characters (a `"` in a cell never joins cells).
+fn find_csv(lines: &[String], t: &ResultTemplate, html: bool) -> Option<(f64, usize)> {
+    let delim = if html { b'|' } else { delimiter(lines) };
     let norm = |s: &str| s.trim().trim_matches('"').trim().to_lowercase();
     let want_col = norm(&t.csv_column);
     let want_key_col = norm(&t.csv_key_column);
@@ -560,6 +564,7 @@ fn find_csv(lines: &[String], t: &ResultTemplate) -> Option<(f64, usize)> {
             .has_headers(false)
             .flexible(true)
             .delimiter(delim)
+            .quoting(!html)
             .from_reader(line.as_bytes());
         let cells: Vec<String> = reader
             .records()
@@ -810,6 +815,21 @@ mod tests {
                     <tr><td>Max. stress</td><td>152.4</td></tr></table>";
         let text = crate::htmltext::extract(html.as_bytes()).unwrap();
         assert_eq!(extract("r.htm", text.as_bytes(), &[t])[0].value, 152.4);
+        // a real report: a title and a paragraph with commas above the table,
+        // an empty top-left header cell, a quote in a cell
+        let mut t = template("csv", "*.html", "");
+        t.csv_column = "Max".into();
+        let html = "<h1>Bracket, static, LC1</h1><p>Mesh: 12,345 nodes, 6,789 elements, \
+                    solver: a, b, c, d, e, f, g, h.</p>\
+                    <table><tr><th></th><th>Min</th><th>Max</th></tr>\
+                    <tr><td>Stress \"von Mises</td><td>1.0</td><td>152.4</td></tr></table>";
+        let text = crate::htmltext::extract(html.as_bytes()).unwrap();
+        let found = extract("report.html", text.as_bytes(), std::slice::from_ref(&t));
+        assert_eq!(found.len(), 1, "{text}");
+        assert_eq!(found[0].value, 152.4, "the Max column, not Min: {text}");
+        assert_eq!(found[0].source, "report.html:6", "{text}");
+        t.csv_column = "Min".into();
+        assert_eq!(extract("report.html", text.as_bytes(), &[t])[0].value, 1.0);
     }
 
     #[test]
