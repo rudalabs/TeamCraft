@@ -21,8 +21,12 @@ Changes on `main` since the `v0.2.5` tag.
   the change, submitted it (an administrator acting for the author) or changed
   the revisions under review (revision creator, file uploader, logged edits).
   Checked when adding a reviewer, on submit and on every decision. The
-  reviewer suggestions never offer such users. Migration `0040` adds
-  `changes.submitted_by`.
+  reviewer suggestions never offer such users. An administrator who prepared
+  the draft for the author (items, reviewers, edits, submit; read from the
+  audit log) cannot review it either. Migrations `0040`/`0041` add
+  `changes.submitted_by` and `changes.four_eyes`. Upgrade: changes already in
+  review keep working (only the author is refused); the editor and preparer
+  checks apply to drafts and to every later submit.
 
 - HTML reports of FEA/CFD tools (`.html`, `.htm`) are read as text for the
   search, `read_file_text` and `propose_result_values` (#141): table rows as

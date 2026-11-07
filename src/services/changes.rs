@@ -336,21 +336,67 @@ pub(crate) async fn change_editors(
         .await?)
 }
 
+/// Audit actions on a change order that count as preparing it.
+const PREPARE_ACTIONS: &[&str] = &[
+    "change.add_item",
+    "change.remove_item",
+    "change.add_reviewer",
+    "change.remove_reviewer",
+    "change.update",
+    "change.submit",
+    "change.reopen",
+];
+
+/// Everybody who prepared or submitted a change order for its author: the
+/// recorded submitter, the extra user of the current call and every user with
+/// a logged preparing action on the change (an administrator acting as proxy).
+async fn change_preparers(
+    conn: &mut PgConnection,
+    change_id: Uuid,
+    extra: Option<Uuid>,
+) -> AppResult<Vec<Uuid>> {
+    let mut users = sqlx::query_scalar::<_, Uuid>(
+        "SELECT submitted_by FROM changes WHERE id = $1 AND submitted_by IS NOT NULL
+         UNION
+         SELECT user_id FROM audit_log
+         WHERE entity_type = 'change' AND entity_id = $1 AND user_id IS NOT NULL
+           AND action = ANY($2)",
+    )
+    .bind(change_id)
+    .bind(PREPARE_ACTIONS)
+    .fetch_all(&mut *conn)
+    .await?;
+    users.extend(extra);
+    Ok(users)
+}
+
 /// Separation of duties for one reviewer: not the author, not the person who
-/// submitted the change and nobody who changed the data. Checked when a
-/// reviewer is added, when the change is submitted and again when the
+/// prepared or submitted the change and nobody who changed the data. Checked
+/// when a reviewer is added, when the change is submitted and again when the
 /// reviewer decides, because people can edit while the change is a draft.
+/// With `author_only` (a change that was already in review when the rule
+/// arrived) only the author is refused.
 async fn review_conflict(
     conn: &mut PgConnection,
     change: &Change,
     reviewer: Uuid,
-    submitter: Option<Uuid>,
+    acting: Option<Uuid>,
+    author_only: bool,
 ) -> AppResult<Option<domain::ReviewConflict>> {
+    if author_only {
+        return Ok(domain::conflicting_reviewer(
+            reviewer,
+            change.created_by,
+            None,
+            &[],
+        ));
+    }
     let editors = change_editors(conn, change.id).await?;
+    let preparers = change_preparers(conn, change.id, acting).await?;
     Ok(domain::conflicting_reviewer(
         reviewer,
         change.created_by,
-        submitter,
+        preparers.contains(&reviewer).then_some(reviewer),
         &editors,
     ))
 }
@@ -905,7 +951,9 @@ pub async fn add_reviewer(
     // The check below looks at every item; for items the actor cannot see
     // it would tell who is a member of their group.
     ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
-    if let Some(conflict) = review_conflict(&mut tx, &change, reviewer.id, Some(actor.id)).await? {
+    if let Some(conflict) =
+        review_conflict(&mut tx, &change, reviewer.id, Some(actor.id), false).await?
+    {
         return Err(AppError::BadRequest(format!(
             "{} cannot review {}: they {} (four-eyes principle).",
             reviewer.display_name,
@@ -1060,7 +1108,8 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     .fetch_all(&mut *tx)
     .await?;
     for (reviewer, name) in &reviewers {
-        if let Some(conflict) = review_conflict(&mut tx, &change, *reviewer, Some(actor.id)).await?
+        if let Some(conflict) =
+            review_conflict(&mut tx, &change, *reviewer, Some(actor.id), false).await?
         {
             return Err(AppError::Conflict(format!(
                 "{name} cannot review {}: they {} (four-eyes principle). Remove them as reviewer first.",
@@ -1100,7 +1149,7 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     let labels = transition_items(&mut tx, change_id, LifecycleState::InReview).await?;
     reset_reviews(&mut tx, change_id).await?;
     sqlx::query(
-        "UPDATE changes SET status = 'in_review', submitted_at = now(), submitted_by = $2, updated_at = now() WHERE id = $1",
+        "UPDATE changes SET status = 'in_review', submitted_at = now(), submitted_by = $2, four_eyes = true, updated_at = now() WHERE id = $1",
     )
     .bind(change_id)
     .bind(actor.id)
@@ -1221,12 +1270,11 @@ pub async fn review(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::Forbidden(format!("You are not a reviewer of {}.", change.number)))?;
-    let submitter =
-        sqlx::query_scalar::<_, Option<Uuid>>("SELECT submitted_by FROM changes WHERE id = $1")
-            .bind(change_id)
-            .fetch_one(&mut *tx)
-            .await?;
-    if let Some(conflict) = review_conflict(&mut tx, &change, actor.id, submitter).await? {
+    let four_eyes = sqlx::query_scalar::<_, bool>("SELECT four_eyes FROM changes WHERE id = $1")
+        .bind(change_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if let Some(conflict) = review_conflict(&mut tx, &change, actor.id, None, !four_eyes).await? {
         return Err(AppError::Forbidden(format!(
             "You cannot decide on {}: you {} (four-eyes principle).",
             change.number,

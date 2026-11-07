@@ -97,10 +97,11 @@ unreleased dependencies* in the *Release…* dialog (on by default).
 Nobody reviews work they did themselves. TeamCraft refuses a reviewer who
 
 - created the change order (the author),
-- submitted it, or prepared it as an administrator for the author, or
+- submitted it, or prepared it as an administrator for the author (added
+  items or reviewers, edited or submitted the draft – read from the audit log), or
 - **changed the revisions under review**: created a revision, uploaded a
-  file to it, or has a logged check-in, revision, file, BOM or reference
-  edit on it.
+  file to it, or has a logged check-in, revision, file, BOM (including BOM
+  import and replace) or reference edit on it.
 
 The rule is checked when a reviewer is added (400), when the change is
 submitted (409, naming the reviewer to remove) and again when a reviewer
@@ -108,7 +109,9 @@ decides (403), because people can edit a draft after they were added. An
 administrator can still act for the author, but then cannot also review that
 change. The rule is always on; a team needs at least one person who did not
 touch the files. The user who submitted a change is stored in
-`changes.submitted_by`.
+`changes.submitted_by`. Changes that were already in review when the rule
+was introduced keep working: only the author is refused on those until they
+are withdrawn and submitted again.
 
 ### Suggested reviewers
 

@@ -213,7 +213,6 @@ async fn reviewers_are_suggested_from_history() {
         json!(["raised ECR-900001, implemented by this change"])
     );
     assert_eq!(v["suggestions"][0]["score"], 4);
-    assert_eq!(v["suggestions"][0]["score"], 6);
 
     // limit, and a hostile limit is clamped
     assert_eq!(usernames(&get(Some(2)).await), ["rolf", "anna"]);

@@ -65,6 +65,8 @@ pub(crate) const EDIT_ACTIONS: &[&str] = &[
     "bom.remove",
     "reference.add",
     "reference.remove",
+    "import.bom",
+    "bom.replace",
 ];
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -214,7 +216,7 @@ pub async fn suggest(
                                 ELSE 1 END AS points
              FROM signals s JOIN users u ON u.id = s.user_id
              WHERE u.active AND u.role IN ('editor', 'admin') AND u.id <> $2
-               AND u.id <> $11
+               AND ($12::uuid IS NULL OR u.id <> $12)
                AND u.id NOT IN (SELECT e.user_id FROM ({editors}) e WHERE e.user_id IS NOT NULL)
                AND NOT EXISTS (SELECT 1 FROM change_reviews x
                                WHERE x.change_id = $1 AND x.reviewer_id = u.id)
@@ -252,6 +254,7 @@ pub async fn suggest(
         .bind(MAX_PER_SOURCE)
         .bind(&actor.hidden_projects)
         .bind(actor.id)
+        .bind((actor.is_admin() && change.created_by != actor.id).then_some(actor.id))
         .fetch_all(pool)
         .await?;
     Ok(rank(signals, limit))
