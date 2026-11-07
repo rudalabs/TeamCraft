@@ -140,7 +140,7 @@ src/workspace.rs   Get, status, read-only handling, check-in, migration of the o
 src/settings.rs    settings.json (incl. the configured agents), the token in the OS keychain (file fallback), http:// check
 src/update.rs      update notice: latest GitHub release at most daily, version comparison
 src/acp.rs         Agent Client Protocol client: agent subprocess, JSON-RPC over stdio, session, permissions, workspace-only reads
-ui/                index.html, app.css (layout), app.js (all views)
+ui/                index.html, app.css (layout), js/ (ES modules per view, no build step; js/main.js starts the app)
 capabilities/      Tauri permissions of the window (dialogs only – files and URLs are opened by Rust)
 icons/             app icons, rendered from icons/app-icon.svg with `tauri icon`
 ```

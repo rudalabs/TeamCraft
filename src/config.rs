@@ -100,6 +100,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_MATTERMOST_DIRECT",
     "TEAMCRAFT_MATTERMOST_WEBHOOK",
     "TEAMCRAFT_MAX_UPLOAD_MB",
+    "TEAMCRAFT_METRICS_TOKEN",
     "TEAMCRAFT_OIDC_ADMIN_GROUP",
     "TEAMCRAFT_OIDC_CLIENT_ID",
     "TEAMCRAFT_OIDC_CLIENT_SECRET",
@@ -256,6 +257,8 @@ pub struct Config {
     /// is refused (`TEAMCRAFT_SIGNIN_MAX_FAILURES`; five times as many per
     /// client address; 0 = off). See [`crate::auth::SignInThrottle`].
     pub signin_max_failures: u32,
+    /// Bearer token of `GET /metrics`; `None` = the endpoint is off.
+    pub metrics_token: Option<String>,
     /// Adds the `Secure` attribute to cookies (required when served via HTTPS).
     pub cookie_secure: bool,
     pub log_format: LogFormat,
@@ -751,6 +754,13 @@ impl Config {
         }
 
         let signin_max_failures = env.parse_or("TEAMCRAFT_SIGNIN_MAX_FAILURES", 10u32)?;
+        let metrics_token = env
+            .get("TEAMCRAFT_METRICS_TOKEN")?
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
+        if metrics_token.as_ref().is_some_and(|t| t.len() < 16) {
+            bail!("TEAMCRAFT_METRICS_TOKEN must be at least 16 characters");
+        }
 
         let cookie_secure = match env.get("TEAMCRAFT_COOKIE_SECURE")? {
             Some(v) => parse_bool(&v).context("TEAMCRAFT_COOKIE_SECURE must be true or false")?,
@@ -862,6 +872,7 @@ impl Config {
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
             signin_max_failures,
+            metrics_token,
             cookie_secure,
             log_format,
             bootstrap_admin,
@@ -1235,6 +1246,18 @@ mod tests {
         ] {
             assert!(config_from(&[(key, value)]).is_err(), "{key}={value}");
         }
+    }
+
+    #[test]
+    fn metrics_token_is_optional_trimmed_and_not_too_short() {
+        assert!(config_from(&[]).unwrap().metrics_token.is_none());
+        assert!(config_from(&[("TEAMCRAFT_METRICS_TOKEN", "  ")])
+            .unwrap()
+            .metrics_token
+            .is_none());
+        let cfg = config_from(&[("TEAMCRAFT_METRICS_TOKEN", " 0123456789abcdef ")]).unwrap();
+        assert_eq!(cfg.metrics_token.as_deref(), Some("0123456789abcdef"));
+        assert!(config_from(&[("TEAMCRAFT_METRICS_TOKEN", "short")]).is_err());
     }
 
     /// Without any configuration TeamCraft uses the local development

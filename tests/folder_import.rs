@@ -1,7 +1,7 @@
 //! The desktop *Import CAD Folder…* against the server, with the openly
 //! licensed NIST CAD fixtures (`tests/fixtures/cad/nist/mtc-assembly/{nx,
 //! solidworks}`): the same grouping and the same requests as
-//! `desktop/ui/app.js` (`planImport`, `importNow`, `bomFromReferences`) –
+//! `desktop/ui/js/folder-import.js` (`planImport`, `importNow`, `bomFromReferences`) –
 //! one item per part/assembly file with the files of the same base name,
 //! files uploaded into the folder of the scanned tree, checked in right
 //! away, BOM lines from the CAD references, nothing left checked out.

@@ -177,7 +177,7 @@ fn main() {
                     let _ = window.set_zoom(zoom);
                 }
                 // the native chrome (the GTK menu bar) in the skin's scheme
-                // from the first frame; app.js keeps it in step on changes
+                // from the first frame; ui/js/skins.js keeps it in step on changes
                 let _ = window.set_theme(theme);
             }
             Ok(())

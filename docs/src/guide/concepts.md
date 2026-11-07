@@ -2,13 +2,14 @@
 
 ## Items and revisions
 
-An **item** is a part, assembly, document, software component or simulation
-with a unique number – generated from the numbering scheme of its project
-group (built in: `PRT-000042`, `ASM-…`, `DOC-…`, `SW-…`, `SIM-…`) or typed in
-by hand. Its state of development is kept in **revisions** `A, B, …, Y,
-AA, …` (I, O, Q, S, X and Z are skipped, as in ASME Y14.35). A revision
-carries the attributes (name, description, material, mass, unit cost), the
-files and the bill of materials.
+An **item** is a part, assembly, document, software component, simulation
+or as-built record (one physical unit or lot, see [As-built
+records](as-built.md)) with a unique number – generated from the numbering
+scheme of its project group (built in: `PRT-000042`, `ASM-…`, `DOC-…`,
+`SW-…`, `SIM-…`, `AB-…`) or typed in by hand. Its state of development
+is kept in **revisions** `A, B, …, Y, AA, …` (I, O, Q, S, X and Z are
+skipped, as in ASME Y14.35). A revision carries the attributes (name,
+description, material, mass, unit cost), the files and the bill of materials.
 
 ## Lifecycle
 
@@ -59,7 +60,7 @@ the BOM import and *Save as*. Managers set it on the group's page, where
 | Placeholder | Becomes                                                                 |
 |-------------|-------------------------------------------------------------------------|
 | `{PROJECT}` | the project code, e.g. `ROVER`                                          |
-| `{TYPE}`    | `PRT`, `ASM`, `DOC` or `SW`                                             |
+| `{TYPE}`    | `PRT`, `ASM`, `DOC`, `SW`, `SIM` or `AB`                                |
 | `{YYYY}`    | the year of creation (UTC); `{YY}` its last two digits, `{MM}` the month |
 | `{SEQ:n}`   | the sequence, zero-padded to *n* digits (1–12); exactly once            |
 
