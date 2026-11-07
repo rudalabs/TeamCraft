@@ -214,8 +214,9 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   add Ubuntu 26.04, and `cargo fmt` runs once
   instead of six times; screenshot-only commits no longer start desktop builds; superseded PR runs of the docs and
   CodeQL are cancelled, CodeQL skips docs-only PRs
-- [ ] `cargo deny` for `desktop/Cargo.lock`: look at the first findings, fix or ignore them with a reason in
-  `deny.toml`, then make the job blocking (`continue-on-error` in `ci.yml`)
+- [x] `cargo deny` for `desktop/Cargo.lock`: the first run found three "unmaintained" notices (zvariant,
+  zbus_names, zvariant_derive – merged into zbus 6, pulled in by keyring and Tauri through zbus 4/5), ignored with a
+  reason in `deny.toml`; the job blocks like the server one
 - [ ] Flaky desktop test on macOS: `resume::tests::a_wrong_part_is_started_over_and_a_complete_one_only_renamed`
   (`desktop/src/resume.rs`, the assertion on the recorded `Range` headers) fails in about 2 of 15 runs – record the
   header before the test server answers, or compare the set of ranges instead of their order
