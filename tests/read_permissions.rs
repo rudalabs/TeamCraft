@@ -171,7 +171,7 @@ fn fill(path: &str, h: &Hidden) -> Option<String> {
             ("{alternate}", _) if path.starts_with("/api/") => h.item_number.clone(),
             ("{alternate}", _) => h.item_id.to_string(),
             // objects of no fixture: unknown ids must not reveal anything either
-            ("{id}", _) | ("{delivery_id}", _) => random.clone(),
+            ("{id}", _) | ("{delivery_id}", _) | ("{review_id}", _) => random.clone(),
             _ => return None,
         };
         out.push(value);
