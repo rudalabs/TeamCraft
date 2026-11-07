@@ -49,6 +49,10 @@ Every answer contains only what the token's user may read (see
   in `restricted_projects`, those of them that are restricted. It never
   names groups the user is not a member of. `auth_source` is `local` or
   `oidc`; only local accounts have a password to change.
+  `capabilities` says what the server offers: `assistant` (Ask TeamCraft
+  is configured), `mcp` and `local_agents` (both `false` when the
+  administrator set `TEAMCRAFT_LOCAL_AGENTS=off`: `POST /api/v1/mcp` then
+  refuses every token and clients offer no local agent).
 * `GET /api/v1/projects` lists only the groups the user may see; projects
   carry `visibility` (`internal` or `restricted`). `POST /api/v1/projects`
   takes an optional `visibility`; `PUT /api/v1/projects/{code}/visibility`
@@ -422,7 +426,7 @@ checked out by the caller.
 | `PATCH/DELETE /simulation-results/{id}`                       | change any field (`null` clears a limit) or remove                                                                             |
 | `GET …/revisions/{code}/simulation/compare?with={code}`       | `{before, after, summary, diffs}` – matched by name and load case, with `delta` and `delta_percent`                           |
 | `GET /items/{number}/simulations`                             | simulations whose latest revision is based on the item, with `out_of_date` and `open_impact_id`                               |
-| `GET/POST /projects/{code}/result-templates` | extraction templates of a group (read: whoever sees the group; write: its managers and admins): `{name, file_pattern, method: regex\|csv, pattern \| csv_column [csv_key_column, csv_key_value], pick?: first\|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?}` |
+| `GET/POST /projects/{code}/result-templates` | extraction templates of a group (read: whoever sees the group; write: its managers and admins): `{name, file_pattern, method: regex\|csv\|table, pattern \| csv_column [csv_key_column, csv_key_value], pick?: first\|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?}` |
 | `PUT/DELETE /result-templates/{id}`                          | replace (same fields) or remove a template                                                                                     |
 | `GET …/revisions/{code}/simulation/proposals?status=` | values the assistant proposed from reports (`pending` default, `accepted`, `rejected`, `all`): `{proposals: [{name, value, unit, limits, load_case, source_file, source_version, quote, status, proposed_by_name}]}` |
 | `POST /simulation-proposals/{id}/accept`, `…/reject`  | CAD editors of the group; accepting makes it a result value (same name and load case = update) and needs the revision checked out |

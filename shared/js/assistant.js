@@ -19,9 +19,14 @@
 //     link(number) → Node | null: how an item number is shown in an answer
 //     privacy      string: where the data goes ("Anthropic", "your organisation's model server" …)
 //     onToggle(open)
+//     onBusy(busy) a question started or ended
+//     inline       true: a panel filling the host (the desktop's Agent tab) –
+//                  always open, no resize handle, no close button, nothing stored
+//     title        the heading (default "Ask TeamCraft")
 //   });
 //   drawer.open(); drawer.close(); drawer.toggle(); drawer.isOpen();
 //   drawer.contextChanged();   // the page or tab changed: re-read the context
+//   drawer.isBusy();           // a question is running
 //   drawer.ask(action, text);  // open and send (quick actions of the apps)
 //
 // No innerHTML anywhere: answers are built as DOM nodes from markdown-lite.
@@ -217,27 +222,30 @@ export function markdown(text, link) {
 export function mount(host, o) {
   o = o || {};
   var api = o.api;
+  var inline = !!o.inline; // a panel in the desktop's Agent tab, not a drawer
   var isOpen = false;
   var busy = false;
   var loaded = false;
   var controller = null;
   var contextOff = false;
   var lastKey = "";
-  var width = parseInt(store(STORE_WIDTH), 10) || DEFAULT_WIDTH;
+  var width = parseInt(inline ? "" : store(STORE_WIDTH), 10) || DEFAULT_WIDTH;
   width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width));
   var retention = 30;
+  var heading = o.title || "Ask TeamCraft";
 
   host.classList.add("tc-assistant");
-  host.setAttribute("role", "complementary");
-  host.setAttribute("aria-label", "Ask TeamCraft");
+  if (inline) host.classList.add("tc-a-inline");
+  host.setAttribute("role", inline ? "region" : "complementary");
+  host.setAttribute("aria-label", heading);
   host.setAttribute("tabindex", "-1");
   host.hidden = true;
-  host.style.setProperty("--tc-assistant-w", width + "px");
+  if (!inline) host.style.setProperty("--tc-assistant-w", width + "px");
 
-  var title = el("h2", { class: "tc-a-title", text: "Ask TeamCraft" });
+  var title = el("h2", { class: "tc-a-title", text: heading });
   var resetBtn = el("button", { type: "button", class: "tc-a-btn", title: "Start a new conversation – the current one is deleted", text: "New conversation", on: { click: reset } });
-  var closeBtn = el("button", { type: "button", class: "tc-a-btn tc-a-close", "aria-label": "Close the assistant", title: "Close (Esc)", text: "×", on: { click: function () { close(true); } } });
-  var handle = el("div", { class: "tc-a-handle", role: "separator", "aria-orientation": "vertical", tabindex: "0", title: "Drag or use the arrow keys to resize", "aria-label": "Resize the assistant", "aria-valuemin": String(MIN_WIDTH), "aria-valuemax": String(MAX_WIDTH) });
+  var closeBtn = inline ? null : el("button", { type: "button", class: "tc-a-btn tc-a-close", "aria-label": "Close the assistant", title: "Close (Esc)", text: "×", on: { click: function () { close(true); } } });
+  var handle = inline ? null : el("div", { class: "tc-a-handle", role: "separator", "aria-orientation": "vertical", tabindex: "0", title: "Drag or use the arrow keys to resize", "aria-label": "Resize the assistant", "aria-valuemin": String(MIN_WIDTH), "aria-valuemax": String(MAX_WIDTH) });
   var chipLabel = el("span", { class: "tc-a-chip-label" });
   var chipRemove = el("button", { type: "button", class: "tc-a-chip-x", "aria-label": "Do not send the page context", title: "Do not send the page context", text: "×", on: { click: function () { contextOff = true; renderContext(); } } });
   var chipAdd = el("button", { type: "button", class: "tc-a-link", text: "add it back", on: { click: function () { contextOff = false; renderContext(); } } });
@@ -262,7 +270,7 @@ export function mount(host, o) {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
   });
 
-  host.appendChild(handle);
+  if (handle) host.appendChild(handle);
   host.appendChild(el("div", { class: "tc-a-head" }, [title, resetBtn, closeBtn]));
   host.appendChild(chip);
   host.appendChild(quick);
@@ -270,10 +278,10 @@ export function mount(host, o) {
   host.appendChild(form);
 
   host.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && isOpen) { e.preventDefault(); e.stopPropagation(); close(true); }
+    if (e.key === "Escape" && isOpen && !inline) { e.preventDefault(); e.stopPropagation(); close(true); }
   });
 
-  // --- resize ---------------------------------------------------------
+  // --- resize (the drawer only) ---------------------------------------
 
   function setWidth(w, save) {
     width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(w)));
@@ -283,25 +291,27 @@ export function mount(host, o) {
     handle.setAttribute("aria-valuenow", String(width));
     if (save) store(STORE_WIDTH, String(width));
   }
-  setWidth(width, false);
-  handle.addEventListener("pointerdown", function (e) {
-    e.preventDefault();
-    handle.setPointerCapture(e.pointerId);
-    function move(ev) { setWidth(window.innerWidth - ev.clientX, false); }
-    function up() {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", up);
-      handle.removeEventListener("pointercancel", up);
-      store(STORE_WIDTH, String(width));
-    }
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", up);
-    handle.addEventListener("pointercancel", up);
-  });
-  handle.addEventListener("keydown", function (e) {
-    if (e.key === "ArrowLeft") { e.preventDefault(); setWidth(width + 24, true); }
-    else if (e.key === "ArrowRight") { e.preventDefault(); setWidth(width - 24, true); }
-  });
+  if (handle) {
+    setWidth(width, false);
+    handle.addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      function move(ev) { setWidth(window.innerWidth - ev.clientX, false); }
+      function up() {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        handle.removeEventListener("pointercancel", up);
+        store(STORE_WIDTH, String(width));
+      }
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+      handle.addEventListener("pointercancel", up);
+    });
+    handle.addEventListener("keydown", function (e) {
+      if (e.key === "ArrowLeft") { e.preventDefault(); setWidth(width + 24, true); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); setWidth(width - 24, true); }
+    });
+  }
 
   // --- context chip and quick actions ---------------------------------
 
@@ -403,6 +413,7 @@ export function mount(host, o) {
     quick.querySelectorAll("button").forEach(function (b) { b.disabled = on; });
     cancelBtn.hidden = !on;
     status.textContent = on ? "Looking it up in TeamCraft … this can take a minute." : "";
+    if (o.onBusy) o.onBusy(on);
   }
 
   function send(action, text, label) {
@@ -471,8 +482,10 @@ export function mount(host, o) {
     if (isOpen) { if (focus) input.focus(); return; }
     isOpen = true;
     host.hidden = false;
-    document.documentElement.classList.add("tc-assistant-open");
-    store(STORE_OPEN, "1");
+    if (!inline) {
+      document.documentElement.classList.add("tc-assistant-open");
+      store(STORE_OPEN, "1");
+    }
     renderContext();
     load();
     if (o.onToggle) o.onToggle(true);
@@ -480,7 +493,7 @@ export function mount(host, o) {
   }
 
   function close(restoreFocus) {
-    if (!isOpen) return;
+    if (!isOpen || inline) return; // the inline panel stays open
     isOpen = false;
     host.hidden = true;
     document.documentElement.classList.remove("tc-assistant-open");
@@ -489,11 +502,15 @@ export function mount(host, o) {
     if (restoreFocus && o.opener) o.opener.focus();
   }
 
+  if (inline) open(false);
+
   var api2 = {
     open: open,
     close: close,
     toggle: function () { if (isOpen) close(true); else open(); },
     isOpen: function () { return isOpen; },
+    /** A question is running (the shell keeps its own controls still). */
+    isBusy: function () { return busy; },
     contextChanged: function () { if (isOpen) renderContext(); },
     ask: function (action, text, label) { open(false); send(action, text || "", label); },
     /** The stored open/closed state of this browser. */

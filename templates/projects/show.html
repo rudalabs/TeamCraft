@@ -193,7 +193,7 @@
 
 <section class="card" id="result-templates">
   <h2>Result extraction templates</h2>
-  <p class="hint">Simulation key numbers are never read out of big result files. A template finds one number in a small <em>text</em> file (solver log, summary .txt/.csv/.html, at most the first 2 MB) when it is checked in with a simulation revision of this group; the value is stored with its file and line. A <span class="mono">teamcraft-results.json</span> or <span class="mono">.csv</span> checked in with the revision does the same without any template.</p>
+  <p class="hint">Simulation key numbers are never read out of big result files. A template finds one number in a small <em>text</em> file (solver log, Fluent report or transcript, Nastran .f06, summary .txt/.csv/.html; at most the first 2 MB, and for “use the last” the last 2 MB as well) when it is checked in with a simulation revision of this group; the value is stored with its file and line. A <span class="mono">teamcraft-results.json</span> or <span class="mono">.csv</span> checked in with the revision does the same without any template.</p>
   {% if result_templates %}
   <div class="table-wrap">
   <table>
@@ -203,7 +203,7 @@
       <tr>
         <td>{{ t.name }}{% if t.load_case %} <span class="small muted">· {{ t.load_case }}</span>{% endif %}{% if not t.enabled %} <span class="badge badge-none">off</span>{% endif %}</td>
         <td class="mono small">{{ t.file_pattern }}</td>
-        <td class="small">{% if t.method == "regex" %}<span class="mono">{{ t.pattern }}</span>{% else %}CSV column <span class="mono">{{ t.csv_column }}</span>{% if t.csv_key_column %} where <span class="mono">{{ t.csv_key_column }}</span> = <span class="mono">{{ t.csv_key_value }}</span>{% endif %}{% endif %} · {{ t.pick }} match</td>
+        <td class="small">{% if t.method == "regex" %}<span class="mono">{{ t.pattern }}</span>{% else %}{% if t.method == "table" %}Table{% else %}CSV{% endif %} column <span class="mono">{{ t.csv_column }}</span>{% if t.csv_key_column %} where <span class="mono">{{ t.csv_key_column }}</span> = <span class="mono">{{ t.csv_key_value }}</span>{% endif %}{% endif %} · {{ t.pick }} match</td>
         <td class="small">{{ t.unit }}</td>
         <td class="num small">{% if t.lower_limit is not none %}{{ t.lower_limit }}{% else %}—{% endif %} … {% if t.upper_limit is not none %}{{ t.upper_limit }}{% else %}—{% endif %}</td>
         {% if can_manage %}
@@ -229,6 +229,7 @@
         <select name="method">
           <option value="regex">Regular expression (text)</option>
           <option value="csv">CSV column</option>
+          <option value="table">Table column (quoted headers, e.g. Fluent report file)</option>
         </select>
       </label>
       <label>If several matches
@@ -240,7 +241,7 @@
         <input class="mono" type="text" name="pattern" maxlength="500" placeholder="Pressure drop:\s*([-+0-9.eE]+)"></label>
     </div>
     <div class="template-fields">
-      <label>CSV column <span class="hint">header name</span><input type="text" name="csv_column" maxlength="200"></label>
+      <label>CSV / table column <span class="hint">header name</span><input type="text" name="csv_column" maxlength="200"></label>
       <label>Row key column <span class="hint">optional</span><input type="text" name="csv_key_column" maxlength="200"></label>
       <label>Row key value<input type="text" name="csv_key_value" maxlength="200"></label>
     </div>

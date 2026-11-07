@@ -17,7 +17,6 @@ import { checkServerVersion, initConnect, showConnect } from "./connect.js";
 import { enterShell, initShell, onPackageProgress, refreshWorklistCount, uploadLine } from "./shell.js";
 import { selectView } from "./navigator.js";
 import { activeTab, reloadActive } from "./tabs.js";
-import { openAssistant } from "./assistant.js";
 import { agent, onAgentEvent, openAgent } from "./agent.js";
 import { onGetProgress, openWorkspaceFolder, uploadWatcher } from "./workspace.js";
 import { newItemDialog } from "./dialogs.js";
@@ -94,7 +93,6 @@ export function handleMenu(id) {
     case "go-worklist": selectView("worklist"); break;
     case "go-changes": selectView("changes"); break;
     case "go-agent": openAgent(); break;
-    case "go-assistant": openAssistant(false); break;
     case "open-workspace": openWorkspaceFolder(activeTab() && activeTab().kind === "revision" ? activeTab() : null); break;
     case "open-web": {
       var t = activeTab();

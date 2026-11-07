@@ -82,6 +82,8 @@ feature milestone – the features in *What works* are enough; what is missing i
   - [x] F1 (rest): wrong current passwords of the own password change (web form and `POST /api/v1/me/password`)
     count like failed sign-ins (429 with `Retry-After`, audited as `user.password_failed`)
   - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
+    (also the complement of `TEAMCRAFT_LOCAL_AGENTS=off`, which closes the MCP endpoint for every token but
+    not the REST API: a read-only token would narrow what an agent holding a user's own token can do there)
   - [x] F3: sign-in, failed sign-in and sign-out in the audit log (`user.sign_in`, `user.sign_in_failed`,
     `user.sign_out`; no password, token or unknown typed name)
   - [x] F4: web posts without `Origin` and `Referer` are refused; install guide says the proxy must overwrite
@@ -98,8 +100,8 @@ feature milestone – the features in *What works* are enough; what is missing i
   - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
   - [x] F12: start the parser children with a cleared environment (no database URL, no keys)
   - [ ] F13: a cap on the unpacked size of XLSX/ODS tables, or read them in the isolated child
-  - [ ] F14: fuzz targets for `simmesh`, `pdftext` and `resultscan` (the no-panic lints and the 3DS and Kelvin
-    fixes are in `main` since #106/#108)
+  - [ ] F14: fuzz targets for `simmesh` and `pdftext` (`resultscan` and `cadformat` have theirs since #156; the
+    no-panic lints and the 3DS and Kelvin fixes are in `main` since #106/#108)
   - [ ] F15: prompt injection: confirmation of assistant drafts per write, or taint for MCP sessions as well
   - [ ] F16: per-user quota for the assistant and MCP (with the daily budget in section 2, *Assistant*)
   - [ ] F17: `teamcraft mcp`: no redirects, a warning (or refusal) for `http://` servers other than `localhost`
@@ -301,6 +303,19 @@ is answered for now: `none` is allowed, but needs a member who is a manager.
 Only finish what is in progress and fix bugs here; see *Direction*. The CAD-program entries are mostly checks with
 real files and belong to section 3 once such files are at hand.
 
+**Ownership and approval rules ([#152](https://github.com/rudalabs/TeamCraft/issues/152))**
+
+- [x] Step 1: wider separation of duties (editors and the acting admin cannot review; suggester excludes them).
+- [ ] Step 2: review policy per project group (min approvals, required reviewers, role group).
+- [ ] Step 3: obsolete and supersede through a change order (per-group setting), supersede notifies watchers.
+- [ ] Step 4: token scopes (`approve`) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`).
+- [ ] Step 5: keep review rounds in `change_reviews`.
+- [ ] Step 6: flag and replace absent reviewers, substitutes.
+- [ ] Step 7: item owner and admin handover of a leaving user's work.
+- [ ] Step 8: approvals in the package manifest, audit log export, hash chain.
+- [ ] Step 9: requester cannot triage own request; separate approval of *use as is* deviations.
+- [ ] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
+
 **Desktop app**
 
 - [ ] Check #58 in the real app (Tauri build, Windows): project groups load again on *Home*, *Refresh* and in the
@@ -347,7 +362,40 @@ real files and belong to section 3 once such files are at hand.
 
 - [ ] OpenFOAM case summary (solver, time steps) from `controlDict` – the 3D preview of VTK and CalculiX results is
   done (#43)
-- [ ] `.sim` detection: verify the STAR-CCM+ marker with real files (heuristic: "STAR-CCM+" near the start)
+- [ ] Fluent, STAR-CCM+ and Simcenter 3D files, plan of the research page *Fluent, STAR-CCM+ and Simcenter 3D files*
+  ([#153](https://github.com/rudalabs/TeamCraft/pull/153), `docs/src/research/solver-files.md`). Every byte-level
+  rule is a hypothesis until it is checked with real files – the heads (1–4 KB) of STAR-CCM+ `.sim` files of two or
+  three versions, NX 1980+ and older `.sim`/`.fem`/`.afm`, a Fluent `report-file-0.out` and `.trn`, a Simcenter 3D
+  Nastran `.dat` and `.f06`, openly licensed or self-made, as fixtures
+  - [x] Step 1 – detection (`src/cadformat.rs`, #156): `SPLMSSTR` as positive NX test for `.sim`/`.fem`/`.afm`,
+    text `.fem` = OptiStruct deck, `.dat` with Nastran markers = Nastran deck, `.f04`/`.pch`, text `.op2` refused,
+    Fluent `.msh`/`.msh.h5`/`.cas.gz`/`.dat.gz`/`.msh.gz` (HDF5 signature at 0 or 512, gzip magic), `.flprj`,
+    `.cdat`, `.jou`, `.trn`, report files (`.out` with quoted title and header), STAR-CCM+ `.simh` and macros (`.java`
+    naming STAR-CCM+), Gmsh `.msh`; fuzz target `cadformat`
+  - [ ] Step 1, open question: label a `.sim` with neither marker as "uncertain" in the UI instead of the NX fallback
+  - [ ] Files stored before #156 keep their old format and search text: a one-time re-detection of the
+    changed extensions (`.sim` `.fem` `.afm` `.dat` `.msh` `.out` `.java` `.jou` `.trn` `.f04` `.pch`, the Fluent
+    `.h5`/`.gz` names) and re-indexing at startup – not in a migration, `files.format` of v0.1.0 data must stay as it is
+  - [x] Step 2 – text (#156): `trn`, `f06`, `f04`, `pch`, `jou`, `java` scannable and plain text (search,
+    `read_file_text` – with the last 64 KiB of a larger file after a marker); templates with `pick = last` read the
+    last 2 MB of a larger file first; new template method `table` (Fluent report files, migration 0040); fuzz target
+    `resultscan`
+  - [ ] Step 3 – solver summary per file version: pure `src/solversummary.rs` over head and tail (64 KiB each):
+    Fluent banner/convergence/last iteration, report file columns and last row, `.f06` version, `END OF JOB` and
+    FATAL/WARNING window counts, Nastran `SOL`, STAR-CCM+ macro version and stopping criterion; a nullable JSONB
+    column on file versions, one line on the file row and the simulation page, data (untrusted) for the MCP tools
+  - [ ] Step 4 – references and basis proposals: `nxpart`'s `ExternalReferences` reader on `nx-simulation` files
+    (first verify the streams exist in CAE parts); `cadrefs` for Fluent journals (`/file/read-case "x"`, …) and
+    STAR-CCM+ macros (`resolvePath("x.sim")`); propose (never set) a *Geometry* basis along `.sim` → `.fem` →
+    `_i.prt` → master `.prt`
+  - [ ] Step 5 – desktop folder import: ignore `cleanup-fluent-*` and Nastran scratch files (`.MASTER`, `.DBALL`,
+    `.SCRATCH`, …, verify the list), group the `.sim`/`.fem` chain, the Fluent case stem and the STAR-CCM+ `.sim`
+    stem into one proposed simulation item, untick results above 64 MB and autosaves except the last step, hint
+    for STAR-CCM+ *Clear Solution*; needs the retention rule (`files.retention = 'latest'`)
+  - [ ] Step 6 – docs: tested snippets that write `teamcraft-results.csv` from a STAR-CCM+ Java macro, a Fluent
+    journal/PyFluent script and a pyNastran post-script (in the simulation guide)
+  - Not planned: parsing `.op2`, `.h5`, `.dat.h5`, `.cdat`, `.sim`, `.simh`; an HDF5 reader (revisit only in the
+    isolated child); vendor tools on the server (later, desktop only: `starccm+ -info` with the user's licence)
 - [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded, audited, with source); never from big result files
 - [x] Result values proposed by the assistant from PDF/text reports (`propose_result_values`, drafts with a quote, accepted or rejected by a CAD editor); PDF text layer in `read_file_text`
 - [x] `read_file_text` of plain-text files shows the real text with its lines and decimal numbers (bounded; only geometry as text – ASCII STL, OBJ, KiCad – drops decimals for the search), so text and CSV reports work like PDFs (#141)

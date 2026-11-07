@@ -1231,7 +1231,12 @@ pub(crate) async fn apply_file_values(
                 if resultscan::is_exchange_name(&name) {
                     continue;
                 }
-                let values = resultscan::extract(&name, &upload.scan_head, &templates);
+                let values = resultscan::extract_with_tail(
+                    &name,
+                    &upload.scan_head,
+                    &upload.scan_tail,
+                    &templates,
+                );
                 if !values.is_empty() {
                     files.push(name);
                 }

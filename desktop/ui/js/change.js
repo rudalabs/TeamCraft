@@ -5,7 +5,6 @@
 import { api, append, badge, call, clear, enc, errorText, fmtDate, h, label, lockBadge, moreMenu, priorityBadge, run, state, toast, tool, toolGroup } from "./core.js";
 import { canEdit, refreshWorklistCount, watchTool } from "./shell.js";
 import { openTab, recordLink, reloadActive, renderTabs, table } from "./tabs.js";
-import { assistantEnabled, openAssistant } from "./assistant.js";
 import { agentButton } from "./agent.js";
 import { dd, dt, openRevision } from "./revision.js";
 import { relationText } from "./references.js";
@@ -96,9 +95,6 @@ export function renderChange(tab, body, toolbar) {
     ]),
     toolGroup("Collaborate", [
       watchTool(tab, "changes", c.number, !!tab.data.watching),
-      assistantEnabled() ? tool("Ask…", "ask", function () {
-        openAssistant(true);
-      }, { title: "Ask TeamCraft (Ctrl+5): a briefing for the review – what changes, impact, risks, open questions" }) : null,
       agentButton(tab)
     ]),
     moreMenu([

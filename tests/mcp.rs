@@ -831,3 +831,116 @@ async fn mcp_simulations() {
 
     app.teardown().await;
 }
+
+/// One MCP request with the header the desktop app adds for a local agent.
+async fn rpc_as_local_agent(app: &common::TestApp, token: &str, msg: Value) -> common::Response {
+    app.send(
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/mcp")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-teamcraft-client", "desktop-agent")
+            .body(Body::from(msg.to_string()))
+            .unwrap(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn local_agents_are_allowed_by_default() {
+    let app = app_or_skip!();
+    let (_, token) = app.user("lina", Role::Editor).await;
+    let r = app.api(Method::GET, "/api/v1/me", &token, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["capabilities"]["local_agents"], true);
+    assert_eq!(r.json()["capabilities"]["mcp"], true);
+    // the desktop's marked connection works as before
+    let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" });
+    let r = rpc_as_local_agent(&app, &token, ping).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.json().get("error").is_none(), "{}", r.text());
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn local_agents_off_closes_the_mcp_endpoint() {
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_LOCAL_AGENTS", "off")]).await else {
+        return;
+    };
+    let (_, token) = app.user("lina", Role::Editor).await;
+    let r = app.api(Method::GET, "/api/v1/me", &token, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["capabilities"]["local_agents"], false);
+    assert_eq!(r.json()["capabilities"]["mcp"], false);
+
+    // the desktop's marked agent connection: refused with the precise message
+    let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" });
+    let r = rpc_as_local_agent(&app, &token, ping.clone()).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+    let message = r.json()["error"]["message"].as_str().unwrap().to_string();
+    assert!(message.contains("TEAMCRAFT_LOCAL_AGENTS=off"), "{message}");
+    assert!(message.contains("Local agents"), "{message}");
+    // also a tool call, not only the handshake
+    let call = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                       "params": { "name": "search_items", "arguments": { "query": "x" } } });
+    let r = rpc_as_local_agent(&app, &token, call.clone()).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    // an unmarked client (the stdio bridge, an agent set up by hand with the
+    // same token, an older desktop app) is refused just the same
+    for msg in [
+        ping,
+        call,
+        json!({ "jsonrpc": "2.0", "id": 3, "method": "initialize",
+                "params": { "protocolVersion": "2025-06-18", "capabilities": {},
+                            "clientInfo": { "name": "x", "version": "1" } } }),
+    ] {
+        let r = rpc(&app, &token, msg).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+        let message = r.json()["error"]["message"].as_str().unwrap().to_string();
+        assert!(message.contains("TEAMCRAFT_LOCAL_AGENTS=off"), "{message}");
+        assert!(r.json().get("result").is_none(), "{}", r.text());
+    }
+    // an administrator's token too: the switch is for the whole server
+    let (_, admin) = app.user("ada", Role::Admin).await;
+    let r = rpc(
+        &app,
+        &admin,
+        json!({ "jsonrpc": "2.0", "id": 4, "method": "ping" }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    // Admin → AI shows the switch (and that no company AI is configured);
+    // only administrators see the page
+    let cookie = app.login("ada").await;
+    let page = app.get_page("/admin/ai", Some(&cookie)).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text());
+    let html = page.text();
+    assert!(html.contains("TEAMCRAFT_LOCAL_AGENTS=off"), "{html}");
+    assert!(html.contains("users have no AI in TeamCraft"), "{html}");
+    let editor = app.login("lina").await;
+    assert_eq!(
+        app.get_page("/admin/ai", Some(&editor)).await.status,
+        StatusCode::FORBIDDEN
+    );
+
+    // the REST API is not affected
+    let r = app.api(Method::GET, "/api/v1/items", &token, None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+
+    // without a token the answer stays 401, the policy reveals nothing
+    let r = app
+        .send(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/mcp")
+                .header("x-teamcraft-client", "desktop-agent")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    app.teardown().await;
+}
