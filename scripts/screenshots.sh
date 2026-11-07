@@ -750,9 +750,9 @@ capture_pages() {
     # part search (signature from the conversion above)
     shot "revision-similar$suffix" "/revisions/$BRACKET_REV" '#similar'
     shot "bom$suffix" "/revisions/$TOP_REV/bom"
-    # release readiness and the impact analysis (the review form is in
-    # desktop-change)
-    shot "change-review$suffix" "/changes/$CHANGE_ID" '#readiness'
+    # the affected revisions and the impact analysis (the review form is in
+    # desktop-change; release readiness is shown only before the review)
+    shot "change-review$suffix" "/changes/$CHANGE_ID" 'section.card:has(+ #impact)'
     shot "notifications$suffix" /notifications
     shot "assistant$suffix" /assistant
     shot "account$suffix" /account '#appearance'
