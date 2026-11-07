@@ -111,11 +111,12 @@ new_password() {
 # ---------------------------------------------------------------------------
 
 # web WHO PATH CURL-ARGS… – request with WHO's cookie jar; the body lands in
-# $WORK/page, the status code is printed. Redirects are not followed.
+# $WORK/page, the status code is printed. Redirects are not followed. The
+# Origin header passes the server's CSRF check of form posts, like a browser.
 web() {
     local who=$1 path=$2
     shift 2
-    curl -sS --max-time 120 -b "$WORK/jar-$who" -c "$WORK/jar-$who" \
+    curl -sS --max-time 120 -b "$WORK/jar-$who" -c "$WORK/jar-$who" -H "Origin: $BASE_URL" \
         -o "$WORK/page" -w '%{http_code}' "$@" "$BASE_URL$path" ||
         die "request to $path failed"
 }

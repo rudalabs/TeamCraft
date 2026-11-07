@@ -150,12 +150,12 @@ and after the main pages a change request, two simulations with results, an
 NX model of the enclosure (the assembly with its eight part files in one
 revision), an as-built unit of the sensor mast with two deviations and a
 restricted project group. It then drives headless Chrome through
-chromedriver's WebDriver API (with `curl` and `jq`, no Node or Python) and saves the pages as PNGs: 1440 × 900 for the
-desktop and 390 pixels wide for the phone, each in the light scheme
-(`NAME.png`, the names the README uses) and again in the dark scheme
-(`NAME-dark.png`; Chrome emulates `prefers-color-scheme`, the demo user keeps
-the System skin). The passwords and API tokens are generated for each run
-and never printed.
+chromedriver's WebDriver API (with `curl` and `jq`, no Node or Python) and
+saves the pages as PNGs: 1440 × 900 for the desktop and 390 pixels wide for
+the phone, each in the light scheme (`NAME.png`, the names the README uses)
+and again in the dark scheme (`NAME-dark.png`; Chrome emulates
+`prefers-color-scheme`, the demo user keeps the System skin). The passwords
+and API tokens are generated for each run and never printed.
 
 With `DESKTOP_APP` set to a built TeamCraft Desktop binary (Linux), the script
 also captures the desktop app, once with *TeamCraft Light* (`desktop-*.png`)
