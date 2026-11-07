@@ -106,13 +106,59 @@
       <button type="submit">Open to all users</button>
       {% else %}
       <input type="hidden" name="visibility" value="restricted">
-      <p class="hint">Restrict the group to hide it, its items, files and changes from everybody who is not a member (administrators still see everything). Add viewers as members to give read-only access.</p>
+      <p class="hint">Restrict the group to hide it, its items, files and changes from everybody who is not a member (administrators still see everything unless the need-to-know policy below says otherwise). Add viewers as members to give read-only access.</p>
       <button type="submit">Restrict to members</button>
       {% endif %}
     </form>
     {% endif %}
   </section>
 </div>
+
+{% if policy %}
+<section class="card" id="need-to-know">
+  <h2>Need to know: administrator access</h2>
+  {% if not readable %}<p class="hint">Your administrator access to this group is closed: you manage it, but you cannot read its items, files or changes.</p>{% endif %}
+  <form class="stack" method="post" action="/projects/{{ project.id }}/policy">
+    <label>Administrators who are not members
+      <select name="admin_read">
+        {% for mode in admin_modes %}<option value="{{ mode.value }}" {% if mode.value == policy.admin_read %}selected{% endif %}>{{ mode.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <p class="hint">With a reason: an administrator opens {{ elevation_minutes }} minutes of access and writes why; the managers are notified and the access is listed below. None: administrators manage members and this policy but only read the group as members (adding themselves is audited and notifies the managers). Every change is audited.</p>
+    <div class="actions"><button class="primary" type="submit">Save</button></div>
+  </form>
+  {% if me.is_admin and policy.admin_read == "with_reason" and not readable %}
+  <h3>Open administrator access</h3>
+  <form class="stack" method="post" action="/projects/{{ project.id }}/elevate">
+    <label>Reason <span class="hint">at least 10 characters, shown to the managers</span>
+      <textarea name="reason" maxlength="1000" required></textarea>
+    </label>
+    <div class="actions"><button type="submit">Open access for {{ elevation_minutes }} minutes</button></div>
+  </form>
+  {% endif %}
+  {% if me.is_admin and policy.admin_read == "with_reason" and readable %}
+  <form class="inline" method="post" action="/projects/{{ project.id }}/elevate/end">
+    <button type="submit">End my administrator access now</button>
+  </form>
+  {% endif %}
+  <h3>Administrator access history</h3>
+  {% if policy.elevations %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Administrator</th><th scope="col">Reason</th><th scope="col">From</th><th scope="col">Until</th></tr></thead>
+    <tbody>
+    {% for e in policy.elevations %}
+    <tr><td>{{ e.username }}</td><td>{{ e.reason }}</td><td>{{ m.time(e.started_at) }}</td>
+        <td>{% if e.active %}{{ m.time(e.expires_at) }} (running){% elif e.ended_at %}{{ m.time(e.ended_at) }} (ended){% else %}{{ m.time(e.expires_at) }}{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">No administrator has opened access to this group.</p>
+  {% endif %}
+</section>
+{% endif %}
 
 <section class="card" id="numbering">
   <h2>Item numbers</h2>

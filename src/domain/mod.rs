@@ -140,6 +140,19 @@ mod tests {
     }
 
     #[test]
+    fn admin_read_parse() {
+        for m in [AdminRead::Implicit, AdminRead::WithReason, AdminRead::None] {
+            assert_eq!(AdminRead::parse(m.as_str()), Some(m));
+            assert!(!m.label().is_empty());
+        }
+        assert_eq!(
+            AdminRead::parse(" With_Reason "),
+            Some(AdminRead::WithReason)
+        );
+        assert_eq!(AdminRead::parse("always"), None);
+    }
+
+    #[test]
     fn base_versions() {
         let sha = "AB".repeat(32);
         assert_eq!(

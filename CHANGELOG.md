@@ -17,6 +17,14 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Need-to-know project groups, step 1 (#151): a restricted group can limit
+  administrator access (`project_policies`, migration 0040): `with_reason`
+  (time-limited, audited elevation with a written reason; managers are
+  notified) or `none` (administrators manage but do not read). Web form on
+  the group page and `GET`/`PUT /api/v1/projects/{code}/policy`,
+  `POST`/`DELETE /api/v1/projects/{code}/elevations`. Nothing changes for
+  groups without a policy.
+
 - HTML reports of FEA/CFD tools (`.html`, `.htm`) are read as text for the
   search, `read_file_text` and `propose_result_values` (#141): table rows as
   lines with ` | ` between the cells, numbers and units as written, entities

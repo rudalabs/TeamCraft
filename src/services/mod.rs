@@ -27,6 +27,7 @@ pub mod items;
 pub mod notifications;
 pub mod package;
 pub mod personal;
+pub mod project_policy;
 pub mod projects;
 pub mod readiness;
 pub mod references;

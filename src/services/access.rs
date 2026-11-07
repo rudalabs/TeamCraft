@@ -2,7 +2,8 @@
 //!
 //! A project group is either `internal` (everybody reads) or `restricted`
 //! (only its members and administrators read). The [`Actor`] carries the
-//! restricted groups it may *not* read (`hidden_projects`, empty for admins);
+//! restricted groups it may *not* read (`hidden_projects`, empty for admins
+//! except in need-to-know groups, see [`hidden_of_user`]);
 //! every guard binds that array. Hidden objects answer with exactly the same
 //! "not found" error as missing ones, so their existence is not confirmed.
 //!
@@ -46,7 +47,11 @@ pub fn change_visible(c: &str, actor_n: usize, hidden_n: usize) -> String {
 pub fn change_visible_for(c: &str, actor: &str, hidden: &str) -> String {
     format!(
         "({c}.created_by = {actor}
-          OR EXISTS (SELECT 1 FROM users aau WHERE aau.id = {actor} AND aau.role = 'admin')
+          OR (EXISTS (SELECT 1 FROM users aau WHERE aau.id = {actor} AND aau.role = 'admin')
+              AND NOT EXISTS (SELECT 1 FROM change_items aci2
+                              JOIN revisions ar2 ON ar2.id = aci2.revision_id
+                              JOIN items ai2 ON ai2.id = ar2.item_id
+                              WHERE aci2.change_id = {c}.id AND NOT {admin_items}))
           OR EXISTS (SELECT 1 FROM change_reviews acr
                      WHERE acr.change_id = {c}.id AND acr.reviewer_id = {actor})
           OR (EXISTS (SELECT 1 FROM change_items aci WHERE aci.change_id = {c}.id)
@@ -55,7 +60,8 @@ pub fn change_visible_for(c: &str, actor: &str, hidden: &str) -> String {
                               JOIN items ai ON ai.id = ar.item_id
                               WHERE aci.change_id = {c}.id
                                 AND NOT {})))",
-        project_visible_in("ai.project_id", hidden)
+        project_visible_in("ai.project_id", hidden),
+        admin_items = project_visible_in("ai2.project_id", hidden),
     )
 }
 
@@ -79,21 +85,35 @@ pub fn request_visible_for(r: &str, actor: &str, hidden: &str) -> String {
 }
 
 /// Recipient-side check: the user aliased `u` may see an item of project
-/// expression `p` (admins, items without a group, internal groups, members).
+/// expression `p` (items without a group, internal groups, members, and
+/// administrators unless the group's need-to-know policy shuts them out).
 pub fn user_sees_project(u: &str, p: &str) -> String {
-    format!(
-        "({u}.role = 'admin' OR {p} IS NULL
-          OR NOT EXISTS (SELECT 1 FROM projects asp WHERE asp.id = {p} AND asp.visibility = 'restricted')
-          OR EXISTS (SELECT 1 FROM project_members asm WHERE asm.project_id = {p} AND asm.user_id = {u}.id))"
-    )
+    format!("({p} IS NULL OR NOT (({p}) = ANY({})))", hidden_of_user(u))
 }
 
-/// The restricted groups a user may not read, as an SQL expression
-/// (`uuid[]`) for the user aliased `u`. Used to evaluate the change and
-/// request guards for notification recipients.
+/// The groups a user may not read, as an SQL expression (`uuid[]`) for the
+/// user aliased `u`. Used to evaluate the change and request guards for
+/// notification recipients and to build the [`Actor`].
+///
+/// * non-administrators: every restricted group they are no member of;
+/// * administrators: only the restricted groups whose need-to-know policy
+///   (`project_policies.admin_read`) shuts them out, they are no member of,
+///   and for which they hold no running elevation. Without a policy row an
+///   administrator reads everything, as before.
 pub fn hidden_of_user(u: &str) -> String {
     format!(
-        "(CASE WHEN {u}.role = 'admin' THEN '{{}}'::uuid[] ELSE
+        "(CASE WHEN {u}.role = 'admin' THEN
+           COALESCE((SELECT array_agg(hp.id) FROM projects hp
+                     JOIN project_policies hpp ON hpp.project_id = hp.id
+                     WHERE hp.visibility = 'restricted' AND hpp.admin_read <> 'implicit'
+                       AND NOT EXISTS (SELECT 1 FROM project_members hpm
+                                       WHERE hpm.project_id = hp.id AND hpm.user_id = {u}.id)
+                       AND NOT (hpp.admin_read = 'with_reason' AND EXISTS (
+                                SELECT 1 FROM project_elevations hpe
+                                WHERE hpe.project_id = hp.id AND hpe.user_id = {u}.id
+                                  AND hpe.ended_at IS NULL AND hpe.expires_at > now()))),
+                    '{{}}'::uuid[])
+         ELSE
            COALESCE((SELECT array_agg(hp.id) FROM projects hp
                      WHERE hp.visibility = 'restricted'
                        AND NOT EXISTS (SELECT 1 FROM project_members hpm

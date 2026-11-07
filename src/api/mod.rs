@@ -36,15 +36,15 @@ use uuid::Uuid;
 use crate::{
     auth::{Actor, ApiUser},
     domain::{
-        self, ChangeStatus, Decision, ItemType, LifecycleState, Priority, ProjectVisibility,
-        ReferenceKind, RevisionRule,
+        self, AdminRead, ChangeStatus, Decision, ItemType, LifecycleState, Priority,
+        ProjectVisibility, ReferenceKind, RevisionRule,
     },
     error::{AppError, AppResult},
     models::Revision,
     services::{
         attributes, audit, bom, changes, checkouts, desktop, files, impacts, imports, items,
-        notifications, package, projects, references, requests, reviewers, revisions, similar,
-        stats, uploads, users, workset, Page,
+        notifications, package, project_policy, projects, references, requests, reviewers,
+        revisions, similar, stats, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -82,6 +82,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/branding/{kind}", get(branding_logo))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{code}/visibility", put(set_project_visibility))
+        .route(
+            "/projects/{code}/policy",
+            get(project_policy_get).put(project_policy_set),
+        )
+        .route(
+            "/projects/{code}/elevations",
+            post(project_elevate).delete(project_elevation_end),
+        )
         .route(
             "/projects/{code}/members",
             get(project_members).post(add_project_member),
@@ -442,6 +450,10 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
+            "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
+            "PUT    /api/v1/projects/{code}/policy                   {admin_read: implicit|with_reason|none} how administrators read a restricted group – managers and admins",
+            "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
+            "DELETE /api/v1/projects/{code}/elevations               ends the administrator's running access",
             "GET    /api/v1/projects/{code}/members",
             "POST   /api/v1/projects/{code}/members                   {username, manager?} – managers and admins",
             "GET    /api/v1/projects/{code}/numbering?scheme=         next generated item numbers per type; scheme = preview another scheme",

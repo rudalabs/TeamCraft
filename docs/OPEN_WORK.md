@@ -291,6 +291,13 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 
 ### 4. Parked features
 
+**Need-to-know project groups (#151)** – step 1 (administrator access: policy, reason-based elevation, `none`) is
+done. Left, in the order of the issue: 2 conditions on membership (OIDC claims, allowed networks, shorter sessions);
+3 interface switches per group (channel on the `Actor`: `api_tokens`, `mcp`, `assistant`, `external_llm`, `webhooks`,
+`notification_content`, `packages`, `desktop_sync`) and the interface guard test; 4 read and download log
+(`access_log`, retention, CLI purge); 5 access review page and evidence report; 6 token scopes (F2). Open question 1
+is answered for now: `none` is allowed, but needs a member who is a manager.
+
 Only finish what is in progress and fix bugs here; see *Direction*. The CAD-program entries are mostly checks with
 real files and belong to section 3 once such files are at hand.
 
