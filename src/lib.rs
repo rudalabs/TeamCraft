@@ -28,6 +28,7 @@ pub mod domain;
 pub mod error;
 #[doc(hidden)]
 pub mod fuzz_harness;
+pub mod htmltext;
 pub mod httprange;
 pub mod llm;
 pub mod mcp;

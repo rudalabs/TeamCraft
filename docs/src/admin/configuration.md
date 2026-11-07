@@ -94,8 +94,9 @@ results are stored as they are, never parsed fully – see
 | `TEAMCRAFT_PREVIEW_MAX_STEP_MB`   | `256`   | largest STEP file (tessellation needs a multiple of the file size)      |
 | `TEAMCRAFT_PREVIEW_MAX_MEMORY_MB` | `1024`  | address space of the preview process, `0` = unlimited                   |
 
-The same process limits protect the text extraction of PDF reports (`teamcraft
-text-extract`: at most 32 MB per PDF, 100 pages, 60 s, the memory limit below).
+The same process limits protect the text extraction of PDF and HTML reports
+(`teamcraft text-extract`: at most 32 MB per PDF and 100 pages, the first 16 MB
+of an HTML file, 60 s, the memory limit below).
 
 The memory limit (`RLIMIT_AS`) is enforced on Linux; on macOS the system may
 ignore it, and on Windows it is **not enforced** (the size caps and the time

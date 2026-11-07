@@ -9,7 +9,7 @@
 
 use std::io::Cursor;
 
-use teamcraft::{bomtable, cadformat, cadrefs, mesh, nxpart, stepbom, swpart, textindex};
+use teamcraft::{bomtable, cadformat, cadrefs, htmltext, mesh, nxpart, stepbom, swpart, textindex};
 
 /// xorshift64: the same corruptions on every run.
 struct Rng(u64);
@@ -278,6 +278,16 @@ fn text_extraction_survives_any_bytes() {
     damage(STEP.as_bytes(), 100, |d| {
         let _ = textindex::extract("a.step", d);
     });
+    let html: &[u8] = b"<html><head><meta charset=windows-1252><style>p{}</style></head><body>\
+        <table><tr><th>R</th><td>1.5&nbsp;MPa</td></tr></table><!-- c --><img alt=\"x\" \
+        src=\"data:,AA\"><p hidden>h</p>&#x110000;\xb0</body></html>";
+    damage(html, 100, |d| {
+        let _ = htmltext::extract(d);
+    });
+    for len in [0usize, 1, 3, 64, 4096] {
+        let d: Vec<u8> = (0..len).map(|_| rng.next() as u8).collect();
+        let _ = htmltext::extract(&d);
+    }
     for q in [
         "", "  ", "a&b", "a | b", "!x", "(x)", "x:*", "'; DROP", "\u{0}", "ä ö ü",
     ] {

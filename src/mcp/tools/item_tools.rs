@@ -212,6 +212,8 @@ pub(super) async fn read_file_text(st: &AppState, me: &Actor, a: &Args<'_>) -> A
         Some(
             "No text is extracted from files of this format (images and binary CAD files are not indexed).",
         )
+    } else if page.total_chars == 0 && crate::htmltext::is_html(&page.file.filename) {
+        Some("The HTML file has no readable text (scripts, styles, hidden elements and images are skipped; linked pages are not followed).")
     } else if page.total_chars == 0 {
         Some("The file has no extractable text (a scanned PDF has no text layer; there is no OCR).")
     } else if page.offset >= page.total_chars {

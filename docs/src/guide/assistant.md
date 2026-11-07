@@ -34,7 +34,7 @@ CAD generation:
 - "What does the spec of PRT-000012 say about the coating?" – the assistant
   reads the text that TeamCraft extracted from the attached files for the
   search (STEP and IGES strings, text, CSV, JSON, XML, KiCad and similar
-  formats, and the text layer of PDF reports; not images, scanned PDFs or binary CAD files). It can read only files
+  formats, the text layer of PDF reports and the readable text of HTML reports with table rows as lines; not images, scanned PDFs or binary CAD files). It can read only files
   that you may open.
 - "Draft a change request from my notes: …" – with drafts allowed (see
   below), the assistant raises the request; otherwise it shows what the

@@ -431,3 +431,134 @@ async fn the_assistant_offers_proposals_only_when_drafts_are_allowed() {
     assert_eq!(action.needs(), "revision");
     assert!(action.label().contains("result values"));
 }
+
+/// HTML and plain-text reports: `read_file_text` returns the readable text
+/// (HTML table rows as lines, decimal numbers intact), the full-text search
+/// finds words of the table, and a quote copied from the text is accepted.
+#[tokio::test]
+async fn html_and_text_reports_reach_the_agent_with_their_numbers() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROVER"]).await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &eng,
+            Some(
+                json!({ "item_type": "simulation", "name": "Bracket static", "project": "ROVER" }),
+            ),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let number = r.json()["item_number"].as_str().unwrap().to_string();
+    let rev = format!("/api/v1/items/{number}/revisions/A");
+    let html = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/reports/results-table.html"),
+    )
+    .unwrap();
+    for (name, bytes) in [
+        ("report.html", html.as_slice()),
+        (
+            "summary.txt",
+            b"Case\tPressure drop [Pa]\nnominal\t388.25\nmax flow\t512.75\n".as_slice(),
+        ),
+        (
+            "hidden.htm",
+            b"<script>1.5</script><p hidden>2.5</p>".as_slice(),
+        ),
+    ] {
+        let r = app
+            .api_upload(&format!("{rev}/files"), &eng, name, bytes)
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{name}: {}", r.text());
+    }
+
+    let r = tool(
+        &app,
+        &eng,
+        "read_file_text",
+        json!({ "item": number, "file": "report.html" }),
+    )
+    .await;
+    assert_eq!(r["isError"], false, "{r}");
+    let text = r["structuredContent"]["text"].as_str().unwrap();
+    assert!(
+        text.contains("Equivalent (von Mises) stress | 0.0213 | 152.4 | MPa"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Total deformation | 0 | 1.2e-3 | m"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("<td>") && !text.contains("report_files"),
+        "{text}"
+    );
+
+    let r = tool(
+        &app,
+        &eng,
+        "read_file_text",
+        json!({ "item": number, "file": "summary.txt" }),
+    )
+    .await;
+    let text = r["structuredContent"]["text"].as_str().unwrap();
+    assert!(
+        text.contains("nominal\t388.25\nmax flow\t512.75"),
+        "{text:?}"
+    );
+
+    let r = tool(
+        &app,
+        &eng,
+        "read_file_text",
+        json!({ "item": number, "file": "hidden.htm" }),
+    )
+    .await;
+    assert_eq!(r["structuredContent"]["total_chars"], 0, "{r}");
+    assert!(
+        r["structuredContent"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("HTML file has no readable text"),
+        "{r}"
+    );
+
+    // the search finds a word of the table (and none of the markup)
+    let search = |q: &str| {
+        let uri = format!("/api/v1/items?q={q}");
+        let eng = eng.clone();
+        let app = &app;
+        async move { app.api(Method::GET, &uri, &eng, None).await.json() }
+    };
+    assert_eq!(search("deformation").await["total"], 1);
+    assert_eq!(search("stylesheet").await["total"], 0);
+
+    // quotes copied from the text are accepted
+    let r = tool(
+        &app,
+        &eng,
+        "propose_result_values",
+        json!({ "item": number, "values": [
+            { "name": "Max von Mises stress", "value": 152.4, "unit": "MPa", "file": "report.html",
+              "quote": "Equivalent (von Mises) stress | 0.0213 | 152.4 | MPa" },
+            { "name": "Pressure drop", "value": 388.25, "unit": "Pa", "load_case": "nominal",
+              "file": "summary.txt", "quote": "nominal 388.25" }
+        ] }),
+    )
+    .await;
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(pending(&app).await, 2);
+    // a number only the markup or a hidden element holds is not quotable
+    let r = tool(
+        &app,
+        &eng,
+        "propose_result_values",
+        json!({ "item": number, "values": [
+            { "name": "x", "value": 1.5, "file": "hidden.htm", "quote": "1.5" }
+        ] }),
+    )
+    .await;
+    assert_eq!(r["isError"], true, "{r}");
+}

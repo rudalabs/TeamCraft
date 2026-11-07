@@ -7,6 +7,9 @@
 //! opened (in tests, where there is no such binary, on a blocking thread).
 //! The result is bounded as well – [`MAX_PAGES`] pages, [`MAX_CHARS`]
 //! characters. There is no OCR: a scanned PDF has no text.
+//!
+//! The same child reads HTML reports (`--format html`, see [`crate::htmltext`]);
+//! [`extract_isolated`] runs either.
 
 use std::{
     path::Path,
@@ -82,7 +85,7 @@ pub fn extract(bytes: &[u8]) -> anyhow::Result<String> {
 
 /// Control characters (NUL included) become spaces, line breaks stay (tables
 /// keep their rows), runs of blank lines collapse, the length is capped.
-fn tidy(text: &str) -> String {
+pub(crate) fn tidy(text: &str) -> String {
     let mut out = String::with_capacity(text.len().min(MAX_CHARS + 16));
     let mut blank_lines = 0;
     for line in text.lines() {
@@ -133,6 +136,61 @@ pub fn run_job(
     Ok(text.chars().count())
 }
 
+/// What the `text-extract` child reads: a PDF or an HTML report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextFormat {
+    Pdf,
+    /// See [`crate::htmltext`].
+    Html,
+}
+
+impl TextFormat {
+    /// The `--format` value of the child.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TextFormat::Pdf => "pdf",
+            TextFormat::Html => "html",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "pdf" => Some(TextFormat::Pdf),
+            "html" => Some(TextFormat::Html),
+            _ => None,
+        }
+    }
+
+    /// Bytes the child reads: a bigger PDF is refused, a bigger HTML file is cut.
+    pub fn max_input_bytes(self) -> u64 {
+        match self {
+            TextFormat::Pdf => MAX_PDF_BYTES,
+            TextFormat::Html => crate::htmltext::MAX_HTML_BYTES,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            TextFormat::Pdf => "PDF",
+            TextFormat::Html => "HTML file",
+        }
+    }
+}
+
+/// One job of the child process in the given format (see [`run_job`] and
+/// [`crate::htmltext::run_job`]).
+pub fn run_job_as(
+    format: TextFormat,
+    input: impl std::io::Read,
+    output: impl std::io::Write,
+    max_input_bytes: u64,
+) -> anyhow::Result<usize> {
+    match format {
+        TextFormat::Pdf => run_job(input, output, max_input_bytes),
+        TextFormat::Html => crate::htmltext::run_job(input, output, max_input_bytes),
+    }
+}
+
 /// The text of a stored PDF; empty if it has none or cannot be read (a
 /// scanned or damaged file never fails an upload). The opened file is handed to the
 /// child on its standard input and the text comes back on its standard
@@ -143,28 +201,41 @@ pub async fn extract_file(file: tokio::fs::File) -> String {
         Ok(meta) if meta.len() <= MAX_PDF_BYTES => {}
         _ => return String::new(),
     }
+    extract_isolated(file, TextFormat::Pdf).await
+}
+
+/// Runs one extraction in the `text-extract` child (or, in tests, on a
+/// blocking thread): one of the [`PARALLEL`] slots, the time limit, the
+/// memory limit, a cleared environment. Empty if there is no text.
+pub(crate) async fn extract_isolated(file: tokio::fs::File, format: TextFormat) -> String {
     let Ok(_slot) = SLOTS.acquire().await else {
         return String::new();
     };
     let file = file.into_std().await;
     let outcome = match crate::preview::worker_exe() {
-        Some(exe) => run_worker(&exe, file).await,
-        None => run_in_process(file).await,
+        Some(exe) => run_worker(&exe, file, format).await,
+        None => run_in_process(file, format).await,
     };
     match outcome {
         Ok(text) => text.chars().take(MAX_CHARS).collect(),
         Err(message) => {
-            tracing::debug!(%message, "no text from the PDF");
+            tracing::debug!(%message, "no text from the {}", format.name());
             String::new()
         }
     }
 }
 
-async fn run_worker(exe: &Path, input: std::fs::File) -> Result<String, String> {
+async fn run_worker(
+    exe: &Path,
+    input: std::fs::File,
+    format: TextFormat,
+) -> Result<String, String> {
     let child = tokio::process::Command::new(exe)
         .arg("text-extract")
+        .arg("--format")
+        .arg(format.as_str())
         .arg("--max-input-bytes")
-        .arg(MAX_PDF_BYTES.to_string())
+        .arg(format.max_input_bytes().to_string())
         .arg("--max-memory-bytes")
         .arg(MEMORY_BYTES.load(Ordering::Relaxed).to_string())
         .env_clear()
@@ -190,10 +261,10 @@ async fn run_worker(exe: &Path, input: std::fs::File) -> Result<String, String> 
     }
 }
 
-async fn run_in_process(input: std::fs::File) -> Result<String, String> {
+async fn run_in_process(input: std::fs::File, format: TextFormat) -> Result<String, String> {
     let task = tokio::task::spawn_blocking(move || {
         let mut text = Vec::new();
-        run_job(input, &mut text, MAX_PDF_BYTES)
+        run_job_as(format, input, &mut text, format.max_input_bytes())
             .map(|_| String::from_utf8_lossy(&text).into_owned())
             .map_err(|e| e.to_string())
     });

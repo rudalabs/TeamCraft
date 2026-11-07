@@ -3,11 +3,16 @@
 //! * STEP (`.step`, `.stp`, `.p21`) and IGES (`.iges`, `.igs`): the quoted strings of
 //!   the file – product names, descriptions, authors, organisation, layer and
 //!   entity names – without the numeric geometry.
-//! * Plain text formats (txt, md, csv, json, xml, yaml, ASCII STL, KiCad,
-//!   Teamcenter PLM XML, OpenSCAD, motor thrust curves, …):
-//!   the text itself.
+//! * Plain text formats (txt, md, csv, json, xml, yaml, log, Teamcenter PLM XML,
+//!   OpenSCAD, motor thrust curves, …): the text itself, line by line, with its
+//!   decimal numbers – a text or CSV report reads like a PDF one (charset: byte
+//!   order mark, UTF-8, else Windows-1252).
+//! * Geometry as text (ASCII STL, OBJ, KiCad boards and symbols): the words
+//!   without the decimal numbers (coordinates are noise in a search).
 //! * PDF: the text layer, read in an isolated process (see `pdftext`); scanned
 //!   PDFs have none.
+//! * HTML (`.html`, `.htm`, the reports of FEA/CFD tools): the readable text with
+//!   table rows as lines, read in the same isolated process (see `htmltext`).
 //! * Everything else (binary CAD, images): nothing (not indexed yet).
 //!
 //! At most `MAX_READ` bytes are read and `MAX_TEXT` characters are kept.
@@ -31,9 +36,14 @@ const MAX_TEXT: usize = 200_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     QuotedStrings,
+    /// The text as it is (lines and decimal numbers kept).
     PlainText,
+    /// Text full of coordinates: words only, decimal numbers dropped.
+    Geometry,
     /// PDF: read in an isolated process (`pdftext`), only by [`extract_file`].
     Pdf,
+    /// HTML: read in an isolated process (`htmltext`), only by [`extract_file`].
+    Html,
     None,
 }
 
@@ -44,11 +54,12 @@ fn kind_of(filename: &str) -> Kind {
         .unwrap_or_default();
     match ext.as_str() {
         "pdf" => Kind::Pdf,
+        "html" | "htm" => Kind::Html,
+        "stl" | "obj" | "kicad_sch" | "kicad_pcb" | "kicad_sym" | "kicad_mod" => Kind::Geometry,
         "step" | "stp" | "p21" | "iges" | "igs" => Kind::QuotedStrings,
         "txt" | "md" | "csv" | "tsv" | "json" | "xml" | "yaml" | "yml" | "toml" | "ini" | "cfg"
-        | "log" | "stl" | "obj" | "kicad_sch" | "kicad_pcb" | "kicad_pro" | "kicad_sym"
-        | "kicad_mod" | "net" | "sch" | "plmxml" | "scad" | "eng" | "rse" | "html" | "htm"
-        | "tex" | "rst" | "py" | "rs" | "c" | "h" | "cpp" | "hpp" | "m" => Kind::PlainText,
+        | "log" | "kicad_pro" | "net" | "sch" | "plmxml" | "scad" | "eng" | "rse" | "tex"
+        | "rst" | "py" | "rs" | "c" | "h" | "cpp" | "hpp" | "m" => Kind::PlainText,
         _ => Kind::None,
     }
 }
@@ -61,12 +72,17 @@ pub fn indexes(filename: &str) -> bool {
 /// Extracts searchable text from raw file content.
 pub fn extract(filename: &str, content: &[u8]) -> String {
     let text = match kind_of(filename) {
-        Kind::None | Kind::Pdf => return String::new(),
+        Kind::None | Kind::Pdf | Kind::Html => return String::new(),
         // A text extension with binary content (binary STL): nothing to index.
-        Kind::PlainText if content.contains(&0) => return String::new(),
+        Kind::PlainText | Kind::Geometry
+            if content.contains(&0) && encoding_rs::Encoding::for_bom(content).is_none() =>
+        {
+            return String::new()
+        }
+        Kind::PlainText => return plain_text(&crate::htmltext::decode(content, false)),
         // Drop decimal numbers (e.g. the facet coordinates of ASCII STL files);
         // integers like "912" in "DIN 912" stay searchable.
-        Kind::PlainText => String::from_utf8_lossy(content)
+        Kind::Geometry => String::from_utf8_lossy(content)
             .split_whitespace()
             .filter(|w| !is_decimal_number(w))
             .collect::<Vec<_>>()
@@ -79,6 +95,38 @@ pub fn extract(filename: &str, content: &[u8]) -> String {
         .map(|c| if c.is_control() { ' ' } else { c })
         .take(MAX_TEXT)
         .collect()
+}
+
+/// A text file as text: lines kept (rows of a table or report stay rows),
+/// control characters except tabs become spaces (PostgreSQL TEXT cannot hold
+/// NUL), trailing blanks and runs of blank lines go, at most [`MAX_TEXT`]
+/// characters.
+fn plain_text(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = 0usize;
+    let mut blank = 0;
+    for line in text.lines() {
+        let line: String = line
+            .chars()
+            .map(|c| if c.is_control() && c != '\t' { ' ' } else { c })
+            .collect();
+        let line = line.trim_end();
+        if line.is_empty() {
+            blank += 1;
+            if blank > 1 {
+                continue;
+            }
+        } else {
+            blank = 0;
+        }
+        out.push_str(line);
+        out.push('\n');
+        chars += line.chars().count() + 1;
+        if chars > MAX_TEXT {
+            break;
+        }
+    }
+    out.trim_matches('\n').chars().take(MAX_TEXT).collect()
 }
 
 /// `1.5`, `-0.25`, `1.000000e+00` – but not `912` or `M6`.
@@ -98,8 +146,10 @@ pub async fn extract_file(path: &Path, filename: &str) -> String {
     let Ok(file) = tokio::fs::File::open(path).await else {
         return String::new();
     };
-    if kind_of(filename) == Kind::Pdf {
-        return crate::pdftext::extract_file(file).await;
+    match kind_of(filename) {
+        Kind::Pdf => return crate::pdftext::extract_file(file).await,
+        Kind::Html => return crate::htmltext::extract_file(file).await,
+        _ => {}
     }
     let mut content = Vec::new();
     if file.take(MAX_READ).read_to_end(&mut content).await.is_err() {
@@ -177,8 +227,9 @@ mod tests {
     #[test]
     fn text_and_binary_files() {
         assert_eq!(
-            extract("notes.md", b"Thrust 2 kN, DIN 912\nburn time 4.2 s"),
-            "Thrust 2 kN, DIN 912 burn time s"
+            extract("notes.md", b"Thrust 2 kN, DIN 912\r\nburn time 4.2 s"),
+            "Thrust 2 kN, DIN 912\nburn time 4.2 s",
+            "text keeps its lines and decimal numbers"
         );
         let stl = b"solid hub\n facet normal 0.0 0.0 1.0\n  outer loop\n   vertex 1.5e+01 -2.25 0.0\n  endloop\n endfacet\nendsolid hub";
         assert_eq!(
@@ -240,15 +291,20 @@ mod tests {
     }
 
     #[test]
-    fn plain_text_keeps_integers_and_words() {
+    fn plain_text_is_the_real_text() {
         assert_eq!(
             extract("a.csv", b"M6;912;-0.5;1e5;3.;v1.2"),
-            "M6;912;-0.5;1e5;3.;v1.2",
-            "one word without white space stays whole"
+            "M6;912;-0.5;1e5;3.;v1.2"
         );
         assert_eq!(
             extract("a.txt", b"len 12.5 mm -3.0 +1.0e-3 ISO 4762"),
-            "len mm ISO 4762"
+            "len 12.5 mm -3.0 +1.0e-3 ISO 4762",
+            "a report keeps its numbers"
+        );
+        assert_eq!(
+            extract("summary.tsv", b"case\tdp_pa  \n\n\n\nA\t388.25\x07\n"),
+            "case\tdp_pa\n\nA\t388.25",
+            "tabs stay, blank runs collapse, control characters go"
         );
         assert_eq!(extract("a.txt", b""), "");
         assert_eq!(
@@ -256,14 +312,38 @@ mod tests {
             "Düse \u{fffd}",
             "non-ASCII text is kept"
         );
+        assert_eq!(extract("a.log", b"85\xB0C"), "85°C", "Windows-1252");
+        let mut utf16 = vec![0xFF, 0xFE];
+        for u in "p 1.5".encode_utf16() {
+            utf16.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(extract("a.txt", &utf16), "p 1.5", "UTF-16 with BOM");
+        assert_eq!(extract("a.txt", b"a\0b"), "", "binary content");
+    }
+
+    #[test]
+    fn geometry_text_drops_decimal_numbers() {
+        assert_eq!(
+            extract("board.kicad_pcb", b"(at 12.5 -3.0) (layer F.Cu) DIN 912"),
+            "(at -3.0) (layer F.Cu) DIN 912"
+        );
         assert!(!is_decimal_number("1.2.3a") && is_decimal_number("1.2.3"));
         assert!(!is_decimal_number("-") && !is_decimal_number("."));
+    }
+
+    #[test]
+    fn html_is_not_read_in_process() {
+        assert_eq!(extract("report.html", b"<p>1.5</p>"), "");
+        assert!(indexes("report.HTM") && indexes("r.html"));
     }
 
     #[test]
     fn extracted_text_is_bounded() {
         let big = "word ".repeat(MAX_TEXT);
         assert_eq!(extract("a.txt", big.as_bytes()).chars().count(), MAX_TEXT);
+        let lines = "word\n".repeat(MAX_TEXT);
+        assert_eq!(extract("a.txt", lines.as_bytes()).chars().count(), MAX_TEXT);
+        assert_eq!(extract("a.stl", big.as_bytes()).chars().count(), MAX_TEXT);
     }
 
     #[tokio::test]

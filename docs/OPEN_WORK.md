@@ -343,11 +343,14 @@ real files and belong to section 3 once such files are at hand.
 - [ ] `.sim` detection: verify the STAR-CCM+ marker with real files (heuristic: "STAR-CCM+" near the start)
 - [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded, audited, with source); never from big result files
 - [x] Result values proposed by the assistant from PDF/text reports (`propose_result_values`, drafts with a quote, accepted or rejected by a CAD editor); PDF text layer in `read_file_text`
-- [ ] `read_file_text` of plain-text files shows the search text, which drops decimal numbers (`textindex`): read the real text (bounded) for the assistant, so text and CSV reports work like PDFs
+- [x] `read_file_text` of plain-text files shows the real text with its lines and decimal numbers (bounded; only geometry as text – ASCII STL, OBJ, KiCad – drops decimals for the search), so text and CSV reports work like PDFs (#141)
 - [ ] Scanned PDF reports (OCR) – not planned; attach a PDF with a text layer or the numbers by hand
-- [ ] HTML reports of commercial FEA/CFD tools: today `.html` is indexed as plain text (tags kept, decimal numbers
-  dropped), so `read_file_text` and `propose_result_values` cannot use them – an HTML-to-text reader in the isolated
-  `text-extract` child with tables kept as rows ([#141](https://github.com/rudalabs/TeamCraft/issues/141))
+- [x] HTML reports of commercial FEA/CFD tools: own bounded HTML-to-text reader (`src/htmltext.rs`) in the isolated
+  `text-extract` child, table rows as lines with ` | ` separators, scripts/styles/comments/hidden elements/embedded
+  images skipped, nothing fetched; search, `read_file_text`, `propose_result_values` and the extraction templates use
+  the extracted text ([#141](https://github.com/rudalabs/TeamCraft/issues/141))
+- [ ] HTML reports: MHTML (`.mht`) and ZIP-packed multi-file reports (unpacking needs its own caps, see F13); text hidden
+  by a style sheet (not inline) is not detected
 - [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
