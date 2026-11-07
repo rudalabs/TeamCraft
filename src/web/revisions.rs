@@ -26,8 +26,8 @@ use crate::{
     preview::PreviewFormat,
     services::{
         as_built, attributes, audit, bom, changes, files, impacts, interchange, items,
-        notifications, projects, references, requests, result_proposals, revisions, similar,
-        simulations, uploads,
+        notifications, ownership, projects, references, requests, result_proposals, revisions,
+        similar, simulations, uploads,
     },
     thumbnail, util, AppState,
 };
@@ -294,6 +294,15 @@ pub async fn show(
         Vec::new()
     };
     let in_project = revisions::ensure_project_access(&rev, me).is_ok();
+    let owner_manageable = match item.project_id {
+        Some(p) => projects::is_manager(&st.db, me, p).await?,
+        None => me.is_admin(),
+    };
+    let owner_candidates = if owner_manageable {
+        ownership::owner_candidates(&st.db, item.project_id).await?
+    } else {
+        Vec::new()
+    };
     let can = json!({
         "edit": editable,
         "checkout": can_work && rev.checked_out_by.is_none(),
@@ -309,6 +318,7 @@ pub async fn show(
             && rev_changes.is_empty()
             && hidden_changes == 0,
         "master": in_project,
+        "owner": owner_manageable,
         "add_to_change": can_work && open_change.is_none(),
         "acknowledge": me.can_edit() && me.can_edit_project(item.project_id),
     });
@@ -435,6 +445,7 @@ pub async fn show(
             "open_change": open_change,
             "drafts": drafts,
             "history": history,
+            "owner_candidates": owner_candidates,
             "projects": projects,
             "units": COMMON_UNITS,
             "where_used_more": where_used_more,

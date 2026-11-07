@@ -110,6 +110,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/items/new", get(items::new_form))
         .route("/items/{id}", get(items::show))
         .route("/items/{id}/master", post(items::update_master))
+        .route("/items/{id}/owner", post(items::set_owner))
         .route("/items/{id}/delete", post(items::delete))
         // alternates, supersession, multi-level where-used, replace in assemblies
         .route("/items/{id}/where-used", get(interchange::where_used))
@@ -370,6 +371,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(admin::user_edit).post(admin::update_user),
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
+        .route("/admin/users/{id}/handover", post(admin::handover))
         .route("/admin/audit", get(admin::audit))
         .route("/admin/ai", get(admin::ai))
         .route("/admin/branding", get(branding::page))

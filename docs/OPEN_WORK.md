@@ -350,10 +350,10 @@ real files and belong to section 3 once such files are at hand.
 - [ ] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`, open).
 - [ ] Step 5: keep review rounds in `change_reviews`.
 - [ ] Step 6: flag and replace absent reviewers, substitutes.
-- [ ] Step 7: item owner and admin handover of a leaving user's work.
+- [x] Step 7: item owner and admin handover of a leaving user's work (owner on the item page; notifying the new owner and a CLI command are not done).
 - [ ] Step 8: approvals in the package manifest, audit log export, hash chain.
 - [ ] Step 9: requester cannot triage own request; separate approval of *use as is* deviations.
-- [ ] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
+- [x] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
 
 **Desktop app**
 

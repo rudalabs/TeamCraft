@@ -107,9 +107,10 @@ pub(super) async fn suggest_reviewers(st: &AppState, me: &Actor, a: &Args<'_>) -
             "name": s.display_name,
             "role": s.role,
             "score": s.score,
+            "cannot_review": s.cannot_review,
             "reasons": s.reasons,
         })).collect::<Vec<_>>(),
-        "note": "Suggestions only; reviewers are added by the author of the change in TeamCraft.",
+        "note": "Suggestions only; reviewers are added by the author of the change in TeamCraft. People with cannot_review edited the affected items and must not be proposed as reviewers (four-eyes principle).",
     }))
 }
 

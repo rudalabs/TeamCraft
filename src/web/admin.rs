@@ -14,7 +14,7 @@ use crate::{
     domain::{self, AdminRead, ProjectVisibility, Role},
     error::{AppError, AppResult},
     resultscan::TemplateInput,
-    services::{audit, project_policy, projects, result_templates, users, Page},
+    services::{audit, ownership, project_policy, projects, result_templates, users, Page},
     util, AppState,
 };
 
@@ -516,12 +516,18 @@ pub async fn user_edit(
     ctx.me.require(Role::Admin)?;
     let user = users::get(&st.db, id).await?;
     let tokens = users::list_tokens(&st.db, id).await?;
+    let handover_targets: Vec<_> = users::reviewer_candidates(&st.db)
+        .await?
+        .into_iter()
+        .filter(|u| u.id != id)
+        .collect();
     let memberships = projects::memberships_of(&st.db, id).await?;
     render(
         &st,
         &ctx,
         "admin/user_edit.html",
         json!({
+            "handover_targets": handover_targets,
             "user": user,
             "tokens": tokens,
             "memberships": memberships,
@@ -741,4 +747,46 @@ pub async fn delete_result_template(
             format!("Extraction template {} removed.", t.name),
         )
     })
+}
+
+#[derive(Deserialize)]
+pub struct HandoverForm {
+    to: Uuid,
+}
+
+/// Moves the work of a user to another one and shows what was moved.
+pub async fn handover(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<HandoverForm>,
+) -> AppResult<Response> {
+    let back = format!("/admin/users/{id}");
+    let result = ownership::hand_over(&st.db, &ctx.me, id, form.to).await;
+    finish(&st, result, &back, |report| {
+        (back.clone(), handover_summary(&report))
+    })
+}
+
+/// Flash text of a hand-over: counts and the first objects that stayed.
+fn handover_summary(report: &ownership::HandoverReport) -> String {
+    let mut text = format!(
+        "Handed over the work of {} to {}: {} items, {} changes, {} requests, {} reviews.",
+        report.from_name,
+        report.to_name,
+        report.count("item"),
+        report.count("change"),
+        report.count("request"),
+        report.count("review"),
+    );
+    if !report.skipped.is_empty() {
+        text.push_str(&format!(" {} not moved:", report.skipped.len()));
+        for e in report.skipped.iter().take(4) {
+            text.push_str(&format!(" {} {} ({});", e.kind, e.number, e.reason));
+        }
+    }
+    if report.truncated {
+        text.push_str(" More remains: run the hand-over again.");
+    }
+    text
 }
