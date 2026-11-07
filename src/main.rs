@@ -75,6 +75,11 @@ enum Command {
         #[arg(long = "format")]
         formats: Vec<String>,
     },
+    /// The read and download log of restricted groups.
+    AccessLog {
+        #[command(subcommand)]
+        command: AccessLogCommand,
+    },
     /// Bridge an MCP client that speaks stdio (e.g. Claude Desktop) to the
     /// MCP endpoint of a TeamCraft server. The personal access token is read
     /// from TEAMCRAFT_TOKEN or --token-file.
@@ -168,6 +173,22 @@ enum AssistantCommand {
     /// report reachability, the API key, the model, tool support and token
     /// counts. Never prints the key.
     Check,
+}
+
+#[derive(Subcommand)]
+enum AccessLogCommand {
+    /// Delete old entries and record that in the audit log. Without
+    /// --older-than-days each group keeps its log for its own retention
+    /// (groups without one keep everything).
+    Purge {
+        /// Only this project group (code).
+        #[arg(long)]
+        project: Option<String>,
+        /// Delete everything older than this many days instead of using the
+        /// retention of the groups.
+        #[arg(long)]
+        older_than_days: Option<i32>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -275,6 +296,7 @@ async fn run(cli: Cli) -> ExitCode {
         Command::Vault { command } => vault_command(command).await,
         Command::Assistant { command } => assistant_command(command).await,
         Command::RescanReferences { formats } => rescan_references(formats).await,
+        Command::AccessLog { command } => access_log_command(command).await,
     };
     match result {
         Ok(code) => code,
@@ -638,6 +660,26 @@ fn read_new_password() -> Result<String> {
         }
         Ok(password)
     }
+}
+
+/// `teamcraft access-log purge`.
+async fn access_log_command(command: AccessLogCommand) -> Result<ExitCode> {
+    let AccessLogCommand::Purge {
+        project,
+        older_than_days,
+    } = command;
+    let config = load_config()?;
+    let pool = db::connect(&config).await?;
+    let project_id = match project.as_deref() {
+        Some(code) => Some(services::access_log::project_id_by_code(&pool, code).await?),
+        None => None,
+    };
+    let n = services::access_log::purge(&pool, project_id, older_than_days).await?;
+    println!(
+        "purged {n} access log entr{}",
+        if n == 1 { "y" } else { "ies" }
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn rescan_references(mut formats: Vec<String>) -> Result<ExitCode> {

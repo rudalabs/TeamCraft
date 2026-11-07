@@ -28,6 +28,7 @@ use crate::{
     auth::Actor,
     auth::ApiUser,
     config::{LocalAgents, LOCAL_AGENT_HEADER, LOCAL_AGENT_HEADER_VALUE},
+    services::project_policy::{self, Interface},
     AppState,
 };
 
@@ -125,6 +126,11 @@ pub async fn http(
         )
             .into_response();
     }
+    // groups that switched MCP off look non-existent to every tool
+    let me = match project_policy::narrow(&st.db, me, &[Interface::Mcp]).await {
+        Ok(me) => me,
+        Err(e) => return e.into_response(),
+    };
     let reply = match serde_json::from_slice::<Value>(&body) {
         Err(e) => Some(error(Value::Null, PARSE_ERROR, format!("parse error: {e}"))),
         Ok(Value::Array(batch)) if batch.is_empty() => {

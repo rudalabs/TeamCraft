@@ -369,9 +369,11 @@ pub(super) async fn revision_at(
 pub(super) async fn get_revision(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
+    log: AccessCtx,
     Path((number, code)): Path<(String, String)>,
 ) -> AppResult<Json<Value>> {
     let rev = revision_at(&st, &me, &number, &code).await?;
+    access_log::record_revision(&st.db, &log, &me, &rev, access_log::Kind::View).await?;
     let attachments = files::list(&st.db, &me, rev.id).await?;
     let lines = bom::lines(&st.db, &me, rev.id).await?;
     let (rev_changes, hidden_changes) = changes::for_revision(&st.db, &me, rev.id).await?;

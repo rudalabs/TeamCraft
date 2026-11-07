@@ -27,6 +27,16 @@ Changes on `main` since the `v0.2.5` tag.
   account is deleted. While a policy is in force an administrator who is no
   manager member cannot loosen it, open the group, link an IdP group or add
   themselves; `/admin/audit` and webhooks honour the rule.
+- Need-to-know project groups, steps 3 and 4 (#151; migration 0045, renumbered
+  at merge): interface switches per restricted group (`api_tokens`, `mcp`,
+  `assistant`, `webhooks`, `packages`; a switched-off interface sees the group
+  as non-existent), a read and download log (`access_log`: views, file
+  downloads, Pack and Go, BOM exports with channel and client address, one
+  entry per object and user within five minutes) with a retention per group,
+  `teamcraft access-log purge` (audited), `GET /api/v1/projects/{code}/access-log`
+  and a form and table on the group page. `tests/interface_switches.rs` fails
+  when an interface has no switch or no code applies it. Everything is allowed
+  and nothing is logged by default.
 
 - Wider separation of duties (#152, step 1): a reviewer must not have created
   the change, submitted it (an administrator acting for the author) or changed

@@ -15,7 +15,10 @@ use crate::{
     auth::WebUser,
     domain::{self, RevisionRule},
     error::AppResult,
-    services::{bom, interchange, package, projects, revisions},
+    services::{
+        access_log::{self, AccessCtx},
+        bom, interchange, package, project_policy, projects, revisions,
+    },
     util, AppState,
 };
 
@@ -124,12 +127,15 @@ pub async fn show(
 pub async fn csv(
     State(st): State<AppState>,
     WebUser(me): WebUser,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
     let rev = revisions::get(&st.db, &me, id).await?;
     let rule = rule_of(&q);
-    let tree = bom::tree(&st.db, &me, id, rule).await?;
+    let reader = project_policy::package_actor(&st.db, &me, rev.project_id).await?;
+    access_log::record_revision(&st.db, &log, &me, &rev, access_log::Kind::Export).await?;
+    let tree = bom::tree(&st.db, &reader, id, rule).await?;
     let filename = format!("{}_{}_bom_{}.csv", rev.item_number, rev.code, rule.as_str());
     Ok((
         [
@@ -148,12 +154,15 @@ pub async fn csv(
 pub async fn xlsx(
     State(st): State<AppState>,
     WebUser(me): WebUser,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
     let rev = revisions::get(&st.db, &me, id).await?;
     let rule = rule_of(&q);
-    let tree = bom::tree(&st.db, &me, id, rule).await?;
+    let reader = project_policy::package_actor(&st.db, &me, rev.project_id).await?;
+    access_log::record_revision(&st.db, &log, &me, &rev, access_log::Kind::Export).await?;
+    let tree = bom::tree(&st.db, &reader, id, rule).await?;
     let filename = format!(
         "{}_{}_bom_{}.xlsx",
         rev.item_number,
@@ -324,10 +333,12 @@ pub(crate) fn package_response(p: package::Package) -> AppResult<Response> {
 pub async fn package(
     State(st): State<AppState>,
     WebUser(me): WebUser,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
     Query(q): Query<RuleQuery>,
 ) -> AppResult<Response> {
     let rev = revisions::get(&st.db, &me, id).await?;
     let rule = package_rule(q.rule.as_deref(), &rev.state);
+    access_log::record_revision(&st.db, &log, &me, &rev, access_log::Kind::Package).await?;
     package_response(package::build(&st.db, &st.vault, &me, id, rule).await?)
 }

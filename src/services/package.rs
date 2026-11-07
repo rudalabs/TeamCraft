@@ -27,7 +27,7 @@ use crate::{
     auth::Actor,
     domain::RevisionRule,
     error::{AppError, AppResult},
-    services::{bom, files, revisions},
+    services::{bom, files, project_policy, revisions},
     vault::Vault,
 };
 
@@ -54,6 +54,9 @@ pub async fn build(
     rule: RevisionRule,
 ) -> AppResult<Package> {
     let root = revisions::get(pool, actor, root_revision_id).await?;
+    // groups that switched packages off: the root refuses, other items are left out
+    let narrowed = project_policy::package_actor(pool, actor, root.project_id).await?;
+    let actor = &narrowed;
     let tree = bom::tree(pool, actor, root_revision_id, rule).await?;
 
     // Every revision of the structure once: the root, then depth first.

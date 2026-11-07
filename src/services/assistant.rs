@@ -10,7 +10,10 @@ use crate::{
     auth::Actor,
     error::{AppError, AppResult},
     pagecontext::PageContext,
-    services::{assistant_threads as threads, audit},
+    services::{
+        assistant_threads as threads, audit,
+        project_policy::{self, Interface},
+    },
     AppState,
 };
 
@@ -170,6 +173,9 @@ async fn run_once(
     let Ok(_permit) = client.permits.try_acquire() else {
         return Err(AssistantError::Busy.into_app_error());
     };
+    // groups that switched the assistant off are hidden from the page context too
+    let narrowed = project_policy::narrow(&st.db, me.clone(), &[Interface::Assistant]).await?;
+    let me = &narrowed;
     let allow_drafts = question.allow_drafts && me.can_edit();
     let system = assistant::system_prompt(me, allow_drafts);
     let instruction = question.instruction();

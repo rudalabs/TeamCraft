@@ -150,10 +150,18 @@ pub(super) async fn project_policy_get(
 
 #[derive(Deserialize)]
 pub(super) struct SetPolicy {
-    admin_read: String,
+    admin_read: Option<String>,
+    /// Interface name (`api_tokens`, `mcp`, `assistant`, `webhooks`,
+    /// `packages`) to allowed.
+    interfaces: Option<std::collections::BTreeMap<String, bool>>,
+    read_log: Option<bool>,
+    /// 1 to 36500 days; `0` removes the retention (the log is kept until
+    /// purged by hand).
+    log_retention_days: Option<i32>,
 }
 
-/// `PUT /api/v1/projects/{code}/policy` – managers and admins.
+/// `PUT /api/v1/projects/{code}/policy` – managers and admins. Every field
+/// is optional; what is left out stays as it is.
 pub(super) async fn project_policy_set(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
@@ -161,12 +169,82 @@ pub(super) async fn project_policy_set(
     ApiJson(body): ApiJson<SetPolicy>,
 ) -> AppResult<Json<Value>> {
     let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
-    let mode = AdminRead::parse(&body.admin_read).ok_or_else(|| {
-        AppError::BadRequest("admin_read must be implicit, with_reason or none.".into())
-    })?;
-    Ok(Json(json!(
-        project_policy::set_admin_read(&st.db, &me, project.id, mode).await?
-    )))
+    let mode = body
+        .admin_read
+        .as_deref()
+        .map(|raw| {
+            AdminRead::parse(raw).ok_or_else(|| {
+                AppError::BadRequest("admin_read must be implicit, with_reason or none.".into())
+            })
+        })
+        .transpose()?;
+    let mut update = project_policy::AccessUpdate {
+        read_log: body.read_log,
+        log_retention_days: body.log_retention_days.map(|d| (d != 0).then_some(d)),
+        ..Default::default()
+    };
+    for (name, allowed) in body.interfaces.iter().flatten() {
+        let interface = project_policy::Interface::parse(name).ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Unknown interface '{name}': use api_tokens, mcp, assistant, webhooks or packages."
+            ))
+        })?;
+        update.interfaces.push((interface, *allowed));
+    }
+    let access_changes = !update.interfaces.is_empty()
+        || update.read_log.is_some()
+        || update.log_retention_days.is_some();
+    if mode.is_none() && !access_changes {
+        return Err(AppError::BadRequest(
+            "Give admin_read, interfaces, read_log or log_retention_days.".into(),
+        ));
+    }
+    let mut view = None;
+    if let Some(mode) = mode {
+        view = Some(project_policy::set_admin_read(&st.db, &me, project.id, mode).await?);
+    }
+    if access_changes {
+        view = Some(project_policy::set_access(&st.db, &me, project.id, update).await?);
+    }
+    Ok(Json(json!(view)))
+}
+
+#[derive(Deserialize)]
+pub(super) struct AccessLogQuery {
+    user: Option<String>,
+    kind: Option<String>,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    until: Option<chrono::DateTime<chrono::Utc>>,
+    limit: Option<i64>,
+}
+
+/// `GET /api/v1/projects/{code}/access-log` – managers and admins: who read
+/// or downloaded what (groups with a read log), newest first.
+pub(super) async fn project_access_log(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    Query(q): Query<AccessLogQuery>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
+    let kind = q
+        .kind
+        .as_deref()
+        .map(|raw| {
+            access_log::Kind::parse(raw).ok_or_else(|| {
+                AppError::BadRequest("kind must be view, download, package or export.".into())
+            })
+        })
+        .transpose()?;
+    let filter = access_log::Filter {
+        username: q.user,
+        kind,
+        since: q.since,
+        until: q.until,
+        limit: q.limit,
+    };
+    let entries = access_log::list(&st.db, &me, project.id, &filter).await?;
+    Ok(Json(json!({ "entries": entries })))
 }
 
 #[derive(Deserialize)]

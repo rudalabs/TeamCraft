@@ -13,7 +13,10 @@ use crate::{
     domain::{self, Role},
     error::{AppError, AppResult},
     models::{ApiToken, User, USER_COLUMNS},
-    services::{access, audit},
+    services::{
+        access, audit,
+        project_policy::{self, Interface},
+    },
 };
 
 /// Columns (of `users u`) needed to build an [`Actor`], including the
@@ -117,7 +120,12 @@ pub async fn actor_for_api_token(pool: &PgPool, token: &str) -> AppResult<Option
     .bind(&token_hash)
     .execute(pool)
     .await?;
-    Ok(Some(Actor::from(row)))
+    // Interfaces switched off per group (need-to-know policy): a PAT sees
+    // those groups as hidden. The web session is not affected.
+    let actor = Actor::from(row);
+    Ok(Some(
+        project_policy::narrow(pool, actor, &[Interface::ApiTokens]).await?,
+    ))
 }
 
 /// Stores the UI skin of the signed-in user.

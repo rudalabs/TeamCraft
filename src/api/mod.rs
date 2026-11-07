@@ -42,6 +42,7 @@ use crate::{
     error::{AppError, AppResult},
     models::Revision,
     services::{
+        access_log::{self, AccessCtx},
         attributes, audit, bom, changes, checkouts, desktop, files, impacts, imports, items,
         notifications, package, project_policy, projects, references, requests, reviewers,
         revisions, similar, stats, uploads, users, workset, Page,
@@ -86,6 +87,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/projects/{code}/policy",
             get(project_policy_get).put(project_policy_set),
         )
+        .route("/projects/{code}/access-log", get(project_access_log))
         .route(
             "/projects/{code}/elevations",
             post(project_elevate).delete(project_elevation_end),
@@ -451,7 +453,8 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
             "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
-            "PUT    /api/v1/projects/{code}/policy                   {admin_read: implicit|with_reason|none} how administrators read a restricted group – managers and admins",
+            "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages: bool}, read_log?, log_retention_days?} need-to-know policy – managers and admins",
+            "GET    /api/v1/projects/{code}/access-log               ?user=&kind=view|download|package|export&since=&until=&limit= read and download log (groups with read_log) – managers and admins",
             "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
             "DELETE /api/v1/projects/{code}/elevations               ends the administrator's running access",
             "GET    /api/v1/projects/{code}/members",

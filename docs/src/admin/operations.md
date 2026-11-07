@@ -1,3 +1,4 @@
+| `teamcraft access-log purge [--project CODE] [--older-than-days N]` | delete read log entries of restricted groups older than the group's retention (or than N days), audited |
 # Operations
 
 | Endpoint / command                         | Purpose                                                                |
