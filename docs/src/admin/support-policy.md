@@ -77,8 +77,8 @@ problem may be fixed in a newer release of your supported version.
 
 ## Desktop app and server versions
 
-The desktop app checks the server's version when it connects and again after
-sign-in, and shows a message when the two do not fit:
+The desktop app checks the server's version on the sign-in screen and when its
+main window opens, and shows a warning once per server when the two do not fit:
 
 | App | Server that works |
 |-----|-------------------|

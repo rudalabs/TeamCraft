@@ -713,6 +713,7 @@ table.grid td.actions button { height: var(--ctl-h-sm); padding: 0 8px; font-siz
 .notice.error { box-shadow: inset 3px 0 0 var(--st-danger-fg); background: var(--surface); border: 1px solid var(--border); }
 .notice.ok { box-shadow: inset 3px 0 0 var(--st-ok-fg); background: var(--surface); border: 1px solid var(--border); }
 .notice.info { background: var(--surface-2); }
+.notice.warn { box-shadow: inset 3px 0 0 var(--warn); background: var(--surface); border: 1px solid var(--border); }
 
 /* 3D viewer */
 .viewer-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; }
@@ -820,6 +821,8 @@ table.grid td.actions button { height: var(--ctl-h-sm); padding: 0 8px; font-siz
 .toast.error::before { content: "×"; color: var(--st-danger-fg); }
 .toast.info { box-shadow: inset 3px 0 0 var(--link), var(--shadow-pop); }
 .toast.info::before { content: "i"; color: var(--link); }
+.toast.warn { box-shadow: inset 3px 0 0 var(--warn), var(--shadow-pop); }
+.toast.warn::before { content: "!"; color: var(--warn); }
 
 @media (prefers-reduced-motion: reduce) {
   /* fades stay, movement goes */

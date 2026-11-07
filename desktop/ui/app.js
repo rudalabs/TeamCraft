@@ -434,7 +434,28 @@
     var err = $("connect-error");
     err.textContent = error || "";
     err.classList.toggle("hidden", !error);
-    if (step === "server") $("server-url").focus();
+    if (step === "server") {
+      $("connect-notice").classList.add("hidden");
+      $("server-url").focus();
+    }
+  }
+
+  /** A server of another version (`server_notice`): a warning, never an error,
+   * and signing in stays possible. Shown once per server – in the connect box
+   * before the sign-in, or as a toast in the main window when the app starts
+   * signed in. */
+  var versionNoticeShown = null; // the server whose notice the user has seen
+  function checkServerVersion() {
+    var server = state.session.server_url;
+    return call("server_notice").then(function (n) {
+      if (server !== state.session.server_url) return; // the user switched meanwhile
+      var box = $("connect-notice");
+      box.textContent = n || "";
+      box.classList.toggle("hidden", !n);
+      if (!n || versionNoticeShown === server) return;
+      versionNoticeShown = server;
+      if ($("connect").classList.contains("hidden")) toast(n, "warn");
+    }, function () {});
   }
 
   function initConnect() {
@@ -445,8 +466,8 @@
       call("set_server", { url: url }).then(function (base) {
         state.session.server_url = base;
         state.session.signed_in = false;
-        // a server of another version: tell now, signing in stays possible
-        call("server_notice").then(function (n) { showConnect("signin", n); }, function () { showConnect("signin"); });
+        showConnect("signin");
+        checkServerVersion();
       }, function (err) { showConnect("server", errorText(err)); });
     });
     $("change-server").addEventListener("click", function () { showConnect("server"); });
@@ -524,7 +545,7 @@
       $("shell").classList.remove("hidden");
       $("status-server").textContent = state.session.server_url;
       $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
-      call("server_notice").then(function (n) { if (n) toast(n, "error"); }, function () {});
+      checkServerVersion();
       initAssistant();
       selectView(state.view);
       renderTabs();
@@ -4850,7 +4871,7 @@
       showZoom();
       applySkin(s.skin);
       if (!s.server_url) showConnect("server");
-      else if (!s.signed_in) showConnect("signin");
+      else if (!s.signed_in) { showConnect("signin"); checkServerVersion(); }
       else enterShell();
     }, function (err) {
       document.body.appendChild(h("p.notice.error", { text: "TeamCraft could not start: " + errorText(err) }));
