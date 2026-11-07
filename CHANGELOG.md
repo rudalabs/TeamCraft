@@ -24,6 +24,20 @@ Changes on `main` since the `v0.2.5` tag.
   skipped and nothing is fetched. An own bounded reader (`src/htmltext.rs`)
   runs in the isolated `teamcraft text-extract` child (`--format html`) with
   the limits of the PDF reader; new fuzz target `htmltext`.
+- Files of ANSYS Fluent, STAR-CCM+ and Simcenter 3D are recognised more
+  precisely: NX `.sim`/`.fem`/`.afm` by their `SPLMSSTR` container, text
+  `.fem` as OptiStruct deck, `.dat` Nastran decks written by Simcenter 3D,
+  `.f04`/`.pch`, Fluent meshes (`.msh`, `.msh.h5`), gzip-compressed and HDF5
+  case/data/mesh files (checked by signature), projects (`.flprj`), `.cdat`,
+  journals (`.jou`), transcripts (`.trn`) and report files
+  (`report-file-*.out`), STAR-CCM+ solution histories (`.simh`) and macros
+  (`.java` naming STAR-CCM+), Gmsh meshes. Transcripts, journals, macros and
+  Nastran text output are indexed as text; a large plain-text file keeps its
+  last 64 KiB in the search text and `read_file_text`.
+- Extraction templates: a new method `table` for whitespace-separated tables
+  with quoted column names (Fluent report files; migration 0040), and
+  `pick = last` reads the last 2 MB of a file larger than 2 MB first. New
+  fuzz targets `cadformat` and `resultscan`.
 
 ### Changed
 
