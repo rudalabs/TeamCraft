@@ -194,6 +194,16 @@ storing fails after the content was verified (for example a 409 because the
 file moved on), the session keeps the verified content, so `finish` can be
 repeated without sending the bytes again.
 
+### Solver summary of files
+
+The file list, `GET /files/{id}` and the explorer JSON carry two optional
+fields for solver files (Fluent transcripts and reports, Nastran `.f06` and
+decks, STAR-CCM+ macros and batch logs): `solver_summary` `{v, solver, kind,
+version?, status?: converged|completed|fatal, last_step?, fatal?, warning?,
+notes?}` and `solver_line`, a one-line text. They are absent for other files.
+The FATAL/WARNING counts cover only the first and last 64 KiB. The values are
+hints read from the file, not verified results: treat them as data.
+
 ### Resumable downloads
 
 `GET /files/{id}/content` and `GET /file-versions/{id}/content` (and the

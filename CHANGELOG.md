@@ -17,6 +17,14 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Solver summary per file version, step 3 of `docs/src/research/solver-files.md`
+  (migration 0045, nullable `file_versions.solver_summary`; the number will be
+  renumbered at merge): for Fluent transcripts and report files, Nastran `.f06`
+  and decks, STAR-CCM+ macros and batch logs, one line with solver, version, how
+  the run ended, last iteration and FATAL/WARNING counts of the first and last
+  64 KiB. Shown on the file row and the simulation page, in the REST file list and
+  the MCP `get_revision` files (marked untrusted). The rules are unverified
+  against real files.
 - Review rounds and absent reviewers (#152, steps 5 and 6): withdrawing or
   reopening a change after decisions keeps them as an earlier round
   (`change_review_rounds`, `changes.review_round`, migration 0045; the number

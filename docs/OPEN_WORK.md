@@ -407,7 +407,7 @@ real files and belong to section 3 once such files are at hand.
     `read_file_text` – with the last 64 KiB of a larger file after a marker); templates with `pick = last` read the
     last 2 MB of a larger file first; new template method `table` (Fluent report files, migration 0040); fuzz target
     `resultscan`
-  - [ ] Step 3 – solver summary per file version: pure `src/solversummary.rs` over head and tail (64 KiB each):
+  - [x] Step 3 (this PR, rules unverified against real files) – solver summary per file version: pure `src/solversummary.rs` over head and tail (64 KiB each):
     Fluent banner/convergence/last iteration, report file columns and last row, `.f06` version, `END OF JOB` and
     FATAL/WARNING window counts, Nastran `SOL`, STAR-CCM+ macro version and stopping criterion; a nullable JSONB
     column on file versions, one line on the file row and the simulation page, data (untrusted) for the MCP tools
