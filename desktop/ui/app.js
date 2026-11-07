@@ -445,7 +445,8 @@
       call("set_server", { url: url }).then(function (base) {
         state.session.server_url = base;
         state.session.signed_in = false;
-        showConnect("signin");
+        // a server of another version: tell now, signing in stays possible
+        call("server_notice").then(function (n) { showConnect("signin", n); }, function () { showConnect("signin"); });
       }, function (err) { showConnect("server", errorText(err)); });
     });
     $("change-server").addEventListener("click", function () { showConnect("server"); });
@@ -523,6 +524,7 @@
       $("shell").classList.remove("hidden");
       $("status-server").textContent = state.session.server_url;
       $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
+      call("server_notice").then(function (n) { if (n) toast(n, "error"); }, function () {});
       initAssistant();
       selectView(state.view);
       renderTabs();

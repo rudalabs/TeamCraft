@@ -12,6 +12,7 @@ mod api;
 mod bomimport;
 mod cadexport;
 mod commands;
+mod compat;
 mod folderimport;
 mod layout;
 mod resume;
@@ -187,6 +188,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::session,
             commands::set_server,
+            commands::server_notice,
             commands::sign_in_browser,
             commands::cancel_sign_in,
             commands::sign_in_token,
