@@ -22,6 +22,11 @@ pub(super) struct ItemQuery {
     /// `>=10`, `<=20`, `10..20`; empty = has a value).
     attr: Option<String>,
     value: Option<String>,
+    /// Result values of simulations (latest revision): `failed`, `passed`,
+    /// `above_limit` or `below_limit`; `result_name` narrows to values whose
+    /// name contains the text.
+    result: Option<String>,
+    result_name: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -67,6 +72,8 @@ pub(super) async fn list_items(
         classification: domain::Classification::parse_field(q.class.as_deref())?,
         attribute: q.attr,
         attribute_value: q.value,
+        result: domain::ResultFilter::parse_field(q.result.as_deref())?,
+        result_name: q.result_name,
     };
     let page = Page::new(q.limit, q.offset);
     let (rows, total) = items::search(&st.db, &me, &filter, page).await?;

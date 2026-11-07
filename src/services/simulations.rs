@@ -1842,3 +1842,87 @@ mod tests {
         assert!(out_of_date_reason(&deleted).unwrap().contains("deleted"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Simulations that need attention (dashboard)
+// ---------------------------------------------------------------------------
+
+/// SQL condition (alias `sr` = `simulation_results`): the value is outside
+/// its limits. Only values with a limit can fail (see
+/// `domain::result_status`).
+pub(crate) const RESULT_FAILED_SQL: &str =
+    "((sr.lower_limit IS NOT NULL AND sr.value < sr.lower_limit)
+      OR (sr.upper_limit IS NOT NULL AND sr.value > sr.upper_limit))";
+
+/// At most this many simulations are checked for the dashboard card.
+pub const MAX_ATTENTION_SCAN: i64 = 2000;
+
+/// A simulation whose latest revision has failed result values or is out of
+/// date.
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct AttentionSimulation {
+    pub item_id: Uuid,
+    pub number: String,
+    pub name: String,
+    pub revision_id: Uuid,
+    pub revision_code: String,
+    pub state: String,
+    pub failed_count: i64,
+    pub result_count: i64,
+    /// Why the simulation is out of date; empty = up to date. Bases the
+    /// actor may not see never contribute.
+    #[sqlx(skip)]
+    pub out_of_date: Vec<String>,
+}
+
+/// Simulations the actor may read whose latest revision (not obsolete) has a
+/// value outside its limits or an out-of-date basis, the first `limit` by
+/// number, and how many there are in total.
+pub async fn needing_attention(
+    pool: &PgPool,
+    actor: &Actor,
+    limit: usize,
+) -> AppResult<(Vec<AttentionSimulation>, usize)> {
+    let mut sims = sqlx::query_as::<_, AttentionSimulation>(&format!(
+        "SELECT i.id AS item_id, i.number, lr.name, lr.id AS revision_id, lr.code AS revision_code,
+                lr.state,
+                (SELECT COUNT(*) FROM simulation_results sr
+                 WHERE sr.revision_id = lr.id AND {RESULT_FAILED_SQL}) AS failed_count,
+                (SELECT COUNT(*) FROM simulation_results sr
+                 WHERE sr.revision_id = lr.id) AS result_count
+         FROM items i
+         CROSS JOIN LATERAL (
+             SELECT r.id, r.code, r.state, r.name FROM revisions r
+             WHERE r.item_id = i.id ORDER BY r.seq DESC LIMIT 1
+         ) lr
+         WHERE i.item_type = 'simulation' AND lr.state <> 'obsolete' AND {}
+         ORDER BY i.number LIMIT $2",
+        access::item_visible("i", 1)
+    ))
+    .bind(&actor.hidden_projects)
+    .bind(MAX_ATTENTION_SCAN)
+    .fetch_all(pool)
+    .await?;
+    let ids: Vec<Uuid> = sims.iter().map(|s| s.revision_id).collect();
+    let bases = sqlx::query_as::<_, SimulationBasis>(&format!(
+        "{BASIS_SELECT} WHERE sb.revision_id = ANY($1)"
+    ))
+    .bind(&ids)
+    .fetch_all(pool)
+    .await?;
+    let mut reasons: HashMap<Uuid, Vec<String>> = HashMap::new();
+    for b in bases {
+        let revision_id = b.revision_id;
+        // a hidden basis is masked first: it tells nothing about the item
+        if let Some(reason) = with_status(b).redact(actor).out_of_date {
+            reasons.entry(revision_id).or_default().push(reason);
+        }
+    }
+    for s in &mut sims {
+        s.out_of_date = reasons.remove(&s.revision_id).unwrap_or_default();
+    }
+    sims.retain(|s| s.failed_count > 0 || !s.out_of_date.is_empty());
+    let total = sims.len();
+    sims.truncate(limit);
+    Ok((sims, total))
+}

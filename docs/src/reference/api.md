@@ -268,6 +268,8 @@ curl -s -X PATCH -H "$H" -H 'Content-Type: application/json' \
 curl -s -X PATCH -H "$H" -H 'Content-Type: application/json' \
      -d '{"classification": "purchased"}' $API/items/PRT-000001
 curl -s -H "$H" "$API/items?class=purchased&attr=length_mm&value=100..200"
+# simulations with a failed value whose name contains "stress"
+curl -s -H "$H" "$API/items?type=simulation&result=failed&result_name=stress"
 ```
 
 `value` matches text and choices as a part (case-insensitive), yes/no
@@ -296,7 +298,7 @@ the caller cannot read are left out; a successor there is a placeholder with
 
 | Resource         | Endpoints                                                                                                                             |
 |------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| Items            | `GET/POST /items` (`class=`, `attr=` + `value=` filters), `GET/PATCH /items/{number}` (classification, unit, project), `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch |
+| Items            | `GET/POST /items` (`class=`, `attr=` + `value=`, `result=` + `result_name=` filters), `GET/PATCH /items/{number}` (classification, unit, project), `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch |
 | Attributes       | `GET /attributes` (`all=true`: also inactive), `POST /attributes`, `PATCH /attributes/{key}` (admins); values in `attributes` of a revision |
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
 | Worklist         | `GET /worklist` (check-outs, reviews, impacts and `impact_groups`, statistics), `POST /worklist/checkin-all`                          |

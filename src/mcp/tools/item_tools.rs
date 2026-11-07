@@ -42,6 +42,7 @@ pub(super) async fn search_items(st: &AppState, me: &Actor, a: &Args<'_>) -> App
         classification: domain::Classification::parse_field(a.opt_str("class")?.as_deref())?,
         attribute: a.opt_str("attr")?,
         attribute_value: a.opt_str("value")?,
+        ..Default::default()
     };
     let (rows, total) = items::search(&st.db, me, &filter, Page::new(Some(limit), None)).await?;
     let list: Vec<Value> = rows

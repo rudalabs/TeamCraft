@@ -17,6 +17,11 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Result values in the item search and on the dashboard: filters
+  `result` (`failed`, `passed`, `above_limit`, `below_limit`) and
+  `result_name` on the item list, `GET /api/v1/items` and the web filter bar,
+  and a dashboard card *Simulations to check* (failed values or out-of-date
+  basis). Restricted groups stay out of results and totals. No migration.
 - Need-to-know project groups, step 1 (#151): a restricted group can limit
   administrator access (`project_policies`, migration 0043): `with_reason`
   (time-limited, audited elevation with a written reason; managers are

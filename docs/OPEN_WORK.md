@@ -325,7 +325,7 @@ is answered for now: `none` is allowed, but needs a member who is a manager.
 Only finish what is in progress and fix bugs here; see *Direction*. The CAD-program entries are mostly checks with
 real files and belong to section 3 once such files are at hand.
 
-**Ownership and approval rules ([#152](https://github.com/rudalabs/TeamCraft/issues/152))**
+**Ownership and approval rules**
 
 - [x] Step 1: wider separation of duties (editors and the acting admin cannot review; suggester excludes them).
 - [ ] Step 2: review policy per project group (min approvals, required reviewers, role group).
@@ -428,7 +428,7 @@ real files and belong to section 3 once such files are at hand.
   the extracted text ([#141](https://github.com/rudalabs/TeamCraft/issues/141))
 - [ ] HTML reports: MHTML (`.mht`) and ZIP-packed multi-file reports (unpacking needs its own caps, see F13); text hidden
   by a style sheet (not inline) is not detected
-- [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
+- [x] Result values in the item search (failed, passed, above/below limit, by name) and a dashboard card for failing or out-of-date simulations; left: an *out of date* search filter, the `result` filter in the MCP `search_items` tool and in saved searches
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
 - [ ] Retention for large result files (`files.retention = 'latest'`), now that chunked resumable uploads exist
