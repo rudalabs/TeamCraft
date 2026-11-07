@@ -126,6 +126,7 @@ pub async fn change_password(
         let this_session = auth::cookie_value(&headers, auth::SESSION_COOKIE);
         users::change_own_password(
             &st.db,
+            &st.sign_in,
             &ctx.me,
             &form.current_password,
             &form.new_password,

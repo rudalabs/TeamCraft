@@ -69,30 +69,56 @@ check-outs and reviews, and a **local working folder**:
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.
-* *Ask* (rail, *View → Ask TeamCraft*, `Ctrl/Cmd+5`, or *Ask…* in a
-  revision or change tab) unfolds the [Ask TeamCraft](assistant.md#the-sidebar)
-  sidebar beside the tabs when the server has the assistant enabled. It
-  knows the tab you are on (revision and its section, BOM with revision
-  rule, change order, change request, or the search and list in the
-  navigator), offers quick actions that fit it, and keeps one conversation
-  on the server that survives tab changes and restarts.
-* *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`) works with a local AI agent
-  that you set up under *Settings → Agents…*, for example Claude Code
-  through its ACP adapter or Gemini CLI. None is set up by default. The app
-  starts the agent in the workspace folder and gives it TeamCraft's tools
-  with your rights. The conversation streams in a tab of its own, with tool
-  calls, the agent's plan, permission prompts (*Allow once* / *Reject*),
-  *Cancel* and quick prompts (release notes, release check, change review,
-  worklist triage). Through the app the agent may only read text files in
-  the workspace folder; it gets no write access and no terminal. See
+* *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`, or *Agent* in a revision or
+  change tab) is the app's one place for AI. It runs on one of two
+  backends, decided by the server's policy and your choice:
+  * **Company AI** – the server's assistant, configured by the
+    administrator (the key stays on the server). It is the
+    [Ask TeamCraft](assistant.md) conversation of the web UI, inline in the
+    Agent tab: it knows the last revision (and its section, BOM with
+    revision rule), change order or change request tab you opened, offers
+    quick actions that fit it (*Draft release notes*, *Check before
+    release*, *Brief me for this review* …), has the *Allow drafting*
+    checkbox, *Cancel* and *New conversation*, and keeps one conversation on
+    the server that survives restarts.
+  * **Local agent** – an AI agent on your computer that you set up under
+    *Settings → Agents…*, for example Claude Code through its ACP adapter
+    or Gemini CLI. None is set up by default. The app starts the agent in
+    the workspace folder and gives it TeamCraft's tools with your rights.
+    The conversation streams in the tab, with tool calls, the agent's plan,
+    permission prompts (*Allow once* / *Reject*), *Cancel* and quick
+    prompts (release notes, release check, change review, worklist triage).
+    Through the app the agent may only read text files in the workspace
+    folder; it gets no write access and no terminal.
+
+  When the server offers both, *Company AI* / *Local agent* in the Agent
+  toolbar switches between them (each keeps its own conversation); the app
+  remembers the choice per server and user, and starts with the local agent
+  if you have set one up, otherwise with the company AI. If the
+  administrator turned local agents off (`TEAMCRAFT_LOCAL_AGENTS=off`), the
+  Agent view runs on the company AI only, the app ends a running agent and
+  refuses to start one; with no company AI configured either, the view
+  says that AI is switched off by the administrator. The app asks the
+  server again when the Agent view opens, every minute and before every
+  message to a local agent, so a changed setting takes effect without a
+  restart. See
   [ACP agents](assistant.md#acp-agents-in-the-desktop-app).
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a
-TeamCraft page) or with a personal access token. The app uses the same skins
+TeamCraft page) or with a personal access token. The app keeps the token in
+the system keychain (Windows Credential Manager, macOS Keychain, GNOME Keyring
+or KWallet on Linux). Where there is none, it uses a file only your user
+account can read and says so at the start and in *Settings*. An address with
+plain `http://` to another computer gets a warning when you connect: the token
+and all data would cross the network unencrypted – use the `https://` address
+of the server. The app uses the same skins
 and 3D viewer as the web interface; the models are converted by the server.
 *Settings → Appearance*: *TeamCraft* (the default) follows the light or dark
 appearance of the operating system and switches with it, *TeamCraft Light*
 and *TeamCraft Dark* stay fixed, the distribution skins are dark.
+*Settings → Change password…* changes the password of a local account (it
+asks for the current one; wrong ones count like failed sign-ins, and your web
+sessions end); single-sign-on accounts do not see it.
 
 The window is built for daily work: object tabs on top, under them the
 toolbar of the open object with its one next step filled (see
@@ -123,7 +149,7 @@ back, and *Check in…* is highlighted.
 * revision tab: **Lock** (*Check out*, or *Check in…* and *Cancel check-out*
   / *Force unlock* while checked out) · **Work** (*Edit*, *Get…*, *Open
   folder*) · **Lifecycle** (*Release…*, *Revise*) · **Collaborate**
-  (*Request change…*, *Watch*, *Ask…*, *Agent*);
+  (*Request change…*, *Watch*, *Agent*);
 * change tab: **Review** (*Approve change* highlighted, *Reject* – the comment field
   of *Your review* goes with it, required for a rejection) while your review
   is pending · **Lifecycle** (*Submit for review*, highlighted on your draft,
@@ -248,3 +274,13 @@ cargo run            # Linux needs the WebKitGTK development packages
 
 The platform guides list the system packages. Installers are not published
 yet; the app is built and tested from source.
+
+## Update notice
+
+Once a day at most, the app asks GitHub for the latest TeamCraft release. If
+it is newer than your version, the status bar shows *TeamCraft x.y.z is
+available* – a link to the release page in your browser. The app never
+downloads or installs anything itself; install the new version as you
+installed this one. *×* hides the notice until the next version;
+*Settings → Updates* switches the check off (for example on computers without
+internet access).

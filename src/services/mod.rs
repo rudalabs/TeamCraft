@@ -5,12 +5,15 @@
 //! are enforced identically for both.
 
 pub mod access;
+pub mod as_built;
+pub mod assemblies;
 pub mod assistant;
 pub mod assistant_threads;
 pub mod attributes;
 pub mod audit;
 pub mod bom;
 pub mod bom_compare;
+pub mod branding;
 pub mod changes;
 pub mod checkouts;
 pub mod desktop;
@@ -24,6 +27,7 @@ pub mod items;
 pub mod notifications;
 pub mod package;
 pub mod personal;
+pub mod project_policy;
 pub mod projects;
 pub mod readiness;
 pub mod references;

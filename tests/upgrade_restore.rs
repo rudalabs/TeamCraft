@@ -192,10 +192,17 @@ async fn seeded_database_at(app: &common::TestApp, suffix: &str, last: i64) -> c
 
 /// `table.column` of everything in `public` that is not in `other`, for the
 /// check that an upgrade ends at the fresh schema.
-async fn columns_of(pool: &sqlx::PgPool) -> BTreeSet<String> {
+/// The schema as a set of lines: every column (type, nullability) and every
+/// constraint (definition), so a migration that only replaces a CHECK
+/// constraint changes it as well.
+async fn schema_of(pool: &sqlx::PgPool) -> BTreeSet<String> {
     sqlx::query_scalar::<_, String>(
         "SELECT table_name || '.' || column_name || ':' || data_type || ':' || is_nullable
-         FROM information_schema.columns WHERE table_schema = 'public'",
+         FROM information_schema.columns WHERE table_schema = 'public'
+         UNION ALL
+         SELECT c.conrelid::regclass::text || ' ' || c.conname || ': ' || pg_get_constraintdef(c.oid)
+         FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+         WHERE n.nspname = 'public' AND c.conrelid <> 0",
     )
     .fetch_all(pool)
     .await
@@ -255,7 +262,7 @@ async fn a_seeded_database_one_migration_behind_upgrades_without_loss() {
         assert_eq!(names, 0);
         assert_eq!(unscanned, before.counts["file_versions"]);
     }
-    assert_eq!(columns_of(&other.pool).await, columns_of(&app.pool).await);
+    assert_eq!(schema_of(&other.pool).await, schema_of(&app.pool).await);
 
     // the current server serves the upgraded data
     let actor = other.actor("erika").await;
@@ -342,7 +349,7 @@ async fn a_migration_that_fails_rolls_back_and_leaves_the_data_alone() {
     let other = seeded_database_at(&app, "rollback", previous).await;
     let before = Snapshot::take(&other.pool).await;
     let versions = applied(&other.pool).await;
-    let schema_before = columns_of(&other.pool).await;
+    let schema_before = schema_of(&other.pool).await;
 
     // the first statements change the schema and the data, the last one fails
     let failing = migrator_with_failing_migration(
@@ -390,7 +397,11 @@ async fn a_migration_that_fails_rolls_back_and_leaves_the_data_alone() {
         "the failing migration is not recorded"
     );
     assert_eq!(now.len(), versions.len() + 1, "the real newest one is");
-    assert_ne!(columns_of(&behind.pool).await, schema_before, "0036 ran");
+    assert_ne!(
+        schema_of(&behind.pool).await,
+        schema_before,
+        "the real newest migration ran"
+    );
     // and the regular start-up still finishes the job afterwards
     db::migrate(&behind.pool).await.expect("regular start-up");
     assert_eq!(applied_versions(&behind.pool).await, all);
@@ -540,10 +551,7 @@ async fn a_backup_from_before_the_newest_migrations_restores_and_migrates() {
         &all[..all.len() - 1],
         "the restored database has the migrations of the backup only"
     );
-    assert_ne!(
-        columns_of(&restored.pool).await,
-        columns_of(&app.pool).await
-    );
+    assert_ne!(schema_of(&restored.pool).await, schema_of(&app.pool).await);
     before.assert_kept_in(&restored.pool, "restored").await;
     for table in ["files", "change_request_attachments"] {
         let sha: String = sqlx::query_scalar(&format!("SELECT sha256 FROM {table} LIMIT 1"))
@@ -559,41 +567,55 @@ async fn a_backup_from_before_the_newest_migrations_restores_and_migrates() {
     before
         .assert_kept_in(&restored.pool, "restored, migrated")
         .await;
-    assert_eq!(
-        columns_of(&restored.pool).await,
-        columns_of(&app.pool).await
-    );
+    assert_eq!(schema_of(&restored.pool).await, schema_of(&app.pool).await);
     assert_eq!(
         row_counts(&restored.pool).await,
         row_counts(&old.pool).await,
         "same rows as the upgraded original"
     );
 
-    // rollback by restore over the already upgraded database: --force
-    // replaces the tables of the backup. Here the newest migrations add no
-    // table that depends on them, so the restore works and the next start
-    // migrates again (with a newer table that references a restored one
-    // it is refused as a whole, see tests/backup_restore.rs).
+    // rollback by restore. Over the already upgraded database a restore
+    // needs --force, and it is refused as a whole when a newer table
+    // references a restored one (then the database is unchanged) – so the
+    // documented rollback is a restore into a fresh, empty database.
     assert!(applied_versions(&old.pool).await == all);
     let old_target = app.client_config(&old.db_name, &old.vault_dir);
     let err = backup::restore(&old_target, &backup_dir, false)
         .await
         .unwrap_err();
     assert!(format!("{err:#}").contains("--force"), "{err:#}");
-    backup::restore(&old_target, &backup_dir, true)
+    if backup::restore(&old_target, &backup_dir, true)
         .await
-        .expect("rollback by restore");
+        .is_err()
+    {
+        assert_eq!(
+            applied_versions(&old.pool).await,
+            all,
+            "a refused forced restore leaves the database unchanged"
+        );
+    }
+    let rollback_db = app.create_empty_database("rollback_fresh").await;
+    let rollback_vault = temp_dir("upgrade-rollback-vault");
+    backup::restore(
+        &app.client_config(&rollback_db, &rollback_vault),
+        &backup_dir,
+        false,
+    )
+    .await
+    .expect("rollback by restore into a fresh database");
+    let rolled = app.open(&rollback_db, rollback_vault).await;
     assert_eq!(
-        applied_versions(&old.pool).await,
+        applied_versions(&rolled.pool).await,
         &all[..all.len() - 1],
         "the database is back at the schema of the backup"
     );
-    before.assert_kept_in(&old.pool, "rolled back").await;
-    db::migrate(&old.pool).await.expect("upgrade again");
-    assert_eq!(applied_versions(&old.pool).await, all);
-    assert_eq!(columns_of(&old.pool).await, columns_of(&app.pool).await);
+    before.assert_kept_in(&rolled.pool, "rolled back").await;
+    db::migrate(&rolled.pool).await.expect("upgrade again");
+    assert_eq!(applied_versions(&rolled.pool).await, all);
+    assert_eq!(schema_of(&rolled.pool).await, schema_of(&app.pool).await);
 
     let _ = std::fs::remove_dir_all(&backup_dir);
+    rolled.teardown().await;
     restored.teardown().await;
     old.teardown().await;
     app.teardown().await;
@@ -627,6 +649,7 @@ async fn a_damaged_backup_is_refused_and_the_database_stays_unchanged() {
         .await
         .unwrap_err();
     assert!(format!("{err:#}").contains("checksum mismatch"), "{err:#}");
+    assert!(!vault.join("objects").exists(), "no vault objects copied");
     let copy = app.open(&database, vault.clone()).await;
     let tables: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM pg_tables WHERE schemaname = 'public'")
@@ -634,7 +657,6 @@ async fn a_damaged_backup_is_refused_and_the_database_stays_unchanged() {
             .await
             .unwrap();
     assert_eq!(tables, 0, "nothing was restored");
-    assert!(!vault.join("objects").exists(), "no vault objects copied");
 
     let _ = std::fs::remove_dir_all(&backup_dir);
     copy.teardown().await;

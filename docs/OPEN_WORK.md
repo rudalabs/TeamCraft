@@ -1,7 +1,7 @@
 # Open work
 
 The to-do list of TeamCraft, in order of priority, then what is done, then details on the open features.
-Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-11-05.
+Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-11-07.
 
 ## Direction
 
@@ -61,8 +61,9 @@ feature milestone – the features in *What works* are enough; what is missing i
 - [ ] MCP tools and prompts: names and argument schemas frozen and versioned, contract tests per tool
 - [ ] Configuration: every variable documented and validated at start (unknown `TEAMCRAFT_*` variables warned),
   defaults reviewed; CLI commands and exit codes documented and frozen
-- [ ] Desktop app ↔ server compatibility: version handshake, the desktop tells the user when the server is too old
-  or too new; a supported-versions table
+- [x] Desktop app ↔ server compatibility: version handshake, the desktop tells the user when the server is too old
+  or too new; a supported-versions table – done in #133 (`desktop/src/compat.rs`; table under *Desktop app and
+  server versions* in [support policy](src/admin/support-policy.md))
 
 *Assistant*
 
@@ -78,8 +79,11 @@ feature milestone – the features in *What works* are enough; what is missing i
 - Open findings of the [threat model](src/dev/threat-model.md) (F1–F19 there):
   - [x] F1: failed password sign-ins throttled per username and client address (`TEAMCRAFT_SIGNIN_MAX_FAILURES`,
     429 with `Retry-After`)
-  - [ ] F1 (rest): count wrong current passwords of the own password change like failed sign-ins
+  - [x] F1 (rest): wrong current passwords of the own password change (web form and `POST /api/v1/me/password`)
+    count like failed sign-ins (429 with `Retry-After`, audited as `user.password_failed`)
   - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
+    (also the complement of `TEAMCRAFT_LOCAL_AGENTS=off`, which closes the MCP endpoint for every token but
+    not the REST API: a read-only token would narrow what an agent holding a user's own token can do there)
   - [x] F3: sign-in, failed sign-in and sign-out in the audit log (`user.sign_in`, `user.sign_in_failed`,
     `user.sign_out`; no password, token or unknown typed name)
   - [x] F4: web posts without `Origin` and `Referer` are refused; install guide says the proxy must overwrite
@@ -96,13 +100,13 @@ feature milestone – the features in *What works* are enough; what is missing i
   - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
   - [x] F12: start the parser children with a cleared environment (no database URL, no keys)
   - [ ] F13: a cap on the unpacked size of XLSX/ODS tables, or read them in the isolated child
-  - [ ] F14: fuzz targets for `simmesh`, `pdftext` and `resultscan` (the no-panic lints and the 3DS and Kelvin
-    fixes are in `main` since #106/#108)
+  - [ ] F14: fuzz targets for `simmesh` and `pdftext` (`resultscan` and `cadformat` have theirs since #156; the
+    no-panic lints and the 3DS and Kelvin fixes are in `main` since #106/#108)
   - [ ] F15: prompt injection: confirmation of assistant drafts per write, or taint for MCP sessions as well
   - [ ] F16: per-user quota for the assistant and MCP (with the daily budget in section 2, *Assistant*)
   - [ ] F17: `teamcraft mcp`: no redirects, a warning (or refusal) for `http://` servers other than `localhost`
-  - [ ] F18: desktop token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service); warn on
-    `http://` server URLs
+  - [x] F18: desktop token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service); warn on
+    `http://` server URLs – file fallback with a warning where there is no keychain
   - [ ] F19: backups written with mode 0600/0700, optional encryption, a signed manifest
 - [ ] External review or pentest of authentication, read permissions and file parsing; fuzzing of all parsers
   running continuously (section 1)
@@ -112,7 +116,7 @@ feature milestone – the features in *What works* are enough; what is missing i
 
 *Operations*
 
-- [ ] Metrics endpoint (Prometheus) for requests, latency, outbox backlogs (notifications, webhooks), preview
+- [~] Metrics endpoint (Prometheus) for requests, latency, outbox backlogs (notifications, webhooks), preview
   queue, database pool; structured JSON logs; documented alerts
 - [ ] Performance targets met and checked by the scale harness (#47): e.g. 1 M files, 100 k items, BOMs of 10 k
   lines, 50 concurrent users – page and API p95 times written down and guarded in a scheduled CI job
@@ -123,8 +127,8 @@ feature milestone – the features in *What works* are enough; what is missing i
 
 *Clients and packaging*
 
-- [ ] Flatpak on Flathub with offline cargo sources; AUR packages published; the desktop app's update notice (no
-  silent auto-update). Binaries and installers stay **unsigned** (no code signing or notarisation): the checksums
+- [ ] Flatpak on Flathub with offline cargo sources; AUR packages published. Done: the desktop app's update notice
+  (daily GitHub release check, opt-out, a link only – no silent auto-update). Binaries and installers stay **unsigned** (no code signing or notarisation): the checksums
   in `SHA256SUMS.txt` and the build provenance are the verification, and the docs explain the first start past
   SmartScreen and Gatekeeper
 - [ ] Desktop app run and tested on Windows x64/ARM64, macOS and Linux for each RC (a short manual test script in
@@ -194,18 +198,72 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   held a letter whose lower case is ASCII (the Kelvin sign `K` → `k`, test
   `a_non_ascii_letter_in_the_extension_does_not_panic`)
 - [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
-- [x] Coverage measured per PR (`cargo llvm-cov`, CI job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
+- [x] Coverage measured per PR (`cargo llvm-cov`, PostgreSQL 18 leg of the CI job *tests*, before 2026-11-07 its own job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
 - [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
-- [ ] Branch protection on `main`: required checks (fmt/clippy, tests on PostgreSQL 16 and 18, builds, docs links)
+- [ ] Branch protection on `main` (**maintainer action**, needs admin rights): a ruleset with required checks – fmt and
+  clippy, tests on PostgreSQL 16 and 18, build (windows-latest), cargo deny (Cargo.toml), local links and images.
+  None exists today (the API answers 404 for the protection and `[]` for rulesets); that is how #65 and #137 were
+  merged with red database tests
+- [x] CI review (2026-11-07, every job checked against its run history, each cut challenged twice): runner minutes
+  are free for this public repository, the scarce resource is concurrency (20 jobs, 5 macOS; PR jobs waited up to
+  29 min). Done: `timeout-minutes` on every CI job (two runs held a runner for the 6 h default); coverage runs in the
+  PostgreSQL 18 test leg instead of its own job (PostgreSQL 16 stays the plain leg with the CLI smoke test); the
+  macOS server build runs on `main` only (no macOS server is shipped), Windows on every PR but without linking the
+  63 integration-test binaries (`cargo check --all-targets`); PR runs read the Rust caches of `main` but no longer
+  write their own (the cache was at 10.95 GB of 10 GB); `cargo deny` also checks `desktop/Cargo.lock` (report-only
+  for now) and runs weekly; desktop PRs run one leg per release architecture (Ubuntu 24.04 x64 and ARM64, macOS,
+  Windows x64 and ARM64 – the last report-only while the runner is a preview), `main`, a weekly run and manual runs
+  add Ubuntu 26.04, and `cargo fmt` runs once
+  instead of six times; screenshot-only commits no longer start desktop builds; superseded PR runs of the docs and
+  CodeQL are cancelled, CodeQL skips docs-only PRs
+- [x] `cargo deny` for `desktop/Cargo.lock`: the first run found three "unmaintained" notices (zvariant,
+  zbus_names, zvariant_derive – merged into zbus 6, pulled in by keyring and Tauri through zbus 4/5), ignored with a
+  reason in `deny.toml`; the job blocks like the server one
+- [ ] Flaky desktop test on macOS: `resume::tests::a_wrong_part_is_started_over_and_a_complete_one_only_renamed`
+  (`desktop/src/resume.rs`, the assertion on the recorded `Range` headers) fails in about 2 of 15 runs – record the
+  header before the test server answers, or compare the set of ranges instead of their order
+- [ ] Decide the release builds on `main` (disputed in the CI review, so not changed): today every push to `main`
+  builds all 14 release jobs (server, desktop installers, Flatpak, image; ~110–170 runner-min, ~50 min wall clock)
+  and a newer push cancels the run, so cancelled commits get no `:edge` image. Options: (a) keep as is; (b) image +
+  Docker smoke test per push, the other artifacts nightly, on tags and by hand; (c) per push only when packaging
+  inputs change. Either way: add `packaging/**` and `desktop/tauri.conf.json` to the PR paths of `release.yml`, so a
+  Flatpak or bundle change is built before it is merged
+- [ ] Run `fuzz.yml` and `scale.yml` once by hand – their schedules have never fired yet – and make a failing
+  scheduled run open an issue instead of only an e-mail
+- [x] Triage the open CodeQL alerts (2026-11-07, 32 alerts, each checked twice; `fix/codeql-triage`). One real
+  finding, the rest false positives, all answered in code or configuration, none by a model row:
+  - `rust/uncontrolled-allocation-size` #38 (`POST /api/v1/change-requests`) **real, low risk**: the handler
+    resolved every listed item before the 100-item limit was checked, and that limit counted distinct rows, so a
+    2 MB body of one repeated item ran ~150 000 lookups and inserts in one transaction and succeeded. Fixed:
+    `requests::check_item_count` in the handler before any lookup and again in `requests::create`; test
+    `too_many_items_are_rejected_before_any_is_resolved`; threat model row. #39 (`simulations::import_results`)
+    was already bounded by `MAX_RESULTS` one line earlier – the pre-sized `Vec` is gone so the bound is plain.
+  - `rust/hard-coded-cryptographic-value` #1–#5 (`src/auth.rs`): the timing-equaliser `DUMMY_HASH` and the round
+    trip test now hash random values instead of literals; #49/#50 (`src/domain/mod.rs`): the password policy unit
+    test is generated at the `MIN_PASSWORD_LEN` boundary; #8–#14 (`src/oidc.rs`, nonce literals in unit tests)
+    and #15/#53/#54 (`tests/`): test fixtures – the OIDC unit tests moved to `src/oidc/tests.rs` and
+    `.github/codeql/codeql-config.yml` leaves `tests/**` and `src/**/tests.rs` out of the analysis (Rust runs with
+    build-mode none, where analysis `paths-ignore` applies).
+  - `rust/cleartext-storage-database` #16 (`src/delivery.rs`) and #17 (`tests/`): the source was only the name of
+    the SQL builder `notifications::confidential_now` (sensitive-name heuristic; it returns constant SQL text) –
+    renamed `restricted_now_sql`; #52 (`tests/common`): test-only, excluded.
+  - `rust/cleartext-logging` #21–#23 (`teamcraft user create|set-password|list`): the operator's own stdout shows
+    account names, never a password. The report is now written with `writeln!` (a closed pipe such as
+    `user list | head` is an error, not a panic); #18–#20, #41, #51: assertion messages in `tests/`, excluded.
+- [ ] After the first CodeQL run of `fix/codeql-triage` on `main`, check that all 32 alerts closed. Not verifiable
+  locally (no CodeQL CLI): whether the `writeln!` output still counts as a logging sink (#21–#23 – if it does,
+  dismiss them in the GitHub UI as false positive, "admin CLI echoes the account names the operator asked for") and
+  whether the path-injection barrier model (#160/#161) closed its 16 alerts
+- [ ] Dependabot (or Renovate) for Cargo and GitHub Actions, and a `Cargo.lock` for `fuzz/`
 
 ### 2. Structure
 
-- [ ] Split the largest modules by area, without behaviour changes, one PR each: `src/mcp/tools.rs` (~3000 lines →
+- [x] Split the largest modules by area, without behaviour changes, one PR each: `src/mcp/tools.rs` (~3000 lines →
   one file per area like `services/`) – mcp done (`src/mcp/tools/*.rs`; tool table, results and dispatch stay in
   `tools.rs`; `tests/mcp_contract.rs` snapshots tool list, schemas and prompts), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
   skins,validation}.rs`) – domain done (`src/domain/*.rs`, re-exported), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`) – api done (`src/api/*_api.rs`, route table stays in `mod.rs`),
   `src/services/requests.rs` (~1900) – requests done (`src/services/requests/*.rs`, re-exported;
-  `tests/change_request_paths.rs` pins the REST paths), `desktop/ui/app.js` (~4700 → ES modules per view, no bundler)
+  `tests/change_request_paths.rs` pins the REST paths), `desktop/ui/app.js` (~5000 → ES modules per view, no bundler) – desktop done (`desktop/ui/js/*.js`, `js/main.js` starts the app; `scripts/check-desktop-modules.mjs` in the CI job `ui` checks that every import resolves and every name of another module is imported)
 - [ ] One request/response contract for web, REST and MCP where they do the same thing (e.g. BOM, where-used,
   change requests): shared view structs in `services::*` instead of three hand-built JSON/HTML shapes
 - [ ] Typed ids (`ItemId`, `RevisionId`, `ChangeId`, … as newtypes over `Uuid`) at the service boundary, so that ids
@@ -257,8 +315,28 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 
 ### 4. Parked features
 
+**Need-to-know project groups (#151)** – step 1 (administrator access: policy, reason-based elevation, `none`) is
+done. Left, in the order of the issue: 2 conditions on membership (OIDC claims, allowed networks, shorter sessions);
+3 interface switches per group (channel on the `Actor`: `api_tokens`, `mcp`, `assistant`, `external_llm`, `webhooks`,
+`notification_content`, `packages`, `desktop_sync`) and the interface guard test; 4 read and download log
+(`access_log`, retention, CLI purge); 5 access review page and evidence report; 6 token scopes (F2). Open question 1
+is answered for now: `none` is allowed, but needs a member who is a manager.
+
 Only finish what is in progress and fix bugs here; see *Direction*. The CAD-program entries are mostly checks with
 real files and belong to section 3 once such files are at hand.
+
+**Ownership and approval rules ([#152](https://github.com/rudalabs/TeamCraft/issues/152))**
+
+- [x] Step 1: wider separation of duties (editors and the acting admin cannot review; suggester excludes them).
+- [ ] Step 2: review policy per project group (min approvals, required reviewers, role group).
+- [ ] Step 3: obsolete and supersede through a change order (per-group setting), supersede notifies watchers.
+- [ ] Step 4: token scopes (`approve`) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`).
+- [ ] Step 5: keep review rounds in `change_reviews`.
+- [ ] Step 6: flag and replace absent reviewers, substitutes.
+- [ ] Step 7: item owner and admin handover of a leaving user's work.
+- [ ] Step 8: approvals in the package manifest, audit log export, hash chain.
+- [ ] Step 9: requester cannot triage own request; separate approval of *use as is* deviations.
+- [ ] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
 
 **Desktop app**
 
@@ -306,11 +384,50 @@ real files and belong to section 3 once such files are at hand.
 
 - [ ] OpenFOAM case summary (solver, time steps) from `controlDict` – the 3D preview of VTK and CalculiX results is
   done (#43)
-- [ ] `.sim` detection: verify the STAR-CCM+ marker with real files (heuristic: "STAR-CCM+" near the start)
+- [ ] Fluent, STAR-CCM+ and Simcenter 3D files, plan of the research page *Fluent, STAR-CCM+ and Simcenter 3D files*
+  ([#153](https://github.com/rudalabs/TeamCraft/pull/153), `docs/src/research/solver-files.md`). Every byte-level
+  rule is a hypothesis until it is checked with real files – the heads (1–4 KB) of STAR-CCM+ `.sim` files of two or
+  three versions, NX 1980+ and older `.sim`/`.fem`/`.afm`, a Fluent `report-file-0.out` and `.trn`, a Simcenter 3D
+  Nastran `.dat` and `.f06`, openly licensed or self-made, as fixtures
+  - [x] Step 1 – detection (`src/cadformat.rs`, #156): `SPLMSSTR` as positive NX test for `.sim`/`.fem`/`.afm`,
+    text `.fem` = OptiStruct deck, `.dat` with Nastran markers = Nastran deck, `.f04`/`.pch`, text `.op2` refused,
+    Fluent `.msh`/`.msh.h5`/`.cas.gz`/`.dat.gz`/`.msh.gz` (HDF5 signature at 0 or 512, gzip magic), `.flprj`,
+    `.cdat`, `.jou`, `.trn`, report files (`.out` with quoted title and header), STAR-CCM+ `.simh` and macros (`.java`
+    naming STAR-CCM+), Gmsh `.msh`; fuzz target `cadformat`
+  - [ ] Step 1, open question: label a `.sim` with neither marker as "uncertain" in the UI instead of the NX fallback
+  - [ ] Files stored before #156 keep their old format and search text: a one-time re-detection of the
+    changed extensions (`.sim` `.fem` `.afm` `.dat` `.msh` `.out` `.java` `.jou` `.trn` `.f04` `.pch`, the Fluent
+    `.h5`/`.gz` names) and re-indexing at startup – not in a migration, `files.format` of v0.1.0 data must stay as it is
+  - [x] Step 2 – text (#156): `trn`, `f06`, `f04`, `pch`, `jou`, `java` scannable and plain text (search,
+    `read_file_text` – with the last 64 KiB of a larger file after a marker); templates with `pick = last` read the
+    last 2 MB of a larger file first; new template method `table` (Fluent report files, migration 0040); fuzz target
+    `resultscan`
+  - [ ] Step 3 – solver summary per file version: pure `src/solversummary.rs` over head and tail (64 KiB each):
+    Fluent banner/convergence/last iteration, report file columns and last row, `.f06` version, `END OF JOB` and
+    FATAL/WARNING window counts, Nastran `SOL`, STAR-CCM+ macro version and stopping criterion; a nullable JSONB
+    column on file versions, one line on the file row and the simulation page, data (untrusted) for the MCP tools
+  - [ ] Step 4 – references and basis proposals: `nxpart`'s `ExternalReferences` reader on `nx-simulation` files
+    (first verify the streams exist in CAE parts); `cadrefs` for Fluent journals (`/file/read-case "x"`, …) and
+    STAR-CCM+ macros (`resolvePath("x.sim")`); propose (never set) a *Geometry* basis along `.sim` → `.fem` →
+    `_i.prt` → master `.prt`
+  - [ ] Step 5 – desktop folder import: ignore `cleanup-fluent-*` and Nastran scratch files (`.MASTER`, `.DBALL`,
+    `.SCRATCH`, …, verify the list), group the `.sim`/`.fem` chain, the Fluent case stem and the STAR-CCM+ `.sim`
+    stem into one proposed simulation item, untick results above 64 MB and autosaves except the last step, hint
+    for STAR-CCM+ *Clear Solution*; needs the retention rule (`files.retention = 'latest'`)
+  - [ ] Step 6 – docs: tested snippets that write `teamcraft-results.csv` from a STAR-CCM+ Java macro, a Fluent
+    journal/PyFluent script and a pyNastran post-script (in the simulation guide)
+  - Not planned: parsing `.op2`, `.h5`, `.dat.h5`, `.cdat`, `.sim`, `.simh`; an HDF5 reader (revisit only in the
+    isolated child); vendor tools on the server (later, desktop only: `starccm+ -info` with the user's licence)
 - [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded, audited, with source); never from big result files
 - [x] Result values proposed by the assistant from PDF/text reports (`propose_result_values`, drafts with a quote, accepted or rejected by a CAD editor); PDF text layer in `read_file_text`
-- [ ] `read_file_text` of plain-text files shows the search text, which drops decimal numbers (`textindex`): read the real text (bounded) for the assistant, so text and CSV reports work like PDFs
+- [x] `read_file_text` of plain-text files shows the real text with its lines and decimal numbers (bounded; only geometry as text – ASCII STL, OBJ, KiCad – drops decimals for the search), so text and CSV reports work like PDFs (#141)
 - [ ] Scanned PDF reports (OCR) – not planned; attach a PDF with a text layer or the numbers by hand
+- [x] HTML reports of commercial FEA/CFD tools: own bounded HTML-to-text reader (`src/htmltext.rs`) in the isolated
+  `text-extract` child, table rows as lines with ` | ` separators, scripts/styles/comments/hidden elements/embedded
+  images skipped, nothing fetched; search, `read_file_text`, `propose_result_values` and the extraction templates use
+  the extracted text ([#141](https://github.com/rudalabs/TeamCraft/issues/141))
+- [ ] HTML reports: MHTML (`.mht`) and ZIP-packed multi-file reports (unpacking needs its own caps, see F13); text hidden
+  by a style sheet (not inline) is not detected
 - [ ] Result values in the item search (e.g. failed simulations, values above a limit) and on the dashboard
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
@@ -589,6 +706,16 @@ MPL-2.0; LGPL only as a separately loaded component; no GPL/AGPL/SSPL, nothing p
 README licence table, follow the definition of done in `CLAUDE.md`. The docs are live at
 <https://rudalabs.github.io/TeamCraft/>.
 
-## Pending verification (2026-11-06)
+## Pending verification (2026-11-07)
 
-Open PRs #122 (idempotency key, `tests/item_idempotency.rs`), #123 (`tests/upgrade_restore.rs`, upgrade guide), #124 (unknown config variables), #125 (`tests/concurrency_mutations.rs` and lock ordering), #126 (`tests/import_scale_and_concurrency.rs`), #127 and #128 (docs). Their database tests were written without access to a database; **CI is the first real run** – fix failures there before merging, and tick the items above (idempotency key, upgrade tests) only once green.
+- The database tests of #122–#126 got their first real runs in CI: #137 and #138 fixed the failures (test bugs, plus
+  one desktop bug – a folder import resumed after a lost creation answer re-uploaded files of an item that was already
+  checked in). Tick the idempotency key and the upgrade tests above once `main` is green.
+- #144 (as-built records, metrics endpoint, desktop notification settings and password change, desktop UI as ES
+  modules – the squashed #132, #134, #135, #136, #143): its new database tests (`tests/as_built.rs`,
+  `tests/api_password.rs`, `tests/notification_settings_api.rs`, the metrics tests) run for the first time in its CI.
+- GA items started but not yet in a pull request (work kept in local worktrees): assistant budget (phase 4, F16),
+  scoped tokens (F2), download hardening (F8, F10), upload quotas (F9), retention and cleanup, parser hardening (F11,
+  F13, F14), MCP hardening (F15, F17), backup hardening (F19), OIDC hardening (F6, F7), OpenAPI description; not
+  started: MCP versioning, CLI and configuration freeze, accessibility leftovers, SBOM and attestations, upgrade
+  proofs per release, scale targets, JSON logs.

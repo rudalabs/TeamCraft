@@ -43,6 +43,8 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "admin/attribute_edit.html",
     "admin/webhooks.html",
     "admin/webhook_edit.html",
+    "admin/branding.html",
+    "admin/ai.html",
     "desktop/authorize.html",
     "formats.html",
     "imports/upload.html",
@@ -249,6 +251,10 @@ mod tests {
         map.insert("local_login".into(), json!(true));
         map.insert("skin".into(), json!("arch"));
         map.insert("skin_scheme".into(), json!("dark"));
+        map.insert(
+            "branding".into(),
+            json!({ "wide": "aaaabbbbcccc", "square": "ddddeeeeffff" }),
+        );
         data
     }
 
@@ -532,6 +538,14 @@ mod tests {
             "error.html",
             json!({ "status": 404, "reason": "Not Found", "message": "gone", "flash": null, "local_login": true }),
         );
+        let html = render(
+            &env,
+            "error.html",
+            json!({ "status": 404, "reason": "Not Found", "message": "gone", "flash": null, "local_login": true,
+                    "branding": { "wide": "aaaabbbbcccc", "square": null } }),
+        );
+        assert!(html.contains("/branding/wide?v=aaaabbbbcccc"));
+        assert!(!html.contains("TeamCraft_Logo_White.svg"));
 
         let html = render(
             &env,
@@ -927,6 +941,124 @@ mod tests {
             "1 of 3 failed",
             "check open",
             "Out of date",
+        ] {
+            assert!(html.contains(expected), "part page shows {expected}");
+        }
+        // As-built: build record and deviations of an as-built revision
+        let lifecycle = |state: &str| {
+            json!({
+                "states": crate::domain::LifecycleState::ALL,
+                "next": crate::domain::rules_from(crate::domain::LifecycleState::parse(state).unwrap()),
+                "rules": crate::domain::LIFECYCLE_RULES,
+            })
+        };
+        let kinds: Vec<_> = crate::domain::DeviationKind::ALL
+            .iter()
+            .map(|k| json!({ "value": k.as_str(), "label": k.label() }))
+            .collect();
+        let dispositions: Vec<_> = crate::domain::Disposition::ALL
+            .iter()
+            .map(|d| json!({ "value": d.as_str(), "label": d.label() }))
+            .collect();
+        let deviation = |feature: &str, disposition: &str| {
+            json!({ "id": ME, "revision_id": OTHER, "position": 1, "kind": "dimension",
+                    "feature": feature, "designed": "12.000 +0.018/0", "built": "12.035 <m>",
+                    "disposition": disposition, "note": "", "created_by_name": "Erika",
+                    "created_at": TS, "updated_at": TS })
+        };
+        for (state, restricted) in [("in_work", false), ("released", true)] {
+            let mut rev = revision(state, false);
+            rev["item_type"] = json!("as_built");
+            rev["item_number"] = json!("AB-000001");
+            let mut unit_item = item();
+            unit_item["item_type"] = json!("as_built");
+            let editable = state == "in_work";
+            let html = render(
+                &env,
+                "revisions/show.html",
+                with_common(json!({
+                    "rev": rev.clone(), "item": unit_item, "revisions": [rev.clone()],
+                    "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0, "units": 0 },
+                    "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
+                    "lines": [], "where_used": [], "changes": [], "open_change": null, "drafts": [],
+                    "history": [], "projects": [], "units": units(), "references": references.clone(),
+                    "impact_groups": [], "resolved_impacts": [], "simulation": null,
+                    "based_simulations": [], "built_units": [], "can_be_built_to": false,
+                    "as_built": {
+                        "record": {
+                            "revision_id": OTHER, "design_item_id": ME,
+                            "design_number": if restricted { "restricted item" } else { "ASM-000003" },
+                            "design_type": "assembly", "design_revision_id": ME, "design_code": "B",
+                            "design_state": "released", "design_name": "Gearbox <g>",
+                            "serial_number": "SN <0042>", "built_on": "2026-11-02", "note": "",
+                            "updated_by_name": "Erika", "updated_at": TS, "released_code": "C",
+                            "newer_design": if restricted { Value::Null } else { json!("ASM-000003/C is released (built to: B)") },
+                            "restricted": restricted,
+                        },
+                        "deviations": [deviation("Bore <Ø12>", "open"), deviation("Flange", "scrap")],
+                        "summary": { "total": 2, "open": 1, "use_as_is": 0, "rework": 0, "repair": 0, "scrap": 1 },
+                        "kinds": kinds.clone(), "dispositions": dispositions.clone(),
+                    },
+                    "can": if editable { can_all.clone() } else { json!({}) }, "max_upload_mb": 512,
+                    "lifecycle": lifecycle(state),
+                })),
+            );
+            for expected in [
+                "id=\"as-built\"",
+                "Built to",
+                "SN &lt;0042&gt;",
+                "2026-11-02",
+                "Deviations from the design",
+                "1 open",
+                "Bore &lt;Ø12&gt;",
+                "12.035 &lt;m&gt;",
+            ] {
+                assert!(html.contains(expected), "as-built page shows {expected}");
+            }
+            assert_eq!(
+                html.contains("ASM-000003/B") && html.contains("/bom/compare?with="),
+                !restricted,
+                "a hidden design is a placeholder"
+            );
+            assert_eq!(
+                html.contains("/as-built/record") && html.contains("/as-built/deviations"),
+                editable,
+                "editing only while checked out"
+            );
+            assert!(!html.contains("id=\"built-units\""));
+        }
+        // the design side: units built to the item
+        let html = render(
+            &env,
+            "revisions/show.html",
+            with_common(json!({
+                "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
+                "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0, "units": 2 },
+                "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
+                "lines": [{ "id": ME, "child_number": "PRT-000009", "child_latest_revision_id": OTHER, "child_name": "Screw", "child_code": "A" }], "where_used": [], "changes": [], "open_change": null, "drafts": [],
+                "history": [], "projects": [{ "id": ME, "code": "ROCKET", "name": "Rocket" }],
+                "units": units(), "references": references.clone(),
+                "impact_groups": [], "resolved_impacts": [], "simulation": null, "as_built": null,
+                "based_simulations": [], "can_be_built_to": true,
+                "built_units": [{
+                    "unit_item_id": OTHER, "unit_number": "AB-000001", "unit_revision_id": OTHER,
+                    "unit_code": "A", "unit_state": "in_work", "unit_name": "Bracket – SN <7>",
+                    "serial_number": "SN-7", "built_on": null, "design_revision_id": ME,
+                    "design_code": "A", "deviation_count": 3, "open_count": 2,
+                    "newer_design": "PRT-000001/B is released (built to: A)" }],
+                "can": {}, "max_upload_mb": 512,
+                "lifecycle": lifecycle("released"),
+            })),
+        );
+        for expected in [
+            "id=\"built-units\"",
+            "AB-000001/A",
+            "Bracket – SN &lt;7&gt;",
+            "Older revision",
+            "2 open",
+            "+2 units in groups you cannot see",
+            "Record a built unit",
+            "Copy the BOM of B",
         ] {
             assert!(html.contains(expected), "part page shows {expected}");
         }
@@ -1331,6 +1463,86 @@ mod tests {
                 "delivered_at": if status == "sent" { json!(TS) } else { json!(null) },
             })
         };
+        let html = render(
+            &env,
+            "admin/branding.html",
+            with_common(json!({
+                "slots": [
+                    { "kind": "wide", "label": "Wide logo", "custom": "aaaabbbbcccc", "hint": "h" },
+                    { "kind": "square", "label": "Square logo", "custom": null, "hint": "h" },
+                ],
+                "max_kib": 512, "max_pixels": 4096,
+            })),
+        );
+        assert!(
+            html.contains("/branding/wide?v=aaaabbbbcccc"),
+            "custom wide logo in the header"
+        );
+        assert!(
+            html.contains("/admin/branding/wide/reset"),
+            "reset offered for a custom logo"
+        );
+        assert!(
+            !html.contains("/admin/branding/square/reset"),
+            "no reset for the built-in logo"
+        );
+        // Admin → AI in every mode: provider and model shown, the key never
+        let company_ai = crate::config::AssistantConfig {
+            provider: crate::config::AssistantProvider::Anthropic,
+            base_url: "https://api.anthropic.com/v1".into(),
+            api_key: Some("sk-ant-never-shown".into()),
+            model: "claude-opus-5-5".into(),
+            max_steps: 8,
+            max_tokens: 4096,
+            request_timeout: std::time::Duration::from_secs(60),
+            run_timeout: std::time::Duration::from_secs(180),
+            max_concurrent: 4,
+            retention_days: 30,
+        };
+        use crate::config::LocalAgents;
+        // the notice, and what the desktop app's Agent view runs on
+        for (agents, assistant, says, desktop) in [
+            (
+                LocalAgents::Off,
+                Some(&company_ai),
+                "Company AI only",
+                "company AI (no local option)",
+            ),
+            (
+                LocalAgents::Off,
+                None,
+                "users have no AI in TeamCraft",
+                "a notice that AI is switched off",
+            ),
+            (
+                LocalAgents::Allowed,
+                Some(&company_ai),
+                "TEAMCRAFT_LOCAL_AGENTS=off",
+                "the user chooses: company AI or local agent",
+            ),
+            (
+                LocalAgents::Allowed,
+                None,
+                "No assistant is configured",
+                "<dd>local agent</dd>",
+            ),
+        ] {
+            let html = render(
+                &env,
+                "admin/ai.html",
+                with_common(crate::services::assistant::admin_overview(
+                    agents, assistant,
+                )),
+            );
+            assert!(html.contains(says), "{agents:?}: {says}");
+            assert!(html.contains(desktop), "{agents:?}: {desktop}");
+            assert!(!html.contains("sk-ant-never-shown"), "the key leaked");
+            if assistant.is_some() {
+                assert!(html.contains("claude-opus-5-5"), "model shown");
+                assert!(html.contains("api.anthropic.com"), "host shown");
+                assert!(html.contains("set (not shown)"));
+            }
+        }
         let html = render(
             &env,
             "admin/webhook_edit.html",

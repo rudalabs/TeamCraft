@@ -1005,7 +1005,7 @@ pub async fn import_results(
             "At most {MAX_RESULTS} result values can be imported at once."
         )));
     }
-    let mut inputs: Vec<ResultInput> = Vec::with_capacity(rows.len());
+    let mut inputs: Vec<ResultInput> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for row in rows {
         let row = row.validated()?;
@@ -1231,7 +1231,12 @@ pub(crate) async fn apply_file_values(
                 if resultscan::is_exchange_name(&name) {
                     continue;
                 }
-                let values = resultscan::extract(&name, &upload.scan_head, &templates);
+                let values = resultscan::extract_with_tail(
+                    &name,
+                    &upload.scan_head,
+                    &upload.scan_tail,
+                    &templates,
+                );
                 if !values.is_empty() {
                     files.push(name);
                 }

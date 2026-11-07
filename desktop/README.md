@@ -36,8 +36,7 @@ TeamCraft server – it is a client, not an offline copy.
 | Change requests | *Request change…* on a revision tab and *Request…* on a file (Files and Workspace tabs) raise a change request prefilled with item, revision and file name, with an optional screenshot or PDF (native file dialog, uploaded by the Rust side); request tabs with discussion, decision (accept / defer / reject), *Create change order*, attachments; *Requests assigned to me* and *My open requests* in the worklist |
 | Change propagation | *Dependents to check* grouped by dependent revision (one worklist line with a count, expandable; on the home page **Open**, **Revise**, **Acknowledge all…** per dependent and **Acknowledge…** per change), *Check needed* on the revision tab, references, *As released* rule, impact analysis |
 | Notifications | Bell with unread count and toasts; **Watch** / **Unwatch** |
-| Ask TeamCraft | **Ask** in the rail (`Ctrl/Cmd+5`, only when the server has the assistant enabled): a sidebar beside the tabs that knows the active tab (revision and section, BOM rule, change, request, search), offers matching quick actions (*Draft release notes*, *Check before release*, *Brief me for this review* …) and keeps one conversation on the server; the server answers with Claude and the user's rights, read-only unless drafts are allowed |
-| Agent (ACP) | **Agent** in the rail (`Ctrl/Cmd+4`): a local agent you configure under *Settings → Agents…* (Claude Code through its ACP adapter, Gemini CLI, any [Agent Client Protocol](https://agentclientprotocol.com) agent; none by default). The app starts it in the workspace folder and hands it TeamCraft's MCP server with your token. Streamed conversation, tool calls, plan, permission prompts (*Allow once* / *Reject*), the agent's own model picker (remembered per agent), *Cancel*, quick prompts from the server's MCP prompts, the open revision or change as context. Through the app the agent may only read text files in the workspace – no writing, no terminal. See [the guide](../docs/src/guide/assistant.md#acp-agents-in-the-desktop-app) |
+| Agent | **Agent** in the rail (`Ctrl/Cmd+4`, or *Agent* in a revision or change tab) – the app's one place for AI, on one of two backends. **Company AI**: the server's assistant (the web UI's *Ask TeamCraft*, inline in the Agent tab; the key stays on the server) – it knows the last revision (and section, BOM rule), change or request tab, offers matching quick actions (*Draft release notes*, *Check before release*, *Brief me for this review* …), the drafts checkbox and one conversation kept on the server; read-only unless drafts are allowed. **Local agent**: an agent you configure under *Settings → Agents…* (Claude Code through its ACP adapter, Gemini CLI, any [Agent Client Protocol](https://agentclientprotocol.com) agent; none by default). The app starts it in the workspace folder and hands it TeamCraft's MCP server with your token. Streamed conversation, tool calls, plan, permission prompts (*Allow once* / *Reject*), the agent's own model picker (remembered per agent), *Cancel*, quick prompts from the server's MCP prompts, the open revision or change as context. Through the app the agent may only read text files in the workspace – no writing, no terminal. With both on the server, *Company AI* / *Local agent* in the Agent toolbar switches (remembered per server and user; default: the local agent if one is set up). When the server sets `TEAMCRAFT_LOCAL_AGENTS=off` the Agent view runs on the company AI only, the Rust side ends a running agent and refuses to start one (the app asks the server again when the Agent view opens, every minute and before every message, so a changed setting needs no restart); without a company AI the view says that AI is switched off. See [the guide](../docs/src/guide/assistant.md#acp-agents-in-the-desktop-app) |
 | Pack and Go, STL | ZIP of a revision and its structure, with a progress dialog and *Cancel* (also while the server packs); written as `<name>.teamcraft-download` and renamed when complete, removed on cancel or error; **Export STL…** from the 3D viewer |
 | Appearance | The same skins as the web UI: *TeamCraft* follows the light or dark appearance of the operating system (and switches with it), *TeamCraft Light* and *TeamCraft Dark* stay fixed, the distribution skins are dark. The window chrome (on Linux the GTK menu bar) asks the system for the matching light or dark variant; a GTK theme without a dark variant keeps its light menu bar (the screenshot job sets `GTK_THEME=Adwaita:dark` for its dark run) |
 
@@ -89,12 +88,33 @@ On the first start enter the server address (`localhost:8080` for a local
 server, `host:port` otherwise) and click **Sign in with the browser**: the browser asks you to
 confirm the sign-in for this computer, the app receives a personal access
 token (valid 90 days, revocable on your account page in the web UI).
+When the server runs a version the app does not fit (before 1.0: another
+`major.minor`; from 1.0: another major version or an older minor version), the
+sign-in screen – or, if you are already signed in, a toast in the main window –
+shows a warning once; signing in and working stay possible. The rules are in the
+[support policy](../docs/src/admin/support-policy.md#desktop-app-and-server-versions)
+(`src/compat.rs`).
+
+Server addresses with plain `http://` to another computer get a warning in the connect dialog
+and in *Settings*: the token and all data would cross the network unencrypted (`localhost` and
+loopback addresses are fine).
+
+Update notice: at most once a day the app asks the GitHub releases API
+(`api.github.com/repos/rudalabs/TeamCraft/releases/latest`, no redirects, 10 s timeout) for the latest
+release. A newer version shows a link in the status bar to the release page; nothing is downloaded or
+installed. *×* hides it until the next version, *Settings → Updates* switches the check off.
 
 Where the app keeps its data:
 
-* settings and the token: the per-user configuration directory
+* settings: the per-user configuration directory
   (`~/.config/io.github.rudalabs.teamcraft`, `~/Library/Application Support/io.github.rudalabs.teamcraft`,
-  `%APPDATA%\io.github.rudalabs.teamcraft`); the token file is readable by the user only;
+  `%APPDATA%\io.github.rudalabs.teamcraft`);
+* the token: the OS keychain (Windows Credential Manager, macOS Keychain, the Secret Service on
+  Linux – GNOME Keyring, KWallet), entry `io.github.rudalabs.teamcraft` / `api-token`. Without a
+  keychain (a Linux session without Secret Service) it falls back to the file `token` in the
+  configuration directory, readable by the user only, and the app warns at the start and in
+  *Settings*; the next start with a keychain moves the file into it (also the file of older app
+  versions). On macOS an unsigned build may ask once whether TeamCraft may use the keychain item (again after an update);
 * the working folder: `Documents/TeamCraft/<project group>/<folder>/<file>` with `Documents/TeamCraft/.teamcraft/state.json` (configurable in *Settings*).
 
 ## Layout
@@ -112,12 +132,14 @@ src/commands.rs    the commands the UI calls (every network and file access)
 src/api.rs         REST client (/api/v1, bearer token) – the web view never talks to the server
 src/abortable.rs   Cancel of long operations: streamed check-in body that stops half-way, Pack and Go download dropped on cancel
 src/signin.rs      browser sign-in: PKCE, loopback listener on 127.0.0.1
+src/compat.rs      version handshake (pure): does the app fit the server version (also tested by tests/desktop_compat.rs)
 src/layout.rs      working-folder rules (pure): folder mapping, state.json, Get planning, migration planning
 src/resume.rs      Get resumes a large file half-way: partial file per content, Range/If-Range, SHA-256 check before the rename
 src/workspace.rs   Get, status, read-only handling, check-in, migration of the old layout
-src/settings.rs    settings.json (incl. the configured agents) and the token file
+src/settings.rs    settings.json (incl. the configured agents), the token in the OS keychain (file fallback), http:// check
+src/update.rs      update notice: latest GitHub release at most daily, version comparison
 src/acp.rs         Agent Client Protocol client: agent subprocess, JSON-RPC over stdio, session, permissions, workspace-only reads
-ui/                index.html, app.css (layout), app.js (all views)
+ui/                index.html, app.css (layout), js/ (ES modules per view, no build step; js/main.js starts the app)
 capabilities/      Tauri permissions of the window (dialogs only – files and URLs are opened by Rust)
 icons/             app icons, rendered from icons/app-icon.svg with `tauri icon`
 ```

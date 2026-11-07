@@ -28,6 +28,7 @@ turn, double-click to reset; *Z up / Y up* switches the convention.
 | Previewed           | Formats                                                          |
 |---------------------|------------------------------------------------------------------|
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                   |
+| Native CAD          | NX parts (`.prt`) – the tessellation NX stores in the file      |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS |
 | Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces          |
 | Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields |
@@ -52,12 +53,28 @@ several fields, a selector – see [Simulations](simulation.md#results-in-3d).
 ## Previews of native CAD files
 
 Native CAD files (Inventor, Solid Edge, SolidWorks, NX, Creo, CATIA, …) are
-proprietary; TeamCraft does not read their geometry (see
+proprietary; TeamCraft does not read their exact geometry (see
 [Research: previews of native CAD files](../research/cad-previews.md)).
-Instead it shows what other PLM systems show:
+The one exception is **NX**: NX saves a tessellation of every part in a
+documented format (JT 9) into the file, and TeamCraft shows it in the 3D
+viewer, refined along the exact surface normals stored with it, so round
+faces stay round. An **NX assembly** is put together from its part files:
+check the parts in (in the assembly's revision or as items of their own,
+under their NX file names) and the assembly shows every component in its
+place, sub-assemblies included (see
+[Research: 3D preview of NX parts](../research/nx-jt-preview.md)).
+Components that are not in TeamCraft are left out, and so are components
+on layers the assembly hides in NX. For the rest TeamCraft shows what other
+PLM systems show:
 
+* **A picture of the 3D preview** for NX parts and assemblies: the small
+  JPEG NX stores is replaced by an image rendered from the 3D preview
+  (512 × 512 PNG, transparent background), drawn once and cached; an
+  assembly's picture is drawn again when one of its parts changes. NX
+  drawings, and assemblies none of whose parts are in TeamCraft, keep the
+  stored JPEG.
 * **The preview image stored in the file.** Inventor (`.ipt`, `.iam`,
-  `.idw`, `.ipn`), Solid Edge (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`), NX (`.prt`, a JPEG) and
+  `.idw`, `.ipn`), Solid Edge (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`), NX assemblies and drawings (`.prt`, a JPEG) and
   SolidWorks files (up to 2014 in their OLE container, from 2015 on in a
   compressed section that TeamCraft inflates) carry a picture the CAD program wrote when saving. It
   appears next to the file on the revision page and in the desktop app (`GET /api/v1/files/{id}/thumbnail`). Only the
@@ -74,4 +91,8 @@ Instead it shows what other PLM systems show:
 
 The item search ranks matches in numbers, names, materials, descriptions and
 file names, and in the text inside STEP and IGES files (product names,
-authors, organisations) and plain-text files.
+authors, organisations), plain-text files (with their decimal numbers), the
+text layer of PDF reports and the text of HTML reports (table rows as lines;
+scripts, styles and hidden elements skipped). PDFs and HTML files are read in an
+isolated child process with size, time and memory limits; scanned PDFs have no
+text layer (there is no OCR).

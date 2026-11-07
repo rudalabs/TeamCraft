@@ -1,6 +1,11 @@
 # TeamCraft CI: formatting, lints and the full test suite against
-# PostgreSQL on Linux; build and unit tests on macOS and Windows.
-# Nothing is packaged or published.
+# PostgreSQL on Linux (with coverage on one leg); build and unit tests on
+# Windows (and macOS on main); dependency checks. Nothing is packaged or
+# published.
+#
+# Runner time is free for this public repository; what is scarce is the
+# number of concurrent jobs (20, of them 5 macOS). Pull requests therefore
+# run the jobs that can find something new there; main runs everything.
 name: CI
 
 on:
@@ -9,13 +14,16 @@ on:
     paths-ignore: ["**.md", "docs/**", "platforms/**"]
   pull_request:
     paths-ignore: ["**.md", "docs/**", "platforms/**"]
+  # new security advisories appear without a code change
+  schedule:
+    - cron: "17 5 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -25,13 +33,19 @@ env:
 jobs:
   lint:
     name: fmt and clippy
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # pull requests read the caches of main but do not write their own
+      # (they would push the main caches out of the 10 GB limit)
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       # broken or private intra-doc links fail here, not only on the docs site
@@ -41,12 +55,22 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   test:
+    # PostgreSQL 16 (the oldest supported version) runs the plain suite and
+    # the CLI smoke test; PostgreSQL 18 runs the same suite under
+    # cargo llvm-cov with the coverage report and floor
+    # (docs/src/dev/coverage.md).
     name: tests (Linux, PostgreSQL ${{ matrix.postgres }})
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        postgres: ["16", "18"]
+        include:
+          - postgres: "16"
+            coverage: false
+          - postgres: "18"
+            coverage: true
     services:
       postgres:
         image: postgres:${{ matrix.postgres }}-alpine
@@ -71,9 +95,17 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql-client-${{ matrix.postgres }}
           echo "/usr/lib/postgresql/${{ matrix.postgres }}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: ${{ matrix.coverage && 'llvm-tools-preview' || '' }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --locked --no-fail-fast
+        with:
+          key: pg${{ matrix.postgres }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - if: ${{ !matrix.coverage }}
+        run: cargo test --locked --no-fail-fast
       - name: CLI smoke test
+        if: ${{ !matrix.coverage }}
         env:
           TEAMCRAFT_DATABASE_URL: postgres://teamcraft@localhost:5432/teamcraft
         run: |
@@ -87,66 +119,16 @@ jobs:
           TEAMCRAFT_VAULT_DIR="$RUNNER_TEMP/vault-restored" \
             cargo run --locked --quiet -- restore "$RUNNER_TEMP/backup"
 
-  build:
-    name: build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked --all-targets
-      - name: unit tests (the database tests run on Linux)
-        run: cargo test --locked --lib
-
-  dependencies:
-    name: cargo deny (advisories, licences, sources)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-
-  coverage:
-    # Report plus a floor: the job fails when the total line coverage drops
-    # below .github/coverage-floor (docs/src/dev/coverage.md). The unit and
-    # the database tests run together, so the numbers include the services.
-    # (The name is kept so that branch protection rules keep matching.)
-    name: coverage (report only)
-    runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: teamcraft
-          POSTGRES_DB: teamcraft
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U teamcraft -d teamcraft"
-          --health-interval 5s --health-timeout 3s --health-retries 20
-    env:
-      TEAMCRAFT_TEST_DATABASE_URL: postgres://teamcraft@localhost:5432/teamcraft
-      TEAMCRAFT_REQUIRE_DB_TESTS: "1"
-    steps:
-      - uses: actions/checkout@v4
-      - name: PostgreSQL 16 client tools (pg_dump, pg_restore)
-        run: |
-          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-          sudo apt-get install -y --no-install-recommends postgresql-client-16
-          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
+      - if: ${{ matrix.coverage }}
+        uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
       - name: Run the tests with coverage
+        if: ${{ matrix.coverage }}
         run: cargo llvm-cov --locked --no-report --no-fail-fast
+      # the report and the floor also when a test failed: the numbers help
       - name: Summary per file
+        if: ${{ matrix.coverage && !cancelled() }}
         run: |
           cargo llvm-cov report --summary-only | tee coverage-summary.txt
           {
@@ -156,16 +138,18 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       - name: HTML report
+        if: ${{ matrix.coverage && !cancelled() }}
         run: cargo llvm-cov report --html
-      - uses: actions/upload-artifact@v4
+      - if: ${{ matrix.coverage && !cancelled() }}
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-html
           path: |
             target/llvm-cov/html
             coverage-summary.txt
           retention-days: 14
-      # last, so the summary and the report are there when the floor fails
       - name: Coverage floor (.github/coverage-floor)
+        if: ${{ matrix.coverage && !cancelled() }}
         run: |
           floor=$(grep -v '^#' .github/coverage-floor | tr -d '[:space:]')
           lines=$(awk '/^TOTAL/ { gsub("%", "", $10); print $10 }' coverage-summary.txt)
@@ -178,3 +162,43 @@ jobs:
             echo "::error::line coverage ${lines} % is below the floor ${floor} % – add tests for the new code, or lower .github/coverage-floor in this pull request and say why"
             exit 1
           fi
+
+  build:
+    # The Windows server ships, so it is built on every pull request. macOS
+    # (no server release, scarce runners, never failed on its own) only on
+    # main and by hand. The test targets are type-checked, not linked: the
+    # database tests do not run here.
+    name: build (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["windows-latest"]' || '["macos-latest", "windows-latest"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --locked
+      - name: type-check every target (tests, examples)
+        run: cargo check --locked --all-targets
+      - name: unit tests (the database tests run on Linux)
+        run: cargo test --locked --lib
+
+  dependencies:
+    # the server and the desktop app ship separate lock files
+    name: cargo deny (${{ matrix.manifest }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        manifest: [Cargo.toml, desktop/Cargo.toml]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: ${{ matrix.manifest }}

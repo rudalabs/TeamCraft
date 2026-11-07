@@ -13,21 +13,21 @@ use crate::{
     domain::{self, Role},
     error::{AppError, AppResult},
     models::{ApiToken, User, USER_COLUMNS},
-    services::audit,
+    services::{access, audit},
 };
 
 /// Columns (of `users u`) needed to build an [`Actor`], including the
-/// project groups the user belongs to and the restricted groups the user
-/// may not read (none for admins; archived groups count too).
-const ACTOR_COLUMNS: &str = "u.id, u.username, u.display_name, u.role, u.skin,
+/// project groups the user belongs to and the groups the user may not read
+/// (see [`access::hidden_of_user`]; archived groups count too).
+fn actor_columns() -> String {
+    format!(
+        "u.id, u.username, u.display_name, u.role, u.skin,
     COALESCE((SELECT array_agg(pm.project_id) FROM project_members pm WHERE pm.user_id = u.id),
-             '{}'::uuid[]) AS projects,
-    CASE WHEN u.role = 'admin' THEN '{}'::uuid[] ELSE
-      COALESCE((SELECT array_agg(p.id) FROM projects p
-                WHERE p.visibility = 'restricted'
-                  AND NOT EXISTS (SELECT 1 FROM project_members pm
-                                  WHERE pm.project_id = p.id AND pm.user_id = u.id)),
-               '{}'::uuid[]) END AS hidden_projects";
+             '{{}}'::uuid[]) AS projects,
+    {} AS hidden_projects",
+        access::hidden_of_user("u")
+    )
+}
 
 #[derive(sqlx::FromRow)]
 struct ActorRow {
@@ -56,14 +56,13 @@ impl From<ActorRow> for Actor {
 
 /// Loads the full actor (incl. project memberships) for a user id.
 pub async fn actor(pool: &PgPool, user_id: Uuid) -> AppResult<Actor> {
-    sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {ACTOR_COLUMNS} FROM users u WHERE u.id = $1"
-    ))
-    .bind(user_id)
-    .fetch_optional(pool)
-    .await?
-    .map(Actor::from)
-    .ok_or_else(|| AppError::not_found("User not found."))
+    let cols = actor_columns();
+    sqlx::query_as::<_, ActorRow>(&format!("SELECT {cols} FROM users u WHERE u.id = $1"))
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?
+        .map(Actor::from)
+        .ok_or_else(|| AppError::not_found("User not found."))
 }
 
 /// The actor of an active user as it is now (memberships and hidden groups
@@ -71,8 +70,9 @@ pub async fn actor(pool: &PgPool, user_id: Uuid) -> AppResult<Actor> {
 /// on behalf of a user (the assistant's tool loop) calls this per step, so
 /// a lost membership or a newly restricted group applies at once.
 pub async fn active_actor(pool: &PgPool, user_id: Uuid) -> AppResult<Option<Actor>> {
+    let cols = actor_columns();
     Ok(sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {ACTOR_COLUMNS} FROM users u WHERE u.id = $1 AND u.active"
+        "SELECT {cols} FROM users u WHERE u.id = $1 AND u.active"
     ))
     .bind(user_id)
     .fetch_optional(pool)
@@ -85,8 +85,9 @@ pub async fn active_actor(pool: &PgPool, user_id: Uuid) -> AppResult<Option<Acto
 // ---------------------------------------------------------------------------
 
 pub async fn actor_for_session(pool: &PgPool, token: &str) -> AppResult<Option<Actor>> {
+    let cols = actor_columns();
     let row = sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {ACTOR_COLUMNS}
+        "SELECT {cols}
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = $1 AND s.expires_at > now() AND u.active"
     ))
@@ -98,8 +99,9 @@ pub async fn actor_for_session(pool: &PgPool, token: &str) -> AppResult<Option<A
 
 pub async fn actor_for_api_token(pool: &PgPool, token: &str) -> AppResult<Option<Actor>> {
     let token_hash = auth::hash_token(token);
+    let cols = actor_columns();
     let row = sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {ACTOR_COLUMNS}
+        "SELECT {cols}
          FROM api_tokens t JOIN users u ON u.id = t.user_id
          WHERE t.token_hash = $1 AND (t.expires_at IS NULL OR t.expires_at > now()) AND u.active"
     ))
@@ -677,31 +679,63 @@ pub async fn set_password(
 /// session that made the change. Personal access tokens stay: they are
 /// separate credentials the user revokes one by one.
 ///
+/// Wrong current passwords count on the same per-username counter of
+/// `throttle` as failed sign-ins (whoever holds a stolen session or token
+/// must not guess the password without a limit); a full counter refuses the
+/// attempt before the password is checked. The web form and
+/// `POST /api/v1/me/password` both come here, so neither path is unthrottled.
+///
 /// # Invariants
 ///
-/// * **Permission:** the current password must be right (400); the new one
-///   must pass the password rules (400).
+/// * **Permission:** a local account (single sign-on accounts have no
+///   password, 400, not counted); not throttled (429 with the wait, also for
+///   the right password); the current password must be right (400, counted);
+///   the new one must pass the password rules (400).
 /// * **Locks:** none.
 /// * **Data:** the password is stored only as a hash; every web session of
 ///   the user except `keep_session` is deleted, personal access tokens stay.
-/// * **Audit:** `user.password` (with the number of sessions ended).
+///   A right current password clears the username's counter.
+/// * **Audit:** `user.password` (with the number of sessions ended);
+///   a wrong current password writes `user.password_failed` (never a
+///   password).
 /// * **Notifications / webhooks:** none.
 /// * **Atomic:** one transaction.
 pub async fn change_own_password(
     pool: &PgPool,
+    throttle: &auth::SignInThrottle,
     actor: &Actor,
     current: &str,
     new: &str,
     keep_session: Option<&str>,
 ) -> AppResult<()> {
+    if get(pool, actor.id).await?.auth_source != "local" {
+        return Err(AppError::BadRequest(
+            "This account signs in via single sign-on and has no local password.".into(),
+        ));
+    }
+    let keys = auth::SignInThrottle::keys(&actor.username, None);
+    if let Some(wait) = throttle.blocked(&keys) {
+        let minutes = wait.as_secs().div_ceil(60).max(1);
+        tracing::warn!(username = %actor.username, "own password change throttled");
+        return Err(AppError::TooManyRequests {
+            message: format!(
+                "Too many failed attempts. Try again in {minutes} minute{}.",
+                if minutes == 1 { "" } else { "s" }
+            ),
+            retry_after: wait,
+        });
+    }
     if authenticate_local(pool, &actor.username, current)
         .await?
         .is_none()
     {
+        throttle.failed(&keys);
+        record_failed_password_change(pool, actor).await?;
         return Err(AppError::BadRequest(
             "The current password is wrong.".into(),
         ));
     }
+    throttle.succeeded(&actor.username);
     domain::validate_password(new)?;
     let hash = auth::hash_password_async(new.to_string()).await?;
     let mut tx = pool.begin().await?;
@@ -725,6 +759,26 @@ pub async fn change_own_password(
         Some(actor.id),
         "Changed own password",
         json!({ "other_sessions_ended": ended }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Records a wrong current password of the own password change
+/// (`user.password_failed`), like a failed sign-in: the account, never what
+/// was typed.
+async fn record_failed_password_change(pool: &PgPool, actor: &Actor) -> AppResult<()> {
+    tracing::warn!(username = %actor.username, "wrong current password at a password change");
+    let mut tx = pool.begin().await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "user.password_failed",
+        "user",
+        Some(actor.id),
+        "Wrong current password at a password change",
+        json!({}),
     )
     .await?;
     tx.commit().await?;

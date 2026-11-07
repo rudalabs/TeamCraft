@@ -152,6 +152,48 @@ pub fn review_outcome(decisions: &[Decision]) -> ReviewOutcome {
     }
 }
 
+/// Why somebody may not review a change order (separation of duties).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReviewConflict {
+    /// Created the change order.
+    Author,
+    /// Submitted (or, as an administrator, prepared) the change order for the author.
+    Submitter,
+    /// Changed the data under review: created a revision, uploaded a file or edited it.
+    Editor,
+}
+
+impl ReviewConflict {
+    /// Sentence fragment for error messages, e.g. "edited the revisions under review".
+    pub fn describe(self) -> &'static str {
+        match self {
+            ReviewConflict::Author => "created this change",
+            ReviewConflict::Submitter => "prepared or submitted this change",
+            ReviewConflict::Editor => "changed the revisions under review",
+        }
+    }
+}
+
+/// Four-eyes check: the reviewer must be neither the author, nor the person
+/// who submitted the change (an administrator acting for the author), nor
+/// anyone who changed the affected revisions (`editors`).
+pub fn conflicting_reviewer(
+    reviewer: uuid::Uuid,
+    author: uuid::Uuid,
+    submitter: Option<uuid::Uuid>,
+    editors: &[uuid::Uuid],
+) -> Option<ReviewConflict> {
+    if reviewer == author {
+        Some(ReviewConflict::Author)
+    } else if submitter == Some(reviewer) {
+        Some(ReviewConflict::Submitter)
+    } else if editors.contains(&reviewer) {
+        Some(ReviewConflict::Editor)
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Change requests (ECR) – the step before a change order (ECO)
 // ---------------------------------------------------------------------------

@@ -44,6 +44,20 @@ pub async fn list(pool: &PgPool, actor: &Actor, only_active: bool) -> AppResult<
     .await?)
 }
 
+/// Every project group, for the project overview of an administrator who
+/// manages groups they may not read (need-to-know policy): names, codes and
+/// member counts are management data, not content.
+pub async fn list_managed(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Project>> {
+    if !actor.is_admin() {
+        return list(pool, actor, false).await;
+    }
+    Ok(sqlx::query_as::<_, Project>(&format!(
+        "SELECT {COLUMNS} FROM projects ORDER BY active DESC, name"
+    ))
+    .fetch_all(pool)
+    .await?)
+}
+
 /// The actor's own memberships whose group is restricted.
 pub async fn restricted_memberships(pool: &PgPool, actor: &Actor) -> AppResult<Vec<Uuid>> {
     Ok(sqlx::query_scalar::<_, Uuid>(
@@ -89,6 +103,28 @@ pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Project> {
     let project = get_unchecked(pool, id).await?;
     access::ensure_visible(actor, Some(project.id), access::not_found_project())?;
     Ok(project)
+}
+
+/// A project group for its maintenance (members, policy, settings): like
+/// [`get`], but an administrator also reaches a group their need-to-know
+/// policy hides. The record holds no content of the group.
+pub async fn get_for_management(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Project> {
+    if actor.is_admin() {
+        return get_unchecked(pool, id).await;
+    }
+    get(pool, actor, id).await
+}
+
+/// [`get_for_management`] by code.
+pub async fn get_by_code_for_management(
+    pool: &PgPool,
+    actor: &Actor,
+    code: &str,
+) -> AppResult<Project> {
+    if actor.is_admin() {
+        return get_by_code_unchecked(pool, code).await;
+    }
+    get_by_code(pool, actor, code).await
 }
 
 pub(crate) async fn get_by_code_unchecked(pool: &PgPool, code: &str) -> AppResult<Project> {
@@ -140,11 +176,19 @@ pub async fn set_visibility(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(access::not_found_project)?;
-    access::ensure_visible(actor, Some(id), access::not_found_project())?;
     require_manager(&mut tx, actor, id).await?;
     if current.visibility == visibility.as_str() {
         tx.rollback().await?;
         return Ok(current);
+    }
+    if visibility == ProjectVisibility::Internal {
+        super::project_policy::require_member_manager_under_policy(
+            &mut tx,
+            actor,
+            id,
+            "Opening the group to all users",
+        )
+        .await?;
     }
     let project = sqlx::query_as::<_, Project>(&format!(
         "UPDATE projects SET visibility = $2 WHERE id = $1 RETURNING {COLUMNS}"
@@ -231,7 +275,11 @@ pub(crate) async fn require_manager(
     project_id: Uuid,
 ) -> AppResult<()> {
     // A hidden group answers like a missing one, never "only managers".
-    access::ensure_visible(actor, Some(project_id), access::not_found_project())?;
+    // Administrators maintain every group, also one whose need-to-know
+    // policy keeps them from reading it.
+    if !actor.is_admin() {
+        access::ensure_visible(actor, Some(project_id), access::not_found_project())?;
+    }
     if can_manage(conn, actor, project_id).await? {
         Ok(())
     } else {
@@ -360,7 +408,17 @@ pub async fn update(
     .ok_or_else(|| AppError::not_found("Project not found."))?;
     require_manager(&mut tx, actor, id).await?;
     let oidc_group = if actor.is_admin() {
-        clean_group(upd.oidc_group)?
+        let wanted = clean_group(upd.oidc_group)?;
+        if wanted != current.oidc_group {
+            super::project_policy::require_member_manager_under_policy(
+                &mut tx,
+                actor,
+                id,
+                "Linking another identity-provider group",
+            )
+            .await?;
+        }
+        wanted
     } else {
         current.oidc_group.clone()
     };
@@ -586,6 +644,8 @@ pub async fn members(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<ProjectMe
 ///   unknown username is refused (400).
 /// * **Locks:** the group row (`FOR UPDATE`) before the manager check, so a manager removed
 ///   at the same moment is refused and membership changes of one group are serialised.
+/// * **Policy:** an administrator who is no member cannot add themselves (or make themselves
+///   manager) to a group whose need-to-know policy is in force (403).
 /// * **Data:** an existing membership keeps its source (an IdP-synchronised
 ///   one stays one) and is only ever raised to manager, never lowered.
 /// * **Audit:** `project.add_member`.
@@ -598,7 +658,7 @@ pub async fn add_member(
     username: &str,
     manager: bool,
 ) -> AppResult<ProjectMember> {
-    let project = get(pool, actor, project_id).await?;
+    let project = get_for_management(pool, actor, project_id).await?;
     let user = users::find_by_username(pool, username)
         .await?
         .ok_or_else(|| AppError::BadRequest(format!("Unknown user '{}'.", username.trim())))?;
@@ -609,6 +669,9 @@ pub async fn add_member(
         .execute(&mut *tx)
         .await?;
     require_manager(&mut tx, actor, project_id).await?;
+    if user.id == actor.id {
+        super::project_policy::forbid_admin_self_add(&mut tx, actor, project_id, manager).await?;
+    }
     // An existing membership keeps its source: one synchronised from the
     // identity provider stays one (also when its holder is made a manager),
     // so it still ends when the IdP drops the user from the group.
@@ -639,6 +702,9 @@ pub async fn add_member(
             json!({ "user_id": user.id, "manager": manager }),
         )
         .await?;
+        if user.id == actor.id {
+            super::project_policy::note_admin_self_add(&mut tx, actor, &project).await?;
+        }
     }
     tx.commit().await?;
     members(pool, project_id)
@@ -672,7 +738,7 @@ pub async fn remove_member(
     project_id: Uuid,
     user_id: Uuid,
 ) -> AppResult<i64> {
-    let project = get(pool, actor, project_id).await?;
+    let project = get_for_management(pool, actor, project_id).await?;
     let mut tx = pool.begin().await?;
     // serialise membership changes of this group
     sqlx::query("SELECT id FROM projects WHERE id = $1 FOR UPDATE")

@@ -96,12 +96,15 @@ enum Command {
         #[arg(long)]
         addr: Option<String>,
     },
-    /// Extract the text of a PDF (used by the server, which never parses a PDF
-    /// in its own process: time, size and memory limits).
+    /// Extract the text of a PDF or an HTML report (used by the server, which
+    /// never parses them in its own process: time, size and memory limits).
     #[command(hide = true)]
     TextExtract {
-        /// Read at most this much of the PDF on standard input (more is refused);
-        /// the text goes to standard output.
+        /// pdf or html
+        #[arg(long, default_value = "pdf")]
+        format: String,
+        /// Read at most this much of the file on standard input (a bigger PDF is
+        /// refused, a bigger HTML file is cut); the text goes to standard output.
         #[arg(long, default_value_t = teamcraft::pdftext::MAX_PDF_BYTES)]
         max_input_bytes: u64,
         /// Limit the address space of this process (0 = unlimited).
@@ -112,7 +115,7 @@ enum Command {
     /// runs every conversion in its own process with a time limit).
     #[command(hide = true)]
     PreviewMesh {
-        /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, pts, xyz, las –
+        /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, nx-part, pts, xyz, las –
         /// or tcm for a cached preview mesh (only --signature)
         #[arg(long)]
         format: String,
@@ -224,6 +227,7 @@ fn main() -> ExitCode {
         );
     }
     if let Some(Command::TextExtract {
+        format,
         max_input_bytes,
         max_memory_bytes,
     }) = &cli.command
@@ -231,7 +235,12 @@ fn main() -> ExitCode {
         teamcraft::preview::limit_memory(*max_memory_bytes);
         // the parser's panic messages are not meant for users
         std::panic::set_hook(Box::new(|_| {}));
-        return match teamcraft::pdftext::run_job(
+        let Some(format) = teamcraft::pdftext::TextFormat::parse(format) else {
+            eprintln!("Error: unknown format {format:?} (pdf or html)");
+            return ExitCode::FAILURE;
+        };
+        return match teamcraft::pdftext::run_job_as(
+            format,
             std::io::stdin().lock(),
             std::io::stdout().lock(),
             *max_input_bytes,
@@ -597,7 +606,12 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 .execute(&pool)
                 .await?;
             }
-            println!(
+            // The `user` commands write their report with `writeln!`, not
+            // `println!`: a closed pipe (`teamcraft user list | head`) is
+            // then an error, not a panic. The report holds account names,
+            // roles and groups the operator asked for – never a password.
+            writeln!(
+                std::io::stdout(),
                 "created user '{}' with role {}{}",
                 user.username,
                 user.role,
@@ -609,7 +623,7 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                         projects.join(", ").to_uppercase()
                     )
                 }
-            );
+            )?;
         }
         UserCommand::SetPassword { username } => {
             let user = services::users::find_by_username(&pool, &username)
@@ -617,21 +631,26 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 .with_context(|| format!("no user named '{username}'"))?;
             let password = read_new_password()?;
             services::users::set_password(&pool, None, user.id, &password).await?;
-            println!(
+            writeln!(
+                std::io::stdout(),
                 "password of '{}' updated; existing sessions were signed out",
                 user.username
-            );
+            )?;
         }
         UserCommand::List => {
-            println!(
+            let users = services::users::list(&pool).await?;
+            let mut out = std::io::stdout().lock();
+            writeln!(
+                out,
                 "{:<24} {:<10} {:<6} {:<7} DISPLAY NAME",
                 "USERNAME", "ROLE", "SOURCE", "ACTIVE"
-            );
-            for u in services::users::list(&pool).await? {
-                println!(
+            )?;
+            for u in users {
+                writeln!(
+                    out,
                     "{:<24} {:<10} {:<6} {:<7} {}",
                     u.username, u.role, u.auth_source, u.active, u.display_name
-                );
+                )?;
             }
         }
     }

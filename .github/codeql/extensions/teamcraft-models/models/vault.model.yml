@@ -1,0 +1,22 @@
+# rust/path-injection: the CodeQL Rust models treat every axum handler
+# argument as user input – `State<AppState>` included – so the configured vault
+# directory (`Vault::root`, read from TEAMCRAFT_VAULT_DIR at start-up) showed up
+# as a "user-provided value" in every file path under it (traced through
+# Vault::objects_dir, tmp_dir and uploads_dir in the alert flows).
+#
+# The paths these functions return are built only from that directory, fixed
+# names, a hex SHA-256 checked in object_path, and server-generated UUIDs
+# (staging_path); nothing from a request reaches them. They are barriers for
+# path injection. A new function that puts request data into a vault path must
+# validate it and get its own review – it is not covered by these rows.
+extensions:
+  - addsTo:
+      pack: codeql/rust-all
+      extensible: barrierModel
+    data:
+      - ["<teamcraft::vault::Vault>::objects_dir", "ReturnValue", "path-injection", "manual"]
+      - ["<teamcraft::vault::Vault>::tmp_dir", "ReturnValue", "path-injection", "manual"]
+      - ["<teamcraft::vault::Vault>::uploads_dir", "ReturnValue", "path-injection", "manual"]
+      - ["<teamcraft::vault::Vault>::object_path", "ReturnValue", "path-injection", "manual"]
+      - ["<teamcraft::vault::Vault>::staging_path", "ReturnValue", "path-injection", "manual"]
+      - ["<teamcraft::vault::Vault>::root", "ReturnValue", "path-injection", "manual"]

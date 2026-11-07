@@ -42,8 +42,9 @@ and the proofing tests).
 
 ## Coverage in CI
 
-The job *coverage* in `.github/workflows/ci.yml` runs `cargo llvm-cov` over
-the complete test suite with PostgreSQL 16 and the client tools, prints the
+The PostgreSQL 18 leg of the job *tests* in `.github/workflows/ci.yml` (until
+2026-11-07 a separate job *coverage*) runs `cargo llvm-cov` over
+the complete test suite with PostgreSQL 18 and the client tools, prints the
 per-file summary into the job summary and uploads the HTML report
 (`coverage-html`, 14 days) as an artifact.
 
@@ -101,6 +102,7 @@ measure of quality. The CI numbers in the tables above are still from
 | Assistant, MCP, agent tools | `assistant` (3), `assistant_threads` (3), `agent_tools` (4), `mcp` (3), `mcp_contract` (2) |
 | Web UI | `web_ui` (16) |
 | Command line | `cli` (4) |
+| Desktop app and server versions | `desktop_compat` (4, the version handshake rules, no database) |
 | Architecture rules | `architecture_guards` (7, reads the sources, no database) |
 | Scale check | `scale.rs` (0 active, one `#[ignore]` test; `scale/seed.sql`) |
 | Shared helpers and data | `common/mod.rs` (test database per test), `fixtures/` (NIST CAD files, v0.1.0 seed) |
