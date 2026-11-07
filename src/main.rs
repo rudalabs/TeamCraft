@@ -639,7 +639,8 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 scope,
             )
             .await?;
-            eprintln!(
+            writeln!(
+                std::io::stderr(),
                 "created token '{}' ({}) for '{}', expires {}; it is shown only once:",
                 record.name,
                 scope.label(),
@@ -647,7 +648,7 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 record
                     .expires_at
                     .map_or_else(|| "never".to_string(), |t| t.format("%Y-%m-%d").to_string())
-            );
+            )?;
             println!("{token}");
         }
         UserCommand::List => {
