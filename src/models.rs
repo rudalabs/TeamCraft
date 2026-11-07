@@ -30,7 +30,14 @@ pub struct ApiToken {
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
+    /// `full`, `write`, `read_only` or `mcp_only` (`domain::TokenScope`).
+    pub scope: String,
+    /// Sliding lifetime: expires after this many days without use.
+    pub idle_days: Option<i32>,
 }
+
+pub const TOKEN_COLUMNS: &str =
+    "id, name, token_prefix, created_at, last_used_at, expires_at, scope, idle_days";
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct Project {
@@ -477,6 +484,23 @@ pub struct ChangeReview {
     pub decision: String,
     pub comment: String,
     pub decided_at: Option<DateTime<Utc>>,
+    /// Why a pending reviewer can no longer decide (`deactivated`, `not_editor`,
+    /// `cannot_see_items`); `None` when they can, and for decided reviews.
+    #[sqlx(default)]
+    pub absent: Option<String>,
+}
+
+/// A review of an earlier round of a change (kept when a new round starts).
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct ChangeReviewRound {
+    pub round: i32,
+    pub reviewer_id: Uuid,
+    pub reviewer_username: String,
+    pub reviewer_name: String,
+    pub decision: String,
+    pub comment: String,
+    pub decided_at: Option<DateTime<Utc>>,
+    pub closed_at: DateTime<Utc>,
 }
 
 /// An engineering change request (ECR).

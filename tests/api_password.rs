@@ -283,9 +283,15 @@ async fn single_sign_on_accounts_have_no_password_to_change() {
     .await
     .expect("provision");
     let actor = app.actor("sso.user").await;
-    let (_, token) = users::create_token(&app.pool, &actor, "desktop", None)
-        .await
-        .expect("token");
+    let (_, token) = users::create_token(
+        &app.pool,
+        &actor,
+        "desktop",
+        users::TokenLifetime::Unlimited,
+        teamcraft::domain::TokenScope::Full,
+    )
+    .await
+    .expect("token");
     let me = app.api(Method::GET, "/api/v1/me", &token, None).await;
     assert_eq!(me.json()["auth_source"], "oidc", "{}", me.text());
     for _ in 0..3 {

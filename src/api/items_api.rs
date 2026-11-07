@@ -461,7 +461,13 @@ pub(super) async fn checkin(
         web::Received::default()
     };
     // Large files sent before as chunked uploads (field `uploads`).
-    let sessions = web::take_session_uploads(&st, &me, rev.id, &mut received).await?;
+    let sessions = web::take_session_uploads(
+        &st,
+        &me,
+        crate::services::uploads::Scope::Revision(rev.id),
+        &mut received,
+    )
+    .await?;
     let (rev, stored) =
         files::check_in(&st.db, &me, rev.id, &received.uploads, &received.comment).await?;
     uploads::forget(&st.db, &st.vault, &sessions).await;

@@ -11,6 +11,25 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/me
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/items?q=bracket&system=solidworks"
 ```
 
+## Token scopes
+
+A token has a scope that narrows what its user may do with it; it never
+widens the user's rights. Choose it on the account page, with
+`POST /api/v1/tokens` (`{name, expires_in_days?, scope?}`) or
+`teamcraft user create-token --scope`.
+
+| Scope       | May                                                                                                   |
+|-------------|-------------------------------------------------------------------------------------------------------|
+| `full`      | read, write and approve: everything the user may do (default; every older token and the desktop token) |
+| `write`     | read and write, but not approve: `POST /changes/{n}/review`, `POST /change-requests/{n}/decide` and `POST /items/{n}/revisions/{r}/obsolete` answer 403 |
+| `read_only` | `GET`/`HEAD` requests and the read-only MCP tools                                                     |
+| `mcp_only`  | only `POST /api/v1/mcp` (all tools)                                                                   |
+
+A refused request answers `403` and changes nothing. A `write` token cannot
+create a `full` token. `GET /api/v1/me` shows the `token_scope`. A token
+with an idle lifetime (the desktop app's) expires after that many days
+without use.
+
 ## Read permissions
 
 Every answer contains only what the token's user may read (see
@@ -386,6 +405,16 @@ assigned reviewers never are. It only reads – add a suggestion with
 `POST /changes/{number}/reviewers`. See
 [Suggested reviewers](../guide/changes.md#suggested-reviewers) for the
 sources and points.
+
+### Review rounds and absent reviewers
+
+`GET /changes/{number}` returns `review_round`, `earlier_rounds` (reviews of
+the rounds before) and, per entry of `reviews`, `absent` (`deactivated`,
+`not_editor`, `cannot_see_items` or `null`; set only for a pending reviewer
+who cannot decide). `POST /changes/{number}/reviewers/{old_username}/replace`
+with `{"username": "<substitute>"}` replaces a pending reviewer while the
+change is in review (author or admin; 409 when it is not in review or the
+reviewer has decided).
 
 ## Change requests (ECR)
 
