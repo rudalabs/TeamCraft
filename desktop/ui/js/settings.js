@@ -7,7 +7,7 @@ import { applySkin } from "./skins.js";
 import { checkServerUrl, showConnect } from "./connect.js";
 import { checkUpdate } from "./shell.js";
 import { resetAssistant } from "./assistant.js";
-import { agent, agentSettingsDialog, endAgentPermissions } from "./agent.js";
+import { agent, agentSettingsDialog, endAgentPermissions, localAgentsAllowed } from "./agent.js";
 
 export function openSettings() {
   var current = document.documentElement.getAttribute("data-skin");
@@ -45,11 +45,12 @@ export function openSettings() {
       TAURI.dialog ? h("button", { type: "button", on: { click: function () {
         TAURI.dialog.open({ directory: true, defaultPath: ws.value }).then(function (dir) { if (dir) ws.value = dir; });
       } } }, "Choose…") : null])),
-    h("h3", { text: "Agents" }),
-    h("div.row", null, [
+    // hidden when the administrator turned local agents off (TEAMCRAFT_LOCAL_AGENTS)
+    localAgentsAllowed() ? h("h3", { text: "Agents" }) : null,
+    localAgentsAllowed() ? h("div.row", null, [
       h("span.hint", { text: "Local AI agents (ACP) that work with TeamCraft's tools – none until you add one." }),
       h("button", { type: "button", on: { click: function () { dlg.close(); agentSettingsDialog(); } } }, "Agents…")
-    ]),
+    ]) : null,
     h("h3", { text: "Notifications" }),
     notifyBox,
     h("h3", { text: "Updates" }),

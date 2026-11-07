@@ -831,3 +831,76 @@ async fn mcp_simulations() {
 
     app.teardown().await;
 }
+
+/// One MCP request with the header the desktop app adds for a local agent.
+async fn rpc_as_local_agent(app: &common::TestApp, token: &str, msg: Value) -> common::Response {
+    app.send(
+        Request::builder()
+            .method(Method::POST)
+            .uri("/api/v1/mcp")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-teamcraft-client", "desktop-agent")
+            .body(Body::from(msg.to_string()))
+            .unwrap(),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn local_agents_are_allowed_by_default() {
+    let app = app_or_skip!();
+    let (_, token) = app.user("lina", Role::Editor).await;
+    let r = app.api(Method::GET, "/api/v1/me", &token, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["capabilities"]["local_agents"], true);
+    // the desktop's marked connection works as before
+    let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" });
+    let r = rpc_as_local_agent(&app, &token, ping).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.json().get("error").is_none(), "{}", r.text());
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn local_agents_off_refuses_the_desktop_agent_only() {
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_LOCAL_AGENTS", "off")]).await else {
+        return;
+    };
+    let (_, token) = app.user("lina", Role::Editor).await;
+    let r = app.api(Method::GET, "/api/v1/me", &token, None).await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert_eq!(r.json()["capabilities"]["local_agents"], false);
+    assert_eq!(r.json()["capabilities"]["mcp"], true);
+
+    let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" });
+    let r = rpc_as_local_agent(&app, &token, ping.clone()).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+    let message = r.json()["error"]["message"].as_str().unwrap().to_string();
+    assert!(message.contains("TEAMCRAFT_LOCAL_AGENTS=off"), "{message}");
+    // also a tool call, not only the handshake
+    let call = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                       "params": { "name": "search_items", "arguments": { "query": "x" } } });
+    let r = rpc_as_local_agent(&app, &token, call).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    // an unmarked MCP client (the stdio bridge, an assistant the user set up
+    // with a token) is not recognisable and keeps working – documented
+    let r = rpc(&app, &token, ping).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(r.json().get("error").is_none(), "{}", r.text());
+
+    // without a token the answer stays 401, the policy reveals nothing
+    let r = app
+        .send(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/v1/mcp")
+                .header("x-teamcraft-client", "desktop-agent")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED);
+    app.teardown().await;
+}

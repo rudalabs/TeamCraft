@@ -7,7 +7,7 @@ import { checkServerVersion, showConnect } from "./connect.js";
 import { navHead, selectView } from "./navigator.js";
 import { activeTab, closeTab, renderActive, renderTabs } from "./tabs.js";
 import { initAssistant } from "./assistant.js";
-import { agent, agentProfiles, openAgent, schedulePaint, updateAgentControls } from "./agent.js";
+import { agent, agentProfiles, applyAgentPolicy, localAgentsAllowed, openAgent, schedulePaint, updateAgentControls } from "./agent.js";
 import { openRevision } from "./revision.js";
 import { impactGroups } from "./references.js";
 import { SYNC_LABEL, checkWorkspaceLayout } from "./workspace.js";
@@ -106,8 +106,12 @@ export function enterShell() {
     renderActive();
     refreshWorklistCount();
     pollNotifications(true);
-    // an agent that kept running while the window reloaded
-    agentProfiles().then(function () { return call("agent_status"); }).then(function (s) {
+    // the administrator may have turned local agents off (TEAMCRAFT_LOCAL_AGENTS);
+    // otherwise: an agent that kept running while the window reloaded
+    applyAgentPolicy().then(function () {
+      if (!localAgentsAllowed()) return null;
+      return agentProfiles().then(function () { return call("agent_status"); });
+    }).then(function (s) {
       if (s && !agent.running) { agent.running = s; agent.busy = s.busy; updateAgentControls(); schedulePaint(true); }
     }, function () {});
     checkWorkspaceLayout();

@@ -603,6 +603,8 @@ async fn me(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<
     body["capabilities"] = json!({
         "assistant": crate::services::assistant::enabled(&st),
         "mcp": true,
+        // TEAMCRAFT_LOCAL_AGENTS: the desktop offers its Agent view (ACP) only when true
+        "local_agents": st.config.local_agents.allowed(),
     });
     Ok(Json(body))
 }

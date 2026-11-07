@@ -84,7 +84,9 @@ check-outs and reviews, and a **local working folder**:
   calls, the agent's plan, permission prompts (*Allow once* / *Reject*),
   *Cancel* and quick prompts (release notes, release check, change review,
   worklist triage). Through the app the agent may only read text files in
-  the workspace folder; it gets no write access and no terminal. See
+  the workspace folder; it gets no write access and no terminal. If the
+  administrator turned local agents off (`TEAMCRAFT_LOCAL_AGENTS=off`), the
+  app shows no *Agent* entry and refuses to start one. See
   [ACP agents](assistant.md#acp-agents-in-the-desktop-app).
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a

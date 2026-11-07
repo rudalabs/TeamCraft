@@ -5,7 +5,7 @@
 import { $, api, append, call, clear, dialog, errorText, field, h, label, setStatus, state, toast, tool } from "./core.js";
 import { refreshWorklistCount } from "./shell.js";
 import { navHead, selectView } from "./navigator.js";
-import { findTab, openTab } from "./tabs.js";
+import { closeTab, findTab, openTab } from "./tabs.js";
 import { markdownLite } from "./assistant.js";
 import { openWorkspaceFolder } from "./workspace.js";
 
@@ -43,6 +43,8 @@ export var agent = {
   toolOrder: [],
   plan: [],
   permissions: {},
+  allowed: true,    // the server allows local agents (TEAMCRAFT_LOCAL_AGENTS)
+  policyMessage: null,
   contextKey: null, // the revision or change tab the agent is told about
   paint: false,
   navDirty: false,
@@ -54,7 +56,39 @@ export function agentProfiles() {
   return call("agent_profiles").then(function (p) { agent.profiles = p; return p; });
 }
 
+/** Local agents are allowed unless the server says otherwise
+ * (`capabilities.local_agents` of GET /me; Rust checks it again on start). */
+export function localAgentsAllowed() {
+  var caps = state.me && state.me.capabilities;
+  return agent.allowed && !(caps && caps.local_agents === false);
+}
+
+/** Asks Rust for the server's policy (it also disables View → Agent and
+ * ends a running agent when off), then hides the Agent entry points. */
+export function applyAgentPolicy() {
+  function apply(allowed, message) {
+    agent.allowed = allowed;
+    agent.policyMessage = allowed ? null : message;
+    document.querySelectorAll(".rail button[data-view=agent]").forEach(function (b) { b.classList.toggle("hidden", !allowed); });
+    if (!allowed) {
+      agent.running = null;
+      agent.busy = false;
+      if (findTab("agent")) closeTab("agent");
+      if (state.view === "agent") selectView("home");
+    }
+  }
+  return call("agent_policy").then(function (p) { apply(p.allowed, p.message); }, function () {
+    // server not reachable: what GET /me said at sign-in
+    var caps = state.me && state.me.capabilities;
+    apply(!(caps && caps.local_agents === false), "Local agents are turned off on this TeamCraft server by the administrator (TEAMCRAFT_LOCAL_AGENTS=off).");
+  });
+}
+
 export function openAgent() {
+  if (!localAgentsAllowed()) {
+    toast(agent.policyMessage || "Local agents are turned off on this TeamCraft server by the administrator (TEAMCRAFT_LOCAL_AGENTS=off). Use Ask TeamCraft instead.", "error");
+    return;
+  }
   if (state.view !== "agent") selectView("agent");
   if (state.active !== "agent") openTab({ key: "agent", kind: "agent", title: "Agent" });
 }
@@ -380,6 +414,13 @@ export function quickPrompt(p) {
 
 export function renderAgentNav() {
   if (state.view !== "agent") return Promise.resolve();
+  if (!localAgentsAllowed()) {
+    var nav = $("navigator");
+    clear(nav);
+    nav.appendChild(navHead("Agent", []));
+    nav.appendChild(h("div.agent-nav", null, [h("p.hint", { text: agent.policyMessage || "Local agents are turned off on this TeamCraft server by the administrator (TEAMCRAFT_LOCAL_AGENTS=off)." })]));
+    return Promise.resolve();
+  }
   return agentProfiles().then(function (p) {
     if (state.view !== "agent") return;
     var nav = $("navigator");
@@ -482,6 +523,7 @@ export function setAgentModel(session, model) {
 
 /** Toolbar button of a revision or change: opens the agent with it as context. */
 export function agentButton(tab) {
+  if (!localAgentsAllowed()) return null;
   if (!agent.profiles || !agent.profiles.agents.length) return null;
   return tool("Agent", "agent", function () {
     agent.contextKey = tab.key;

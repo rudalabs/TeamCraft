@@ -1192,6 +1192,35 @@ pub fn agent_status(state: State<'_, AppState>) -> Option<AgentState> {
         .map(describe)
 }
 
+/// Whether the server lets this user run local agents.
+#[derive(Serialize)]
+pub struct AgentPolicy {
+    pub allowed: bool,
+    /// Why not, naming the administrator setting.
+    pub message: Option<String>,
+}
+
+/// Asks the server whether local agents are allowed
+/// (`TEAMCRAFT_LOCAL_AGENTS`), switches the *View → Agent* menu entry to
+/// match and ends a running agent when they are not. The user interface
+/// calls it after sign-in; `agent_start` checks again on its own.
+#[tauri::command]
+pub async fn agent_policy(app: AppHandle, state: State<'_, AppState>) -> CmdResult<AgentPolicy> {
+    let api = signed_in_api(&state)?;
+    let me = api.json(Method::GET, "/me", None).await?;
+    let gate = acp::local_agents_gate(&me);
+    if gate.is_err() {
+        stop_agent(&state);
+    }
+    if let Some(menu) = app.try_state::<crate::AgentMenuItem>() {
+        let _ = menu.0.set_enabled(gate.is_ok());
+    }
+    Ok(AgentPolicy {
+        allowed: gate.is_ok(),
+        message: gate.err(),
+    })
+}
+
 /// Starts a configured agent in the workspace folder and opens a session
 /// with TeamCraft's MCP server (the desktop's token, so the user's rights).
 #[tauri::command]
@@ -1201,6 +1230,10 @@ pub async fn agent_start(
     name: String,
 ) -> CmdResult<AgentState> {
     let api = signed_in_api(&state)?;
+    // the server's administrator may have turned local agents off: asked
+    // fresh at every start, so a changed setting needs no restart of the app
+    let me = api.json(Method::GET, "/me", None).await?;
+    acp::local_agents_gate(&me).map_err(ApiError::local)?;
     let profile = snapshot(&state)
         .agents
         .into_iter()

@@ -9,8 +9,11 @@
 //! 1. `initialize` – protocol version 1 and the client capabilities;
 //! 2. `session/new` – the workspace folder as `cwd` and TeamCraft's MCP
 //!    server (`<server>/api/v1/mcp`, HTTP transport, the desktop's bearer
-//!    token as header), so the agent works with TeamCraft's tools and exactly
-//!    the rights of the signed-in user;
+//!    token as header, plus [`LOCAL_AGENT_HEADER`] so the server can refuse
+//!    local agents when its administrator turned them off), so the agent
+//!    works with TeamCraft's tools and exactly the rights of the signed-in
+//!    user. Before that, `commands::agent_start` asks the server whether
+//!    local agents are allowed at all ([`local_agents_gate`]);
 //! 3. `session/prompt` per user message; meanwhile the agent streams
 //!    `session/update` notifications (message chunks, tool calls, plans) and
 //!    may ask `session/request_permission`, which the user answers;
@@ -837,6 +840,28 @@ pub fn models_of(result: &Value) -> Option<Models> {
     config_models(&result["configOptions"]).or_else(|| legacy_models(&result["models"]))
 }
 
+// ---------------------------------------------------------------- policy
+
+/// Header on the MCP connection handed to a local agent, so the server can
+/// recognise (and, with `TEAMCRAFT_LOCAL_AGENTS=off`, refuse) it. Same
+/// name and value as `LOCAL_AGENT_HEADER` in the server's `src/config.rs`.
+pub const LOCAL_AGENT_HEADER: &str = "X-TeamCraft-Client";
+pub const LOCAL_AGENT_HEADER_VALUE: &str = "desktop-agent";
+
+/// Shown when the server's administrator turned local agents off.
+pub const LOCAL_AGENTS_OFF: &str = "Local agents are turned off on this TeamCraft server: the administrator \
+set TEAMCRAFT_LOCAL_AGENTS=off. Use Ask TeamCraft, the assistant configured on the server, instead.";
+
+/// May the desktop start a local agent, by the server's `GET /api/v1/me`?
+/// `capabilities.local_agents == false` refuses; a server too old to report
+/// it (no such field) allows, as before the setting existed.
+pub fn local_agents_gate(me: &Value) -> Result<(), String> {
+    match me["capabilities"]["local_agents"].as_bool() {
+        Some(false) => Err(LOCAL_AGENTS_OFF.to_string()),
+        _ => Ok(()),
+    }
+}
+
 // ---------------------------------------------------------------- session
 
 /// TeamCraft's MCP server as handed to the agent.
@@ -1161,7 +1186,11 @@ async fn handshake(
             "type": "http",
             "name": "teamcraft",
             "url": m.url,
-            "headers": [{ "name": "Authorization", "value": format!("Bearer {}", m.token) }],
+            "headers": [
+                { "name": "Authorization", "value": format!("Bearer {}", m.token) },
+                // lets the server refuse local agents (TEAMCRAFT_LOCAL_AGENTS=off)
+                { "name": LOCAL_AGENT_HEADER, "value": LOCAL_AGENT_HEADER_VALUE },
+            ],
         }]),
         _ => json!([]),
     };
@@ -1783,11 +1812,31 @@ mod tests {
         assert_eq!(
             new["mcpServers"],
             json!([{ "type": "http", "name": "teamcraft", "url": "https://plm.example.org/api/v1/mcp",
-                     "headers": [{ "name": "Authorization", "value": "Bearer fake-test-token" }] }])
+                     "headers": [{ "name": "Authorization", "value": "Bearer fake-test-token" },
+                                 { "name": "X-TeamCraft-Client", "value": "desktop-agent" }] }])
         );
         assert!(session.info.teamcraft_tools);
         assert_eq!(session.info.agent.as_deref(), Some("Fake Agent"));
         assert!(sink.events().is_empty());
+    }
+
+    #[test]
+    fn local_agents_gate_follows_the_server() {
+        assert!(local_agents_gate(&json!({ "capabilities": { "local_agents": true } })).is_ok());
+        let off = local_agents_gate(
+            &json!({ "capabilities": { "assistant": true, "local_agents": false } }),
+        )
+        .unwrap_err();
+        assert!(off.contains("TEAMCRAFT_LOCAL_AGENTS=off"), "{off}");
+        assert!(off.contains("administrator"), "{off}");
+        // an older server reports nothing: allowed, as before the setting
+        assert!(
+            local_agents_gate(&json!({ "capabilities": { "assistant": false, "mcp": true } }))
+                .is_ok()
+        );
+        assert!(local_agents_gate(&json!({ "username": "lina" })).is_ok());
+        // anything but a plain false does not turn agents off by accident
+        assert!(local_agents_gate(&json!({ "capabilities": { "local_agents": "off" } })).is_ok());
     }
 
     #[tokio::test]

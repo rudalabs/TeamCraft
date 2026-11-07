@@ -218,6 +218,52 @@ kind and identifiers, whether it was asked in the conversation and
 the outcome – `cancelled` when the client closed the connection before the
 answer – never the question or the answer).
 
+## Local agents
+
+The desktop app can run an AI agent on the user's own computer (its
+*Agent* view, see [ACP agents](../guide/assistant.md#acp-agents-in-the-desktop-app)).
+That agent sends the user's questions and the TeamCraft data it looks up
+to the agent's own AI provider, under the user's own account and terms.
+An organisation that wants AI use to go only through the provider the
+administrator configured for *Ask TeamCraft* can turn local agents off.
+
+| Variable                 | Default   | Meaning                                                                                                                                   |
+|--------------------------|-----------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_LOCAL_AGENTS` | `allowed` | `allowed` or `off`. `off`: the desktop app hides its *Agent* view and refuses to start a local agent; only *Ask TeamCraft* remains. Any other value stops the server at startup |
+
+Like every variable it also works as `TEAMCRAFT_LOCAL_AGENTS_FILE`. The
+startup log shows `local_agents=allowed|off`. Changing it needs a restart
+of the server; the desktop app picks it up at its next sign-in or window
+reload and checks it again before every agent start.
+
+What `off` does:
+
+* `GET /api/v1/me` reports `capabilities.local_agents: false`. The desktop
+  app then hides **Agent** in the rail, the toolbar buttons and the
+  *Settings → Agents* entry, disables *View → Agent* (`Ctrl/Cmd+4`), ends
+  an agent that is still running and refuses to start one, with a message
+  that names this setting. The refusal is in the app's Rust code, not only
+  in the user interface.
+* The desktop app marks the MCP connection it hands to a local agent with
+  the header `X-TeamCraft-Client: desktop-agent`. `POST /api/v1/mcp`
+  refuses such calls with `403` and a JSON-RPC error naming this setting,
+  also from an older desktop app or an agent that is still running.
+  Refusals are not written to the audit log (see below why they are not a
+  security boundary).
+
+What `off` does **not** do: it does not stop a user from handing their own
+personal access token to an MCP client of their choice (an agent set up
+outside the desktop app, the [`teamcraft mcp`](../reference/mcp.md)
+bridge, or any program that leaves out the header). The server cannot
+tell such a client from any other API client: the token carries the
+user's rights, whoever presents it. Treat `off` as a clear policy that the
+supported client follows, not as a technical barrier. The complement is
+scoped personal access tokens (read-only, no MCP), which are planned
+(`docs/OPEN_WORK.md`, F2). Until then, a written usage policy, the token
+list of each user (*Account → API tokens*, revocable by administrators)
+and the audit log (writes through MCP are recorded under the user's name)
+are the controls for the rest.
+
 ## Tests
 
 | Variable                      | Meaning                                                                                                                              |

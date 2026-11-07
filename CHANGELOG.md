@@ -15,6 +15,18 @@ see the notices in the README.
 
 Changes on `main` since the `v0.2.5` tag.
 
+### Added
+
+- `TEAMCRAFT_LOCAL_AGENTS=off` lets administrators turn off local AI agents
+  (the desktop app's *Agent* view, ACP), so that only the server-side
+  assistant *Ask TeamCraft* remains. `GET /api/v1/me` reports
+  `capabilities.local_agents`; the desktop app hides the Agent view, disables
+  *View → Agent*, ends a running agent and refuses to start one;
+  `POST /api/v1/mcp` refuses calls the desktop marks as coming from a local
+  agent (`X-TeamCraft-Client: desktop-agent`). The default `allowed` changes
+  nothing. It cannot stop a user from giving their own token to another MCP
+  client (scoped tokens, F2, are the complement).
+
 ## [0.2.5] - 2026-11-07
 
 Changes since the `v0.2.0` tag.

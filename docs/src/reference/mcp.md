@@ -34,6 +34,12 @@ session id. Protocol revisions `2025-06-18`, `2025-03-26` and `2024-11-05`
 are accepted. Without a valid token the endpoint answers like the rest of
 the API, with `401` and a JSON error.
 
+With `TEAMCRAFT_LOCAL_AGENTS=off` the endpoint refuses, with `403`, the
+calls that the desktop app marks as coming from a local agent it started
+(header `X-TeamCraft-Client: desktop-agent`). Other MCP clients are not
+affected: see [Local agents](../admin/configuration.md#local-agents) for
+what this setting can and cannot enforce.
+
 ## Setup
 
 Create a personal access token under **Account → API tokens**. Give it an

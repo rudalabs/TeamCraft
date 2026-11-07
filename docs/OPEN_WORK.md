@@ -82,6 +82,8 @@ feature milestone – the features in *What works* are enough; what is missing i
   - [x] F1 (rest): wrong current passwords of the own password change (web form and `POST /api/v1/me/password`)
     count like failed sign-ins (429 with `Retry-After`, audited as `user.password_failed`)
   - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
+    (also the complement of `TEAMCRAFT_LOCAL_AGENTS=off`, which only the desktop app and its marked MCP
+    connection obey: a token scoped to "no MCP" would stop a user's own MCP client too)
   - [x] F3: sign-in, failed sign-in and sign-out in the audit log (`user.sign_in`, `user.sign_in_failed`,
     `user.sign_out`; no password, token or unknown typed name)
   - [x] F4: web posts without `Origin` and `Referer` are refused; install guide says the proxy must overwrite

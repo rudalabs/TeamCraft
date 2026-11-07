@@ -19,12 +19,17 @@ pub mod tools;
 use axum::{
     body::Bytes,
     extract::State,
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde_json::{json, Value};
 
-use crate::{auth::Actor, auth::ApiUser, AppState};
+use crate::{
+    auth::Actor,
+    auth::ApiUser,
+    config::{LocalAgents, LOCAL_AGENT_HEADER, LOCAL_AGENT_HEADER_VALUE},
+    AppState,
+};
 
 /// Newest protocol revision spoken; offered when a client asks for another.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -68,8 +73,43 @@ fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message.into() } })
 }
 
+/// Told to a local agent when `TEAMCRAFT_LOCAL_AGENTS=off`.
+pub const LOCAL_AGENTS_OFF: &str =
+    "Local agents are turned off on this TeamCraft server by the administrator \
+(TEAMCRAFT_LOCAL_AGENTS=off). Use Ask TeamCraft, the assistant configured on the server, instead.";
+
+/// Whether a call must be refused under the local-agent policy: only calls
+/// the desktop app marked as coming from a local agent it started
+/// ([`LOCAL_AGENT_HEADER`]) can be recognised. Pure, for tests.
+pub fn refuses_local_agent(policy: LocalAgents, headers: &HeaderMap) -> bool {
+    !policy.allowed()
+        && headers.get_all(LOCAL_AGENT_HEADER).iter().any(|v| {
+            v.as_bytes()
+                .eq_ignore_ascii_case(LOCAL_AGENT_HEADER_VALUE.as_bytes())
+        })
+}
+
 /// `POST /api/v1/mcp`.
-pub async fn http(State(st): State<AppState>, ApiUser(me): ApiUser, body: Bytes) -> Response {
+pub async fn http(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if refuses_local_agent(st.config.local_agents, &headers) {
+        // not audited: the header is the desktop's courtesy, not a security
+        // boundary (the same token works without it)
+        tracing::debug!(
+            user = %me.username,
+            "MCP call of a local agent refused (TEAMCRAFT_LOCAL_AGENTS=off)"
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "application/json")],
+            error(Value::Null, INVALID_REQUEST, LOCAL_AGENTS_OFF).to_string(),
+        )
+            .into_response();
+    }
     let reply = match serde_json::from_slice::<Value>(&body) {
         Err(e) => Some(error(Value::Null, PARSE_ERROR, format!("parse error: {e}"))),
         Ok(Value::Array(batch)) if batch.is_empty() => {
@@ -244,6 +284,28 @@ async fn request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_agent_calls_are_refused_only_when_off() {
+        let mut marked = HeaderMap::new();
+        marked.insert(
+            LOCAL_AGENT_HEADER,
+            LOCAL_AGENT_HEADER_VALUE.parse().unwrap(),
+        );
+        let mut shouted = HeaderMap::new();
+        shouted.insert("X-TeamCraft-Client", "Desktop-Agent".parse().unwrap());
+        let mut other = HeaderMap::new();
+        other.insert(LOCAL_AGENT_HEADER, "cli".parse().unwrap());
+        let plain = HeaderMap::new();
+        assert!(refuses_local_agent(LocalAgents::Off, &marked));
+        assert!(refuses_local_agent(LocalAgents::Off, &shouted));
+        assert!(!refuses_local_agent(LocalAgents::Off, &other));
+        assert!(!refuses_local_agent(LocalAgents::Off, &plain));
+        for h in [&marked, &shouted, &other, &plain] {
+            assert!(!refuses_local_agent(LocalAgents::Allowed, h));
+        }
+        assert!(LOCAL_AGENTS_OFF.contains("TEAMCRAFT_LOCAL_AGENTS=off"));
+    }
 
     #[test]
     fn requests_notifications_and_garbage_are_told_apart() {
