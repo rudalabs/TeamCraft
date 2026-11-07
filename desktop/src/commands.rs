@@ -1269,8 +1269,10 @@ fn check_backend(wanted: acp::AgentBackend, available: &[acp::AgentBackend]) -> 
 /// Asks the server what the Agent view may use – local agents
 /// (`TEAMCRAFT_LOCAL_AGENTS`) and the company AI (the server's assistant) –
 /// and ends a running agent when local agents are off. The user interface
-/// calls it after sign-in; with local agents off the Agent view runs on the
-/// company AI, or shows a notice without one. `agent_start` checks again.
+/// calls it after sign-in, when the Agent view opens and every minute; with
+/// local agents off the Agent view runs on the company AI, or shows a notice
+/// without one. `agent_start`, `agent_prompt` and an allowing
+/// `agent_permission` check again.
 #[tauri::command]
 pub async fn agent_policy(state: State<'_, AppState>) -> CmdResult<AgentPolicy> {
     let api = signed_in_api(&state)?;
@@ -1279,6 +1281,19 @@ pub async fn agent_policy(state: State<'_, AppState>) -> CmdResult<AgentPolicy> 
         stop_agent(&state);
     }
     Ok(policy_of(&me, &snapshot(&state)))
+}
+
+/// Asks the server again whether local agents are allowed, before a running
+/// agent gets a message or a permission: an administrator who turned them
+/// off while the app was open ends the agent here, not only at the next
+/// sign-in (the user interface also asks every minute, agent_policy).
+async fn ensure_local_agents(state: &State<'_, AppState>) -> CmdResult<()> {
+    let api = signed_in_api(state)?;
+    let me = api.json(Method::GET, "/me", None).await?;
+    acp::local_agents_gate(&me).map_err(|message| {
+        stop_agent(state);
+        ApiError::local(message)
+    })
 }
 
 /// The user switches the Agent view between the company AI and the local
@@ -1377,6 +1392,7 @@ pub async fn agent_prompt(
     context: Option<acp::PromptContext>,
 ) -> CmdResult<String> {
     let agent = current_agent(&state)?;
+    ensure_local_agents(&state).await?;
     agent
         .prompt(&text, &context.unwrap_or_default())
         .await
@@ -1401,6 +1417,9 @@ pub async fn agent_permission(
         .filter(|r| r.session == session)
         .map(|r| r.agent.clone())
         .ok_or_else(|| ApiError::local("This request is no longer open."))?;
+    if allow {
+        ensure_local_agents(&state).await?;
+    }
     agent
         .answer_permission(key, allow)
         .await

@@ -13,7 +13,8 @@
 //!    local agents when its administrator turned them off), so the agent
 //!    works with TeamCraft's tools and exactly the rights of the signed-in
 //!    user. Before that, `commands::agent_start` asks the server whether
-//!    local agents are allowed at all ([`local_agents_gate`]);
+//!    local agents are allowed at all ([`local_agents_gate`]), and
+//!    `commands::agent_prompt` asks again before every message;
 //! 3. `session/prompt` per user message; meanwhile the agent streams
 //!    `session/update` notifications (message chunks, tool calls, plans) and
 //!    may ask `session/request_permission`, which the user answers;

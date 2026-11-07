@@ -107,7 +107,7 @@ export function enterShell() {
     // the Agent view's backend: the server's policy (TEAMCRAFT_LOCAL_AGENTS, the
     // company AI) and the user's pick; then an agent that kept running while
     // the window reloaded
-    applyAiPolicy().then(function () {
+    applyAiPolicy(true).then(function () {
       if (!localAgentsAllowed()) return null;
       return agentProfiles().then(function () { return call("agent_status"); });
     }).then(function (s) {
@@ -180,8 +180,14 @@ export function initShell() {
   });
   $("open-settings").addEventListener("click", openSettings);
   $("open-notifications").addEventListener("click", function () { selectView("notifications"); });
-  // New notifications: bell count and a toast, every minute while signed in.
-  setInterval(function () { if (state.me) pollNotifications(false); }, 60000);
+  // New notifications: bell count and a toast, every minute while signed in;
+  // and the server's AI policy, so a changed TEAMCRAFT_LOCAL_AGENTS or
+  // company AI reaches the Agent view (and ends a local agent) without a restart.
+  setInterval(function () {
+    if (!state.me) return;
+    pollNotifications(false);
+    applyAiPolicy().catch(function () {});
+  }, 60000);
   initSplitter();
   // back from the CAD program: is the next step of my check-out still right?
   window.addEventListener("focus", function () {

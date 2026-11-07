@@ -24,8 +24,9 @@ Changes on `main` since the `v0.2.5` tag.
   organisation configured (Anthropic, OpenAI/Azure, or a local
   OpenAI-compatible server), its per-question audit and its limits; the key
   never reaches a client. `GET /api/v1/me` reports
-  `capabilities.local_agents`; the desktop app ends a running agent and
-  refuses to start one, and its *Agent* view (`Ctrl/Cmd+4`) runs on the
+  `capabilities.local_agents`; the desktop app ends a running agent (it
+  asks again when the Agent view opens, every minute and before every
+  message) and refuses to start one, and its *Agent* view (`Ctrl/Cmd+4`) runs on the
   company AI automatically, with no local option (or, without a configured
   assistant, shows that AI is switched off by the administrator). When the
   server offers both, *Company AI* / *Local agent* in the Agent toolbar

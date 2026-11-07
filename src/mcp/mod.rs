@@ -77,13 +77,15 @@ fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
 /// [`LOCAL_AGENT_HEADER`]) when `TEAMCRAFT_LOCAL_AGENTS=off`.
 pub const LOCAL_AGENTS_OFF: &str =
     "Local agents are turned off on this TeamCraft server by the administrator \
-(TEAMCRAFT_LOCAL_AGENTS=off). Use Ask TeamCraft, the assistant configured on the server, instead.";
+(TEAMCRAFT_LOCAL_AGENTS=off). Use the company AI configured on the server instead: \
+Company AI in the desktop app's Agent view (Ask TeamCraft in the web UI).";
 
 /// Told to every other MCP client when `TEAMCRAFT_LOCAL_AGENTS=off`.
 pub const MCP_OFF: &str =
     "The MCP endpoint is turned off on this TeamCraft server by the administrator \
-(TEAMCRAFT_LOCAL_AGENTS=off): AI agents outside the server are not allowed. Use Ask TeamCraft, \
-the assistant configured on the server, instead.";
+(TEAMCRAFT_LOCAL_AGENTS=off): AI agents outside the server are not allowed. Use the company AI \
+configured on the server instead: Ask TeamCraft in the web UI or Company AI in the desktop \
+app's Agent view.";
 
 /// Why a call must be refused under the local-agent policy, `None` = serve it.
 ///

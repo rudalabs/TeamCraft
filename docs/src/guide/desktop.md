@@ -98,7 +98,10 @@ check-outs and reviews, and a **local working folder**:
   administrator turned local agents off (`TEAMCRAFT_LOCAL_AGENTS=off`), the
   Agent view runs on the company AI only, the app ends a running agent and
   refuses to start one; with no company AI configured either, the view
-  says that AI is switched off by the administrator. See
+  says that AI is switched off by the administrator. The app asks the
+  server again when the Agent view opens, every minute and before every
+  message to a local agent, so a changed setting takes effect without a
+  restart. See
   [ACP agents](assistant.md#acp-agents-in-the-desktop-app).
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a

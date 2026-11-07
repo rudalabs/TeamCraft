@@ -252,7 +252,8 @@ own (data-loss prevention: the organisation's provider and contract, the
 key only on the server, every question in the audit log and within the
 assistant's limits). The server then refuses every MCP client, also one
 you set up with your own token, and the desktop app ends a running agent
-and refuses to start one. The **Agent** view (`Ctrl/Cmd+4`) then runs on
+and refuses to start one – it asks the server again when the Agent view
+opens, every minute and before every message, so this needs no restart. The **Agent** view (`Ctrl/Cmd+4`) then runs on
 the company AI, automatically and without a local option, with a short
 note that your organisation provides its AI centrally – or, if no
 assistant is configured, says that AI is switched off by the administrator

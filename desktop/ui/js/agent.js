@@ -79,26 +79,55 @@ export function setAiPolicy(p) {
   agent.allowed = p.allowed !== false;
   agent.backend = p.backend || "off";
   agent.available = p.available || [];
-  if (!agent.allowed) {
-    // Rust ended the agent process
-    agent.running = null;
-    agent.busy = false;
-  }
+  if (!agent.allowed) endLocalAgent(); // Rust ended the agent process
 }
 
+/** Local agents were turned off while one ran: the process is ended. */
+export function endLocalAgent() {
+  if (!agent.running && !agent.busy) return;
+  endAgentPermissions();
+  agent.running = null;
+  agent.busy = false;
+  agentNote("Your administrator turned local agents off (TEAMCRAFT_LOCAL_AGENTS=off) – the agent was ended.", "warn");
+  updateAgentControls();
+}
+
+function policyKey() {
+  return [agent.allowed, agent.backend, agent.available.join(",")].join("|");
+}
+
+var policyAsk = null;
+
 /** Asks Rust for the server's policy (it ends a running agent when local
- * agents are off) and the Agent view's backend, then shows it. */
-export function applyAiPolicy() {
-  return call("agent_policy").then(setAiPolicy, function () {
-    // server not reachable: what GET /me said at sign-in
+ * agents are off) and the Agent view's backend; redraws the view when that
+ * changed, or always with `force`. Called at sign-in, when the Agent view
+ * opens, after a refused start or message, and every minute (shell.js), so
+ * a changed TEAMCRAFT_LOCAL_AGENTS or company AI is followed without a
+ * restart. */
+export function applyAiPolicy(force) {
+  if (policyAsk) return force ? policyAsk.then(refreshAgentView) : policyAsk;
+  // the user's switch answers with the policy itself
+  if (agent.switching) return Promise.resolve();
+  var before = policyKey();
+  policyAsk = call("agent_policy").then(setAiPolicy, function () {
+    // server not reachable: keep what is known – an unknown backend stays
+    // "Asking the server …" until a later ask succeeds; Rust's pick (the
+    // remembered choice, a set-up agent) is never guessed here. Only a local
+    // agent that GET /me at sign-in already forbade is ended.
     var caps = (state.me && state.me.capabilities) || {};
-    var allowed = caps.local_agents !== false;
-    var available = (caps.assistant === true ? ["company"] : []).concat(allowed ? ["local"] : []);
+    if (caps.local_agents !== false) return;
     // agent_policy did not run, so Rust did not end a running agent: do it
     // here, or the UI would forget a child process that keeps running
-    if (!allowed) call("agent_stop").catch(function () {});
-    setAiPolicy({ allowed: allowed, backend: available[0] || "off", available: available });
-  }).then(refreshAgentView);
+    call("agent_stop").catch(function () {});
+    agent.allowed = false;
+    agent.available = agent.available.filter(function (b) { return b !== "local"; });
+    if (agent.backend === "local") agent.backend = null;
+    endLocalAgent();
+  }).then(function () {
+    policyAsk = null;
+    if (force || policyKey() !== before) refreshAgentView();
+  });
+  return policyAsk;
 }
 
 /** Redraws the Agent tab and navigator after the backend changed. */
@@ -120,7 +149,7 @@ export function switchBackend(backend) {
   }, function (err) {
     agent.switching = false;
     toast(errorText(err), "error");
-    applyAiPolicy(); // the server's policy may have changed meanwhile
+    applyAiPolicy(true); // the server's policy may have changed meanwhile
   });
 }
 
@@ -144,6 +173,8 @@ export function localAgentsOffText() {
 export function openAgent() {
   if (state.view !== "agent") selectView("agent");
   if (state.active !== "agent") openTab({ key: "agent", kind: "agent", title: "Agent" });
+  // the server's policy may have changed since sign-in
+  applyAiPolicy();
 }
 
 /** The tab the AI is told about: the last revision, change or request tab. */
@@ -405,6 +436,7 @@ export function startAgent(name) {
     agent.early = [];
     agentNote(errorText(err), "error");
     schedulePaint(true);
+    applyAiPolicy(); // refused because local agents are off: company AI or the notice
   });
 }
 
@@ -443,6 +475,7 @@ export function sendAgent(text, shown) {
   }, function (err) {
     finishTurn(null);
     agentNote(errorText(err), "error");
+    applyAiPolicy(); // refused because local agents are off: company AI or the notice
   });
   return true;
 }
