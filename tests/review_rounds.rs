@@ -236,3 +236,30 @@ async fn an_absent_reviewer_is_flagged_and_can_be_replaced() {
     );
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn an_administrator_cannot_replace_a_reviewer_with_themselves() {
+    let app = app_or_skip!();
+    let (_, erika) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    let (_, rolf) = app.user_in("rolf", Role::Editor, &["ROCKET"]).await;
+    let (_, _sara) = app.user_in("sara", Role::Editor, &["ROCKET"]).await;
+    let (_, admin) = app.user("root", Role::Admin).await;
+    let part = app
+        .create_item(
+            &rolf,
+            json!({ "item_type": "part", "name": "Fin", "project": "ROCKET" }),
+        )
+        .await;
+    let chg = draft(&app, &erika, &part, &["sara"]).await;
+    let r = post(&app, &erika, &format!("/api/v1/changes/{chg}/submit"), None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let r = post(
+        &app,
+        &admin,
+        &format!("/api/v1/changes/{chg}/reviewers/sara/replace"),
+        Some(json!({ "username": "root" })),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    app.teardown().await;
+}

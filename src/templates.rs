@@ -1233,6 +1233,22 @@ mod tests {
                     && html.contains("/reviewers/"),
                 "{status}: rounds and absent reviewers"
             );
+            if status == "in_review" {
+                let mut ctx = json!({
+                    "change": change(status), "status_label": "In review",
+                    "reviews": [{ "reviewer_id": ME, "reviewer_username": "gone", "reviewer_name": "Gone <G>",
+                                  "decision": "pending", "comment": "", "decided_at": null, "absent": "deactivated" }],
+                    "replacements": [user()], "review_round": 1, "earlier_rounds": [],
+                    "items": [], "candidates": [], "history": [], "priorities": ["low", "normal"],
+                    "suggested": [], "impact": [],
+                    "can": { "modify": false, "review": false, "replace_reviewer": true },
+                });
+                let html = render(&env, "changes/show.html", with_common(ctx.take()));
+                assert!(
+                    html.contains("/replace") && html.contains("Substitute for"),
+                    "the replace form of an absent reviewer"
+                );
+            }
             assert!(
                 html.contains("Impact analysis") && html.contains("uses PRT-000001 in its BOM"),
                 "impact analysis on the change page"

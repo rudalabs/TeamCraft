@@ -380,6 +380,7 @@ const PREPARE_ACTIONS: &[&str] = &[
     "change.remove_item",
     "change.add_reviewer",
     "change.remove_reviewer",
+    "change.replace_reviewer",
     "change.update",
     "change.submit",
     "change.reopen",
@@ -1145,7 +1146,7 @@ pub async fn replace_reviewer(
         .fetch_one(&mut *tx)
         .await?;
     if let Some(conflict) =
-        review_conflict(&mut tx, &change, substitute.id, None, !four_eyes).await?
+        review_conflict(&mut tx, &change, substitute.id, Some(actor.id), !four_eyes).await?
     {
         return Err(AppError::BadRequest(format!(
             "{} cannot review {}: they {} (four-eyes principle).",
