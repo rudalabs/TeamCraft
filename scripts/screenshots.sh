@@ -939,8 +939,9 @@ desktop_agent() {
     desktop_key ctrl+4
     settle 2 "the agent view"
     desktop_snap "desktop-agent-nav$suffix"
-    desktop_click 100 215 # "Start" in the navigator
+    desktop_click 320 120 # "Start" next to the agent picker in the navigator
     settle 4 "the agent to start"
+    desktop_click 898 760 # the message box
     xdotool type --delay 25 "What needs my attention?" || die "xdotool could not type"
     desktop_key Return
     settle 6 "the agent's answer"
