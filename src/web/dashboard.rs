@@ -4,12 +4,22 @@ use serde_json::json;
 use super::{finish, redirect_flash, render, Flash, WebCtx};
 use crate::{
     error::AppResult,
-    services::{audit, changes, checkouts, impacts, requests, revisions, stats},
+    services::{audit, changes, checkouts, impacts, requests, revisions, simulations, stats},
     AppState,
 };
 
 pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
-    let (stats, checkouts, reviews, my_changes, activity, impacts, assigned, my_requests) = tokio::try_join!(
+    let (
+        stats,
+        checkouts,
+        reviews,
+        my_changes,
+        activity,
+        impacts,
+        assigned,
+        my_requests,
+        (attention, attention_total, attention_capped),
+    ) = tokio::try_join!(
         stats::load(&st.db, &ctx.me),
         revisions::checked_out_by(&st.db, &ctx.me),
         changes::pending_reviews(&st.db, &ctx.me),
@@ -18,6 +28,7 @@ pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response
         impacts::open_for(&st.db, &ctx.me),
         requests::assigned_to(&st.db, &ctx.me),
         requests::open_by(&st.db, &ctx.me),
+        simulations::needing_attention(&st.db, &ctx.me, 10),
     )?;
     render(
         &st,
@@ -32,6 +43,9 @@ pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response
             "impact_groups": impacts::group_by_dependent(impacts),
             "assigned_requests": assigned,
             "my_requests": my_requests,
+            "attention_simulations": attention,
+            "attention_total": attention_total,
+            "attention_capped": attention_capped,
         }),
     )
 }

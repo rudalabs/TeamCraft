@@ -26,6 +26,7 @@ pub mod insights;
 pub mod interchange;
 pub mod items;
 pub mod notifications;
+pub mod ownership;
 pub mod package;
 pub mod personal;
 pub mod project_policy;

@@ -1166,6 +1166,7 @@ ul.impact-rows button.ghost, .impact-group-head .ghost { color: var(--link); }
 ul.impact-rows button.ghost:focus-visible, .impact-group-head .ghost:focus-visible { border-color: var(--control-border); }
 .impact-event a.mono { font-weight: 400; }
 .decided-at { margin-top: 2px; }
+.absent-reviewer { color: var(--danger); }
 @media (hover: hover) {
   ul.impact-rows > li:hover { background: var(--surface-hover); }
 }

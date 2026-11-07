@@ -113,6 +113,21 @@ touch the files. The user who submitted a change is stored in
 was introduced keep working: only the author is refused on those until they
 are withdrawn and submitted again.
 
+### Review rounds and absent reviewers
+
+When a change is withdrawn or reopened after somebody decided, the decisions
+of that round are kept (table `change_review_rounds`) and the next submit
+starts a new round. The change page shows the current round in the
+*Reviewers* card and the earlier ones under *Earlier rounds*.
+
+A reviewer who has not decided yet but no longer can (account deactivated,
+role below editor, or not a member of a restricted group of an affected item)
+is marked *Cannot decide*. While the change is in review, the author or an
+administrator can replace any pending reviewer by another eligible user; the
+other decisions are kept, the substitute is notified and the audit log gets
+`change.replace_reviewer`. The substitute must pass the same checks as a new
+reviewer (editor role, four-eyes rule, sees every item).
+
 ### Suggested reviewers
 
 Next to the reviewer picker of a draft change, TeamCraft suggests up to
@@ -130,10 +145,11 @@ already keeps – no AI, the same data always gives the same order:
 
 Each source counts at most a few times per person, so one busy source
 cannot outweigh the others. Only active CAD editors and admins – the users
-who may review – are suggested, never the author, never someone who changed the
-affected revisions in this change (they cannot review it, see below), never the
+who may review – are suggested, never the author, never the
 administrator who is preparing the change and never someone already
-assigned. The desktop app shows the same suggestions on the tab of a draft
+assigned. People who changed the affected revisions know the item best but cannot
+review it: they are listed after the others as *knows the item, cannot review*
+without an *Add* button. The desktop app shows the same suggestions on the tab of a draft
 change, the REST API has `GET /api/v1/changes/{number}/suggested-reviewers`
 and AI assistants the MCP tool `suggest_reviewers`. Suggestions never
 assign anybody.

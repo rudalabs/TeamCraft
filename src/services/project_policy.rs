@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::{AdminRead, NotificationKind, ProjectVisibility, Role},
+    domain::{self, AdminRead, NotificationKind, ProjectVisibility, Role},
     error::{AppError, AppResult},
     models::Project,
     services::{
@@ -516,4 +516,341 @@ fn rank(mode: AdminRead) -> u8 {
         AdminRead::WithReason => 1,
         AdminRead::None => 2,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Review policy (issue #152, step 2)
+// ---------------------------------------------------------------------------
+
+/// Most people a group can name as required reviewers.
+pub const MAX_REQUIRED_REVIEWERS: usize = 20;
+
+/// A person named in a review policy.
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct PolicyPerson {
+    pub id: Uuid,
+    pub username: String,
+    pub display_name: String,
+}
+
+/// The role group of a review policy.
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct RoleGroup {
+    pub id: Uuid,
+    pub code: String,
+    pub name: String,
+}
+
+/// How changes touching a group are reviewed. The default (no minimum, nobody
+/// required, no role group) is "every reviewer approves".
+#[derive(Clone, Debug, Serialize)]
+pub struct ReviewPolicyView {
+    pub project_id: Uuid,
+    /// `None` = all reviewers.
+    pub min_approvals: Option<i32>,
+    pub required_reviewers: Vec<PolicyPerson>,
+    pub role_group: Option<RoleGroup>,
+    /// A role group is set but the reader may not see that group.
+    pub role_group_hidden: bool,
+}
+
+/// What a manager submits.
+#[derive(Clone, Debug, Default)]
+pub struct ReviewPolicyInput {
+    pub min_approvals: Option<i32>,
+    pub required_usernames: Vec<String>,
+    /// Code of the role group.
+    pub role_group_code: Option<String>,
+}
+
+async fn review_policy_of(
+    conn: &mut PgConnection,
+    viewer: Option<&Actor>,
+    project_id: Uuid,
+) -> AppResult<ReviewPolicyView> {
+    let row = sqlx::query_as::<_, (Option<i32>, Option<Uuid>)>(
+        "SELECT review_min_approvals, review_role_project_id FROM project_policies WHERE project_id = $1",
+    )
+    .bind(project_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .unwrap_or((None, None));
+    let required_reviewers = sqlx::query_as::<_, PolicyPerson>(
+        "SELECT u.id, u.username, u.display_name FROM project_required_reviewers r
+         JOIN users u ON u.id = r.user_id WHERE r.project_id = $1 ORDER BY u.username",
+    )
+    .bind(project_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    // A role group the reader may not see is not named (it answers like a
+    // group that does not exist); `role_group_hidden` tells the form so.
+    let mut role_group_hidden = false;
+    let role_group = match row.1 {
+        Some(id) if viewer.is_some_and(|a| !a.can_see_project(Some(id))) => {
+            role_group_hidden = true;
+            None
+        }
+        Some(id) => {
+            sqlx::query_as::<_, RoleGroup>("SELECT id, code, name FROM projects WHERE id = $1")
+                .bind(id)
+                .fetch_optional(&mut *conn)
+                .await?
+        }
+        None => None,
+    };
+    Ok(ReviewPolicyView {
+        project_id,
+        min_approvals: row.0,
+        required_reviewers,
+        role_group,
+        role_group_hidden,
+    })
+}
+
+/// The review policy of a group (anybody who may see the group; an
+/// administrator maintaining a group hidden by the need-to-know policy too).
+/// A role group the actor may not see is left out.
+pub async fn get_review_policy(
+    pool: &PgPool,
+    actor: &Actor,
+    project_id: Uuid,
+) -> AppResult<ReviewPolicyView> {
+    projects::get_for_management(pool, actor, project_id).await?;
+    let mut conn = pool.acquire().await?;
+    review_policy_of(&mut conn, Some(actor), project_id).await
+}
+
+/// Sets the review policy of a group.
+///
+/// # Invariants
+///
+/// * **Permission:** the actor manages the group (403; a group the actor may
+///   not know answers "not found"). The role group must be visible to the
+///   actor and a different group (400).
+/// * **Locks:** the group row (`FOR UPDATE`).
+/// * **Data:** the minimum is 1 to 50 or empty (all reviewers); required
+///   reviewers are active users with the editor role or higher, at most
+///   [`MAX_REQUIRED_REVIEWERS`] (400). Existing changes already in review
+///   keep being evaluated with the policy as it is when they are decided.
+/// * **Audit:** `project.review_policy` with the old and the new values.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
+pub async fn set_review_policy(
+    pool: &PgPool,
+    actor: &Actor,
+    project_id: Uuid,
+    input: &ReviewPolicyInput,
+) -> AppResult<ReviewPolicyView> {
+    if let Some(m) = input.min_approvals {
+        if !(1..=50).contains(&m) {
+            return Err(AppError::BadRequest(
+                "Minimum approvals must be between 1 and 50, or empty for all reviewers.".into(),
+            ));
+        }
+    }
+    let mut names: Vec<String> = input
+        .required_usernames
+        .iter()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
+    names.sort();
+    names.dedup();
+    if names.len() > MAX_REQUIRED_REVIEWERS {
+        return Err(AppError::BadRequest(format!(
+            "At most {MAX_REQUIRED_REVIEWERS} required reviewers."
+        )));
+    }
+    let mut tx = pool.begin().await?;
+    let code =
+        sqlx::query_scalar::<_, String>("SELECT code FROM projects WHERE id = $1 FOR UPDATE")
+            .bind(project_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(access::not_found_project)?;
+    projects::require_manager(&mut tx, actor, project_id).await?;
+    let mut people = Vec::new();
+    for name in &names {
+        let row = sqlx::query_as::<_, (Uuid, String, bool)>(
+            "SELECT id, role, active FROM users WHERE lower(username) = lower($1)",
+        )
+        .bind(name)
+        .fetch_optional(&mut *tx)
+        .await?;
+        match row {
+            Some((id, role, true))
+                if Role::parse(&role).unwrap_or(Role::Viewer) >= Role::Editor =>
+            {
+                people.push(id)
+            }
+            Some((_, _, true)) => {
+                return Err(AppError::BadRequest(format!(
+                    "{name} has the viewer role and cannot review changes."
+                )))
+            }
+            Some(_) => return Err(AppError::BadRequest(format!("{name} is deactivated."))),
+            None => return Err(AppError::BadRequest(format!("Unknown user '{name}'."))),
+        }
+    }
+    let role_id = match input
+        .role_group_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+    {
+        None => None,
+        Some(c) => {
+            let id = sqlx::query_scalar::<_, Uuid>(
+                "SELECT id FROM projects WHERE lower(code) = lower($1)",
+            )
+            .bind(c)
+            .fetch_optional(&mut *tx)
+            .await?;
+            match id {
+                Some(id) if id == project_id => {
+                    return Err(AppError::BadRequest(
+                        "The role group must be a different project group.".into(),
+                    ))
+                }
+                Some(id) if actor.is_admin() || actor.can_see_project(Some(id)) => Some(id),
+                _ => {
+                    return Err(AppError::BadRequest(format!(
+                        "Unknown project group '{c}'."
+                    )))
+                }
+            }
+        }
+    };
+    let before = review_policy_of(&mut tx, None, project_id).await?;
+    sqlx::query(
+        "INSERT INTO project_policies (project_id, review_min_approvals, review_role_project_id, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $4)
+         ON CONFLICT (project_id) DO UPDATE
+         SET review_min_approvals = EXCLUDED.review_min_approvals,
+             review_role_project_id = EXCLUDED.review_role_project_id,
+             updated_by = EXCLUDED.updated_by, updated_at = now()",
+    )
+    .bind(project_id)
+    .bind(input.min_approvals)
+    .bind(role_id)
+    .bind(actor.id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM project_required_reviewers WHERE project_id = $1")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await?;
+    for id in &people {
+        sqlx::query("INSERT INTO project_required_reviewers (project_id, user_id) VALUES ($1, $2)")
+            .bind(project_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    let after = review_policy_of(&mut tx, None, project_id).await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "project.review_policy",
+        "project",
+        Some(project_id),
+        format!("Review policy of {code} changed"),
+        json!({
+            "min_approvals": after.min_approvals,
+            "required_reviewers": after.required_reviewers.iter().map(|p| &p.username).collect::<Vec<_>>(),
+            "role_group": after.role_group.as_ref().map(|g| &g.code),
+            "previous": {
+                "min_approvals": before.min_approvals,
+                "required_reviewers": before.required_reviewers.iter().map(|p| &p.username).collect::<Vec<_>>(),
+                "role_group": before.role_group.as_ref().map(|g| &g.code),
+            },
+        }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(after)
+}
+
+/// What the review policies of the groups touched by a change ask for: the
+/// strictest minimum, the union of the required people and the role groups.
+/// Items without a group, and groups without a policy, ask for "all reviewers
+/// approve", so one of them in a change makes every reviewer count. People
+/// who are deactivated or no longer editors do not count. With a `viewer`,
+/// a role group the viewer cannot see is labelled neutrally.
+pub(crate) async fn review_requirement(
+    conn: &mut PgConnection,
+    viewer: Option<&Actor>,
+    change_id: Uuid,
+) -> AppResult<domain::ReviewRequirement> {
+    let all_groups: Vec<Option<Uuid>> = sqlx::query_scalar(
+        "SELECT DISTINCT i.project_id FROM change_items ci
+         JOIN revisions r ON r.id = ci.revision_id
+         JOIN items i ON i.id = r.item_id
+         WHERE ci.change_id = $1",
+    )
+    .bind(change_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    let has_ungrouped = all_groups.iter().any(Option::is_none);
+    let groups: Vec<Uuid> = all_groups.into_iter().flatten().collect();
+    if groups.is_empty() {
+        return Ok(domain::ReviewRequirement::default());
+    }
+    let policies: Vec<(Uuid, Option<i32>, Option<Uuid>)> = sqlx::query_as(
+        "SELECT project_id, review_min_approvals, review_role_project_id
+         FROM project_policies WHERE project_id = ANY($1)",
+    )
+    .bind(&groups)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut mins: Vec<Option<usize>> = groups
+        .iter()
+        .map(|g| {
+            policies
+                .iter()
+                .find(|p| p.0 == *g)
+                .and_then(|p| p.1)
+                .map(|m| m as usize)
+        })
+        .collect();
+    if has_ungrouped {
+        mins.push(None);
+    }
+    let required_users = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT DISTINCT u.id, u.display_name FROM project_required_reviewers r
+         JOIN users u ON u.id = r.user_id
+         WHERE r.project_id = ANY($1) AND u.active AND u.role IN ('editor', 'admin')
+         ORDER BY u.display_name, u.id",
+    )
+    .bind(&groups)
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut role_ids: Vec<Uuid> = policies.iter().filter_map(|p| p.2).collect();
+    role_ids.sort();
+    role_ids.dedup();
+    let mut role_groups = Vec::new();
+    for id in role_ids {
+        let code = sqlx::query_scalar::<_, String>("SELECT code FROM projects WHERE id = $1")
+            .bind(id)
+            .fetch_one(&mut *conn)
+            .await?;
+        let label = if viewer.is_none_or(|a| a.can_see_project(Some(id))) {
+            format!("the group {code}")
+        } else {
+            "a required role group".to_string()
+        };
+        let members = sqlx::query_scalar::<_, Uuid>(
+            "SELECT m.user_id FROM project_members m JOIN users u ON u.id = m.user_id
+             WHERE m.project_id = $1 AND u.active AND u.role IN ('editor', 'admin')",
+        )
+        .bind(id)
+        .fetch_all(&mut *conn)
+        .await?;
+        role_groups.push(domain::RoleRequirement { label, members });
+    }
+    Ok(domain::ReviewRequirement {
+        min_approvals: domain::combine_min_approvals(&mins),
+        required_users,
+        role_groups,
+    })
 }

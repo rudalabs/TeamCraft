@@ -5,8 +5,8 @@
   <p class="meta">TeamCraft Desktop</p>
   <h1>Sign in on {{ req.device }}?</h1>
   <p>The TeamCraft desktop app on <strong>{{ req.device }}</strong> asks to work with your account
-    <strong>{{ me.display_name }}</strong> ({{ me.role|label }}). It receives a personal access token that is
-    valid for {{ token_days }} days and appears on your <a href="/account">account page</a>, where you can revoke
+    <strong>{{ me.display_name }}</strong> ({{ me.role|label }}). It receives a personal access token that
+    expires after {{ token_days }} days without use and appears on your <a href="/account">account page</a>, where you can revoke
     it at any time.</p>
   <p class="hint">Only allow this if you have just started the sign-in in TeamCraft Desktop yourself.</p>
   <form method="post" action="/desktop/authorize" class="actions">

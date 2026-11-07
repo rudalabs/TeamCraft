@@ -169,6 +169,48 @@ pub(super) async fn project_policy_set(
     )))
 }
 
+/// `GET /api/v1/projects/{code}/review-policy` – anybody who sees the group.
+pub(super) async fn review_policy_get(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code(&st.db, &me, &code).await?;
+    Ok(Json(json!(
+        project_policy::get_review_policy(&st.db, &me, project.id).await?
+    )))
+}
+
+#[derive(Deserialize)]
+pub(super) struct SetReviewPolicy {
+    /// Empty or null: all reviewers must approve.
+    #[serde(default)]
+    min_approvals: Option<i32>,
+    #[serde(default)]
+    required_reviewers: Vec<String>,
+    /// Code of the role group (empty or null: none).
+    #[serde(default)]
+    role_group: Option<String>,
+}
+
+/// `PUT /api/v1/projects/{code}/review-policy` – managers and admins.
+pub(super) async fn review_policy_set(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    ApiJson(body): ApiJson<SetReviewPolicy>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
+    let input = project_policy::ReviewPolicyInput {
+        min_approvals: body.min_approvals,
+        required_usernames: body.required_reviewers,
+        role_group_code: body.role_group,
+    };
+    Ok(Json(json!(
+        project_policy::set_review_policy(&st.db, &me, project.id, &input).await?
+    )))
+}
+
 #[derive(Deserialize)]
 pub(super) struct Elevate {
     reason: String,
