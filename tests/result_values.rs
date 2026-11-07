@@ -426,3 +426,49 @@ async fn csv_templates_and_the_scan_size_cap() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     assert!(results(&app, &boss, &rev).await.is_empty());
 }
+
+#[tokio::test]
+async fn templates_read_html_reports_as_their_extracted_text() {
+    let app = app_or_skip!();
+    let (_, boss) = app.user_in("boss", Role::Editor, &["ROVER"]).await;
+    sqlx::query("UPDATE project_members SET manager = true")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/projects/ROVER/result-templates",
+            &boss,
+            Some(json!({
+                "name": "Max stress", "file_pattern": "*.html", "method": "regex",
+                "pattern": "Maximum stress \\| ([-+0-9.eE]+) \\| MPa", "unit": "MPa", "pick": "first"
+            })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let rev = simulation(&app, &boss, "ROVER").await;
+    // the markup, a script and a hidden row never reach the template
+    let html = "<html><head><script>var s = 'Maximum stress | 999.9 | MPa';</script></head><body>\
+                <table><tr hidden><td>Maximum stress</td><td>888.8</td><td>MPa</td></tr>\
+                <tr><td>Maximum&nbsp;stress</td><td>152.4</td><td>MPa</td></tr></table></body></html>";
+    let r = app
+        .api_multipart(
+            &format!("{rev}/checkin"),
+            &boss,
+            &[("report.html", html.as_bytes())],
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let values = results(&app, &boss, &rev).await;
+    assert_eq!(values.len(), 1, "{values:?}");
+    assert_eq!(values[0]["value"], 152.4);
+    assert!(
+        values[0]["source"]
+            .as_str()
+            .unwrap()
+            .starts_with("report.html:"),
+        "{values:?}"
+    );
+}

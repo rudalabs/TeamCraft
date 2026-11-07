@@ -91,4 +91,8 @@ PLM systems show:
 
 The item search ranks matches in numbers, names, materials, descriptions and
 file names, and in the text inside STEP and IGES files (product names,
-authors, organisations) and plain-text files.
+authors, organisations), plain-text files (with their decimal numbers), the
+text layer of PDF reports and the text of HTML reports (table rows as lines;
+scripts, styles and hidden elements skipped). PDFs and HTML files are read in an
+isolated child process with size, time and memory limits; scanned PDFs have no
+text layer (there is no OCR).

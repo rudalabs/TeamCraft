@@ -15,6 +15,25 @@ see the notices in the README.
 
 Changes on `main` since the `v0.2.5` tag.
 
+### Added
+
+- HTML reports of FEA/CFD tools (`.html`, `.htm`) are read as text for the
+  search, `read_file_text` and `propose_result_values` (#141): table rows as
+  lines with ` | ` between the cells, numbers and units as written, entities
+  decoded; scripts, styles, comments, embedded images and hidden elements are
+  skipped and nothing is fetched. An own bounded reader (`src/htmltext.rs`)
+  runs in the isolated `teamcraft text-extract` child (`--format html`) with
+  the limits of the PDF reader; new fuzz target `htmltext`.
+
+### Changed
+
+- Extraction templates for `.html` files run on the extracted text instead of
+  the raw markup.
+- Text and CSV files keep their lines and decimal numbers in the stored text,
+  so `read_file_text` shows the real text (only ASCII STL, OBJ and KiCad files
+  still drop decimal numbers for the search). Files uploaded before keep their
+  old text until a new version is uploaded.
+
 ## [0.2.5] - 2026-11-07
 
 Changes since the `v0.2.0` tag.
