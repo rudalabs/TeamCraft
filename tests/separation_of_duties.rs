@@ -40,6 +40,18 @@ async fn seed_edit(app: &common::TestApp, user: Uuid, revision: Uuid) {
 }
 
 async fn new_change(app: &common::TestApp, token: &str, item: &str) -> String {
+    // a new item is checked out to its creator, and a change order cannot be
+    // submitted while a revision is checked out: hand it over directly (an
+    // API check-in would add an edit to the audit log, which these tests seed
+    // on purpose where they need one)
+    sqlx::query(
+        "UPDATE revisions r SET checked_out_by = NULL, checked_out_at = NULL
+         FROM items i WHERE i.id = r.item_id AND i.number = $1",
+    )
+    .bind(item)
+    .execute(&app.pool)
+    .await
+    .expect("hand over the revision");
     let r = app
         .api(
             Method::POST,
