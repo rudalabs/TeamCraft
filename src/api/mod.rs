@@ -93,6 +93,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(project_policy_get).put(project_policy_set),
         )
         .route(
+            "/projects/{code}/review-policy",
+            get(review_policy_get).put(review_policy_set),
+        )
+        .route(
             "/projects/{code}/elevations",
             post(project_elevate).delete(project_elevation_end),
         )
@@ -461,6 +465,8 @@ async fn index() -> Json<Value> {
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
             "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
             "PUT    /api/v1/projects/{code}/policy                   {admin_read: implicit|with_reason|none} how administrators read a restricted group – managers and admins",
+            "GET    /api/v1/projects/{code}/review-policy            review policy: min approvals, required reviewers, role group",
+            "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?} – managers and admins",
             "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
             "DELETE /api/v1/projects/{code}/elevations               ends the administrator's running access",
             "GET    /api/v1/projects/{code}/members",

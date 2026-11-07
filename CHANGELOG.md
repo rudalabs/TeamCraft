@@ -17,7 +17,16 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
-
+- Review policy per project group, step 2 of #152 (migration 0045, to be
+  renumbered at merge): minimum approvals (default all), required reviewers and
+  an optional role group (e.g. QA) whose member must approve. `submit` refuses a
+  change that cannot meet the policy of every affected group; the review outcome
+  uses it. Form on the group page, `GET`/`PUT /api/v1/projects/{code}/review-policy`.
+  Nothing changes for groups without a policy.
+  Review fixes: admins maintain a group hidden by need-to-know, a role group the
+  reader cannot see is not named, only the parts of the policy the assigned
+  reviewers can meet count after submit, a required person who is the author
+  gets a specific message, ungrouped items count as "all reviewers".
 - Scoped personal access tokens (threat model F2, #151 step 6, #152 step 4):
   a token gets a scope when it is created (account page, `POST /api/v1/tokens`,
   `teamcraft user create-token --scope`). `full` = read, write and approve
