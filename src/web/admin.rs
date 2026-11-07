@@ -552,8 +552,13 @@ pub async fn audit(
         action: clean(&q.action),
     };
     let page_no = q.page.unwrap_or(1).max(1);
-    let (entries, total) =
-        audit::list(&st.db, &filter, Page::from_page_number(Some(page_no), 100)).await?;
+    let (entries, total) = audit::list(
+        &st.db,
+        &ctx.me,
+        &filter,
+        Page::from_page_number(Some(page_no), 100),
+    )
+    .await?;
     let base_query = [
         ("entity_type", filter.entity_type.as_deref()),
         ("username", filter.username.as_deref()),

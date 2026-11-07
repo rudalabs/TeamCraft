@@ -14,7 +14,7 @@
 //! `Actor::hidden_projects` for administrators too, so every existing guard
 //! applies without a check in any handler.
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::json;
 use sqlx::{PgConnection, PgPool};
@@ -46,7 +46,8 @@ pub const MAX_REASON_CHARS: usize = 1000;
 pub struct Elevation {
     pub id: Uuid,
     pub project_id: Uuid,
-    pub user_id: Uuid,
+    /// Cleared when the account is deleted; `username` stays.
+    pub user_id: Option<Uuid>,
     pub username: String,
     pub reason: String,
     pub started_at: DateTime<Utc>,
@@ -69,9 +70,9 @@ pub struct PolicyView {
 }
 
 const ELEVATION_SELECT: &str =
-    "SELECT e.id, e.project_id, e.user_id, u.username, e.reason, e.started_at, e.expires_at,
+    "SELECT e.id, e.project_id, e.user_id, e.username, e.reason, e.started_at, e.expires_at,
             e.ended_at, (e.ended_at IS NULL AND e.expires_at > now()) AS active
-     FROM project_elevations e JOIN users u ON u.id = e.user_id";
+     FROM project_elevations e";
 
 async fn admin_read_of(conn: &mut PgConnection, project_id: Uuid) -> AppResult<AdminRead> {
     let raw = sqlx::query_scalar::<_, String>(
@@ -218,6 +219,16 @@ pub async fn set_admin_read(
         tx.rollback().await?;
         return get(pool, actor, project_id).await;
     }
+    // loosening is for the managers; an administrator may only tighten
+    if rank(mode) < rank(current) {
+        require_member_manager_under_policy(
+            &mut tx,
+            actor,
+            project_id,
+            "Loosening the administrator access",
+        )
+        .await?;
+    }
     if mode != AdminRead::Implicit {
         let managers: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM project_members WHERE project_id = $1 AND manager",
@@ -321,7 +332,7 @@ pub async fn elevate(
     if mode == AdminRead::None {
         return Err(AppError::Forbidden(format!(
             "The policy of {} does not allow administrators to read it. Only a member reads \
-             the group; the managers can add you (this is audited).",
+             the group; a manager of the group adds you (this is audited).",
             project.0
         )));
     }
@@ -338,15 +349,17 @@ pub async fn elevate(
         tx.rollback().await?;
         return Ok(running);
     }
-    let expires = Utc::now() + Duration::minutes(ELEVATION_MINUTES);
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO project_elevations (project_id, user_id, reason, expires_at)
-         VALUES ($1, $2, $3, $4) RETURNING id",
+    // the clock of the database decides, like every comparison with it
+    let (id, expires) = sqlx::query_as::<_, (Uuid, DateTime<Utc>)>(
+        "INSERT INTO project_elevations (project_id, user_id, username, reason, expires_at)
+         VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5))
+         RETURNING id, expires_at",
     )
     .bind(project_id)
     .bind(actor.id)
+    .bind(&actor.username)
     .bind(reason)
-    .bind(expires)
+    .bind(ELEVATION_MINUTES as i32)
     .fetch_one(&mut *tx)
     .await?;
     audit::record(
@@ -419,4 +432,88 @@ pub async fn end_elevation(pool: &PgPool, actor: &Actor, project_id: Uuid) -> Ap
     .await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// Whether a need-to-know policy is in force on the group (restricted, and
+/// its mode is not `implicit`).
+async fn policy_in_force(conn: &mut PgConnection, project_id: Uuid) -> AppResult<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM projects p
+                        JOIN project_policies pp ON pp.project_id = p.id
+                        WHERE p.id = $1 AND p.visibility = 'restricted'
+                          AND pp.admin_read <> 'implicit')",
+    )
+    .bind(project_id)
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
+/// Refuses an administrator who is no member-manager of the group a change
+/// that would widen access (loosening the policy, opening the group, linking
+/// an identity-provider group) while a policy is in force: otherwise an
+/// administrator could undo the policy in one call. Other users, and
+/// administrators while no policy is in force, are not affected.
+pub(crate) async fn require_member_manager_under_policy(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    project_id: Uuid,
+    what: &str,
+) -> AppResult<()> {
+    if !actor.is_admin() || !policy_in_force(conn, project_id).await? {
+        return Ok(());
+    }
+    if is_member(conn, actor, project_id, true).await? {
+        return Ok(());
+    }
+    Err(AppError::Forbidden(format!(
+        "{what} is for the managers of this group while administrators are limited by its \
+         need-to-know policy; an administrator who is no manager member cannot do it."
+    )))
+}
+
+/// Refuses an administrator who is no member yet to add themselves to a
+/// group whose policy is in force, or to make themselves a manager: the managers
+/// do that (under `with_reason` the administrator opens an elevation instead).
+pub(crate) async fn forbid_admin_self_add(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    project_id: Uuid,
+    manager: bool,
+) -> AppResult<()> {
+    if !actor.is_admin()
+        || !policy_in_force(conn, project_id).await?
+        || is_member(conn, actor, project_id, manager).await?
+    {
+        return Ok(());
+    }
+    Err(AppError::Forbidden(
+        "The need-to-know policy of this group does not let administrators add themselves or \
+         make themselves managers; a manager of the group does that."
+            .into(),
+    ))
+}
+
+async fn is_member(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    project_id: Uuid,
+    manager_only: bool,
+) -> AppResult<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM project_members
+                        WHERE project_id = $1 AND user_id = $2 AND (manager OR NOT $3))",
+    )
+    .bind(project_id)
+    .bind(actor.id)
+    .bind(manager_only)
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
+fn rank(mode: AdminRead) -> u8 {
+    match mode {
+        AdminRead::Implicit => 0,
+        AdminRead::WithReason => 1,
+        AdminRead::None => 2,
+    }
 }

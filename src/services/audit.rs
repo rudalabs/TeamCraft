@@ -193,33 +193,88 @@ pub struct AuditFilter {
 }
 
 /// Lists audit entries, newest first. Returns the page and the total count.
-/// Administrators only (`/admin/audit`): unfiltered.
+/// Administrators only (`/admin/audit`): every entry except those about
+/// items, changes, requests or groups the administrator's need-to-know
+/// policy hides (see `visible_clause`); entries that name such items are
+/// redacted.
 pub async fn list(
     pool: &PgPool,
+    actor: &Actor,
     filter: &AuditFilter,
     page: Page,
 ) -> AppResult<(Vec<AuditEntry>, i64)> {
-    const WHERE: &str = "WHERE ($1::text IS NULL OR entity_type = $1)
-                           AND ($2::text IS NULL OR username = $2)
-                           AND ($3::text IS NULL OR action = $3)";
+    // $1..$3 filter, $4 limit, $5 offset, $6 hidden groups, $7 admin, $8 actor
+    let filter_sql = "($1::text IS NULL OR a.entity_type = $1)
+                      AND ($2::text IS NULL OR a.username = $2)
+                      AND ($3::text IS NULL OR a.action = $3)";
+    let joins = "LEFT JOIN revisions sr ON a.entity_type = 'revision' AND sr.id = a.entity_id
+         LEFT JOIN items si ON si.id = CASE a.entity_type WHEN 'item' THEN a.entity_id
+                                                          WHEN 'revision' THEN sr.item_id END";
+    let visible = visible_clause(6, 7, 8);
+    // the count has no limit and offset: hidden groups, admin and actor are $4..$6
+    let count_visible = visible_clause(4, 5, 6);
     let entries = sqlx::query_as::<_, AuditEntry>(&format!(
-        "SELECT id, at, user_id, username, action, entity_type, entity_id, summary, details
-         FROM audit_log {WHERE} ORDER BY at DESC, id DESC LIMIT $4 OFFSET $5"
+        "SELECT {cols} FROM audit_log a {joins}
+         WHERE {filter_sql} AND ({visible})
+         ORDER BY a.at DESC, a.id DESC LIMIT $4 OFFSET $5",
+        cols = columns(6, 8),
     ))
     .bind(filter.entity_type.as_deref())
     .bind(filter.username.as_deref())
     .bind(filter.action.as_deref())
     .bind(page.limit)
     .bind(page.offset)
+    .bind(&actor.hidden_projects)
+    .bind(actor.is_admin())
+    .bind(actor.id)
     .fetch_all(pool)
     .await?;
-    let total = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM audit_log {WHERE}"))
-        .bind(filter.entity_type.as_deref())
-        .bind(filter.username.as_deref())
-        .bind(filter.action.as_deref())
-        .fetch_one(pool)
-        .await?;
-    Ok((entries, total))
+    let total = sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(*) FROM audit_log a {joins} WHERE {filter_sql} AND ({count_visible})"
+    ))
+    .bind(filter.entity_type.as_deref())
+    .bind(filter.username.as_deref())
+    .bind(filter.action.as_deref())
+    .bind(&actor.hidden_projects)
+    .bind(actor.is_admin())
+    .bind(actor.id)
+    .fetch_one(pool)
+    .await?;
+    Ok((redact(entries), total))
+}
+
+/// The row filter of the audit feeds; expects the joins `sr` (revision) and
+/// `si` (item of an item or revision entry) on `audit_log a`. `hidden`,
+/// `admin` and `actor` are the parameter numbers of the actor's hidden
+/// groups, its administrator flag and its id.
+///
+/// * administrators see every entry except those about an item, revision,
+///   change, request or group they may not read (a deleted subject stays
+///   visible, as without a policy);
+/// * everybody else sees the entries about subjects they may read, plus
+///   their own user, webhook and assistant entries.
+fn visible_clause(hidden: usize, admin: usize, actor: usize) -> String {
+    format!(
+        "(${admin} AND NOT (
+               (a.entity_type IN ('item', 'revision') AND si.id IS NOT NULL AND NOT {item})
+            OR (a.entity_type = 'change' AND EXISTS (
+                   SELECT 1 FROM changes c WHERE c.id = a.entity_id AND NOT {change}))
+            OR (a.entity_type = 'change_request' AND EXISTS (
+                   SELECT 1 FROM change_requests cr WHERE cr.id = a.entity_id AND NOT {request}))
+            OR (a.entity_type = 'project' AND NOT {project})))
+         OR (NOT ${admin} AND (
+               (a.entity_type IN ('item', 'revision') AND si.id IS NOT NULL AND {item})
+            OR (a.entity_type = 'change' AND EXISTS (
+                   SELECT 1 FROM changes c WHERE c.id = a.entity_id AND {change}))
+            OR (a.entity_type = 'change_request' AND EXISTS (
+                   SELECT 1 FROM change_requests cr WHERE cr.id = a.entity_id AND {request}))
+            OR (a.entity_type = 'project' AND {project})
+            OR (a.entity_type IN ('user', 'webhook', 'assistant') AND a.user_id = ${actor})))",
+        item = access::item_visible("si", hidden),
+        change = access::change_visible("c", actor, hidden),
+        request = access::request_visible("cr", actor, hidden),
+        project = access::project_visible("a.entity_id", hidden),
+    )
 }
 
 /// Columns of a readable entry; `$n` = the actor's hidden groups, `$actor`
@@ -297,22 +352,10 @@ pub async fn recent(pool: &PgPool, actor: &Actor, limit: i64) -> AppResult<Vec<A
          LEFT JOIN revisions sr ON a.entity_type = 'revision' AND sr.id = a.entity_id
          LEFT JOIN items si ON si.id = CASE a.entity_type WHEN 'item' THEN a.entity_id
                                                           WHEN 'revision' THEN sr.item_id END
-         WHERE ($3 AND (cardinality($2) = 0
-                        OR a.entity_type IN ('user', 'webhook', 'assistant', 'attribute',
-                                             'branding', 'notifications')))
-            OR (a.entity_type IN ('item', 'revision') AND si.id IS NOT NULL AND {item})
-            OR (a.entity_type = 'change' AND EXISTS (
-                   SELECT 1 FROM changes c WHERE c.id = a.entity_id AND {change}))
-            OR (a.entity_type = 'change_request' AND EXISTS (
-                   SELECT 1 FROM change_requests cr WHERE cr.id = a.entity_id AND {request}))
-            OR (a.entity_type = 'project' AND {project})
-            OR (a.entity_type IN ('user', 'webhook', 'assistant') AND a.user_id = $4)
+         WHERE {visible}
          ORDER BY a.at DESC, a.id DESC LIMIT $1",
         cols = columns(2, 4),
-        item = access::item_visible("si", 2),
-        change = access::change_visible("c", 4, 2),
-        request = access::request_visible("cr", 4, 2),
-        project = access::project_visible("a.entity_id", 2),
+        visible = visible_clause(2, 3, 4),
     ))
     .bind(limit)
     .bind(&actor.hidden_projects)

@@ -124,7 +124,7 @@
         {% for mode in admin_modes %}<option value="{{ mode.value }}" {% if mode.value == policy.admin_read %}selected{% endif %}>{{ mode.label }}</option>{% endfor %}
       </select>
     </label>
-    <p class="hint">With a reason: an administrator opens {{ elevation_minutes }} minutes of access and writes why; the managers are notified and the access is listed below. None: administrators manage members and this policy but only read the group as members (adding themselves is audited and notifies the managers). Every change is audited.</p>
+    <p class="hint">With a reason: an administrator opens {{ elevation_minutes }} minutes of access and writes why; the managers are notified and the access is listed below. None: administrators manage members and this policy but only read the group as members (they cannot add themselves; a manager does). Every change is audited.</p>
     <div class="actions"><button class="primary" type="submit">Save</button></div>
   </form>
   {% if me.is_admin and policy.admin_read == "with_reason" and not readable %}

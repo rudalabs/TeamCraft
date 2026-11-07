@@ -181,6 +181,15 @@ pub async fn set_visibility(
         tx.rollback().await?;
         return Ok(current);
     }
+    if visibility == ProjectVisibility::Internal {
+        super::project_policy::require_member_manager_under_policy(
+            &mut tx,
+            actor,
+            id,
+            "Opening the group to all users",
+        )
+        .await?;
+    }
     let project = sqlx::query_as::<_, Project>(&format!(
         "UPDATE projects SET visibility = $2 WHERE id = $1 RETURNING {COLUMNS}"
     ))
@@ -399,7 +408,17 @@ pub async fn update(
     .ok_or_else(|| AppError::not_found("Project not found."))?;
     require_manager(&mut tx, actor, id).await?;
     let oidc_group = if actor.is_admin() {
-        clean_group(upd.oidc_group)?
+        let wanted = clean_group(upd.oidc_group)?;
+        if wanted != current.oidc_group {
+            super::project_policy::require_member_manager_under_policy(
+                &mut tx,
+                actor,
+                id,
+                "Linking another identity-provider group",
+            )
+            .await?;
+        }
+        wanted
     } else {
         current.oidc_group.clone()
     };
@@ -625,6 +644,8 @@ pub async fn members(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<ProjectMe
 ///   unknown username is refused (400).
 /// * **Locks:** the group row (`FOR UPDATE`) before the manager check, so a manager removed
 ///   at the same moment is refused and membership changes of one group are serialised.
+/// * **Policy:** an administrator who is no member cannot add themselves (or make themselves
+///   manager) to a group whose need-to-know policy is in force (403).
 /// * **Data:** an existing membership keeps its source (an IdP-synchronised
 ///   one stays one) and is only ever raised to manager, never lowered.
 /// * **Audit:** `project.add_member`.
@@ -648,6 +669,9 @@ pub async fn add_member(
         .execute(&mut *tx)
         .await?;
     require_manager(&mut tx, actor, project_id).await?;
+    if user.id == actor.id {
+        super::project_policy::forbid_admin_self_add(&mut tx, actor, project_id, manager).await?;
+    }
     // An existing membership keeps its source: one synchronised from the
     // identity provider stays one (also when its holder is made a manager),
     // so it still ends when the IdP drops the user from the group.

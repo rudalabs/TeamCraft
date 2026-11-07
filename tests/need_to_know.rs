@@ -158,7 +158,7 @@ async fn none_hides_the_group_from_administrators_but_not_the_management() {
 }
 
 #[tokio::test]
-async fn an_administrator_who_joins_a_none_group_reads_it_and_the_managers_are_told() {
+async fn an_administrator_cannot_add_themselves_to_a_none_group_a_manager_adds_them() {
     let app = app_or_skip!();
     let (_, erika) = app.user("erika", Role::Editor).await;
     let (_, root) = app.user("root", Role::Admin).await;
@@ -167,8 +167,7 @@ async fn an_administrator_who_joins_a_none_group_reads_it_and_the_managers_are_t
         set_policy(&app, &erika, "none").await.status,
         StatusCode::OK
     );
-    let before = alerts(&app, "erika").await.len();
-
+    // self-add is refused: the managers decide
     let r = app
         .api(
             Method::POST,
@@ -177,14 +176,35 @@ async fn an_administrator_who_joins_a_none_group_reads_it_and_the_managers_are_t
             Some(json!({ "username": "root" })),
         )
         .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+    assert_eq!(
+        status(&app, Method::GET, &format!("/api/v1/items/{item}"), &root).await,
+        StatusCode::NOT_FOUND
+    );
+    // a manager adds the administrator
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/projects/NTK/members",
+            &erika,
+            Some(json!({ "username": "root" })),
+        )
+        .await;
     assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
     assert_eq!(
         status(&app, Method::GET, &format!("/api/v1/items/{item}"), &root).await,
         StatusCode::OK
     );
-    let alerts = alerts(&app, "erika").await;
-    assert_eq!(alerts.len(), before + 1, "{alerts:?}");
-    assert!(alerts[0].contains("root"), "{alerts:?}");
+    // and as a member the administrator cannot promote themselves
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/projects/NTK/members",
+            &root,
+            Some(json!({ "username": "root", "manager": true })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
     app.teardown().await;
 }
 
@@ -441,5 +461,135 @@ async fn the_project_page_of_a_hidden_group_shows_management_only() {
         .get_page(&format!("/projects/{id}"), Some(&cookie))
         .await;
     assert!(page.text().contains("End my administrator access"));
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn a_shut_out_administrator_cannot_undo_the_policy() {
+    let app = app_or_skip!();
+    let (_, erika) = app.user("erika", Role::Editor).await;
+    let (_, root) = app.user("root", Role::Admin).await;
+    let item = group_with_item(&app, &erika).await;
+    assert_eq!(
+        set_policy(&app, &erika, "none").await.status,
+        StatusCode::OK
+    );
+    let uri = format!("/api/v1/items/{item}");
+
+    // loosening the policy, opening the group, linking an IdP group, adding
+    // oneself: all refused for an administrator who is no manager member
+    assert_eq!(
+        set_policy(&app, &root, "implicit").await.status,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        set_policy(&app, &root, "with_reason").await.status,
+        StatusCode::FORBIDDEN
+    );
+    let r = app
+        .api(
+            Method::PUT,
+            "/api/v1/projects/NTK/visibility",
+            &root,
+            Some(json!({ "visibility": "internal" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
+    let admin = app.actor("root").await;
+    let pid = app.project_id("NTK").await;
+    let err = teamcraft::services::projects::update(
+        &app.pool,
+        &admin,
+        pid,
+        teamcraft::services::projects::ProjectUpdate {
+            name: "Need to know",
+            description: "",
+            active: true,
+            oidc_group: Some("everybody"),
+        },
+    )
+    .await
+    .expect_err("linking an IdP group is refused");
+    assert!(
+        matches!(err, teamcraft::error::AppError::Forbidden(_)),
+        "{err:?}"
+    );
+    assert_eq!(
+        status(&app, Method::GET, &uri, &root).await,
+        StatusCode::NOT_FOUND
+    );
+
+    // the managers can still loosen it
+    assert_eq!(
+        set_policy(&app, &erika, "with_reason").await.status,
+        StatusCode::OK
+    );
+    // tightening is open to the administrator
+    assert_eq!(set_policy(&app, &root, "none").await.status, StatusCode::OK);
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn a_shut_out_administrator_sees_neither_audit_page_search_nor_tools_of_the_group() {
+    let app = app_or_skip!();
+    let (_, erika) = app.user("erika", Role::Editor).await;
+    let (_, root) = app.user("root", Role::Admin).await;
+    let item = group_with_item(&app, &erika).await;
+    let admin = app.actor("root").await;
+    let page = || teamcraft::services::Page::from_page_number(Some(1), 500);
+    let filter = teamcraft::services::audit::AuditFilter::default();
+    let (before, _) = teamcraft::services::audit::list(&app.pool, &admin, &filter, page())
+        .await
+        .unwrap();
+    assert!(before.iter().any(|e| e.summary.contains(&item)));
+
+    assert_eq!(
+        set_policy(&app, &erika, "none").await.status,
+        StatusCode::OK
+    );
+    let admin = app.actor("root").await;
+    let (entries, total) = teamcraft::services::audit::list(&app.pool, &admin, &filter, page())
+        .await
+        .unwrap();
+    assert!(
+        entries.iter().all(|e| !e.summary.contains(&item)),
+        "audit::list names the hidden item"
+    );
+    assert_eq!(total as usize, entries.len(), "the count follows the rule");
+
+    // search and the MCP endpoint answer nothing about the group
+    let found = app
+        .api(Method::GET, "/api/v1/items?q=Secret", &root, None)
+        .await
+        .text();
+    assert!(!found.contains(&item), "{found}");
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/mcp",
+            &root,
+            Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                         "params": { "name": "search_items",
+                                     "arguments": { "q": "Secret" } } })),
+        )
+        .await;
+    assert!(!r.text().contains(&item), "{}", r.text());
+
+    // a webhook for the hidden group cannot be created
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/webhooks",
+            &root,
+            Some(json!({ "name": "Spy", "url": "https://example.org/hook",
+                         "events": ["item.created"], "project": "NTK" })),
+        )
+        .await;
+    assert!(
+        r.status == StatusCode::BAD_REQUEST || r.status == StatusCode::NOT_FOUND,
+        "{} {}",
+        r.status,
+        r.text()
+    );
     app.teardown().await;
 }

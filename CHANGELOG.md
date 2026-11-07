@@ -23,7 +23,10 @@ Changes on `main` since the `v0.2.5` tag.
   notified) or `none` (administrators manage but do not read). Web form on
   the group page and `GET`/`PUT /api/v1/projects/{code}/policy`,
   `POST`/`DELETE /api/v1/projects/{code}/elevations`. Nothing changes for
-  groups without a policy.
+  groups without a policy. Migration 0041 keeps the elevation history when an
+  account is deleted. While a policy is in force an administrator who is no
+  manager member cannot loosen it, open the group, link an IdP group or add
+  themselves; `/admin/audit` and webhooks honour the rule.
 
 - HTML reports of FEA/CFD tools (`.html`, `.htm`) are read as text for the
   search, `read_file_text` and `propose_result_values` (#141): table rows as
