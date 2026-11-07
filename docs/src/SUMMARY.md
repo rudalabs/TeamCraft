@@ -55,6 +55,7 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [3D preview of SOLIDWORKS files](research/solidworks-display-preview.md)
     - [3D preview of NX parts](research/nx-jt-preview.md)
     - [Text from HTML reports](research/html-report-text.md)
     - [Text from PDF reports](research/pdf-text-extraction.md)
