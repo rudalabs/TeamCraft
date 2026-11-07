@@ -19,7 +19,7 @@ use crate::{
     services::{
         bom_compare::{self, Depth},
         explorer::{self, Listing},
-        items, personal, projects,
+        items, personal, project_policy, projects,
         save_as::{self, SaveAs},
     },
     web, AppState,
@@ -172,6 +172,7 @@ async fn compare_at(
     number: &str,
     code: &str,
     q: &CompareQuery,
+    download: bool,
 ) -> AppResult<(Revision, Revision, Vec<bom_compare::LineDiff>)> {
     let depth = Depth::parse(q.depth.as_deref())?;
     let rule = match q.rule.as_deref() {
@@ -186,7 +187,14 @@ async fn compare_at(
     )?;
     let (before, after) = if a.seq <= b.seq { (a, b) } else { (b, a) };
     let rule = rule.unwrap_or_else(|| bom_compare::default_rule(&before.state, &after.state));
-    let diffs = bom_compare::compare(&st.db, me, before.id, after.id, depth, rule).await?;
+    // an Excel download obeys the packages switch of both revisions' groups
+    let reader = if download {
+        let r = project_policy::package_actor(&st.db, me, before.project_id).await?;
+        project_policy::package_actor(&st.db, &r, after.project_id).await?
+    } else {
+        me.clone()
+    };
+    let diffs = bom_compare::compare(&st.db, &reader, before.id, after.id, depth, rule).await?;
     Ok((before, after, diffs))
 }
 
@@ -197,7 +205,7 @@ pub(super) async fn bom_compare(
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Json<Value>> {
-    let (before, after, diffs) = compare_at(&st, &me, &number, &code, &q).await?;
+    let (before, after, diffs) = compare_at(&st, &me, &number, &code, &q, false).await?;
     let summary = bom_compare::summary(&diffs);
     Ok(Json(json!({
         "before": before.code,
@@ -215,7 +223,7 @@ pub(super) async fn bom_compare_xlsx(
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let (before, after, diffs) = compare_at(&st, &me, &number, &code, &q).await?;
+    let (before, after, diffs) = compare_at(&st, &me, &number, &code, &q, true).await?;
     let bytes = bom_compare::to_xlsx(&diffs)?;
     let filename = format!("bom-compare-{}-{}-{}.xlsx", number, before.code, after.code);
     Ok(web::xlsx_response(bytes, &filename))

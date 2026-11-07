@@ -700,6 +700,20 @@ impl Tools for McpTools<'_> {
                 return mcp::tools::failure("The tool is not available right now.");
             }
         };
+        // groups that switched the assistant off look non-existent to it
+        let me = match crate::services::project_policy::narrow(
+            &self.state.db,
+            me,
+            &[crate::services::project_policy::Interface::Assistant],
+        )
+        .await
+        {
+            Ok(me) => me,
+            Err(e) => {
+                tracing::warn!(error = %e, "narrowing the assistant's user failed");
+                return mcp::tools::failure("The tool is not available right now.");
+            }
+        };
         if TEXT_WRITE_TOOLS.contains(&name) && self.tainted.load(Ordering::SeqCst) {
             return mcp::tools::failure(TAINTED_WRITE);
         }

@@ -63,6 +63,19 @@ impl Actor {
         project_id.is_none_or(|p| !self.hidden_projects.contains(&p))
     }
 
+    /// The same actor without the read rights to `groups` (an interface that
+    /// is switched off for them, see `services::project_policy`): they are
+    /// hidden like groups the user is no member of.
+    pub fn without_groups(mut self, groups: &[Uuid]) -> Actor {
+        for g in groups {
+            if !self.hidden_projects.contains(g) {
+                self.hidden_projects.push(*g);
+            }
+        }
+        self.projects.retain(|p| !groups.contains(p));
+        self
+    }
+
     /// A webhook evaluated as a virtual reader: it sees its own group and
     /// every internal group; a global webhook (`project_id = None`) sees
     /// internal groups only. `restricted` = all restricted groups.
@@ -359,6 +372,36 @@ impl FromRequestParts<AppState> for ApiCaller {
             return Err(AppError::Forbidden(caller.scope.refusal().into()));
         }
         Ok(caller)
+    }
+}
+
+/// Channel and client address of a request, for the read log of restricted
+/// groups (`services::access_log`). Never rejects: a bearer token means the
+/// API channel, otherwise the browser session.
+impl FromRequestParts<AppState> for services::access_log::AccessCtx {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let bearer = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.len() > 7 && v[..7].eq_ignore_ascii_case("bearer "));
+        let peer = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|c| c.0.ip());
+        Ok(services::access_log::AccessCtx {
+            channel: if bearer {
+                services::access_log::Channel::Api
+            } else {
+                services::access_log::Channel::Web
+            },
+            client: client_address(&parts.headers, peer),
+        })
     }
 }
 

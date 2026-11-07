@@ -179,6 +179,41 @@
   <p class="muted">No administrator has opened access to this group.</p>
   {% endif %}
 </section>
+<section class="card" id="interfaces">
+  <h2>Need to know: interfaces and read log</h2>
+  <form class="stack" method="post" action="/projects/{{ project.id }}/access">
+    <fieldset>
+      <legend>Interfaces that may reach this group</legend>
+      {% for row in interface_rows %}
+      <label class="check"><input type="checkbox" name="{{ row.name }}" {% if row.allowed %}checked{% endif %}> {{ row.label }}</label>
+      {% endfor %}
+    </fieldset>
+    <p class="hint">A switched-off interface sees the group as if it did not exist (the web UI is not affected). Everything is allowed by default.</p>
+    <label class="check"><input type="checkbox" name="read_log" {% if policy.access.read_log %}checked{% endif %}> Log who views and downloads items, revisions and files of this group</label>
+    <label>Keep the log for (days) <span class="hint">empty keeps it until purged with <span class="mono">teamcraft access-log purge</span></span>
+      <input type="number" name="retention_days" min="1" max="36500" value="{% if policy.access.log_retention_days %}{{ policy.access.log_retention_days }}{% endif %}">
+    </label>
+    <div class="actions"><button class="primary" type="submit">Save</button></div>
+  </form>
+  <h3>Read and download log</h3>
+  {% if access_entries %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Object</th><th scope="col">Channel</th><th scope="col">Address</th></tr></thead>
+    <tbody>
+    {% for e in access_entries %}
+    <tr><td>{{ m.time(e.at) }}</td><td>{{ e.username }}</td><td>{{ e.kind }}</td><td>{{ e.label }}</td><td>{{ e.channel }}</td><td class="mono">{{ e.client_address or "" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">The newest 50 entries; the REST API lists more (<span class="mono">GET /api/v1/projects/{code}/access-log</span>).</p>
+  {% elif not readable %}
+  <p class="muted">The log is shown to readers of the group; your administrator access to it is closed.</p>
+  {% else %}
+  <p class="muted">Nothing logged{% if not policy.access.read_log %} (the log is off){% endif %}.</p>
+  {% endif %}
+</section>
 {% endif %}
 
 <section class="card" id="numbering">

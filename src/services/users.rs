@@ -13,7 +13,10 @@ use crate::{
     domain::{self, Role, TokenScope},
     error::{AppError, AppResult},
     models::{ApiToken, User, TOKEN_COLUMNS, USER_COLUMNS},
-    services::{access, audit},
+    services::{
+        access, audit,
+        project_policy::{self, Interface},
+    },
 };
 
 /// Columns (of `users u`) needed to build an [`Actor`], including the
@@ -134,7 +137,14 @@ pub async fn actor_for_api_token(
     .execute(pool)
     .await?;
     // an unknown stored scope (the CHECK constraint prevents it) grants nothing
-    Ok(TokenScope::parse(&row.scope).map(|scope| (Actor::from(row.actor), scope)))
+    let Some(scope) = TokenScope::parse(&row.scope) else {
+        return Ok(None);
+    };
+    // Interfaces switched off per group (need-to-know policy): a PAT sees
+    // those groups as hidden. The web session is not affected.
+    let actor =
+        project_policy::narrow(pool, Actor::from(row.actor), &[Interface::ApiTokens]).await?;
+    Ok(Some((actor, scope)))
 }
 
 /// Stores the UI skin of the signed-in user.
