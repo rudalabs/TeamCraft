@@ -19,7 +19,7 @@ use crate::{
     auth::Actor,
     domain::{
         self, ChangeStatus, ItemType, LifecycleState, Priority, RequestReason, RequestStatus,
-        RevisionRule, Role,
+        RevisionRule, Role, TokenScope,
     },
     error::{AppError, AppResult},
     models::{BomLine, Change, ChangeRequest, FileRecord, Impact, Revision},
@@ -378,6 +378,22 @@ const TOOLS: &[Tool] = &[
         schema: schema_comment_request,
     },
 ];
+
+/// `tools/list` for a token scope: a `read_only` token sees the read-only
+/// tools only.
+pub fn definitions_for(scope: TokenScope) -> Vec<Value> {
+    definitions()
+        .into_iter()
+        .filter(|d| scope.allows_tool(d["annotations"]["readOnlyHint"] == true))
+        .collect()
+}
+
+/// Whether a tool only reads (`false` for an unknown name).
+pub fn is_read_only(name: &str) -> bool {
+    TOOLS
+        .iter()
+        .any(|t| t.name == name && t.effect == Effect::Read)
+}
 
 /// `tools/list`.
 pub fn definitions() -> Vec<Value> {

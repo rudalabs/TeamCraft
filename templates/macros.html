@@ -132,6 +132,16 @@
 {% if value %}<time datetime="{{ value }}">{{ value|dt }}</time>{% else %}<span class="muted">—</span>{% endif %}
 {%- endmacro %}
 
+{#- What a personal access token may do (`domain::TokenScope`). -#}
+{% macro token_scope(scope) -%}
+{% if scope == "read_only" %}read-only{% elif scope == "mcp_only" %}MCP only{% else %}full access{% endif %}
+{%- endmacro %}
+
+{#- What expires: a sliding lifetime renews on every use. -#}
+{% macro token_expiry(t) -%}
+{% if t.expires_at %}{{ time(t.expires_at) }}{% if t.idle_days %} <span class="muted">(after {{ t.idle_days }} days unused)</span>{% endif %}{% else %}never{% endif %}
+{%- endmacro %}
+
 {#- The same, the date alone (narrow columns); the tooltip has the time. -#}
 {% macro date(value) -%}
 {% if value %}<time datetime="{{ value }}" data-date>{{ value|dt }}</time>{% else %}<span class="muted">—</span>{% endif %}

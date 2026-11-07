@@ -148,6 +148,8 @@ pub struct TokenForm {
     name: String,
     #[serde(default)]
     expires_days: String,
+    #[serde(default)]
+    scope: String,
 }
 
 pub async fn create_token(
@@ -163,7 +165,20 @@ pub async fn create_token(
                     .map_err(|_| AppError::BadRequest("Choose a token lifetime.".into()))?,
             ),
         };
-        users::create_token(&st.db, &ctx.me, &form.name, days).await
+        // no choice (an older form or a script) = full, as before scopes existed
+        let scope = match form.scope.trim() {
+            "" => Some(domain::TokenScope::Full),
+            s => domain::TokenScope::parse(s),
+        }
+        .ok_or_else(|| AppError::BadRequest("Choose what the token may do.".into()))?;
+        users::create_token(
+            &st.db,
+            &ctx.me,
+            &form.name,
+            users::TokenLifetime::fixed(days),
+            scope,
+        )
+        .await
     }
     .await;
     match result {
@@ -172,7 +187,7 @@ pub async fn create_token(
             render_account(
                 &st,
                 &ctx,
-                Some(json!({ "name": token.name, "value": plaintext })),
+                Some(json!({ "name": token.name, "value": plaintext, "scope": token.scope })),
             )
             .await
         }

@@ -9,6 +9,7 @@ mod change_requests;
 mod interchange_api;
 mod personal;
 mod simulations;
+mod tokens_api;
 pub(crate) mod uploads_api;
 mod webhooks;
 
@@ -67,6 +68,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/", get(index))
         .route("/me", get(me))
         .route("/desktop/token", post(desktop_token))
+        .route(
+            "/tokens",
+            get(tokens_api::list_tokens).post(tokens_api::create_token),
+        )
+        .route("/tokens/{id}", delete(tokens_api::revoke_token))
         .route("/worklist", get(worklist))
         .route("/worklist/checkin-all", post(checkin_all))
         .route("/mcp", post(crate::mcp::http).get(crate::mcp::http_get))
@@ -409,9 +415,12 @@ async fn index() -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
-            "GET    /api/v1/me",
+            "GET    /api/v1/me                                        the caller, its groups and token_scope",
             "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts, and grouped by dependent revision as impact_groups), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
+            "GET    /api/v1/tokens                                    your personal access tokens (name, prefix, scope, expiry; never the value)",
+            "POST   /api/v1/tokens                                    {name, expires_in_days?: 1..3650 (absent = never), scope?: full|read_only|mcp_only} – the value is answered once",
+            "DELETE /api/v1/tokens/{id}                               revoke a token (your own; admins: any)",
             "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
@@ -556,11 +565,15 @@ async fn index() -> Json<Value> {
     }))
 }
 
-async fn me(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
+async fn me(
+    State(st): State<AppState>,
+    crate::auth::ApiCaller { actor: me, scope }: crate::auth::ApiCaller,
+) -> AppResult<Json<Value>> {
     // `hidden_projects` is never serialized; the client learns only which of
     // its own groups are restricted (for a badge).
     let mut body = json!(me);
     body["restricted_projects"] = json!(projects::restricted_memberships(&st.db, &me).await?);
+    body["token_scope"] = json!(scope);
     body["capabilities"] = json!({
         "assistant": crate::services::assistant::enabled(&st),
         "mcp": true,

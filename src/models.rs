@@ -30,7 +30,14 @@ pub struct ApiToken {
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
+    /// `full`, `read_only` or `mcp_only` (`domain::TokenScope`).
+    pub scope: String,
+    /// Sliding lifetime: expires after this many days without use.
+    pub idle_days: Option<i32>,
 }
+
+pub const TOKEN_COLUMNS: &str =
+    "id, name, token_prefix, created_at, last_used_at, expires_at, scope, idle_days";
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct Project {

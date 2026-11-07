@@ -473,9 +473,15 @@ impl TestApp {
             .expect("add project membership");
         }
         let actor = self.actor(username).await;
-        let (_, token) = users::create_token(&self.pool, &actor, "tests", None)
-            .await
-            .expect("create token");
+        let (_, token) = users::create_token(
+            &self.pool,
+            &actor,
+            "tests",
+            teamcraft::services::users::TokenLifetime::Unlimited,
+            teamcraft::domain::TokenScope::Full,
+        )
+        .await
+        .expect("create token");
         (actor, token)
     }
 

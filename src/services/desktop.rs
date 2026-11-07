@@ -31,8 +31,12 @@ use crate::{
 
 /// Lifetime of a one-time code.
 const CODE_TTL_MINUTES: i64 = 5;
-/// Lifetime of the personal access token of a desktop sign-in.
-pub const TOKEN_DAYS: i64 = 90;
+/// The personal access token of a desktop sign-in expires after this many
+/// days without use; every use renews it (a sliding lifetime). It keeps the
+/// full scope: the app reads, uploads, checks in and reviews like the web UI.
+/// A copy left on an unused computer dies within a month, an app in daily use
+/// never has to sign in again.
+pub const TOKEN_DAYS: i64 = 30;
 const CODE_PREFIX: &str = "tc_dsk_";
 
 /// A validated sign-in request of the desktop app.
@@ -182,7 +186,14 @@ pub async fn exchange(pool: &PgPool, code: &str, verifier: &str) -> AppResult<De
     let actor = users::actor(pool, user_id).await?;
     let token_name =
         domain::limit_text("Token name", &format!("TeamCraft Desktop – {device}"), 100)?;
-    let (record, token) = users::create_token(pool, &actor, &token_name, Some(TOKEN_DAYS)).await?;
+    let (record, token) = users::create_token(
+        pool,
+        &actor,
+        &token_name,
+        users::TokenLifetime::IdleDays(TOKEN_DAYS),
+        domain::TokenScope::Full,
+    )
+    .await?;
     Ok(DesktopToken {
         token,
         token_name: record.name,

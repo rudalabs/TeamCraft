@@ -1253,7 +1253,9 @@ mod tests {
             with_common(json!({
                 "user": user(), "roles": roles(), "oidc_enabled": false, "memberships": [project()],
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
-                             "last_used_at": null, "expires_at": TS }],
+                             "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": null },
+                           { "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,
+                             "last_used_at": TS, "expires_at": TS, "scope": "read_only", "idle_days": 30 }],
             })),
         );
         render(
@@ -1369,7 +1371,7 @@ mod tests {
             with_common(json!({
                 "req": { "port": 53682, "state": "abcdefghijklmnop", "challenge": "c".repeat(43),
                          "device": "Leo's <MacBook>" },
-                "token_days": 90,
+                "token_days": 30,
             })),
         );
         assert!(
@@ -1381,7 +1383,10 @@ mod tests {
             &env,
             "account.html",
             with_common(json!({
-                "user": user(), "tokens": [], "new_token": { "name": "ci", "value": "tc_pat_secret" },
+                "user": user(),
+                "tokens": [{ "id": ME, "name": "assistant", "token_prefix": "tc_pat_abc123", "created_at": TS,
+                             "last_used_at": null, "expires_at": null, "scope": "mcp_only", "idle_days": null }],
+                "new_token": { "name": "ci", "value": "tc_pat_secret", "scope": "read_only" },
                 "api_base": "http://localhost:8080/api/v1",
                 "skins": crate::domain::SKINS,
                 "notify": {
@@ -1396,6 +1401,12 @@ mod tests {
             })),
         );
         assert!(html.contains("tc_pat_secret"));
+        assert!(
+            html.contains("“ci” (read-only)")
+                && html.contains("MCP only")
+                && html.contains("name=\"scope\""),
+            "token scopes"
+        );
         assert!(
             html.contains("value=\"review_requested\" checked")
                 && html.contains("value=\"item_update\" >")
