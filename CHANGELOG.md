@@ -17,17 +17,27 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
-- `TEAMCRAFT_LOCAL_AGENTS=off` lets administrators turn off local AI agents
-  (the desktop app's *Agent* view, ACP), so that only the server-side
-  assistant *Ask TeamCraft* remains. `GET /api/v1/me` reports
-  `capabilities.local_agents`; the desktop app hides the Agent view, disables
-  *View → Agent*, ends a running agent and refuses to start one;
+- Company AI instead of shadow AI (data-loss prevention):
+  `TEAMCRAFT_LOCAL_AGENTS=off` lets administrators turn off local AI agents
+  (the desktop app's *Agent* view, ACP), so that AI use goes through the
+  server-side assistant *Ask TeamCraft* with the provider and key the
+  organisation configured (Anthropic, OpenAI/Azure, or a local
+  OpenAI-compatible server), its per-question audit and its limits; the key
+  never reaches a client. `GET /api/v1/me` reports
+  `capabilities.local_agents`; the desktop app hides the Agent rail button,
+  ends a running agent and refuses to start one, and *View → Agent*
+  (`Ctrl/Cmd+4`) opens *Ask TeamCraft* with a short explanation instead (or,
+  without a configured assistant, a notice that local agents are off and no
+  company AI is configured);
   `POST /api/v1/mcp` refuses every call with `403`, for every token (also
   the `teamcraft mcp` bridge, agents set up by hand and older desktop apps;
   the built-in assistant calls the tools inside the server and is not
   affected), and `capabilities.mcp` turns `false`. The default `allowed`
   changes nothing. The REST API stays open to a user's own token (scoped
-  tokens, F2, are the complement).
+  tokens, F2, are the complement): cooperative enforcement, not a barrier.
+- **Admin → AI** (`/admin/ai`): the local-agent setting, the MCP endpoint's
+  state and the configured assistant (provider, model, host, limits, whether
+  a key is set – never the key).
 
 ## [0.2.5] - 2026-11-07
 

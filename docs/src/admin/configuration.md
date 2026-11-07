@@ -226,12 +226,24 @@ and users can connect other MCP clients (an assistant set up by hand, the
 [`teamcraft mcp`](../reference/mcp.md) bridge) with a personal access
 token. Such agents send the user's questions and the TeamCraft data they
 look up to the agent's own AI provider, under the user's own account and
-terms. An organisation that wants AI use to go only through the provider
-the administrator configured for *Ask TeamCraft* can turn local agents off.
+terms.
+
+**Company AI instead of shadow AI.** For data-loss prevention an
+organisation can turn local agents off and offer its own AI centrally:
+the provider configured under [Assistant](#assistant-optional) – Anthropic,
+OpenAI or Azure OpenAI with the company's contract and key, or a model
+server inside the network (Ollama, vLLM …). Users then work with *Ask
+TeamCraft* in the web UI and the desktop app; the key stays on the server
+and never reaches a client. Every question runs with the user's rights,
+is recorded in the audit log (`assistant.run`, without the question or
+the answer) and is bounded by the assistant's limits (steps, tokens, time,
+questions at the same time). **Admin → AI** (`/admin/ai`) shows the
+setting, the MCP endpoint's state and the configured provider, model,
+host and limits – never the key, only whether one is set.
 
 | Variable                 | Default   | Meaning                                                                                                                                                        |
 |--------------------------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_LOCAL_AGENTS` | `allowed` | `allowed` or `off`. `off`: the MCP endpoint is closed for every token and the desktop app hides its *Agent* view; only *Ask TeamCraft* remains. Any other value stops the server at startup |
+| `TEAMCRAFT_LOCAL_AGENTS` | `allowed` | `allowed` or `off`. `off`: the MCP endpoint is closed for every token and the desktop app routes its *Agent* view to *Ask TeamCraft*, the company AI. Any other value stops the server at startup |
 
 Like every variable it also works as `TEAMCRAFT_LOCAL_AGENTS_FILE`. The
 startup log shows `local_agents=allowed|off`. Changing it needs a restart
@@ -250,20 +262,26 @@ What `off` does:
   nothing).
 * `GET /api/v1/me` reports `capabilities.local_agents: false` and
   `capabilities.mcp: false`. The desktop app then hides **Agent** in the
-  rail, the toolbar buttons and the *Settings → Agents* entry, disables
-  *View → Agent* (`Ctrl/Cmd+4`), ends an agent that is still running and
-  refuses to start one, with a message that names this setting. The
-  refusal is in the app's Rust code, not only in the user interface. A
+  rail and the toolbar buttons, ends an agent that is still running and
+  refuses to start one (in the app's Rust code, not only in the user
+  interface). *View → Agent* (`Ctrl/Cmd+4`) leads to the company AI
+  instead: with an assistant configured it opens *Ask TeamCraft* and says
+  that the organisation provides its AI centrally; without one it shows a
+  notice that local agents are off and no company AI is configured.
+  *Settings → Agents* shows the same explanation. A
   desktop app older than this setting does not hide the view, but its
   agent gets no TeamCraft tools: the endpoint refuses it.
 * The desktop app marks the MCP connection it hands to a local agent with
   the header `X-TeamCraft-Client: desktop-agent`. It only picks the
   wording of the refusal; leaving it out does not get a call through.
 
-What `off` does **not** do: it does not close the REST API
+What `off` does **not** do – it is cooperative enforcement, not a
+barrier against a determined user: it does not close the REST API
 (`/api/v1/…`) to a user's own personal access token. A program the user
-writes or an agent that calls the REST API directly still reads and
-writes with that user's rights. The complement is scoped personal access
+writes, or another MCP client or agent that wraps the REST API with that
+token, still reads and writes with that user's rights and can hand what it
+reads to an AI provider of the user's choice. Nor can a server stop
+anyone from copying what they see into another tool. The complement is scoped personal access
 tokens (read-only, no API), which are planned (`docs/OPEN_WORK.md`, F2).
 Until then, a written usage policy, the token list of each user
 (*Account → API tokens*, revocable by administrators) and the audit log

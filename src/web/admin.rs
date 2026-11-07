@@ -287,6 +287,21 @@ pub async fn update_visibility(
     })
 }
 
+/// `GET /admin/ai`: which AI the users have – the local-agent switch and the
+/// server-side assistant (provider, model, host, limits; never the key).
+pub async fn ai(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
+    ctx.me.require(Role::Admin)?;
+    render(
+        &st,
+        &ctx,
+        "admin/ai.html",
+        crate::services::assistant::admin_overview(
+            st.config.local_agents,
+            st.config.assistant.as_ref(),
+        ),
+    )
+}
+
 pub async fn users(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
     ctx.me.require(Role::Admin)?;
     let list = users::list(&st.db).await?;

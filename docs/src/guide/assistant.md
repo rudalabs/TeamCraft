@@ -232,10 +232,16 @@ with its own provider.
 Your administrator can turn local agents off for the whole server
 (`TEAMCRAFT_LOCAL_AGENTS=off`, see
 [Local agents](../admin/configuration.md#local-agents)), so that AI use
-goes only through *Ask TeamCraft*. The server then refuses every MCP
-client, also one you set up with your own token, and the desktop app shows no
-**Agent** entry, ends a running agent and refuses to start one with a
-message that names this setting.
+goes through the company AI, *Ask TeamCraft*, instead of AI tools of your
+own (data-loss prevention: the organisation's provider and contract, the
+key only on the server, every question in the audit log and within the
+assistant's limits). The server then refuses every MCP client, also one
+you set up with your own token, and the desktop app ends a running agent
+and refuses to start one. **Agent** disappears from the rail; *View →
+Agent* (`Ctrl/Cmd+4`) opens *Ask TeamCraft* with a short note that your
+organisation provides its AI centrally – or, if no assistant is
+configured, tells you that local agents are off and no company AI is set
+up.
 
 ### Set it up
 

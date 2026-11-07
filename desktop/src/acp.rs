@@ -849,7 +849,7 @@ pub use crate::compat::{LOCAL_AGENT_HEADER, LOCAL_AGENT_HEADER_VALUE};
 
 /// Shown when the server's administrator turned local agents off.
 pub const LOCAL_AGENTS_OFF: &str = "Local agents are turned off on this TeamCraft server: the administrator \
-set TEAMCRAFT_LOCAL_AGENTS=off. Use Ask TeamCraft, the assistant configured on the server, instead.";
+set TEAMCRAFT_LOCAL_AGENTS=off, so AI use goes through the company AI (Ask TeamCraft) where the server provides one.";
 
 /// May the desktop start a local agent, by the server's `GET /api/v1/me`?
 /// `capabilities.local_agents == false` refuses; a server too old to report

@@ -44,6 +44,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "admin/webhooks.html",
     "admin/webhook_edit.html",
     "admin/branding.html",
+    "admin/ai.html",
     "desktop/authorize.html",
     "formats.html",
     "imports/upload.html",
@@ -1485,6 +1486,45 @@ mod tests {
             !html.contains("/admin/branding/square/reset"),
             "no reset for the built-in logo"
         );
+        // Admin → AI in every mode: provider and model shown, the key never
+        let company_ai = crate::config::AssistantConfig {
+            provider: crate::config::AssistantProvider::Anthropic,
+            base_url: "https://api.anthropic.com/v1".into(),
+            api_key: Some("sk-ant-never-shown".into()),
+            model: "claude-opus-5-5".into(),
+            max_steps: 8,
+            max_tokens: 4096,
+            request_timeout: std::time::Duration::from_secs(60),
+            run_timeout: std::time::Duration::from_secs(180),
+            max_concurrent: 4,
+            retention_days: 30,
+        };
+        use crate::config::LocalAgents;
+        for (agents, assistant, says) in [
+            (LocalAgents::Off, Some(&company_ai), "Company AI only"),
+            (LocalAgents::Off, None, "users have no AI in TeamCraft"),
+            (
+                LocalAgents::Allowed,
+                Some(&company_ai),
+                "TEAMCRAFT_LOCAL_AGENTS=off",
+            ),
+            (LocalAgents::Allowed, None, "No assistant is configured"),
+        ] {
+            let html = render(
+                &env,
+                "admin/ai.html",
+                with_common(crate::services::assistant::admin_overview(
+                    agents, assistant,
+                )),
+            );
+            assert!(html.contains(says), "{agents:?}: {says}");
+            assert!(!html.contains("sk-ant-never-shown"), "the key leaked");
+            if assistant.is_some() {
+                assert!(html.contains("claude-opus-5-5"), "model shown");
+                assert!(html.contains("api.anthropic.com"), "host shown");
+                assert!(html.contains("set (not shown)"));
+            }
+        }
         let html = render(
             &env,
             "admin/webhook_edit.html",

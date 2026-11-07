@@ -1201,19 +1201,17 @@ pub struct AgentPolicy {
 }
 
 /// Asks the server whether local agents are allowed
-/// (`TEAMCRAFT_LOCAL_AGENTS`), switches the *View → Agent* menu entry to
-/// match and ends a running agent when they are not. The user interface
-/// calls it after sign-in; `agent_start` checks again on its own.
+/// (`TEAMCRAFT_LOCAL_AGENTS`) and ends a running agent when they are not.
+/// The user interface calls it after sign-in and then routes *View → Agent*
+/// (`Ctrl/Cmd+4`) to *Ask TeamCraft*, the company AI, or to a notice;
+/// `agent_start` checks again on its own.
 #[tauri::command]
-pub async fn agent_policy(app: AppHandle, state: State<'_, AppState>) -> CmdResult<AgentPolicy> {
+pub async fn agent_policy(state: State<'_, AppState>) -> CmdResult<AgentPolicy> {
     let api = signed_in_api(&state)?;
     let me = api.json(Method::GET, "/me", None).await?;
     let gate = acp::local_agents_gate(&me);
     if gate.is_err() {
         stop_agent(&state);
-    }
-    if let Some(menu) = app.try_state::<crate::AgentMenuItem>() {
-        let _ = menu.0.set_enabled(gate.is_ok());
     }
     Ok(AgentPolicy {
         allowed: gate.is_ok(),

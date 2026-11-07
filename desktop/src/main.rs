@@ -56,10 +56,6 @@ pub struct AppState {
     pub get_cancel: Arc<AtomicBool>,
 }
 
-/// The *View → Agent* menu entry: disabled when the server turned local
-/// agents off (`commands::agent_policy`).
-pub struct AgentMenuItem(pub tauri::menu::MenuItem<tauri::Wry>);
-
 /// Name of this computer, shown on the browser confirmation page and used for
 /// the token name.
 pub fn device_name() -> String {
@@ -121,7 +117,6 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&PredefinedMenuItem::paste(app, None)?)
         .item(&PredefinedMenuItem::select_all(app, None)?)
         .build()?;
-    let go_agent = item("go-agent", "Agent", Some("CmdOrCtrl+4"))?;
     let view = SubmenuBuilder::new(app, "View")
         .item(&item("refresh", "Refresh", Some("F5"))?)
         .item(&item("search", "Search", Some("CmdOrCtrl+F"))?)
@@ -129,7 +124,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&item("go-home", "Home", Some("CmdOrCtrl+1"))?)
         .item(&item("go-worklist", "My Worklist", Some("CmdOrCtrl+2"))?)
         .item(&item("go-changes", "Changes", Some("CmdOrCtrl+3"))?)
-        .item(&go_agent)
+        .item(&item("go-agent", "Agent", Some("CmdOrCtrl+4"))?)
         .item(&item("go-assistant", "Ask TeamCraft", Some("CmdOrCtrl+5"))?)
         .separator()
         .item(&item("zoom-in", "Zoom In (Ctrl + wheel)", None)?)
@@ -152,7 +147,6 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
     let menu = menu.item(&app_menu);
     let menu = menu.items(&[&file, &edit, &view, &tools, &help]).build()?;
     app.set_menu(menu)?;
-    app.manage(AgentMenuItem(go_agent));
     Ok(())
 }
 

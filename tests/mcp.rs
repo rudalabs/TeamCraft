@@ -912,6 +912,20 @@ async fn local_agents_off_closes_the_mcp_endpoint() {
     .await;
     assert_eq!(r.status, StatusCode::FORBIDDEN);
 
+    // Admin → AI shows the switch (and that no company AI is configured);
+    // only administrators see the page
+    let cookie = app.login("ada").await;
+    let page = app.get_page("/admin/ai", Some(&cookie)).await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text());
+    let html = page.text();
+    assert!(html.contains("TEAMCRAFT_LOCAL_AGENTS=off"), "{html}");
+    assert!(html.contains("users have no AI in TeamCraft"), "{html}");
+    let editor = app.login("lina").await;
+    assert_eq!(
+        app.get_page("/admin/ai", Some(&editor)).await.status,
+        StatusCode::FORBIDDEN
+    );
+
     // the REST API is not affected
     let r = app.api(Method::GET, "/api/v1/items", &token, None).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());

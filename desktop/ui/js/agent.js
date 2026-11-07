@@ -6,7 +6,7 @@ import { $, api, append, call, clear, dialog, errorText, field, h, label, setSta
 import { refreshWorklistCount } from "./shell.js";
 import { navHead, selectView } from "./navigator.js";
 import { closeTab, findTab, openTab } from "./tabs.js";
-import { markdownLite } from "./assistant.js";
+import { assistantEnabled, markdownLite, openAssistant } from "./assistant.js";
 import { openWorkspaceFolder } from "./workspace.js";
 
 // ======================================================================
@@ -44,7 +44,6 @@ export var agent = {
   plan: [],
   permissions: {},
   allowed: true,    // the server allows local agents (TEAMCRAFT_LOCAL_AGENTS)
-  policyMessage: null,
   contextKey: null, // the revision or change tab the agent is told about
   paint: false,
   navDirty: false,
@@ -63,12 +62,12 @@ export function localAgentsAllowed() {
   return agent.allowed && !(caps && caps.local_agents === false);
 }
 
-/** Asks Rust for the server's policy (it also disables View → Agent and
- * ends a running agent when off), then hides the Agent entry points. */
+/** Asks Rust for the server's policy (it ends a running agent when off),
+ * then hides the Agent rail button and tab; View → Agent (`openAgent`)
+ * leads to the company AI instead. */
 export function applyAgentPolicy() {
-  function apply(allowed, message) {
+  function apply(allowed) {
     agent.allowed = allowed;
-    agent.policyMessage = allowed ? null : message;
     document.querySelectorAll(".rail button[data-view=agent]").forEach(function (b) { b.classList.toggle("hidden", !allowed); });
     if (!allowed) {
       agent.running = null;
@@ -77,20 +76,36 @@ export function applyAgentPolicy() {
       if (state.view === "agent") selectView("home");
     }
   }
-  return call("agent_policy").then(function (p) { apply(p.allowed, p.message); }, function () {
+  return call("agent_policy").then(function (p) { apply(p.allowed); }, function () {
     // server not reachable: what GET /me said at sign-in
     var caps = state.me && state.me.capabilities;
     var allowed = !(caps && caps.local_agents === false);
     // agent_policy did not run, so Rust did not end a running agent: do it
     // here, or the UI would forget a child process that keeps running
     if (!allowed) call("agent_stop").catch(function () {});
-    apply(allowed, "Local agents are turned off on this TeamCraft server by the administrator (TEAMCRAFT_LOCAL_AGENTS=off).");
+    apply(allowed);
   });
 }
 
+/** Why there is no local agent: the administrator turned them off, and
+ * whether the organisation's own AI (Ask TeamCraft) is there instead. */
+export function localAgentsOffText() {
+  return assistantEnabled()
+    ? "Your organisation provides its AI centrally: local agents are turned off by the administrator (TEAMCRAFT_LOCAL_AGENTS=off), so questions go to Ask TeamCraft, the company AI, with your rights and the server's audit and limits."
+    : "Local agents are turned off by the administrator of this TeamCraft server (TEAMCRAFT_LOCAL_AGENTS=off), and no company AI (Ask TeamCraft) is configured. Ask your administrator.";
+}
+
+/** View → Agent (Ctrl/Cmd+4) and the rail: the local agent, or – when the
+ * administrator turned local agents off – the company AI instead. */
 export function openAgent() {
   if (!localAgentsAllowed()) {
-    toast(agent.policyMessage || "Local agents are turned off on this TeamCraft server by the administrator (TEAMCRAFT_LOCAL_AGENTS=off). Use Ask TeamCraft instead.", "error");
+    if (assistantEnabled()) {
+      openAssistant(true);
+      toast(localAgentsOffText());
+    } else {
+      dialog("Local agents are off", h("p", { text: localAgentsOffText() }),
+        [{ label: "OK", primary: true, onClick: function (d) { d.close(); } }]);
+    }
     return;
   }
   if (state.view !== "agent") selectView("agent");
@@ -422,7 +437,7 @@ export function renderAgentNav() {
     var nav = $("navigator");
     clear(nav);
     nav.appendChild(navHead("Agent", []));
-    nav.appendChild(h("div.agent-nav", null, [h("p.hint", { text: agent.policyMessage || "Local agents are turned off on this TeamCraft server by the administrator (TEAMCRAFT_LOCAL_AGENTS=off)." })]));
+    nav.appendChild(h("div.agent-nav", null, [h("p.hint", { text: localAgentsOffText() })]));
     return Promise.resolve();
   }
   return agentProfiles().then(function (p) {
