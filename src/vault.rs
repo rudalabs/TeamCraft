@@ -59,12 +59,6 @@ impl Vault {
 
     /// Path of the blob with the given hash. The hash must be validated hex.
     pub fn object_path(&self, sha256: &str) -> AppResult<PathBuf> {
-        // implied by the hex check below; spelled out because it is the path
-        // traversal guard that static analysis (CodeQL rust/path-injection)
-        // recognises, so every path built here is known to be safe
-        if sha256.contains("..") {
-            return Err(AppError::BadRequest("invalid content hash".into()));
-        }
         if sha256.len() != 64 || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(AppError::BadRequest("invalid content hash".into()));
         }

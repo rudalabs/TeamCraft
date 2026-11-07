@@ -230,8 +230,11 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   Flatpak or bundle change is built before it is merged
 - [ ] Run `fuzz.yml` and `scale.yml` once by hand – their schedules have never fired yet – and make a failing
   scheduled run open an issue instead of only an e-mail
-- [ ] Triage the 46 open CodeQL alerts (path injection, cleartext logging/storage, hard-coded crypto value,
-  uncontrolled allocation size): fix or dismiss each with a reason; until then the PR annotations are noise
+- [ ] Triage the open CodeQL alerts (cleartext logging/storage, hard-coded crypto value, uncontrolled allocation
+  size): fix or dismiss each with a reason; until then the PR annotations are noise. Path injection: the 16 alerts
+  were one false positive – the axum `State` extractor counts as user input, so the configured vault directory
+  did – answered by the barrier model in `.github/codeql/extensions/teamcraft-models/` (check that the alerts
+  close after its first run on `main`)
 - [ ] Dependabot (or Renovate) for Cargo and GitHub Actions, and a `Cargo.lock` for `fuzz/`
 
 ### 2. Structure
