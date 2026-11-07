@@ -522,7 +522,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/built-units                units built to the design item (older design revision? open deviations?)",
             "POST   /api/v1/items/{number}/revisions/{code}/built-units  {serial_number?, built_on?, number?, name?, note?, project?, with_bom?: true} – records a unit built to this design revision",
             "GET    /api/v1/projects/{code}/result-templates         extraction templates of the group (see the simulation guide)",
-            "POST   /api/v1/projects/{code}/result-templates         {name, file_pattern, method: regex|csv, pattern | csv_column [csv_key_column, csv_key_value], pick?: first|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?} – managers and admins",
+            "POST   /api/v1/projects/{code}/result-templates         {name, file_pattern, method: regex|csv|table, pattern | csv_column [csv_key_column, csv_key_value], pick?: first|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?} – managers and admins",
             "PUT    /api/v1/result-templates/{id}                    the same fields; replaces the template",
             "DELETE /api/v1/result-templates/{id}",
             "GET    /api/v1/impacts                                   open impacts on items of my project groups",

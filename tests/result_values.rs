@@ -399,21 +399,25 @@ async fn csv_templates_and_the_scan_size_cap() {
     assert_eq!(values[0]["value"], 2.25);
     assert_eq!(values[0]["source"], "summary.csv:3");
 
-    // a number after the first 2 MB of a file is never looked at
-    let tmpl = json!({
-        "name": "Late", "file_pattern": "huge.log", "method": "regex", "pattern": "late=([0-9]+)"
-    });
-    let r = app
-        .api(
-            Method::POST,
-            "/api/v1/projects/ROVER/result-templates",
-            &boss,
-            Some(tmpl),
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    // only the first and the last 2 MB of a file are looked at: a number in
+    // the middle never, a number at the end with `pick = last` (the default)
+    for (name, pattern) in [("Late", "late=([0-9]+)"), ("Middle", "middle=([0-9]+)")] {
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/projects/ROVER/result-templates",
+                &boss,
+                Some(json!({
+                    "name": name, "file_pattern": "huge.log", "method": "regex", "pattern": pattern
+                })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    }
     let rev = simulation(&app, &boss, "ROVER").await;
-    let mut huge = vec![b'.'; 3 * 1024 * 1024];
+    let mut huge = vec![b'.'; 5 * 1024 * 1024 / 2];
+    huge.extend_from_slice(b"\nmiddle=5\n");
+    huge.extend_from_slice(&vec![b'.'; 5 * 1024 * 1024 / 2]);
     huge.extend_from_slice(b"\nlate=7\n");
     let r = app
         .api_multipart(
@@ -424,7 +428,73 @@ async fn csv_templates_and_the_scan_size_cap() {
         )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
-    assert!(results(&app, &boss, &rev).await.is_empty());
+    let values = results(&app, &boss, &rev).await;
+    assert_eq!(values.len(), 1, "{values:?}");
+    assert_eq!(values[0]["name"], "Late");
+    assert_eq!(values[0]["value"], 7.0);
+    assert_eq!(values[0]["source"], "huge.log: last line");
+}
+
+/// A Fluent report file through a `table` template (migration 0040 allows
+/// the method): the last row, or the row of a given iteration.
+#[tokio::test]
+async fn table_templates_read_fluent_report_files() {
+    let app = app_or_skip!();
+    let (_, boss) = app.user_in("boss", Role::Editor, &["ROVER"]).await;
+    sqlx::query("UPDATE project_members SET manager = true")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    for (name, key, value) in [
+        ("Pressure drop", "", ""),
+        ("Pressure drop at 2", "Iteration", "2"),
+    ] {
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/projects/ROVER/result-templates",
+                &boss,
+                Some(json!({
+                    "name": name, "file_pattern": "report-file-*.out", "method": "table",
+                    "csv_column": "pressure-drop", "csv_key_column": key, "csv_key_value": value,
+                    "unit": "Pa"
+                })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+        assert_eq!(r.json()["method"], "table", "{}", r.text());
+    }
+    let rev = simulation(&app, &boss, "ROVER").await;
+    let report = b"\"report-def-0-rfile\"\n\"Iteration\" \"pressure-drop\" \"flow-time\"\n\
+        (\"Iteration\" \"pressure-drop\" \"flow-time\")\n1 2.53e+02 0.001\n2 2.49e+02 0.002\n\
+        3 2.47e+02 0.003\n";
+    let r = app
+        .api_multipart(
+            &format!("{rev}/checkin"),
+            &boss,
+            &[("report-file-0.out", report)],
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let values = results(&app, &boss, &rev).await;
+    let by_name = |n: &str| {
+        values
+            .iter()
+            .find(|v| v["name"] == n)
+            .unwrap_or_else(|| panic!("{n} in {values:?}"))
+            .clone()
+    };
+    assert_eq!(by_name("Pressure drop")["value"], 247.0);
+    assert_eq!(by_name("Pressure drop")["source"], "report-file-0.out:6");
+    assert_eq!(by_name("Pressure drop at 2")["value"], 249.0);
+    // the file is recognised as a Fluent report file
+    let format: String = sqlx::query_scalar("SELECT format FROM files WHERE filename = $1")
+        .bind("report-file-0.out")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(format, "fluent-report");
 }
 
 #[tokio::test]

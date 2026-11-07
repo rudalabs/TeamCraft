@@ -18,10 +18,15 @@
 //!   SolidCraft design (ZIP container or JSON) or a script, `.pdf` with an
 //!   embedded U3D/PRC model is a 3D PDF.
 //! * simulation models and results (FEA/CFD) are recognised the same way.
-//!   `.sim` is NX unless the file names STAR-CCM+ near its start; generic
+//!   `.sim`, `.fem` and `.afm` are NX when they start with the `SPLMSSTR`
+//!   container; a `.sim` that names STAR-CCM+ near its start is STAR-CCM+,
+//!   any other `.sim` stays NX; a text `.fem` is an OptiStruct deck. Generic
 //!   extensions only count with matching content: `.dat` only with Fluent's
-//!   `(0 …)` sections, `.e` only as netCDF/HDF5 (Exodus II), `.db` not for
-//!   SQLite/OLE/text files, `.rst` not for text (reStructuredText), `.msg`
+//!   `(0 …)` sections or Nastran bulk-data markers, `.msh` with Fluent
+//!   sections or Gmsh's `$MeshFormat`, `.java` only naming STAR-CCM+, `.out`
+//!   only as a Fluent report file, `.cas.h5`/`.dat.h5`/`.msh.h5` only with
+//!   the HDF5 signature and `.cas.gz`/… with the gzip magic, `.e` only as
+//!   netCDF/HDF5 (Exodus II), `.db` not for SQLite/OLE/text files, `.rst` not for text (reStructuredText), `.msg`
 //!   and `.sta` only as text (not Outlook mails), `.odb` not as ZIP
 //!   (OpenDocument database), `.bdf` not for bitmap fonts. OpenFOAM cases
 //!   are recognised by `controlDict` (or a `.foam` marker), LS-DYNA results
@@ -33,6 +38,13 @@
 //! cloud – store their STEP/Parasolid exports.
 //!
 //! Extensions are matched case-insensitively (`.CATPart`, `.SLDPRT`).
+#![deny(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unreachable
+)]
 
 use serde::Serialize;
 
@@ -212,9 +224,9 @@ pub const SYSTEMS: &[CadSystem] = &[
     system!("eagle", "Eagle", "Eagle", "Autodesk"),
     system!("pcb-fab", "PCB manufacturing (Gerber, drill)", "PCB fab", "vendor independent", "gerber"),
     system!("rocketry", "Rocketry (OpenRocket, RockSim, RASAero)", "Rocketry", "various", "openrocket", "rocksim", "rasaero"),
-    system!("cae", "Simulation (ANSYS, Abaqus, COMSOL, Nastran, CalculiX, LS-DYNA)", "Simulation", "various", "ansys", "abaqus", "comsol", "nastran", "calculix", "ls-dyna", "lsdyna", "fea"),
+    system!("cae", "Simulation (ANSYS, Abaqus, COMSOL, Nastran, CalculiX, LS-DYNA)", "Simulation", "various", "ansys", "abaqus", "comsol", "nastran", "calculix", "ls-dyna", "lsdyna", "fea", "optistruct", "simcenter"),
     system!("cfd", "CFD (OpenFOAM, Fluent, STAR-CCM+)", "CFD", "various", "openfoam", "fluent", "star-ccm+", "starccm"),
-    system!("cae-open", "Open simulation data (VTK, CGNS, Exodus II)", "VTK/CGNS", "vendor independent", "vtk", "paraview", "cgns", "exodus"),
+    system!("cae-open", "Open simulation data (VTK, CGNS, Exodus II, Gmsh)", "VTK/CGNS", "vendor independent", "vtk", "paraview", "cgns", "exodus", "gmsh"),
     system!("cam", "CNC and 3D printer programs (G-code)", "G-code", "vendor independent", "gcode", "cnc"),
     system!("documents", "Documents and images", "Document", "various"),
 ];
@@ -372,9 +384,12 @@ pub const FORMATS: &[CadFormat] = &[
     cad_format!("ansys-result", "ANSYS result file", "cae", Result, ["rst"], OCTET),
     cad_format!("ansys-thermal-result", "ANSYS thermal result file", "cae", Result, ["rth"], OCTET),
     cad_format!("ansys-database", "ANSYS Mechanical APDL database", "cae", Simulation, ["db"], OCTET),
-    cad_format!("nastran-bulk", "Nastran input deck (bulk data)", "cae", Simulation, ["bdf", "nas"], "text/plain"),
+    cad_format!("nastran-bulk", "Nastran input deck (bulk data)", "cae", Simulation, ["bdf", "nas", "dat"], "text/plain"),
     cad_format!("nastran-op2", "Nastran binary results (OP2)", "cae", Result, ["op2"], OCTET),
     cad_format!("nastran-f06", "Nastran print output (F06)", "cae", Result, ["f06"], "text/plain"),
+    cad_format!("nastran-f04", "Nastran execution summary (F04)", "cae", Result, ["f04"], "text/plain"),
+    cad_format!("nastran-punch", "Nastran punch output (PCH)", "cae", Result, ["pch"], "text/plain"),
+    cad_format!("optistruct-deck", "OptiStruct / HyperMesh input deck", "cae", Simulation, ["fem"], "text/plain"),
     cad_format!("calculix-frd", "CalculiX results (FRD)", "cae", Result, ["frd"], "text/plain"),
     cad_format!("lsdyna-keyword", "LS-DYNA keyword input deck", "cae", Simulation, ["k"], "text/plain"),
     cad_format!("lsdyna-d3plot", "LS-DYNA results (d3plot)", "cae", Result, ["d3plot"], OCTET),
@@ -384,7 +399,19 @@ pub const FORMATS: &[CadFormat] = &[
     cad_format!("fluent-data", "Fluent data file (results)", "cfd", Result, ["dat"], OCTET),
     cad_format!("fluent-case-h5", "Fluent case file (HDF5)", "cfd", Simulation, ["cas.h5"], OCTET),
     cad_format!("fluent-data-h5", "Fluent data file (HDF5, results)", "cfd", Result, ["dat.h5"], OCTET),
+    cad_format!("fluent-mesh", "Fluent mesh file", "cfd", Mesh, ["msh"], OCTET),
+    cad_format!("fluent-mesh-h5", "Fluent mesh file (HDF5)", "cfd", Mesh, ["msh.h5"], OCTET),
+    cad_format!("fluent-case-gz", "Fluent case file (gzip)", "cfd", Simulation, ["cas.gz"], "application/gzip"),
+    cad_format!("fluent-data-gz", "Fluent data file (gzip, results)", "cfd", Result, ["dat.gz"], "application/gzip"),
+    cad_format!("fluent-mesh-gz", "Fluent mesh file (gzip)", "cfd", Mesh, ["msh.gz"], "application/gzip"),
+    cad_format!("fluent-project", "Fluent project", "cfd", Simulation, ["flprj"], OCTET),
+    cad_format!("fluent-cdat", "Fluent CFD-Post data (results)", "cfd", Result, ["cdat"], OCTET),
+    cad_format!("fluent-journal", "Fluent journal (run script)", "cfd", Simulation, ["jou"], "text/plain"),
+    cad_format!("fluent-transcript", "Fluent transcript (solver log)", "cfd", Result, ["trn"], "text/plain"),
+    cad_format!("fluent-report", "Fluent report file (monitor values)", "cfd", Result, ["out"], "text/plain"),
     cad_format!("starccm-sim", "STAR-CCM+ simulation", "cfd", Simulation, ["sim"], OCTET),
+    cad_format!("starccm-history", "STAR-CCM+ solution history (results)", "cfd", Result, ["simh"], OCTET),
+    cad_format!("starccm-macro", "STAR-CCM+ macro (Java)", "cfd", Simulation, ["java"], "text/plain"),
     // Open simulation data formats
     cad_format!("vtk-legacy", "VTK legacy data", "cae-open", Result, ["vtk"], OCTET),
     cad_format!("vtk-unstructured", "VTK unstructured grid (XML)", "cae-open", Result, ["vtu"], "application/xml"),
@@ -395,6 +422,7 @@ pub const FORMATS: &[CadFormat] = &[
     cad_format!("vtk-multiblock", "VTK multiblock data set (XML)", "cae-open", Result, ["vtm"], "application/xml"),
     cad_format!("cgns", "CGNS (CFD General Notation System)", "cae-open", Result, ["cgns"], OCTET),
     cad_format!("exodus", "Exodus II mesh and results", "cae-open", Result, ["exo", "e"], OCTET),
+    cad_format!("gmsh", "Gmsh mesh", "cae-open", Mesh, ["msh"], OCTET),
     // CNC / 3D printer programs
     cad_format!("gcode", "G-code program", "cam", Manufacturing, ["gcode", "gco", "ngc", "nc", "bgcode"], "text/plain"),
     // Documents and images
@@ -412,7 +440,9 @@ pub const FORMATS: &[CadFormat] = &[
 
 /// Extensions shared by two formats; [`detect`] (and for 3D PDFs
 /// [`detect_stored`]) decides by content.
-pub const AMBIGUOUS: [&str; 4] = ["prt", "asm", "pdf", "sim"];
+pub const AMBIGUOUS: [&str; 9] = [
+    "prt", "asm", "pdf", "sim", "fem", "dat", "msh", "java", "out",
+];
 
 /// Creo saves every iteration as `<name>.<ext>.<n>`.
 const CREO_ITERATED: [&str; 7] = ["prt", "asm", "drw", "frm", "lay", "sec", "mfg"];
@@ -486,18 +516,34 @@ pub fn detect(name: &str, head: &[u8]) -> Option<&'static CadFormat> {
         return Some(format);
     }
     let iterated = creo_iteration(name).is_some();
-    let ext = extension(name)?;
     // `head` is empty when only the name is known: then the name decides.
     let known = !head.is_empty();
+    if let Some(compound) = compound_extension(name) {
+        return detect_compound(compound, head, known);
+    }
+    let ext = extension(name)?;
     match ext.as_str() {
-        // NX simulation files and STAR-CCM+ simulations share .sim; STAR-CCM+
-        // names itself near the start of the file, everything else is NX.
+        // NX writes its simulation and FE model files in the same SPLMSSTR
+        // container as its parts (a positive test). STAR-CCM+ names itself
+        // near the start of the file; an unrecognised .sim stays NX (older
+        // NX releases have no container signature).
+        "sim" if is_nx_container(head) => by_id("nx-simulation"),
         "sim" if contains_ascii_ci(head, b"star-ccm") || contains_ascii_ci(head, b"starccm") => {
             by_id("starccm-sim")
         }
         "sim" => by_id("nx-simulation"),
+        // .fem: NX FE model (container) or an OptiStruct/HyperMesh text deck.
+        "fem" if !known || is_nx_container(head) => by_id("nx-simulation"),
+        "fem" if looks_textual(head) => by_id("optistruct-deck"),
+        "fem" => None,
+        // .afm: NX assembly FEM; Adobe font metrics (text) use it too.
+        "afm" if known && !is_nx_container(head) => None,
         // Abaqus writes .msg and .sta as text; Outlook messages are OLE files.
         "msg" | "sta" if known && !looks_textual(head) => None,
+        // Text logs and scripts of Nastran and Fluent.
+        "f04" | "pch" | "jou" | "trn" if known && !looks_textual(head) => None,
+        // OP2 is binary (Fortran records); a text .op2 is something else.
+        "op2" if known && looks_textual(head) => None,
         // ANSYS databases are binary; SQLite files and Windows thumbnail
         // caches use .db too.
         "db" if name.eq_ignore_ascii_case("thumbs.db")
@@ -513,8 +559,25 @@ pub fn detect(name: &str, head: &[u8]) -> Option<&'static CadFormat> {
         "bdf" if head.starts_with(b"STARTFONT") => None,
         // OpenDocument databases (LibreOffice Base) are ZIP files.
         "odb" if head.starts_with(b"PK\x03\x04") => None,
-        // .dat is everywhere; only Fluent's "(0 …)" section syntax counts.
-        "dat" if !is_fluent_sections(head) => None,
+        // .dat is everywhere: only Fluent's "(0 …)" section syntax or the
+        // markers of a Nastran deck (Simcenter 3D writes its decks as .dat)
+        // count.
+        "dat" if is_fluent_sections(head) => by_id("fluent-data"),
+        "dat" if looks_textual(head) && is_nastran_deck(head) => by_id("nastran-bulk"),
+        "dat" => None,
+        // .msh: Fluent sections or Gmsh's "$MeshFormat"; anything else
+        // (and a name alone) stays unclassified.
+        "msh" if is_fluent_mesh(head) => by_id("fluent-mesh"),
+        "msh" if trim_start(head).starts_with(b"$MeshFormat") => by_id("gmsh"),
+        "msh" => None,
+        // Fluent report files: a quoted title line and a header of quoted
+        // column names; by name only "report-file-*.out".
+        "out" if is_fluent_report(head) => by_id("fluent-report"),
+        "out" if !known && is_report_file_name(name) => by_id("fluent-report"),
+        "out" => None,
+        // Only Java sources that name STAR-CCM+ are macros.
+        "java" if is_starccm_macro(head) => by_id("starccm-macro"),
+        "java" => None,
         // Exodus II is netCDF or HDF5; other .e files are not.
         "e" if known && !is_netcdf_or_hdf5(head) => None,
         // LS-DYNA keyword decks are text.
@@ -546,8 +609,8 @@ pub fn detect(name: &str, head: &[u8]) -> Option<&'static CadFormat> {
 
 /// Formats recognised by the whole file name rather than its extension:
 /// the OpenFOAM `controlDict` (marks a case folder), LS-DYNA `d3plot`,
-/// `d3plot01`, … and the two-part Fluent HDF5 extensions `.cas.h5` /
-/// `.dat.h5`.
+/// `d3plot01`, … (two-part extensions such as `.cas.h5` are
+/// [`compound_extension`]s).
 fn detect_by_name(name: &str) -> Option<&'static CadFormat> {
     let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
     let lower = base.to_ascii_lowercase();
@@ -559,13 +622,151 @@ fn detect_by_name(name: &str) -> Option<&'static CadFormat> {
             return by_id("lsdyna-d3plot");
         }
     }
-    if lower.len() > ".cas.h5".len() && lower.ends_with(".cas.h5") {
-        return by_id("fluent-case-h5");
-    }
-    if lower.len() > ".dat.h5".len() && lower.ends_with(".dat.h5") {
-        return by_id("fluent-data-h5");
-    }
     None
+}
+
+/// Two-part extensions of Fluent: HDF5 (Common Fluids Format) and gzip
+/// compressed legacy files.
+const COMPOUND: [&str; 6] = ["cas.h5", "dat.h5", "msh.h5", "cas.gz", "dat.gz", "msh.gz"];
+
+/// The two-part extension of a file name (`pipe.cas.h5` → `cas.h5`), lower
+/// case; `None` without a stem.
+fn compound_extension(name: &str) -> Option<&'static str> {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    let lower = base.to_ascii_lowercase();
+    COMPOUND.into_iter().find(|ext| {
+        lower.len() > ext.len() + 1
+            && lower.ends_with(ext)
+            && lower.as_bytes().get(lower.len() - ext.len() - 1) == Some(&b'.')
+    })
+}
+
+/// A two-part extension: the name decides when only the name is known,
+/// otherwise the HDF5 signature or the gzip magic must be there too.
+fn detect_compound(ext: &str, head: &[u8], known: bool) -> Option<&'static CadFormat> {
+    let id = match ext {
+        "cas.h5" => "fluent-case-h5",
+        "dat.h5" => "fluent-data-h5",
+        "msh.h5" => "fluent-mesh-h5",
+        "cas.gz" => "fluent-case-gz",
+        "dat.gz" => "fluent-data-gz",
+        "msh.gz" => "fluent-mesh-gz",
+        _ => return None,
+    };
+    let content_ok = if ext.ends_with(".h5") {
+        is_hdf5(head)
+    } else {
+        head.starts_with(&GZIP_MAGIC)
+    };
+    if known && !content_ok {
+        return None;
+    }
+    by_id(id)
+}
+
+const HDF5_SIGNATURE: &[u8; 8] = b"\x89HDF\r\n\x1a\n";
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+
+/// The HDF5 signature at offset 0 or 512 (HDF5 allows a user block in
+/// front of the superblock; later offsets 1024, 2048, … lie beyond
+/// [`HEAD_LEN`]).
+fn is_hdf5(head: &[u8]) -> bool {
+    head.starts_with(HDF5_SIGNATURE) || head.get(512..520) == Some(HDF5_SIGNATURE.as_slice())
+}
+
+/// The `SPLMSSTR` container NX writes its parts, FE models and simulations
+/// in (NX 1980 and later).
+fn is_nx_container(head: &[u8]) -> bool {
+    head.starts_with(crate::nxpart::MAGIC)
+}
+
+/// `head` without leading white space.
+fn trim_start(head: &[u8]) -> &[u8] {
+    let start = head
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(head.len());
+    head.get(start..).unwrap_or_default()
+}
+
+/// Lines of a text head (the last, possibly cut line included).
+fn head_lines(head: &[u8]) -> impl Iterator<Item = &[u8]> {
+    head.split(|b| *b == b'\n')
+        .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+}
+
+/// A Nastran bulk-data deck: a line starting with `SOL `, `CEND`,
+/// `BEGIN BULK` or `INIT MASTER`, or a `$` comment that names Nastran or
+/// Simcenter (the translator comment of Simcenter 3D).
+fn is_nastran_deck(head: &[u8]) -> bool {
+    head_lines(head).any(|line| {
+        let line = trim_start(line);
+        // the keyword as a whole word: "CEND", not "CENDRA"
+        let starts = |p: &[u8]| {
+            line.get(..p.len())
+                .is_some_and(|s| s.eq_ignore_ascii_case(p))
+                && (p.ends_with(b" ")
+                    || !line
+                        .get(p.len())
+                        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_'))
+        };
+        starts(b"SOL ")
+            || starts(b"CEND")
+            || starts(b"BEGIN BULK")
+            || starts(b"INIT MASTER")
+            || (line.starts_with(b"$")
+                && (contains_ascii_ci(line, b"nastran") || contains_ascii_ci(line, b"simcenter")))
+    })
+}
+
+/// Fluent mesh files: the sections of case files plus the dimension `(2 …)`
+/// and node `(10 …)` sections a mesh may start with.
+fn is_fluent_mesh(head: &[u8]) -> bool {
+    let rest = trim_start(head);
+    is_fluent_sections(head) || rest.starts_with(b"(2 ") || rest.starts_with(b"(10 ")
+}
+
+/// The tokens of a line made only of double-quoted strings separated by
+/// white space, optionally in parentheses (`"Iteration" "report-def-0"` or
+/// `("Iteration" "report-def-0")`); `None` for any other line.
+fn quoted_tokens(line: &[u8]) -> Option<usize> {
+    let mut rest = trim_start(line);
+    if let Some(inner) = rest.strip_prefix(b"(") {
+        let inner = inner.trim_ascii_end();
+        rest = inner.strip_suffix(b")")?;
+    }
+    let mut count = 0;
+    loop {
+        rest = trim_start(rest);
+        if rest.is_empty() {
+            return (count > 0).then_some(count);
+        }
+        let after = rest.strip_prefix(b"\"")?;
+        let end = after.iter().position(|b| *b == b'"')?;
+        rest = after.get(end + 1..)?;
+        count += 1;
+    }
+}
+
+/// A Fluent report file (`report-file-0.out`): the first line a quoted
+/// title, the second a header of at least two quoted column names.
+fn is_fluent_report(head: &[u8]) -> bool {
+    let mut lines = head_lines(head).filter(|l| !trim_start(l).is_empty());
+    matches!(lines.next().map(quoted_tokens), Some(Some(1)))
+        && matches!(lines.next().map(quoted_tokens), Some(Some(n)) if n >= 2)
+}
+
+/// `report-file-*.out`, the name Fluent gives its report files.
+fn is_report_file_name(name: &str) -> bool {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or(name);
+    base.to_ascii_lowercase().starts_with("report-file")
+}
+
+/// A Java source that names STAR-CCM+ (the header comment of a recorded
+/// macro) or imports its API.
+fn is_starccm_macro(head: &[u8]) -> bool {
+    looks_textual(head)
+        && (contains_ascii_ci(head, b"star-ccm+") || contains_ascii_ci(head, b"import star.common"))
 }
 
 /// Case-insensitive search for an ASCII needle.
@@ -581,7 +782,7 @@ fn is_fluent_sections(head: &[u8]) -> bool {
         .iter()
         .position(|b| !b.is_ascii_whitespace())
         .unwrap_or(head.len());
-    let rest = &head[start..];
+    let rest = head.get(start..).unwrap_or_default();
     rest.starts_with(b"(0 ") || rest.starts_with(b"(1 ") || rest.starts_with(b"(4 ")
 }
 
@@ -618,7 +819,7 @@ async fn pdf_has_3d(path: &std::path::Path) -> bool {
             Ok(n) => n,
         };
         scanned += n as u64;
-        carry.extend_from_slice(&buf[..n]);
+        carry.extend_from_slice(buf.get(..n).unwrap_or_default());
         if needles
             .iter()
             .any(|needle| carry.windows(needle.len()).any(|w| w == *needle))
@@ -763,7 +964,7 @@ pub fn catalogue() -> Vec<serde_json::Value> {
                         "kind_label": f.kind.label(),
                         "extensions": f.extensions,
                         "preview": info.preview,
-                        "searchable_text": crate::textindex::indexes(&format!("x.{}", f.extensions[0])),
+                        "searchable_text": f.extensions.first().is_some_and(|e| crate::textindex::indexes(&format!("x.{e}"))),
                         "ambiguous": f.extensions.iter().any(|e| AMBIGUOUS.contains(e)),
                         "creo_iterations": f.extensions.iter().any(|e| CREO_ITERATED.contains(e)) && f.system == "creo",
                     })
@@ -1089,7 +1290,8 @@ mod tests {
         }
         for (ext, formats) in owners {
             if AMBIGUOUS.contains(&ext) {
-                assert_eq!(formats.len(), 2, "{ext}");
+                // two owners, or one that needs the content (.java, .out)
+                assert!((1..=2).contains(&formats.len()), "{ext}: {formats:?}");
             } else {
                 assert_eq!(formats.len(), 1, "extension {ext} belongs to {formats:?}");
             }
@@ -1275,6 +1477,193 @@ mod tests {
         assert_eq!(id("x.dat", b"\n\t(4 (\"rp\"))"), Some("fluent-data"));
         assert_eq!(id("x.dat", b"(2 3)"), None);
         assert_eq!(id("x.e", b"CDF\x03"), None, "unknown netCDF version");
+    }
+
+    /// The research page `docs/src/research/solver-files.md`: synthetic
+    /// heads for every rule (no real files of these programs were at hand).
+    #[test]
+    fn simcenter_3d_files() {
+        let mut nx = crate::nxpart::MAGIC.to_vec();
+        nx.extend_from_slice(&[0, 0, 0, 1, 0xFF, 0x00]);
+        // the SPLMSSTR container is a positive NX test for .sim/.fem/.afm
+        for name in ["bracket_sim1.sim", "bracket_fem1.fem", "frame.afm"] {
+            assert_eq!(id(name, &nx), Some("nx-simulation"), "{name}");
+            assert_eq!(id(name, &[]), Some("nx-simulation"), "{name} by name");
+        }
+        // even when the container happens to contain the STAR-CCM+ name
+        let mut nx_star = nx.clone();
+        nx_star.extend_from_slice(b"STAR-CCM+ import");
+        assert_eq!(id("a.sim", &nx_star), Some("nx-simulation"));
+        // a .sim with neither marker keeps the NX fallback
+        assert_eq!(
+            id("old.sim", b"\x00\x00\x00\x07binary"),
+            Some("nx-simulation")
+        );
+        // .fem: OptiStruct/HyperMesh text deck, other binary files unknown
+        assert_eq!(
+            id(
+                "bracket.fem",
+                b"$$ HyperMesh OptiStruct deck\nBEGIN BULK\nGRID,1,,0.,0.,0.\n"
+            ),
+            Some("optistruct-deck")
+        );
+        assert_eq!(id("bracket.fem", b"\x00\x01\x02\x03\x04"), None);
+        // .afm: Adobe font metrics are text
+        assert_eq!(
+            id(
+                "Helvetica.afm",
+                b"StartFontMetrics 4.1\nFontName Helvetica\n"
+            ),
+            None
+        );
+        // Nastran decks written by Simcenter 3D as .dat
+        for deck in [
+            &b"$ Simcenter Nastran input deck\nSOL 101\nCEND\n"[..],
+            b"SOL 101\nCEND\nBEGIN BULK\n",
+            b"  sol 103\n",
+            b"INIT MASTER(S)\nID bracket\n",
+            b"TITLE = x\r\nBEGIN BULK\r\nGRID,1\r\n",
+            b"$ NASTRAN deck\nGRID,1,,0.,0.,0.\n",
+        ] {
+            assert_eq!(
+                id("bracket_sim1-solution_1.dat", deck),
+                Some("nastran-bulk")
+            );
+        }
+        assert_eq!(id("values.dat", b"SOLAR 1 2 3\nCENDRA\n"), None);
+        assert_eq!(id("values.dat", b"$ just a comment\n1 2 3\n"), None);
+        assert_eq!(id("blob.dat", b"\x00SOL 101\nCEND\n"), None, "binary");
+        assert_eq!(
+            id("pipe.dat", b"(0 \"fluent\")\nSOL 101\n"),
+            Some("fluent-data")
+        );
+        // the rest of the Nastran set
+        assert_eq!(
+            id("run.f04", b"  NASTRAN EXECUTIVE SUMMARY\n"),
+            Some("nastran-f04")
+        );
+        assert_eq!(id("run.f04", &[]), Some("nastran-f04"));
+        assert_eq!(id("run.f04", b"\x00\x01\x02\x03"), None);
+        assert_eq!(id("run.pch", b"$TITLE   = x\n"), Some("nastran-punch"));
+        assert_eq!(id("run.pch", b"\x00\x01\x02\x03"), None);
+        assert_eq!(
+            id(
+                "run.op2",
+                b"\x00\x00\x00\x1cNASTRAN FORT TAPE ID CODE - \x00"
+            ),
+            Some("nastran-op2")
+        );
+        assert_eq!(id("run.op2", &[]), Some("nastran-op2"));
+        assert_eq!(id("notes.op2", b"plain text notes\n"), None);
+    }
+
+    #[test]
+    fn fluent_files() {
+        let mut hdf5 = HDF5_SIGNATURE.to_vec();
+        hdf5.extend_from_slice(&[0; 16]);
+        let mut user_block = vec![0u8; 512];
+        user_block.extend_from_slice(HDF5_SIGNATURE);
+        let gz = [0x1f, 0x8b, 0x08, 0x00, 0, 0, 0, 0];
+        for (name, expected) in [
+            ("pipe.cas.h5", "fluent-case-h5"),
+            ("pipe-1-00100.dat.h5", "fluent-data-h5"),
+            ("pipe.MSH.H5", "fluent-mesh-h5"),
+        ] {
+            assert_eq!(id(name, &hdf5), Some(expected), "{name}");
+            assert_eq!(id(name, &user_block), Some(expected), "{name}, user block");
+            assert_eq!(id(name, &[]), Some(expected), "{name} by name");
+            assert_eq!(
+                id(name, b"not hdf5 at all"),
+                None,
+                "{name} without signature"
+            );
+            assert_eq!(id(name, &gz), None, "{name} gzip");
+        }
+        for (name, expected) in [
+            ("pipe.cas.gz", "fluent-case-gz"),
+            ("pipe.dat.gz", "fluent-data-gz"),
+            ("pipe.msh.gz", "fluent-mesh-gz"),
+        ] {
+            assert_eq!(id(name, &gz), Some(expected), "{name}");
+            assert_eq!(id(name, &[]), Some(expected), "{name} by name");
+            assert_eq!(id(name, &hdf5), None, "{name} without gzip magic");
+        }
+        assert_eq!(id(".msh.h5", &[]), None, "no stem");
+        assert_eq!(id("pipe.xcas.h5", &[]), None, "not .cas.h5");
+        assert_eq!(id("archive.gz", &gz), None);
+        // .msh: Fluent sections or Gmsh
+        assert_eq!(
+            id("pipe.msh", b"(0 \"Grid:\")\n(2 3)\n"),
+            Some("fluent-mesh")
+        );
+        assert_eq!(
+            id("pipe.msh", b"(2 3)\n(10 (0 1 2c8 0))\n"),
+            Some("fluent-mesh")
+        );
+        assert_eq!(id("pipe.msh", b"\n(10 (0 1 2c8 0))\n"), Some("fluent-mesh"));
+        assert_eq!(
+            id("pipe.msh", b"$MeshFormat\n4.1 0 8\n$EndMeshFormat\n"),
+            Some("gmsh")
+        );
+        assert_eq!(id("pipe.msh", b"random words\n"), None);
+        assert_eq!(id("pipe.msh", &[]), None, "the name alone is ambiguous");
+        // project, CFD-Post data, journal, transcript
+        assert_eq!(id("pipe.flprj", &[]), Some("fluent-project"));
+        assert_eq!(id("pipe.cdat", &[]), Some("fluent-cdat"));
+        assert_eq!(
+            id(
+                "run.jou",
+                b"/file/read-case \"pipe.cas.h5\"\n/solve/iterate 500\n"
+            ),
+            Some("fluent-journal")
+        );
+        assert_eq!(id("run.jou", b"\x00\x01\x02\x03"), None);
+        assert_eq!(
+            id("run.trn", b"Welcome to ANSYS Fluent 2024 R2\n"),
+            Some("fluent-transcript")
+        );
+        assert_eq!(id("run.trn", b"\x00\x01\x02\x03"), None);
+        // report files
+        let report =
+            b"\"report-def-0-rfile\"\n\"Iteration\" \"report-def-0\" \"flow-time\"\n1 0.5 0.001\n";
+        assert_eq!(id("report-file-0.out", report), Some("fluent-report"));
+        assert_eq!(
+            id("monitor.out", report),
+            Some("fluent-report"),
+            "by content"
+        );
+        let repeated = b"\"title\"\r\n(\"Time Step\" \"drag\")\r\n1 2\r\n";
+        assert_eq!(id("x.out", repeated), Some("fluent-report"));
+        assert_eq!(id("report-file-0.out", &[]), Some("fluent-report"));
+        assert_eq!(id("a.out", &[]), None);
+        assert_eq!(id("a.out", b"\x7fELF\x02\x01\x01"), None, "an executable");
+        assert_eq!(id("a.out", b"\"title\"\n1 2 3\n"), None, "no header");
+        assert_eq!(id("a.out", b"\"a\" \"b\"\n\"c\" \"d\"\n"), None, "no title");
+        assert_eq!(id("a.out", b"\"unclosed\n\"a\" \"b\n"), None);
+    }
+
+    #[test]
+    fn star_ccm_files() {
+        assert_eq!(id("pipe.simh", &[]), Some("starccm-history"));
+        let recorded = b"// Simcenter STAR-CCM+ macro: run.java\n// Written by Simcenter STAR-CCM+ 18.06.006\npackage macro;\n";
+        assert_eq!(id("run.java", recorded), Some("starccm-macro"));
+        assert_eq!(
+            id("Export.java", b"package macro;\n\nimport star.common.*;\n"),
+            Some("starccm-macro")
+        );
+        assert_eq!(
+            id(
+                "Main.java",
+                b"package com.example;\n\npublic class Main {}\n"
+            ),
+            None,
+            "ordinary Java"
+        );
+        assert_eq!(id("Main.java", &[]), None, "the name alone is not enough");
+        assert_eq!(
+            id("pipe.sim", b"\x00\x01Simcenter STAR-CCM+ 2402"),
+            Some("starccm-sim")
+        );
     }
 
     #[test]

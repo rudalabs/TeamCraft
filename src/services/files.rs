@@ -62,6 +62,10 @@ pub struct Upload {
     /// for result values from exchange files and templates; empty for other
     /// files.
     pub scan_head: Vec<u8>,
+    /// The end of a text file larger than `resultscan::SCAN_MAX_BYTES` (at most
+    /// as many bytes, starting at a line) for templates with `pick = last`;
+    /// empty when `scan_head` holds the whole file.
+    pub scan_tail: Vec<u8>,
 }
 
 /// The name a file gets on the server – the key for bases and versions.
@@ -161,12 +165,18 @@ impl Upload {
         client_content_type: &str,
     ) -> Upload {
         let mut scan_head = Vec::new();
+        let mut scan_tail = Vec::new();
         let mut export_name = None;
         let (format, content_text, references) = match vault.object_path(&blob.sha256) {
             Ok(path) => {
                 let html = crate::htmltext::is_html(&filename);
                 if crate::resultscan::scannable(&filename) && !html {
                     scan_head = read_head(&path, crate::resultscan::SCAN_MAX_BYTES).await;
+                    if blob.size > crate::resultscan::SCAN_MAX_BYTES {
+                        scan_tail =
+                            crate::textindex::read_tail(&path, crate::resultscan::SCAN_MAX_BYTES)
+                                .await;
+                    }
                 }
                 let format = cadformat::detect_stored(&path, &filename).await;
                 let references = match format {
@@ -197,6 +207,7 @@ impl Upload {
             base: None,
             folder: None,
             scan_head,
+            scan_tail,
         }
     }
 }
