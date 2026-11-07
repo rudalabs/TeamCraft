@@ -304,6 +304,7 @@ the caller cannot read are left out; a successor there is a placeholder with
 | Save As, compare | `POST …/revisions/{code}/save-as` `{number?, name?, project?, files?, bom?}`, `GET …/revisions/{code}/bom/compare?with={code}`        |
 | Similar parts    | `GET …/revisions/{code}/similar` (`limit`, `ignore_scale`, `file`, `wait`) – parts of similar 3D shape, see below                    |
 | Formats          | `GET /formats` – the recognised CAD programs and formats                                                                              |
+| Password         | `POST /me/password` `{current_password, new_password}` – change the own password (204; throttled; web sessions end, tokens stay) |
 | MCP              | `POST /mcp` – Model Context Protocol for AI assistants, see [MCP server](mcp.md)                                                      |
 | Assistant        | `GET/POST /assistant` – the built-in assistant (optional), `context` = the page the caller is on, `thread: true` = ask in the caller's conversation; `GET/DELETE /assistant/thread` – the conversation. See [Ask TeamCraft](../guide/assistant.md#api) |
 

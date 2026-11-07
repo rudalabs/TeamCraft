@@ -17,6 +17,8 @@ Changes on `main` since the `v0.2.0` tag.
 
 ### Added
 
+- The desktop settings have *Change password…* (`POST /api/v1/me/password`,
+  throttled like sign-ins).
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.

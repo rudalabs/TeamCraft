@@ -4694,6 +4694,7 @@
       h("p", null, ["Signed in to ", h("strong", { text: state.session.server_url }), " as ", h("strong", { text: state.me.display_name }), " (" + label(state.me.role) + ") on ", h("span", { text: state.session.device })]),
       h("div.row", null, [
         h("button.danger", { type: "button", on: { click: function () { dlg.close(); signOut(); } } }, "Sign out"),
+        h("button", { type: "button", on: { click: function () { dlg.close(); passwordDialog(); } } }, "Change password…"),
         h("button", { type: "button", on: { click: function () { dlg.close(); signOut(true); } } }, "Change server")
       ])
     ]);
@@ -4711,6 +4712,27 @@
         }
       }
     ], { wide: true });
+  }
+
+  /** Changes the password of the account (`POST /me/password`; accounts of a single sign-on have none). */
+  function passwordDialog() {
+    var current = h("input", { type: "password", autocomplete: "current-password", required: "required" });
+    var next = h("input", { type: "password", autocomplete: "new-password", minlength: "10", required: "required" });
+    var again = h("input", { type: "password", autocomplete: "new-password", minlength: "10", required: "required" });
+    dialog("Change password", h("div.stack", null, [
+      field("Current password", current),
+      field("New password", next, "at least 10 characters"),
+      field("Repeat the new password", again)
+    ]), [
+      { label: "Cancel", onClick: function (d) { d.close(); } },
+      { label: "Change password", primary: true, submit: true, onClick: function (d) {
+        if (next.value !== again.value) { d.fail("The new passwords do not match."); return; }
+        api("POST", "/me/password", { current_password: current.value, new_password: next.value }).then(function () {
+          d.close();
+          toast("Password changed");
+        }, function (err) { d.fail(err); });
+      } }
+    ]);
   }
 
   function signOut(changeServer) {

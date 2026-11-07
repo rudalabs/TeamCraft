@@ -66,6 +66,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/", get(index))
         .route("/me", get(me))
+        .route("/me/password", post(change_password))
         .route("/desktop/token", post(desktop_token))
         .route("/worklist", get(worklist))
         .route("/worklist/checkin-all", post(checkin_all))
@@ -410,6 +411,7 @@ async fn index() -> Json<Value> {
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
             "GET    /api/v1/me",
+            "POST   /api/v1/me/password                            {current_password, new_password} – change own password (throttled; ends web sessions)",
             "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts, and grouped by dependent revision as impact_groups), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
             "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
@@ -696,4 +698,60 @@ async fn formats(ApiUser(_me): ApiUser) -> Json<Value> {
             .map(|k| json!({ "id": k, "label": k.label() }))
             .collect::<Vec<_>>(),
     }))
+}
+
+#[derive(Deserialize)]
+struct PasswordBody {
+    current_password: String,
+    new_password: String,
+}
+
+/// `POST /api/v1/me/password` `{current_password, new_password}`: the caller
+/// changes their own password (clients such as the desktop app). Wrong
+/// current passwords are throttled like sign-ins; the web sessions of the
+/// user end, personal access tokens stay. 204 on success.
+async fn change_password(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    ApiJson(body): ApiJson<PasswordBody>,
+) -> AppResult<axum::response::Response> {
+    use axum::response::IntoResponse;
+    let keys = crate::auth::SignInThrottle::keys(&me.username, None);
+    if let Some(wait) = st.sign_in.blocked(&keys) {
+        let minutes = wait.as_secs().div_ceil(60).max(1);
+        let mut response = (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({ "error": { "code": "too_many_requests",
+                "message": format!("Too many failed attempts. Try again in {minutes} minute(s).") } })),
+        )
+            .into_response();
+        if let Ok(v) = axum::http::HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, v);
+        }
+        return Ok(response);
+    }
+    match users::change_own_password(
+        &st.db,
+        &me,
+        &body.current_password,
+        &body.new_password,
+        None,
+    )
+    .await
+    {
+        Ok(()) => {
+            st.sign_in.succeeded(&me.username);
+            Ok(StatusCode::NO_CONTENT.into_response())
+        }
+        Err(e) => {
+            if body.current_password.is_empty()
+                || matches!(&e, AppError::BadRequest(m) if m.contains("current password"))
+            {
+                st.sign_in.failed(&keys);
+            }
+            Err(e)
+        }
+    }
 }
