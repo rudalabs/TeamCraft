@@ -32,6 +32,7 @@ pub mod httprange;
 pub mod llm;
 pub mod mcp;
 pub mod mesh;
+pub mod metrics;
 pub mod models;
 pub mod notify;
 pub mod nxpart;
@@ -91,6 +92,8 @@ pub struct AppState {
     pub webhooks: webhooks::Dispatcher,
     /// Failed password sign-ins per username and client address.
     pub sign_in: Arc<auth::SignInThrottle>,
+    /// Request counters for `GET /metrics`.
+    pub metrics: Arc<metrics::Metrics>,
 }
 
 impl AppState {
@@ -138,6 +141,7 @@ impl AppState {
         Ok(AppState {
             db,
             sign_in,
+            metrics: Arc::default(),
             config: Arc::new(config),
             templates: Arc::new(templates),
             vault,
@@ -158,9 +162,10 @@ pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; img-src 'self' da
 /// Builds the complete HTTP application.
 pub fn router(state: AppState) -> Router {
     let hsts = state.config.cookie_secure;
-    Router::new()
+    let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics_endpoint))
         .nest("/api/v1", api::router(&state))
         .merge(web::router(&state))
         .layer(SetResponseHeaderLayer::if_not_present(
@@ -188,8 +193,8 @@ pub fn router(state: AppState) -> Router {
                 header::STRICT_TRANSPORT_SECURITY,
                 HeaderValue::from_static("max-age=31536000"),
             )
-        })))
-        .layer(CatchPanicLayer::custom(panic_response))
+        })));
+    guarded(app, state.metrics.clone())
         .layer(
             // One INFO line per request. Only the path is recorded: query
             // strings can carry one-time OIDC codes and search terms.
@@ -244,4 +249,170 @@ fn panic_response(err: Box<dyn Any + Send + 'static>) -> Response {
         Json(json!({ "error": { "code": "internal", "message": "Internal server error." } })),
     )
         .into_response()
+}
+
+/// Prometheus metrics: 404 unless `TEAMCRAFT_METRICS_TOKEN` is set, 401
+/// without that token as bearer token (see `metrics`).
+async fn metrics_endpoint(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let Some(expected) = state.config.metrics_token.as_deref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let given = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    if !metrics::token_matches(given, expected) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [
+                (header::WWW_AUTHENTICATE, "Bearer"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            "metrics token required\n",
+        )
+            .into_response();
+    }
+    let count = |gauge: &'static str, sql: &'static str| {
+        let pool = state.db.clone();
+        async move {
+            match sqlx::query_scalar::<_, i64>(sql).fetch_one(&pool).await {
+                Ok(n) => n as f64,
+                Err(e) => {
+                    // the gauge shows NaN; the log says why
+                    tracing::warn!(gauge, error = %e, "metrics: counting the backlog failed");
+                    f64::NAN
+                }
+            }
+        }
+    };
+    let (webhooks, mail, chat) = tokio::join!(
+        count(
+            "teamcraft_webhook_deliveries_pending",
+            "SELECT COUNT(*) FROM webhook_deliveries WHERE status = 'pending'"
+        ),
+        count(
+            "teamcraft_notification_emails_pending",
+            "SELECT COUNT(*) FROM notifications WHERE email_state = 'pending'"
+        ),
+        count(
+            "teamcraft_notification_chat_pending",
+            "SELECT COUNT(*) FROM notifications WHERE chat_state = 'pending'"
+        ),
+    );
+    let (previews_running, previews_waiting) = state.previews.queue();
+    let gauges = [
+        (
+            "teamcraft_db_pool_connections",
+            "Open database connections.",
+            f64::from(state.db.size()),
+        ),
+        (
+            "teamcraft_db_pool_idle_connections",
+            "Idle database connections.",
+            state.db.num_idle() as f64,
+        ),
+        (
+            "teamcraft_webhook_deliveries_pending",
+            "Webhook deliveries waiting to be sent.",
+            webhooks,
+        ),
+        (
+            "teamcraft_notification_emails_pending",
+            "E-mails waiting to be sent.",
+            mail,
+        ),
+        (
+            "teamcraft_notification_chat_pending",
+            "Chat messages waiting to be sent.",
+            chat,
+        ),
+        (
+            "teamcraft_preview_conversions_running",
+            "3D preview conversions running now (this server).",
+            previews_running as f64,
+        ),
+        (
+            "teamcraft_preview_conversions_waiting",
+            "3D preview conversions waiting for a free slot (this server).",
+            previews_waiting as f64,
+        ),
+    ];
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                "text/plain; version=0.0.4; charset=utf-8",
+            ),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        state.metrics.render(env!("CARGO_PKG_VERSION"), &gauges),
+    )
+        .into_response()
+}
+
+/// Turns a panic into a 500 page and counts every answered request for
+/// `/metrics`. The counter sits outside the panic catcher, so a panicking
+/// handler is counted as `5xx` (see the test below).
+fn guarded<S: Clone + Send + Sync + 'static>(
+    router: Router<S>,
+    metrics: Arc<metrics::Metrics>,
+) -> Router<S> {
+    router.layer(CatchPanicLayer::custom(panic_response)).layer(
+        axum::middleware::from_fn_with_state(metrics, count_requests),
+    )
+}
+
+/// Counts every answered request for `/metrics`. The latency ends when the
+/// response headers are ready; a streamed body (downloads) is not included.
+async fn count_requests(
+    State(metrics): State<Arc<metrics::Metrics>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+    metrics.record(response.status().as_u16(), started.elapsed());
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tower::ServiceExt;
+
+    async fn boom() -> &'static str {
+        panic!("handler bug")
+    }
+
+    /// The point of the layer order: a panic is caught inside the counter,
+    /// so it arrives there as a 500 and is counted as `5xx`.
+    #[tokio::test]
+    async fn a_panicking_request_is_counted_as_5xx() {
+        let metrics = Arc::new(metrics::Metrics::default());
+        let app = guarded(
+            Router::new()
+                .route("/boom", get(boom))
+                .route("/ok", get(healthz)),
+            metrics.clone(),
+        );
+        let request = |uri: &str| {
+            axum::http::Request::builder()
+                .uri(uri)
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let answer = app.clone().oneshot(request("/boom")).await.unwrap();
+        assert_eq!(answer.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let answer = app.oneshot(request("/ok")).await.unwrap();
+        assert_eq!(answer.status(), StatusCode::OK);
+        let text = metrics.render("t", &[]);
+        assert!(
+            text.contains("teamcraft_http_requests_total{class=\"5xx\"} 1"),
+            "{text}"
+        );
+        assert!(text.contains("teamcraft_http_requests_total{class=\"2xx\"} 1"));
+        assert!(text.contains("teamcraft_http_request_duration_seconds_count 2"));
+    }
 }

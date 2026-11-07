@@ -397,7 +397,8 @@
               "assembly",
               "document",
               "software",
-              "simulation"
+              "simulation",
+              "as_built"
             ],
             "type": "string"
           },

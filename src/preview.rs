@@ -16,11 +16,14 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 use crate::{
     error::{AppError, AppResult},
@@ -353,6 +356,8 @@ pub struct Previews {
     /// The `teamcraft` binary for isolated conversions; `None` = in-process.
     worker: Option<PathBuf>,
     slots: Semaphore,
+    /// Conversions waiting for one of the slots (for `GET /metrics`).
+    waiting: AtomicUsize,
     limits: PreviewLimits,
     running: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
@@ -366,9 +371,34 @@ impl Previews {
             dir: vault.root().join("previews"),
             worker,
             slots: Semaphore::new(MAX_PARALLEL),
+            waiting: AtomicUsize::new(0),
             limits,
             running: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The preview queue: conversions running now and conversions waiting
+    /// for a free slot (at most [`MAX_PARALLEL`] run at a time).
+    pub fn queue(&self) -> (usize, usize) {
+        let running = MAX_PARALLEL.saturating_sub(self.slots.available_permits());
+        (running, self.waiting.load(Ordering::Relaxed))
+    }
+
+    /// Waits for a conversion slot; counted in [`Previews::queue`] while
+    /// waiting, also when the waiting request is dropped.
+    async fn slot(&self) -> AppResult<SemaphorePermit<'_>> {
+        struct Waiting<'a>(&'a AtomicUsize);
+        impl Drop for Waiting<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+        self.waiting.fetch_add(1, Ordering::Relaxed);
+        let _waiting = Waiting(&self.waiting);
+        self.slots
+            .acquire()
+            .await
+            .map_err(|e| AppError::Other(anyhow::anyhow!("preview queue closed: {e}")))
     }
 
     fn paths(&self, sha256: &str) -> AppResult<(PathBuf, PathBuf)> {
@@ -450,11 +480,7 @@ impl Previews {
             if let Some(found) = read_signature(&sig_path).await {
                 return found;
             }
-            let _slot = self
-                .slots
-                .acquire()
-                .await
-                .map_err(|e| AppError::Other(anyhow::anyhow!("preview queue closed: {e}")))?;
+            let _slot = self.slot().await?;
             let dir = sig_path.parent().unwrap_or(&self.dir);
             let tmp = dir.join(format!(
                 "{sha256}.{}.sig.tmp",
@@ -595,11 +621,7 @@ impl Previews {
         tokio::fs::create_dir_all(&dir).await.map_err(|e| {
             AppError::Other(anyhow::anyhow!("cannot create {}: {e}", dir.display()))
         })?;
-        let _slot = self
-            .slots
-            .acquire()
-            .await
-            .map_err(|e| AppError::Other(anyhow::anyhow!("preview queue closed: {e}")))?;
+        let _slot = self.slot().await?;
         let tmp = dir.join(format!("{sha256}.{}.tmp", uuid::Uuid::new_v4().simple()));
         // the shape signature comes with the conversion, from the same mesh
         let sig_tmp = tmp.with_extension("sig.tmp");
@@ -938,5 +960,40 @@ mod tests {
         )
         .is_err());
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn the_queue_counts_running_and_waiting_conversions() {
+        let root = std::env::temp_dir().join(format!("teamcraft-preview-{}", uuid::Uuid::new_v4()));
+        let vault = Vault::open(&root).await.unwrap();
+        let previews = Arc::new(Previews::new(&vault, PreviewLimits::default()));
+        assert_eq!(previews.queue(), (0, 0));
+        let held: Vec<_> = take_every_slot(&previews).await;
+        assert_eq!(previews.queue(), (MAX_PARALLEL, 0));
+        let waiter = {
+            let previews = previews.clone();
+            tokio::spawn(async move {
+                let _slot = previews.slot().await.unwrap();
+            })
+        };
+        while previews.queue().1 == 0 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(previews.queue(), (MAX_PARALLEL, 1));
+        // a dropped waiter leaves the queue as well
+        waiter.abort();
+        let _ = waiter.await;
+        assert_eq!(previews.queue(), (MAX_PARALLEL, 0));
+        drop(held);
+        assert_eq!(previews.queue(), (0, 0));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    async fn take_every_slot(previews: &Previews) -> Vec<SemaphorePermit<'_>> {
+        let mut held = Vec::new();
+        for _ in 0..MAX_PARALLEL {
+            held.push(previews.slot().await.unwrap());
+        }
+        held
     }
 }

@@ -14,15 +14,20 @@ pub enum ItemType {
     /// An analysis (FEA, CFD, …): model, solver deck, results and report,
     /// linked to the revisions it is based on (see `services::simulations`).
     Simulation,
+    /// One physical unit (or lot) as it was really built: the design revision
+    /// it was built to, serial number, as-built BOM and deviations from the
+    /// design (see `services::as_built`).
+    AsBuilt,
 }
 
 impl ItemType {
-    pub const ALL: [ItemType; 5] = [
+    pub const ALL: [ItemType; 6] = [
         ItemType::Part,
         ItemType::Assembly,
         ItemType::Document,
         ItemType::Software,
         ItemType::Simulation,
+        ItemType::AsBuilt,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -32,6 +37,7 @@ impl ItemType {
             ItemType::Document => "document",
             ItemType::Software => "software",
             ItemType::Simulation => "simulation",
+            ItemType::AsBuilt => "as_built",
         }
     }
 
@@ -42,6 +48,7 @@ impl ItemType {
             ItemType::Document => "Document",
             ItemType::Software => "Software",
             ItemType::Simulation => "Simulation",
+            ItemType::AsBuilt => "As-built",
         }
     }
 
@@ -53,16 +60,24 @@ impl ItemType {
             ItemType::Document => "DOC",
             ItemType::Software => "SW",
             ItemType::Simulation => "SIM",
+            ItemType::AsBuilt => "AB",
         }
     }
 
+    /// Also accepts `as-built` and `as built`.
     pub fn parse(s: &str) -> Option<ItemType> {
-        match s.trim().to_ascii_lowercase().as_str() {
+        match s
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['-', ' '], "_")
+            .as_str()
+        {
             "part" => Some(ItemType::Part),
             "assembly" => Some(ItemType::Assembly),
             "document" => Some(ItemType::Document),
             "software" => Some(ItemType::Software),
             "simulation" => Some(ItemType::Simulation),
+            "as_built" => Some(ItemType::AsBuilt),
             _ => None,
         }
     }
@@ -78,7 +93,7 @@ const MAX_SEQ_WIDTH: usize = 12;
 /// A numbering scheme for generated item numbers, e.g.
 /// `{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}` → `ROVER-PRT-2026-0007`.
 ///
-/// Placeholders: `{PROJECT}` (project code), `{TYPE}` (PRT, ASM, DOC, SW),
+/// Placeholders: `{PROJECT}` (project code), `{TYPE}` (PRT, ASM, DOC, SW, SIM, AB),
 /// `{YYYY}`, `{YY}`, `{MM}` (creation date, UTC) and exactly one `{SEQ:n}`
 /// (sequence, zero-padded to `n` digits; `{SEQ}` pads nothing). Everything
 /// else is literal text from the item-number alphabet `A–Z 0–9 . _ -`.

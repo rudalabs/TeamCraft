@@ -29,6 +29,13 @@ pub enum AppError {
     /// (`503`); the message is shown to the user, nothing is reported.
     #[error("{0}")]
     Unavailable(String),
+    /// Too many failed attempts (`429` with `Retry-After`); the message is
+    /// shown to the user, `retry_after` says when the next attempt counts.
+    #[error("{message}")]
+    TooManyRequests {
+        message: String,
+        retry_after: std::time::Duration,
+    },
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("I/O error: {0}")]
@@ -63,6 +70,7 @@ impl AppError {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::PayloadTooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
             AppError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            AppError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::Database(sqlx::Error::RowNotFound) => StatusCode::NOT_FOUND,
             AppError::Database(_)
             | AppError::Io(_)
@@ -80,6 +88,7 @@ impl AppError {
             AppError::Unauthorized => "unauthorized",
             AppError::PayloadTooLarge(_) => "payload_too_large",
             AppError::Unavailable(_) => "unavailable",
+            AppError::TooManyRequests { .. } => "too_many_requests",
             AppError::Database(sqlx::Error::RowNotFound) => "not_found",
             AppError::Database(_)
             | AppError::Io(_)
@@ -127,7 +136,39 @@ impl IntoResponse for AppError {
         };
         let body = json!({ "error": { "code": info.code, "message": info.message } });
         let mut response = (status, Json(body)).into_response();
+        if let AppError::TooManyRequests { retry_after, .. } = &self {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from(retry_after.as_secs().max(1)),
+            );
+        }
         response.extensions_mut().insert(info);
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn too_many_requests_is_429_with_retry_after() {
+        let e = AppError::TooManyRequests {
+            message: "Too many failed attempts.".into(),
+            retry_after: Duration::from_millis(1500),
+        };
+        assert_eq!(e.code(), "too_many_requests");
+        assert_eq!(e.public_message(), "Too many failed attempts.");
+        let r = e.into_response();
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(r.headers()[axum::http::header::RETRY_AFTER], "1");
+        // never 0 seconds: a client would retry at once
+        let r = AppError::TooManyRequests {
+            message: String::new(),
+            retry_after: Duration::ZERO,
+        }
+        .into_response();
+        assert_eq!(r.headers()[axum::http::header::RETRY_AFTER], "1");
     }
 }

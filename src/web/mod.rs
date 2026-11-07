@@ -9,6 +9,7 @@
 
 mod account;
 mod admin;
+mod as_built;
 mod assistant;
 mod attributes;
 mod auth_pages;
@@ -203,6 +204,24 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/revisions/{id}/impacts/acknowledge",
             post(references::acknowledge_all),
         )
+        // as-built: build record, deviations, recording a unit of a design
+        .route(
+            "/revisions/{id}/as-built/record",
+            post(as_built::set_record),
+        )
+        .route(
+            "/revisions/{id}/as-built/deviations",
+            post(as_built::add_deviation),
+        )
+        .route(
+            "/as-built-deviations/{id}",
+            post(as_built::update_deviation),
+        )
+        .route(
+            "/as-built-deviations/{id}/delete",
+            post(as_built::delete_deviation),
+        )
+        .route("/revisions/{id}/built-units", post(as_built::record_unit))
         // simulations: basis links, result values, comparison
         .route(
             "/revisions/{id}/simulation/bases",
@@ -633,6 +652,7 @@ pub(crate) fn is_user_error(e: &AppError) -> bool {
             | AppError::NotFound(_)
             | AppError::PayloadTooLarge(_)
             | AppError::Unavailable(_)
+            | AppError::TooManyRequests { .. }
     )
 }
 

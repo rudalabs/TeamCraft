@@ -71,7 +71,7 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 |---|---|---|---|---|
 | Password database stolen | I | Argon2id with a random salt (`src/auth.rs` `hash_password`); minimum 10 characters (`src/domain/validation.rs` `validate_password`) | `src/auth.rs` `password_hash_round_trip` | mitigated |
 | User enumeration at sign-in | I | one message for unknown user, wrong password, OIDC-only and inactive accounts; a dummy Argon2 verify for unknown users (`src/services/users.rs` `authenticate_local`, `src/auth.rs` `DUMMY_HASH`) | `tests/web_ui.rs` `wrong_password_is_rejected` (message); no timing test | mitigated |
-| Password guessing (A1) | S | failed sign-ins counted per username and per client address for 15 minutes (`TEAMCRAFT_SIGNIN_MAX_FAILURES`, 10 per name, 50 per address); then 429 with `Retry-After` without checking the password; the address is the peer or, behind an internal proxy, the proxy's `X-Forwarded-For` entry; in memory per process (`src/auth.rs` `SignInThrottle`, `client_address`; `src/web/auth_pages.rs` `login_submit`). Not throttled: the own password change (needs a session) and the desktop token exchange (its one-time code is deleted on the first attempt) | `src/auth.rs` `sign_in_throttle_counts_per_name_and_address`, `client_addresses_behind_a_proxy`; `tests/web_security.rs` `failed_sign_ins_are_throttled_per_name_and_address` | mitigated (F1 fixed) |
+| Password guessing (A1) | S | failed sign-ins counted per username and per client address for 15 minutes (`TEAMCRAFT_SIGNIN_MAX_FAILURES`, 10 per name, 50 per address); then 429 with `Retry-After` without checking the password; the address is the peer or, behind an internal proxy, the proxy's `X-Forwarded-For` entry; in memory per process (`src/auth.rs` `SignInThrottle`, `client_address`; `src/web/auth_pages.rs` `login_submit`). The own password change (web form `/account/password` and `POST /api/v1/me/password` of the desktop app) shares the per-username counter: a wrong current password counts, a full counter refuses even the right one with 429 (`src/services/users.rs` `change_own_password`); so whoever holds a stolen session or token can lock the user's web sign-in for 15 minutes, as anyone can at the sign-in form. Not throttled: the desktop token exchange (its one-time code is deleted on the first attempt) | `src/auth.rs` `sign_in_throttle_counts_per_name_and_address`, `client_addresses_behind_a_proxy`; `tests/web_security.rs` `failed_sign_ins_are_throttled_per_name_and_address`; `tests/api_password.rs` `wrong_current_passwords_are_throttled` | mitigated (F1 fixed) |
 | Session token guessed or stolen from the database | S, I | 256-bit random tokens, only SHA-256 hashes stored (`src/auth.rs` `generate_token`, `hash_token`; `src/services/users.rs` `create_session`) | `src/auth.rs` `tokens_are_random_and_hashed` | mitigated |
 | Session cookie read by script or sent cross-site | I | `HttpOnly; SameSite=Lax`, `Secure` when the public URL is https (`src/auth.rs` `cookie_attributes`, `src/config.rs` `TEAMCRAFT_COOKIE_SECURE`) | – (attributes not asserted by a test) | partial: no test |
 | Session outlives its purpose | S | absolute lifetime `TEAMCRAFT_SESSION_TTL_HOURS` (72 h); the lookup requires `expires_at > now()` and an active user (`actor_for_session`); sign-out deletes the row; deactivation and an admin password reset delete all sessions | `tests/oidc_flow.rs` `sessions_expire_end_with_sign_out_and_with_deactivation` | mitigated |
@@ -79,7 +79,7 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 | Role or membership changed, old rights stay | E | role and memberships are read from the database on every request (`actor_for_session`, `actor_for_api_token`) | `tests/read_permissions.rs` `visibility_is_managed_and_audited` | mitigated |
 | Personal access token (PAT) stolen | S, I | 256-bit random, SHA-256 hash stored, shown once, optional expiry, revocation by the owner or an admin (audited `token.revoke`), dead with a deactivated account (`src/services/users.rs` `create_token`, `revoke_token`, `actor_for_api_token`) | `tests/oidc_flow.rs` `personal_access_tokens_expire_are_revoked_and_die_with_the_account`; `tests/api_flow.rs` `api_requires_a_valid_token` | mitigated |
 | A PAT has more rights than its client needs | E | none: a PAT carries all rights of its user (REST and MCP, writes included); the desktop app's token lives 90 days. The MCP reference advises one token per client with an expiry (`docs/src/reference/mcp.md`) | – | **open** (F2) |
-| Sign-in events cannot be traced | R | token creation and revocation, password changes, role changes, OIDC provisioning and desktop authorisation are audited, and so are sign-in (`user.sign_in` with the method: password, SSO, setup), failed password sign-in (`user.sign_in_failed`; an unknown typed username is not kept) and sign-out (`user.sign_out`) – never a password or token (`src/services/users.rs` `create_session`, `delete_session`, `record_failed_sign_in`) | `tests/web_security.rs` `sign_in_and_sign_out_are_audited`; `tests/architecture_guards.rs` | mitigated (F3 fixed) |
+| Sign-in events cannot be traced | R | token creation and revocation, password changes, role changes, OIDC provisioning and desktop authorisation are audited, and so are sign-in (`user.sign_in` with the method: password, SSO, setup), failed password sign-in (`user.sign_in_failed`; an unknown typed username is not kept), a wrong current password at the own password change (`user.password_failed`) and sign-out (`user.sign_out`) – never a password or token (`src/services/users.rs` `create_session`, `delete_session`, `record_failed_sign_in`) | `tests/web_security.rs` `sign_in_and_sign_out_are_audited`; `tests/architecture_guards.rs` | mitigated (F3 fixed) |
 
 ## Web: CSRF, XSS, headers, redirects
 
@@ -188,6 +188,12 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 | A non-administrator replaces the logos | E | `Actor::require(Admin)` in `branding::set` and `reset`; every change audited (`branding.set`, `branding.reset`) | `tests/branding.rs` `bad_logos_and_other_users_are_refused` | mitigated |
 | The public logo route leaks data | I | `GET /branding/{wide,square}` serves only the logo images (no sign-in, so the sign-in page can show them) | `tests/branding.rs` | accepted: logos are public by design |
 
+## Metrics endpoint
+
+| Threat | STRIDE | Mitigation | Tests | Status |
+|---|---|---|---|---|
+| Metrics read by outsiders | I | off unless `TEAMCRAFT_METRICS_TOKEN` (at least 16 characters) is set; bearer token compared without early exit; no label comes from a request (no paths, no users) (`src/metrics.rs`, `src/lib.rs` `metrics_endpoint`) | `src/metrics.rs` `token_comparison`; `tests/metrics.rs` | mitigated; a reverse proxy should not expose `/metrics` publicly |
+
 ## Open findings
 
 Each open one has an entry in `docs/OPEN_WORK.md` (section 2, *Security*);
@@ -195,7 +201,7 @@ fixed ones are struck through and name the change.
 
 | | Finding | Area |
 |---|---|---|
-| F1 | ~~No rate limit or lockout for sign-in~~ – fixed (`fix/security-web-auth`): per username and client address, 429; the password change and the desktop token exchange are not throttled (see the table above) | authentication |
+| F1 | ~~No rate limit or lockout for sign-in~~ – fixed (`fix/security-web-auth`): per username and client address, 429; the own password change (web form and REST) counts on the same per-username counter; the desktop token exchange is not throttled (see the table above) | authentication |
 | F2 | PATs have no scopes (read-only, MCP-only); the desktop token has full rights for 90 days | tokens |
 | F3 | ~~Sign-in, failed sign-in and sign-out are not in the audit log~~ – fixed (`fix/security-web-auth`) | audit |
 | F4 | ~~CSRF: a request without `Origin` and `Referer` passes~~ fixed (#111); `X-Forwarded-Host` is trusted as sent (documented) | web |

@@ -47,7 +47,8 @@ Every answer contains only what the token's user may read (see
   the user cannot see are left out without a count.
 * `GET /api/v1/me` lists the user's own memberships in `projects` and,
   in `restricted_projects`, those of them that are restricted. It never
-  names groups the user is not a member of.
+  names groups the user is not a member of. `auth_source` is `local` or
+  `oidc`; only local accounts have a password to change.
 * `GET /api/v1/projects` lists only the groups the user may see; projects
   carry `visibility` (`internal` or `restricted`). `POST /api/v1/projects`
   takes an optional `visibility`; `PUT /api/v1/projects/{code}/visibility`
@@ -297,6 +298,7 @@ the caller cannot read are left out; a successor there is a placeholder with
 | References       | `GET/POST …/references`, `DELETE /references/{id}`, `GET /impacts`, `POST /impacts/{id}/acknowledge`, `POST …/impacts/acknowledge`    |
 | Change requests  | `GET/POST /change-requests`, `GET/PATCH /change-requests/{number}`, `comments`, `items`, `triage`, `assign`, `decide`, `reopen`, `withdraw`, `create-change`, `link-change`, `attachments`, `watch` |
 | Simulations      | `GET/POST /projects/{code}/result-templates`, `PUT/DELETE /result-templates/{id}`, `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
+| As-built         | `GET …/as-built`, `PUT …/as-built/record`, `GET/POST …/as-built/deviations`, `PATCH/DELETE /as-built-deviations/{id}`, `GET /items/{number}/built-units`, `POST …/revisions/{code}/built-units` |
 | Changes          | `GET/POST /changes`, items, reviewers, `suggested-reviewers`, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact` |
 | Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                 |
 | Notifications    | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                   |
@@ -304,6 +306,7 @@ the caller cannot read are left out; a successor there is a placeholder with
 | Save As, compare | `POST …/revisions/{code}/save-as` `{number?, name?, project?, files?, bom?}`, `GET …/revisions/{code}/bom/compare?with={code}`        |
 | Similar parts    | `GET …/revisions/{code}/similar` (`limit`, `ignore_scale`, `file`, `wait`) – parts of similar 3D shape, see below                    |
 | Formats          | `GET /formats` – the recognised CAD programs and formats                                                                              |
+| Password         | `POST /me/password` `{current_password, new_password}` – change the own password (204; throttled; web sessions end, tokens stay) |
 | Branding         | `GET /branding` – replaced logos `{wide, square}` (version token or `null`) and `{wide_type, square_type}` (content type); `GET /branding/{wide|square}` – the image (404 = built-in logo) |
 | MCP              | `POST /mcp` – Model Context Protocol for AI assistants, see [MCP server](mcp.md)                                                      |
 | Assistant        | `GET/POST /assistant` – the built-in assistant (optional), `context` = the page the caller is on, `thread: true` = ask in the caller's conversation; `GET/DELETE /assistant/thread` – the conversation. See [Ask TeamCraft](../guide/assistant.md#api) |
@@ -429,6 +432,29 @@ curl -s -X PUT -H "$H" -H 'Content-Type: application/json' \
      $API/items/SIM-000003/revisions/B/simulation/results
 curl -s -X POST -H "$H" -F file=@job.frd $API/items/SIM-000003/revisions/B/checkin
 ```
+
+## As-built records
+
+An as-built revision (item type `as_built`, numbers `AB-…`) records one
+physical unit: the design revision it was built to, serial number, build
+date, deviations and – as its regular BOM – what was really installed (see
+[As-built records](../guide/as-built.md)). Writes need the as-built revision
+checked out by the caller; a revision checked out by somebody else answers
+`409`, a viewer or a non-member of the group `403`, and a revision or
+deviation the caller may not read `404`.
+
+| Endpoint                                              | Body / result                                                                                                                                  |
+|-------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
+| `GET …/revisions/{code}/as-built`                     | `{revision, record, summary, deviations}`; `record` is `null` until entered, has `newer_design` (text or `null`) and `restricted: true` with a placeholder when the design is hidden |
+| `PUT …/revisions/{code}/as-built/record`              | `{design, design_revision?, serial_number?, built_on?: YYYY-MM-DD, note?}` – default: latest design revision; `409` when the serial number is taken for that design item, `400` for an obsolete design revision |
+| `GET/POST …/revisions/{code}/as-built/deviations`     | `{kind: dimension\|material\|component\|process\|other, feature, designed?, built?, disposition?: open\|use_as_is\|rework\|repair\|scrap, note?}` → `201`; at most 1000 per revision |
+| `PATCH /as-built-deviations/{id}`                     | any of the deviation fields, e.g. `{"disposition": "use_as_is"}`; the others are kept                                                          |
+| `DELETE /as-built-deviations/{id}`                    | removes a deviation → `204`                                                                                                                    |
+| `GET /items/{number}/built-units`                     | units built to any revision of the design item (latest revision of each unit, at most 500); hidden units are counted in `X-Hidden-Count`        |
+| `POST /items/{number}/revisions/{code}/built-units`   | `{serial_number?, built_on?, number?, name?, note?, project?, with_bom?: true}` → `201` with the new as-built revision (A, checked out by the caller) |
+
+A change order with an as-built revision cannot be submitted (`409`) while
+that revision has no build record or an `open` deviation.
 
 ## Webhooks (administrators)
 

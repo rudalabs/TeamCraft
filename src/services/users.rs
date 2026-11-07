@@ -677,31 +677,63 @@ pub async fn set_password(
 /// session that made the change. Personal access tokens stay: they are
 /// separate credentials the user revokes one by one.
 ///
+/// Wrong current passwords count on the same per-username counter of
+/// `throttle` as failed sign-ins (whoever holds a stolen session or token
+/// must not guess the password without a limit); a full counter refuses the
+/// attempt before the password is checked. The web form and
+/// `POST /api/v1/me/password` both come here, so neither path is unthrottled.
+///
 /// # Invariants
 ///
-/// * **Permission:** the current password must be right (400); the new one
-///   must pass the password rules (400).
+/// * **Permission:** a local account (single sign-on accounts have no
+///   password, 400, not counted); not throttled (429 with the wait, also for
+///   the right password); the current password must be right (400, counted);
+///   the new one must pass the password rules (400).
 /// * **Locks:** none.
 /// * **Data:** the password is stored only as a hash; every web session of
 ///   the user except `keep_session` is deleted, personal access tokens stay.
-/// * **Audit:** `user.password` (with the number of sessions ended).
+///   A right current password clears the username's counter.
+/// * **Audit:** `user.password` (with the number of sessions ended);
+///   a wrong current password writes `user.password_failed` (never a
+///   password).
 /// * **Notifications / webhooks:** none.
 /// * **Atomic:** one transaction.
 pub async fn change_own_password(
     pool: &PgPool,
+    throttle: &auth::SignInThrottle,
     actor: &Actor,
     current: &str,
     new: &str,
     keep_session: Option<&str>,
 ) -> AppResult<()> {
+    if get(pool, actor.id).await?.auth_source != "local" {
+        return Err(AppError::BadRequest(
+            "This account signs in via single sign-on and has no local password.".into(),
+        ));
+    }
+    let keys = auth::SignInThrottle::keys(&actor.username, None);
+    if let Some(wait) = throttle.blocked(&keys) {
+        let minutes = wait.as_secs().div_ceil(60).max(1);
+        tracing::warn!(username = %actor.username, "own password change throttled");
+        return Err(AppError::TooManyRequests {
+            message: format!(
+                "Too many failed attempts. Try again in {minutes} minute{}.",
+                if minutes == 1 { "" } else { "s" }
+            ),
+            retry_after: wait,
+        });
+    }
     if authenticate_local(pool, &actor.username, current)
         .await?
         .is_none()
     {
+        throttle.failed(&keys);
+        record_failed_password_change(pool, actor).await?;
         return Err(AppError::BadRequest(
             "The current password is wrong.".into(),
         ));
     }
+    throttle.succeeded(&actor.username);
     domain::validate_password(new)?;
     let hash = auth::hash_password_async(new.to_string()).await?;
     let mut tx = pool.begin().await?;
@@ -725,6 +757,26 @@ pub async fn change_own_password(
         Some(actor.id),
         "Changed own password",
         json!({ "other_sessions_ended": ended }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Records a wrong current password of the own password change
+/// (`user.password_failed`), like a failed sign-in: the account, never what
+/// was typed.
+async fn record_failed_password_change(pool: &PgPool, actor: &Actor) -> AppResult<()> {
+    tracing::warn!(username = %actor.username, "wrong current password at a password change");
+    let mut tx = pool.begin().await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "user.password_failed",
+        "user",
+        Some(actor.id),
+        "Wrong current password at a password change",
+        json!({}),
     )
     .await?;
     tx.commit().await?;

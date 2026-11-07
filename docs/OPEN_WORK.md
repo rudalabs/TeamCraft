@@ -78,7 +78,8 @@ feature milestone – the features in *What works* are enough; what is missing i
 - Open findings of the [threat model](src/dev/threat-model.md) (F1–F19 there):
   - [x] F1: failed password sign-ins throttled per username and client address (`TEAMCRAFT_SIGNIN_MAX_FAILURES`,
     429 with `Retry-After`)
-  - [ ] F1 (rest): count wrong current passwords of the own password change like failed sign-ins
+  - [x] F1 (rest): wrong current passwords of the own password change (web form and `POST /api/v1/me/password`)
+    count like failed sign-ins (429 with `Retry-After`, audited as `user.password_failed`)
   - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
   - [x] F3: sign-in, failed sign-in and sign-out in the audit log (`user.sign_in`, `user.sign_in_failed`,
     `user.sign_out`; no password, token or unknown typed name)
@@ -112,7 +113,7 @@ feature milestone – the features in *What works* are enough; what is missing i
 
 *Operations*
 
-- [ ] Metrics endpoint (Prometheus) for requests, latency, outbox backlogs (notifications, webhooks), preview
+- [~] Metrics endpoint (Prometheus) for requests, latency, outbox backlogs (notifications, webhooks), preview
   queue, database pool; structured JSON logs; documented alerts
 - [ ] Performance targets met and checked by the scale harness (#47): e.g. 1 M files, 100 k items, BOMs of 10 k
   lines, 50 concurrent users – page and API p95 times written down and guarded in a scheduled CI job
@@ -200,12 +201,12 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 
 ### 2. Structure
 
-- [ ] Split the largest modules by area, without behaviour changes, one PR each: `src/mcp/tools.rs` (~3000 lines →
+- [x] Split the largest modules by area, without behaviour changes, one PR each: `src/mcp/tools.rs` (~3000 lines →
   one file per area like `services/`) – mcp done (`src/mcp/tools/*.rs`; tool table, results and dispatch stay in
   `tools.rs`; `tests/mcp_contract.rs` snapshots tool list, schemas and prompts), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
   skins,validation}.rs`) – domain done (`src/domain/*.rs`, re-exported), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`) – api done (`src/api/*_api.rs`, route table stays in `mod.rs`),
   `src/services/requests.rs` (~1900) – requests done (`src/services/requests/*.rs`, re-exported;
-  `tests/change_request_paths.rs` pins the REST paths), `desktop/ui/app.js` (~4700 → ES modules per view, no bundler)
+  `tests/change_request_paths.rs` pins the REST paths), `desktop/ui/app.js` (~5000 → ES modules per view, no bundler) – desktop done (`desktop/ui/js/*.js`, `js/main.js` starts the app; `scripts/check-desktop-modules.mjs` in the CI job `ui` checks that every import resolves and every name of another module is imported)
 - [ ] One request/response contract for web, REST and MCP where they do the same thing (e.g. BOM, where-used,
   change requests): shared view structs in `services::*` instead of three hand-built JSON/HTML shapes
 - [ ] Typed ids (`ItemId`, `RevisionId`, `ChangeId`, … as newtypes over `Uuid`) at the service boundary, so that ids
