@@ -179,6 +179,14 @@ decision, documented). STRIDE letters: **S**poofing, **T**ampering,
 | Restore of a tampered or broken backup | T | manifest, dump checksum, object count and every object hash are checked before anything is written; a non-empty database needs `--force`; `pg_restore` runs in one transaction (`src/backup.rs` `verify_backup`, `ensure_database_empty`) | `tests/backup_errors.rs`, `tests/backup_proofing.rs` `a_failing_forced_restore_leaves_database_and_vault_untouched`, `tests/backup_restore.rs` | mitigated; the manifest is not signed (whoever can write the backup can rewrite both) |
 | The backup leaks credentials | I | the dump holds password, session and token hashes and the webhook secrets; files are written with the process umask (no restrictive mode), not encrypted; the database password goes only through `PGPASSWORD` (`src/backup.rs`) | `src/backup.rs` `commands_keep_the_password_out_of_the_arguments` | partial (F19) |
 
+## Branding uploads
+
+| Threat | STRIDE | Mitigation | Tests | Status |
+|---|---|---|---|---|
+| An administrator's SVG logo runs script in the origin of other users | E, I | the type is decided from the content; SVG with scripts, event handlers, animations, `foreignObject` or external references is refused; logos are shown only through `<img>` (no script runs there) and served with `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` and `nosniff`; 512 KiB and 4096 px caps (`src/services/branding.rs` `validate`, `src/web/branding.rs` `image`) | `src/services/branding.rs` unit tests (`refuses_active_svg_content`, `refuses_oversized_files_and_huge_bitmaps`, …); `tests/branding.rs` | mitigated; the SVG check is a deny list, the sandbox and `<img>` are the real barrier |
+| A non-administrator replaces the logos | E | `Actor::require(Admin)` in `branding::set` and `reset`; every change audited (`branding.set`, `branding.reset`) | `tests/branding.rs` `bad_logos_and_other_users_are_refused` | mitigated |
+| The public logo route leaks data | I | `GET /branding/{wide,square}` serves only the logo images (no sign-in, so the sign-in page can show them) | `tests/branding.rs` | accepted: logos are public by design |
+
 ## Open findings
 
 Each open one has an entry in `docs/OPEN_WORK.md` (section 2, *Security*);

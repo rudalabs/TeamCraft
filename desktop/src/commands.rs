@@ -311,6 +311,9 @@ pub async fn file_bytes(
         "version-mesh" => format!("/file-versions/{id}/mesh"),
         // preview image stored in Inventor / Solid Edge / SolidWorks files
         "thumbnail" => format!("/files/{id}/thumbnail"),
+        // logos an administrator replaced (the id is not used)
+        "branding-wide" => "/branding/wide".to_string(),
+        "branding-square" => "/branding/square".to_string(),
         // screenshots and PDFs attached to a change request
         "request-attachment" => format!("/change-request-attachments/{id}/content"),
         _ => return Err(ApiError::local("Unknown file kind.")),

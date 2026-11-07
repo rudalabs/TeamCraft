@@ -517,12 +517,45 @@
     return reloadProjects().catch(function () {});
   }
 
+  var brandingImages = {};
+  /** Blob URL of a replaced logo (cached per version token). */
+  function brandingImage(kind, token) {
+    var key = kind + ":" + token;
+    return brandingImages[key] || (brandingImages[key] = invoke("file_bytes", { kind: "branding-" + kind, id: "" })
+      .then(function (bytes) { return URL.createObjectURL(new Blob([bytes])); }));
+  }
+
+  /** Shows the logos the administrators set: wide in the title bar, square in the rail; built-in ones otherwise. */
+  function applyBranding() {
+    var brand = document.querySelector(".titlebar .brand"), mark = document.querySelector(".rail-mark");
+    if (!mark.dataset.builtin) mark.dataset.builtin = mark.getAttribute("src");
+    function builtinWide() {
+      brand.classList.remove("has-wide");
+      var old = brand.querySelector(".brand-wide");
+      if (old) old.remove();
+    }
+    api("GET", "/branding").then(function (b) {
+      if (b.wide) {
+        brandingImage("wide", b.wide).then(function (url) {
+          var img = brand.querySelector(".brand-wide");
+          if (!img) { img = h("img.brand-wide", { alt: "Logo" }); brand.appendChild(img); }
+          img.src = url;
+          brand.classList.add("has-wide");
+        }, builtinWide);
+      } else { builtinWide(); }
+      if (b.square) {
+        brandingImage("square", b.square).then(function (url) { mark.src = url; }, function () { mark.src = mark.dataset.builtin; });
+      } else { mark.src = mark.dataset.builtin; }
+    }).catch(function () { /* an older server has no branding: built-in logos */ builtinWide(); mark.src = mark.dataset.builtin; });
+  }
+
   function enterShell() {
     return reloadProjects().then(function () {
       $("connect").classList.add("hidden");
       $("shell").classList.remove("hidden");
       $("status-server").textContent = state.session.server_url;
       $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
+      applyBranding();
       initAssistant();
       selectView(state.view);
       renderTabs();
