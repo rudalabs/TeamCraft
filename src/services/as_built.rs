@@ -23,7 +23,7 @@
 //! Record and deviations belong to the revision like BOM lines: changed only
 //! while it is checked out, copied by Revise, frozen at release. A change
 //! order with an as-built revision cannot be submitted while that revision
-//! has no build record or an open deviation ([`ensure_ready`]).
+//! has no build record or an open deviation (`ensure_ready`).
 
 use chrono::NaiveDate;
 use serde::Serialize;
@@ -411,7 +411,7 @@ pub async fn set_record(
 pub struct NewUnit {
     /// Item number of the as-built item; empty = generated (`AB-…`).
     pub number: Option<String>,
-    /// Name of the as-built item; empty = "<design name> – SN <serial>".
+    /// Name of the as-built item; empty = "`<design name> – SN <serial>`".
     pub name: String,
     pub serial_number: String,
     pub built_on: Option<NaiveDate>,

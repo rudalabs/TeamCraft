@@ -20,6 +20,11 @@ const files = fs.readdirSync(dir).filter((f) => f.endsWith(".js")).sort();
 const errors = [];
 const ident = "[A-Za-z_$][\\w$]*";
 
+/** `text` as a literal inside a regular expression (every special character escaped). */
+function escapeRegExp(text) {
+  return text.replace(/[\\^$.*+?()[\]{}|\/-]/g, "\\$&");
+}
+
 /** Source without comments and string/regex contents (rough, line-preserving). */
 function code(text) {
   return text
@@ -76,7 +81,7 @@ for (const [f, m] of Object.entries(mods)) {
     const o = owner.get(n);
     if (!o || o === f || m.imports.has(n) || local.has(n)) continue;
     // an object key ({ name: … }) is not a use
-    if (new RegExp(`(^|[^.\\w$])${n.replace(/\$/g, "\\$")}(?!\\s*:)`, "m").test(m.body)) {
+    if (new RegExp(`(^|[^.\\w$])${escapeRegExp(n)}(?!\\s*:)`, "m").test(m.body)) {
       errors.push(`${f}: uses ${n} of ${o} without importing it`);
     }
   }
