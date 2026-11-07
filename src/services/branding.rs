@@ -72,6 +72,11 @@ pub struct Logo {
 pub struct Branding {
     pub wide: Option<String>,
     pub square: Option<String>,
+    /// Content type of the wide logo (clients that build the image from
+    /// bytes, such as the desktop app, need it: an untyped SVG is not shown).
+    pub wide_type: Option<String>,
+    /// Content type of the square logo.
+    pub square_type: Option<String>,
 }
 
 impl Branding {
@@ -85,15 +90,21 @@ impl Branding {
 
 /// The custom slots (one cheap query; used for every page).
 pub async fn current(pool: &PgPool) -> AppResult<Branding> {
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT kind, substr(sha256, 1, 12) FROM branding_logos")
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT kind, substr(sha256, 1, 12), content_type FROM branding_logos")
             .fetch_all(pool)
             .await?;
     let mut branding = Branding::default();
-    for (kind, token) in rows {
+    for (kind, token, content_type) in rows {
         match Kind::parse(&kind) {
-            Some(Kind::Wide) => branding.wide = Some(token),
-            Some(Kind::Square) => branding.square = Some(token),
+            Some(Kind::Wide) => {
+                branding.wide = Some(token);
+                branding.wide_type = Some(content_type);
+            }
+            Some(Kind::Square) => {
+                branding.square = Some(token);
+                branding.square_type = Some(content_type);
+            }
             None => {}
         }
     }
@@ -155,22 +166,34 @@ fn check_svg(data: &[u8]) -> AppResult<()> {
         "<!entity",
         "javascript:",
         "data:text/html",
-        "http://",
-        "https://",
         "@import",
     ];
     for needle in forbidden {
-        // `http://www.w3.org/…` namespaces are normal; everything else is not
-        let hit = if needle.starts_with("http") {
-            squeezed
-                .match_indices(needle)
-                .any(|(i, _)| !squeezed[i..].starts_with("http://www.w3.org/"))
-        } else {
-            squeezed.contains(needle)
-        };
-        if hit {
+        if squeezed.contains(needle) {
             return Err(AppError::BadRequest(format!(
                 "The SVG contains '{needle}': scripts, animations and external references are not allowed in a logo."
+            )));
+        }
+    }
+    // References: `href`, `xlink:href` and `src` values and CSS `url(…)` may
+    // point only inside the file (`#id`) or carry an embedded image
+    // (`data:image/…`). Namespace declarations (`xmlns:inkscape="http://…"`)
+    // and metadata URLs (`rdf:resource`, comments) are only text and stay.
+    for value in reference_attribute_values(&lower) {
+        if !local_reference(value) {
+            return Err(AppError::BadRequest(format!(
+                "The SVG links to '{}': a logo may reference only parts of itself (#id) or embedded images.",
+                shorten(value)
+            )));
+        }
+    }
+    for (i, _) in squeezed.match_indices("url(") {
+        let rest = &squeezed[i + 4..];
+        let arg = rest.split(')').next().unwrap_or(rest);
+        if !local_reference(arg.trim_matches(|c| c == '"' || c == '\'')) {
+            return Err(AppError::BadRequest(format!(
+                "The SVG contains 'url({})': a logo may reference only parts of itself (#id) or embedded images.",
+                shorten(arg)
             )));
         }
     }
@@ -194,7 +217,66 @@ fn check_svg(data: &[u8]) -> AppResult<()> {
     Ok(())
 }
 
-/// Pixel size of a PNG (IHDR) or JPEG (SOFn); `None` if it cannot be read.
+/// Whether a reference stays inside the file: `#id` or an embedded image.
+/// Anything else – `http(s)://`, `//host`, `file:`, relative paths, values
+/// written with character references (`&#…;`) – is refused.
+fn local_reference(value: &str) -> bool {
+    let value = value.trim();
+    value.starts_with('#') || value.starts_with("data:image/")
+}
+
+fn shorten(value: &str) -> String {
+    let value = value.trim();
+    if value.chars().count() > 60 {
+        format!("{}…", value.chars().take(60).collect::<String>())
+    } else {
+        value.to_string()
+    }
+}
+
+/// The values of the attributes that load something: `href`, any `…:href`
+/// (`xlink:href`) and `src`. Input is the lower-cased SVG text; text that only
+/// looks like such an attribute is checked too (refusing is the safe side).
+fn reference_attribute_values(lower: &str) -> Vec<&str> {
+    let b = lower.as_bytes();
+    let mut values = Vec::new();
+    for (eq, _) in lower.match_indices('=') {
+        // attribute name before the `=` (whitespace allowed in between)
+        let mut end = eq;
+        while end > 0 && b[end - 1].is_ascii_whitespace() {
+            end -= 1;
+        }
+        let mut start = end;
+        while start > 0
+            && (b[start - 1].is_ascii_alphanumeric() || matches!(b[start - 1], b':' | b'-' | b'_'))
+        {
+            start -= 1;
+        }
+        let name = &lower[start..end];
+        if !(name == "href" || name == "src" || name.ends_with(":href")) {
+            continue;
+        }
+        // the value after the `=`: quoted, or up to whitespace / `>`
+        let rest = lower[eq + 1..].trim_start();
+        let value = match rest.as_bytes().first() {
+            Some(&q @ (b'"' | b'\'')) => {
+                let inner = &rest[1..];
+                &inner[..inner.find(q as char).unwrap_or(inner.len())]
+            }
+            _ => {
+                let len = rest
+                    .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                    .unwrap_or(rest.len());
+                &rest[..len]
+            }
+        };
+        values.push(value);
+    }
+    values
+}
+
+/// Pixel size of a PNG (IHDR), JPEG (SOFn) or WebP (VP8 / VP8L / VP8X);
+/// `None` if it cannot be read.
 fn bitmap_size(content_type: &str, data: &[u8]) -> Option<(u32, u32)> {
     match content_type {
         "image/png" if data.len() >= 24 => Some((
@@ -223,6 +305,40 @@ fn bitmap_size(content_type: &str, data: &[u8]) -> Option<(u32, u32)> {
             }
             None
         }
+        "image/webp" => webp_size(data),
+        _ => None,
+    }
+}
+
+/// Canvas size of a WebP file from its first chunk.
+fn webp_size(data: &[u8]) -> Option<(u32, u32)> {
+    let chunk = data.get(12..16)?;
+    let body = data.get(20..)?;
+    match chunk {
+        // lossy: frame tag (3 bytes), start code 9D 01 2A, 14-bit sizes
+        b"VP8 " => {
+            if body.get(3..6)? != [0x9D, 0x01, 0x2A] {
+                return None;
+            }
+            let w = u16::from_le_bytes([*body.get(6)?, *body.get(7)?]) & 0x3FFF;
+            let h = u16::from_le_bytes([*body.get(8)?, *body.get(9)?]) & 0x3FFF;
+            Some((w as u32, h as u32))
+        }
+        // lossless: signature 0x2F, then width-1 and height-1 in 14 bits each
+        b"VP8L" => {
+            if *body.first()? != 0x2F {
+                return None;
+            }
+            let bits = u32::from_le_bytes(body.get(1..5)?.try_into().ok()?);
+            Some(((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1))
+        }
+        // extended: flags (4 bytes), canvas width-1 and height-1 in 24 bits each
+        b"VP8X" => {
+            let s = body.get(4..10)?;
+            let w = u32::from_le_bytes([s[0], s[1], s[2], 0]) + 1;
+            let h = u32::from_le_bytes([s[3], s[4], s[5], 0]) + 1;
+            Some((w, h))
+        }
         _ => None,
     }
 }
@@ -245,7 +361,15 @@ pub fn validate(data: &[u8]) -> AppResult<&'static str> {
     if content_type == "image/svg+xml" {
         check_svg(data)?;
     }
-    if let Some((w, h)) = bitmap_size(content_type, data) {
+    if content_type != "image/svg+xml" {
+        // a bitmap whose size cannot be read is refused: every client would
+        // decode it without knowing how large it gets
+        let (w, h) = bitmap_size(content_type, data).ok_or_else(|| {
+            AppError::BadRequest(
+                "The image size cannot be read; the file is damaged or of an unusual kind. Save it again as PNG."
+                    .into(),
+            )
+        })?;
         if w == 0 || h == 0 || w > MAX_LOGO_PIXELS || h > MAX_LOGO_PIXELS {
             return Err(AppError::BadRequest(format!(
                 "The image is {w}×{h} pixels; each side must be between 1 and {MAX_LOGO_PIXELS}."
@@ -336,7 +460,167 @@ mod tests {
         v
     }
 
+    /// SOI, an APP0 segment, SOF0 with the size and a few bytes after it.
+    fn jpeg(w: u16, h: u16) -> Vec<u8> {
+        let mut v = vec![
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0, 0, 0xFF, 0xC0, 0x00, 0x0B, 8,
+        ];
+        v.extend_from_slice(&h.to_be_bytes());
+        v.extend_from_slice(&w.to_be_bytes());
+        v.extend_from_slice(&[1, 1, 0x11, 0, 0xFF, 0xD9]);
+        v
+    }
+
+    fn riff(chunk: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut v = b"RIFF".to_vec();
+        v.extend_from_slice(&((body.len() + 12) as u32).to_le_bytes());
+        v.extend_from_slice(b"WEBP");
+        v.extend_from_slice(chunk);
+        v.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        v.extend_from_slice(body);
+        v
+    }
+
+    fn webp_lossy(w: u16, h: u16) -> Vec<u8> {
+        let mut body = vec![0x30, 0x01, 0x00, 0x9D, 0x01, 0x2A];
+        body.extend_from_slice(&w.to_le_bytes());
+        body.extend_from_slice(&h.to_le_bytes());
+        body.extend_from_slice(&[0; 8]);
+        riff(b"VP8 ", &body)
+    }
+
+    fn webp_lossless(w: u32, h: u32) -> Vec<u8> {
+        let bits = (w - 1) | ((h - 1) << 14);
+        let mut body = vec![0x2F];
+        body.extend_from_slice(&bits.to_le_bytes());
+        body.extend_from_slice(&[0; 8]);
+        riff(b"VP8L", &body)
+    }
+
+    fn webp_extended(w: u32, h: u32) -> Vec<u8> {
+        let mut body = vec![0x10, 0, 0, 0];
+        body.extend_from_slice(&(w - 1).to_le_bytes()[..3]);
+        body.extend_from_slice(&(h - 1).to_le_bytes()[..3]);
+        riff(b"VP8X", &body)
+    }
+
     const SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="#036"/></svg>"##;
+
+    /// What Inkscape 1.x writes with "Save" (Inkscape SVG): namespace
+    /// declarations, a comment with a URL, `sodipodi:namedview`, RDF metadata
+    /// with licence URLs, gradients via `url(#…)`, `xlink:href` to an id and
+    /// an embedded PNG.
+    const INKSCAPE_SVG: &str = r##"<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="600"
+   height="120"
+   viewBox="0 0 158.75 31.75"
+   version="1.1"
+   id="svg5"
+   inkscape:version="1.2.2 (b0a8486541, 2022-12-01)"
+   sodipodi:docname="logo.svg"
+   inkscape:export-filename="logo.png"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"
+   xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+   xmlns:cc="http://creativecommons.org/ns#"
+   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <sodipodi:namedview
+     id="namedview7"
+     pagecolor="#ffffff"
+     bordercolor="#666666"
+     borderopacity="1.0"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     showgrid="false"
+     inkscape:zoom="1.2"
+     inkscape:window-width="1920"
+     inkscape:window-height="1011"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs2">
+    <linearGradient
+       inkscape:collect="always"
+       id="linearGradient1">
+      <stop
+         style="stop-color:#003366;stop-opacity:1"
+         offset="0"
+         id="stop1" />
+      <stop
+         style="stop-color:#0066cc;stop-opacity:1"
+         offset="1"
+         id="stop2" />
+    </linearGradient>
+  </defs>
+  <metadata
+     id="metadata1">
+    <rdf:RDF>
+      <cc:Work
+         rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type
+           rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <cc:license
+           rdf:resource="http://creativecommons.org/licenses/by-sa/4.0/" />
+      </cc:Work>
+    </rdf:RDF>
+  </metadata>
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <rect
+       style="fill:url(#linearGradient1);fill-opacity:1;stroke:none"
+       id="rect1"
+       width="31.75"
+       height="31.75"
+       x="0"
+       y="0"
+       rx="4" />
+    <path
+       style="fill:#ffffff;stroke:none"
+       d="M 6,6 H 26 V 10 H 18 V 26 H 14 V 10 H 6 Z"
+       id="path1"
+       sodipodi:nodetypes="ccccccccc"
+       inkscape:connector-curvature="0" />
+    <use
+       x="0"
+       y="0"
+       xlink:href="#path1"
+       id="use1"
+       transform="translate(40)" />
+    <image
+       width="8"
+       height="8"
+       preserveAspectRatio="none"
+       xlink:href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+       id="image1"
+       x="140"
+       y="2" />
+    <text
+       xml:space="preserve"
+       style="font-size:12px;font-family:sans-serif;fill:#003366"
+       x="70"
+       y="20"
+       id="text1"><tspan
+         sodipodi:role="line"
+         id="tspan1"
+         x="70"
+         y="20">ACME</tspan></text>
+  </g>
+</svg>
+"##;
 
     #[test]
     fn kinds_round_trip() {
@@ -349,14 +633,98 @@ mod tests {
     #[test]
     fn accepts_png_jpeg_webp_and_plain_svg() {
         assert_eq!(validate(&png(600, 120)).unwrap(), "image/png");
-        assert_eq!(
-            validate(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 2]).unwrap(),
-            "image/jpeg"
-        );
-        assert_eq!(validate(b"RIFF\0\0\0\0WEBPVP8 ").unwrap(), "image/webp");
+        assert_eq!(validate(&jpeg(600, 120)).unwrap(), "image/jpeg");
+        assert_eq!(validate(&webp_lossy(600, 120)).unwrap(), "image/webp");
+        assert_eq!(validate(&webp_lossless(600, 120)).unwrap(), "image/webp");
+        assert_eq!(validate(&webp_extended(600, 120)).unwrap(), "image/webp");
         assert_eq!(validate(SVG).unwrap(), "image/svg+xml");
         let with_xml = [b"<?xml version=\"1.0\"?>\n".as_slice(), SVG].concat();
         assert_eq!(validate(&with_xml).unwrap(), "image/svg+xml");
+    }
+
+    #[test]
+    fn webp_size_is_read_from_every_kind_of_first_chunk() {
+        assert_eq!(webp_size(&webp_lossy(300, 120)), Some((300, 120)));
+        assert_eq!(webp_size(&webp_lossless(300, 120)), Some((300, 120)));
+        assert_eq!(webp_size(&webp_extended(300, 120)), Some((300, 120)));
+        assert_eq!(webp_size(&webp_lossless(16384, 1)), Some((16384, 1)));
+        assert_eq!(
+            webp_size(&webp_extended(16383, 16383)),
+            Some((16383, 16383))
+        );
+    }
+
+    #[test]
+    fn huge_webp_and_bitmaps_without_a_readable_size_are_refused() {
+        // a 16383 × 16383 WebP fits into a few hundred bytes
+        assert!(validate(&webp_lossless(16383, 16383)).is_err());
+        assert!(validate(&webp_extended(MAX_LOGO_PIXELS + 1, 10)).is_err());
+        assert!(validate(&webp_lossy(10, MAX_LOGO_PIXELS as u16 + 1)).is_err());
+        assert!(validate(&webp_extended(MAX_LOGO_PIXELS, MAX_LOGO_PIXELS)).is_ok());
+        // headers only: the size cannot be read
+        assert!(validate(b"RIFF\0\0\0\0WEBPVP8 ").is_err());
+        assert!(validate(&riff(b"VP8 ", &[0x30, 0x01, 0x00, 0, 0, 0, 1, 0, 1, 0])).is_err());
+        assert!(validate(&riff(b"VP8L", &[0x00, 1, 2, 3, 4])).is_err());
+        assert!(validate(&riff(b"ALPH", &[0; 16])).is_err());
+        // a JPEG without a frame header
+        assert!(validate(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 2]).is_err());
+        assert!(validate(&jpeg(MAX_LOGO_PIXELS as u16 + 1, 10)).is_err());
+        assert!(validate(&jpeg(10, 0)).is_err());
+    }
+
+    #[test]
+    fn accepts_an_inkscape_svg_with_namespaces_and_metadata() {
+        assert_eq!(validate(INKSCAPE_SVG.as_bytes()).unwrap(), "image/svg+xml");
+    }
+
+    #[test]
+    fn refuses_external_references_in_an_inkscape_svg() {
+        let linked = [
+            // linked instead of embedded image (Inkscape's "link" import)
+            (
+                r#"xlink:href="data:image/png;base64,"#,
+                r#"xlink:href="file:///home/me/logo.png" data-x=""#,
+            ),
+            (
+                r#"xlink:href="data:image/png;base64,"#,
+                r#"xlink:href="https://cdn.example.com/x.png" data-x=""#,
+            ),
+            (r##"xlink:href="#path1""##, r##"href="//evil.example/a.svg#p""##),
+            (r##"xlink:href="#path1""##, r#"xlink:href = 'logo.svg#p'"#),
+            // character references hide the scheme
+            (
+                r##"xlink:href="#path1""##,
+                r#"xlink:href="&#104;ttps://evil.example/""#,
+            ),
+            (
+                "fill:url(#linearGradient1)",
+                "fill:url(https://evil.example/g.svg#g)",
+            ),
+            (
+                "fill:url(#linearGradient1)",
+                "fill:url( 'http://evil.example/g.svg#g' )",
+            ),
+            ("fill:url(#linearGradient1)", "fill:url(//evil.example/g)"),
+            // still refused: scripts, handlers, foreignObject, entities
+            ("<defs", "<script>alert(1)</script><defs"),
+            (r#"id="rect1""#, r#"id="rect1" onload="alert(1)""#),
+            ("<defs", "<foreignObject><p>x</p></foreignObject><defs"),
+            (
+                "<svg\n",
+                "<!DOCTYPE svg [<!ENTITY ns_extend \"http://ns.adobe.com/Extensibility/1.0/\">]>\n<svg\n",
+            ),
+        ];
+        for (from, to) in linked {
+            assert!(INKSCAPE_SVG.contains(from), "test fixture lacks {from}");
+            let bad = INKSCAPE_SVG.replacen(from, to, 1);
+            assert!(validate(bad.as_bytes()).is_err(), "accepted: {to}");
+        }
+    }
+
+    #[test]
+    fn reference_attributes_are_found_in_every_spelling() {
+        let svg = r##"<svg a:href = "#a" src='x' href=y/><use xlink:href="#b"/><x nohref="z" hreflang="w"/></svg>"##;
+        assert_eq!(reference_attribute_values(svg), vec!["#a", "x", "y", "#b"]);
     }
 
     #[test]

@@ -518,11 +518,19 @@
   }
 
   var brandingImages = {};
-  /** Blob URL of a replaced logo (cached per version token). */
-  function brandingImage(kind, token) {
+  /** Blob URL of a replaced logo (cached per version token). The type is needed: an untyped SVG blob is not shown. */
+  function brandingImage(kind, token, type) {
     var key = kind + ":" + token;
-    return brandingImages[key] || (brandingImages[key] = invoke("file_bytes", { kind: "branding-" + kind, id: "" })
-      .then(function (bytes) { return URL.createObjectURL(new Blob([bytes])); }));
+    if (!brandingImages[key]) {
+      brandingImages[key] = invoke("file_bytes", { kind: "branding-" + kind, id: "" })
+        .then(function (bytes) {
+          return URL.createObjectURL(new Blob([bytes], { type: type || "application/octet-stream" }));
+        }, function (err) {
+          delete brandingImages[key]; // retry on the next sign-in, not only after a restart
+          throw err;
+        });
+    }
+    return brandingImages[key];
   }
 
   /** Shows the logos the administrators set: wide in the title bar, square in the rail; built-in ones otherwise. */
@@ -536,7 +544,7 @@
     }
     api("GET", "/branding").then(function (b) {
       if (b.wide) {
-        brandingImage("wide", b.wide).then(function (url) {
+        brandingImage("wide", b.wide, b.wide_type).then(function (url) {
           var img = brand.querySelector(".brand-wide");
           if (!img) { img = h("img.brand-wide", { alt: "Logo" }); brand.appendChild(img); }
           img.src = url;
@@ -544,7 +552,7 @@
         }, builtinWide);
       } else { builtinWide(); }
       if (b.square) {
-        brandingImage("square", b.square).then(function (url) { mark.src = url; }, function () { mark.src = mark.dataset.builtin; });
+        brandingImage("square", b.square, b.square_type).then(function (url) { mark.src = url; }, function () { mark.src = mark.dataset.builtin; });
       } else { mark.src = mark.dataset.builtin; }
     }).catch(function () { /* an older server has no branding: built-in logos */ builtinWide(); mark.src = mark.dataset.builtin; });
   }

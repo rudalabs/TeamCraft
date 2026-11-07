@@ -15,10 +15,20 @@ removes an upload again.
 
 * PNG, JPEG, WebP or SVG – the type is decided from the content, not from the
   file name.
-* At most 512 KiB; bitmaps at most 4096 pixels per side.
+* At most 512 KiB; bitmaps at most 4096 pixels per side. A PNG, JPEG or WebP
+  file whose pixel size cannot be read is refused.
 * SVG files must not contain scripts, event handlers, animations,
-  `foreignObject` or links to other files; they are shown only as images and
-  served with a sandboxing `Content-Security-Policy`.
+  `foreignObject`, entity declarations (`<!ENTITY …>`) or links to other
+  files: `href`, `xlink:href`, `src` and CSS `url(…)` may point only into the
+  file itself (`#id`) or carry an embedded `data:image/…`. Namespace
+  declarations and metadata, as Inkscape writes them, are fine. Illustrator
+  files saved with *Preserve Illustrator Editing Capabilities* carry entity
+  declarations and are refused; use *File → Export → Export As… → SVG*
+  instead, or save from Inkscape as *Plain SVG*.
+  SVG logos are shown only as images and served with a sandboxing
+  `Content-Security-Policy`.
+* The web header shows one wide logo for all skins (light and dark). A logo
+  with a transparent background and colours that read on both is best.
 
 ## What else to know
 
@@ -30,4 +40,5 @@ removes an upload again.
   it signs in or starts; sign out and in again to see a change.
 * The image routes `GET /branding/wide` and `GET /branding/square` need no
   sign-in (the sign-in page shows the logo); they answer 404 while the built-in
-  logo is in use. The REST API reports the state at `GET /api/v1/branding`.
+  logo is in use. The REST API reports the state and the content types at
+  `GET /api/v1/branding`; its image routes are cached `private`.
