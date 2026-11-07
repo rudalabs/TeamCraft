@@ -68,7 +68,9 @@ async fn put_in_place(source: &Path, target: &Path) -> AppResult<()> {
                 .and_then(|f| f.set_modified(SystemTime::now()))
         })
         .await;
-        if matches!(renewed, Ok(Ok(()))) {
+        // The garbage collector may have unlinked the blob between the check
+        // and the renewal: look again and keep our copy in that case.
+        if matches!(renewed, Ok(Ok(()))) && fs::try_exists(target).await? {
             fs::remove_file(source).await?;
             return Ok(());
         }

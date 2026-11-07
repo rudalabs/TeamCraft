@@ -81,7 +81,7 @@ uploads too: each user may hold 16 of them for 24 hours.
 | Variable                                | Default | Meaning                                                                                                                                  |
 |-----------------------------------------|---------|------------------------------------------------------------------------------------------------------------------------------------------|
 | `TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS` | `7`     | days after which the old versions of a file set to *keep only the latest version* are removed (1–3650; `0` = the housekeeping never removes them, only `teamcraft vault purge-versions` does) |
-| `TEAMCRAFT_AUDIT_RETENTION_DAYS`        | `0`     | days the audit log is kept; `0` = for ever, otherwise 30–36500; the removal is recorded as one `audit.purge` entry                       |
+| `TEAMCRAFT_AUDIT_RETENTION_DAYS`        | `0`     | days the audit log is kept; `0` = for ever, otherwise 30–36500; the removal is recorded as one `audit.purge` entry; entries that separation of duties still needs (edits of revisions in work or review, preparing actions of open changes) are kept until those are closed; administrator elevation entries are removed too (the elevation list keeps reason and times)                       |
 | `TEAMCRAFT_PREVIEW_CACHE_MAX_MB`        | `0`     | size the preview cache (`<vault>/previews`) is trimmed to, least recently used first; `0` = no limit; previews are made again when needed |
 
 Files keep every version unless someone sets a file to *keep only the latest

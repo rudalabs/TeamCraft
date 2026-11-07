@@ -197,7 +197,11 @@ async fn insert(
 /// # Invariants
 ///
 /// * **Permission:** none – the server's housekeeping, no actor ("system").
-/// * **Data:** only entries older than the cut-off; a retention of 0 days is
+/// * **Data:** only entries older than the cut-off, except the entries separation
+///   of duties still reads: logged edits (`reviewers::EDIT_ACTIONS`) of revisions
+///   that are still in work or review and preparing actions
+///   (`changes::PREPARE_ACTIONS`) of changes that are not yet released or
+///   cancelled – otherwise an editor could drop out of the four-eyes check; a retention of 0 days is
 ///   refused (400).
 /// * **Audit:** one `audit.purge` entry when something was removed (only
 ///   administrators see it, like every entry without an item, change or
@@ -213,11 +217,23 @@ pub async fn purge_older_than(pool: &PgPool, retention_days: u32) -> AppResult<u
     let (removed, oldest, newest): (i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
         sqlx::query_as(
             "WITH gone AS (
-                 DELETE FROM audit_log WHERE at < now() - make_interval(days => $1) RETURNING at
+                 DELETE FROM audit_log a
+                 WHERE a.at < now() - make_interval(days => $1)
+                   AND NOT (a.entity_type = 'revision' AND a.action = ANY($2)
+                            AND EXISTS (SELECT 1 FROM revisions r
+                                        WHERE r.id = a.entity_id
+                                          AND r.state IN ('in_work', 'in_review')))
+                   AND NOT (a.entity_type = 'change' AND a.action = ANY($3)
+                            AND EXISTS (SELECT 1 FROM changes c
+                                        WHERE c.id = a.entity_id
+                                          AND c.status IN ('draft', 'in_review', 'rejected')))
+                 RETURNING a.at
              )
              SELECT COUNT(*), MIN(at), MAX(at) FROM gone",
         )
         .bind(i32::try_from(retention_days).unwrap_or(i32::MAX))
+        .bind(crate::services::reviewers::EDIT_ACTIONS)
+        .bind(crate::services::changes::PREPARE_ACTIONS)
         .fetch_one(&mut *tx)
         .await?;
     if removed > 0 {

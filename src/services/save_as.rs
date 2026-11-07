@@ -115,9 +115,9 @@ pub async fn save_as(
     if input.with_files {
         files = sqlx::query(
             "INSERT INTO files (id, revision_id, filename, content_type, size_bytes, sha256,
-                                uploaded_by, uploaded_at, format, folder)
+                                uploaded_by, uploaded_at, format, folder, retention)
              SELECT gen_random_uuid(), $2, filename, content_type, size_bytes, sha256, $3, now(), format,
-                    folder
+                    folder, retention
              FROM files WHERE revision_id = $1",
         )
         .bind(src.id)

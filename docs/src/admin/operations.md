@@ -172,8 +172,10 @@ How to run it locally is described in `CONTRIBUTING.md`.
 ## Data retention
 
 The server's hourly housekeeping removes what is no longer needed. Nothing
-the database still refers to is ever removed, and everything removed by the
-retention rules below is recorded in the audit log.
+the database still refers to is ever removed. Removals of product data (old
+file versions) and of audit entries are recorded in the audit log; caches,
+expired sessions, staged uploads and unreferenced blobs (also `vault gc
+--apply`) are removed without an entry.
 
 | What                                                        | Rule                                                                                         |
 |-------------------------------------------------------------|----------------------------------------------------------------------------------------------|

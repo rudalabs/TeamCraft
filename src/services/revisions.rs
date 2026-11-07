@@ -486,9 +486,9 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     // The new revision starts with the current version of every file as v1.
     let files = sqlx::query(
         "INSERT INTO files (id, revision_id, filename, content_type, size_bytes, sha256, uploaded_by, uploaded_at,
-                            format, folder)
+                            format, folder, retention)
          SELECT gen_random_uuid(), $2, filename, content_type, size_bytes, sha256, uploaded_by, uploaded_at, format,
-                folder
+                folder, retention
          FROM files WHERE revision_id = $1",
     )
     .bind(src.id)

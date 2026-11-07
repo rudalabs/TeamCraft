@@ -337,7 +337,7 @@ pub(crate) async fn change_editors(
 }
 
 /// Audit actions on a change order that count as preparing it.
-const PREPARE_ACTIONS: &[&str] = &[
+pub(crate) const PREPARE_ACTIONS: &[&str] = &[
     "change.add_item",
     "change.remove_item",
     "change.add_reviewer",

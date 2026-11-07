@@ -833,6 +833,19 @@ pub fn cache_entry(name: &str) -> CacheEntry<'_> {
     if rest.ends_with(".tmp") {
         return CacheEntry::Temporary;
     }
+    // composed assembly previews: `asm-<hex key>.v<N>.tcm`
+    if let Some((key, tail)) = rest.strip_prefix("asm-").and_then(|r| r.split_once('.')) {
+        if !key.is_empty() && key.bytes().all(|b| b.is_ascii_hexdigit()) {
+            if let Some(n) = tail.strip_prefix('v').and_then(|t| t.strip_suffix(".tcm")) {
+                if n == CACHE_VERSION.to_string() {
+                    return CacheEntry::Current(sha256);
+                }
+                if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) {
+                    return CacheEntry::Stale;
+                }
+            }
+        }
+    }
     let mesh = format!("v{CACHE_VERSION}.");
     let thumb = format!("thumb.v{}.", crate::thumbnail::CACHE_VERSION);
     let current = match rest.strip_prefix(&mesh) {
@@ -1052,8 +1065,9 @@ mod tests {
             running: Mutex::new(HashMap::new()),
         };
         let (mesh, err) = previews.paths(&sha).unwrap();
+        let asm = previews.assembly_path(&sha, "0123abcd").unwrap();
         let sig = previews.signature_path(&sha).unwrap();
-        for path in [&mesh, &err, &sig] {
+        for path in [&mesh, &err, &sig, &asm] {
             let name = path.file_name().unwrap().to_str().unwrap();
             assert_eq!(cache_entry(name), CacheEntry::Current(&sha), "{name}");
         }
@@ -1067,6 +1081,7 @@ mod tests {
             format!("{sha}.v{old}.err"),
             format!("{sha}.v{CACHE_VERSION}.s{}.json", shape::VERSION + 7),
             format!("{sha}.thumb.v{old}.png"),
+            format!("{sha}.asm-0123abcd.v{old}.tcm"),
         ] {
             assert_eq!(cache_entry(&name), CacheEntry::Stale, "{name}");
         }

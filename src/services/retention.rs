@@ -11,7 +11,11 @@
 //! whenever the same content is stored again (`vault.rs`), and every writer
 //! stores the blob before it inserts the row that refers to it, so content on
 //! its way into the database is always younger than the grace period. The
-//! time is checked again right before the removal.
+//! time is checked again right before the removal. A store of identical
+//! content that overlaps the removal itself re-checks that the blob exists
+//! after renewing it and puts its own copy in place otherwise; the remaining
+//! window is a few instructions wide and only open for blobs that were idle
+//! for the whole grace period.
 
 use std::{
     collections::HashSet,

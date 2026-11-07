@@ -80,6 +80,23 @@ async fn age(app: &common::TestApp, days: i32) {
         .unwrap();
 }
 
+/// Pretends the blob was stored two hours ago, past the vault's in-flight grace.
+fn old_blob(vault: &teamcraft::vault::Vault, content: &[u8]) {
+    let path = vault.object_path(&sha(content)).unwrap();
+    let past = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 3600);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+}
+
+fn sha(content: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(content))
+}
+
 async fn set_retention(
     app: &common::TestApp,
     token: &str,
@@ -191,10 +208,6 @@ async fn superseded_versions_go_after_the_grace_period() {
     version(&app, &max, "run.csv", b"result three").await;
     version(&app, &max, "keep.csv", b"keep two").await;
     let vault = app.vault().await;
-    let sha = |content: &[u8]| {
-        use sha2::{Digest, Sha256};
-        format!("{:x}", Sha256::digest(content))
-    };
     assert_eq!(versions_of(&app, &run).await, [1, 2, 3]);
 
     // Nothing is old enough yet.
@@ -209,6 +222,8 @@ async fn superseded_versions_go_after_the_grace_period() {
             .is_err()
     );
 
+    old_blob(&vault, b"result one");
+    old_blob(&vault, b"result two");
     age(&app, 10).await;
     // A dry run reports and changes nothing.
     let dry = retention::purge_superseded_versions(&app.pool, &vault, 7, false)
@@ -223,6 +238,9 @@ async fn superseded_versions_go_after_the_grace_period() {
         .await
         .unwrap();
     assert_eq!(done.versions(), 2);
+    assert_eq!(done.blobs_removed, 2);
+    assert!(!vault.exists(&sha(b"result one")).await);
+    assert!(!vault.exists(&sha(b"result two")).await);
     assert_eq!(versions_of(&app, &run).await, [3]);
     // the file that keeps everything is untouched
     assert_eq!(versions_of(&app, &keep).await, [1, 2]);
@@ -337,11 +355,13 @@ async fn shared_content_stays_in_the_vault() {
     version(&app, &max, "run.csv", b"other content").await;
     age(&app, 10).await;
     let vault = app.vault().await;
+    old_blob(&vault, b"shared content");
     let report = retention::purge_superseded_versions(&app.pool, &vault, 7, true)
         .await
         .unwrap();
     assert_eq!(report.versions(), 1);
     assert_eq!(report.blobs_removed, 0, "copy.csv still uses the content");
+    assert!(vault.exists(&sha(b"shared content")).await);
     let r = app
         .api(
             Method::GET,
@@ -354,5 +374,98 @@ async fn shared_content_stays_in_the_vault() {
         )
         .await;
     assert_eq!(r.body, b"shared content");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn revise_and_save_as_keep_the_retention_setting() {
+    let app = app_or_skip!();
+    let (_, max) = app.user_in("max", Role::Editor, &["ROVER"]).await;
+    let (_, reviewer) = app.user_in("rolf", Role::Editor, &["ROVER"]).await;
+    part(&app, &max).await;
+    let r = app
+        .api_multipart(&format!("{REV}/files"), &max, &[("run.csv", b"one")], &[])
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let id = file_id(&app, &max, "run.csv").await;
+    checkout(&app, &max).await;
+    assert_eq!(
+        set_retention(&app, &max, &id, "latest").await.status,
+        StatusCode::OK
+    );
+    app.release(&max, ("rolf", &reviewer), &["PRT-000001"])
+        .await;
+    let r = app
+        .api(Method::POST, &format!("{REV}/revise"), &max, None)
+        .await;
+    assert!(r.status.is_success(), "{}", r.text());
+    let kept: Vec<String> = sqlx::query_scalar(
+        "SELECT f.retention FROM files f JOIN revisions r ON r.id = f.revision_id
+         WHERE r.code = 'B'",
+    )
+    .fetch_all(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, ["latest"]);
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn audit_purge_keeps_what_separation_of_duties_needs() {
+    let app = app_or_skip!();
+    let (max, token) = app.user_in("max", Role::Editor, &["ROVER"]).await;
+    part(&app, &token).await;
+    let rev: uuid::Uuid = sqlx::query_scalar("SELECT id FROM revisions LIMIT 1")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    for (action, entity) in [
+        ("revision.update", "revision"),
+        ("login", "session"),
+        ("revision.update", "item"),
+    ] {
+        sqlx::query(
+            "INSERT INTO audit_log (at, user_id, username, action, entity_type, entity_id, summary)
+             VALUES (now() - interval '100 days', $1, 'max', $2, $3, $4, 'seeded')",
+        )
+        .bind(max.id)
+        .bind(action)
+        .bind(entity)
+        .bind(rev)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    }
+    let count = |app: &common::TestApp| {
+        let pool = app.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM audit_log WHERE summary = 'seeded' AND entity_type = 'revision'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    // the old edit of an in-work revision survives; the other old entries go
+    teamcraft::services::audit::purge_older_than(&app.pool, 30)
+        .await
+        .unwrap();
+    assert_eq!(count(&app).await, 1);
+    let others: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE summary = 'seeded'")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(others, 1);
+    // once the revision is released it is no longer needed
+    sqlx::query("UPDATE revisions SET state = 'released' WHERE id = $1")
+        .bind(rev)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    teamcraft::services::audit::purge_older_than(&app.pool, 30)
+        .await
+        .unwrap();
+    assert_eq!(count(&app).await, 0);
     app.teardown().await;
 }
