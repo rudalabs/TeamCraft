@@ -528,7 +528,7 @@ async fn a_backup_from_before_the_newest_migrations_restores_and_migrates() {
 
     // restore the old backup into a fresh database: it is the old schema,
     // with all of the data
-    let database = app.create_empty_database("restored-old").await;
+    let database = app.create_empty_database("restored_old").await;
     let vault = temp_dir("upgrade-vault");
     let target = app.client_config(&database, &vault);
     backup::restore(&target, &backup_dir, false)
@@ -569,31 +569,48 @@ async fn a_backup_from_before_the_newest_migrations_restores_and_migrates() {
         "same rows as the upgraded original"
     );
 
-    // rollback by restore over the already upgraded database: --force
-    // replaces the tables of the backup. Here the newest migrations add no
-    // table that depends on them, so the restore works and the next start
-    // migrates again (with a newer table that references a restored one
-    // it is refused as a whole, see tests/backup_restore.rs).
+    // rollback by restore. Over the already upgraded database a restore
+    // needs --force, and it is refused as a whole when a newer table
+    // references a restored one (then the database is unchanged) – so the
+    // documented rollback is a restore into a fresh, empty database.
     assert!(applied_versions(&old.pool).await == all);
     let old_target = app.client_config(&old.db_name, &old.vault_dir);
     let err = backup::restore(&old_target, &backup_dir, false)
         .await
         .unwrap_err();
     assert!(format!("{err:#}").contains("--force"), "{err:#}");
-    backup::restore(&old_target, &backup_dir, true)
+    if backup::restore(&old_target, &backup_dir, true)
         .await
-        .expect("rollback by restore");
+        .is_err()
+    {
+        assert_eq!(
+            applied_versions(&old.pool).await,
+            all,
+            "a refused forced restore leaves the database unchanged"
+        );
+    }
+    let rollback_db = app.create_empty_database("rollback_fresh").await;
+    let rollback_vault = temp_dir("upgrade-rollback-vault");
+    backup::restore(
+        &app.client_config(&rollback_db, &rollback_vault),
+        &backup_dir,
+        false,
+    )
+    .await
+    .expect("rollback by restore into a fresh database");
+    let rolled = app.open(&rollback_db, rollback_vault).await;
     assert_eq!(
-        applied_versions(&old.pool).await,
+        applied_versions(&rolled.pool).await,
         &all[..all.len() - 1],
         "the database is back at the schema of the backup"
     );
-    before.assert_kept_in(&old.pool, "rolled back").await;
-    db::migrate(&old.pool).await.expect("upgrade again");
-    assert_eq!(applied_versions(&old.pool).await, all);
-    assert_eq!(columns_of(&old.pool).await, columns_of(&app.pool).await);
+    before.assert_kept_in(&rolled.pool, "rolled back").await;
+    db::migrate(&rolled.pool).await.expect("upgrade again");
+    assert_eq!(applied_versions(&rolled.pool).await, all);
+    assert_eq!(columns_of(&rolled.pool).await, columns_of(&app.pool).await);
 
     let _ = std::fs::remove_dir_all(&backup_dir);
+    rolled.teardown().await;
     restored.teardown().await;
     old.teardown().await;
     app.teardown().await;
@@ -620,13 +637,14 @@ async fn a_damaged_backup_is_refused_and_the_database_stays_unchanged() {
     bytes[middle] ^= 0xff;
     std::fs::write(&dump, bytes).unwrap();
 
-    let database = app.create_empty_database("dmg-target").await;
+    let database = app.create_empty_database("dmg_target").await;
     let vault = temp_dir("damaged-vault");
     let target = app.client_config(&database, &vault);
     let err = backup::restore(&target, &backup_dir, false)
         .await
         .unwrap_err();
     assert!(format!("{err:#}").contains("checksum mismatch"), "{err:#}");
+    assert!(!vault.join("objects").exists(), "no vault objects copied");
     let copy = app.open(&database, vault.clone()).await;
     let tables: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM pg_tables WHERE schemaname = 'public'")
@@ -634,7 +652,6 @@ async fn a_damaged_backup_is_refused_and_the_database_stays_unchanged() {
             .await
             .unwrap();
     assert_eq!(tables, 0, "nothing was restored");
-    assert!(!vault.join("objects").exists(), "no vault objects copied");
 
     let _ = std::fs::remove_dir_all(&backup_dir);
     copy.teardown().await;

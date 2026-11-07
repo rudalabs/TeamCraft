@@ -475,7 +475,7 @@ async fn wrong_password_is_rejected() {
         .post_form(
             "/login",
             None,
-            None,
+            Some("http://localhost:8080"),
             &[("username", "max"), ("password", "wrong-password")],
         )
         .await;

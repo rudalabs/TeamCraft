@@ -17,6 +17,7 @@ mod layout;
 mod resume;
 mod settings;
 mod signin;
+mod update;
 mod workspace;
 
 use std::{
@@ -187,6 +188,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::session,
             commands::set_server,
+            commands::server_url_insecure,
             commands::sign_in_browser,
             commands::cancel_sign_in,
             commands::sign_in_token,
@@ -208,6 +210,10 @@ fn main() {
             commands::workspace_open,
             commands::open_web,
             commands::set_zoom,
+            commands::check_update,
+            commands::dismiss_update,
+            commands::set_update_check,
+            commands::open_release_page,
             commands::save_package,
             commands::cancel_package,
             commands::save_stl,

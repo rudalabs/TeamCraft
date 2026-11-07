@@ -102,8 +102,8 @@ feature milestone – the features in *What works* are enough; what is missing i
   - [ ] F15: prompt injection: confirmation of assistant drafts per write, or taint for MCP sessions as well
   - [ ] F16: per-user quota for the assistant and MCP (with the daily budget in section 2, *Assistant*)
   - [ ] F17: `teamcraft mcp`: no redirects, a warning (or refusal) for `http://` servers other than `localhost`
-  - [ ] F18: desktop token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service); warn on
-    `http://` server URLs
+  - [x] F18: desktop token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service); warn on
+    `http://` server URLs – file fallback with a warning where there is no keychain
   - [ ] F19: backups written with mode 0600/0700, optional encryption, a signed manifest
 - [ ] External review or pentest of authentication, read permissions and file parsing; fuzzing of all parsers
   running continuously (section 1)
@@ -124,8 +124,8 @@ feature milestone – the features in *What works* are enough; what is missing i
 
 *Clients and packaging*
 
-- [ ] Flatpak on Flathub with offline cargo sources; AUR packages published; the desktop app's update notice (no
-  silent auto-update). Binaries and installers stay **unsigned** (no code signing or notarisation): the checksums
+- [ ] Flatpak on Flathub with offline cargo sources; AUR packages published. Done: the desktop app's update notice
+  (daily GitHub release check, opt-out, a link only – no silent auto-update). Binaries and installers stay **unsigned** (no code signing or notarisation): the checksums
   in `SHA256SUMS.txt` and the build provenance are the verification, and the docs explain the first start past
   SmartScreen and Gatekeeper
 - [ ] Desktop app run and tested on Windows x64/ARM64, macOS and Linux for each RC (a short manual test script in

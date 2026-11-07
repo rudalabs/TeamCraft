@@ -23,6 +23,7 @@
 - [Users, roles and single sign-on](admin/users.md)
 - [Read permissions and restricted groups](admin/permissions.md)
 - [Event webhooks](admin/webhooks.md)
+- [Branding: your own logos](admin/branding.md)
 - [Upgrading and rolling back](admin/upgrade.md)
 - [Operations](admin/operations.md)
 - [Support policy](admin/support-policy.md)
