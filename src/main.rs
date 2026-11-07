@@ -165,6 +165,23 @@ enum UserCommand {
     },
     /// List all accounts.
     List,
+    /// Create a personal access token for an account (e.g. for a CI job or
+    /// an MCP client) and print it once on standard output.
+    CreateToken {
+        #[arg(long)]
+        username: String,
+        /// Name shown on the account page, e.g. "nightly export".
+        #[arg(long)]
+        name: String,
+        /// full (read, write, approve), write (no approving), read_only
+        /// (GET requests and read-only MCP tools) or mcp_only (only the MCP
+        /// endpoint)
+        #[arg(long, default_value = "full")]
+        scope: String,
+        /// Lifetime in days (1–3650); without it the token never expires.
+        #[arg(long)]
+        expires_days: Option<i64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -620,6 +637,41 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 "password of '{}' updated; existing sessions were signed out",
                 user.username
             )?;
+        }
+        UserCommand::CreateToken {
+            username,
+            name,
+            scope,
+            expires_days,
+        } => {
+            let scope = teamcraft::domain::TokenScope::parse(&scope)
+                .context("scope must be full, write, read_only or mcp_only")?;
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            if !user.active {
+                bail!("the account '{username}' is deactivated");
+            }
+            let actor = services::users::actor(&pool, user.id).await?;
+            let (record, token) = services::users::create_token(
+                &pool,
+                &actor,
+                &name,
+                services::users::TokenLifetime::fixed(expires_days),
+                scope,
+            )
+            .await?;
+            writeln!(
+                std::io::stderr(),
+                "created token '{}' ({}) for '{}', expires {}; it is shown only once:",
+                record.name,
+                scope.label(),
+                user.username,
+                record
+                    .expires_at
+                    .map_or_else(|| "never".to_string(), |t| t.format("%Y-%m-%d").to_string())
+            )?;
+            println!("{token}");
         }
         UserCommand::List => {
             let users = services::users::list(&pool).await?;

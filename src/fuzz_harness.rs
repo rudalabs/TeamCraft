@@ -169,6 +169,28 @@ pub fn resultscan(data: &[u8]) {
     let _ = crate::resultscan::parse_exchange(crate::resultscan::EXCHANGE_JSON, data);
 }
 
+/// The solver summary of every supported format over the input as a
+/// file's head and as its head and tail, and the window cut.
+pub fn solversummary(data: &[u8]) {
+    let half = data.len() / 2;
+    let (head, tail) = data.split_at(half);
+    for id in [
+        "fluent-transcript",
+        "fluent-report",
+        "nastran-f06",
+        "nastran-bulk",
+        "starccm-macro",
+        "starccm-log",
+        "",
+    ] {
+        let _ = crate::solversummary::summarize(id, data, &[]);
+        let (h, t) = crate::solversummary::windows(head, tail);
+        let _ = crate::solversummary::summarize(id, &h, &t);
+        let (h, t) = crate::solversummary::windows(data, &[]);
+        let _ = crate::solversummary::summarize(id, &h, &t);
+    }
+}
+
 /// The STEP tessellation through `truck` (slow, catches the kernel's
 /// panics itself; the server runs it in a child process with a time limit).
 pub fn mesh_step(data: &[u8]) {
@@ -192,6 +214,7 @@ pub const TARGETS: &[Target] = &[
     ("mesh_step", mesh_step),
     ("cadformat", cadformat),
     ("resultscan", resultscan),
+    ("solversummary", solversummary),
 ];
 
 /// A panic hook that prints the message and nothing else: panics a reader

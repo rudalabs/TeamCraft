@@ -10,9 +10,9 @@ use uuid::Uuid;
 use crate::{
     auth::{self, Actor},
     config::Config,
-    domain::{self, Role},
+    domain::{self, Role, TokenScope},
     error::{AppError, AppResult},
-    models::{ApiToken, User, USER_COLUMNS},
+    models::{ApiToken, User, TOKEN_COLUMNS, USER_COLUMNS},
     services::{
         access, audit,
         project_policy::{self, Interface},
@@ -100,11 +100,24 @@ pub async fn actor_for_session(pool: &PgPool, token: &str) -> AppResult<Option<A
     Ok(row.map(Actor::from))
 }
 
-pub async fn actor_for_api_token(pool: &PgPool, token: &str) -> AppResult<Option<Actor>> {
+#[derive(sqlx::FromRow)]
+struct TokenActorRow {
+    #[sqlx(flatten)]
+    actor: ActorRow,
+    scope: String,
+}
+
+/// The user of a personal access token and the token's scope; `None` for an
+/// unknown, expired or revoked token or a deactivated user. A use moves the
+/// expiry of a token with a sliding lifetime (`idle_days`) forward.
+pub async fn actor_for_api_token(
+    pool: &PgPool,
+    token: &str,
+) -> AppResult<Option<(Actor, TokenScope)>> {
     let token_hash = auth::hash_token(token);
     let cols = actor_columns();
-    let row = sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {cols}
+    let row = sqlx::query_as::<_, TokenActorRow>(&format!(
+        "SELECT {cols}, t.scope
          FROM api_tokens t JOIN users u ON u.id = t.user_id
          WHERE t.token_hash = $1 AND (t.expires_at IS NULL OR t.expires_at > now()) AND u.active"
     ))
@@ -112,20 +125,26 @@ pub async fn actor_for_api_token(pool: &PgPool, token: &str) -> AppResult<Option
     .fetch_optional(pool)
     .await?;
     let Some(row) = row else { return Ok(None) };
-    // Only touch last_used_at once per minute to keep write load low.
+    // Only touch last_used_at (and a sliding expiry) once per minute to keep
+    // write load low.
     sqlx::query(
-        "UPDATE api_tokens SET last_used_at = now()
+        "UPDATE api_tokens SET last_used_at = now(),
+                expires_at = CASE WHEN idle_days IS NULL THEN expires_at
+                                  ELSE now() + make_interval(days => idle_days) END
          WHERE token_hash = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')",
     )
     .bind(&token_hash)
     .execute(pool)
     .await?;
+    // an unknown stored scope (the CHECK constraint prevents it) grants nothing
+    let Some(scope) = TokenScope::parse(&row.scope) else {
+        return Ok(None);
+    };
     // Interfaces switched off per group (need-to-know policy): a PAT sees
     // those groups as hidden. The web session is not affected.
-    let actor = Actor::from(row);
-    Ok(Some(
-        project_policy::narrow(pool, actor, &[Interface::ApiTokens]).await?,
-    ))
+    let actor =
+        project_policy::narrow(pool, Actor::from(row.actor), &[Interface::ApiTokens]).await?;
+    Ok(Some((actor, scope)))
 }
 
 /// Stores the UI skin of the signed-in user.
@@ -285,36 +304,60 @@ pub async fn purge_expired(pool: &PgPool) -> AppResult<u64> {
 }
 
 pub async fn list_tokens(pool: &PgPool, user_id: Uuid) -> AppResult<Vec<ApiToken>> {
-    let tokens = sqlx::query_as::<_, ApiToken>(
-        "SELECT id, name, token_prefix, created_at, last_used_at, expires_at
-         FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC",
-    )
+    let tokens = sqlx::query_as::<_, ApiToken>(&format!(
+        "SELECT {TOKEN_COLUMNS} FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC"
+    ))
     .bind(user_id)
     .fetch_all(pool)
     .await?;
     Ok(tokens)
 }
 
+/// How long a new token lives.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TokenLifetime {
+    /// Until revoked.
+    Unlimited,
+    /// A fixed number of days from creation.
+    Days(i64),
+    /// Expires after this many days without use; every use renews it.
+    IdleDays(i64),
+}
+
+impl TokenLifetime {
+    /// `None` = never expires, otherwise a fixed lifetime in days.
+    pub fn fixed(days: Option<i64>) -> Self {
+        days.map_or(TokenLifetime::Unlimited, TokenLifetime::Days)
+    }
+}
+
 /// Creates a personal access token. The plaintext is returned exactly once.
 ///
 /// # Invariants
 ///
-/// * **Permission:** any signed-in actor; the token belongs to the actor.
-///   A lifetime outside 1 to 3650 days is refused (400).
+/// * **Permission:** any signed-in actor; the token belongs to the actor
+///   and never carries more than the actor's rights; the scope only
+///   narrows them. A lifetime outside 1 to 3650 days is refused (400).
 /// * **Locks:** none.
 /// * **Data:** only the hash and a short prefix are stored; the plaintext
 ///   is not recoverable later.
-/// * **Audit:** `token.create`.
+/// * **Audit:** `token.create` (name, scope and expiry, never the token).
 /// * **Notifications / webhooks:** none.
 /// * **Atomic:** one transaction.
 pub async fn create_token(
     pool: &PgPool,
     actor: &Actor,
     name: &str,
-    expires_in_days: Option<i64>,
+    lifetime: TokenLifetime,
+    scope: TokenScope,
 ) -> AppResult<(ApiToken, String)> {
     let name = domain::require_text("Token name", name, 100)?;
-    if let Some(days) = expires_in_days {
+    let (days, idle_days) = match lifetime {
+        TokenLifetime::Unlimited => (None, None),
+        TokenLifetime::Days(d) => (Some(d), None),
+        TokenLifetime::IdleDays(d) => (Some(d), Some(d)),
+    };
+    if let Some(days) = days {
         if !(1..=3650).contains(&days) {
             return Err(AppError::BadRequest(
                 "Token lifetime must be between 1 and 3650 days.".into(),
@@ -326,19 +369,21 @@ pub async fn create_token(
         .chars()
         .take(auth::API_TOKEN_PREFIX.len() + 6)
         .collect();
-    let expires_at = expires_in_days.map(|d| Utc::now() + chrono::Duration::days(d));
+    let expires_at = days.map(|d| Utc::now() + chrono::Duration::days(d));
     let mut tx = pool.begin().await?;
-    let record = sqlx::query_as::<_, ApiToken>(
-        "INSERT INTO api_tokens (id, user_id, name, token_hash, token_prefix, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, name, token_prefix, created_at, last_used_at, expires_at",
-    )
+    let record = sqlx::query_as::<_, ApiToken>(&format!(
+        "INSERT INTO api_tokens (id, user_id, name, token_hash, token_prefix, expires_at, scope, idle_days)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING {TOKEN_COLUMNS}"
+    ))
     .bind(Uuid::new_v4())
     .bind(actor.id)
     .bind(&name)
     .bind(auth::hash_token(&token))
     .bind(&prefix)
     .bind(expires_at)
+    .bind(scope.as_str())
+    .bind(idle_days.and_then(|d| i32::try_from(d).ok()))
     .fetch_one(&mut *tx)
     .await?;
     audit::record(
@@ -347,8 +392,9 @@ pub async fn create_token(
         "token.create",
         "user",
         Some(actor.id),
-        format!("Created API token '{name}'"),
-        json!({ "token_id": record.id, "expires_at": expires_at }),
+        format!("Created API token '{name}' ({})", scope.label()),
+        json!({ "token_id": record.id, "expires_at": expires_at, "scope": scope.as_str(),
+                "idle_days": idle_days }),
     )
     .await?;
     tx.commit().await?;

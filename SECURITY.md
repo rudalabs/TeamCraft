@@ -77,7 +77,8 @@ Out of scope:
   reads to its own provider. `TEAMCRAFT_LOCAL_AGENTS=off` closes the MCP
   endpoint for every token and the desktop's *Agent* view then runs on the
   server-side assistant, so only that remains; the REST API stays reachable
-  with a user's own token until scoped tokens exist (see
+  with a user's own token; an `mcp_only` token cannot reach it and a `read_only`
+  token can only read through it (see
   [Local agents](https://rudalabs.github.io/TeamCraft/admin/configuration.html#local-agents)).
   A call to `POST /api/v1/mcp` that gets through while the setting is
   `off` is in scope.

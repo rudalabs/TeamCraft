@@ -155,8 +155,20 @@
       <dt>Classification</dt><dd>{% for c in classifications %}{% if c.value == item.classification %}{{ c.label }}{% endif %}{% endfor %}</dd>
       <dt>Project group</dt><dd>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% else %}—{% endif %}</dd>
       <dt>Created</dt><dd>{{ m.time(item.created_at) }} by {{ item.created_by_name }}</dd>
+      <dt>Owner</dt><dd>{{ item.owner_name }}{% if can.owner and owner_candidates %} <button class="small" type="button" data-toggle="owner-form">Change</button>{% endif %}</dd>
       <dt>Short link</dt><dd class="mono small"><a href="/i/{{ item.number }}">/i/{{ item.number }}</a></dd>
     </dl>
+    {% if can.owner and owner_candidates %}
+    <form id="owner-form" class="stack hidden" method="post" action="/items/{{ item.id }}/owner">
+      <input type="hidden" name="back" value="{{ back }}">
+      <label>Owner
+        <select name="owner_id">
+          {% for u in owner_candidates %}<option value="{{ u.id }}" {% if item.owner_id == u.id %}selected{% endif %}>{{ u.display_name }} ({{ u.username }})</option>{% endfor %}
+        </select>
+      </label>
+      <div class="actions"><button class="primary" type="submit">Save owner</button></div>
+    </form>
+    {% endif %}
     {% if can.master %}
     <form id="master-form" class="stack hidden" method="post" action="/items/{{ item.id }}/master">
       <input type="hidden" name="back" value="{{ back }}">
@@ -261,7 +273,8 @@
           <a href="/files/{{ f.id }}/download">{{ f.filename }}</a>
           {% if f.format_info %}<span class="fmt fmt-{{ f.format_info.kind }}" title="{{ f.format_info.system_name }} · {{ f.format_info.kind_label }} · {{ f.content_type }}">{{ f.format_info.label }}</span>{% else %}<span class="muted small">{{ f.content_type }}</span>{% endif %}
           {% if f.preview %}<a class="view-3d" href="/files/{{ f.id }}/preview" title="3D preview in the browser">3D view</a>{% endif %}
-        </div></td>
+        </div>
+        {% if f.solver_line %}<div class="muted small solver-line" title="Read from the first and last 64 KiB of the file by pattern rules – a hint, not a verified result">{{ f.solver_line }}</div>{% endif %}</td>
         <td>
           {% if f.folder %}<span class="mono" title="{{ rev.project_code or '' }}/{{ f.folder }}/{{ f.filename }} in the desktop working folder">{{ f.folder }}/</span>
           {% else %}<span class="dim" title="At the top of the project group in the desktop working folder">—</span>{% endif %}
@@ -438,6 +451,12 @@
       {% if simulation.results %}<a class="button small" href="/revisions/{{ rev.id }}/simulation/results.csv">CSV</a>{% endif %}
     </div>
   </div>
+  {% set solver_files = files|selectattr("solver_line")|list %}
+  {% if solver_files %}
+  <ul class="small solver-runs" aria-label="Solver output">
+    {% for f in solver_files %}<li><span class="mono">{{ f.filename }}</span> <span class="muted" title="Read from the first and last 64 KiB of the file by pattern rules – a hint, not a verified result">{{ f.solver_line }}</span></li>{% endfor %}
+  </ul>
+  {% endif %}
   {% if simulation.images %}
   <ul class="sim-gallery" aria-label="Pictures of the results">
     {% for f in simulation.images %}

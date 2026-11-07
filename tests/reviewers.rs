@@ -1,6 +1,6 @@
 //! Suggested reviewers: ranked from the history of the affected items, with
 //! reasons; the author, deactivated users, viewers and assigned reviewers
-//! are never suggested. REST, MCP tool and the change page.
+//! are never suggested; editors of the items are listed as "cannot review". REST, MCP tool and the change page.
 
 mod common;
 
@@ -199,8 +199,10 @@ async fn reviewers_are_suggested_from_history() {
     let v = get(None).await;
     assert_eq!(v["change"], chg.as_str());
     // ranked: earlier review (4) > manager (3) > dependent (2) > request (1);
-    // max edited the affected revision and is never suggested
-    assert_eq!(usernames(&v), ["rolf", "anna", "olga", "carl"]);
+    // max edited the affected revision: listed last, flagged, not to be added
+    assert_eq!(usernames(&v), ["rolf", "anna", "olga", "carl", "max"]);
+    assert_eq!(v["suggestions"][4]["cannot_review"], true);
+    assert_eq!(v["suggestions"][0]["cannot_review"], false);
     let reasons = |i: usize| v["suggestions"][i]["reasons"].clone();
     assert_eq!(reasons(0), json!(["reviewed ECO-900001 (same items)"]));
     assert_eq!(reasons(1), json!(["manager of ROCKET"]));
@@ -221,7 +223,7 @@ async fn reviewers_are_suggested_from_history() {
             .as_array()
             .unwrap()
             .len(),
-        4
+        5
     );
     let r = app
         .api(
@@ -258,6 +260,7 @@ async fn reviewers_are_suggested_from_history() {
     let result = r.json()["result"]["structuredContent"].clone();
     assert_eq!(usernames(&result), ["rolf", "anna", "olga"]);
     assert_eq!(result["suggestions"][0]["name"], "rolf (test)");
+    assert_eq!(result["suggestions"][0]["cannot_review"], false);
 
     // someone who edited the revision cannot be assigned
     let r = app
@@ -280,7 +283,7 @@ async fn reviewers_are_suggested_from_history() {
         )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
-    assert_eq!(usernames(&get(None).await), ["anna", "olga", "carl"]);
+    assert_eq!(usernames(&get(None).await), ["anna", "olga", "carl", "max"]);
 
     app.teardown().await;
 }

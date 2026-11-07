@@ -17,6 +17,63 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Item owner and hand-over (#152 step 7, migration 0050): `items.owner_id`
+  (default: the creator) is shown on the item page and changed by the
+  managers of the group and administrators (`item.owner`). Administrators
+  hand over a leaving user's item ownerships, draft and rejected change
+  orders, open change requests and pending reviews to another user in one
+  transaction on *Users* → user → *Hand over work*; a message after the
+  redirect gives the counts and the first objects that stayed (restricted
+  group, already a reviewer, four-eyes); numbers the acting administrator
+  may not read (need-to-know) are shown as "restricted item"; every object
+  has its own audit entry.
+- Reviewer suggestions show people who changed the affected revisions as
+  *knows the item, cannot review* (`cannot_review` in the REST and MCP
+  answers, desktop app, change page) instead of hiding them.
+- Result values in the item search and on the dashboard: filters
+  `result` (`failed`, `passed`, `above_limit`, `below_limit`) and
+  `result_name` on the item list, `GET /api/v1/items` and the web filter bar,
+  and a dashboard card *Simulations to check* (failed values or out-of-date
+  basis). Restricted groups stay out of results and totals. No migration.
+- Solver summary per file version, step 3 of `docs/src/research/solver-files.md`
+  (migration 0049, nullable `file_versions.solver_summary`): for Fluent transcripts and report files, Nastran `.f06`
+  and decks, STAR-CCM+ macros and batch logs, one line with solver, version, how
+  the run ended, last iteration and FATAL/WARNING counts of the first and last
+  64 KiB. Shown on the file row and the simulation page, in the REST file list and
+  the MCP `get_revision` files (marked untrusted). The rules are unverified
+  against real files.
+- Review rounds and absent reviewers (#152, steps 5 and 6): withdrawing or
+  reopening a change after decisions keeps them as an earlier round
+  (`change_review_rounds`, `changes.review_round`, migration 0048). The change page and
+  `GET /api/v1/changes/{number}` show earlier rounds and flag pending
+  reviewers who cannot decide (deactivated, demoted, blind to an item). The
+  author or an administrator replaces a pending reviewer while the change is in
+  review (`POST /api/v1/changes/{number}/reviewers/{old}/replace`, audited
+  `change.replace_reviewer`); other decisions are kept.
+- Review policy per project group, step 2 of #152 (migration 0047): minimum approvals (default all), required reviewers and
+  an optional role group (e.g. QA) whose member must approve. `submit` refuses a
+  change that cannot meet the policy of every affected group; the review outcome
+  uses it. Form on the group page, `GET`/`PUT /api/v1/projects/{code}/review-policy`.
+  Nothing changes for groups without a policy.
+  Review fixes: admins maintain a group hidden by need-to-know, a role group the
+  reader cannot see is not named, only the parts of the policy the assigned
+  reviewers can meet count after submit, a required person who is the author
+  gets a specific message, ungrouped items count as "all reviewers".
+- Scoped personal access tokens (threat model F2, #151 step 6, #152 step 4):
+  a token gets a scope when it is created (account page, `POST /api/v1/tokens`,
+  `teamcraft user create-token --scope`). `full` = read, write and approve
+  (what every token had before; existing tokens and the desktop app's token
+  stay `full`), `write` = read and write but no approving (reviewing a change
+  order, deciding a change request, making a revision obsolete), `read_only` =
+  GET/HEAD and the read-only MCP tools, `mcp_only` = only `POST /api/v1/mcp`.
+  Refusals are 403 and write nothing; a token cannot mint a token with more
+  rights than its own. The desktop app's new tokens now expire after 30 days
+  without use (renewed on every use) instead of a fixed 90 days; existing
+  desktop tokens keep their fixed expiry.
+  Migration `0046`.
+- The web *New item* form sends files above 32 MiB in chunks too (resumable, like the revision page); the
+  upload sessions may now have no revision and only join the creation of an item. Without JavaScript the form still
+  submits all files in one request.
 - Need-to-know project groups, step 1 (#151): a restricted group can limit
   administrator access (`project_policies`, migration 0043): `with_reason`
   (time-limited, audited elevation with a written reason; managers are
@@ -27,8 +84,7 @@ Changes on `main` since the `v0.2.5` tag.
   account is deleted. While a policy is in force an administrator who is no
   manager member cannot loosen it, open the group, link an IdP group or add
   themselves; `/admin/audit` and webhooks honour the rule.
-- Need-to-know project groups, steps 3 and 4 (#151; migration 0045, renumbered
-  at merge): interface switches per restricted group (`api_tokens`, `mcp`,
+- Need-to-know project groups, steps 3 and 4 (#151; migration 0053): interface switches per restricted group (`api_tokens`, `mcp`,
   `assistant`, `webhooks`, `packages`; a switched-off interface sees the group
   as non-existent), a read and download log (`access_log`: views, file
   downloads, Pack and Go, BOM exports with channel and client address, one

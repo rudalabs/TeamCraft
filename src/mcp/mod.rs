@@ -25,9 +25,9 @@ use axum::{
 use serde_json::{json, Value};
 
 use crate::{
-    auth::Actor,
-    auth::ApiUser,
+    auth::{Actor, ApiCaller},
     config::{LocalAgents, LOCAL_AGENT_HEADER, LOCAL_AGENT_HEADER_VALUE},
+    domain::TokenScope,
     services::project_policy::{self, Interface},
     AppState,
 };
@@ -109,7 +109,7 @@ pub fn local_agent_refusal(policy: LocalAgents, headers: &HeaderMap) -> Option<&
 /// `POST /api/v1/mcp`.
 pub async fn http(
     State(st): State<AppState>,
-    ApiUser(me): ApiUser,
+    ApiCaller { actor: me, scope }: ApiCaller,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
@@ -142,13 +142,13 @@ pub async fn http(
         Ok(Value::Array(batch)) => {
             let mut replies = Vec::new();
             for msg in batch {
-                if let Some(r) = handle(&st, &me, msg).await {
+                if let Some(r) = handle(&st, &me, scope, msg).await {
                     replies.push(r);
                 }
             }
             (!replies.is_empty()).then_some(Value::Array(replies))
         }
-        Ok(msg) => handle(&st, &me, msg).await,
+        Ok(msg) => handle(&st, &me, scope, msg).await,
     };
     match reply {
         Some(r) => ([(header::CONTENT_TYPE, "application/json")], r.to_string()).into_response(),
@@ -241,12 +241,12 @@ pub fn negotiate(asked: Option<&str>) -> &'static str {
 }
 
 /// One JSON-RPC message in, at most one out (notifications get none).
-pub async fn handle(st: &AppState, me: &Actor, msg: Value) -> Option<Value> {
+pub async fn handle(st: &AppState, me: &Actor, scope: TokenScope, msg: Value) -> Option<Value> {
     match classify(msg) {
         Message::Silent => None,
         Message::Invalid(reply) => Some(reply),
         Message::Request { id, method, params } => {
-            Some(match request(st, me, &method, &params).await {
+            Some(match request(st, me, scope, &method, &params).await {
                 Ok(result) => response(id, result),
                 Err((code, message)) => error(id, code, message),
             })
@@ -257,6 +257,7 @@ pub async fn handle(st: &AppState, me: &Actor, msg: Value) -> Option<Value> {
 async fn request(
     st: &AppState,
     me: &Actor,
+    scope: TokenScope,
     method: &str,
     params: &Value,
 ) -> Result<Value, (i64, String)> {
@@ -270,11 +271,16 @@ async fn request(
                     "prompts": { "listChanged": false },
                 },
                 "serverInfo": { "name": "teamcraft", "title": "TeamCraft PDM", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": format!("{INSTRUCTIONS}\n\nSigned in as {} ({}).", me.display_name, me.role.as_str()),
+                "instructions": format!(
+                    "{INSTRUCTIONS}\n\nSigned in as {} ({}).{}",
+                    me.display_name,
+                    me.role.as_str(),
+                    if scope == TokenScope::ReadOnly { " This token is read-only: only the read-only tools are listed." } else { "" }
+                ),
             }))
         }
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tools::definitions() })),
+        "tools/list" => Ok(json!({ "tools": tools::definitions_for(scope) })),
         "tools/call" => {
             let name = params
                 .get("name")
@@ -282,6 +288,9 @@ async fn request(
                 .ok_or((INVALID_PARAMS, "missing tool `name`".to_string()))?;
             if !tools::exists(name) {
                 return Err((INVALID_PARAMS, format!("unknown tool `{name}`")));
+            }
+            if !scope.allows_tool(tools::is_read_only(name)) {
+                return Ok(tools::failure(scope.refusal()));
             }
             let args = match params.get("arguments") {
                 None | Some(Value::Null) => json!({}),

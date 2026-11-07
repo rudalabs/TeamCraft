@@ -137,6 +137,13 @@ and their layout depends on the solution sequence and the output requests.
 These numbers come in through templates (bounded, per group, chosen by the
 team) or from the report.
 
+Implementation (step 3, `src/solversummary.rs`): the summary is stored per file
+version as JSON (`file_versions.solver_summary`) and shown as one line. The
+patterns (Fluent banner `Fluent 2023 R1`, `solution is converged`, iteration rows
+and `time step = N`, Nastran `END OF JOB` and `FATAL`, `SOL n`, the STAR-CCM+ macro
+header comment and `Stopping criterion … satisfied`) are **unverified guesses until
+tested with real files**.
+
 ### 3. Never parsed
 
 `.dat.h5`, `.cas.h5` (beyond the signature), legacy binary `.dat`/`.cdat`,

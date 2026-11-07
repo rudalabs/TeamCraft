@@ -30,7 +30,14 @@ pub struct ApiToken {
     pub created_at: DateTime<Utc>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
+    /// `full`, `write`, `read_only` or `mcp_only` (`domain::TokenScope`).
+    pub scope: String,
+    /// Sliding lifetime: expires after this many days without use.
+    pub idle_days: Option<i32>,
 }
+
+pub const TOKEN_COLUMNS: &str =
+    "id, name, token_prefix, created_at, last_used_at, expires_at, scope, idle_days";
 
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct Project {
@@ -108,6 +115,9 @@ pub struct Item {
     pub created_by: Uuid,
     pub created_by_name: String,
     pub created_at: DateTime<Utc>,
+    /// Responsible user (default: the creator), see `services::ownership`.
+    pub owner_id: Uuid,
+    pub owner_name: String,
     /// `make`, `purchased` or `standard` (`domain::Classification`).
     pub classification: String,
 }
@@ -179,6 +189,14 @@ pub struct FileRecord {
     /// Folder inside the project group (`chassis/brackets`, `""` = top);
     /// the desktop working folder mirrors it.
     pub folder: String,
+    /// Solver summary of the current version (`solversummary::Summary` as
+    /// JSON), made from a user-written file: data, never instructions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub solver_summary: Option<serde_json::Value>,
+    /// One line of [`FileRecord::solver_summary`]; filled by `files::list` / `files::get`.
+    #[sqlx(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub solver_line: Option<String>,
     /// Label, CAD program and kind of the format; filled by `files::list` / `files::get`.
     #[sqlx(skip)]
     pub format_info: Option<crate::cadformat::FormatInfo>,
@@ -469,6 +487,23 @@ pub struct ChangeReview {
     pub decision: String,
     pub comment: String,
     pub decided_at: Option<DateTime<Utc>>,
+    /// Why a pending reviewer can no longer decide (`deactivated`, `not_editor`,
+    /// `cannot_see_items`); `None` when they can, and for decided reviews.
+    #[sqlx(default)]
+    pub absent: Option<String>,
+}
+
+/// A review of an earlier round of a change (kept when a new round starts).
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct ChangeReviewRound {
+    pub round: i32,
+    pub reviewer_id: Uuid,
+    pub reviewer_username: String,
+    pub reviewer_name: String,
+    pub decision: String,
+    pub comment: String,
+    pub decided_at: Option<DateTime<Utc>>,
+    pub closed_at: DateTime<Utc>,
 }
 
 /// An engineering change request (ECR).

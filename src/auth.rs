@@ -18,7 +18,7 @@ use argon2::{
     Argon2,
 };
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRequestParts, OriginalUri},
     http::{header, request::Parts, HeaderMap},
 };
 use rand::{rngs::OsRng, RngCore};
@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
-    domain::Role,
+    domain::{Role, TokenScope},
     error::{AppError, AppResult},
     services, AppState,
 };
@@ -300,6 +300,9 @@ impl FromRequestParts<AppState> for WebUser {
 }
 
 /// Extracts the user of an API request from a bearer token.
+///
+/// Built on [`ApiCaller`], so the token's scope is enforced on every API
+/// route that takes an `ApiUser`.
 pub struct ApiUser(pub Actor);
 
 impl FromRequestParts<AppState> for ApiUser {
@@ -309,25 +312,66 @@ impl FromRequestParts<AppState> for ApiUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        if let Some(actor) = parts.extensions.get::<Actor>() {
-            return Ok(ApiUser(actor.clone()));
+        let caller = ApiCaller::from_request_parts(parts, state).await?;
+        Ok(ApiUser(caller.actor))
+    }
+}
+
+/// The user of an API request and the scope of its token. Refuses (403) a
+/// request outside the scope: a `read_only` token may only send `GET`/`HEAD`
+/// requests and post to the MCP endpoint (whose dispatcher allows it the
+/// read-only tools only), an `mcp_only` token may only post to the MCP
+/// endpoint (`domain::TokenScope::allows_request`).
+#[derive(Clone, Debug)]
+pub struct ApiCaller {
+    pub actor: Actor,
+    pub scope: TokenScope,
+}
+
+impl FromRequestParts<AppState> for ApiCaller {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let caller = if let Some(caller) = parts.extensions.get::<ApiCaller>() {
+            caller.clone()
+        } else if let Some(actor) = parts.extensions.get::<Actor>() {
+            // resolved from a browser session by `WebUser`: no token, no scope
+            ApiCaller {
+                actor: actor.clone(),
+                scope: TokenScope::Full,
+            }
+        } else {
+            let token = parts
+                .headers
+                .get(header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| {
+                    v.strip_prefix("Bearer ")
+                        .or_else(|| v.strip_prefix("bearer "))
+                })
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .ok_or(AppError::Unauthorized)?;
+            let (actor, scope) = services::users::actor_for_api_token(&state.db, token)
+                .await?
+                .ok_or(AppError::Unauthorized)?;
+            let caller = ApiCaller { actor, scope };
+            parts.extensions.insert(caller.actor.clone());
+            parts.extensions.insert(caller.clone());
+            caller
+        };
+        // the full path: routes nested under /api/v1 see only their own part
+        let path = parts
+            .extensions
+            .get::<OriginalUri>()
+            .map_or_else(|| parts.uri.path(), |uri| uri.0.path());
+        if !caller.scope.allows_request(parts.method.as_str(), path) {
+            return Err(AppError::Forbidden(caller.scope.refusal().into()));
         }
-        let token = parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| {
-                v.strip_prefix("Bearer ")
-                    .or_else(|| v.strip_prefix("bearer "))
-            })
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .ok_or(AppError::Unauthorized)?;
-        let actor = services::users::actor_for_api_token(&state.db, token)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
-        parts.extensions.insert(actor.clone());
-        Ok(ApiUser(actor))
+        Ok(caller)
     }
 }
 

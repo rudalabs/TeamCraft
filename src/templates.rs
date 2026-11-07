@@ -188,7 +188,8 @@ mod tests {
         json!({
             "id": "44444444-4444-4444-8444-444444444444", "number": "PRT-000001", "item_type": "part",
             "unit": "each", "project_id": null, "project_code": "ROCKET", "created_by": ME,
-            "created_by_name": "Max Muster", "created_at": TS
+            "created_by_name": "Max Muster", "created_at": TS,
+            "owner_id": ME, "owner_name": "Max Muster"
         })
     }
 
@@ -377,7 +378,7 @@ mod tests {
                 .map(|k| json!({ "value": k.as_str(), "label": k.label() })).collect::<Vec<_>>(),
         });
         let can_all = json!({ "edit": true, "checkout": true, "checkin": true, "cancel_checkout": true,
-                              "revise": true, "obsolete": true, "delete": true, "master": true,
+                              "revise": true, "obsolete": true, "delete": true, "master": true, "owner": true,
                               "add_to_change": true, "acknowledge": true });
 
         let html = render(
@@ -1208,19 +1209,49 @@ mod tests {
                     "items": [{ "revision_id": OTHER, "item_id": ME, "item_number": "PRT-000001", "code": "A",
                                 "name": "Bracket", "state": "in_work", "checked_out_by_name": "Erika" }],
                     "reviews": [{ "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
-                                  "decision": "approved", "comment": "ok", "decided_at": TS }],
+                                  "decision": "approved", "comment": "ok", "decided_at": TS, "absent": null },
+                                 { "reviewer_id": ME, "reviewer_username": "gone", "reviewer_name": "Gone <G>",
+                                  "decision": "pending", "comment": "", "decided_at": null, "absent": "deactivated" }],
+                    "replacements": [user()], "review_round": 2,
+                    "earlier_rounds": [{ "round": 1, "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
+                                         "decision": "rejected", "comment": "<too thin>", "decided_at": TS, "closed_at": TS }],
                     "candidates": [user()], "history": [audit_entry()], "priorities": ["low", "normal"],
                     "suggested": [{ "user_id": OTHER, "username": "max", "display_name": "Max <M>", "role": "editor",
                                     "score": 7, "reasons": ["edited PRT-000001 3 times in the last 90 days",
-                                                            "manager of ROVER"] }],
+                                                            "manager of ROVER"] },
+                                  { "user_id": ME, "username": "erika", "display_name": "Erika", "role": "editor",
+                                    "score": 5, "cannot_review": true, "reasons": ["edited PRT-000001 once in the last 90 days"] }],
                     "impact": [{ "root_item_id": ME, "level": 1, "item_id": OTHER, "item_number": "ASM-000001",
                                  "item_name": "Stage", "revision_id": OTHER, "revision_code": "A",
                                  "revision_state": "released", "relation": "bom", "via_number": "PRT-000001",
                                  "in_change": false }],
                     "can": { "modify": true, "edit_text": true, "submit": true, "withdraw": true, "reopen": true,
-                             "cancel": true, "review": true },
+                             "cancel": true, "review": true, "replace_reviewer": true },
                 })),
             );
+            assert!(
+                html.contains("Earlier rounds")
+                    && html.contains("Cannot decide: deactivated")
+                    && html.contains("&lt;too thin&gt;")
+                    && html.contains("/reviewers/"),
+                "{status}: rounds and absent reviewers"
+            );
+            if status == "in_review" {
+                let mut ctx = json!({
+                    "change": change(status), "status_label": "In review",
+                    "reviews": [{ "reviewer_id": ME, "reviewer_username": "gone", "reviewer_name": "Gone <G>",
+                                  "decision": "pending", "comment": "", "decided_at": null, "absent": "deactivated" }],
+                    "replacements": [user()], "review_round": 1, "earlier_rounds": [],
+                    "items": [], "candidates": [], "history": [], "priorities": ["low", "normal"],
+                    "suggested": [], "impact": [],
+                    "can": { "modify": false, "review": false, "replace_reviewer": true },
+                });
+                let html = render(&env, "changes/show.html", with_common(ctx.take()));
+                assert!(
+                    html.contains("/replace") && html.contains("Substitute for"),
+                    "the replace form of an absent reviewer"
+                );
+            }
             assert!(
                 html.contains("Impact analysis") && html.contains("uses PRT-000001 in its BOM"),
                 "impact analysis on the change page"
@@ -1410,8 +1441,11 @@ mod tests {
             "admin/user_edit.html",
             with_common(json!({
                 "user": user(), "roles": roles(), "oidc_enabled": false, "memberships": [project()],
+                "handover_targets": [user()],
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
-                             "last_used_at": null, "expires_at": TS }],
+                             "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": null },
+                           { "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,
+                             "last_used_at": TS, "expires_at": TS, "scope": "read_only", "idle_days": 30 }],
             })),
         );
         render(
@@ -1607,7 +1641,7 @@ mod tests {
             with_common(json!({
                 "req": { "port": 53682, "state": "abcdefghijklmnop", "challenge": "c".repeat(43),
                          "device": "Leo's <MacBook>" },
-                "token_days": 90,
+                "token_days": 30,
             })),
         );
         assert!(
@@ -1619,7 +1653,10 @@ mod tests {
             &env,
             "account.html",
             with_common(json!({
-                "user": user(), "tokens": [], "new_token": { "name": "ci", "value": "tc_pat_secret" },
+                "user": user(),
+                "tokens": [{ "id": ME, "name": "assistant", "token_prefix": "tc_pat_abc123", "created_at": TS,
+                             "last_used_at": null, "expires_at": null, "scope": "mcp_only", "idle_days": null }],
+                "new_token": { "name": "ci", "value": "tc_pat_secret", "scope": "read_only" },
                 "api_base": "http://localhost:8080/api/v1",
                 "skins": crate::domain::SKINS,
                 "notify": {
@@ -1634,6 +1671,12 @@ mod tests {
             })),
         );
         assert!(html.contains("tc_pat_secret"));
+        assert!(
+            html.contains("“ci” (read-only)")
+                && html.contains("MCP only")
+                && html.contains("name=\"scope\""),
+            "token scopes"
+        );
         assert!(
             html.contains("value=\"review_requested\" checked")
                 && html.contains("value=\"item_update\" >")
