@@ -7,7 +7,7 @@
 <p align="center">
   <strong>Open-source product lifecycle management, built in pure Rust.</strong><br />
   Check your CAD data out and in, keep every version, release with reviews,
-  follow changes through assemblies and see STEP, mesh and point-cloud models
+  follow changes through assemblies and see STEP, NX, mesh and point-cloud models
   in 3D – in the browser, in the desktop app or through the REST API.<br />
   <em>Work in progress: an open-source alternative to Siemens Teamcenter.</em>
 </p>
@@ -77,11 +77,11 @@ end-to-end tests against a real PostgreSQL.
 
 **Previews and search**
 
-- **3D preview** – STEP, NX parts, STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no plug-ins.
-- **Native CAD thumbnails** – the preview images stored in Inventor, Solid Edge, NX and SolidWorks files.
+- **3D preview** – STEP, NX parts and assemblies (put together from their part files, hidden layers left out), STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no plug-ins.
+- **CAD thumbnails** – the preview images stored in Inventor, Solid Edge and SolidWorks files; NX parts and assemblies get a sharper thumbnail rendered from their 3D preview.
 - **FEA/CFD results** – VTK, VTU/VTP and CalculiX results coloured by a result field, with legend.
 - **Search** – ranked full-text search over numbers, names, materials, file names and file contents.
-- **Similar parts** – finds existing parts of similar 3D shape and size, with the reason for each hit.
+- **Similar parts** – on every revision with a STEP or mesh file, existing parts of similar 3D shape and size, with the reason for each hit.
 
 **Structure**
 
@@ -113,13 +113,15 @@ end-to-end tests against a real PostgreSQL.
 - **Custom attributes** – vendor, order number, RoHS … as text, number, yes/no or choice list per item type, versioned with each revision; in-house, purchased and standard parts; search by attribute value.
 - **Notifications** – in-app, e-mail and Mattermost; watch items, changes and change requests.
 - **Event webhooks** – signed JSON for releases, changes and simulation results, retried with backoff.
-- **Audit log** – every modification with user, time and details.
+- **Audit log** – every modification and every sign-in (password, SSO, failed attempts) with user, time and details; repeated failed sign-ins are slowed down.
+- **Branding** – replace the wide and the square logo under *Admin → Branding*; the desktop app shows them too.
+- **Monitoring** – `/healthz`, `/readyz` and Prometheus metrics at `/metrics` (requests, database pool, outbox backlogs, preview queue), enabled with a token.
 - **Backup and restore** – one command for database and vault (see below).
 
 **Clients and integrations**
 
 - **Web UI** – light and dark design that follows the operating system, plus distribution skins.
-- **Desktop app** – Linux, macOS and Windows client with a local working folder, *Get* of whole assemblies and an import wizard.
+- **Desktop app** – Linux, macOS and Windows client with a local working folder, *Get* of whole assemblies, an import wizard, an Agent view, and an update notice (never installs anything itself).
 - **REST API** – everything the UI does, with personal access tokens.
 - **MCP server** – AI assistants such as Claude Code search, explain BOMs and draft changes with your rights, never approving anything.
 - **Ask TeamCraft (optional)** – a sidebar on every page (web and desktop) that knows which page you are on, keeps your conversation and, with your own key for Anthropic, OpenAI, Azure OpenAI or any OpenAI-compatible service, or a local model (Ollama, vLLM), drafts release notes and answers questions with your rights, read-only by default.
@@ -160,44 +162,38 @@ the web UI with headless Chrome, TeamCraft Desktop on a virtual X display.
 <table>
   <tr>
     <td width="50%"><a href="media/screenshots/vault-explorer.png"><img src="media/screenshots/vault-explorer.png" alt="Vault explorer: the project group ROVER as a folder, items with state and lock owner, and the detail pane of the electronics enclosure with its files" /></a><br /><sub><b>Vault explorer</b> – project groups, lock owners, one-click check-out</sub></td>
-    <td width="50%"><a href="media/screenshots/revision-files.png"><img src="media/screenshots/revision-files.png" alt="Files of the mounting bracket revision: STEP, Inventor, SolidWorks and NX files with their formats, the preview image stored in the Inventor file, the 3D button of the STEP file and a text file in version 2" /></a><br /><sub><b>Revision files</b> – formats, versions and embedded CAD previews</sub></td>
+    <td width="50%"><a href="media/screenshots/revision-files.png"><img src="media/screenshots/revision-files.png" alt="Files of the mounting bracket revision: STEP, Inventor, SolidWorks and NX files with formats, previews and versions, and below them the similar existing parts found by 3D shape" /></a><br /><sub><b>Revision files</b> – formats, versions, CAD previews and similar existing parts</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="media/screenshots/viewer-3d.png"><img src="media/screenshots/viewer-3d.png" alt="3D viewer in the browser showing the STEP model of the NIST CTC-01 mounting bracket" /></a><br /><sub><b>3D viewer</b> – STEP tessellated on the server, drawn with WebGL</sub></td>
+    <td width="50%"><a href="media/screenshots/nx-assembly-3d.png"><img src="media/screenshots/nx-assembly-3d.png" alt="3D viewer in the browser showing the NX assembly of the NIST MTC enclosure, put together from its nine NX part files" /></a><br /><sub><b>NX in 3D</b> – parts from their JT data, assemblies put together from their parts</sub></td>
     <td width="50%"><a href="media/screenshots/bom.png"><img src="media/screenshots/bom.png" alt="Multi-level bill of materials of the sensor mast assembly with quantities, states and mass and cost roll-up" /></a><br /><sub><b>Multi-level BOM</b> – revision rules, mass and cost roll-up</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="media/screenshots/change-review.png"><img src="media/screenshots/change-review.png" alt="Change order in review: affected revisions, reviewers with one approval and one pending decision, and the impact analysis" /></a><br /><sub><b>Change order</b> – four-eyes review and impact analysis</sub></td>
-    <td width="50%"><a href="media/screenshots/revision.png"><img src="media/screenshots/revision.png" alt="Revision page of the mounting bracket: attributes, lifecycle state, check-out lock and actions" /></a><br /><sub><b>Revision</b> – attributes, lifecycle and lock</sub></td>
+    <td width="50%"><a href="media/screenshots/change-review.png"><img src="media/screenshots/change-review.png" alt="Change order in review: the affected revisions and the impact analysis listing the assemblies that depend on them" /></a><br /><sub><b>Change order</b> – affected revisions and impact analysis</sub></td>
+    <td width="50%"><a href="media/screenshots/as-built.png"><img src="media/screenshots/as-built.png" alt="As-built record of sensor mast unit RVR-0007: the design revision it was built to, serial number and two deviations, one accepted as is and one still open" /></a><br /><sub><b>As-built records</b> – serial number, as-built BOM and deviations</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="media/screenshots/notifications.png"><img src="media/screenshots/notifications.png" alt="Notifications: review requests, approvals and the release of the standard fasteners" /></a><br /><sub><b>Notifications</b> – in-app, e-mail and Mattermost</sub></td>
+    <td width="50%"><a href="media/screenshots/simulation-cfd-3d.png"><img src="media/screenshots/simulation-cfd-3d.png" alt="Made-up CFD result of the flow around a cylindrical mast fairing in the 3D viewer, coloured by velocity magnitude with a colour legend and field selector" /></a><br /><sub><b>FEA/CFD results in 3D</b> – VTK and CalculiX results coloured by field</sub></td>
+    <td width="50%"><a href="media/screenshots/simulation-results.png"><img src="media/screenshots/simulation-results.png" alt="A static analysis linked to the mounting bracket revision it analysed, with result values, limits and pass or fail" /></a><br /><sub><b>Simulation results</b> – linked to the analysed revision, with limits and pass/fail</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/assistant-sidebar.png"><img src="media/screenshots/assistant-sidebar.png" alt="The Ask TeamCraft sidebar open on the mounting bracket revision, with the page it knows about shown as a context chip" /></a><br /><sub><b>Ask TeamCraft</b> – knows the page you are on, works with your rights</sub></td>
+    <td width="50%"><a href="media/screenshots/restricted-bom.png"><img src="media/screenshots/restricted-bom.png" alt="The BOM of the sensor test rig as seen by a user outside a restricted project group: one line shows only as Restricted item, and mass and cost exclude it with a note" /></a><br /><sub><b>Read permissions</b> – restricted groups stay hidden, even inside BOMs</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/desktop-home.png"><img src="media/screenshots/desktop-home.png" alt="TeamCraft Desktop start screen: the project group ROVER expanded in the navigator with its items and their states, item statistics and the dependents to check" /></a><br /><sub><b>Desktop app</b> – navigator, statistics and what needs attention</sub></td>
+    <td width="50%"><a href="media/screenshots/desktop-revision.png"><img src="media/screenshots/desktop-revision.png" alt="TeamCraft Desktop: the checked-out mounting bracket revision in a tab with check-in, edit and release actions, its properties, lifecycle and the sub-tabs for files, structure, where used and 3D viewer" /></a><br /><sub><b>Desktop revision tab</b> – check-out to a local workspace, check-in</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/desktop-change.png"><img src="media/screenshots/desktop-change.png" alt="TeamCraft Desktop: the enclosure change order in review with the approve and reject form, one approval and one pending reviewer and the affected revisions" /></a><br /><sub><b>Desktop review</b> – four-eyes approval without leaving the app</sub></td>
+    <td width="50%"><a href="media/screenshots/desktop-agent.png"><img src="media/screenshots/desktop-agent.png" alt="TeamCraft Desktop Agent view: a local agent answers What needs my attention with the change order waiting for review and the open change request" /></a><br /><sub><b>Desktop agent</b> – a local AI agent next to your PDM data</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href="media/screenshots/bom-dark.png"><img src="media/screenshots/bom-dark.png" alt="The multi-level bill of materials of the sensor mast assembly in the dark scheme with states, quantities and the mass and cost totals" /></a><br /><sub><b>Dark</b> – follows the system appearance, or pick Light or Dark</sub></td>
     <td width="50%" align="center"><a href="media/screenshots/mobile-dashboard.png"><img src="media/screenshots/mobile-dashboard.png" width="200" alt="The dashboard on a 390 pixel wide phone screen" /></a><br /><sub><b>On the phone</b> – the same pages, responsive</sub></td>
   </tr>
-  <tr>
-    <td width="50%"><a href="media/screenshots/dashboard-dark.png"><img src="media/screenshots/dashboard-dark.png" alt="The dashboard in the dark scheme: the same work lists, statistics and dependents to check on dark surfaces" /></a><br /><sub><b>Dark</b> – follows the system appearance, or pick Light or Dark</sub></td>
-    <td width="50%"><a href="media/screenshots/bom-dark.png"><img src="media/screenshots/bom-dark.png" alt="The multi-level bill of materials of the sensor mast assembly in the dark scheme with states, quantities and the mass and cost totals" /></a><br /><sub><b>Multi-level BOM, dark</b> – every page in both schemes</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><a href="media/screenshots/assistant.png"><img src="media/screenshots/assistant.png" alt="Ask TeamCraft: the quick action What needs my attention, a free question box, the option to allow drafts and the note that the assistant reads the PDM data with your rights and never approves or releases" /></a><br /><sub><b>Ask TeamCraft</b> – the AI assistant with your rights, read-only by default</sub></td>
-    <td width="50%"><a href="media/screenshots/revision-similar.png"><img src="media/screenshots/revision-similar.png" alt="Similar parts of the mounting bracket: existing parts of similar 3D shape and size, ranked, each with the reason for the hit" /></a><br /><sub><b>Similar parts</b> – "do we already have a part like this?"</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><a href="media/screenshots/simulation-result-3d.png"><img src="media/screenshots/simulation-result-3d.png" alt="A static analysis result of the mast arm in the 3D viewer, coloured by von Mises stress with a colour legend and field selector" /></a><br /><sub><b>FEA results in 3D</b> – VTK and CalculiX results coloured by field</sub></td>
-    <td width="50%"><a href="media/screenshots/simulation-cfd-3d.png"><img src="media/screenshots/simulation-cfd-3d.png" alt="Made-up CFD result of the flow around a cylindrical mast fairing in the 3D viewer, coloured by velocity magnitude with a colour legend and field selector" /></a><br /><sub><b>CFD results in 3D</b> – velocity and pressure fields</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><a href="media/screenshots/restricted-bom.png"><img src="media/screenshots/restricted-bom.png" alt="The BOM of the sensor test rig as seen by a user outside a restricted project group: one line shows only as Restricted item, and mass and cost exclude it with a note" /></a><br /><sub><b>Read permissions</b> – restricted groups stay hidden, even inside BOMs</sub></td>
-    <td width="50%"><a href="media/screenshots/desktop-home.png"><img src="media/screenshots/desktop-home.png" alt="TeamCraft Desktop start screen: the project group ROVER expanded in the navigator with its items and their states, item statistics and the dependents to check" /></a><br /><sub><b>Desktop app</b> – navigator, statistics and what needs attention</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><a href="media/screenshots/desktop-revision.png"><img src="media/screenshots/desktop-revision.png" alt="TeamCraft Desktop: the checked-out mounting bracket revision in a tab with check-in, edit and release actions, its properties, lifecycle and the sub-tabs for files, structure, where used and 3D viewer" /></a><br /><sub><b>Desktop revision tab</b> – check-out to a local workspace, check-in</sub></td>
-    <td width="50%"><a href="media/screenshots/desktop-change.png"><img src="media/screenshots/desktop-change.png" alt="TeamCraft Desktop: the enclosure change order in review with the approve and reject form, one approval and one pending reviewer and the affected revisions" /></a><br /><sub><b>Desktop review</b> – approve or reject without leaving the app</sub></td>
-  </tr>
-  <tr>
-    <td width="50%" align="center" colspan="2"><a href="media/screenshots/desktop-worklist.png"><img src="media/screenshots/desktop-worklist.png" alt="TeamCraft Desktop worklist: the revision checked out by me, the change order waiting for my review and four dependents to check" /></a><br /><sub><b>Desktop worklist</b> – check-outs, reviews and dependents</sub></td>
-  </tr>
 </table>
+
 
 ## Quick start
 

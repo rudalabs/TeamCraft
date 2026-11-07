@@ -12,22 +12,31 @@ reason you can check.
   *extents 118 × 40 × 8 vs 120 × 40 × 8, shape distribution 94 % similar*.
   On a brand-new part (only revision A, in work) the section is called
   *Similar existing parts*: if one fits, reuse it instead of creating a new
-  item. Create the item with its STEP or mesh file and the list appears on
-  the page that opens.
-* **Desktop app**: the revision overview links to the list in the browser.
+  item. It is a card on the page, not a pop-up: it appears whenever the
+  revision has a file it can compare, and stays hidden otherwise. Right
+  after *Items → New item* with a STEP or mesh file the card first says
+  *Comparing the shape … reload the page in a moment* – the page does not
+  refresh itself, reload it once the comparison is done.
+* **Desktop app**: the revision overview has a *Compare the shape in the
+  browser* button that opens this card in the web UI; the app itself shows
+  no list.
 * **REST API**: `GET /api/v1/items/{number}/revisions/{code}/similar`
   ([REST API](../reference/api.md#similar-parts)).
 * **AI assistants**: the MCP tool `find_similar_parts`
   ([MCP server](../reference/mcp.md)); `find_duplicate_files` is its sibling
   for byte-identical copies.
 
-The comparison needs a 3D model with a preview: STEP or a mesh (STL, OBJ,
-PLY, OFF, 3MF, AMF, glTF/GLB, 3DS). Native CAD files are compared through
-their STEP export – attach one. Point clouds are not compared.
+The comparison needs a 3D model with a preview: STEP, a mesh (STL, OBJ,
+PLY, OFF, 3MF, AMF, glTF/GLB, 3DS) or an NX part (`.prt` with its JT
+lightweight representation). Other native CAD files are compared through
+their STEP export – attach one. NX assemblies are not compared (they hold no
+shape of their own), and neither are point clouds. Simulation result files
+(VTK, VTU, VTP, CalculiX FRD) have a 3D preview too and are currently
+compared like parts.
 
 ## How it works
 
-When a 3D file is uploaded (or first shown), the preview process computes a
+When a 3D file is attached or checked in (or first shown), the preview process computes a
 small **shape signature** of its mesh, once per file content:
 
 | Part of the signature  | What it is                                                                                     |
