@@ -72,3 +72,12 @@ Out of scope:
   migration 0024 are shown as written, backups and the command line contain
   everything, and the assistant sends what a member reads to the configured
   model provider.
+* what a user's own AI agent does with their token: a local agent (the
+  desktop app's *Agent* view, an MCP client set up by hand) sends what it
+  reads to its own provider. `TEAMCRAFT_LOCAL_AGENTS=off` closes the MCP
+  endpoint for every token and the desktop's *Agent* view then runs on the
+  server-side assistant, so only that remains; the REST API stays reachable
+  with a user's own token until scoped tokens exist (see
+  [Local agents](https://rudalabs.github.io/TeamCraft/admin/configuration.html#local-agents)).
+  A call to `POST /api/v1/mcp` that gets through while the setting is
+  `off` is in scope.

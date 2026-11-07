@@ -30,7 +30,7 @@ export function openTab(tab) {
 export function activate(key) {
   state.active = key;
   var t = findTab(key);
-  if (t && (t.kind === "revision" || t.kind === "change")) agent.contextKey = key;
+  if (t && (t.kind === "revision" || t.kind === "change" || t.kind === "request")) agent.contextKey = key;
   if (state.view === "agent") schedulePaint(true);
   renderTabs();
   renderActive();

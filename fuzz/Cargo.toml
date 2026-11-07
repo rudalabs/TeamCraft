@@ -89,3 +89,17 @@ path = "fuzz_targets/mesh_step.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "cadformat"
+path = "fuzz_targets/cadformat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resultscan"
+path = "fuzz_targets/resultscan.rs"
+test = false
+doc = false
+bench = false

@@ -23,11 +23,34 @@ Changes on `main` since the `v0.2.5` tag.
   Checked when adding a reviewer, on submit and on every decision. The
   reviewer suggestions never offer such users. An administrator who prepared
   the draft for the author (items, reviewers, edits, submit; read from the
-  audit log) cannot review it either. Migrations `0040`/`0041` add
+  audit log) cannot review it either. Migrations `0041`/`0042` add
   `changes.submitted_by` and `changes.four_eyes`. Upgrade: changes already in
   review keep working (only the author is refused); the editor and preparer
   checks apply to drafts and to every later submit.
 
+- Company AI instead of shadow AI (data-loss prevention):
+  `TEAMCRAFT_LOCAL_AGENTS=off` lets administrators turn off local AI agents
+  (the desktop app's *Agent* view, ACP), so that AI use goes through the
+  server-side assistant *Ask TeamCraft* with the provider and key the
+  organisation configured (Anthropic, OpenAI/Azure, or a local
+  OpenAI-compatible server), its per-question audit and its limits; the key
+  never reaches a client. `GET /api/v1/me` reports
+  `capabilities.local_agents`; the desktop app ends a running agent (it
+  asks again when the Agent view opens, every minute and before every
+  message) and refuses to start one, and its *Agent* view (`Ctrl/Cmd+4`) runs on the
+  company AI automatically, with no local option (or, without a configured
+  assistant, shows that AI is switched off by the administrator). When the
+  server offers both, *Company AI* / *Local agent* in the Agent toolbar
+  switches between them, remembered per server and user;
+  `POST /api/v1/mcp` refuses every call with `403`, for every token (also
+  the `teamcraft mcp` bridge, agents set up by hand and older desktop apps;
+  the built-in assistant calls the tools inside the server and is not
+  affected), and `capabilities.mcp` turns `false`. The default `allowed`
+  changes nothing. The REST API stays open to a user's own token (scoped
+  tokens, F2, are the complement): cooperative enforcement, not a barrier.
+- **Admin → AI** (`/admin/ai`): the local-agent setting, the MCP endpoint's
+  state and the configured assistant (provider, model, host, limits, whether
+  a key is set – never the key).
 - HTML reports of FEA/CFD tools (`.html`, `.htm`) are read as text for the
   search, `read_file_text` and `propose_result_values` (#141): table rows as
   lines with ` | ` between the cells, numbers and units as written, entities
@@ -35,9 +58,30 @@ Changes on `main` since the `v0.2.5` tag.
   skipped and nothing is fetched. An own bounded reader (`src/htmltext.rs`)
   runs in the isolated `teamcraft text-extract` child (`--format html`) with
   the limits of the PDF reader; new fuzz target `htmltext`.
+- Files of ANSYS Fluent, STAR-CCM+ and Simcenter 3D are recognised more
+  precisely: NX `.sim`/`.fem`/`.afm` by their `SPLMSSTR` container, text
+  `.fem` as OptiStruct deck, `.dat` Nastran decks written by Simcenter 3D,
+  `.f04`/`.pch`, Fluent meshes (`.msh`, `.msh.h5`), gzip-compressed and HDF5
+  case/data/mesh files (checked by signature), projects (`.flprj`), `.cdat`,
+  journals (`.jou`), transcripts (`.trn`) and report files
+  (`report-file-*.out`), STAR-CCM+ solution histories (`.simh`) and macros
+  (`.java` naming STAR-CCM+), Gmsh meshes. Transcripts, journals, macros and
+  Nastran text output are indexed as text; a large plain-text file keeps its
+  last 64 KiB in the search text and `read_file_text`.
+- Extraction templates: a new method `table` for whitespace-separated tables
+  with quoted column names (Fluent report files; migration 0040), and
+  `pick = last` reads the last 2 MB of a file larger than 2 MB first. New
+  fuzz targets `cadformat` and `resultscan`.
 
 ### Changed
 
+- Desktop: *Ask TeamCraft* and *Agent* are one view. The company AI (the
+  server's assistant, with page context, quick actions, the drafts checkbox
+  and the conversation kept on the server) is a backend of the *Agent* view
+  (`Ctrl/Cmd+4`, the *Agent* button of revision and change tabs); the *Ask*
+  rail button, the drawer beside the tabs, *View → Ask TeamCraft*
+  (`Ctrl/Cmd+5`) and the *Ask…* toolbar buttons are gone. The web UI keeps
+  its sidebar.
 - Extraction templates for `.html` files run on the extracted text instead of
   the raw markup.
 - Text and CSV files keep their lines and decimal numbers in the stored text,

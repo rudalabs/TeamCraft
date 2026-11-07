@@ -360,6 +360,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/admin/audit", get(admin::audit))
+        .route("/admin/ai", get(admin::ai))
         .route("/admin/branding", get(branding::page))
         .route(
             "/admin/branding/{kind}",

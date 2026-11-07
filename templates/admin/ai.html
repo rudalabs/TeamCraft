@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}AI{% endblock %}
+{% block nav_ai %}active{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>AI</h1>
+    <p class="subtitle">
+      Which AI your users work with in TeamCraft: the company AI on the server (<em>Ask TeamCraft</em>) and local agents on their own computers.
+      Both are set in the server configuration and take effect at the next restart.
+      <a href="https://rudalabs.github.io/TeamCraft/admin/configuration.html#local-agents" rel="noopener">Configuration guide</a>
+    </p>
+  </div>
+</div>
+
+{% if mode == "company-ai" %}
+<p class="notice">Company AI only: users ask <em>Ask TeamCraft</em>, which runs on the provider configured below with each user's rights, per-question audit records and the server's limits. Local agents and the MCP endpoint are off; the desktop app's <strong>Agent</strong> view runs on the company AI, with no local option.</p>
+{% elif mode == "no-ai" %}
+<p class="notice">Local agents are off and no assistant is configured: users have no AI in TeamCraft. Set <span class="mono">TEAMCRAFT_ASSISTANT_PROVIDER</span> and its key to offer the company AI.</p>
+{% elif mode == "both" %}
+<p class="notice">Users can ask <em>Ask TeamCraft</em> and may also connect their own local agents with their own AI provider (in the desktop app's <strong>Agent</strong> view they choose between both). Set <span class="mono">TEAMCRAFT_LOCAL_AGENTS=off</span> to keep AI use on the company AI.</p>
+{% else %}
+<p class="notice">No assistant is configured; users may connect their own local agents with their own AI provider.</p>
+{% endif %}
+
+<section class="card">
+  <h2>Local agents</h2>
+  <dl class="props">
+    <dt>Setting</dt>
+    <dd><span class="mono">TEAMCRAFT_LOCAL_AGENTS={{ local_agents }}</span>
+      {% if local_agents_allowed %}<span class="badge badge-released">allowed</span>{% else %}<span class="badge badge-obsolete">off</span>{% endif %}</dd>
+    <dt>MCP endpoint</dt>
+    <dd>{% if local_agents_allowed %}open to every personal access token{% else %}closed for every token (<span class="mono">403</span>){% endif %}</dd>
+    <dt>Desktop Agent view</dt>
+    <dd>{% if local_agents_allowed and assistant %}the user chooses: company AI or local agent{% elif local_agents_allowed %}local agent{% elif assistant %}company AI (no local option){% else %}a notice that AI is switched off{% endif %}</dd>
+  </dl>
+  {% if not local_agents_allowed %}
+  <p class="hint">Cooperative enforcement: the REST API stays open to a user's own personal access token, so a program the user writes can still read with that user's rights until scoped tokens exist.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Ask TeamCraft (server assistant)</h2>
+  {% if assistant %}
+  <dl class="props">
+    <dt>Provider</dt><dd class="mono">{{ assistant.provider }}</dd>
+    <dt>Model</dt><dd class="mono">{{ assistant.model }}</dd>
+    <dt>Host</dt><dd class="mono">{{ assistant.host }}</dd>
+    <dt>API key</dt><dd>{% if assistant.key_set %}set (not shown){% else %}none{% endif %}</dd>
+    <dt>Limits</dt><dd>{{ assistant.max_steps }} steps and {{ assistant.max_tokens }} output tokens per call, {{ assistant.run_timeout_secs }} s per question, {{ assistant.max_concurrent }} at a time</dd>
+    <dt>Conversations</dt><dd>kept {{ assistant.retention_days }} days after the last question</dd>
+  </dl>
+  <p class="hint">Every question is recorded in the <a href="/admin/audit">audit log</a> as <span class="mono">assistant.run</span> (who, which tools, token counts – never the question or the answer).</p>
+  {% else %}
+  <p class="empty">Not configured. Set <span class="mono">TEAMCRAFT_ASSISTANT_PROVIDER</span> (<span class="mono">anthropic</span>, <span class="mono">openai</span> or <span class="mono">openai-compatible</span> for Azure, Ollama, vLLM …), the model and the key.</p>
+  {% endif %}
+</section>
+{% endblock %}

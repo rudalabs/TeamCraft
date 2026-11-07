@@ -7,7 +7,7 @@
 ALTER TABLE changes ADD COLUMN four_eyes BOOLEAN NOT NULL DEFAULT true;
 UPDATE changes SET four_eyes = false WHERE status = 'in_review';
 
--- Migration 0040 recorded the author as submitter. Where the audit log knows
+-- Migration 0041 recorded the author as submitter. Where the audit log knows
 -- who really pressed submit, use that user.
 UPDATE changes c SET submitted_by = s.user_id
 FROM (
