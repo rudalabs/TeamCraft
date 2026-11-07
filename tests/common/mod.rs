@@ -383,6 +383,13 @@ impl TestApp {
     /// Creates an empty database next to the test database (dropped by
     /// `teardown` of the app returned by [`TestApp::open`]).
     pub async fn create_empty_database(&self, suffix: &str) -> String {
+        assert!(
+            !suffix.is_empty()
+                && suffix
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+            "database suffix {suffix:?}: lower-case letters, digits and _ only (unquoted identifier)"
+        );
         let name = format!("{}_{suffix}", self.db_name);
         let mut admin = connect_retrying(&self.admin_options)
             .await
