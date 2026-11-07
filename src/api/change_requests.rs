@@ -151,7 +151,9 @@ pub(super) async fn create(
         priority: priority_of(body.priority.as_deref())?,
         due_date: requests::parse_due_date(body.due_date.as_deref())?,
     };
-    let mut list = Vec::with_capacity(body.items.len());
+    // Bound the list before resolving it: every reference costs lookups.
+    requests::check_item_count(body.items.len())?;
+    let mut list = Vec::new();
     for r in &body.items {
         list.push(affected(&st, &me, r).await?);
     }

@@ -98,6 +98,20 @@ async fn insert_item(
     Ok((inserted > 0).then_some(label))
 }
 
+/// Rejects a list of more than [`MAX_ITEMS`] affected items. Callers that
+/// resolve item references one by one (the REST API) check this first, so a
+/// long list costs no lookups; [`create`] checks it again, because
+/// `insert_item` counts distinct rows and repeated items would never reach
+/// its limit.
+pub fn check_item_count(len: usize) -> AppResult<()> {
+    if len > MAX_ITEMS as usize {
+        return Err(AppError::BadRequest(format!(
+            "A change request can name at most {MAX_ITEMS} items."
+        )));
+    }
+    Ok(())
+}
+
 /// Raises a change request. Every signed-in user may do this, viewers
 /// included. The requester watches it from now on.
 pub async fn create(
@@ -106,6 +120,7 @@ pub async fn create(
     input: RequestInput,
     affected: Vec<AffectedItem>,
 ) -> AppResult<ChangeRequest> {
+    check_item_count(affected.len())?;
     let text = clean(&input)?;
     let mut tx = pool.begin().await?;
     let number = domain::format_request_number(next_counter(&mut tx, "change_request").await?);
