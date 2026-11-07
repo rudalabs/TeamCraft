@@ -433,6 +433,21 @@ async fn desktop_sign_in_through_the_browser() {
     let r = app.api(Method::GET, "/api/v1/me", &token, None).await;
     assert_eq!(r.status, StatusCode::OK);
     assert_eq!(r.json()["username"], "leo");
+    // full scope (the app writes), sliding lifetime (F2)
+    assert_eq!(r.json()["token_scope"], "full");
+    let (scope, idle): (String, Option<i32>) =
+        sqlx::query_as("SELECT scope, idle_days FROM api_tokens WHERE name = $1")
+            .bind("TeamCraft Desktop – Leo's Laptop")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (scope.as_str(), idle),
+        (
+            "full",
+            Some(teamcraft::services::desktop::TOKEN_DAYS as i32)
+        )
+    );
     let r = exchange(code, verifier).await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "already used");
 

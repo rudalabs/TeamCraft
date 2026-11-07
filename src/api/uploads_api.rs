@@ -101,7 +101,7 @@ pub(super) async fn create(
         &st,
         &me,
         NewSession {
-            revision_id: rev.id,
+            revision_id: Some(rev.id),
             filename: body.filename,
             size: body.size,
             sha256: body.sha256,

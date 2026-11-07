@@ -131,7 +131,8 @@ unfinished uploads at a time, so the space they reserve stays bounded
 cancels one at once.
 
 **In the browser** the upload and check-in forms of the revision page and
-the vault explorer do the same on their own: files above 32 MiB go first in
+the vault explorer, and the *New item* form (its uploads have no revision yet
+and can only join the creation of an item), do the same on their own: files above 32 MiB go first in
 chunks (to `/uploads`, the same sessions, signed in with the browser
 session), the progress bar counts all files, and the form then stores them
 together with the small files and the comment in one step. A dropped chunk

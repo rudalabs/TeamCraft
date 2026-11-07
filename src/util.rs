@@ -145,6 +145,18 @@ mod tests {
         assert_eq!(format_bytes(5 * 1024 * 1024), "5 MiB");
     }
 
+    /// TiB is the largest unit: bigger sizes stay in TiB instead of running
+    /// off the end of the unit table (found by cargo-mutants: a loop bound
+    /// of `<=` or `len() + 1` went unnoticed, and would have panicked).
+    #[test]
+    fn byte_sizes_stop_at_tib() {
+        const TIB: i64 = 1 << 40;
+        assert_eq!(format_bytes(TIB), "1 TiB");
+        assert_eq!(format_bytes(2048 * TIB), "2048 TiB");
+        assert_eq!(format_bytes(i64::MAX), "8388608 TiB");
+        assert_eq!(format_bytes(-5), "-5 B", "negative sizes are not scaled");
+    }
+
     #[test]
     fn redirect_targets() {
         assert_eq!(safe_redirect_target(Some("/items?q=1")), "/items?q=1");

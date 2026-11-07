@@ -115,6 +115,21 @@ Solver scripts write their results through the REST API
 (`PUT …/simulation/results` replaces the set in one transaction; see the
 [REST API](../reference/api.md#simulations)).
 
+### Solver summary of a file
+
+For solver output a one-line summary appears next to the file on the revision page
+(and in the vault explorer): solver and version, how the run ended (`converged`,
+`END OF JOB`, `fatal`), the last iteration or time step, and the number of `FATAL`
+and `WARNING` lines. It is made at check-in from the **first and the last 64 KiB**
+of the file only, so the counts cover those two windows, not the whole file – the
+line says so. Supported: Fluent transcripts (`.trn`) and report files, Nastran
+`.f06` and decks (`SOL`), STAR-CCM+ macros (`.java`) and batch logs
+(`.log`/`.txt` that name STAR-CCM+). The summary is a hint read from a
+user-written file, never a verified result; the MCP tools mark it as untrusted
+data. The rules follow public documentation and typical output and are **not yet
+checked against real files** of these programs; a file that does not match shows
+no summary. Files stored before the feature have none until they get a new version.
+
 ### Values from files at check-in
 
 Two bounded ways fill the table without typing – neither reads big result
