@@ -17,6 +17,17 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Need-to-know project groups, step 5 (#151): access review of a restricted
+  group (migration 0045, `project_access_reviews`; the number may be
+  renumbered at merge). Page `/projects/{id}/access-review` for managers and
+  administrators: members with role, group role, source (manual or identity
+  provider), account state and last sign-in (stale after 90 days), the
+  administrator policy and elevations, and a "reviewed" confirmation with an
+  optional note that is dated and audited (`project.access_review`) and keeps
+  the member list as it was. Evidence for auditors as CSV (page and
+  `GET /api/v1/projects/{code}/access-review?format=csv`) or JSON, plus
+  `POST` to confirm and `GET .../access-review/{id}` for the stored member list.
+  The shorter session age for restricted groups (step 2) is not part of this.
 - Need-to-know project groups, step 1 (#151): a restricted group can limit
   administrator access (`project_policies`, migration 0043): `with_reason`
   (time-limited, audited elevation with a written reason; managers are

@@ -341,6 +341,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/projects/{id}/numbering", post(admin::update_numbering))
         .route("/projects/{id}/visibility", post(admin::update_visibility))
         .route("/projects/{id}/policy", post(admin::update_policy))
+        .route(
+            "/projects/{id}/access-review",
+            get(admin::access_review).post(admin::confirm_access_review),
+        )
+        .route(
+            "/projects/{id}/access-review.csv",
+            get(admin::access_review_csv),
+        )
         .route("/projects/{id}/elevate", post(admin::elevate))
         .route("/projects/{id}/elevate/end", post(admin::end_elevation))
         .route("/projects/{id}/members", post(admin::add_member))

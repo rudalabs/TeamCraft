@@ -199,3 +199,67 @@ pub(super) async fn project_elevation_end(
     project_policy::end_elevation(&st.db, &me, project.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+#[derive(Deserialize)]
+pub(super) struct ReviewQuery {
+    /// `json` (default) or `csv`.
+    format: Option<String>,
+}
+
+/// `GET /api/v1/projects/{code}/access-review` – managers and admins: the
+/// access report of a restricted group (members, source, last sign-in,
+/// administrator policy, elevations, confirmed reviews) as JSON, or CSV with
+/// `?format=csv`.
+pub(super) async fn project_access_review(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    Query(q): Query<ReviewQuery>,
+) -> AppResult<Response> {
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
+    let report = access_review::report(&st.db, &me, project.id).await?;
+    match q.format.as_deref() {
+        None | Some("json") => Ok(Json(json!(report)).into_response()),
+        Some("csv") => Ok((
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "text/csv; charset=utf-8".to_string(),
+            )],
+            access_review::to_csv(&report),
+        )
+            .into_response()),
+        Some(_) => Err(AppError::BadRequest("format must be json or csv.".into())),
+    }
+}
+
+#[derive(Deserialize)]
+pub(super) struct ConfirmReview {
+    #[serde(default)]
+    note: String,
+}
+
+/// `POST /api/v1/projects/{code}/access-review` – managers and admins:
+/// confirms (audited, dated) that the access was reviewed.
+pub(super) async fn project_access_review_confirm(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    ApiJson(body): ApiJson<ConfirmReview>,
+) -> AppResult<Response> {
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
+    let r = access_review::confirm(&st.db, &me, project.id, &body.note).await?;
+    Ok((StatusCode::CREATED, Json(json!(r))).into_response())
+}
+
+/// `GET /api/v1/projects/{code}/access-review/{review_id}` – the member list
+/// as it was when a review was confirmed.
+pub(super) async fn project_access_review_snapshot(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((code, review_id)): Path<(String, Uuid)>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
+    Ok(Json(
+        access_review::snapshot(&st.db, &me, project.id, review_id).await?,
+    ))
+}

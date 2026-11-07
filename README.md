@@ -169,7 +169,7 @@ there is no separate enterprise edition.
 
 **Planned** – open issues, not done yet:
 
-- **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – membership conditions (IdP claims, networks, session age), interface switches per group, a read and download log, access reviews.
+- **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – membership conditions (IdP claims, networks, session age), interface switches per group, a read and download log; access reviews with an evidence report are built.
 - **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – review policies per project group, obsolete through change orders, sign-off, review rounds, substitutes, owner and handover.
 - **Scoped access tokens** – personal access tokens limited to read-only or MCP-only use.
 

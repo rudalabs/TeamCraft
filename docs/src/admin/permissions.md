@@ -79,9 +79,28 @@ deleting the group deletes its history (the audit log keeps the records). The ru
 is part of the actor's hidden groups (`access::hidden_of_user`), so every
 guard, the audit feed, change orders, notifications and the assistant honour
 it without a check of their own. This is step 1 of
-[#151](https://github.com/rudalabs/TeamCraft/issues/151); conditions on
-membership, interface switches, a read log, an access review and token scopes
-are not built yet (see `docs/OPEN_WORK.md`).
+[#151](https://github.com/rudalabs/TeamCraft/issues/151) together with step 5,
+the access review (below); conditions on membership, interface switches, a read
+log and token scopes are not built yet (see `docs/OPEN_WORK.md`).
+
+### Access review
+
+Managers of a restricted group and administrators open *Access review* on the
+group page (`/projects/{id}/access-review`). It lists every member with the
+account role, the role in the group, the source (added by hand or synchronised
+from the identity provider), whether the account is active, the last sign-in
+(flagged when there was none for 90 days) and the date the membership began,
+then the administrator policy (with the number of active administrators who are
+not members) and the administrator elevations with their reasons. *I reviewed
+the access* confirms the review with an optional note: the confirmation is
+dated, audited (`project.access_review`), tells the other managers and stores
+the member list as it was, so the question "who had access at the time" is
+answered later (`GET /api/v1/projects/{code}/access-review/{id}`). The evidence
+report is a CSV (one row per member, elevation and confirmed review, formula-safe)
+or the same data as JSON (`GET /api/v1/projects/{code}/access-review`, with
+`?format=csv` for the CSV). The page is for restricted groups only; elevations
+are listed up to the newest 100 and reviews up to the newest 50 (the audit log
+keeps all).
 
 Moving an item out of a restricted group, or copying it with *Save As*
 into another group, needs a manager of the source group or an administrator

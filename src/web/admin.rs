@@ -2,7 +2,8 @@
 
 use axum::{
     extract::{Path, Query, State},
-    response::Response,
+    http::header,
+    response::{IntoResponse, Response},
     Form,
 };
 use serde::Deserialize;
@@ -14,7 +15,7 @@ use crate::{
     domain::{self, AdminRead, ProjectVisibility, Role},
     error::{AppError, AppResult},
     resultscan::TemplateInput,
-    services::{audit, project_policy, projects, result_templates, users, Page},
+    services::{access_review, audit, project_policy, projects, result_templates, users, Page},
     util, AppState,
 };
 
@@ -689,4 +690,63 @@ pub async fn delete_result_template(
             format!("Extraction template {} removed.", t.name),
         )
     })
+}
+
+/// `GET /projects/{id}/access-review` – managers of the group, admins.
+pub async fn access_review(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let report = access_review::report(&st.db, &ctx.me, id).await?;
+    render(
+        &st,
+        &ctx,
+        "projects/access_review.html",
+        json!({ "project_id": id, "report": report, "max_note": access_review::MAX_NOTE_CHARS }),
+    )
+}
+
+#[derive(Deserialize)]
+pub struct ReviewForm {
+    #[serde(default)]
+    note: String,
+}
+
+/// `POST /projects/{id}/access-review` – confirms the review.
+pub async fn confirm_access_review(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<ReviewForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}/access-review");
+    let result = access_review::confirm(&st.db, &ctx.me, id, &form.note).await;
+    finish(&st, result, &back, |r| {
+        (
+            back.clone(),
+            format!("Access review confirmed ({} members)", r.member_count),
+        )
+    })
+}
+
+/// `GET /projects/{id}/access-review.csv` – the evidence report.
+pub async fn access_review_csv(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let report = access_review::report(&st.db, &ctx.me, id).await?;
+    let filename = format!("{}_access_review.csv", report.project_code);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                util::content_disposition(&filename),
+            ),
+        ],
+        access_review::to_csv(&report),
+    )
+        .into_response())
 }

@@ -42,9 +42,9 @@ use crate::{
     error::{AppError, AppResult},
     models::Revision,
     services::{
-        attributes, audit, bom, changes, checkouts, desktop, files, impacts, imports, items,
-        notifications, package, project_policy, projects, references, requests, reviewers,
-        revisions, similar, stats, uploads, users, workset, Page,
+        access_review, attributes, audit, bom, changes, checkouts, desktop, files, impacts,
+        imports, items, notifications, package, project_policy, projects, references, requests,
+        reviewers, revisions, similar, stats, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -85,6 +85,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route(
             "/projects/{code}/policy",
             get(project_policy_get).put(project_policy_set),
+        )
+        .route(
+            "/projects/{code}/access-review",
+            get(project_access_review).post(project_access_review_confirm),
+        )
+        .route(
+            "/projects/{code}/access-review/{review_id}",
+            get(project_access_review_snapshot),
         )
         .route(
             "/projects/{code}/elevations",
@@ -453,6 +461,9 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
             "PUT    /api/v1/projects/{code}/policy                   {admin_read: implicit|with_reason|none} how administrators read a restricted group – managers and admins",
             "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
+            "GET    /api/v1/projects/{code}/access-review            access report of a restricted group (members, source, last sign-in, policy, elevations, reviews); ?format=csv – managers and admins",
+            "POST   /api/v1/projects/{code}/access-review            {note} confirm the access review (dated, audited) – managers and admins",
+            "GET    /api/v1/projects/{code}/access-review/{id}       the member list as it was at a confirmed review",
             "DELETE /api/v1/projects/{code}/elevations               ends the administrator's running access",
             "GET    /api/v1/projects/{code}/members",
             "POST   /api/v1/projects/{code}/members                   {username, manager?} – managers and admins",
