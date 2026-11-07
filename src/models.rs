@@ -108,6 +108,9 @@ pub struct Item {
     pub created_by: Uuid,
     pub created_by_name: String,
     pub created_at: DateTime<Utc>,
+    /// Responsible user (default: the creator), see `services::ownership`.
+    pub owner_id: Uuid,
+    pub owner_name: String,
     /// `make`, `purchased` or `standard` (`domain::Classification`).
     pub classification: String,
 }

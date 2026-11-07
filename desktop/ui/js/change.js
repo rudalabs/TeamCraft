@@ -39,6 +39,13 @@ export function suggestedReviewers(number) {
     r.suggestions.forEach(function (s, i) {
       var whyId = "suggested-why-" + number + "-" + i;
       var why = h("p.hint", { id: whyId, text: s.reasons.join("; ") });
+      if (s.cannot_review) {
+        box.appendChild(h("div.suggestion", null, [
+          h("p", null, [h("strong", { text: s.display_name }), " ", h("span.badge", { text: "knows the item, cannot review" })]),
+          why,
+        ]));
+        return;
+      }
       var add = h("button.small", { type: "button", "aria-describedby": whyId, on: { click: function () {
         add.disabled = true;
         run("Adding " + s.display_name, function () {

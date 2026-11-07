@@ -13,12 +13,14 @@ use crate::{
     services::{access, attributes, audit, files, notifications, projects, revisions, Page},
 };
 
-const ITEM_SELECT: &str = "
+pub(crate) const ITEM_SELECT: &str = "
     SELECT i.id, i.number, i.item_type, i.unit, i.project_id, p.code AS project_code,
-           i.created_by, u.display_name AS created_by_name, i.created_at, i.classification
+           i.created_by, u.display_name AS created_by_name, i.created_at, i.classification,
+           i.owner_id, ou.display_name AS owner_name
     FROM items i
     LEFT JOIN projects p ON p.id = i.project_id
-    JOIN users u ON u.id = i.created_by";
+    JOIN users u ON u.id = i.created_by
+    JOIN users ou ON ou.id = i.owner_id";
 
 #[derive(Clone, Debug, Default)]
 pub struct ItemFilter {
@@ -738,8 +740,8 @@ pub(crate) async fn create_tx(
 
     let item_id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO items (id, number, item_type, unit, project_id, created_by, classification)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        "INSERT INTO items (id, number, item_type, unit, project_id, created_by, owner_id, classification)
+         VALUES ($1, $2, $3, $4, $5, $6, $6, $7)",
     )
     .bind(item_id)
     .bind(&number)

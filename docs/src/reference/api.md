@@ -372,7 +372,8 @@ should review this?* from the history of the affected items:
 "display_name", "role", "score", "reasons": ["edited PRT-000005 3 times in
 the last 90 days", "manager of ROVER"]}]}`, highest score first, ties by
 name. Only active CAD editors and admins are suggested; the author and the
-assigned reviewers never are. It only reads – add a suggestion with
+assigned reviewers never are. Users who changed the affected revisions come
+last with `"cannot_review": true` (four-eyes): show them, do not add them. It only reads – add a suggestion with
 `POST /changes/{number}/reviewers`. See
 [Suggested reviewers](../guide/changes.md#suggested-reviewers) for the
 sources and points.

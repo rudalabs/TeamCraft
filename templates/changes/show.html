@@ -133,10 +133,14 @@
       <ul class="suggestions" aria-labelledby="suggested-reviewers">
         {% for s in suggested %}
         <li class="suggestion">
+          {% if s.cannot_review %}
+          <p><strong>{{ s.display_name }}</strong> <span class="badge">knows the item, cannot review</span></p>
+          {% else %}
           <form method="post" action="/changes/{{ change.id }}/reviewers">
             <input type="hidden" name="username" value="{{ s.username }}">
             <button class="small" type="submit" aria-describedby="suggested-why-{{ loop.index }}">Add {{ s.display_name }}</button>
           </form>
+          {% endif %}
           <p class="small muted" id="suggested-why-{{ loop.index }}">{{ s.reasons | join("; ") }}</p>
         </li>
         {% endfor %}

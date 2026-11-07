@@ -130,10 +130,11 @@ already keeps – no AI, the same data always gives the same order:
 
 Each source counts at most a few times per person, so one busy source
 cannot outweigh the others. Only active CAD editors and admins – the users
-who may review – are suggested, never the author, never someone who changed the
-affected revisions in this change (they cannot review it, see below), never the
+who may review – are suggested, never the author, never the
 administrator who is preparing the change and never someone already
-assigned. The desktop app shows the same suggestions on the tab of a draft
+assigned. People who changed the affected revisions know the item best but cannot
+review it: they are listed after the others as *knows the item, cannot review*
+without an *Add* button. The desktop app shows the same suggestions on the tab of a draft
 change, the REST API has `GET /api/v1/changes/{number}/suggested-reviewers`
 and AI assistants the MCP tool `suggest_reviewers`. Suggestions never
 assign anybody.

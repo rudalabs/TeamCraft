@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Hand over {{ user.username }}{% endblock %}
+{% block nav_users %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Hand-over of {{ user.display_name }}</h1>
+    <p class="subtitle">to {{ report.to_name }} · {{ report.moved|length }} moved, {{ report.skipped|length }} skipped</p>
+  </div>
+  <div class="actions"><a class="button" href="/admin/users/{{ user.id }}">← Back to the user</a></div>
+</div>
+
+{% if report.truncated %}
+<div class="notice">There was more than one run can move. Run the hand-over again to move the rest.</div>
+{% endif %}
+
+<section class="card">
+  <h2>Moved</h2>
+  {% if report.moved %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">What</th><th scope="col">Number</th></tr></thead>
+    <tbody>
+    {% for e in report.moved %}
+      <tr>
+        <td>{% if e.kind == "item" %}Item ownership{% elif e.kind == "change" %}Change order (author){% elif e.kind == "request" %}Change request (assignee){% else %}Pending review{% endif %}</td>
+        <td class="mono">{{ e.number }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">Nothing was moved.</p>{% endif %}
+</section>
+
+{% if report.skipped %}
+<section class="card">
+  <h2>Not moved</h2>
+  <p class="hint">These stay with {{ report.from_name }}. Reassign them by hand or change the circumstances and run the hand-over again.</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">What</th><th scope="col">Number</th><th scope="col">Reason</th></tr></thead>
+    <tbody>
+    {% for e in report.skipped %}
+      <tr>
+        <td>{% if e.kind == "item" %}Item ownership{% elif e.kind == "change" %}Change order (author){% elif e.kind == "request" %}Change request (assignee){% else %}Pending review{% endif %}</td>
+        <td class="mono">{{ e.number }}</td>
+        <td>{{ e.reason }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

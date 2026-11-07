@@ -16,7 +16,7 @@ use super::{
 use crate::{
     domain::{self, Classification, ItemType, LifecycleState, COMMON_UNITS},
     error::{AppError, AppResult},
-    services::{attributes, items, projects, Page},
+    services::{attributes, items, ownership, projects, Page},
     util, AppState,
 };
 
@@ -401,4 +401,27 @@ pub async fn delete(
 #[derive(Deserialize)]
 pub struct BackForm {
     pub back: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct OwnerForm {
+    owner_id: Uuid,
+    back: Option<String>,
+}
+
+/// Changes the owner of an item (managers of its group, administrators).
+pub async fn set_owner(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<OwnerForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = ownership::set_item_owner(&st.db, &ctx.me, id, form.owner_id).await;
+    finish(&st, result, &back, |item| {
+        (
+            back.clone(),
+            format!("{} is now owned by {}", item.number, item.owner_name),
+        )
+    })
 }

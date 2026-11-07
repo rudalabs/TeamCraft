@@ -155,8 +155,20 @@
       <dt>Classification</dt><dd>{% for c in classifications %}{% if c.value == item.classification %}{{ c.label }}{% endif %}{% endfor %}</dd>
       <dt>Project group</dt><dd>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% else %}—{% endif %}</dd>
       <dt>Created</dt><dd>{{ m.time(item.created_at) }} by {{ item.created_by_name }}</dd>
+      <dt>Owner</dt><dd>{{ item.owner_name }}{% if can.owner and owner_candidates %} <button class="small" type="button" data-toggle="owner-form">Change</button>{% endif %}</dd>
       <dt>Short link</dt><dd class="mono small"><a href="/i/{{ item.number }}">/i/{{ item.number }}</a></dd>
     </dl>
+    {% if can.owner and owner_candidates %}
+    <form id="owner-form" class="stack hidden" method="post" action="/items/{{ item.id }}/owner">
+      <input type="hidden" name="back" value="{{ back }}">
+      <label>Owner
+        <select name="owner_id">
+          {% for u in owner_candidates %}<option value="{{ u.id }}" {% if item.owner_id == u.id %}selected{% endif %}>{{ u.display_name }} ({{ u.username }})</option>{% endfor %}
+        </select>
+      </label>
+      <div class="actions"><button class="primary" type="submit">Save owner</button></div>
+    </form>
+    {% endif %}
     {% if can.master %}
     <form id="master-form" class="stack hidden" method="post" action="/items/{{ item.id }}/master">
       <input type="hidden" name="back" value="{{ back }}">

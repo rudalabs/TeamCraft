@@ -9,12 +9,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::{finish, pagination, render, WebCtx, PER_PAGE};
+use super::{finish, is_user_error, pagination, redirect_flash, render, Flash, WebCtx, PER_PAGE};
 use crate::{
     domain::{self, AdminRead, ProjectVisibility, Role},
     error::{AppError, AppResult},
     resultscan::TemplateInput,
-    services::{audit, project_policy, projects, result_templates, users, Page},
+    services::{audit, ownership, project_policy, projects, result_templates, users, Page},
     util, AppState,
 };
 
@@ -464,12 +464,18 @@ pub async fn user_edit(
     ctx.me.require(Role::Admin)?;
     let user = users::get(&st.db, id).await?;
     let tokens = users::list_tokens(&st.db, id).await?;
+    let handover_targets: Vec<_> = users::reviewer_candidates(&st.db)
+        .await?
+        .into_iter()
+        .filter(|u| u.id != id)
+        .collect();
     let memberships = projects::memberships_of(&st.db, id).await?;
     render(
         &st,
         &ctx,
         "admin/user_edit.html",
         json!({
+            "handover_targets": handover_targets,
             "user": user,
             "tokens": tokens,
             "memberships": memberships,
@@ -689,4 +695,34 @@ pub async fn delete_result_template(
             format!("Extraction template {} removed.", t.name),
         )
     })
+}
+
+#[derive(Deserialize)]
+pub struct HandoverForm {
+    to: Uuid,
+}
+
+/// Moves the work of a user to another one and shows what was moved.
+pub async fn handover(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<HandoverForm>,
+) -> AppResult<Response> {
+    let back = format!("/admin/users/{id}");
+    match ownership::hand_over(&st.db, &ctx.me, id, form.to).await {
+        Ok(report) => {
+            let user = users::get(&st.db, id).await?;
+            render(
+                &st,
+                &ctx,
+                "admin/handover.html",
+                json!({ "user": user, "report": report }),
+            )
+        }
+        Err(e) if is_user_error(&e) => {
+            Ok(redirect_flash(&st, &back, Flash::error(e.public_message())))
+        }
+        Err(e) => Err(e),
+    }
 }

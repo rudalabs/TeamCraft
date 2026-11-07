@@ -376,7 +376,7 @@ async fn change_preparers(
 /// reviewer decides, because people can edit while the change is a draft.
 /// With `author_only` (a change that was already in review when the rule
 /// arrived) only the author is refused.
-async fn review_conflict(
+pub(crate) async fn review_conflict(
     conn: &mut PgConnection,
     change: &Change,
     reviewer: Uuid,

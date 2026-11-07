@@ -46,6 +46,19 @@
 </div>
 
 <section class="card">
+  <h2>Hand over work</h2>
+  <p class="hint">Moves the item ownerships, draft and rejected change orders, open change requests and pending reviews of {{ user.display_name }} to another user in one step. Every object is audited; objects the receiver may not own or review are listed and stay.</p>
+  {% if handover_targets %}
+  <form class="inline" method="post" action="/admin/users/{{ user.id }}/handover" data-confirm="Hand over the work of {{ user.display_name }}?">
+    <select name="to" required aria-label="Hand over to">
+      {% for u in handover_targets %}<option value="{{ u.id }}">{{ u.display_name }} ({{ u.username }})</option>{% endfor %}
+    </select>
+    <button type="submit">Hand over</button>
+  </form>
+  {% else %}<p class="empty">No other active CAD editor or administrator to hand over to.</p>{% endif %}
+</section>
+
+<section class="card">
   <h2>Project groups</h2>
   {% if memberships %}
   <ul class="tag-row">

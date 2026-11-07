@@ -38,6 +38,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "files/preview.html",
     "admin/users.html",
     "admin/user_edit.html",
+    "admin/handover.html",
     "admin/audit.html",
     "admin/attributes.html",
     "admin/attribute_edit.html",
@@ -188,7 +189,8 @@ mod tests {
         json!({
             "id": "44444444-4444-4444-8444-444444444444", "number": "PRT-000001", "item_type": "part",
             "unit": "each", "project_id": null, "project_code": "ROCKET", "created_by": ME,
-            "created_by_name": "Max Muster", "created_at": TS
+            "created_by_name": "Max Muster", "created_at": TS,
+            "owner_id": ME, "owner_name": "Max Muster"
         })
     }
 
@@ -377,7 +379,7 @@ mod tests {
                 .map(|k| json!({ "value": k.as_str(), "label": k.label() })).collect::<Vec<_>>(),
         });
         let can_all = json!({ "edit": true, "checkout": true, "checkin": true, "cancel_checkout": true,
-                              "revise": true, "obsolete": true, "delete": true, "master": true,
+                              "revise": true, "obsolete": true, "delete": true, "master": true, "owner": true,
                               "add_to_change": true, "acknowledge": true });
 
         let html = render(
@@ -1212,7 +1214,9 @@ mod tests {
                     "candidates": [user()], "history": [audit_entry()], "priorities": ["low", "normal"],
                     "suggested": [{ "user_id": OTHER, "username": "max", "display_name": "Max <M>", "role": "editor",
                                     "score": 7, "reasons": ["edited PRT-000001 3 times in the last 90 days",
-                                                            "manager of ROVER"] }],
+                                                            "manager of ROVER"] },
+                                  { "user_id": ME, "username": "erika", "display_name": "Erika", "role": "editor",
+                                    "score": 5, "cannot_review": true, "reasons": ["edited PRT-000001 once in the last 90 days"] }],
                     "impact": [{ "root_item_id": ME, "level": 1, "item_id": OTHER, "item_number": "ASM-000001",
                                  "item_name": "Stage", "revision_id": OTHER, "revision_code": "A",
                                  "revision_state": "released", "relation": "bom", "via_number": "PRT-000001",
@@ -1384,9 +1388,29 @@ mod tests {
             "admin/user_edit.html",
             with_common(json!({
                 "user": user(), "roles": roles(), "oidc_enabled": false, "memberships": [project()],
+                "handover_targets": [user()],
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
                              "last_used_at": null, "expires_at": TS }],
             })),
+        );
+        let handover = |skipped: Value| {
+            with_common(json!({
+                "user": user(),
+                "report": { "from_name": "Erika", "to_name": "Max <M>", "truncated": true,
+                            "moved": [{ "kind": "item", "number": "PRT-000001", "reason": "" },
+                                      { "kind": "change", "number": "CHG-000001", "reason": "" },
+                                      { "kind": "request", "number": "REQ-000001", "reason": "" },
+                                      { "kind": "review", "number": "CHG-000002", "reason": "" }],
+                            "skipped": skipped },
+            }))
+        };
+        render(&env, "admin/handover.html", handover(json!([])));
+        render(
+            &env,
+            "admin/handover.html",
+            handover(
+                json!([{ "kind": "review", "number": "CHG-000003", "reason": "Max is already a reviewer" }]),
+            ),
         );
         render(
             &env,
