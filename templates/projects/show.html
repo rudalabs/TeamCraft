@@ -114,6 +114,25 @@
   </section>
 </div>
 
+{% if review_policy %}
+<section class="card" id="review-policy">
+  <h2>Review policy</h2>
+  <form class="stack" method="post" action="/projects/{{ project.id }}/review-policy">
+    <label>Minimum approvals <span class="hint">empty = every reviewer must approve</span>
+      <input type="number" name="min_approvals" min="1" max="50" value="{% if review_policy.min_approvals %}{{ review_policy.min_approvals }}{% endif %}">
+    </label>
+    <label>Required reviewers <span class="hint">user names, separated by commas; they must be reviewers of every change and approve it</span>
+      <input type="text" name="required_reviewers" maxlength="600" value="{% for p in review_policy.required_reviewers %}{{ p.username }}{% if not loop.last %}, {% endif %}{% endfor %}">
+    </label>
+    <label>Approval required from members of <span class="hint">code of another project group used as a role group, e.g. QA</span>
+      <input type="text" name="role_group" maxlength="40" value="{% if review_policy.role_group %}{{ review_policy.role_group.code }}{% endif %}">
+    </label>
+    <p class="hint">Applies to every change that touches items of this group. A change that cannot meet the policy of all its groups is refused when it is submitted. A single rejection always rejects the change.</p>
+    <div class="actions"><button class="primary" type="submit">Save</button></div>
+  </form>
+</section>
+{% endif %}
+
 {% if policy %}
 <section class="card" id="need-to-know">
   <h2>Need to know: administrator access</h2>

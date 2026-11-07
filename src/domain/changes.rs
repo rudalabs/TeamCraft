@@ -152,6 +152,101 @@ pub fn review_outcome(decisions: &[Decision]) -> ReviewOutcome {
     }
 }
 
+/// A project group that must be represented among the approvals (a role
+/// group such as QA): `members` are the people whose approval counts.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RoleRequirement {
+    /// Name shown in messages (the group code).
+    pub label: String,
+    pub members: Vec<uuid::Uuid>,
+}
+
+/// What the review policies of all affected project groups ask of a change.
+/// The default asks for nothing beyond "every reviewer approves".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReviewRequirement {
+    /// `None` = every reviewer must approve.
+    pub min_approvals: Option<usize>,
+    /// People who must be reviewers and approve (with their display names).
+    pub required_users: Vec<(uuid::Uuid, String)>,
+    /// Role groups that need at least one approval from a member.
+    pub role_groups: Vec<RoleRequirement>,
+}
+
+/// Combines the minimum approvals of several groups: a group without a
+/// value wants all reviewers, so the strictest wins.
+pub fn combine_min_approvals(mins: &[Option<usize>]) -> Option<usize> {
+    if mins.is_empty() || mins.contains(&None) {
+        None
+    } else {
+        mins.iter().copied().flatten().max()
+    }
+}
+
+/// Outcome of a change under a review policy. A single rejection still
+/// rejects; the change is approved when enough reviewers approved, every
+/// required person did, and every role group is represented. With the
+/// default requirement this equals [`review_outcome`].
+pub fn review_outcome_with(
+    votes: &[(uuid::Uuid, Decision)],
+    req: &ReviewRequirement,
+) -> ReviewOutcome {
+    if votes.iter().any(|(_, d)| *d == Decision::Rejected) {
+        return ReviewOutcome::Rejected;
+    }
+    if votes.is_empty() {
+        return ReviewOutcome::Pending;
+    }
+    let approved: Vec<uuid::Uuid> = votes
+        .iter()
+        .filter(|(_, d)| *d == Decision::Approved)
+        .map(|(u, _)| *u)
+        .collect();
+    let needed = req
+        .min_approvals
+        .map_or(votes.len(), |m| m.min(votes.len()));
+    let enough = approved.len() >= needed.max(1);
+    let people = req.required_users.iter().all(|(u, _)| approved.contains(u));
+    let roles = req
+        .role_groups
+        .iter()
+        .all(|g| g.members.iter().any(|m| approved.contains(m)));
+    if enough && people && roles {
+        ReviewOutcome::Approved
+    } else {
+        ReviewOutcome::Pending
+    }
+}
+
+/// Why a set of reviewers can never satisfy the policy (empty = it can).
+/// `submit` refuses a change with any of these.
+pub fn policy_shortfalls(reviewers: &[uuid::Uuid], req: &ReviewRequirement) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(min) = req.min_approvals {
+        if min > reviewers.len() {
+            out.push(format!(
+                "{min} approvals are required but only {} reviewer{} assigned",
+                reviewers.len(),
+                if reviewers.len() == 1 { " is" } else { "s are" }
+            ));
+        }
+    }
+    for (user, name) in &req.required_users {
+        if !reviewers.contains(user) {
+            out.push(format!("{name} must be a reviewer"));
+        }
+    }
+    for group in &req.role_groups {
+        if !group.members.iter().any(|m| reviewers.contains(m)) {
+            out.push(format!(
+                "a reviewer from the group {} is required",
+                group.label
+            ));
+        }
+    }
+    out
+}
+
 /// Why somebody may not review a change order (separation of duties).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReviewConflict {

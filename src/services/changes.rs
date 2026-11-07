@@ -29,7 +29,7 @@ use crate::{
     services::{
         access, as_built, audit, impacts, next_counter,
         notifications::{self, Notice},
-        readiness, requests, revisions, users, webhooks, Page,
+        project_policy, readiness, requests, revisions, users, webhooks, Page,
     },
 };
 
@@ -1065,6 +1065,8 @@ pub async fn remove_reviewer(
 ///   no dependency is unreleased unless it is in the change (409).
 /// * **Locks:** the change row (`FOR UPDATE`), then every revision (`revisions::lock`) before
 ///   its state changes.
+/// * **Review policy:** every affected project group's policy is met (409): enough
+///   reviewers for the minimum approvals, the required people and a reviewer from each role group.
 /// * **Audit:** `change.submit`.
 /// * **Notifications:** the reviewers (review requested) and the other watchers of the change;
 ///   readers who may not see every item get a text without item names; never the actor.
@@ -1117,6 +1119,17 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
                 conflict.describe()
             )));
         }
+    }
+    // The review policy of every affected project group.
+    let requirement = project_policy::review_requirement(&mut tx, change_id).await?;
+    let reviewer_uuids: Vec<Uuid> = reviewers.iter().map(|(id, _)| *id).collect();
+    let shortfalls = domain::policy_shortfalls(&reviewer_uuids, &requirement);
+    if !shortfalls.is_empty() {
+        return Err(AppError::Conflict(format!(
+            "{} does not meet the review policy of its project groups: {}.",
+            change.number,
+            shortfalls.join("; ")
+        )));
     }
     for id in &item_ids {
         let rev = revisions::lock(&mut tx, *id).await?;
@@ -1324,16 +1337,18 @@ pub async fn review(
     )
     .await?;
 
-    let decisions: Vec<Decision> =
-        sqlx::query_scalar::<_, String>("SELECT decision FROM change_reviews WHERE change_id = $1")
-            .bind(change_id)
-            .fetch_all(&mut *tx)
-            .await?
-            .iter()
-            .filter_map(|d| Decision::parse(d))
-            .collect();
+    let votes: Vec<(Uuid, Decision)> = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT reviewer_id, decision FROM change_reviews WHERE change_id = $1",
+    )
+    .bind(change_id)
+    .fetch_all(&mut *tx)
+    .await?
+    .into_iter()
+    .filter_map(|(u, d)| Decision::parse(&d).map(|d| (u, d)))
+    .collect();
     let people = notifications::change_people(&mut tx, change_id).await?;
-    let outcome = domain::review_outcome(&decisions);
+    let requirement = project_policy::review_requirement(&mut tx, change_id).await?;
+    let outcome = domain::review_outcome_with(&votes, &requirement);
     match outcome {
         ReviewOutcome::Pending => {
             touch(&mut tx, change_id).await?;
