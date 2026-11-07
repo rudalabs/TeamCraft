@@ -5,6 +5,7 @@
 //! `GET /api/v1/items/PRT-000042/revisions/B`. The code `latest` selects the
 //! newest revision.
 
+mod as_built;
 mod change_requests;
 mod interchange_api;
 mod personal;
@@ -36,15 +37,15 @@ use uuid::Uuid;
 use crate::{
     auth::{Actor, ApiUser},
     domain::{
-        self, ChangeStatus, Decision, ItemType, LifecycleState, Priority, ProjectVisibility,
-        ReferenceKind, RevisionRule,
+        self, AdminRead, ChangeStatus, Decision, ItemType, LifecycleState, Priority,
+        ProjectVisibility, ReferenceKind, RevisionRule,
     },
     error::{AppError, AppResult},
     models::Revision,
     services::{
         attributes, audit, bom, changes, checkouts, desktop, files, impacts, imports, items,
-        notifications, package, projects, references, requests, reviewers, revisions, similar,
-        stats, uploads, users, workset, Page,
+        notifications, package, project_policy, projects, references, requests, reviewers,
+        revisions, similar, stats, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -67,6 +68,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
     Router::new()
         .route("/", get(index))
         .route("/me", get(me))
+        .route("/me/password", post(change_password))
         .route("/desktop/token", post(desktop_token))
         .route(
             "/tokens",
@@ -82,8 +84,18 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(assistant_thread).delete(assistant_thread_reset),
         )
         .route("/formats", get(formats))
+        .route("/branding", get(branding_info))
+        .route("/branding/{kind}", get(branding_logo))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{code}/visibility", put(set_project_visibility))
+        .route(
+            "/projects/{code}/policy",
+            get(project_policy_get).put(project_policy_set),
+        )
+        .route(
+            "/projects/{code}/elevations",
+            post(project_elevate).delete(project_elevation_end),
+        )
         .route(
             "/projects/{code}/members",
             get(project_members).post(add_project_member),
@@ -167,6 +179,28 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route(
             "/items/{number}/simulations",
             get(simulations::item_simulations),
+        )
+        // as-built records
+        .route(
+            "/items/{number}/revisions/{code}/as-built",
+            get(as_built::get_as_built),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/as-built/record",
+            put(as_built::put_record),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/as-built/deviations",
+            get(as_built::list_deviations).post(as_built::add_deviation),
+        )
+        .route(
+            "/as-built-deviations/{id}",
+            patch(as_built::patch_deviation).delete(as_built::delete_deviation),
+        )
+        .route("/items/{number}/built-units", get(as_built::built_units))
+        .route(
+            "/items/{number}/revisions/{code}/built-units",
+            post(as_built::record_unit),
         )
         .route(
             "/projects/{code}/result-templates",
@@ -416,14 +450,19 @@ async fn index() -> Json<Value> {
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
             "GET    /api/v1/me                                        the caller, its groups and token_scope",
+            "POST   /api/v1/me/password                            {current_password, new_password} – change own password (throttled; ends web sessions)",
             "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts, and grouped by dependent revision as impact_groups), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
             "GET    /api/v1/tokens                                    your personal access tokens (name, prefix, scope, expiry; never the value)",
-            "POST   /api/v1/tokens                                    {name, expires_in_days?: 1..3650 (absent = never), scope?: full|read_only|mcp_only} – the value is answered once",
+            "POST   /api/v1/tokens                                    {name, expires_in_days?: 1..3650 (absent = never), scope?: full|write|read_only|mcp_only} – the value is answered once",
             "DELETE /api/v1/tokens/{id}                               revoke a token (your own; admins: any)",
             "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
+            "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
+            "PUT    /api/v1/projects/{code}/policy                   {admin_read: implicit|with_reason|none} how administrators read a restricted group – managers and admins",
+            "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
+            "DELETE /api/v1/projects/{code}/elevations               ends the administrator's running access",
             "GET    /api/v1/projects/{code}/members",
             "POST   /api/v1/projects/{code}/members                   {username, manager?} – managers and admins",
             "GET    /api/v1/projects/{code}/numbering?scheme=         next generated item numbers per type; scheme = preview another scheme",
@@ -433,6 +472,8 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention|impact|simulation_status|result_values, context: {kind?, item?, revision?, change?, request?, project?, view?, rule?, query?, filters?, selected?, shown?}, allow_drafts?, thread?}",
             "GET    /api/v1/assistant/thread                          the caller's conversation (thread: true questions), newest message last",
             "DELETE /api/v1/assistant/thread                          new conversation: deletes the caller's thread",
+            "GET    /api/v1/branding                                  which logos an administrator replaced: {wide, square} = version token or null, {wide_type, square_type} = content type",
+            "GET    /api/v1/branding/{wide|square}                   the replaced logo (image); 404 = the built-in logo",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
             "GET    /api/v1/items?q=&type=&project=&state=&system=&class=&attr=&value=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo; class = make|purchased|standard; attr + value = custom attribute (value: text contains, yes/no, 12, >=10, <=20, 10..20, empty = has a value)",
             "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?, classification?, attributes?}",
@@ -493,8 +534,16 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/simulation-proposals/{id}/reject",
             "GET    /api/v1/items/{number}/revisions/{code}/simulation/compare?with=A   result values of two revisions",
             "GET    /api/v1/items/{number}/simulations                simulations based on the item (out of date?)",
+            "GET    /api/v1/items/{number}/revisions/{code}/as-built   build record (design revision built to, serial, date), deviations and summary of an as-built revision",
+            "PUT    /api/v1/items/{number}/revisions/{code}/as-built/record  {design, design_revision?, serial_number?, built_on?: YYYY-MM-DD, note?} – revision checked out",
+            "GET    /api/v1/items/{number}/revisions/{code}/as-built/deviations",
+            "POST   /api/v1/items/{number}/revisions/{code}/as-built/deviations  {kind: dimension|material|component|process|other, feature, designed?, built?, disposition?: open|use_as_is|rework|repair|scrap, note?}",
+            "PATCH  /api/v1/as-built-deviations/{id}                  any deviation field",
+            "DELETE /api/v1/as-built-deviations/{id}",
+            "GET    /api/v1/items/{number}/built-units                units built to the design item (older design revision? open deviations?)",
+            "POST   /api/v1/items/{number}/revisions/{code}/built-units  {serial_number?, built_on?, number?, name?, note?, project?, with_bom?: true} – records a unit built to this design revision",
             "GET    /api/v1/projects/{code}/result-templates         extraction templates of the group (see the simulation guide)",
-            "POST   /api/v1/projects/{code}/result-templates         {name, file_pattern, method: regex|csv, pattern | csv_column [csv_key_column, csv_key_value], pick?: first|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?} – managers and admins",
+            "POST   /api/v1/projects/{code}/result-templates         {name, file_pattern, method: regex|csv|table, pattern | csv_column [csv_key_column, csv_key_value], pick?: first|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?} – managers and admins",
             "PUT    /api/v1/result-templates/{id}                    the same fields; replaces the template",
             "DELETE /api/v1/result-templates/{id}",
             "GET    /api/v1/impacts                                   open impacts on items of my project groups",
@@ -574,9 +623,14 @@ async fn me(
     let mut body = json!(me);
     body["restricted_projects"] = json!(projects::restricted_memberships(&st.db, &me).await?);
     body["token_scope"] = json!(scope);
+    // "local" or "oidc": a client offers "Change password" only for local accounts
+    body["auth_source"] = json!(users::get(&st.db, me.id).await?.auth_source);
     body["capabilities"] = json!({
         "assistant": crate::services::assistant::enabled(&st),
-        "mcp": true,
+        // TEAMCRAFT_LOCAL_AGENTS=off refuses POST /api/v1/mcp for every token
+        // and the desktop's Agent view then runs on the server-side assistant
+        "mcp": st.config.local_agents.allowed(),
+        "local_agents": st.config.local_agents.allowed(),
     });
     Ok(Json(body))
 }
@@ -709,4 +763,58 @@ async fn formats(ApiUser(_me): ApiUser) -> Json<Value> {
             .map(|k| json!({ "id": k, "label": k.label() }))
             .collect::<Vec<_>>(),
     }))
+}
+
+#[derive(Deserialize)]
+struct PasswordBody {
+    current_password: String,
+    new_password: String,
+}
+
+/// `POST /api/v1/me/password` `{current_password, new_password}`: the caller
+/// changes their own password (clients such as the desktop app). Wrong
+/// current passwords count like failed sign-ins (429 with `Retry-After` once
+/// the counter is full, see [`users::change_own_password`]); the web
+/// sessions of the user end, personal access tokens stay. 204 on success.
+async fn change_password(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    ApiJson(body): ApiJson<PasswordBody>,
+) -> AppResult<StatusCode> {
+    users::change_own_password(
+        &st.db,
+        &st.sign_in,
+        &me,
+        &body.current_password,
+        &body.new_password,
+        None,
+    )
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /api/v1/branding`: which logos an administrator replaced (version
+/// tokens; `null` = built-in logo) and their content types. Clients load the
+/// images from `/api/v1/branding/{wide|square}`.
+async fn branding_info(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+) -> AppResult<Json<Value>> {
+    let b = crate::services::branding::current(&st.db).await?;
+    Ok(Json(json!({
+        "wide": b.wide,
+        "square": b.square,
+        "wide_type": b.wide_type,
+        "square_type": b.square_type,
+    })))
+}
+
+/// `GET /api/v1/branding/{kind}`: the replaced logo as an image.
+async fn branding_logo(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+    axum::extract::Path(kind): axum::extract::Path<String>,
+    headers: axum::http::HeaderMap,
+) -> AppResult<axum::response::Response> {
+    web::branding_image(&st, &kind, &headers, false).await
 }

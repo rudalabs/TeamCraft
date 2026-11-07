@@ -27,7 +27,21 @@ list is on every server at `/formats` and `GET /api/v1/formats`
 NX parts (NX 1980 and later) are read through their stream container
 (`SPLMSSTR`, `src/nxpart.rs`): the referenced component files come only from
 its reference streams (not from the save history), the preview image from
-`/Root/images/preview`.
+`/Root/images/preview`, and the 3D preview of parts from
+`/Root/FastLoad/JT`: a JT 9 file whose finest level of detail
+(topologically compressed tri-strip sets, `src/mesh/jt.rs`) is refined
+along its stored surface normals up to 3 × 3 (`src/mesh/pn.rs`, at most
+about 500 000 triangles) and shown in millimetres. Assemblies carry no
+such stream: their 3D preview is put together from the previews of their
+part files (`src/nxasm.rs` reads the components and placements from
+`/Root/FastLoad/Structure`, `src/services/assemblies.rs` places the parts).
+Components are found by file name, like file references – in the
+assembly's revision first, otherwise in the latest revision of another
+item – and sub-assemblies are followed up to 8 levels deep; components
+that are not in TeamCraft are left out, and so are components on a layer
+the assembly's layer settings hide (read from `/Root/UG_PART/UG_PART`), as
+in NX. Drawings have no 3D preview;
+stand-alone `.jt` files (JT 10) are not previewed yet.
 
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
@@ -116,25 +130,43 @@ other result formats are stored, not parsed.
 |-----------------------|-------------------------------------------------------------------------------------------|
 | ANSYS                 | `.wbpj` (Workbench), `.db` (model), `.rst` `.rth` (results)                               |
 | Abaqus                | `.cae` `.inp` (model), `.odb` `.sta` `.msg` (results)                                     |
-| Nastran               | `.bdf` `.nas` (input deck), `.op2` `.f06` (results)                                       |
+| Nastran               | `.bdf` `.nas` `.dat` (input deck), `.op2` `.f06` `.f04` `.pch` (results)                  |
+| OptiStruct            | `.fem` (text input deck)                                                                  |
 | CalculiX              | `.inp` (Abaqus syntax), `.frd` (results)                                                  |
 | LS-DYNA               | `.k` (keyword deck), `d3plot`, `d3plot01`, … `.d3plot` (results)                          |
 | COMSOL                | `.mph`                                                                                    |
 | NX / Simcenter        | `.sim` `.fem` `.afm`                                                                      |
 | OpenFOAM              | `controlDict` (marks the case), `.foam` (ParaView marker file)                            |
-| Fluent                | `.cas` `.cas.h5` (case), `.dat` `.dat.h5` (data / results)                                |
-| STAR-CCM+             | `.sim`                                                                                    |
+| Fluent                | `.cas` `.cas.gz` `.cas.h5` (case), `.dat` `.dat.gz` `.dat.h5` `.cdat` (data / results), `.msh` `.msh.gz` `.msh.h5` (mesh), `.flprj` (project), `.jou` (journal), `.trn` (transcript), `report-file-*.out` (report file) |
+| STAR-CCM+             | `.sim`, `.simh` (solution history), `.java` (macro)                                       |
 | VTK / ParaView        | `.vtk` (legacy), `.vtu` `.vtp` `.vts` `.vtr` `.vtm` (XML), `.pvd` (time-step collection)  |
-| CGNS, Exodus II       | `.cgns`; `.exo` `.e`                                                                      |
+| CGNS, Exodus II, Gmsh | `.cgns`; `.exo` `.e`; `.msh`                                                              |
 
 Extensions that other programs use too are decided by the file content:
 
-* `.sim` is a STAR-CCM+ simulation when the beginning of the file names
-  STAR-CCM+, otherwise an NX simulation file (the more common case next to
-  CAD data). This is a heuristic; it was not verified with files of every
-  STAR-CCM+ version.
-* `.dat` counts only with Fluent's section syntax (`(0 "…")`, `(1 "…")`); all
-  other `.dat` files stay unclassified.
+* `.sim`, `.fem` and `.afm` starting with NX's `SPLMSSTR` container are NX
+  simulation files. Any other `.sim` is a STAR-CCM+ simulation when the
+  beginning of the file names STAR-CCM+, otherwise an NX simulation file
+  (older NX releases have no container signature). A text `.fem` is an
+  OptiStruct/HyperMesh deck, another binary `.fem` and a non-NX `.afm`
+  (Adobe font metrics) stay unclassified. The STAR-CCM+ marker is a
+  heuristic; it was not verified with files of every STAR-CCM+ version.
+* `.dat` counts with Fluent's section syntax (`(0 "…")`, `(1 "…")`) as Fluent
+  data, and as a Nastran deck when it is text with a line starting with
+  `SOL `, `CEND`, `BEGIN BULK` or `INIT MASTER`, or a `$` comment naming
+  Nastran or Simcenter (Simcenter 3D writes its decks as `.dat`); all other
+  `.dat` files stay unclassified.
+* `.msh` is a Fluent mesh with Fluent's sections (`(0 `, `(1 `, `(2 `,
+  `(10 `) and a Gmsh mesh with `$MeshFormat`; otherwise, and by name alone,
+  it stays unclassified.
+* `.cas.h5`, `.dat.h5` and `.msh.h5` need the HDF5 signature (at offset 0 or
+  512), `.cas.gz`, `.dat.gz` and `.msh.gz` the gzip magic. The HDF5 files are
+  never opened as HDF5.
+* `.out` is a Fluent report file when its first line is a quoted title and
+  the second a header of quoted column names (by name alone:
+  `report-file-*.out`); `.java` is a STAR-CCM+ macro only when its beginning
+  names STAR-CCM+ or imports `star.common`; `.op2` must be binary, `.f04`,
+  `.pch`, `.jou` and `.trn` must be text.
 * `.e` is Exodus II only as netCDF or HDF5 file; `.db` is not ANSYS when it
   is an SQLite database, an OLE file (`Thumbs.db`) or text; `.rst` text files
   are reStructuredText; `.msg` and `.sta` must be text (Outlook mails are

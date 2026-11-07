@@ -134,7 +134,7 @@
 
 {#- What a personal access token may do (`domain::TokenScope`). -#}
 {% macro token_scope(scope) -%}
-{% if scope == "read_only" %}read-only{% elif scope == "mcp_only" %}MCP only{% else %}full access{% endif %}
+{% if scope == "write" %}read and write{% elif scope == "read_only" %}read-only{% elif scope == "mcp_only" %}MCP only{% else %}full access{% endif %}
 {%- endmacro %}
 
 {#- What expires: a sliding lifetime renews on every use. -#}

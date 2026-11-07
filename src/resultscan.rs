@@ -7,9 +7,11 @@
 //!   checked in with a simulation revision (at most [`EXCHANGE_MAX_BYTES`]),
 //!   see [`parse_exchange`] for the schema;
 //! * **extraction templates** of a project group ([`ResultTemplate`]): a file
-//!   name pattern plus a regular expression (one capture group) or a CSV
-//!   column that finds one number in a *text* file; only the first
-//!   [`SCAN_MAX_BYTES`] of a file are looked at, see [`extract`].
+//!   name pattern plus a regular expression (one capture group), a CSV
+//!   column or a column of a whitespace table with quoted headers (Fluent
+//!   report files) that finds one number in a *text* file; only the first
+//!   and – for `pick = last` – the last [`SCAN_MAX_BYTES`] of a file are
+//!   looked at, see [`extract_with_tail`].
 //!
 //! Regular expressions are compiled with the `regex` crate's size limits and
 //! run in time linear in the input (no backtracking), so a hostile pattern or
@@ -81,6 +83,13 @@ pub fn scannable(filename: &str) -> bool {
             | "htm"
             | "json"
             | "md"
+            // solver logs, print output and scripts of Fluent, STAR-CCM+, Nastran
+            | "trn"
+            | "f06"
+            | "f04"
+            | "pch"
+            | "jou"
+            | "java"
     )
 }
 
@@ -253,6 +262,9 @@ fn parse_exchange_json(filename: &str, bytes: &[u8]) -> Result<Vec<ResultInput>,
 pub enum Method {
     Regex,
     Csv,
+    /// Whitespace-separated table with quoted column names (Fluent report
+    /// files); uses the `csv_*` fields for the column and the row key.
+    Table,
 }
 
 impl Method {
@@ -260,6 +272,7 @@ impl Method {
         match self {
             Method::Regex => "regex",
             Method::Csv => "csv",
+            Method::Table => "table",
         }
     }
 
@@ -267,6 +280,7 @@ impl Method {
         match s {
             "regex" => Some(Method::Regex),
             "csv" => Some(Method::Csv),
+            "table" => Some(Method::Table),
             _ => None,
         }
     }
@@ -281,11 +295,11 @@ pub struct ResultTemplate {
     pub name: String,
     /// File names it applies to: `*` and `?`, case-insensitive.
     pub file_pattern: String,
-    /// `regex` or `csv`.
+    /// `regex`, `csv` or `table`.
     pub method: String,
     /// `regex`: the expression; its first capture group is the number.
     pub pattern: String,
-    /// `csv`: the column (header name) that holds the number.
+    /// `csv` / `table`: the column (header name) that holds the number.
     pub csv_column: String,
     /// `csv`: optional – only the row whose `csv_key_column` is `csv_key_value`.
     pub csv_key_column: String,
@@ -347,7 +361,7 @@ impl TemplateInput {
         let file_pattern =
             require_text("File name pattern", &self.file_pattern, 200).map_err(msg)?;
         let method = Method::parse(self.method.trim())
-            .ok_or_else(|| "The method must be 'regex' or 'csv'.".to_string())?;
+            .ok_or_else(|| "The method must be 'regex', 'csv' or 'table'.".to_string())?;
         let pick = match self.pick.trim() {
             "" | "last" => "last",
             "first" => "first",
@@ -384,7 +398,7 @@ impl TemplateInput {
                     require_text("Pattern", &self.pattern, MAX_PATTERN_LEN).map_err(msg)?;
                 compile_regex(&out.pattern)?;
             }
-            Method::Csv => {
+            Method::Csv | Method::Table => {
                 out.csv_column = require_text("CSV column", &self.csv_column, 200).map_err(msg)?;
                 out.csv_key_column =
                     limit_text("CSV key column", &self.csv_key_column, 200).map_err(msg)?;
@@ -459,67 +473,66 @@ pub fn glob_matches(pattern: &str, name: &str) -> bool {
     pi == p.len()
 }
 
-/// Text lines of a file for the patterns: HTML loses its tags (block tags
-/// end a line), everything else is used as is.
-fn lines_of(filename: &str, bytes: &[u8]) -> Vec<String> {
-    let text = String::from_utf8_lossy(bytes);
-    let lower = filename.to_ascii_lowercase();
-    let text = if lower.ends_with(".html") || lower.ends_with(".htm") {
-        strip_tags(&text)
-    } else {
-        text.into_owned()
-    };
-    text.lines()
+/// Text lines of a file for the patterns. An HTML report arrives as its
+/// extracted text already (see [`extract`]), so nothing is stripped here.
+fn lines_of(bytes: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(bytes)
+        .lines()
         .take(SCAN_MAX_LINES)
         .map(|l| l.chars().take(MAX_LINE_CHARS).collect())
         .collect()
 }
 
-/// HTML as lines of text: tags removed, row and block ends become line
-/// breaks, cells are separated by a space.
-fn strip_tags(html: &str) -> String {
-    let mut out = String::with_capacity(html.len().min(SCAN_MAX_BYTES as usize));
-    let mut chars = html.chars();
-    while let Some(c) = chars.next() {
-        if c != '<' {
-            out.push(c);
-            continue;
-        }
-        let mut tag = String::new();
-        for t in chars.by_ref() {
-            if t == '>' {
-                break;
-            }
-            if tag.len() < 32 {
-                tag.push(t);
-            }
-        }
-        let name: String = tag
-            .trim_start_matches('/')
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric())
-            .collect::<String>()
-            .to_ascii_lowercase();
-        match name.as_str() {
-            "br" | "p" | "div" | "tr" | "li" | "h1" | "h2" | "h3" | "h4" | "pre" | "table" => {
-                out.push('\n')
-            }
-            _ => out.push(' '),
-        }
-    }
-    out.replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+/// The last [`SCAN_MAX_LINES`] lines of a file's end (see
+/// [`crate::textindex::read_tail`]: it starts at a line).
+fn tail_lines_of(bytes: &[u8]) -> Vec<String> {
+    let text = String::from_utf8_lossy(bytes);
+    let count = text.lines().count();
+    text.lines()
+        .skip(count.saturating_sub(SCAN_MAX_LINES))
+        .map(|l| l.chars().take(MAX_LINE_CHARS).collect())
+        .collect()
 }
 
-/// The values the templates find in one file (`bytes` = its beginning).
+/// Where a value was found: a line of the beginning (1-based) or a line
+/// counted from the end of the file (1 = the last line).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Place {
+    Line(usize),
+    FromEnd(usize),
+}
+
+/// The values the templates find in one file (`bytes` = its beginning; for
+/// an HTML report the text `htmltext` extracted in the isolated child, with
+/// table rows as lines and cells separated by ` | ` – the server never
+/// parses HTML itself).
 /// A template that does not match yields nothing; each value carries its
 /// source `file:line`.
 pub fn extract(filename: &str, bytes: &[u8], templates: &[ResultTemplate]) -> Vec<ResultInput> {
-    if bytes.contains(&0) {
+    extract_with_tail(filename, bytes, &[], templates)
+}
+
+/// [`extract`] for a file larger than [`SCAN_MAX_BYTES`]: `head` is its
+/// beginning, `tail` its end (at most [`SCAN_MAX_BYTES`] each, the tail
+/// starting at a line; empty when the head holds the whole file). A
+/// template with `pick = last` looks at the tail first – a solver writes its
+/// final values at the end – and falls back to the head; table headers
+/// (`csv`, `table`) always come from the head. `pick = first` reads the
+/// head only. A tail holding a NUL (zero padding) is ignored. For a file
+/// below twice [`SCAN_MAX_BYTES`] head and tail overlap: a value found in
+/// the overlap is labelled by its line from the end, not its line number.
+pub fn extract_with_tail(
+    filename: &str,
+    head: &[u8],
+    tail: &[u8],
+    templates: &[ResultTemplate],
+) -> Vec<ResultInput> {
+    if head.contains(&0) {
         return Vec::new();
     }
+    // a NUL in the end only (zero padding of a crashed or preallocated log):
+    // the templates fall back to the head
+    let tail: &[u8] = if tail.contains(&0) { &[] } else { tail };
     let mut applicable: Vec<&ResultTemplate> = templates
         .iter()
         .filter(|t| t.enabled && glob_matches(&t.file_pattern, filename))
@@ -528,15 +541,19 @@ pub fn extract(filename: &str, bytes: &[u8], templates: &[ResultTemplate]) -> Ve
         return Vec::new();
     }
     applicable.sort_by_key(|t| t.name.to_lowercase());
-    let lines = lines_of(filename, bytes);
+    let head_lines = lines_of(head);
+    let tail_lines = tail_lines_of(tail);
+    let html = crate::htmltext::is_html(filename);
     let mut out = Vec::new();
     for t in applicable {
-        let found = match Method::parse(&t.method) {
-            Some(Method::Regex) => find_regex(&lines, t),
-            Some(Method::Csv) => find_csv(&lines, t),
-            None => None,
-        };
-        if let Some((value, line)) = found {
+        let from_tail = (t.pick != "first" && !tail_lines.is_empty())
+            .then(|| find(t, &head_lines, Some(&tail_lines), html))
+            .flatten()
+            .map(|(value, i)| (value, Place::FromEnd(tail_lines.len().saturating_sub(i))));
+        let found = from_tail.or_else(|| {
+            find(t, &head_lines, None, html).map(|(value, i)| (value, Place::Line(i + 1)))
+        });
+        if let Some((value, place)) = found {
             out.push(ResultInput {
                 name: t.name.clone(),
                 value,
@@ -547,11 +564,32 @@ pub fn extract(filename: &str, bytes: &[u8], templates: &[ResultTemplate]) -> Ve
                 solver: t.solver.clone(),
                 solver_version: String::new(),
                 note: String::new(),
-                source: format!("{filename}:{line}"),
+                source: match place {
+                    Place::Line(line) => format!("{filename}:{line}"),
+                    Place::FromEnd(1) => format!("{filename}: last line"),
+                    Place::FromEnd(n) => format!("{filename}: line {n} from the end"),
+                },
             });
         }
     }
     out
+}
+
+/// One template over the head, or over the tail rows (`tail`) with the
+/// table header from the head: the value and the 0-based index of its line
+/// in the lines searched. `html`: the text of an HTML report (see
+/// [`find_csv`]).
+fn find(
+    t: &ResultTemplate,
+    head: &[String],
+    tail: Option<&[String]>,
+    html: bool,
+) -> Option<(f64, usize)> {
+    match Method::parse(&t.method)? {
+        Method::Regex => find_regex(tail.unwrap_or(head), t),
+        Method::Csv => find_csv(head, tail, t, html),
+        Method::Table => find_table(head, tail, t),
+    }
 }
 
 fn pick<T>(mut found: impl Iterator<Item = T>, which: &str) -> Option<T> {
@@ -567,13 +605,13 @@ fn find_regex(lines: &[String], t: &ResultTemplate) -> Option<(f64, usize)> {
     let matches = lines.iter().enumerate().filter_map(|(i, line)| {
         let caps = re.captures(line)?;
         let value = table_number(caps.get(1)?.as_str())?;
-        Some((value, i + 1))
+        Some((value, i))
     });
     pick(matches, &t.pick)
 }
 
 /// The delimiter of a CSV text: the one that occurs most often in the first
-/// lines.
+/// lines (the text of an HTML report always uses `|`, see [`find_csv`]).
 fn delimiter(lines: &[String]) -> u8 {
     let head = lines.iter().take(20);
     let mut best = (b',', 0usize);
@@ -589,51 +627,171 @@ fn delimiter(lines: &[String]) -> u8 {
     best.0
 }
 
-fn find_csv(lines: &[String], t: &ResultTemplate) -> Option<(f64, usize)> {
-    let delim = delimiter(lines);
-    let norm = |s: &str| s.trim().trim_matches('"').trim().to_lowercase();
+/// A header name or cell as compared: trimmed, without quotes, lower case.
+fn norm(s: &str) -> String {
+    s.trim().trim_matches('"').trim().to_lowercase()
+}
+
+/// The cells of a line of a table.
+type Cells = fn(&str, u8) -> Vec<String>;
+
+fn csv_cells(line: &str, delim: u8) -> Vec<String> {
+    // one row per line (a quoted cell with a line break is not supported)
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .delimiter(delim)
+        .from_reader(line.as_bytes());
+    reader
+        .records()
+        .next()
+        .and_then(Result::ok)
+        .map(|r| r.iter().map(|c| c.trim().to_string()).collect())
+        .unwrap_or_default()
+}
+
+/// The cells of a table row in the text of an HTML report: always `|`,
+/// quotes are plain characters.
+fn html_cells(line: &str, _delim: u8) -> Vec<String> {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .delimiter(b'|')
+        .quoting(false)
+        .from_reader(line.as_bytes());
+    reader
+        .records()
+        .next()
+        .and_then(Result::ok)
+        .map(|r| r.iter().map(|c| c.trim().to_string()).collect())
+        .unwrap_or_default()
+}
+
+/// The tokens of a whitespace-separated line; a `"…"` token may hold
+/// blanks (Fluent's quoted column names such as `"Time Step"`). An outer
+/// pair of parentheses – Fluent repeats the header as `("Iteration" …)` –
+/// is dropped.
+fn table_cells(line: &str, _delim: u8) -> Vec<String> {
+    let mut rest = line.trim();
+    if let Some(inner) = rest.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
+        rest = inner;
+    }
+    let mut cells = Vec::new();
+    loop {
+        rest = rest.trim_start();
+        if rest.is_empty() {
+            return cells;
+        }
+        if let Some(quoted) = rest.strip_prefix('"') {
+            let end = quoted.find('"').unwrap_or(quoted.len());
+            cells.push(quoted.get(..end).unwrap_or_default().to_string());
+            rest = quoted.get(end + 1..).unwrap_or_default();
+        } else {
+            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            cells.push(rest.get(..end).unwrap_or_default().to_string());
+            rest = rest.get(end..).unwrap_or_default();
+        }
+    }
+}
+
+/// The header of a table in `head`: its line index, the value column and
+/// the key column (when the template has one).
+fn header(
+    head: &[String],
+    cells: Cells,
+    delim: u8,
+    t: &ResultTemplate,
+    is_header: fn(&str) -> bool,
+) -> Option<(usize, usize, Option<usize>)> {
     let want_col = norm(&t.csv_column);
     let want_key_col = norm(&t.csv_key_column);
-    let want_key = norm(&t.csv_key_value);
-    // one row per line (a quoted cell with a line break is not supported)
-    let mut rows = lines.iter().enumerate().map(|(i, line)| {
-        let mut reader = csv::ReaderBuilder::new()
-            .has_headers(false)
-            .flexible(true)
-            .delimiter(delim)
-            .from_reader(line.as_bytes());
-        let cells: Vec<String> = reader
-            .records()
-            .next()
-            .and_then(Result::ok)
-            .map(|r| r.iter().map(|c| c.trim().to_string()).collect())
-            .unwrap_or_default();
-        (i + 1, cells)
-    });
-    let (col, key_col) = loop {
-        let (_, cells) = rows.next()?;
-        if let Some(col) = cells.iter().position(|c| norm(c) == want_col) {
-            let key_col = if want_key_col.is_empty() {
-                None
-            } else {
-                match cells.iter().position(|c| norm(c) == want_key_col) {
-                    Some(k) => Some(k),
-                    None => continue,
-                }
-            };
-            break (col, key_col);
+    head.iter().enumerate().find_map(|(i, line)| {
+        if !is_header(line) {
+            return None;
         }
+        let row = cells(line, delim);
+        let col = row.iter().position(|c| norm(c) == want_col)?;
+        if want_key_col.is_empty() {
+            return Some((i, col, None));
+        }
+        let key = row.iter().position(|c| norm(c) == want_key_col)?;
+        Some((i, col, Some(key)))
+    })
+}
+
+/// The rows after a header (in the head) or all rows of the tail, filtered
+/// by the key column, with the number of the value column.
+fn table_value(
+    head: &[String],
+    tail: Option<&[String]>,
+    cells: Cells,
+    is_header: fn(&str) -> bool,
+    t: &ResultTemplate,
+) -> Option<(f64, usize)> {
+    let delim = delimiter(head);
+    let (at, col, key_col) = header(head, cells, delim, t, is_header)?;
+    let want_key = norm(&t.csv_key_value);
+    let (rows, skip) = match tail {
+        Some(tail) => (tail, 0),
+        None => (head, at + 1),
     };
-    let matching = rows.filter_map(|(line, cells)| {
+    let matching = rows.iter().enumerate().skip(skip).filter_map(|(i, line)| {
+        let row = cells(line, delim);
         if let Some(k) = key_col {
-            if norm(cells.get(k)?) != want_key {
+            if norm(row.get(k)?) != want_key {
                 return None;
             }
         }
-        let value = table_number(cells.get(col)?)?;
-        Some((value, line))
+        let value = table_number(row.get(col)?)?;
+        Some((value, i))
     });
     pick(matching, &t.pick)
+}
+
+/// A CSV template on a table. For an HTML report (`html`) the text has one
+/// table row per line with the cells separated by ` | `, so `|` is the
+/// delimiter whatever the title and paragraphs above the table contain, and
+/// quotes are plain characters (a `"` in a cell never joins cells).
+fn find_csv(
+    head: &[String],
+    tail: Option<&[String]>,
+    t: &ResultTemplate,
+    html: bool,
+) -> Option<(f64, usize)> {
+    let cells: Cells = if html { html_cells } else { csv_cells };
+    table_value(head, tail, cells, |_| true, t)
+}
+
+/// `table`: a whitespace-separated table with a header of quoted column
+/// names (Fluent's `report-file-*.out`: a quoted title line, the header,
+/// optionally the header again in parentheses, then one row per iteration
+/// or time step). The header is the first line of only quoted names that
+/// holds the column; a row's cells are split at white space.
+fn find_table(
+    head: &[String],
+    tail: Option<&[String]>,
+    t: &ResultTemplate,
+) -> Option<(f64, usize)> {
+    fn all_quoted(line: &str) -> bool {
+        let mut rest = line.trim();
+        if let Some(inner) = rest.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
+            rest = inner.trim();
+        }
+        // "a" "b" … : an even number of quotes, nothing outside them
+        let mut inside = false;
+        let mut quotes = 0;
+        for c in rest.chars() {
+            if c == '"' {
+                inside = !inside;
+                quotes += 1;
+            } else if !inside && !c.is_whitespace() {
+                return false;
+            }
+        }
+        // at least two names: a quoted title line alone is no header
+        quotes >= 4 && !inside
+    }
+    table_value(head, tail, table_cells, all_quoted, t)
 }
 
 #[cfg(test)]
@@ -837,8 +995,35 @@ mod tests {
     fn html_summaries_are_read_as_text() {
         let t = template("regex", "*.html", r"Pressure drop[^0-9-]*([-0-9.]+)");
         let html = "<html><body><table><tr><td>Pressure drop</td><td>412.0</td></tr>\n<tr><td>Mass</td><td>3</td></tr></table></body></html>";
-        let found = extract("report.html", html.as_bytes(), &[t]);
+        // the caller hands over the text htmltext extracted (in the child)
+        let text = crate::htmltext::extract(html.as_bytes()).unwrap();
+        let found = extract("report.html", text.as_bytes(), &[t]);
         assert_eq!(found[0].value, 412.0);
+        assert_eq!(found[0].source, "report.html:1");
+        // a CSV template on the table: the cells are separated by " | "
+        let mut t = template("csv", "*.htm", "");
+        t.csv_column = "Value".into();
+        t.csv_key_column = "Result".into();
+        t.csv_key_value = "Max. stress".into();
+        let html = "<table><tr><th>Result</th><th>Value</th></tr><tr><td>Mass</td><td>3</td></tr>\
+                    <tr><td>Max. stress</td><td>152.4</td></tr></table>";
+        let text = crate::htmltext::extract(html.as_bytes()).unwrap();
+        assert_eq!(extract("r.htm", text.as_bytes(), &[t])[0].value, 152.4);
+        // a real report: a title and a paragraph with commas above the table,
+        // an empty top-left header cell, a quote in a cell
+        let mut t = template("csv", "*.html", "");
+        t.csv_column = "Max".into();
+        let html = "<h1>Bracket, static, LC1</h1><p>Mesh: 12,345 nodes, 6,789 elements, \
+                    solver: a, b, c, d, e, f, g, h.</p>\
+                    <table><tr><th></th><th>Min</th><th>Max</th></tr>\
+                    <tr><td>Stress \"von Mises</td><td>1.0</td><td>152.4</td></tr></table>";
+        let text = crate::htmltext::extract(html.as_bytes()).unwrap();
+        let found = extract("report.html", text.as_bytes(), std::slice::from_ref(&t));
+        assert_eq!(found.len(), 1, "{text}");
+        assert_eq!(found[0].value, 152.4, "the Max column, not Min: {text}");
+        assert_eq!(found[0].source, "report.html:6", "{text}");
+        t.csv_column = "Min".into();
+        assert_eq!(extract("report.html", text.as_bytes(), &[t])[0].value, 1.0);
     }
 
     #[test]
@@ -867,5 +1052,196 @@ mod tests {
         let mut t = base;
         t.pick = "middle".into();
         assert!(t.validated().is_err());
+    }
+
+    /// A Fluent report file as written by the report definitions.
+    const FLUENT_REPORT: &str = "\"report-def-0-rfile\"\n\
+        \"Iteration\" \"pressure-drop\" \"flow-time\"\n\
+        (\"Iteration\" \"pressure-drop\" \"flow-time\")\n\
+        1 2.53e+02 0.001\n\
+        2 2.49e+02 0.002\n\
+        3 2.47e+02 0.003\n";
+
+    fn table(column: &str) -> ResultTemplate {
+        let mut t = template("table", "report-file-*.out", "");
+        t.csv_column = column.into();
+        t
+    }
+
+    #[test]
+    fn table_template_reads_fluent_report_files() {
+        let t = table("pressure-drop");
+        let found = extract(
+            "report-file-0.out",
+            FLUENT_REPORT.as_bytes(),
+            std::slice::from_ref(&t),
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].value, 247.0);
+        assert_eq!(found[0].source, "report-file-0.out:6");
+        // the first row
+        let mut first = t.clone();
+        first.pick = "first".into();
+        assert_eq!(
+            extract("report-file-0.out", FLUENT_REPORT.as_bytes(), &[first])[0].value,
+            253.0
+        );
+        // a row by key; header names case-insensitive, quoted names with blanks
+        let mut keyed = table("Pressure-Drop");
+        keyed.csv_key_column = "iteration".into();
+        keyed.csv_key_value = "2".into();
+        assert_eq!(
+            extract("report-file-0.out", FLUENT_REPORT.as_bytes(), &[keyed])[0].value,
+            249.0
+        );
+        let spaced = "\"t\"\n\"Time Step\" \"drag force\"\n10 1.5\n20 1.25\n";
+        let mut t2 = table("drag force");
+        t2.csv_key_column = "time step".into();
+        t2.csv_key_value = "10".into();
+        assert_eq!(
+            extract("report-file-1.out", spaced.as_bytes(), &[t2])[0].value,
+            1.5
+        );
+        // unknown column, rows without numbers, no header: nothing
+        assert!(extract(
+            "report-file-0.out",
+            FLUENT_REPORT.as_bytes(),
+            &[table("lift")]
+        )
+        .is_empty());
+        assert!(extract(
+            "report-file-0.out",
+            b"\"t\"\n\"a\" \"b\"\nx y\n",
+            &[table("b")]
+        )
+        .is_empty());
+        assert!(extract("report-file-0.out", b"1 2\n3 4\n", &[table("b")]).is_empty());
+        // a quoted title alone is no header of two columns: the title is not matched
+        assert!(extract("report-file-0.out", b"\"b\"\n1\n", &[table("b")]).is_empty());
+    }
+
+    #[test]
+    fn table_cells_split_quoted_names_and_white_space() {
+        assert_eq!(
+            table_cells("(\"Time Step\" \"a\")", 0),
+            vec!["Time Step".to_string(), "a".to_string()]
+        );
+        assert_eq!(table_cells("  1\t2.5   3 ", 0), vec!["1", "2.5", "3"]);
+        assert_eq!(table_cells("\"unclosed", 0), vec!["unclosed"]);
+        assert!(table_cells("", 0).is_empty());
+        assert!(table_cells("()", 0).is_empty());
+    }
+
+    #[test]
+    fn pick_last_reads_the_tail_of_a_large_file() {
+        // the head: the start of a long transcript, the value only at the end
+        let head = "Welcome to ANSYS Fluent\n".repeat(10);
+        let tail = "  499  1.0e-04\n  500  9.0e-05\nPressure drop: 251.5 Pa\nDone.\n";
+        let mut t = template("regex", "*.trn", r"Pressure drop:\s*([-+0-9.eE]+)");
+        let found = extract_with_tail("run.trn", head.as_bytes(), tail.as_bytes(), &[t.clone()]);
+        assert_eq!(found[0].value, 251.5);
+        assert_eq!(found[0].source, "run.trn: line 2 from the end");
+        // the last line is named as such
+        let tail_last = "x\nPressure drop: 9 Pa\n";
+        let found = extract_with_tail(
+            "run.trn",
+            head.as_bytes(),
+            tail_last.as_bytes(),
+            &[t.clone()],
+        );
+        assert_eq!(found[0].source, "run.trn: last line");
+        // not in the tail: the head is searched
+        let head2 = "Pressure drop: 1 Pa\nmore\n";
+        let found = extract_with_tail("run.trn", head2.as_bytes(), b"nothing\n", &[t.clone()]);
+        assert_eq!(
+            (found[0].value, found[0].source.as_str()),
+            (1.0, "run.trn:1")
+        );
+        // pick = first never looks at the tail
+        t.pick = "first".into();
+        assert!(extract_with_tail("run.trn", head.as_bytes(), tail.as_bytes(), &[t]).is_empty());
+        // a table: the header from the head, the last row from the tail
+        let found = extract_with_tail(
+            "report-file-0.out",
+            FLUENT_REPORT.as_bytes(),
+            b"9999 1.11e+02 9.9\n10000 1.10e+02 10.0\n",
+            &[table("pressure-drop")],
+        );
+        assert_eq!(found[0].value, 110.0);
+        assert_eq!(found[0].source, "report-file-0.out: last line");
+        // CSV likewise; a key that is only in the head falls back to it
+        let mut c = template("csv", "*.csv", "");
+        c.csv_column = "drag".into();
+        let csv_head = "iter,drag\n1,5.0\n2,4.0\n";
+        let found = extract_with_tail(
+            "m.csv",
+            csv_head.as_bytes(),
+            b"700,1.5\n701,1.25\n",
+            &[c.clone()],
+        );
+        assert_eq!(found[0].value, 1.25);
+        c.csv_key_column = "iter".into();
+        c.csv_key_value = "2".into();
+        let found = extract_with_tail("m.csv", csv_head.as_bytes(), b"700,1.5\n701,1.25\n", &[c]);
+        assert_eq!((found[0].value, found[0].source.as_str()), (4.0, "m.csv:3"));
+        // NUL in the tail (zero padding): the tail is ignored, the head used
+        let t = template("regex", "*.trn", r"Pressure drop:\s*([-+0-9.eE]+)");
+        assert!(extract_with_tail(
+            "run.trn",
+            head.as_bytes(),
+            b"\0Pressure drop: 1\n",
+            std::slice::from_ref(&t)
+        )
+        .is_empty());
+        let found = extract_with_tail(
+            "run.trn",
+            head2.as_bytes(),
+            b"Pressure drop: 7 Pa\n\0\0\0\0",
+            std::slice::from_ref(&t),
+        );
+        assert_eq!(
+            (found[0].value, found[0].source.as_str()),
+            (1.0, "run.trn:1")
+        );
+        // NUL in the head: a binary file, nothing
+        assert!(extract_with_tail("run.trn", b"bin\0", b"Pressure drop: 1\n", &[t]).is_empty());
+    }
+
+    #[test]
+    fn a_five_megabyte_log_with_the_value_at_the_end() {
+        // what files.rs hands over for a 5 MB file: the first and the last
+        // SCAN_MAX_BYTES, the tail starting at a line
+        let line = "  iter  continuity  x-velocity  y-velocity  1.0e-03  2.0e-03\n";
+        let mut file = line.repeat(5 * 1024 * 1024 / line.len());
+        file.push_str("Pressure drop: 251.5 Pa\n");
+        let max = usize::try_from(SCAN_MAX_BYTES).unwrap();
+        let head = &file.as_bytes()[..max];
+        let raw_tail = &file.as_bytes()[file.len() - max..];
+        let cut = raw_tail.iter().position(|b| *b == b'\n').unwrap();
+        let tail = &raw_tail[cut + 1..];
+        let t = template("regex", "*.log", r"Pressure drop:\s*([-+0-9.eE]+)");
+        assert!(
+            extract("run.log", head, std::slice::from_ref(&t)).is_empty(),
+            "not in the head"
+        );
+        let found = extract_with_tail("run.log", head, tail, &[t]);
+        assert_eq!(found[0].value, 251.5);
+    }
+
+    #[test]
+    fn table_method_is_accepted_with_a_column() {
+        let input = TemplateInput {
+            name: "dp".into(),
+            file_pattern: "report-file-*.out".into(),
+            method: "table".into(),
+            csv_column: "pressure-drop".into(),
+            ..Default::default()
+        };
+        assert_eq!(input.clone().validated().unwrap().method, "table");
+        let mut no_column = input;
+        no_column.csv_column = String::new();
+        assert!(no_column.validated().is_err());
+        assert!(scannable("run.trn") && scannable("x.F06") && scannable("m.java"));
+        assert!(!scannable("pipe.cas.h5") && !scannable("run.op2"));
     }
 }

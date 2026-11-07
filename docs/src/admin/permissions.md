@@ -38,6 +38,51 @@ members to give read-only access. Linking a group to an identity-provider
 group (`oidc_group`) stays with administrators, because it grants read
 access.
 
+## Need to know: administrator access
+
+By default an administrator reads every restricted group. A restricted group
+can limit that (*Project groups → the group → Need to know*, managers and
+administrators; `PUT /api/v1/projects/{code}/policy`
+`{"admin_read": "implicit" | "with_reason" | "none"}`):
+
+* **implicit** – today's behaviour, the default (also when no policy was ever
+  set);
+* **with a reason** – an administrator who is not a member sees the group as
+  "not found" until they open an **elevation** with a written reason (10 to
+  1000 characters; `POST /api/v1/projects/{code}/elevations`, or the form on
+  the group page). It lasts 60 minutes, can be ended early
+  (`DELETE …/elevations`) and is audited (`project.elevate`, with the reason).
+  The group's managers get a notification, and the group page lists every
+  elevation with administrator, reason and time;
+* **none** – administrators still manage the group (members, policy, the
+  settings on the group page) but read nothing in it. An administrator cannot
+  add themselves as a member or make themselves a manager: a manager of the
+  group does that. There is no elevation under `none`.
+
+Every change of the policy is audited (`project.policy`, with the previous
+value) and notifies the other managers. The policy applies to restricted
+groups only and needs at least one member who is a manager, so the group can
+be recovered; opening the group to all users makes the policy inert.
+While a policy is in force, an administrator who is no manager member can
+still add or remove other members, tighten the policy and rename the group,
+but cannot loosen the policy, open the group to all users, link another
+identity-provider group, add themselves or become a manager (403): those
+would undo the policy in one call. What an administrator can still do is
+limited by design: add *another* user (a manager sees it in the audit log),
+see that the group exists (code and name), and change operator-level things
+(database, backups, the command line) outside the application. A group
+linked to an identity-provider group before the policy was set keeps that
+link, so an administrator in that IdP group is a member. Webhooks cannot be
+scoped to, or redirected for, a hidden group; their deliveries are not shown.
+The elevation history keeps the username when an account is deleted;
+deleting the group deletes its history (the audit log keeps the records). The rule
+is part of the actor's hidden groups (`access::hidden_of_user`), so every
+guard, the audit feed, change orders, notifications and the assistant honour
+it without a check of their own. This is step 1 of
+[#151](https://github.com/rudalabs/TeamCraft/issues/151); conditions on
+membership, interface switches, a read log, an access review and token scopes
+are not built yet (see `docs/OPEN_WORK.md`).
+
 Moving an item out of a restricted group, or copying it with *Save As*
 into another group, needs a manager of the source group or an administrator
 – both declassify the item.
@@ -232,5 +277,6 @@ These are inherent to a shared instance and documented on purpose:
   records the removal (with the item's note) in its history and tells its
   people, without telling the deleter about requests they cannot see.
 * Response times of hidden and missing objects are not equalised.
-* Backups, the command line and `/admin/audit` contain everything
-  (operators and administrators).
+* Backups and the command line contain everything (operators). `/admin/audit`
+  omits and redacts entries about groups hidden from the administrator by a
+  need-to-know policy.

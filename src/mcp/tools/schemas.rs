@@ -49,7 +49,7 @@ pub(super) fn schema_search_items() -> Value {
     object(
         json!({
             "q": { "type": "string", "description": "Search text (number, name, material, attribute values, file name or content)" },
-            "type": { "type": "string", "enum": ["part", "assembly", "document", "software", "simulation"] },
+            "type": { "type": "string", "enum": ["part", "assembly", "document", "software", "simulation", "as_built"] },
             "project": { "type": "string", "description": "Project group code, e.g. ROVER" },
             "state": { "type": "string", "enum": ["in_work", "in_review", "released", "obsolete"], "description": "State of the latest revision" },
             "system": { "type": "string", "description": "CAD program with files in the latest revision, e.g. solidworks, nx, creo, inventor, freecad" },

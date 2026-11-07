@@ -588,3 +588,45 @@ async fn outsider_cannot_attach_foreign_items_after_deciding_an_empty_request() 
     assert_eq!(r.json()["change_request"]["item_count"], 1, "fresh reply");
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn too_many_items_are_rejected_before_any_is_resolved() {
+    use teamcraft::services::requests::MAX_ITEMS;
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    let part = create_part(&app, &eng, "Bracket").await;
+    let too_many = MAX_ITEMS as usize + 1;
+    let cap = format!("at most {MAX_ITEMS} items");
+
+    // unknown items: rejected for their number, not looked up one by one
+    let unknown: Vec<Value> = (0..too_many)
+        .map(|i| json!({ "item": format!("NOPE-{i}") }))
+        .collect();
+    {
+        let items = unknown;
+        let r = app
+            .api(
+                Method::POST,
+                "/api/v1/change-requests",
+                &eng,
+                Some(json!({ "title": "Too long", "items": items })),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+        assert!(r.text().contains(&cap), "{}", r.text());
+    }
+    let r = app
+        .api(Method::GET, "/api/v1/change-requests", &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["total"], 0, "nothing was raised");
+
+    // repeats are listed once and do not count against the limit – also
+    // thousands of them (before, each one was looked up and inserted)
+    for n in [too_many, 20_000] {
+        let items = vec![json!({ "item": part }); n];
+        let created = raise(&app, &eng, json!({ "title": "Repeated", "items": items })).await;
+        assert_eq!(created["change_request"]["item_count"], 1, "{created}");
+    }
+    app.teardown().await;
+}

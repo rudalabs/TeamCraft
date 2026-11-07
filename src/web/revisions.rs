@@ -16,14 +16,18 @@ use super::{finish, items::BackForm, render, WebCtx};
 use crate::{
     auth::{Actor, WebUser},
     cadformat::FormatKind,
-    domain::{self, BasisRole, ItemType, LifecycleState, ReferenceKind, COMMON_UNITS},
+    domain::{
+        self, BasisRole, DeviationKind, Disposition, ItemType, LifecycleState, ReferenceKind,
+        COMMON_UNITS,
+    },
     error::{AppError, AppResult},
     httprange,
     models::{AttributeDef, FileRecord, Revision},
     preview::PreviewFormat,
     services::{
-        attributes, audit, bom, changes, files, impacts, interchange, items, notifications,
-        projects, references, requests, result_proposals, revisions, similar, simulations, uploads,
+        as_built, attributes, audit, bom, changes, files, impacts, interchange, items,
+        notifications, projects, references, requests, result_proposals, revisions, similar,
+        simulations, uploads,
     },
     thumbnail, util, AppState,
 };
@@ -355,6 +359,35 @@ pub async fn show(
     } else {
         simulations::based_on_item(&st.db, me, item.id).await?
     };
+    // As-built: the build record and deviations of an as-built revision;
+    // for a design (part, assembly, software) the units built to it.
+    let as_built = if rev.item_type == ItemType::AsBuilt.as_str() {
+        let (record, deviations) = tokio::try_join!(
+            as_built::record(&st.db, me, id),
+            as_built::deviations(&st.db, me, id)
+        )?;
+        json!({
+            "record": record,
+            "summary": as_built::summarize(&deviations),
+            "deviations": deviations,
+            "kinds": DeviationKind::ALL
+                .iter()
+                .map(|k| json!({ "value": k.as_str(), "label": k.label() }))
+                .collect::<Vec<_>>(),
+            "dispositions": Disposition::ALL
+                .iter()
+                .map(|d| json!({ "value": d.as_str(), "label": d.label() }))
+                .collect::<Vec<_>>(),
+        })
+    } else {
+        serde_json::Value::Null
+    };
+    let can_be_built_to = ItemType::parse(&rev.item_type).is_some_and(ItemType::can_be_built_to);
+    let (built_units, hidden_units) = if can_be_built_to {
+        as_built::built_units(&st.db, me, item.id).await?
+    } else {
+        (Vec::new(), 0)
+    };
     let rev_attributes = rev.attributes.clone();
     render(
         &st,
@@ -378,6 +411,7 @@ pub async fn show(
                 "incoming": hidden_incoming,
                 "changes": hidden_changes,
                 "simulations": hidden_simulations,
+                "units": hidden_units,
             },
             "references": {
                 "outgoing": outgoing,
@@ -390,6 +424,9 @@ pub async fn show(
             "impact_groups": impacts::group_by_dependent(open_impacts),
             "simulation": simulation,
             "based_simulations": based_simulations,
+            "as_built": as_built,
+            "built_units": built_units,
+            "can_be_built_to": can_be_built_to,
             "watching": watching,
             "favorite": favorite,
             "resolved_impacts": resolved_impacts,
@@ -943,9 +980,78 @@ pub async fn download(
     file_response(&st, &me, id, &headers).await
 }
 
-/// The preview image stored inside a CAD file (Inventor, Solid Edge,
-/// SolidWorks), read once and cached next to the 3D previews. Shared with
-/// the REST API.
+/// The thumbnail of a format that is rendered from its 3D preview (NX
+/// parts and assemblies). A part's image is cached by its content and drawn
+/// from its cached preview mesh (converted first, in the isolated preview
+/// process); an assembly's image sits next to its composed preview, whose
+/// name depends on the components used. `None` when the format is not
+/// rendered or there is no 3D preview (a drawing, an assembly without any
+/// part in TeamCraft) – the image stored in the file is used then.
+async fn rendered_thumbnail(
+    st: &AppState,
+    me: &Actor,
+    file: &FileRecord,
+    cache: &std::path::Path,
+) -> AppResult<Option<thumbnail::Thumbnail>> {
+    let Some(preview) = crate::preview::PreviewFormat::of_format(&file.format) else {
+        return Ok(None);
+    };
+    if !thumbnail::rendered(&file.format) {
+        return Ok(None);
+    }
+    let sha256 = file.sha256.clone();
+    let blocking_failed =
+        |e: tokio::task::JoinError| AppError::Other(anyhow::anyhow!("thumbnail task failed: {e}"));
+    let store_failed =
+        |e: std::io::Error| AppError::Other(anyhow::anyhow!("cannot store the thumbnail: {e}"));
+    if let Ok(mesh_path) = st.previews.mesh(&st.vault, &sha256, preview).await {
+        let cache = cache.to_path_buf();
+        return tokio::task::spawn_blocking(
+            move || -> std::io::Result<Option<thumbnail::Thumbnail>> {
+                if let Some(Some(known)) = thumbnail::lookup(&cache, &sha256)? {
+                    return Ok(Some(known));
+                }
+                let Some(image) = thumbnail::render_mesh(&std::fs::read(mesh_path)?) else {
+                    return Ok(None);
+                };
+                thumbnail::store(&cache, &sha256, Some(&image))?;
+                Ok(Some(image))
+            },
+        )
+        .await
+        .map_err(blocking_failed)?
+        .map_err(store_failed);
+    }
+    let Some(mesh_path) =
+        crate::services::assemblies::mesh(st, me, file.revision_id, &sha256).await?
+    else {
+        return Ok(None);
+    };
+    tokio::task::spawn_blocking(move || -> std::io::Result<Option<thumbnail::Thumbnail>> {
+        let png = mesh_path.with_extension("png");
+        if let Ok(bytes) = std::fs::read(&png) {
+            return Ok(Some(thumbnail::Thumbnail {
+                content_type: "image/png",
+                bytes,
+            }));
+        }
+        let Some(image) = thumbnail::render_mesh(&std::fs::read(&mesh_path)?) else {
+            return Ok(None);
+        };
+        let tmp = png.with_extension(format!("{}.tmp", Uuid::new_v4().simple()));
+        std::fs::write(&tmp, &image.bytes)?;
+        std::fs::rename(&tmp, &png)?;
+        Ok(Some(image))
+    })
+    .await
+    .map_err(blocking_failed)?
+    .map_err(store_failed)
+}
+
+/// The preview image of a CAD file, read once and cached next to the 3D
+/// previews: stored inside the file (Inventor, Solid Edge, SolidWorks, NX
+/// assemblies and drawings) or rendered from the 3D preview (NX parts).
+/// Shared with the REST API.
 pub(crate) async fn thumbnail_response(
     st: &AppState,
     me: &Actor,
@@ -959,10 +1065,15 @@ pub(crate) async fn thumbnail_response(
     }
     let blob = st.vault.object_path(&f.sha256)?;
     let cache = st.vault.root().join("previews");
-    let sha256 = f.sha256.clone();
-    let found = tokio::task::spawn_blocking(move || thumbnail::cached(&cache, &sha256, &blob))
-        .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("thumbnail task failed: {e}")))??;
+    let found = match rendered_thumbnail(st, me, &f, &cache).await? {
+        Some(rendered) => Some(rendered),
+        None => {
+            let sha256 = f.sha256.clone();
+            tokio::task::spawn_blocking(move || thumbnail::cached(&cache, &sha256, &blob))
+                .await
+                .map_err(|e| AppError::Other(anyhow::anyhow!("thumbnail task failed: {e}")))??
+        }
+    };
     let Some(image) = found else {
         return Err(AppError::not_found(format!(
             "{} has no embedded preview image.",
@@ -1075,11 +1186,21 @@ async fn preview_page(
 /// REST API.
 pub(crate) async fn mesh_response(
     st: &AppState,
+    me: &Actor,
     file: &FileRecord,
     sha256: &str,
 ) -> AppResult<Response> {
     let format = preview_of(file).ok_or_else(no_preview)?;
-    let path = st.previews.mesh(&st.vault, sha256, format).await?;
+    let path = match st.previews.mesh(&st.vault, sha256, format).await {
+        Ok(path) => path,
+        // an NX assembly: put together from the previews of its parts
+        Err(e) if format == crate::preview::PreviewFormat::NxPart => {
+            crate::services::assemblies::mesh(st, me, file.revision_id, sha256)
+                .await?
+                .ok_or(e)?
+        }
+        Err(e) => return Err(e),
+    };
     let handle = tokio::fs::File::open(&path)
         .await
         .map_err(|e| AppError::Other(anyhow::anyhow!("cannot open the preview: {e}")))?;
@@ -1105,7 +1226,7 @@ pub async fn mesh(
 ) -> AppResult<Response> {
     let file = files::get(&st.db, &me, id).await?;
     let sha = file.sha256.clone();
-    let mut response = mesh_response(&st, &file, &sha).await?;
+    let mut response = mesh_response(&st, &me, &file, &sha).await?;
     // "current version" changes with every check-in
     response.headers_mut().insert(
         header::CACHE_CONTROL,
@@ -1122,7 +1243,7 @@ pub async fn mesh_version(
 ) -> AppResult<Response> {
     let (version, _) = files::get_version(&st.db, &me, id).await?;
     let file = files::get(&st.db, &me, version.file_id).await?;
-    mesh_response(&st, &file, &version.sha256).await
+    mesh_response(&st, &me, &file, &version.sha256).await
 }
 
 #[derive(Deserialize)]

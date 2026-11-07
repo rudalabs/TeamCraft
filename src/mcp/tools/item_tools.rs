@@ -12,7 +12,7 @@ pub(super) async fn search_items(st: &AppState, me: &Actor, a: &Args<'_>) -> App
         .map(|t| {
             ItemType::parse(&t).ok_or_else(|| {
                 bad(format!(
-                    "Unknown item type '{t}' (part, assembly, document, software, simulation)."
+                    "Unknown item type '{t}' (part, assembly, document, software, simulation, as_built)."
                 ))
             })
         })
@@ -136,6 +136,9 @@ pub(super) async fn get_revision(st: &AppState, me: &Actor, a: &Args<'_>) -> App
         let (based, cut) = simulations_of(st, me, rev.item_id).await?;
         (None, based, cut)
     };
+    // An as-built revision shows what it was built to and its deviations;
+    // a design the units built to it.
+    let (as_built_state, units, units_cut) = as_built_of(st, me, &rev).await?;
     Ok(json!({
         "revision": rev_full(&rev),
         "files": file_list.iter().map(file_brief).collect::<Vec<_>>(),
@@ -173,7 +176,15 @@ pub(super) async fn get_revision(st: &AppState, me: &Actor, a: &Args<'_>) -> App
         "open_change_requests": open_requests,
         "simulation": simulation,
         "simulations": based,
-        "truncated": files_cut || bom_cut || incoming_cut || cad_cut || requests_cut || based_cut,
+        "as_built": as_built_state,
+        "built_units": units,
+        "truncated": files_cut
+            || bom_cut
+            || incoming_cut
+            || cad_cut
+            || requests_cut
+            || based_cut
+            || units_cut,
         "url": web_url(st, &format!("/items/{}", rev.item_id)),
     }))
 }
@@ -201,6 +212,8 @@ pub(super) async fn read_file_text(st: &AppState, me: &Actor, a: &Args<'_>) -> A
         Some(
             "No text is extracted from files of this format (images and binary CAD files are not indexed).",
         )
+    } else if page.total_chars == 0 && crate::htmltext::is_html(&page.file.filename) {
+        Some("The HTML file has no readable text (scripts, styles, hidden elements and images are skipped; linked pages are not followed).")
     } else if page.total_chars == 0 {
         Some("The file has no extractable text (a scanned PDF has no text layer; there is no OCR).")
     } else if page.offset >= page.total_chars {
@@ -244,4 +257,69 @@ pub(super) async fn item_history(st: &AppState, me: &Actor, a: &Args<'_>) -> App
             "summary": e.summary,
         })).collect::<Vec<_>>(),
     }))
+}
+
+/// The build record and deviations of an as-built revision, or the units
+/// built to a design item (capped).
+async fn as_built_of(
+    st: &AppState,
+    me: &Actor,
+    rev: &Revision,
+) -> AppResult<(Option<Value>, Vec<Value>, bool)> {
+    if rev.item_type == ItemType::AsBuilt.as_str() {
+        let (record, deviations) = tokio::try_join!(
+            as_built::record(&st.db, me, rev.id),
+            as_built::deviations(&st.db, me, rev.id)
+        )?;
+        let summary = as_built::summarize(&deviations);
+        let (deviations, cut) = capped(deviations, MAX_LIST);
+        let state = json!({
+            "built_to": record.as_ref().map(|r| json!({
+                "item": r.design_number,
+                "revision": r.design_code,
+                "name": r.design_name,
+                "state": r.design_state,
+                "newer_design": r.newer_design,
+            })),
+            "serial_number": record.as_ref().map(|r| r.serial_number.clone()),
+            "built_on": record.as_ref().and_then(|r| r.built_on),
+            "note": record.as_ref().map(|r| r.note.clone()),
+            "summary": summary,
+            "deviations": deviations.iter().map(|d| json!({
+                "kind": d.kind,
+                "feature": d.feature,
+                "designed": d.designed,
+                "built": d.built,
+                "disposition": d.disposition,
+                "note": d.note,
+            })).collect::<Vec<_>>(),
+        });
+        return Ok((Some(state), Vec::new(), cut));
+    }
+    let can_be_built_to = ItemType::parse(&rev.item_type).is_some_and(ItemType::can_be_built_to);
+    if !can_be_built_to {
+        return Ok((None, Vec::new(), false));
+    }
+    let (units, _hidden) = as_built::built_units(&st.db, me, rev.item_id).await?;
+    let (units, cut) = capped(units, MAX_LIST);
+    Ok((
+        None,
+        units
+            .iter()
+            .map(|u| {
+                json!({
+                    "item": u.unit_number,
+                    "revision": u.unit_code,
+                    "state": u.unit_state,
+                    "serial_number": u.serial_number,
+                    "built_on": u.built_on,
+                    "built_to": u.design_code,
+                    "newer_design": u.newer_design,
+                    "deviations": u.deviation_count,
+                    "open_deviations": u.open_count,
+                })
+            })
+            .collect(),
+        cut,
+    ))
 }

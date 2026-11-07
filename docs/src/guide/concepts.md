@@ -2,13 +2,14 @@
 
 ## Items and revisions
 
-An **item** is a part, assembly, document, software component or simulation
-with a unique number – generated from the numbering scheme of its project
-group (built in: `PRT-000042`, `ASM-…`, `DOC-…`, `SW-…`, `SIM-…`) or typed in
-by hand. Its state of development is kept in **revisions** `A, B, …, Y,
-AA, …` (I, O, Q, S, X and Z are skipped, as in ASME Y14.35). A revision
-carries the attributes (name, description, material, mass, unit cost), the
-files and the bill of materials.
+An **item** is a part, assembly, document, software component, simulation
+or as-built record (one physical unit or lot, see [As-built
+records](as-built.md)) with a unique number – generated from the numbering
+scheme of its project group (built in: `PRT-000042`, `ASM-…`, `DOC-…`,
+`SW-…`, `SIM-…`, `AB-…`) or typed in by hand. Its state of development
+is kept in **revisions** `A, B, …, Y, AA, …` (I, O, Q, S, X and Z are
+skipped, as in ASME Y14.35). A revision carries the attributes (name,
+description, material, mass, unit cost), the files and the bill of materials.
 
 ## Lifecycle
 
@@ -21,7 +22,7 @@ files and the bill of materials.
 | Transition           | How                                                                               | Who                                                                      |
 |----------------------|-----------------------------------------------------------------------------------|--------------------------------------------------------------------------|
 | WIP → In Review      | submit a change order containing the revision                                     | the change's author (CAD editor of the item's project group) or an admin |
-| In Review → Released | automatically when every reviewer approved – all revisions of the change together | the assigned reviewers, never the author (four-eyes principle)           |
+| In Review → Released | automatically when every reviewer approved – all revisions of the change together | the assigned reviewers, never the author or someone who changed the data   |
 | In Review → WIP      | a reviewer rejects with a reason, or the author withdraws                         | reviewers; author or admin                                               |
 | Released → Obsolete  | *Mark obsolete* (final)                                                           | CAD editors of the project group, admins                                 |
 
@@ -59,7 +60,7 @@ the BOM import and *Save as*. Managers set it on the group's page, where
 | Placeholder | Becomes                                                                 |
 |-------------|-------------------------------------------------------------------------|
 | `{PROJECT}` | the project code, e.g. `ROVER`                                          |
-| `{TYPE}`    | `PRT`, `ASM`, `DOC` or `SW`                                             |
+| `{TYPE}`    | `PRT`, `ASM`, `DOC`, `SW`, `SIM` or `AB`                                |
 | `{YYYY}`    | the year of creation (UTC); `{YY}` its last two digits, `{MM}` the month |
 | `{SEQ:n}`   | the sequence, zero-padded to *n* digits (1–12); exactly once            |
 

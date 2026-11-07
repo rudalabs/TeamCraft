@@ -481,3 +481,102 @@ async fn sliding_tokens_are_renewed_on_use_and_die_unused() {
 
     app.teardown().await;
 }
+
+/// A `write` token does everything but approve: it is refused (403, before
+/// the route runs) on the review of a change, the decision on a change
+/// request and making a revision obsolete, and it cannot mint a `full` token.
+#[tokio::test]
+async fn write_tokens_cannot_approve_or_mint_full_tokens() {
+    let app = app_or_skip!();
+    let (erika, _) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    let write = token(&app, &erika, TokenScope::Write).await;
+    let full = token(&app, &erika, TokenScope::Full).await;
+
+    // reads and writes work
+    let r = app.api(Method::GET, "/api/v1/me", &write, None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["token_scope"], "write");
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/items",
+            &write,
+            Some(json!({ "item_type": "part", "name": "Nose cone", "project": "ROCKET" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let items = count(&app, "items").await;
+
+    // approving routes are refused for the write token, whatever exists
+    for path in [
+        "/api/v1/changes/ECO-000001/review",
+        "/api/v1/change-requests/CR-000001/decide",
+        "/api/v1/items/PRT-000001/revisions/A/obsolete",
+    ] {
+        let r = app
+            .api(
+                Method::POST,
+                path,
+                &write,
+                Some(json!({ "decision": "approve" })),
+            )
+            .await;
+        assert_refused(&r, path, "may not approve");
+        // the full token passes the scope check (the object does not exist)
+        let r = app
+            .api(
+                Method::POST,
+                path,
+                &full,
+                Some(json!({ "decision": "approve" })),
+            )
+            .await;
+        assert_ne!(r.status, StatusCode::FORBIDDEN, "{path}: {}", r.text());
+    }
+
+    // no escalation: a write token creates write (or narrower) tokens only
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/tokens",
+            &write,
+            Some(json!({ "name": "esc", "scope": "full" })),
+        )
+        .await;
+    assert_refused(&r, "mint full", "cannot create a token that may approve");
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/tokens",
+            &write,
+            Some(json!({ "name": "ok", "scope": "write" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(r.json()["scope"], "write");
+    assert_eq!(count(&app, "items").await, items);
+
+    app.teardown().await;
+}
+
+/// Tokens that exist before the migration keep their rights: the column
+/// default is `full` (read, write and approve).
+#[tokio::test]
+async fn tokens_without_a_choice_are_full() {
+    let app = app_or_skip!();
+    let (erika, _) = app.user("erika", Role::Editor).await;
+    sqlx::query(
+        "INSERT INTO api_tokens (id, user_id, name, token_hash, token_prefix)
+         VALUES (gen_random_uuid(), $1, 'old', 'hash-old', 'tc_pat_old')",
+    )
+    .bind(erika.id)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let scope: String = sqlx::query_scalar("SELECT scope FROM api_tokens WHERE name = 'old'")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(scope, "full");
+    app.teardown().await;
+}

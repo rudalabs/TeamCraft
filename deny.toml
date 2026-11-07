@@ -4,13 +4,20 @@
 all-features = false
 
 [advisories]
-# Vulnerabilities and yanked crates fail the check. The three "unmaintained"
+# Vulnerabilities and yanked crates fail the check. The "unmaintained"
 # notices below are transitive, have no fixed release to move to and are not
-# vulnerabilities; revisit them when the parent crates update.
+# vulnerabilities; revisit them when the parent crates update. The same policy
+# checks the desktop app (desktop/Cargo.lock, CI job "cargo deny
+# (desktop/Cargo.toml)"); an ignore that one lock file does not need is only a
+# warning for the other.
 ignore = [
     { id = "RUSTSEC-2026-0196", reason = "cgmath is unmaintained; pulled in by truck-base (STEP reading). No advisory against it, no drop-in replacement for truck." },
     { id = "RUSTSEC-2024-0370", reason = "proc-macro-error is unmaintained; a build-time macro dependency of ruststep-derive and truck-derivers, not part of the running server." },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; pulled in by pdf_oxide (text extraction from PDFs). Parsers run under the preview size and memory limits." },
+    # desktop app: zbus 4 (keyring, Secret Service on Linux) and zbus 5 (Tauri)
+    { id = "RUSTSEC-2026-0370", reason = "zvariant is merged into zbus 6; pulled in by zbus 4/5 through keyring (Secret Service) and Tauri, which have no zbus-6 release yet. Not a vulnerability." },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names is merged into zbus 6; same path as zvariant (keyring, Tauri). Not a vulnerability." },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is merged into zbus 6; same path as zvariant (keyring, Tauri). Not a vulnerability." },
 ]
 
 [licenses]

@@ -5,6 +5,7 @@
 //! The rules are split by area; everything is re-exported here, so callers
 //! keep using `crate::domain::Name`.
 
+mod as_built;
 mod attributes;
 mod changes;
 mod concurrency;
@@ -18,6 +19,7 @@ mod skins;
 mod tokens;
 mod validation;
 
+pub use as_built::*;
 pub use attributes::*;
 pub use changes::*;
 pub use concurrency::*;
@@ -140,6 +142,19 @@ mod tests {
     }
 
     #[test]
+    fn admin_read_parse() {
+        for m in [AdminRead::Implicit, AdminRead::WithReason, AdminRead::None] {
+            assert_eq!(AdminRead::parse(m.as_str()), Some(m));
+            assert!(!m.label().is_empty());
+        }
+        assert_eq!(
+            AdminRead::parse(" With_Reason "),
+            Some(AdminRead::WithReason)
+        );
+        assert_eq!(AdminRead::parse("always"), None);
+    }
+
+    #[test]
     fn base_versions() {
         let sha = "AB".repeat(32);
         assert_eq!(
@@ -257,14 +272,14 @@ mod tests {
     /// server's templates); it must name the same skins and logos.
     #[test]
     fn desktop_app_knows_every_skin() {
-        let app = include_str!("../../desktop/ui/app.js");
+        let app = include_str!("../../desktop/ui/js/core.js");
         for skin in SKINS {
             assert!(
                 app.contains(&format!(
                     "id: \"{}\", name: \"{}\", logo: \"{}\"",
                     skin.id, skin.name, skin.logo
                 )),
-                "desktop/ui/app.js SKINS: {} ({}, {})",
+                "desktop/ui/js/core.js SKINS: {} ({}, {})",
                 skin.id,
                 skin.name,
                 skin.logo
@@ -565,6 +580,29 @@ mod tests {
     }
 
     #[test]
+    fn separation_of_duties() {
+        use uuid::Uuid;
+        let (author, admin, editor, other) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let editors = [editor];
+        let check = |who, submitter| conflicting_reviewer(who, author, submitter, &editors);
+        assert_eq!(check(author, None), Some(ReviewConflict::Author));
+        assert_eq!(check(editor, None), Some(ReviewConflict::Editor));
+        assert_eq!(check(admin, Some(admin)), Some(ReviewConflict::Submitter));
+        assert_eq!(check(admin, None), None);
+        assert_eq!(check(other, Some(admin)), None);
+        // the author wins over the other reasons
+        assert_eq!(
+            conflicting_reviewer(author, author, Some(author), &[author]),
+            Some(ReviewConflict::Author)
+        );
+    }
+
+    #[test]
     fn review_outcomes() {
         use Decision::*;
         assert_eq!(review_outcome(&[]), ReviewOutcome::Pending);
@@ -748,8 +786,10 @@ mod tests {
 
     #[test]
     fn password_policy() {
-        assert!(validate_password("short").is_err());
-        assert!(validate_password("long enough pw").is_ok());
+        // generated at the boundary, not literal phrases: a password literal
+        // reads as a hard-coded credential (CodeQL) and says less about the rule
+        assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN - 1)).is_err());
+        assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN)).is_ok());
     }
 
     #[test]
@@ -808,7 +848,7 @@ mod tests {
         );
         assert_eq!(RequestDecision::parse("approve"), None);
         // the desktop app has its own copy of the reasons
-        let app = include_str!("../../desktop/ui/app.js");
+        let app = include_str!("../../desktop/ui/js/core.js");
         for r in RequestReason::ALL {
             assert!(
                 app.contains(&format!(
@@ -816,7 +856,7 @@ mod tests {
                     r.as_str(),
                     r.label()
                 )),
-                "desktop/ui/app.js lists the reason {}",
+                "desktop/ui/js/core.js lists the reason {}",
                 r.as_str()
             );
         }

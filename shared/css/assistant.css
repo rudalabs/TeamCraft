@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /* "Ask TeamCraft" sidebar (shared/js/assistant.js), the part both apps share:
  * everything inside the drawer. Each shell places the <aside class="tc-assistant">
- * itself (web: fixed on the right below the top bar, desktop: a grid column
- * beside the work area) and sets its width through --tc-assistant-w.
+ * itself (web: fixed on the right below the top bar) and sets its width through
+ * --tc-assistant-w; the desktop shows it inline in its Agent tab (.tc-a-inline).
  * Tokens only (shared/css/skins.css): no literal colours, no gradients. */
 
 .tc-assistant {
@@ -20,6 +20,9 @@
 }
 .tc-assistant[hidden] { display: none; }
 .tc-assistant:focus { outline: none; }
+/* inline mode (mount option `inline`): a panel that fills its host – the
+ * desktop's Agent tab – instead of a drawer beside the page */
+.tc-assistant.tc-a-inline { width: auto; border-left: 0; background: transparent; }
 
 /* the drag handle on the left edge */
 .tc-a-handle {

@@ -9,13 +9,40 @@ use serde::{Deserialize, Serialize};
 /// The path of the MCP endpoint (the only one an `mcp_only` token reaches).
 pub const MCP_PATH: &str = "/api/v1/mcp";
 
+/// Whether a request approves or releases something: the review of a change
+/// order (its approval releases the revisions), the decision on a change
+/// request and making a revision obsolete. Needs the `approve` right of a
+/// token, i.e. scope `full`.
+pub fn is_approval(method: &str, path: &str) -> bool {
+    if method != "POST" {
+        return false;
+    }
+    let Some(rest) = path.strip_prefix("/api/v1/") else {
+        return false;
+    };
+    let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
+    matches!(
+        parts.as_slice(),
+        ["changes", _, "review"]
+            | ["change-requests", _, "decide"]
+            | ["items", _, "revisions", _, "obsolete"]
+    )
+}
+
 /// What a personal access token may do with the rights of its user.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenScope {
-    /// Everything the user may do (REST and MCP, writes included).
+    /// Everything the user may do: read, write and approve (REST and MCP).
+    /// Every token created before scopes existed, and the desktop app's
+    /// tokens, have it, so nothing changes for them.
     #[default]
     Full,
+    /// Read and write, but not approve: a change order cannot be reviewed
+    /// (approved or rejected, which releases it), a change request cannot be
+    /// decided and a revision cannot be made obsolete. For integrations that
+    /// create and edit data but must not release it.
+    Write,
     /// Only reads: `GET`/`HEAD` requests and the read-only MCP tools.
     ReadOnly,
     /// Only the MCP endpoint (`POST /api/v1/mcp`), with all its tools.
@@ -23,11 +50,17 @@ pub enum TokenScope {
 }
 
 impl TokenScope {
-    pub const ALL: [TokenScope; 3] = [TokenScope::Full, TokenScope::ReadOnly, TokenScope::McpOnly];
+    pub const ALL: [TokenScope; 4] = [
+        TokenScope::Full,
+        TokenScope::Write,
+        TokenScope::ReadOnly,
+        TokenScope::McpOnly,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             TokenScope::Full => "full",
+            TokenScope::Write => "write",
             TokenScope::ReadOnly => "read_only",
             TokenScope::McpOnly => "mcp_only",
         }
@@ -37,6 +70,7 @@ impl TokenScope {
     pub fn parse(s: &str) -> Option<TokenScope> {
         match s.trim().to_ascii_lowercase().replace('-', "_").as_str() {
             "full" => Some(TokenScope::Full),
+            "write" => Some(TokenScope::Write),
             "read_only" => Some(TokenScope::ReadOnly),
             "mcp_only" => Some(TokenScope::McpOnly),
             _ => None,
@@ -46,6 +80,7 @@ impl TokenScope {
     pub fn label(self) -> &'static str {
         match self {
             TokenScope::Full => "full access",
+            TokenScope::Write => "read and write, no approval",
             TokenScope::ReadOnly => "read-only",
             TokenScope::McpOnly => "MCP only",
         }
@@ -60,6 +95,7 @@ impl TokenScope {
         let mcp = method == "POST" && path == MCP_PATH;
         match self {
             TokenScope::Full => true,
+            TokenScope::Write => !is_approval(method, path),
             TokenScope::ReadOnly => read || mcp,
             TokenScope::McpOnly => mcp,
         }
@@ -74,6 +110,9 @@ impl TokenScope {
     pub fn refusal(self) -> &'static str {
         match self {
             TokenScope::Full => "",
+            TokenScope::Write => {
+                "This token may not approve: it cannot review a change order, decide a change request or make a revision obsolete."
+            }
             TokenScope::ReadOnly => {
                 "This token is read-only: it may send GET requests and call the read-only MCP tools."
             }
@@ -93,7 +132,8 @@ mod tests {
         }
         assert_eq!(TokenScope::parse(" Read-Only "), Some(TokenScope::ReadOnly));
         assert_eq!(TokenScope::parse("mcp-only"), Some(TokenScope::McpOnly));
-        for bad in ["", "read", "admin", "write"] {
+        assert_eq!(TokenScope::parse("write"), Some(TokenScope::Write));
+        for bad in ["", "read", "admin", "approve"] {
             assert_eq!(TokenScope::parse(bad), None, "{bad:?}");
         }
         assert_eq!(TokenScope::default(), TokenScope::Full);
@@ -110,6 +150,32 @@ mod tests {
             assert!(TokenScope::Full.allows_request(m, p), "{m} {p}");
         }
         assert!(TokenScope::Full.allows_tool(false));
+    }
+
+    #[test]
+    fn write_tokens_do_everything_but_approve() {
+        let s = TokenScope::Write;
+        for (m, p) in [
+            ("GET", "/api/v1/items"),
+            ("POST", "/api/v1/items"),
+            ("PATCH", "/api/v1/items/PRT-000001"),
+            ("POST", "/api/v1/changes/ECO-1/submit"),
+            ("POST", "/api/v1/changes/ECO-1/withdraw"),
+            ("POST", "/api/v1/change-requests/CR-1/triage"),
+            ("POST", MCP_PATH),
+        ] {
+            assert!(s.allows_request(m, p), "{m} {p}");
+        }
+        for (m, p) in [
+            ("POST", "/api/v1/changes/ECO-1/review"),
+            ("POST", "/api/v1/changes/ECO-1/review/"),
+            ("POST", "/api/v1/change-requests/CR-1/decide"),
+            ("POST", "/api/v1/items/PRT-000001/revisions/B/obsolete"),
+        ] {
+            assert!(!s.allows_request(m, p), "{m} {p}");
+            assert!(TokenScope::Full.allows_request(m, p), "{m} {p}");
+        }
+        assert!(s.allows_tool(false));
     }
 
     #[test]

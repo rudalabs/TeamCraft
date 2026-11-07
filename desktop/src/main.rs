@@ -12,11 +12,13 @@ mod api;
 mod bomimport;
 mod cadexport;
 mod commands;
+mod compat;
 mod folderimport;
 mod layout;
 mod resume;
 mod settings;
 mod signin;
+mod update;
 mod workspace;
 
 use std::{
@@ -123,7 +125,6 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&item("go-worklist", "My Worklist", Some("CmdOrCtrl+2"))?)
         .item(&item("go-changes", "Changes", Some("CmdOrCtrl+3"))?)
         .item(&item("go-agent", "Agent", Some("CmdOrCtrl+4"))?)
-        .item(&item("go-assistant", "Ask TeamCraft", Some("CmdOrCtrl+5"))?)
         .separator()
         .item(&item("zoom-in", "Zoom In (Ctrl + wheel)", None)?)
         .item(&item("zoom-out", "Zoom Out", None)?)
@@ -175,7 +176,7 @@ fn main() {
                     let _ = window.set_zoom(zoom);
                 }
                 // the native chrome (the GTK menu bar) in the skin's scheme
-                // from the first frame; app.js keeps it in step on changes
+                // from the first frame; ui/js/skins.js keeps it in step on changes
                 let _ = window.set_theme(theme);
             }
             Ok(())
@@ -187,6 +188,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::session,
             commands::set_server,
+            commands::server_notice,
+            commands::server_url_insecure,
             commands::sign_in_browser,
             commands::cancel_sign_in,
             commands::sign_in_token,
@@ -208,6 +211,10 @@ fn main() {
             commands::workspace_open,
             commands::open_web,
             commands::set_zoom,
+            commands::check_update,
+            commands::dismiss_update,
+            commands::set_update_check,
+            commands::open_release_page,
             commands::save_package,
             commands::cancel_package,
             commands::save_stl,
@@ -222,6 +229,8 @@ fn main() {
             commands::agent_profiles,
             commands::set_agent_profiles,
             commands::agent_status,
+            commands::agent_policy,
+            commands::set_agent_backend,
             commands::agent_start,
             commands::agent_prompt,
             commands::agent_permission,

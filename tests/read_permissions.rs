@@ -163,6 +163,8 @@ fn fill(path: &str, h: &Hidden) -> Option<String> {
             ("{revision_id}", _) => h.revision_id.to_string(),
             ("{item_id}", _) => h.item_id.to_string(),
             ("{user_id}", _) => h.caller.to_string(),
+            // the logos belong to no project group
+            ("{kind}", "branding") => "wide".into(),
             // attribute definitions belong to no project group
             ("{key}", "attributes") => "vendor".into(),
             // an alternate: by number in the REST API, by id in the web UI
@@ -2201,19 +2203,19 @@ async fn second_review_round_leaks_are_closed() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     let group_id = app.project_id(&code).await;
     // the stored flag is stale; delivery evaluates it again
-    let confidential: Vec<(bool, bool)> = sqlx::query_as(&format!(
+    let flags: Vec<(bool, bool)> = sqlx::query_as(&format!(
         "SELECT n.confidential, {} FROM notifications n JOIN users u ON u.id = n.user_id
          WHERE u.username = 'vera' AND n.title LIKE '%' || $1 || '%'",
-        teamcraft::services::notifications::confidential_now("n")
+        teamcraft::services::notifications::restricted_now_sql("n")
     ))
     .bind(&hq)
     .fetch_all(&app.pool)
     .await
     .unwrap();
-    assert!(!confidential.is_empty(), "vera was told of the release");
+    assert!(!flags.is_empty(), "vera was told of the release");
     assert!(
-        confidential.iter().all(|(stored, now)| !stored && *now),
-        "{confidential:?}"
+        flags.iter().all(|(stored, now)| !stored && *now),
+        "{flags:?}"
     );
     // the queued delivery is withheld, not sent
     let dispatcher = teamcraft::webhooks::Dispatcher::new(
@@ -3241,11 +3243,14 @@ async fn fourth_review_round_leaks_are_closed() {
         "{}",
         r.text()
     );
+    // mona created the assembly, so she may not review it (four-eyes);
+    // a ROVER editor who did not touch it reviews
+    app.user_in("rita", Role::Editor, &["ROVER"]).await;
     post_ok(
         &app,
         &format!("/api/v1/changes/{chg}/reviewers"),
         &otto,
-        json!({ "username": "mona" }),
+        json!({ "username": "rita" }),
     )
     .await;
     let r = app

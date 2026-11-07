@@ -9,8 +9,12 @@
 //! 1. `initialize` – protocol version 1 and the client capabilities;
 //! 2. `session/new` – the workspace folder as `cwd` and TeamCraft's MCP
 //!    server (`<server>/api/v1/mcp`, HTTP transport, the desktop's bearer
-//!    token as header), so the agent works with TeamCraft's tools and exactly
-//!    the rights of the signed-in user;
+//!    token as header, plus [`LOCAL_AGENT_HEADER`] so the server can refuse
+//!    local agents when its administrator turned them off), so the agent
+//!    works with TeamCraft's tools and exactly the rights of the signed-in
+//!    user. Before that, `commands::agent_start` asks the server whether
+//!    local agents are allowed at all ([`local_agents_gate`]), and
+//!    `commands::agent_prompt` asks again before every message;
 //! 3. `session/prompt` per user message; meanwhile the agent streams
 //!    `session/update` notifications (message chunks, tool calls, plans) and
 //!    may ask `session/request_permission`, which the user answers;
@@ -837,6 +841,51 @@ pub fn models_of(result: &Value) -> Option<Models> {
     config_models(&result["configOptions"]).or_else(|| legacy_models(&result["models"]))
 }
 
+// ---------------------------------------------------------------- policy
+
+/// Header on the MCP connection handed to a local agent (defined in the
+/// dependency-free `compat.rs`, which the server's tests check against
+/// `LOCAL_AGENT_HEADER` in its `src/config.rs`).
+pub use crate::compat::{LOCAL_AGENT_HEADER, LOCAL_AGENT_HEADER_VALUE};
+
+/// Shown when the server's administrator turned local agents off.
+pub const LOCAL_AGENTS_OFF: &str = "Local agents are turned off on this TeamCraft server: the administrator \
+set TEAMCRAFT_LOCAL_AGENTS=off, so the Agent view runs on the company AI where the server provides one.";
+
+/// May the desktop start a local agent, by the server's `GET /api/v1/me`?
+/// `capabilities.local_agents == false` refuses; a server too old to report
+/// it (no such field) allows, as before the setting existed.
+pub fn local_agents_gate(me: &Value) -> Result<(), String> {
+    match me["capabilities"]["local_agents"].as_bool() {
+        Some(false) => Err(LOCAL_AGENTS_OFF.to_string()),
+        _ => Ok(()),
+    }
+}
+
+pub use crate::compat::AgentBackend;
+
+/// Does the server run its assistant – the company AI – for this user?
+/// Only a plain `true` in `capabilities.assistant` counts.
+pub fn company_ai(me: &Value) -> bool {
+    me["capabilities"]["assistant"].as_bool() == Some(true)
+}
+
+/// The Agent view's backend by the server's `GET /api/v1/me`, whether the
+/// user has set up a local agent and the user's stored pick (only a
+/// preference: the policy wins) – see [`crate::compat::choose_backend`].
+pub fn choose_backend(
+    me: &Value,
+    has_agents: bool,
+    stored: Option<AgentBackend>,
+) -> (AgentBackend, Vec<AgentBackend>) {
+    crate::compat::choose_backend(
+        local_agents_gate(me).is_ok(),
+        company_ai(me),
+        has_agents,
+        stored,
+    )
+}
+
 // ---------------------------------------------------------------- session
 
 /// TeamCraft's MCP server as handed to the agent.
@@ -1161,7 +1210,11 @@ async fn handshake(
             "type": "http",
             "name": "teamcraft",
             "url": m.url,
-            "headers": [{ "name": "Authorization", "value": format!("Bearer {}", m.token) }],
+            "headers": [
+                { "name": "Authorization", "value": format!("Bearer {}", m.token) },
+                // lets the server refuse local agents (TEAMCRAFT_LOCAL_AGENTS=off)
+                { "name": LOCAL_AGENT_HEADER, "value": LOCAL_AGENT_HEADER_VALUE },
+            ],
         }]),
         _ => json!([]),
     };
@@ -1783,11 +1836,75 @@ mod tests {
         assert_eq!(
             new["mcpServers"],
             json!([{ "type": "http", "name": "teamcraft", "url": "https://plm.example.org/api/v1/mcp",
-                     "headers": [{ "name": "Authorization", "value": "Bearer fake-test-token" }] }])
+                     "headers": [{ "name": "Authorization", "value": "Bearer fake-test-token" },
+                                 { "name": "X-TeamCraft-Client", "value": "desktop-agent" }] }])
         );
         assert!(session.info.teamcraft_tools);
         assert_eq!(session.info.agent.as_deref(), Some("Fake Agent"));
         assert!(sink.events().is_empty());
+    }
+
+    #[test]
+    fn local_agents_gate_follows_the_server() {
+        assert!(local_agents_gate(&json!({ "capabilities": { "local_agents": true } })).is_ok());
+        let off = local_agents_gate(
+            &json!({ "capabilities": { "assistant": true, "local_agents": false } }),
+        )
+        .unwrap_err();
+        assert!(off.contains("TEAMCRAFT_LOCAL_AGENTS=off"), "{off}");
+        assert!(off.contains("administrator"), "{off}");
+        // an older server reports nothing: allowed, as before the setting
+        assert!(
+            local_agents_gate(&json!({ "capabilities": { "assistant": false, "mcp": true } }))
+                .is_ok()
+        );
+        assert!(local_agents_gate(&json!({ "username": "lina" })).is_ok());
+        // anything but a plain false does not turn agents off by accident
+        assert!(local_agents_gate(&json!({ "capabilities": { "local_agents": "off" } })).is_ok());
+    }
+
+    #[test]
+    fn the_agent_backend_follows_the_server() {
+        use AgentBackend::{Company, Local, Off};
+        let me = |assistant: Value, local: Value| json!({ "username": "lina", "capabilities": { "assistant": assistant, "local_agents": local } });
+        // off + company AI: the company AI, a stored local pick does not count
+        assert_eq!(
+            choose_backend(&me(json!(true), json!(false)), true, Some(Local)),
+            (Company, vec![Company])
+        );
+        // off + no company AI: no AI
+        assert_eq!(
+            choose_backend(&me(json!(false), json!(false)), true, None),
+            (Off, vec![])
+        );
+        // both: the stored pick, else the local agent when one is set up
+        let both = me(json!(true), json!(true));
+        assert_eq!(
+            choose_backend(&both, true, Some(Company)),
+            (Company, vec![Company, Local])
+        );
+        assert_eq!(choose_backend(&both, true, None).0, Local);
+        assert_eq!(choose_backend(&both, false, None).0, Company);
+        // allowed, no company AI: local only, a stale company pick ignored
+        assert_eq!(
+            choose_backend(&me(json!(false), json!(true)), false, Some(Company)),
+            (Local, vec![Local])
+        );
+        // an older server without `local_agents`: allowed as before
+        assert_eq!(
+            choose_backend(
+                &json!({ "capabilities": { "assistant": false } }),
+                true,
+                None
+            ),
+            (Local, vec![Local])
+        );
+        // only a plain true is a company AI
+        assert!(!company_ai(&me(json!("yes"), json!(true))));
+        assert_eq!(
+            choose_backend(&me(json!("yes"), json!(false)), true, None),
+            (Off, vec![])
+        );
     }
 
     #[tokio::test]

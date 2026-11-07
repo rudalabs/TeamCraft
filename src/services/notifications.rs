@@ -199,7 +199,7 @@ pub(crate) fn notification_visible(n: &str, actor: &str, hidden: &str) -> String
 /// stored flag, or its subject or something its text names is in a
 /// restricted group at delivery time (the group may have been restricted
 /// after the row was queued).
-pub fn confidential_now(n: &str) -> String {
+pub fn restricted_now_sql(n: &str) -> String {
     let restricted = "cp.visibility = 'restricted'";
     format!(
         "({n}.confidential

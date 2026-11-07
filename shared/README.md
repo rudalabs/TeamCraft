@@ -7,7 +7,7 @@ research page *Sharing UI code between the web UI and the desktop app*
 
 ```text
 css/skins.css   design tokens and skins (colours, radii, spacing, density, fonts)
-css/assistant.css  the "Ask TeamCraft" drawer (inside of the <aside>; each shell places it)
+css/assistant.css  the "Ask TeamCraft" panel (a drawer on the web, inline in the desktop's Agent tab)
 fonts/          Montserrat, Oswald (variable WOFF2) and their SIL OFL texts
 js/viewer.js    3D preview (WebGL2, TCMESH01), still a classic script
 js/assistant.js "Ask TeamCraft" sidebar: ES module, mount(host, {api, getContext, link, …}) – no fetch, no invoke
@@ -60,16 +60,22 @@ The first shared *component*: one module, one stylesheet, two shells.
 * **Contract.** The shell provides an empty `<aside>` and the callbacks; the
   module builds the drawer inside it (context chip, quick actions, the
   conversation, the composer). The shell owns the icon that opens it, the
-  place of the `<aside>` (web: fixed on the right below the top bar; desktop:
-  a grid column beside the tabs) and every data access:
-  `api.thread()`, `api.send(body, signal)`, `api.reset()`, `getContext()`.
+  place of the `<aside>` (web: fixed on the right below the top bar) and every
+  data access: `api.thread()`, `api.send(body, signal)`, `api.reset()`,
+  `getContext()`. **Inline mode** (`mount(host, { inline: true, title })`):
+  the same panel fills its host instead of being a drawer – always open, no
+  resize handle, no close button, no Esc. The desktop app uses it for the
+  company AI inside its *Agent* tab; `onBusy(busy)` and `isBusy()` let the
+  shell keep its own controls still while a question runs.
 * **Page context.** The page (web: `data-tc-*` attributes on `<main>`;
-  desktop: the active tab) declares a plain object – `kind`, `item`,
-  `revision`, `change`, `request`, `project`, `view`, `rule`, `query`,
+  desktop: the last revision, change or request tab) declares a plain
+  object – `kind`, `item`, `revision`, `change`, `request`, `project`, `view`, `rule`, `query`,
   `filters`, `selected`, `shown` – described in
   `docs/src/guide/assistant.md` (API section). It is only a hint; the server
   resolves it with the user's rights.
 * **State.** Open/closed and the width are kept in `localStorage`
   (`tc.assistant.open`, `tc.assistant.width`), always inside `try/catch`.
+  Inline mode stores nothing and leaves `<html>` alone (no
+  `tc-assistant-open`, no `--tc-assistant-w`).
 * **Answers** are markdown-lite built as DOM nodes (`markdown(text, link)`),
   never as HTML.

@@ -151,8 +151,18 @@ pub(super) async fn create(
         priority: priority_of(body.priority.as_deref())?,
         due_date: requests::parse_due_date(body.due_date.as_deref())?,
     };
-    let mut list = Vec::with_capacity(body.items.len());
-    for r in &body.items {
+    // Bound the list before resolving it: every reference costs lookups.
+    // An item named twice is listed once (the first mention wins, as in the
+    // database), so repeats are dropped here and cost nothing.
+    let mut seen = std::collections::HashSet::new();
+    let refs: Vec<&ItemRef> = body
+        .items
+        .iter()
+        .filter(|r| seen.insert(r.item.trim().to_string()))
+        .collect();
+    requests::check_item_count(refs.len())?;
+    let mut list = Vec::new();
+    for r in refs {
         list.push(affected(&st, &me, r).await?);
     }
     let request = requests::create(&st.db, &me, input, list).await?;

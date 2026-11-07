@@ -12,6 +12,7 @@
 - [Finding similar parts](guide/similar-parts.md)
 - [Change requests, change orders and notifications](guide/changes.md)
 - [Simulations (FEA, CFD)](guide/simulation.md)
+- [As-built records](guide/as-built.md)
 - [Desktop app](guide/desktop.md)
 - [Ask TeamCraft (assistant)](guide/assistant.md)
 - [Manual test tour](guide/tour.md)
@@ -23,6 +24,7 @@
 - [Users, roles and single sign-on](admin/users.md)
 - [Read permissions and restricted groups](admin/permissions.md)
 - [Event webhooks](admin/webhooks.md)
+- [Branding: your own logos](admin/branding.md)
 - [Upgrading and rolling back](admin/upgrade.md)
 - [Operations](admin/operations.md)
 - [Support policy](admin/support-policy.md)
@@ -53,6 +55,8 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [3D preview of NX parts](research/nx-jt-preview.md)
+    - [Text from HTML reports](research/html-report-text.md)
     - [Text from PDF reports](research/pdf-text-extraction.md)
     - [One provider interface for the assistant](research/agent-interface.md)
     - [Sharing UI code between web and desktop](research/shared-ui.md)
@@ -63,3 +67,5 @@
     - [Popular features of Teamcenter](research/teamcenter.md)
     - [Openly licensed CAD files for end-to-end tests](research/cad-test-files.md)
     - [Read permissions for project groups](research/read-permissions.md)
+    - [As-built records](research/as-built.md)
+    - [Fluent, STAR-CCM+ and Simcenter 3D files](research/solver-files.md)

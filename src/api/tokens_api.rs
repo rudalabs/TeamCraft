@@ -1,6 +1,8 @@
 //! The caller's own personal access tokens: list, create (with a scope),
 //! revoke. A token reaches these routes only within its scope: a
-//! `read_only` token may list, an `mcp_only` token none of them.
+//! `read_only` token may list, an `mcp_only` token none of them. A token
+//! never creates a token with more rights than its own (a `write` token no
+//! `full` one).
 
 use axum::{
     extract::{Path, State},
@@ -13,7 +15,7 @@ use uuid::Uuid;
 
 use super::ApiJson;
 use crate::{
-    auth::ApiUser,
+    auth::{ApiCaller, ApiUser},
     domain::TokenScope,
     error::{AppError, AppResult},
     services::users::{self, TokenLifetime},
@@ -33,7 +35,7 @@ pub(super) struct NewTokenBody {
     name: String,
     /// 1 to 3650; absent or `null` = never expires.
     expires_in_days: Option<i64>,
-    /// `full` (default), `read_only` or `mcp_only`.
+    /// `full` (default), `write`, `read_only` or `mcp_only`.
     scope: Option<String>,
 }
 
@@ -41,17 +43,25 @@ pub(super) struct NewTokenBody {
 /// answer exactly once.
 pub(super) async fn create_token(
     State(st): State<AppState>,
-    ApiUser(me): ApiUser,
+    ApiCaller {
+        actor: me,
+        scope: caller_scope,
+    }: ApiCaller,
     ApiJson(body): ApiJson<NewTokenBody>,
 ) -> AppResult<(StatusCode, Json<Value>)> {
     let scope = match body.scope.as_deref() {
         None => TokenScope::Full,
         Some(s) => TokenScope::parse(s).ok_or_else(|| {
             AppError::BadRequest(format!(
-                "Unknown token scope '{s}': use full, read_only or mcp_only."
+                "Unknown token scope '{s}': use full, write, read_only or mcp_only."
             ))
         })?,
     };
+    if caller_scope == TokenScope::Write && scope == TokenScope::Full {
+        return Err(AppError::Forbidden(
+            "A write token cannot create a token that may approve (scope full).".into(),
+        ));
+    }
     let (record, token) = users::create_token(
         &st.db,
         &me,

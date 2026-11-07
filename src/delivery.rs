@@ -215,7 +215,7 @@ impl Delivery {
              FROM notifications n JOIN users u ON u.id = n.user_id
              WHERE (n.email_state = 'pending' OR n.chat_state = 'pending') AND u.active
              ORDER BY n.created_at LIMIT 100",
-            crate::services::notifications::confidential_now("n")
+            crate::services::notifications::restricted_now_sql("n")
         ))
         .fetch_all(pool)
         .await?;

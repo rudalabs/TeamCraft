@@ -94,8 +94,9 @@ results are stored as they are, never parsed fully – see
 | `TEAMCRAFT_PREVIEW_MAX_STEP_MB`   | `256`   | largest STEP file (tessellation needs a multiple of the file size)      |
 | `TEAMCRAFT_PREVIEW_MAX_MEMORY_MB` | `1024`  | address space of the preview process, `0` = unlimited                   |
 
-The same process limits protect the text extraction of PDF reports (`teamcraft
-text-extract`: at most 32 MB per PDF, 100 pages, 60 s, the memory limit below).
+The same process limits protect the text extraction of PDF and HTML reports
+(`teamcraft text-extract`: at most 32 MB per PDF and 100 pages, the first 16 MB
+of an HTML file, 60 s, the memory limit below).
 
 The memory limit (`RLIMIT_AS`) is enforced on Linux; on macOS the system may
 ignore it, and on Windows it is **not enforced** (the size caps and the time
@@ -109,6 +110,7 @@ limit still are). Every variable also exists as `NAME_FILE`.
 | `TEAMCRAFT_COOKIE_SECURE`                          | `true` for `https://` public URLs | force the `Secure` cookie flag                                                 |
 | `TEAMCRAFT_LOCAL_LOGIN`                            | `true` without SSO                | username/password accounts                                                     |
 | `TEAMCRAFT_SIGNIN_MAX_FAILURES`                    | `10`                              | failed password sign-ins per username in 15 minutes before 429 (5× per client address; `0` = off) |
+| `TEAMCRAFT_METRICS_TOKEN`                          | – (endpoint off)                  | enables `GET /metrics` (Prometheus text format); the scraper sends this value (at least 16 characters) as `Authorization: Bearer …`. Request counts and latency, database pool, pending webhook deliveries, e-mails and chat messages, 3D preview queue |
 | `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME`, `TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD` | `admin` / –                       | create this administrator on start when there are no accounts (public servers) |
 | `TEAMCRAFT_OIDC_*`                                 | –                                 | single sign-on, see [Users, roles and SSO](users.md)                           |
 
@@ -216,6 +218,76 @@ length, provider, model, tools used, token counts, `usage_reported`, the page
 kind and identifiers, whether it was asked in the conversation and
 the outcome – `cancelled` when the client closed the connection before the
 answer – never the question or the answer).
+
+## Local agents
+
+The desktop app can run an AI agent on the user's own computer (its
+*Agent* view, see [ACP agents](../guide/assistant.md#acp-agents-in-the-desktop-app)),
+and users can connect other MCP clients (an assistant set up by hand, the
+[`teamcraft mcp`](../reference/mcp.md) bridge) with a personal access
+token. Such agents send the user's questions and the TeamCraft data they
+look up to the agent's own AI provider, under the user's own account and
+terms.
+
+**Company AI instead of shadow AI.** For data-loss prevention an
+organisation can turn local agents off and offer its own AI centrally:
+the provider configured under [Assistant](#assistant-optional) – Anthropic,
+OpenAI or Azure OpenAI with the company's contract and key, or a model
+server inside the network (Ollama, vLLM …). Users then work with *Ask
+TeamCraft* in the web UI and with the **Agent** view of the desktop app,
+which runs on that assistant (*Company AI*); the key stays on the server
+and never reaches a client. Every question runs with the user's rights,
+is recorded in the audit log (`assistant.run`, without the question or
+the answer) and is bounded by the assistant's limits (steps, tokens, time,
+questions at the same time). **Admin → AI** (`/admin/ai`) shows the
+setting, the MCP endpoint's state and the configured provider, model,
+host and limits – never the key, only whether one is set.
+
+| Variable                 | Default   | Meaning                                                                                                                                                        |
+|--------------------------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_LOCAL_AGENTS` | `allowed` | `allowed` or `off`. `off`: the MCP endpoint is closed for every token and the desktop app's *Agent* view runs on the company AI (the assistant), or says that AI is off when none is configured. Any other value stops the server at startup |
+
+Like every variable it also works as `TEAMCRAFT_LOCAL_AGENTS_FILE`. The
+startup log shows `local_agents=allowed|off`. Changing it needs a restart
+of the server; the desktop app picks it up at its next sign-in or window
+reload and checks it again before every agent start.
+
+What `off` does:
+
+* `POST /api/v1/mcp` answers every call with `403` and a JSON-RPC error
+  naming this setting, whoever sends it and with whichever token
+  (administrators included): the desktop app's agent, the `teamcraft mcp`
+  bridge, an agent the user set up by hand, an older desktop app. Without
+  a valid token the answer stays `401`. The built-in assistant is not
+  affected: it calls the same tools inside the server, not over this
+  endpoint. Refusals are not written to the audit log (they change
+  nothing).
+* `GET /api/v1/me` reports `capabilities.local_agents: false` and
+  `capabilities.mcp: false`. The desktop app then ends an agent that is
+  still running and refuses to start one (in the app's Rust code, not only
+  in the user interface). Its **Agent** view – the app's one place for AI –
+  runs on the company AI instead: with an assistant configured
+  (`TEAMCRAFT_ASSISTANT_*`), questions go to the server's assistant
+  automatically, with no local option shown (the key never reaches the
+  app); without one the view says that AI is switched off by the
+  administrator. *Settings → Agents* shows the same explanation. A
+  desktop app older than this setting still offers its local agent, but
+  the agent gets no TeamCraft tools: the endpoint refuses it.
+* The desktop app marks the MCP connection it hands to a local agent with
+  the header `X-TeamCraft-Client: desktop-agent`. It only picks the
+  wording of the refusal; leaving it out does not get a call through.
+
+What `off` does **not** do – it is cooperative enforcement, not a
+barrier against a determined user: it does not close the REST API
+(`/api/v1/…`) to a user's own personal access token. A program the user
+writes, or another MCP client or agent that wraps the REST API with that
+token, still reads and writes with that user's rights and can hand what it
+reads to an AI provider of the user's choice. Nor can a server stop
+anyone from copying what they see into another tool. The complement is scoped personal access
+tokens: give an agent a `read_only` or `mcp_only` token (see
+[API reference](../reference/api.md#token-scopes)). A written usage policy, the token list of each user
+(*Account → API tokens*, revocable by administrators) and the audit log
+(writes are recorded under the user's name) are the controls for the rest.
 
 ## Tests
 

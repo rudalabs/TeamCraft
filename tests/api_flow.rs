@@ -3563,6 +3563,164 @@ async fn preview_images_stored_in_cad_files() {
     app.teardown().await;
 }
 
+/// NX parts get a thumbnail rendered from their 3D preview (the JPEG in
+/// the file is small and poor); an NX assembly has no 3D preview and keeps
+/// its embedded JPEG.
+#[tokio::test]
+async fn nx_part_thumbnails_are_rendered_from_the_3d_preview() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "assembly", "name": "Crada", "project": "GEARBOX" })),
+    )
+    .await;
+    let nx = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/cad/nist/mtc-assembly/nx");
+    let nut = std::fs::read(nx.join("90591A141 HEX NUT.prt")).unwrap();
+    let assembly = std::fs::read(nx.join("NIST mtc crada assembly.prt")).unwrap();
+    let files = app
+        .api_multipart(
+            "/api/v1/items/ASM-000001/revisions/A/files",
+            &eng,
+            &[("nut.prt", &nut), ("crada.prt", &assembly)],
+            &[],
+        )
+        .await;
+    assert_eq!(files.status, StatusCode::CREATED, "{}", files.text());
+    let files = files.json();
+    let id_of = |name: &str| {
+        files
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["filename"] == name)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    let thumbnail = |id: String| {
+        let app = &app;
+        let eng = &eng;
+        async move {
+            app.api(
+                Method::GET,
+                &format!("/api/v1/files/{id}/thumbnail"),
+                eng,
+                None,
+            )
+            .await
+        }
+    };
+    let part = thumbnail(id_of("nut.prt")).await;
+    assert_eq!(part.status, StatusCode::OK, "{}", part.text());
+    assert_eq!(part.header("content-type").as_deref(), Some("image/png"));
+    assert!(part.body.starts_with(&[0x89, b'P', b'N', b'G']));
+    // IHDR: the rendered size, RGBA
+    assert_eq!(&part.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
+    let again = thumbnail(id_of("nut.prt")).await;
+    assert_eq!(again.body, part.body, "served from the cache");
+
+    let asm = thumbnail(id_of("crada.prt")).await;
+    assert_eq!(asm.status, StatusCode::OK, "{}", asm.text());
+    assert_eq!(asm.header("content-type").as_deref(), Some("image/jpeg"));
+    app.teardown().await;
+}
+
+/// An NX assembly has no tessellation of its own: its 3D preview is put
+/// together from the previews of its part files, found by file name and
+/// placed as the assembly says (the NIST assembly: 36 instances of 8
+/// parts). Its thumbnail is drawn from that preview.
+#[tokio::test]
+async fn nx_assemblies_are_put_together_from_their_parts() {
+    // the NIST parts have up to 4 MB; the test default allows 1 MiB uploads
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "assembly", "name": "Crada", "project": "GEARBOX" })),
+    )
+    .await;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/cad/nist/mtc-assembly/nx");
+    let names = [
+        "NIST mtc crada assembly.prt",
+        "NIST mtc crada box.prt",
+        "NIST mtc crada cover.prt",
+        "NIST mtc crada plate.prt",
+        "NIST mtc crada polycarb.prt",
+        "90591A141 HEX NUT.prt",
+        "91274A118 SHCS.prt",
+        "91274A141 SHCS.prt",
+        "91304A112 FHSCS.prt",
+    ];
+    // one upload per file: together they exceed the test's upload limit
+    let mut asm_id = String::new();
+    for name in names {
+        let data = std::fs::read(dir.join(name)).unwrap();
+        let files = app
+            .api_multipart(
+                "/api/v1/items/ASM-000001/revisions/A/files",
+                &eng,
+                &[(name, data.as_slice())],
+                &[],
+            )
+            .await;
+        assert_eq!(
+            files.status,
+            StatusCode::CREATED,
+            "{name}: {}",
+            files.text()
+        );
+        if name == "NIST mtc crada assembly.prt" {
+            asm_id = files.json()[0]["id"].as_str().unwrap().to_string();
+        }
+    }
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{asm_id}/mesh"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.parts, 36, "every instance placed");
+    let b = mesh.bounds();
+    // the box is 152.4 × 101.6 mm; screws stand out on top
+    assert!((b[3] - b[0] - 152.4).abs() < 1.0, "{b:?}");
+    assert!((b[4] - b[1] - 101.6).abs() < 1.0, "{b:?}");
+    let again = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{asm_id}/mesh"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(again.body, r.body, "cached");
+
+    let thumb = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{asm_id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
+    assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
+    app.teardown().await;
+}
+
 /// The most used Teamcenter working features: favorites, saved
 /// searches, Save As and the BOM comparison.
 #[tokio::test]

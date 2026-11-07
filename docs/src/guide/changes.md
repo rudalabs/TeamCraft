@@ -67,8 +67,8 @@ priority and reviewers.
    revision page) and reviewers – or the draft is created from an accepted
    change request.
 2. **Submit** – the revisions move to *In Review*; they are frozen.
-3. Each reviewer **approves** or **rejects** with a reason. The author never
-   reviews their own change.
+3. Each reviewer **approves** or **rejects** with a reason. Reviewers must be
+   independent (see *Separation of duties* below).
 4. When everybody approved, **all revisions are released together**, and
    the accepted change requests the change implements become *implemented*.
    A rejection sends them back to *WIP*; fix, *reopen* and resubmit – or *cancel* the change (takes effect at once).
@@ -92,6 +92,27 @@ released there first. Dependencies of a project group you are not a member
 of are skipped by *Add all*; a member has to add or release them. The desktop app does the same with *Include
 unreleased dependencies* in the *Release…* dialog (on by default).
 
+### Separation of duties
+
+Nobody reviews work they did themselves. TeamCraft refuses a reviewer who
+
+- created the change order (the author),
+- submitted it, or prepared it as an administrator for the author (added
+  items or reviewers, edited or submitted the draft – read from the audit log), or
+- **changed the revisions under review**: created a revision, uploaded a
+  file to it, or has a logged check-in, revision, file, BOM (including BOM
+  import and replace) or reference edit on it.
+
+The rule is checked when a reviewer is added (400), when the change is
+submitted (409, naming the reviewer to remove) and again when a reviewer
+decides (403), because people can edit a draft after they were added. An
+administrator can still act for the author, but then cannot also review that
+change. The rule is always on; a team needs at least one person who did not
+touch the files. The user who submitted a change is stored in
+`changes.submitted_by`. Changes that were already in review when the rule
+was introduced keep working: only the author is refused on those until they
+are withdrawn and submitted again.
+
 ### Suggested reviewers
 
 Next to the reviewer picker of a draft change, TeamCraft suggests up to
@@ -101,7 +122,7 @@ already keeps – no AI, the same data always gives the same order:
 
 | Source | Example reason | Points |
 |---|---|---|
-| edits of an affected item in the last 90 days (check-ins, uploads, BOM and attribute edits) | edited PRT-000005 3 times in the last 90 days | 3 + one per edit (at most 10 per item) |
+| edits of an earlier revision of an affected item in the last 90 days (check-ins, uploads, BOM and attribute edits) | edited PRT-000005 3 times in the last 90 days | 3 + one per edit (at most 10 per item) |
 | a decision on an earlier change with the same items | reviewed ECO-000012 (same items) | 4 (still pending: 2) |
 | owner of a dependent: creator or author of the latest revision of an item that uses, documents or references an affected item | owns ASM-000003, which uses PRT-000005 | 2 |
 | manager of the project group of an affected item | manager of ROVER | 3 |
@@ -109,7 +130,9 @@ already keeps – no AI, the same data always gives the same order:
 
 Each source counts at most a few times per person, so one busy source
 cannot outweigh the others. Only active CAD editors and admins – the users
-who may review – are suggested, never the author and never someone already
+who may review – are suggested, never the author, never someone who changed the
+affected revisions in this change (they cannot review it, see below), never the
+administrator who is preparing the change and never someone already
 assigned. The desktop app shows the same suggestions on the tab of a draft
 change, the REST API has `GET /api/v1/changes/{number}/suggested-reviewers`
 and AI assistants the MCP tool `suggest_reviewers`. Suggestions never
