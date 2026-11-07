@@ -5,7 +5,8 @@
 <h1 align="center">TeamCraft</h1>
 
 <p align="center">
-  <strong>Open-source product lifecycle management, built in pure Rust.</strong><br />
+  <strong>Free, open-source product lifecycle management, built in pure Rust.</strong><br />
+  For early-stage startups and large student teams that have outgrown shared folders.<br />
   Check your CAD data out and in, keep every version, release with reviews,
   follow changes through assemblies and see STEP, NX, mesh and point-cloud models
   in 3D – in the browser, in the desktop app or through the REST API.<br />
@@ -37,6 +38,7 @@
   <a href="https://rudalabs.github.io/TeamCraft/">Documentation</a> ·
   <a href="#download">Download</a> ·
   <a href="#quick-start">Quick start</a> ·
+  <a href="#enterprise-management">Enterprise management</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/guide/tour.html">Feature tour</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/reference/formats.html">File formats</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/reference/api.html">REST API</a> ·
@@ -61,6 +63,29 @@
 > guarantee that it works as described or is fit for any particular purpose,
 > and no liability for any damage or data loss. See sections 6 and 7 of the
 > [MPL-2.0](LICENSE).
+
+## Who it is for
+
+TeamCraft is free of charge and open source (MPL-2.0): no licence fees, no
+seat counts, no vendor lock-in, and the data stays in your own PostgreSQL
+database and file vault. It is made for two kinds of teams that need to
+professionalise their PLM / PDM before they can afford, or justify, a
+commercial system:
+
+- **Early-stage hardware startups** – the first customer, auditor or investor
+  asks which revision was delivered, who approved it and what changed since.
+  TeamCraft gives you released revisions, change orders with reviews, BOMs and
+  an audit trail from day one, on one server you run yourself.
+- **Large student organisations** – racing, rocketry, satellite, robotics and
+  similar teams with dozens to hundreds of members, a new generation every
+  year and real engineering hand-overs. Knowledge stays in the system instead
+  of in the inbox of last year's lead: what was built, from which revision,
+  with which simulation results and which deviations.
+
+In both cases, "professionalise" means the same things: check-out instead of
+overwriting each other's files, revisions and releases instead of
+`final_v3_really_final.step`, reviewed change orders, traceable BOMs, and
+onboarding where new members sign in with the accounts they already have.
 
 ## What works
 
@@ -125,6 +150,32 @@ end-to-end tests against a real PostgreSQL.
 - **REST API** – everything the UI does, with personal access tokens.
 - **MCP server** – AI assistants such as Claude Code search, explain BOMs and draft changes with your rights, never approving anything.
 - **Ask TeamCraft (optional)** – a sidebar on every page (web and desktop) that knows which page you are on, keeps your conversation and, with your own key for Anthropic, OpenAI, Azure OpenAI or any OpenAI-compatible service, or a local model (Ollama, vLLM), drafts release notes and answers questions with your rights, read-only by default.
+
+## Enterprise management
+
+The features an IT department or a team lead asks about before rolling a
+system out to an organisation. All of them are part of the free release –
+there is no separate enterprise edition.
+
+| Area | What TeamCraft offers |
+|------|-----------------------|
+| **Identity and access** | Single sign-on with any OpenID Connect provider (Keycloak, Entra ID, Google, Authentik …), IdP groups mapped to roles and project groups; viewer / editor / admin roles; [restricted project groups](https://rudalabs.github.io/TeamCraft/admin/permissions.html) that stay invisible to outsiders, even inside BOMs, search, notifications and the AI assistant. |
+| **Traceability** | An [audit log](https://rudalabs.github.io/TeamCraft/admin/operations.html) of every change and every sign-in, failed attempts included; four-eyes change orders where authors cannot approve their own work; released data that never changes; as-built records per serial number. |
+| **Company AI instead of shadow AI** | *Ask TeamCraft* runs on the AI service the organisation chooses – Anthropic, OpenAI, Azure OpenAI, any OpenAI-compatible endpoint or a local model (Ollama, vLLM). The key stays on the server and never reaches a browser or the desktop app; the assistant works with each user's rights, read-only by default, and every question is audited (without its content). |
+| **Operations** | [Docker install](https://rudalabs.github.io/TeamCraft/admin/docker.html) with one script, [backup and restore](https://rudalabs.github.io/TeamCraft/admin/operations.html#backups) of database and vault in one command, `/healthz` and `/readyz` probes, [Prometheus metrics](https://rudalabs.github.io/TeamCraft/admin/operations.html#metrics-for-prometheus), documented [upgrades](https://rudalabs.github.io/TeamCraft/admin/upgrade.html) and a [support policy](https://rudalabs.github.io/TeamCraft/admin/support-policy.html). |
+| **Integration** | REST API, an MCP server for AI tools, signed [event webhooks](https://rudalabs.github.io/TeamCraft/admin/webhooks.html), e-mail and Mattermost notifications. |
+| **Your look** | Your own logos under *Admin → Branding*, shown in the web UI and the desktop app. |
+| **Configuration** | Everything through environment variables, each also as `*_FILE` for Docker or Kubernetes secrets – see the [configuration reference](https://rudalabs.github.io/TeamCraft/admin/configuration.html). |
+
+**In progress** – open pull requests and issues, not in a release yet:
+
+- **Company AI only** ([#154](https://github.com/rudalabs/TeamCraft/pull/154)) – administrators can switch off the desktop app's own local AI agents, so employees use the organisation's configured AI instead of their own tools (data-loss prevention).
+- **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – stricter access and interface control per project group.
+- **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – wider separation of duties, review policies per project group, sign-off and handover.
+- **Scoped access tokens** – personal access tokens limited to read-only or MCP-only use.
+
+TeamCraft is a community project without commercial support or a service
+level agreement; see the warning above.
 
 ## Download
 
