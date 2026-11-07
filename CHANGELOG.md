@@ -38,6 +38,11 @@ Changes on `main` since the `v0.2.0` tag.
 
 ### Fixed
 
+- Desktop app: the assistant answer hung when a whole line looked like an item
+  number to the folder import (two variables of the same name), and item
+  numbers in answers were never links. Simulation numbers (`SIM-…`) are links
+  now as well, in the web UI too.
+
 - The reference scan records the names of STEP exports as a second name, and
   no longer reports noise for JT files.
 - The duplicate-files report counts the files of a hidden revision correctly.

@@ -1360,7 +1360,7 @@
     return !!(state.me && state.me.capabilities && state.me.capabilities.assistant);
   }
 
-  var ITEM_NUMBER = /\b(?:PRT|ASM|DOC|SW)-\d{3,}\b/g;
+  var ITEM_NUMBER_IN_TEXT = /\b(?:PRT|ASM|DOC|SW|SIM)-\d{3,}\b/g;
 
   /** Text with generated item numbers as links that open the item. */
   function itemLink(number) {
@@ -1369,8 +1369,8 @@
 
   function itemLinks(text) {
     var nodes = [], last = 0, m;
-    ITEM_NUMBER.lastIndex = 0;
-    while ((m = ITEM_NUMBER.exec(text)) !== null) {
+    ITEM_NUMBER_IN_TEXT.lastIndex = 0;
+    while ((m = ITEM_NUMBER_IN_TEXT.exec(text)) !== null) {
       if (m.index > last) nodes.push(text.slice(last, m.index));
       nodes.push(itemLink(m[0]));
       last = m.index + m[0].length;
@@ -4360,7 +4360,7 @@
     return formatKindsPromise;
   }
 
-  var ITEM_NUMBER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+  var IMPORT_NUMBER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
   /** Kinds that become an item of their own (grouped by base name). */
   var GROUPED_KINDS = ["part", "assembly", "model", "drawing", "exchange", "mesh", "visualization", "electronics"];
 
@@ -4432,7 +4432,7 @@
         key: key, name: g.name, files: g.files,
         type: g.kinds.indexOf("assembly") >= 0 ? "assembly"
           : g.kinds.some(function (k) { return k !== "drawing"; }) ? "part" : "document",
-        number: opts.numbersFromNames && ITEM_NUMBER.test(g.name) ? g.name.toUpperCase() : null
+        number: opts.numbersFromNames && IMPORT_NUMBER.test(g.name) ? g.name.toUpperCase() : null
       };
     });
     if (extras.length && opts.extras) {
