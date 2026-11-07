@@ -6,6 +6,7 @@
 
 pub mod access;
 pub mod as_built;
+pub mod assemblies;
 pub mod assistant;
 pub mod assistant_threads;
 pub mod attributes;

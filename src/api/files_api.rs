@@ -71,7 +71,7 @@ pub(super) async fn file_mesh(
 ) -> AppResult<Response> {
     let file = files::get(&st.db, &me, id).await?;
     let sha = file.sha256.clone();
-    web::mesh_response(&st, &file, &sha).await
+    web::mesh_response(&st, &me, &file, &sha).await
 }
 
 /// 3D preview mesh of a file version.
@@ -82,7 +82,7 @@ pub(super) async fn version_mesh(
 ) -> AppResult<Response> {
     let (version, _) = files::get_version(&st.db, &me, id).await?;
     let file = files::get(&st.db, &me, version.file_id).await?;
-    web::mesh_response(&st, &file, &version.sha256).await
+    web::mesh_response(&st, &me, &file, &version.sha256).await
 }
 
 pub(super) async fn file_meta(

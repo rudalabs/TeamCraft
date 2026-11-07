@@ -27,7 +27,21 @@ list is on every server at `/formats` and `GET /api/v1/formats`
 NX parts (NX 1980 and later) are read through their stream container
 (`SPLMSSTR`, `src/nxpart.rs`): the referenced component files come only from
 its reference streams (not from the save history), the preview image from
-`/Root/images/preview`.
+`/Root/images/preview`, and the 3D preview of parts from
+`/Root/FastLoad/JT`: a JT 9 file whose finest level of detail
+(topologically compressed tri-strip sets, `src/mesh/jt.rs`) is refined
+along its stored surface normals up to 3 × 3 (`src/mesh/pn.rs`, at most
+about 500 000 triangles) and shown in millimetres. Assemblies carry no
+such stream: their 3D preview is put together from the previews of their
+part files (`src/nxasm.rs` reads the components and placements from
+`/Root/FastLoad/Structure`, `src/services/assemblies.rs` places the parts).
+Components are found by file name, like file references – in the
+assembly's revision first, otherwise in the latest revision of another
+item – and sub-assemblies are followed up to 8 levels deep; components
+that are not in TeamCraft are left out, and so are components on a layer
+the assembly's layer settings hide (read from `/Root/UG_PART/UG_PART`), as
+in NX. Drawings have no 3D preview;
+stand-alone `.jt` files (JT 10) are not previewed yet.
 
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018

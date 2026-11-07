@@ -29,7 +29,9 @@
 * **3D preview**: `mesh.rs` reads STL/OBJ/PLY/OFF/3MF/AMF/glTF/3DS/point
   clouds and tessellates STEP with the truck kernel (`mesh/step.rs`; an own
   Part 21 reader in `mesh/p21.rs` filters what the kernel gets, AP242
-  tessellated geometry is read by `mesh/tessellated.rs`); `preview.rs` caches the
+  tessellated geometry is read by `mesh/tessellated.rs`), reads the JT 9
+  tessellation inside NX parts (`mesh/jt.rs`) and refines it along its
+  stored normals (`mesh/pn.rs`); `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child
   process with a time limit. The browser only draws the compact
   `TCMESH01` buffer; `simmesh.rs` turns VTK/VTU/VTP and CalculiX `.frd`

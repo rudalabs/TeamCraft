@@ -58,13 +58,17 @@ pub fn swpart(data: &[u8]) {
     }
 }
 
-/// NX part stream container: directory, every stream, the reference streams.
+/// NX part stream container: directory, every stream, the reference
+/// streams and the JT tessellation of the 3D preview.
 pub fn nxpart(data: &[u8]) {
     for stream in crate::nxpart::streams(data) {
         let _ = crate::nxpart::data(data, &stream);
     }
     let _ = crate::nxpart::reference_streams_in(data);
     let _ = crate::nxpart::reference_streams(Cursor::new(data), LIMIT);
+    let _ = crate::mesh::read("nx-part", data);
+    let _ = crate::nxasm::components(data);
+    let _ = crate::nxasm::visible_layers(data);
 }
 
 /// Referenced file names (every container and the text heuristic).

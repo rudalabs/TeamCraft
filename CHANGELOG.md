@@ -45,6 +45,13 @@ Changes since the `v0.2.0` tag.
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.
+- 3D preview of NX parts (`.prt`) from the JT tessellation NX stores in the
+  file, refined along its exact surface normals so round faces stay round.
+  The thumbnail of an NX part is rendered from it instead of the small JPEG
+  stored in the file.
+- 3D preview and thumbnail of NX assemblies, put together from the previews
+  of their part files (found by file name, sub-assemblies included);
+  components on layers the assembly hides are left out, as in NX.
 - Desktop app: an update notice. At most once a day the app asks GitHub for
   the latest release and shows a link to it in the status bar; it never
   downloads or installs anything. *Settings → Updates* switches it off.

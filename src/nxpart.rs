@@ -43,6 +43,9 @@ pub const REFERENCE_STREAMS: [&str; 2] = [
 ];
 /// Stream with the preview image.
 pub const PREVIEW_STREAM: &str = "/Root/images/preview";
+/// Stream with the lightweight representation (a JT 9 file after a short
+/// index), read by `mesh` for the 3D preview of parts.
+pub const JT_STREAM: &str = "/Root/FastLoad/JT";
 
 const FOOTER_OFFSET_AT: usize = 0x11;
 /// Bytes at the start searched for the header block.

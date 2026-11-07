@@ -126,6 +126,90 @@ async fn the_nx_assembly_references_its_parts() {
     }
 }
 
+/// Every NX part gets a 3D preview from the JT tessellation NX stores in
+/// it (`/Root/FastLoad/JT`): closed, consistently oriented, in millimetres,
+/// refined along the stored normals. The assembly has no such stream and
+/// says so (its preview image is shown instead).
+#[test]
+fn nx_parts_get_a_closed_3d_preview() {
+    for (rel, max_extent_mm) in [
+        ("ctc-01/nx-1980/nist_ctc_01_asme1_nx1980_rd.prt", 1000.0),
+        ("mtc-assembly/nx/90591A141 HEX NUT.prt", 30.0),
+        ("mtc-assembly/nx/91274A118 SHCS.prt", 60.0),
+        ("mtc-assembly/nx/91274A141 SHCS.prt", 60.0),
+        ("mtc-assembly/nx/91304A112 FHSCS.prt", 60.0),
+        ("mtc-assembly/nx/NIST mtc crada box.prt", 1000.0),
+        ("mtc-assembly/nx/NIST mtc crada cover.prt", 1000.0),
+        ("mtc-assembly/nx/NIST mtc crada plate.prt", 1000.0),
+        ("mtc-assembly/nx/NIST mtc crada polycarb.prt", 1000.0),
+    ] {
+        assert_eq!(
+            preview::PreviewFormat::of(rel),
+            Some(preview::PreviewFormat::NxPart)
+        );
+        let mesh = preview::convert(preview::PreviewFormat::NxPart, &fixture(rel))
+            .unwrap_or_else(|e| panic!("{rel}: {e}"));
+        mesh.check().unwrap();
+        // LOD 0 has 1 350 to 6 450 triangles; refined 3 × 3
+        assert!(
+            mesh.triangle_count() > 9_000,
+            "{rel}: {}",
+            mesh.triangle_count()
+        );
+        // every edge once in each direction: closed and consistently oriented
+        let mut edges = std::collections::HashMap::<(u32, u32), u32>::new();
+        for t in mesh.indices.chunks_exact(3) {
+            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                *edges.entry((a, b)).or_default() += 1;
+            }
+        }
+        assert!(
+            edges
+                .iter()
+                .all(|(&(a, b), &n)| n == 1 && edges.get(&(b, a)) == Some(&1)),
+            "{rel}: the mesh is not closed"
+        );
+        let b = mesh.bounds();
+        let extent = (0..3).map(|i| b[i + 3] - b[i]).fold(0.0, f32::max);
+        assert!(extent > 5.0 && extent < max_extent_mm, "{rel}: {b:?}");
+        let s = teamcraft::shape::compute(&mesh).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        assert!(s.is_valid() && s.closed && s.volume > 0.0, "{rel}: {s:?}");
+        let bytes = mesh.encode();
+        assert_eq!(mesh::Mesh::decode(&bytes).unwrap(), mesh);
+    }
+    let err = preview::convert(
+        preview::PreviewFormat::NxPart,
+        &fixture("mtc-assembly/nx/NIST mtc crada assembly.prt"),
+    )
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("no lightweight representation"),
+        "{err}"
+    );
+}
+
+/// A damaged JT stream is an error, never a panic: every byte of the
+/// shape segment of a real part is flipped in turn (in steps).
+#[test]
+fn damaged_nx_parts_never_panic() {
+    let data = std::fs::read(fixture("mtc-assembly/nx/90591A141 HEX NUT.prt")).unwrap();
+    let streams = teamcraft::nxpart::streams(&data);
+    let jt = streams
+        .iter()
+        .find(|s| s.name == teamcraft::nxpart::JT_STREAM)
+        .unwrap();
+    let start = jt.offset as usize;
+    let end = start + jt.len as usize;
+    for at in (start..end).step_by(97) {
+        let mut copy = data.clone();
+        copy[at] ^= 0x5A;
+        let _ = mesh::read("nx-part", &copy);
+    }
+    for cut in (start..end).step_by(997) {
+        let _ = mesh::read("nx-part", &data[..cut]);
+    }
+}
+
 /// Every STEP fixture – AP203 geometry only and AP242 with PMI – gets a
 /// complete 3D preview. The AP242 file used to fail: its tessellated PMI
 /// (empty lists `()`) made the B-rep reader's parser reject the whole file.

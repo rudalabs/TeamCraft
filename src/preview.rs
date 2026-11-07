@@ -161,6 +161,8 @@ pub enum PreviewFormat {
     Glb,
     ThreeDs,
     Step,
+    /// Siemens NX parts: the lightweight (JT) representation they store.
+    NxPart,
     Pts,
     Xyz,
     Las,
@@ -172,7 +174,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 17] = [
+    pub const ALL: [PreviewFormat; 18] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -183,6 +185,7 @@ impl PreviewFormat {
         PreviewFormat::Glb,
         PreviewFormat::ThreeDs,
         PreviewFormat::Step,
+        PreviewFormat::NxPart,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
         PreviewFormat::Las,
@@ -215,6 +218,7 @@ impl PreviewFormat {
             PreviewFormat::Glb => "glb",
             PreviewFormat::ThreeDs => "3ds",
             PreviewFormat::Step => "step",
+            PreviewFormat::NxPart => "nx-part",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
             PreviewFormat::Las => "las",
@@ -410,6 +414,17 @@ impl Previews {
             base.join(format!("{sha256}.v{CACHE_VERSION}.tcm")),
             base.join(format!("{sha256}.v{CACHE_VERSION}.err")),
         ))
+    }
+
+    /// Where the composed preview of an assembly is cached: next to the
+    /// blob's own preview, named by the components it was built from
+    /// (`key`, hex), so a changed component gives a new file.
+    pub fn assembly_path(&self, sha256: &str, key: &str) -> AppResult<PathBuf> {
+        if key.is_empty() || !key.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(AppError::BadRequest("Invalid assembly key.".into()));
+        }
+        let (mesh, _) = self.paths(sha256)?;
+        Ok(mesh.with_file_name(format!("{sha256}.asm-{key}.v{CACHE_VERSION}.tcm")))
     }
 
     /// The cached shape signature (or the reason why there is none).
