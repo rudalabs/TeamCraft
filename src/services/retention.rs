@@ -35,7 +35,8 @@ use crate::{
 /// Every column that may name a vault blob by its SHA-256 – the files and
 /// their versions, change request attachments, staged STEP imports and
 /// upload sessions (the stored content, and the hashes the client announced
-/// or started from). `shape_signatures.sha256` is derived data and keeps no
+/// or started from). `shape_signatures.sha256` is derived data and
+/// `branding_logos.sha256` the hash of bytes kept in the row; neither keeps a
 /// blob alive. A test checks this list against the migrations.
 pub const BLOB_COLUMNS: &[(&str, &str)] = &[
     ("change_request_attachments", "sha256"),
@@ -48,7 +49,11 @@ pub const BLOB_COLUMNS: &[(&str, &str)] = &[
 ];
 
 /// Hash columns that are not references to vault content.
-pub const NOT_BLOB_COLUMNS: &[(&str, &str)] = &[("shape_signatures", "sha256")];
+pub const NOT_BLOB_COLUMNS: &[(&str, &str)] = &[
+    // the logo bytes are stored in the row itself (`data`)
+    ("branding_logos", "sha256"),
+    ("shape_signatures", "sha256"),
+];
 
 /// Grace period of the housekeeping: blobs of expired staged imports and
 /// upload sessions written or stored again within the last hour stay (and
