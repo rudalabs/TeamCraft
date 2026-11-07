@@ -28,7 +28,8 @@ async fn settings_describe_the_form_and_round_trip() {
     );
     assert_eq!(s["email_enabled"], json!(false));
     assert_eq!(s["mattermost_enabled"], json!(false));
-    assert_eq!(s["email"], json!(false));
+    // e-mail notifications are on for a new user (users.notify_email DEFAULT TRUE)
+    assert_eq!(s["email"], json!(true));
 
     let first = kinds[0]["value"].as_str().unwrap().to_string();
     let r = app
@@ -46,6 +47,8 @@ async fn settings_describe_the_form_and_round_trip() {
         .api(Method::GET, "/api/v1/notifications/settings", &token, None)
         .await
         .json();
+    assert_eq!(s["email"], json!(false), "e-mail switched off by the PUT");
+    assert_eq!(s["mattermost"], json!(false));
     assert_eq!(s["mattermost_username"], json!("ed.m"));
     let k = s["kinds"].as_array().unwrap();
     assert_eq!(k[0]["on"], json!(false));
