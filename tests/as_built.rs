@@ -442,3 +442,363 @@ async fn a_newer_design_release_marks_the_unit_and_hidden_designs_are_placeholde
     assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text());
     app.teardown().await;
 }
+
+/// Id of revision `code` of item `number`.
+async fn revision_id(app: &common::TestApp, number: &str, code: &str) -> uuid::Uuid {
+    sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT r.id FROM revisions r JOIN items i ON i.id = r.item_id
+         WHERE i.number = $1 AND r.code = $2",
+    )
+    .bind(number)
+    .bind(code)
+    .fetch_one(&app.pool)
+    .await
+    .expect("revision exists")
+}
+
+#[tokio::test]
+async fn deviation_writes_need_the_checkout_and_hidden_deviations_are_not_found() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("erika", Role::Editor, &["ROVER"]).await;
+    let (_, colleague) = app.user_in("emil", Role::Editor, &["ROVER"]).await;
+    let (_, viewer) = app.user_in("vera", Role::Viewer, &["ROVER"]).await;
+    let (_, outsider) = app.user_in("otto", Role::Editor, &["ROCKET"]).await;
+    let design = app
+        .create_item(
+            &eng,
+            json!({ "item_type": "part", "name": "Bracket", "project": "ROVER" }),
+        )
+        .await;
+    // a unit of the in-work design (prototype); checked out by erika
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/items/{design}/revisions/A/built-units"),
+            &eng,
+            Some(json!({ "serial_number": "B-1", "with_bom": false })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let unit = r.json()["item_number"].as_str().unwrap().to_string();
+    let ab = format!("/api/v1/items/{unit}/revisions/A");
+    let r = app
+        .api(
+            Method::POST,
+            &format!("{ab}/as-built/deviations"),
+            &eng,
+            Some(
+                json!({ "kind": "material", "feature": "Sheet", "designed": "1.4301",
+                         "built": "1.4404" }),
+            ),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let id = r.json()["id"].as_str().unwrap().to_string();
+    let deviation = format!("/api/v1/as-built-deviations/{id}");
+    let add = json!({ "kind": "process", "feature": "Weld seam" });
+    let patch = json!({ "disposition": "scrap" });
+
+    // a viewer of the group and an editor of another group may read, not write
+    for (who, token) in [("viewer", &viewer), ("non-member", &outsider)] {
+        let r = app
+            .api(Method::GET, &format!("{ab}/as-built"), token, None)
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{who} reads: {}", r.text());
+        let r = app
+            .api(
+                Method::POST,
+                &format!("{ab}/as-built/deviations"),
+                token,
+                Some(add.clone()),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{who} adds: {}", r.text());
+        let r = app
+            .api(Method::PATCH, &deviation, token, Some(patch.clone()))
+            .await;
+        assert_eq!(
+            r.status,
+            StatusCode::FORBIDDEN,
+            "{who} patches: {}",
+            r.text()
+        );
+        let r = app.api(Method::DELETE, &deviation, token, None).await;
+        assert_eq!(
+            r.status,
+            StatusCode::FORBIDDEN,
+            "{who} deletes: {}",
+            r.text()
+        );
+    }
+
+    // a member while erika has the revision checked out
+    let r = app
+        .api(
+            Method::PUT,
+            &format!("{ab}/as-built/record"),
+            &colleague,
+            Some(json!({ "design": design, "serial_number": "B-2" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+    assert!(r.text().contains("checked out"), "{}", r.text());
+    let r = app
+        .api(Method::PATCH, &deviation, &colleague, Some(patch.clone()))
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+
+    // nothing changed
+    let r = app
+        .api(Method::GET, &format!("{ab}/as-built"), &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["record"]["serial_number"], "B-1");
+    assert_eq!(r.json()["deviations"][0]["disposition"], "open");
+    assert_eq!(r.json()["summary"]["total"], 1);
+
+    // the group becomes restricted: the outsider gets "not found", not 403
+    sqlx::query("UPDATE projects SET visibility = 'restricted' WHERE code = 'ROVER'")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let r = app
+        .api(Method::PATCH, &deviation, &outsider, Some(patch.clone()))
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text());
+    let r = app.api(Method::DELETE, &deviation, &outsider, None).await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text());
+    assert!(!r.text().contains(&unit), "{}", r.text());
+    let r = app
+        .api(Method::GET, &format!("{ab}/as-built"), &outsider, None)
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text());
+
+    // the owner still can
+    let r = app
+        .api(Method::PATCH, &deviation, &eng, Some(patch.clone()))
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["disposition"], "scrap");
+    assert_eq!(r.json()["built"], "1.4404", "unchanged fields are kept");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn submit_needs_a_build_record_and_deviations_are_limited() {
+    let app = app_or_skip!();
+    let (erika, eng) = app.user_in("erika", Role::Editor, &["ROVER"]).await;
+    app.user("rolf", Role::Editor).await;
+    // an as-built item created directly: no build record yet
+    let unit = app
+        .create_item(
+            &eng,
+            json!({ "item_type": "as_built", "name": "Loose unit", "project": "ROVER" }),
+        )
+        .await;
+    assert!(unit.starts_with("AB-"), "{unit}");
+    let ab = format!("/api/v1/items/{unit}/revisions/A");
+
+    // the deviation limit: fill up to one below it, then one more fits
+    let limit = teamcraft::services::as_built::MAX_DEVIATIONS;
+    sqlx::query(
+        "INSERT INTO as_built_deviations (id, revision_id, position, kind, feature,
+                                          disposition, created_by)
+         SELECT gen_random_uuid(), $1, g, 'other', 'Feature ' || g, 'use_as_is', $2
+         FROM generate_series(1, $3) g",
+    )
+    .bind(revision_id(&app, &unit, "A").await)
+    .bind(erika.id)
+    .bind(i32::try_from(limit - 1).unwrap())
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let one = json!({ "kind": "other", "feature": "Last one", "disposition": "use_as_is" });
+    let r = app
+        .api(
+            Method::POST,
+            &format!("{ab}/as-built/deviations"),
+            &eng,
+            Some(one.clone()),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    assert_eq!(r.json()["position"], i64::try_from(limit).unwrap());
+    let r = app
+        .api(
+            Method::POST,
+            &format!("{ab}/as-built/deviations"),
+            &eng,
+            Some(one),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    assert!(
+        r.text().contains(&format!("at most {limit} deviations")),
+        "{}",
+        r.text()
+    );
+
+    // every deviation is decided, but the build record is missing
+    checkin(&app, &eng, &unit, "A").await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/changes",
+            &eng,
+            Some(json!({ "title": "Unit without record" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let chg = r.json()["number"].as_str().unwrap().to_string();
+    for (path, body) in [
+        ("items", json!({ "item": unit })),
+        ("reviewers", json!({ "username": "rolf" })),
+    ] {
+        let r = app
+            .api(
+                Method::POST,
+                &format!("/api/v1/changes/{chg}/{path}"),
+                &eng,
+                Some(body),
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    }
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/changes/{chg}/submit"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+    assert!(r.text().contains("no build record"), "{}", r.text());
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn obsolete_design_revisions_take_no_new_units() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("erika", Role::Editor, &["ROVER"]).await;
+    let (_, rolf) = app.user("rolf", Role::Editor).await;
+    let (asm, _) = released_design(&app, &eng, &rolf).await;
+    // a unit recorded while A was current
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/items/{asm}/revisions/A/built-units"),
+            &eng,
+            Some(json!({ "serial_number": "OLD-1", "with_bom": false })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let unit = r.json()["item_number"].as_str().unwrap().to_string();
+
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/items/{asm}/revisions/A/obsolete"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+
+    // no new unit against the obsolete revision
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/items/{asm}/revisions/A/built-units"),
+            &eng,
+            Some(json!({ "serial_number": "NEW-1", "with_bom": false })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    assert!(r.text().contains("obsolete"), "{}", r.text());
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/built-units"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.json().as_array().map(Vec::len), Some(1), "{}", r.text());
+
+    // the existing unit keeps its record and may still correct it
+    let r = app
+        .api(
+            Method::PUT,
+            &format!("/api/v1/items/{unit}/revisions/A/as-built/record"),
+            &eng,
+            Some(
+                json!({ "design": asm, "design_revision": "A", "serial_number": "OLD-1",
+                         "note": "built before A was withdrawn" }),
+            ),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.json()["note"], "built before A was withdrawn");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn concurrent_units_with_one_serial_number_record_exactly_one() {
+    let app = app_or_skip!();
+    app.user_in("erika", Role::Editor, &["ROVER"]).await;
+    let (_, eng) = app.user_in("emil", Role::Editor, &["ROVER"]).await;
+    let design = app
+        .create_item(
+            &eng,
+            json!({ "item_type": "part", "name": "Housing", "project": "ROVER" }),
+        )
+        .await;
+    let design_rev = revision_id(&app, &design, "A").await;
+    let erika = app.actor("erika").await;
+    let emil = app.actor("emil").await;
+    for round in 0..3 {
+        let serial = format!("H-{round}");
+        let unit = |serial: &str| teamcraft::services::as_built::NewUnit {
+            serial_number: serial.to_string(),
+            ..Default::default()
+        };
+        let (a, b) = tokio::join!(
+            teamcraft::services::as_built::record_unit(
+                &app.pool,
+                &erika,
+                design_rev,
+                unit(&serial)
+            ),
+            teamcraft::services::as_built::record_unit(&app.pool, &emil, design_rev, unit(&serial)),
+        );
+        let ok = [a.is_ok(), b.is_ok()].iter().filter(|x| **x).count();
+        assert_eq!(ok, 1, "round {round}: {a:?} / {b:?}");
+        let refused = a.err().or(b.err()).unwrap();
+        assert!(
+            refused.to_string().contains("already recorded"),
+            "round {round}: {refused}"
+        );
+        let stored = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM as_built_records rec
+             JOIN items d ON d.id = rec.design_item_id
+             WHERE d.number = $1 AND rec.serial_number = $2",
+        )
+        .bind(&design)
+        .bind(&serial)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+        assert_eq!(stored, 1, "round {round}");
+        // the refused transaction left no as-built item behind
+        let units = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM items WHERE item_type = 'as_built' AND name LIKE $1",
+        )
+        .bind(format!("% – SN {serial}"))
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+        assert_eq!(units, 1, "round {round}");
+    }
+    app.teardown().await;
+}

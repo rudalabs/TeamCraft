@@ -9,7 +9,9 @@
 //!
 //! * a **build record** – the design revision (part, assembly or software)
 //!   the unit was built to, serial or lot number, build date and note. The
-//!   serial number is unique per design item;
+//!   serial number is unique per design item. The design revision may be in
+//!   work, in review or released (prototypes are built before the
+//!   release); an obsolete revision is refused for a new record;
 //! * **deviations** – how the unit departs from its design (kind, feature,
 //!   as designed, as built) and the **disposition** (open, use as is,
 //!   rework, repair, scrap);
@@ -31,7 +33,7 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::{self, Classification, DeviationKind, Disposition, ItemType},
+    domain::{self, Classification, DeviationKind, Disposition, ItemType, LifecycleState},
     error::{AppError, AppResult},
     models::Revision,
     services::{access, audit, items, revisions},
@@ -275,16 +277,42 @@ async fn write_record(
             })
         )));
     }
-    // Serialise serial-number checks per design item (and hold it against
-    // a concurrent delete, which locks it FOR UPDATE and then checks
-    // `item_is_design`).
-    let exists = sqlx::query_scalar::<_, Uuid>("SELECT id FROM items WHERE id = $1 FOR UPDATE")
-        .bind(design.item_id)
-        .fetch_optional(&mut *conn)
-        .await?
-        .is_some();
+    // Why the design item row is locked (the actor may only be able to read
+    // it, possibly in another group):
+    // * Serial numbers are unique per design item, but no unique index can
+    //   say so – the revisions of one unit share its serial number. Two
+    //   transactions recording the same serial would both pass the check
+    //   below; the row lock serialises them, so exactly one succeeds.
+    // * items::delete locks the row FOR UPDATE and then checks
+    //   `item_is_design`; holding the lock until commit keeps a design from
+    //   being deleted under a build record that is being written.
+    // FOR NO KEY UPDATE conflicts with both, but not with the FOR KEY SHARE
+    // locks that foreign-key checks (new BOM lines, references) take, so
+    // ordinary work on the design is not blocked.
+    let exists =
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM items WHERE id = $1 FOR NO KEY UPDATE")
+            .bind(design.item_id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .is_some();
     if !exists {
         return Err(access::not_found_item());
+    }
+    let previous = sqlx::query_scalar::<_, Uuid>(
+        "SELECT design_revision_id FROM as_built_records WHERE revision_id = $1",
+    )
+    .bind(rev.id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    // Units are recorded against in-work, in-review or released design
+    // revisions (prototypes are built before the release). An obsolete
+    // revision must not be used for new builds; a record that already
+    // names it (copied by Revise) may still be edited.
+    if design.state == LifecycleState::Obsolete.as_str() && previous != Some(design.id) {
+        return Err(AppError::BadRequest(format!(
+            "{} is obsolete; record the unit against a current revision of the design.",
+            revisions::label(design)
+        )));
     }
     if !facts.serial_number.is_empty() {
         let holder = sqlx::query_as::<_, (String, Option<Uuid>)>(
@@ -312,12 +340,6 @@ async fn write_record(
             )));
         }
     }
-    let previous = sqlx::query_scalar::<_, Uuid>(
-        "SELECT design_revision_id FROM as_built_records WHERE revision_id = $1",
-    )
-    .bind(rev.id)
-    .fetch_optional(&mut *conn)
-    .await?;
     sqlx::query(
         "INSERT INTO as_built_records (revision_id, design_revision_id, design_item_id,
                                        serial_number, built_on, note, updated_by, updated_at)
@@ -652,17 +674,80 @@ pub async fn add_deviation(
     get_deviation(pool, actor, id).await
 }
 
-/// Changes a deviation of an as-built revision checked out by the actor.
+/// Changed fields of a deviation; `None` keeps the stored value
+/// ([`patch_deviation`]).
+#[derive(Clone, Debug, Default)]
+pub struct DeviationPatch {
+    pub kind: Option<DeviationKind>,
+    pub feature: Option<String>,
+    pub designed: Option<String>,
+    pub built: Option<String>,
+    pub disposition: Option<Disposition>,
+    pub note: Option<String>,
+}
+
+impl From<DeviationInput> for DeviationPatch {
+    fn from(input: DeviationInput) -> Self {
+        DeviationPatch {
+            kind: Some(input.kind),
+            feature: Some(input.feature),
+            designed: Some(input.designed),
+            built: Some(input.built),
+            disposition: Some(input.disposition),
+            note: Some(input.note),
+        }
+    }
+}
+
+/// Replaces every field of a deviation of an as-built revision checked out
+/// by the actor.
 pub async fn update_deviation(
     pool: &PgPool,
     actor: &Actor,
     id: Uuid,
     input: DeviationInput,
 ) -> AppResult<Deviation> {
-    let input = input.validated()?;
-    let existing = get_deviation(pool, actor, id).await?;
+    patch_deviation(pool, actor, id, input.into()).await
+}
+
+/// Changes the given fields of a deviation of an as-built revision checked
+/// out by the actor. The stored deviation is read and merged while the
+/// revision row is locked – every writer of a deviation holds that lock –
+/// so two concurrent changes cannot overwrite each other's fields.
+pub async fn patch_deviation(
+    pool: &PgPool,
+    actor: &Actor,
+    id: Uuid,
+    patch: DeviationPatch,
+) -> AppResult<Deviation> {
+    // Read check first: a deviation of a hidden revision is "not found".
+    let located = get_deviation(pool, actor, id).await?;
     let mut tx = pool.begin().await?;
-    let rev = lock_editable(&mut tx, actor, existing.revision_id).await?;
+    let rev = lock_editable(&mut tx, actor, located.revision_id).await?;
+    let existing = sqlx::query_as::<_, Deviation>(&format!(
+        "{DEVIATION_SELECT} WHERE d.id = $1 AND d.revision_id = $2"
+    ))
+    .bind(id)
+    .bind(rev.id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::not_found("Deviation not found."))?;
+    let input = DeviationInput {
+        // the CHECK constraints keep the stored values parseable
+        kind: match patch.kind {
+            Some(kind) => kind,
+            None => DeviationKind::parse(&existing.kind).unwrap_or(DeviationKind::Other),
+        },
+        feature: patch.feature.unwrap_or_else(|| existing.feature.clone()),
+        designed: patch.designed.unwrap_or_else(|| existing.designed.clone()),
+        built: patch.built.unwrap_or_else(|| existing.built.clone()),
+        disposition: match patch.disposition {
+            Some(disposition) => disposition,
+            None => Disposition::parse(&existing.disposition).unwrap_or(Disposition::Open),
+        },
+        note: patch.note.unwrap_or_else(|| existing.note.clone()),
+    }
+    .validated()?;
     let updated = sqlx::query(
         "UPDATE as_built_deviations SET kind = $2, feature = $3, designed = $4, built = $5,
                 disposition = $6, note = $7, updated_at = now()

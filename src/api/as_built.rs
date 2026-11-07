@@ -18,7 +18,7 @@ use crate::{
     domain::{DeviationKind, Disposition},
     error::{AppError, AppResult},
     services::{
-        as_built::{self, DeviationInput, NewUnit, RecordInput},
+        as_built::{self, DeviationInput, DeviationPatch, NewUnit, RecordInput},
         items, projects,
     },
     AppState,
@@ -160,18 +160,20 @@ pub(super) async fn patch_deviation(
     Path(id): Path<Uuid>,
     ApiJson(body): ApiJson<PatchDeviation>,
 ) -> AppResult<Json<Value>> {
-    let current = as_built::get_deviation(&st.db, &me, id).await?;
-    let input = DeviationInput {
-        kind: parse_kind(body.kind.as_deref().unwrap_or(&current.kind))?,
-        feature: body.feature.unwrap_or(current.feature),
-        designed: body.designed.unwrap_or(current.designed),
-        built: body.built.unwrap_or(current.built),
-        disposition: parse_disposition(
-            body.disposition.as_deref().unwrap_or(&current.disposition),
-        )?,
-        note: body.note.unwrap_or(current.note),
+    // the service merges the given fields under the revision lock
+    let patch = DeviationPatch {
+        kind: body.kind.as_deref().map(parse_kind).transpose()?,
+        feature: body.feature,
+        designed: body.designed,
+        built: body.built,
+        disposition: body
+            .disposition
+            .as_deref()
+            .map(parse_disposition)
+            .transpose()?,
+        note: body.note,
     };
-    let deviation = as_built::update_deviation(&st.db, &me, id, input).await?;
+    let deviation = as_built::patch_deviation(&st.db, &me, id, patch).await?;
     Ok(Json(json!(deviation)))
 }
 

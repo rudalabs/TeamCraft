@@ -12,6 +12,7 @@
 - [Finding similar parts](guide/similar-parts.md)
 - [Change requests, change orders and notifications](guide/changes.md)
 - [Simulations (FEA, CFD)](guide/simulation.md)
+- [As-built records](guide/as-built.md)
 - [Desktop app](guide/desktop.md)
 - [Ask TeamCraft (assistant)](guide/assistant.md)
 - [Manual test tour](guide/tour.md)

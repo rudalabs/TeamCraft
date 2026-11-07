@@ -927,8 +927,8 @@ pub(crate) async fn ensure_may_take_out(
 
 /// Deletes an item created by mistake. Only allowed while it has a single
 /// in-work revision, is not used in any BOM, not part of any change, no
-/// simulation basis and – in a restricted group – no affected item of a
-/// change request.
+/// simulation basis, no design that units were built to and – in a
+/// restricted group – no affected item of a change request.
 ///
 /// # Invariants
 ///
@@ -943,8 +943,9 @@ pub(crate) async fn ensure_may_take_out(
 ///   groups only).
 /// * **Webhooks:** none.
 /// * **Refused with 409:** more than one revision or one not in work, used in
-///   a BOM, part of a change, basis of a simulation, or (restricted group)
-///   an affected item of a change request.
+///   a BOM, part of a change, basis of a simulation, units were recorded as
+///   built to it (a build record names one of its revisions), or
+///   (restricted group) an affected item of a change request.
 /// * **Atomic:** one transaction.
 pub async fn delete(pool: &PgPool, actor: &Actor, item_id: Uuid) -> AppResult<String> {
     actor.require(Role::Editor)?;

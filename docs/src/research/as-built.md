@@ -42,9 +42,11 @@ Common ground:
   repair, retrofit = *as-maintained*); the old revision stays.
 - **Build record per as-built revision:** the design revision it was built
   to (a part, assembly or software revision), serial or lot number, build
-  date, note. The serial number is unique per design item. Like the basis
-  links of a simulation, the record belongs to the revision: editable only
-  while it is checked out, copied by *Revise*, frozen at release.
+  date, note. The serial number is unique per design item. The design
+  revision may be in work, in review or released; an obsolete one is refused.
+  Like the basis links of a simulation, the record belongs to the revision:
+  editable only while it is checked out, copied by *Revise*, frozen at
+  release.
 - **As-built BOM** = the normal BOM of the as-built revision. *Record a built
   unit* on a part or assembly creates the as-built item with the design's BOM
   copied in; the existing cross-item BOM comparison shows *design → as-built*.
