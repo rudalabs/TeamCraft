@@ -713,7 +713,7 @@ check_png() {
 
 # sidebar_shot NAME PATH – opens PATH, unfolds the "Ask TeamCraft" sidebar
 # (no question is asked: the server has no model behind the placeholder key)
-# and saves the screenshot. The sidebar is folded again afterwards, because
+# and saves the screenshot (assistant-sidebar.png is in the README). The sidebar is folded again afterwards, because
 # the browser remembers whether it was open.
 sidebar_shot() {
     local name=$1 path=$2
@@ -745,10 +745,13 @@ capture_pages() {
         die "the 3D viewer reported: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
     fi
     snap "viewer-3d$suffix"
-    # not in the README: the similar part search (signature from the conversion above)
+    # not in the README (revision-files shows the same card): the similar
+    # part search (signature from the conversion above)
     shot "revision-similar$suffix" "/revisions/$BRACKET_REV" '#similar'
     shot "bom$suffix" "/revisions/$TOP_REV/bom"
-    shot "change-review$suffix" "/changes/$CHANGE_ID"
+    # release readiness and the impact analysis (the review form is in
+    # desktop-change)
+    shot "change-review$suffix" "/changes/$CHANGE_ID" '#readiness'
     shot "notifications$suffix" /notifications
     shot "assistant$suffix" /assistant
     shot "account$suffix" /account '#appearance'
@@ -924,7 +927,9 @@ desktop_run() {
 
 # desktop_agent SUFFIX – the Agent view (Ctrl+4) with the scripted demo agent
 # (scripts/demo-agent.sh): start it in the navigator, ask one question and
-# wait for the streamed answer. desktop-agent-nav*.png (the navigator before
+# wait for the streamed answer (desktop-agent.png is in the README; the
+# worklist image is not, the run only needs the worklist for its clicks).
+# desktop-agent-nav*.png (the navigator before
 # the start) is a calibration image for the click position, not in the README.
 desktop_agent() {
     local suffix=$1
@@ -948,14 +953,26 @@ desktop_click() {
         die "xdotool could not click at $1,$2"
 }
 
-# Simulation result in the 3D viewer with its colour legend – extra images,
-# not used in the README. Seeded last, so the README images stay as they are.
+# Simulation results: simulation-cfd-3d and simulation-results are in the
+# README, simulation-result-3d is an extra image. Seeded after the README's
+# web pages and the desktop run, so those images keep their content.
 capture_simulation() {
     log "adding a simulation with a 3D result"
     item sim simulation "Mast arm static analysis"
     result_vtu "$WORK/mast-arm-static.vtu"
     local result
     result=$(attach sim "$WORK/mast-arm-static.vtu" mast-arm-static.vtu)
+    # The basis it was computed with and its result values – made up for the
+    # screenshot, like the VTU. The natural frequency misses its limit on
+    # purpose, so the table shows a pass and a fail.
+    japi admin POST "/items/${NUM[sim]}/revisions/latest/simulation/bases" \
+        "$(jq -nc --arg i "${NUM[bracket]}" '{item: $i, file: "mounting_bracket.stp", role: "geometry"}')" >/dev/null
+    japi admin PUT "/items/${NUM[sim]}/revisions/latest/simulation/results" '{"results": [
+        {"name": "Max. von Mises stress", "value": 142, "unit": "MPa", "upper_limit": 180,
+         "load_case": "LC1 wind 25 m/s", "solver": "CalculiX", "solver_version": "2.21"},
+        {"name": "Max. displacement", "value": 0.8, "unit": "mm", "upper_limit": 1.0, "load_case": "LC1 wind 25 m/s"},
+        {"name": "Safety factor", "value": 1.9, "lower_limit": 1.5, "load_case": "LC1 wind 25 m/s"},
+        {"name": "First natural frequency", "value": 36.5, "unit": "Hz", "lower_limit": 40, "load_case": "Modal"}]}' >/dev/null
     checkin sim
     viewport 1440 900 "$SCALE" false
     open_page "/files/$result/preview"
@@ -964,7 +981,7 @@ capture_simulation() {
     [[ $(js 'return document.querySelector(".viewer-legend") !== null;') == true ]] ||
         die "the simulation result has no colour legend: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
     snap simulation-result-3d
-    shot simulation-results "/revisions/${REV[sim]}" '#simulation-results'
+    shot simulation-results "/revisions/${REV[sim]}" '#simulation-basis'
 
     # CFD: flow around the mast fairing, coloured by velocity magnitude (the
     # README image). The viewer has no camera presets: the arrow keys turn
@@ -987,9 +1004,61 @@ capture_simulation() {
     snap simulation-cfd-3d
 }
 
-# Read permissions – extra images, not used in the README: the settings of a
-# restricted group (as admin) and what a non-member sees of a link into it.
-# Seeded last, so the README images stay as they are; signs the browser out.
+# NX in 3D – nx-assembly-3d is in the README, nx-files is an extra image: an
+# item whose one revision holds the NX assembly of the NIST MTC enclosure and
+# its eight part files. The preview looks for the parts by file name in the
+# same revision first, so the seeded items stay as they are. Seeded after the
+# README's web pages and the desktop run, so those images keep their content.
+capture_nx() {
+    log "adding the NX model of the enclosure (nine NX files)"
+    local nx=$FIXTURES/mtc-assembly/nx f asm
+    item nx_enclosure assembly "Electronics enclosure, NX model" \
+        '{"description":"NX model of the enclosure (NIST MTC CRADA assembly) with its part files."}'
+    asm=$(attach nx_enclosure "$nx/NIST mtc crada assembly.prt")
+    for f in "NIST mtc crada box" "NIST mtc crada cover" "NIST mtc crada plate" "NIST mtc crada polycarb" \
+        "91274A118 SHCS" "91274A141 SHCS" "91304A112 FHSCS" "90591A141 HEX NUT"; do
+        attach nx_enclosure "$nx/$f.prt" >/dev/null
+    done
+    checkin nx_enclosure
+    viewport 1440 900 "$SCALE" false
+    log "waiting for the 3D preview of the NX assembly (nine conversions)"
+    open_page "/files/$asm/preview"
+    wait_js 'document.getElementById("viewer-canvas").getAttribute("data-ready") !== null' 300 \
+        "the 3D preview of the NX assembly"
+    [[ $(js 'return document.getElementById("viewer-canvas").getAttribute("data-ready");') == true ]] ||
+        die "the NX assembly preview: $(js 'var s = document.getElementById("viewer-status"); return s ? s.textContent : "";')"
+    snap nx-assembly-3d
+    # the part meshes are cached now, so the rendered thumbnails are quick
+    shot nx-files "/revisions/${REV[nx_enclosure]}" '#files'
+}
+
+# As-built record – as-built is in the README: unit RVR-0007 of the sensor
+# mast with one deviation accepted as is and one still open (made-up facts).
+# The new as-built revision stays checked out by admin.
+capture_as_built() {
+    log "recording sensor mast unit RVR-0007 as built"
+    local out ab_num ab_rev
+    out=$(japi admin POST "/items/${NUM[mast]}/revisions/latest/built-units" \
+        '{"serial_number":"RVR-0007","built_on":"2026-10-28","note":"First field unit, assembled in the workshop."}')
+    ab_rev=$(jq -r '.id' <<<"$out")
+    ab_num=$(jq -r '.item_number' <<<"$out")
+    [[ -n $ab_rev && $ab_rev != null ]] || die "recording the unit returned no revision"
+    japi admin POST "/items/$ab_num/revisions/latest/as-built/deviations" \
+        '{"kind":"dimension","feature":"Bore Ø12 H7, mounting bracket","designed":"12.000 +0.018/0","built":"12.035","disposition":"use_as_is","note":"Accepted by MRB: joint secured with retaining compound."}' >/dev/null
+    japi admin POST "/items/$ab_num/revisions/latest/as-built/deviations" \
+        '{"kind":"component","feature":"Hex nut 90591A141, find no. 50","designed":"90591A141, zinc plated","built":"Second-source nut DIN 934 A2","disposition":"open","note":"Waiting for the supplier certificate."}' >/dev/null
+    log "  $ab_num recorded"
+    viewport 1440 900 "$SCALE" false
+    shot as-built "/revisions/$ab_rev" '#as-built'
+    scheme dark
+    shot as-built-dark "/revisions/$ab_rev" '#as-built'
+    scheme light
+}
+
+# Read permissions – restricted-bom is in the README, the others are extra
+# images: the settings of a restricted group (as admin) and what a non-member
+# sees of a link into it. Seeded last, so the README images stay as they are;
+# signs the browser in as jlopez, so it must stay the last capture.
 capture_restricted() {
     log "adding the restricted project group LAB"
     local lab_id out
@@ -1063,6 +1132,8 @@ main() {
         capture_desktop
     fi
     capture_simulation
+    capture_nx
+    capture_as_built
     capture_restricted
     log "done: $(find "$OUT_DIR" -maxdepth 1 -name '*.png' | wc -l) screenshots in $OUT_DIR"
     compare_with_readme
