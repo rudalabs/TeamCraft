@@ -23,6 +23,10 @@ Changes on `main` since the `v0.2.5` tag.
   change that cannot meet the policy of every affected group; the review outcome
   uses it. Form on the group page, `GET`/`PUT /api/v1/projects/{code}/review-policy`.
   Nothing changes for groups without a policy.
+  Review fixes: admins maintain a group hidden by need-to-know, a role group the
+  reader cannot see is not named, only the parts of the policy the assigned
+  reviewers can meet count after submit, a required person who is the author
+  gets a specific message, ungrouped items count as "all reviewers".
 - Need-to-know project groups, step 1 (#151): a restricted group can limit
   administrator access (`project_policies`, migration 0043): `with_reason`
   (time-limited, audited elevation with a written reason; managers are

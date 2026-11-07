@@ -106,11 +106,17 @@ A change that touches several groups must meet the policy of each: the
 strictest minimum applies (a group without a value wants all reviewers), the
 required people and role groups add up. `submit` refuses a change that cannot
 meet them (409, naming what is missing: too few reviewers, a required person
-who is not a reviewer, no reviewer from the role group); the outcome of the
-review uses the same policy when a reviewer decides, so reviewers who have not
-decided yet stay pending once the change is released. The policy is read at
-decision time, not frozen at submit. The error message names the role group
-code to the submitter, also for a restricted group. Changes are audited
+who is not a reviewer, no reviewer from the role group; a required person
+who may not review it, e.g. its author, gets a message of its own); the outcome
+of the review uses the same policy when a reviewer decides, so reviewers who
+have not decided yet stay pending once the change is released. The policy is
+read at decision time, not frozen at submit, but only the parts the assigned
+reviewers can still meet count (reviewers change in Draft only), so a policy
+edit after submit cannot strand a change in review. Deactivated people and
+people below the editor role do not count. Items without a project group count
+like a group without a policy: all reviewers must approve. A role group the
+reader cannot see is never named: the policy shows it as hidden and the submit
+message says "a required role group". Changes are audited
 (`project.review_policy`, with the previous values). Step 2 of
 [#152](https://github.com/rudalabs/TeamCraft/issues/152).
 

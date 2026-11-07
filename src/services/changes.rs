@@ -1121,8 +1121,24 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
         }
     }
     // The review policy of every affected project group.
-    let requirement = project_policy::review_requirement(&mut tx, change_id).await?;
+    let requirement = project_policy::review_requirement(&mut tx, Some(actor), change_id).await?;
     let reviewer_uuids: Vec<Uuid> = reviewers.iter().map(|(id, _)| *id).collect();
+    // A required person who may not review this change (its author, an editor
+    // of its data) can never be added: say so instead of "must be a reviewer".
+    for (user, name) in &requirement.required_users {
+        if reviewer_uuids.contains(user) {
+            continue;
+        }
+        if let Some(conflict) =
+            review_conflict(&mut tx, &change, *user, Some(actor.id), false).await?
+        {
+            return Err(AppError::Conflict(format!(
+                "{name} is required by the review policy of {} but cannot review it: they {} (four-eyes principle). Change the policy or the change.",
+                change.number,
+                conflict.describe()
+            )));
+        }
+    }
     let shortfalls = domain::policy_shortfalls(&reviewer_uuids, &requirement);
     if !shortfalls.is_empty() {
         return Err(AppError::Conflict(format!(
@@ -1347,7 +1363,10 @@ pub async fn review(
     .filter_map(|(u, d)| Decision::parse(&d).map(|d| (u, d)))
     .collect();
     let people = notifications::change_people(&mut tx, change_id).await?;
-    let requirement = project_policy::review_requirement(&mut tx, change_id).await?;
+    let requirement = project_policy::review_requirement(&mut tx, None, change_id).await?;
+    // Reviewers are fixed after submit; only what they can still meet counts.
+    let voters: Vec<Uuid> = votes.iter().map(|(u, _)| *u).collect();
+    let requirement = domain::attainable(&requirement, &voters);
     let outcome = domain::review_outcome_with(&votes, &requirement);
     match outcome {
         ReviewOutcome::Pending => {

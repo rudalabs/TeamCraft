@@ -550,6 +550,8 @@ pub struct ReviewPolicyView {
     pub min_approvals: Option<i32>,
     pub required_reviewers: Vec<PolicyPerson>,
     pub role_group: Option<RoleGroup>,
+    /// A role group is set but the reader may not see that group.
+    pub role_group_hidden: bool,
 }
 
 /// What a manager submits.
@@ -563,6 +565,7 @@ pub struct ReviewPolicyInput {
 
 async fn review_policy_of(
     conn: &mut PgConnection,
+    viewer: Option<&Actor>,
     project_id: Uuid,
 ) -> AppResult<ReviewPolicyView> {
     let row = sqlx::query_as::<_, (Option<i32>, Option<Uuid>)>(
@@ -579,7 +582,14 @@ async fn review_policy_of(
     .bind(project_id)
     .fetch_all(&mut *conn)
     .await?;
+    // A role group the reader may not see is not named (it answers like a
+    // group that does not exist); `role_group_hidden` tells the form so.
+    let mut role_group_hidden = false;
     let role_group = match row.1 {
+        Some(id) if viewer.is_some_and(|a| !a.can_see_project(Some(id))) => {
+            role_group_hidden = true;
+            None
+        }
         Some(id) => {
             sqlx::query_as::<_, RoleGroup>("SELECT id, code, name FROM projects WHERE id = $1")
                 .bind(id)
@@ -593,18 +603,21 @@ async fn review_policy_of(
         min_approvals: row.0,
         required_reviewers,
         role_group,
+        role_group_hidden,
     })
 }
 
-/// The review policy of a group (anybody who may see the group).
+/// The review policy of a group (anybody who may see the group; an
+/// administrator maintaining a group hidden by the need-to-know policy too).
+/// A role group the actor may not see is left out.
 pub async fn get_review_policy(
     pool: &PgPool,
     actor: &Actor,
     project_id: Uuid,
 ) -> AppResult<ReviewPolicyView> {
-    projects::get(pool, actor, project_id).await?;
+    projects::get_for_management(pool, actor, project_id).await?;
     let mut conn = pool.acquire().await?;
-    review_policy_of(&mut conn, project_id).await
+    review_policy_of(&mut conn, Some(actor), project_id).await
 }
 
 /// Sets the review policy of a group.
@@ -708,7 +721,7 @@ pub async fn set_review_policy(
             }
         }
     };
-    let before = review_policy_of(&mut tx, project_id).await?;
+    let before = review_policy_of(&mut tx, None, project_id).await?;
     sqlx::query(
         "INSERT INTO project_policies (project_id, review_min_approvals, review_role_project_id, created_by, updated_by)
          VALUES ($1, $2, $3, $4, $4)
@@ -734,7 +747,7 @@ pub async fn set_review_policy(
             .execute(&mut *tx)
             .await?;
     }
-    let after = review_policy_of(&mut tx, project_id).await?;
+    let after = review_policy_of(&mut tx, None, project_id).await?;
     audit::record(
         &mut tx,
         Some(actor),
@@ -760,21 +773,26 @@ pub async fn set_review_policy(
 
 /// What the review policies of the groups touched by a change ask for: the
 /// strictest minimum, the union of the required people and the role groups.
-/// Items without a group, and groups without a policy, ask for nothing more
-/// than "all reviewers approve".
+/// Items without a group, and groups without a policy, ask for "all reviewers
+/// approve", so one of them in a change makes every reviewer count. People
+/// who are deactivated or no longer editors do not count. With a `viewer`,
+/// a role group the viewer cannot see is labelled neutrally.
 pub(crate) async fn review_requirement(
     conn: &mut PgConnection,
+    viewer: Option<&Actor>,
     change_id: Uuid,
 ) -> AppResult<domain::ReviewRequirement> {
-    let groups: Vec<Uuid> = sqlx::query_scalar(
+    let all_groups: Vec<Option<Uuid>> = sqlx::query_scalar(
         "SELECT DISTINCT i.project_id FROM change_items ci
          JOIN revisions r ON r.id = ci.revision_id
          JOIN items i ON i.id = r.item_id
-         WHERE ci.change_id = $1 AND i.project_id IS NOT NULL",
+         WHERE ci.change_id = $1",
     )
     .bind(change_id)
     .fetch_all(&mut *conn)
     .await?;
+    let has_ungrouped = all_groups.iter().any(Option::is_none);
+    let groups: Vec<Uuid> = all_groups.into_iter().flatten().collect();
     if groups.is_empty() {
         return Ok(domain::ReviewRequirement::default());
     }
@@ -785,7 +803,7 @@ pub(crate) async fn review_requirement(
     .bind(&groups)
     .fetch_all(&mut *conn)
     .await?;
-    let mins: Vec<Option<usize>> = groups
+    let mut mins: Vec<Option<usize>> = groups
         .iter()
         .map(|g| {
             policies
@@ -795,9 +813,14 @@ pub(crate) async fn review_requirement(
                 .map(|m| m as usize)
         })
         .collect();
+    if has_ungrouped {
+        mins.push(None);
+    }
     let required_users = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT DISTINCT u.id, u.display_name FROM project_required_reviewers r
-         JOIN users u ON u.id = r.user_id WHERE r.project_id = ANY($1) ORDER BY u.display_name, u.id",
+         JOIN users u ON u.id = r.user_id
+         WHERE r.project_id = ANY($1) AND u.active AND u.role IN ('editor', 'admin')
+         ORDER BY u.display_name, u.id",
     )
     .bind(&groups)
     .fetch_all(&mut *conn)
@@ -807,12 +830,18 @@ pub(crate) async fn review_requirement(
     role_ids.dedup();
     let mut role_groups = Vec::new();
     for id in role_ids {
-        let label = sqlx::query_scalar::<_, String>("SELECT code FROM projects WHERE id = $1")
+        let code = sqlx::query_scalar::<_, String>("SELECT code FROM projects WHERE id = $1")
             .bind(id)
             .fetch_one(&mut *conn)
             .await?;
+        let label = if viewer.is_none_or(|a| a.can_see_project(Some(id))) {
+            format!("the group {code}")
+        } else {
+            "a required role group".to_string()
+        };
         let members = sqlx::query_scalar::<_, Uuid>(
-            "SELECT user_id FROM project_members WHERE project_id = $1",
+            "SELECT m.user_id FROM project_members m JOIN users u ON u.id = m.user_id
+             WHERE m.project_id = $1 AND u.active AND u.role IN ('editor', 'admin')",
         )
         .bind(id)
         .fetch_all(&mut *conn)

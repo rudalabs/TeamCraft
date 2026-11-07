@@ -273,3 +273,119 @@ async fn fewer_approvals_than_reviewers_release_and_a_rejection_still_rejects() 
     assert_eq!(status_of(&app, &erika, &chg2).await, "rejected");
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn an_admin_opens_the_page_of_a_group_hidden_by_need_to_know() {
+    let app = app_or_skip!();
+    let (_, erika) = app.user("erika", Role::Editor).await;
+    app.user("root", Role::Admin).await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/projects",
+            &erika,
+            Some(json!({ "code": "NTK", "name": "Need to know", "visibility": "restricted" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let r = app
+        .api(
+            Method::PUT,
+            "/api/v1/projects/NTK/policy",
+            &erika,
+            Some(json!({ "admin_read": "none" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let cookie = app.login("root").await;
+    let id = app.project_id("NTK").await;
+    let page = app
+        .get_page(&format!("/projects/{id}"), Some(&cookie))
+        .await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.text());
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn a_role_group_the_reader_cannot_see_is_not_named() {
+    let app = app_or_skip!();
+    let (_, admin) = app.user("boss", Role::Admin).await;
+    let (_, qa) = app.user("quinn", Role::Editor).await;
+    let (_, anna) = app.user_in("anna", Role::Editor, &["ROCKET"]).await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/projects",
+            &qa,
+            Some(json!({ "code": "SECQA", "name": "Secret QA", "visibility": "restricted" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let r = put_policy(&app, &admin, json!({ "role_group": "SECQA" })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let r = app
+        .api(
+            Method::GET,
+            "/api/v1/projects/ROCKET/review-policy",
+            &anna,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!(!r.text().contains("SECQA"), "{}", r.text());
+    assert_eq!(r.json()["role_group_hidden"], true);
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn a_policy_added_after_submit_does_not_strand_the_change() {
+    let app = app_or_skip!();
+    let (_, admin) = app.user("boss", Role::Admin).await;
+    let (_, erika) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    let (_, anna) = app.user_in("anna", Role::Editor, &["ROCKET"]).await;
+    app.user_in("quincy", Role::Editor, &["ROCKET", "ROVER"])
+        .await;
+    let part = app
+        .create_item(
+            &erika,
+            json!({ "item_type": "part", "name": "Fin", "project": "ROCKET" }),
+        )
+        .await;
+    let chg = new_change(&app, &erika, &part).await;
+    add_reviewers(&app, &erika, &chg, &["anna"]).await;
+    assert_eq!(submit(&app, &erika, &chg).await.status, StatusCode::OK);
+    // the policy now wants somebody from ROVER and carl, who are no reviewers
+    let r = put_policy(
+        &app,
+        &admin,
+        json!({ "required_reviewers": ["quincy"], "role_group": "ROVER" }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let r = app.review(&chg, &anna, "approve", "").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(status_of(&app, &erika, &chg).await, "released");
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn a_required_reviewer_who_is_the_author_gets_a_clear_message() {
+    let app = app_or_skip!();
+    let (_, admin) = app.user("boss", Role::Admin).await;
+    let (_, erika) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    app.user_in("anna", Role::Editor, &["ROCKET"]).await;
+    let part = app
+        .create_item(
+            &erika,
+            json!({ "item_type": "part", "name": "Fin", "project": "ROCKET" }),
+        )
+        .await;
+    let r = put_policy(&app, &admin, json!({ "required_reviewers": ["erika"] })).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let chg = new_change(&app, &erika, &part).await;
+    add_reviewers(&app, &erika, &chg, &["anna"]).await;
+    let r = submit(&app, &erika, &chg).await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "{}", r.text());
+    assert!(r.text().contains("cannot review"), "{}", r.text());
+    app.teardown().await;
+}

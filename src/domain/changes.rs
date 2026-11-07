@@ -156,7 +156,7 @@ pub fn review_outcome(decisions: &[Decision]) -> ReviewOutcome {
 /// group such as QA): `members` are the people whose approval counts.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RoleRequirement {
-    /// Name shown in messages (the group code).
+    /// Name shown in messages, e.g. "the group QA".
     pub label: String,
     pub members: Vec<uuid::Uuid>,
 }
@@ -218,6 +218,27 @@ pub fn review_outcome_with(
     }
 }
 
+/// The part of the requirement the assigned `reviewers` can still meet.
+/// Reviewers are only changed in Draft, so a policy or a group that changed
+/// after submit must not make an in-review change undecidable.
+pub fn attainable(req: &ReviewRequirement, reviewers: &[uuid::Uuid]) -> ReviewRequirement {
+    ReviewRequirement {
+        min_approvals: req.min_approvals,
+        required_users: req
+            .required_users
+            .iter()
+            .filter(|(u, _)| reviewers.contains(u))
+            .cloned()
+            .collect(),
+        role_groups: req
+            .role_groups
+            .iter()
+            .filter(|g| g.members.iter().any(|m| reviewers.contains(m)))
+            .cloned()
+            .collect(),
+    }
+}
+
 /// Why a set of reviewers can never satisfy the policy (empty = it can).
 /// `submit` refuses a change with any of these.
 pub fn policy_shortfalls(reviewers: &[uuid::Uuid], req: &ReviewRequirement) -> Vec<String> {
@@ -238,10 +259,7 @@ pub fn policy_shortfalls(reviewers: &[uuid::Uuid], req: &ReviewRequirement) -> V
     }
     for group in &req.role_groups {
         if !group.members.iter().any(|m| reviewers.contains(m)) {
-            out.push(format!(
-                "a reviewer from the group {} is required",
-                group.label
-            ));
+            out.push(format!("a reviewer from {} is required", group.label));
         }
     }
     out

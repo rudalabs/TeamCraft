@@ -715,6 +715,9 @@ mod tests {
         assert!(s[2].contains("QA"));
         assert!(policy_shortfalls(&[a, b, Uuid::from_u128(3)], &req).is_empty());
         assert!(policy_shortfalls(&[], &ReviewRequirement::default()).is_empty());
+        let rest = attainable(&req, &[a]);
+        assert!(rest.required_users.is_empty() && rest.role_groups.is_empty());
+        assert_eq!(attainable(&req, &[a, b]), req);
     }
 
     #[test]

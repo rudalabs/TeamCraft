@@ -328,7 +328,7 @@ real files and belong to section 3 once such files are at hand.
 **Ownership and approval rules ([#152](https://github.com/rudalabs/TeamCraft/issues/152))**
 
 - [x] Step 1: wider separation of duties (editors and the acting admin cannot review; suggester excludes them).
-- [x] Step 2: review policy per project group (min approvals, required reviewers, role group). Left: show the policy on the change page, notify when a role group has no eligible reviewer, freeze the policy at submit.
+- [x] Step 2: review policy per project group (min approvals, required reviewers, role group). Left: show the policy on the change page, notify when a role group has no eligible reviewer. (After submit only the parts the assigned reviewers can meet count, instead of a frozen snapshot.)
 - [ ] Step 3: obsolete and supersede through a change order (per-group setting), supersede notifies watchers.
 - [ ] Step 4: token scopes (`approve`) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`).
 - [ ] Step 5: keep review rounds in `change_reviews`.

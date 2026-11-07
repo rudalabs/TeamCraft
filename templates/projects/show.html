@@ -126,6 +126,7 @@
     </label>
     <label>Approval required from members of <span class="hint">code of another project group used as a role group, e.g. QA</span>
       <input type="text" name="role_group" maxlength="40" value="{% if review_policy.role_group %}{{ review_policy.role_group.code }}{% endif %}">
+      {% if review_policy.role_group_hidden %}<span class="hint">A role group is set that you cannot see; saving this form with the field empty removes it.</span>{% endif %}
     </label>
     <p class="hint">Applies to every change that touches items of this group. A change that cannot meet the policy of all its groups is refused when it is submitted. A single rejection always rejects the change.</p>
     <div class="actions"><button class="primary" type="submit">Save</button></div>
