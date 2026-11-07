@@ -13,7 +13,11 @@ see the notices in the README.
 
 ## [Unreleased]
 
-Changes on `main` since the `v0.2.0` tag.
+Changes on `main` since the `v0.2.5` tag.
+
+## [0.2.5] - 2026-11-07
+
+Changes since the `v0.2.0` tag.
 
 ### Added
 
@@ -85,4 +89,5 @@ Changes on `main` since the `v0.2.0` tag.
   app keeps the private file and shows a warning. Server addresses with plain
   `http://` to another computer get a warning.
 
-[Unreleased]: https://github.com/rudalabs/TeamCraft/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/rudalabs/TeamCraft/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/rudalabs/TeamCraft/compare/v0.2.0...v0.2.5

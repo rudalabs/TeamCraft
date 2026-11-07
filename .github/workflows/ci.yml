@@ -193,9 +193,6 @@ jobs:
     name: cargo deny (${{ matrix.manifest }})
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # the desktop lock file is checked since 2026-11-07: report-only until
-    # its findings are cleaned up (docs/OPEN_WORK.md)
-    continue-on-error: ${{ matrix.manifest == 'desktop/Cargo.toml' }}
     strategy:
       fail-fast: false
       matrix:
