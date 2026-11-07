@@ -1371,6 +1371,32 @@ mod tests {
         assert!(html.contains("value=\"{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}\""));
         assert!(html.contains("&lt;bad&gt;"), "scheme errors are escaped");
         assert!(html.contains("/numbering\""), "managers edit the scheme");
+        let html = render(
+            &env,
+            "projects/show.html",
+            with_common(json!({
+                "project": project(), "members": [], "candidates": [], "is_member": true,
+                "can_edit": true, "oidc_enabled": false, "can_manage": true, "readable": true,
+                "result_templates": [],
+                "policy": { "admin_read": "implicit", "access": { "read_log": true, "log_retention_days": 90,
+                    "interfaces": { "api_tokens": true, "mcp": false, "assistant": true, "webhooks": true, "packages": true } } },
+                "admin_modes": [{ "value": "implicit", "label": "Implicit" }],
+                "interface_rows": [{ "name": "mcp", "label": "MCP <server>", "allowed": false }],
+                "access_entries": [{ "id": OTHER, "at": TS, "username": "erika", "channel": "api", "kind": "download",
+                    "label": "<b>secret.step</b>", "client_address": "10.0.0.1" }],
+                "numbering": { "scheme": "{TYPE}-{SEQ:6}", "is_default": true, "next": [] },
+                "scheme_input": "", "previewing": false, "scheme_error": null, "default_scheme": "{TYPE}-{SEQ:6}",
+            })),
+        );
+        assert!(
+            html.contains("/access\""),
+            "managers edit the interfaces and the log"
+        );
+        assert!(html.contains("MCP &lt;server&gt;"));
+        assert!(
+            html.contains("&lt;b&gt;secret.step"),
+            "log labels are escaped"
+        );
         render(
             &env,
             "admin/users.html",

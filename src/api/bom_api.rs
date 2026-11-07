@@ -50,8 +50,15 @@ pub(super) async fn get_bom_xlsx(
     let rev = revision_at(&st, &me, &number, &code).await?;
     let rule = bom_rule(q.rule.as_deref())?;
     let reader = project_policy::package_actor(&st.db, &me, rev.project_id).await?;
-    access_log::record_revision(&st.db, &log, &me, &rev, access_log::Kind::Export).await?;
     let tree = bom::tree(&st.db, &reader, rev.id, rule).await?;
+    access_log::record_structure(
+        &st.db,
+        &log,
+        &me,
+        access_log::Kind::Export,
+        &bom::tree_revision_ids(&tree),
+    )
+    .await?;
     let filename = format!(
         "{}_{}_bom_{}.xlsx",
         rev.item_number,
@@ -138,8 +145,7 @@ pub(super) async fn get_package(
         })?;
     }
     let rule = web::package_rule(q.rule.as_deref(), &rev.state);
-    access_log::record_revision(&st.db, &log, &me, &rev, access_log::Kind::Package).await?;
-    web::package_response(package::build(&st.db, &st.vault, &me, rev.id, rule).await?)
+    web::package_response(package::build(&st.db, &st.vault, &me, rev.id, rule, &log).await?)
 }
 
 #[derive(Deserialize)]

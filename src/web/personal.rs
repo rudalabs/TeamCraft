@@ -18,7 +18,7 @@ use crate::{
     models::Revision,
     services::{
         bom_compare::{self, Depth},
-        items, personal, projects, revisions,
+        items, personal, project_policy, projects, revisions,
         save_as::{self, SaveAs},
     },
     util, AppState,
@@ -240,6 +240,7 @@ async fn comparison(
     me: &Actor,
     id: Uuid,
     q: &CompareQuery,
+    download: bool,
 ) -> AppResult<Comparison> {
     let depth = q.depth()?;
     let rev = revisions::get(&st.db, me, id).await?;
@@ -269,7 +270,14 @@ async fn comparison(
         (rev.clone(), other)
     };
     let rule = q.rule(&before, &after);
-    let diffs = bom_compare::compare(&st.db, me, before.id, after.id, depth, rule).await?;
+    // an Excel download obeys the packages switch of both revisions' groups
+    let reader = if download {
+        let r = project_policy::package_actor(&st.db, me, before.project_id).await?;
+        project_policy::package_actor(&st.db, &r, after.project_id).await?
+    } else {
+        me.clone()
+    };
+    let diffs = bom_compare::compare(&st.db, &reader, before.id, after.id, depth, rule).await?;
     Ok(Comparison {
         rev,
         revisions: all,
@@ -287,7 +295,7 @@ pub async fn bom_compare(
     Path(id): Path<Uuid>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let mut cmp = comparison(&st, &ctx.me, id, &q).await?;
+    let mut cmp = comparison(&st, &ctx.me, id, &q, false).await?;
     let summary = bom_compare::summary(&cmp.diffs);
     // like the BOM page: the first lines here, all in the Excel download
     let diffs_total = cmp.diffs.len();
@@ -318,7 +326,7 @@ pub async fn bom_compare_xlsx(
     Path(id): Path<Uuid>,
     Query(q): Query<CompareQuery>,
 ) -> AppResult<Response> {
-    let cmp = comparison(&st, &ctx.me, id, &q).await?;
+    let cmp = comparison(&st, &ctx.me, id, &q, true).await?;
     let bytes = bom_compare::to_xlsx(&cmp.diffs)?;
     Ok(xlsx_response(bytes, &cmp.file_name()))
 }

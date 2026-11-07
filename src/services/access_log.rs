@@ -179,6 +179,44 @@ pub async fn record_revision(
     .await
 }
 
+/// Logs the read of a whole structure (Pack and Go, BOM export): one entry per
+/// group of the structure that logs, labelled with the first revision of that
+/// group. `revision_ids` holds the root and every revision of the tree.
+pub async fn record_structure(
+    pool: &PgPool,
+    ctx: &AccessCtx,
+    actor: &Actor,
+    kind: Kind,
+    revision_ids: &[Uuid],
+) -> AppResult<()> {
+    let rows: Vec<(Uuid, Uuid, String, String)> = sqlx::query_as(
+        "SELECT DISTINCT ON (i.project_id) r.id, i.project_id, i.number, r.code
+         FROM revisions r JOIN items i ON i.id = r.item_id
+         WHERE r.id = ANY($1) AND i.project_id IS NOT NULL
+         ORDER BY i.project_id, array_position($1, r.id)",
+    )
+    .bind(revision_ids)
+    .fetch_all(pool)
+    .await?;
+    for (id, project_id, number, code) in rows {
+        let label = format!("{number}/{code}");
+        record(
+            pool,
+            ctx,
+            actor,
+            Subject {
+                kind,
+                project_id: Some(project_id),
+                object_type: "revision",
+                object_id: Some(id),
+                label: &label,
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// The group of a file (through its revision and item).
 pub async fn project_of_file(pool: &PgPool, file_id: Uuid) -> AppResult<Option<Uuid>> {
     Ok(sqlx::query_scalar::<_, Option<Uuid>>(
@@ -227,6 +265,11 @@ pub async fn list(
     filter: &Filter,
 ) -> AppResult<Vec<Entry>> {
     projects::get_for_management(pool, actor, project_id).await?;
+    // Managing the group is not reading it: an administrator shut out by the
+    // need-to-know policy sees neither items nor the labels in the log.
+    if !actor.can_see_project(Some(project_id)) {
+        return Err(AppError::not_found("Project not found."));
+    }
     let mut conn = pool.acquire().await?;
     if !projects::can_manage(&mut conn, actor, project_id).await? {
         return Err(AppError::Forbidden(

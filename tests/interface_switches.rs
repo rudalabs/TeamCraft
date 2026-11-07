@@ -160,14 +160,22 @@ fn every_package_and_bom_download_applies_the_packages_switch() {
         if rel.starts_with("src/services/bom.rs") || rel.contains("tests") {
             continue;
         }
-        let produces = text.contains("bom::to_csv(")
-            || text.contains("bom::to_xlsx(")
-            || text.contains("package::build(");
-        if produces {
-            assert!(
-                text.contains("package_actor("),
-                "{rel} builds a package or BOM download without the packages switch"
-            );
+        // every function that produces a download applies the switch itself
+        // (package::build narrows the actor on its own)
+        for body in text.split("async fn ").skip(1) {
+            let body = body.split("\n}\n").next().unwrap_or(body);
+            let produces = body.contains("bom::to_csv(")
+                || body.contains("bom::to_xlsx(")
+                || body.contains("bom_compare::to_xlsx(");
+            if produces {
+                let name = body.split('(').next().unwrap_or("?");
+                assert!(
+                    body.contains("package_actor(")
+                        || body.contains("comparison(&st, &ctx.me, id, &q, true)")
+                        || body.contains("compare_at(&st, &me, &number, &code, &q, true)"),
+                    "{rel}: {name} builds a BOM download without the packages switch"
+                );
+            }
         }
     }
 }

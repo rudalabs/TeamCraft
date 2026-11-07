@@ -89,14 +89,14 @@ pub async fn project_show(
         None => Vec::new(),
     };
     let access_entries = match &policy {
-        Some(_) => {
+        Some(_) if readable => {
             let filter = access_log::Filter {
                 limit: Some(50),
                 ..Default::default()
             };
             access_log::list(&st.db, &ctx.me, id, &filter).await?
         }
-        None => Vec::new(),
+        _ => Vec::new(),
     };
     let admin_modes: Vec<Value> = [AdminRead::Implicit, AdminRead::WithReason, AdminRead::None]
         .iter()

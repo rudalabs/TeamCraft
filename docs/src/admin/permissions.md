@@ -120,7 +120,11 @@ the client address (with the same reverse-proxy rule as the sign-in
 throttle). Repeated reads of the same object by the same user through the
 same channel within five minutes are one entry, so a resumed or ranged
 download is logged once. A read that cannot be logged does not happen. Groups
-that do not log write nothing. The managers and administrators read the
+that do not log write nothing. A Pack and Go or BOM export writes one
+entry for every logging group inside the structure, not only for the root
+item's group; a refused one writes nothing. The managers and administrators
+read the log, but only while they may read the group (an administrator shut
+out by `admin_read` gets "not found"; the labels are item content). They read the
 newest entries on the group page, or `GET
 /api/v1/projects/{code}/access-log?user=&kind=&since=&until=&limit=`. Not
 logged yet: MCP and assistant tool reads, desktop Get, thumbnails and

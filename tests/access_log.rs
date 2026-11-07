@@ -578,3 +578,84 @@ async fn a_shut_out_administrator_may_tighten_but_not_loosen() {
     );
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn pack_and_go_through_a_parent_logs_in_the_group_of_the_child() {
+    let app = app_or_skip!();
+    let f = group(&app).await;
+    let (_, vera) = app.user_in("vera", Role::Editor, &["NTK", "ROCKET"]).await;
+    update(
+        &app,
+        "erika",
+        AccessUpdate {
+            read_log: Some(true),
+            ..Default::default()
+        },
+    )
+    .await;
+    let parent = app
+        .create_item(
+            &vera,
+            json!({ "item_type": "assembly", "name": "Top", "project": "ROCKET" }),
+        )
+        .await;
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/items/{parent}/revisions/A/bom"),
+            &vera,
+            Some(json!({ "child": f.item, "quantity": 1 })),
+        )
+        .await;
+    assert!(r.status.is_success(), "{}", r.text());
+    let package = format!("/api/v1/items/{parent}/revisions/A/package?rule=latest");
+    assert_eq!(get(&app, &vera, &package).await, StatusCode::OK);
+    let entries: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM access_log l JOIN projects p ON p.id = l.project_id
+         WHERE p.code = 'NTK' AND l.kind = 'package' AND l.username = 'vera'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(entries, 1, "the child's group logs the package");
+
+    // a refused package leaves no entry
+    update(&app, "erika", off(Interface::Packages)).await;
+    let before = log_count(&app).await;
+    let own = format!("/api/v1/items/{}/revisions/A/package", f.item);
+    assert_eq!(get(&app, &f.owner, &own).await, StatusCode::FORBIDDEN);
+    assert_eq!(log_count(&app).await, before);
+    app.teardown().await;
+}
+
+#[tokio::test]
+async fn a_shut_out_administrator_cannot_read_the_log() {
+    let app = app_or_skip!();
+    let f = group(&app).await;
+    let (_, root) = app.user("root", Role::Admin).await;
+    update(
+        &app,
+        "erika",
+        AccessUpdate {
+            read_log: Some(true),
+            ..Default::default()
+        },
+    )
+    .await;
+    let content = format!("/api/v1/files/{}/content", f.file);
+    assert_eq!(get(&app, &f.owner, &content).await, StatusCode::OK);
+    let log = "/api/v1/projects/NTK/access-log";
+    assert_eq!(get(&app, &f.owner, log).await, StatusCode::OK);
+    let r = app
+        .api(
+            Method::PUT,
+            "/api/v1/projects/NTK/policy",
+            &f.owner,
+            Some(json!({ "admin_read": "none" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(get(&app, &root, log).await, StatusCode::NOT_FOUND);
+    assert_eq!(get(&app, &f.owner, log).await, StatusCode::OK);
+    app.teardown().await;
+}

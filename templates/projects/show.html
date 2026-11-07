@@ -187,6 +187,8 @@
   </table>
   </div>
   <p class="hint">The newest 50 entries; the REST API lists more (<span class="mono">GET /api/v1/projects/{code}/access-log</span>).</p>
+  {% elif not readable %}
+  <p class="muted">The log is shown to readers of the group; your administrator access to it is closed.</p>
   {% else %}
   <p class="muted">Nothing logged{% if not policy.access.read_log %} (the log is off){% endif %}.</p>
   {% endif %}
