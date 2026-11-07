@@ -17,6 +17,9 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- The web *New item* form sends files above 32 MiB in chunks too (resumable, like the revision page); the
+  upload sessions may now have no revision and only join the creation of an item. Without JavaScript the form still
+  submits all files in one request.
 - Need-to-know project groups, step 1 (#151): a restricted group can limit
   administrator access (`project_policies`, migration 0043): `with_reason`
   (time-limited, audited elevation with a written reason; managers are

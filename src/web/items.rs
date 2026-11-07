@@ -277,6 +277,23 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
         }
         Err(e) => return Err(e),
     };
+    let mut received = received;
+    // Large files sent before in chunks by app.js (field `uploads`): sessions
+    // without a revision, which only join the creation of an item.
+    let sessions = match super::revisions::take_session_uploads(
+        &st,
+        &ctx.me,
+        crate::services::uploads::Scope::NewItem,
+        &mut received,
+    )
+    .await
+    {
+        Ok(ids) => ids,
+        Err(e) if is_user_error(&e) => {
+            return render_new(&st, &ctx, &NewItemForm::default(), Some(e.public_message())).await;
+        }
+        Err(e) => return Err(e),
+    };
     let mut form: NewItemForm = serde_json::from_value(json!(received.fields)).unwrap_or_default();
     if form.name.trim().is_empty() {
         if let Some(first) = received.uploads.first() {
@@ -289,6 +306,8 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
     };
     match result {
         Ok(rev) => {
+            crate::services::uploads::forget(&st.db, &st.vault, &sessions).await;
+            super::revisions::warm_previews(&st, &received.uploads);
             let files = match received.uploads.len() {
                 0 => String::new(),
                 1 => " with 1 file".to_string(),
