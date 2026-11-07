@@ -563,6 +563,8 @@ async fn me(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<
     // its own groups are restricted (for a badge).
     let mut body = json!(me);
     body["restricted_projects"] = json!(projects::restricted_memberships(&st.db, &me).await?);
+    // "local" or "oidc": a client offers "Change password" only for local accounts
+    body["auth_source"] = json!(users::get(&st.db, me.id).await?.auth_source);
     body["capabilities"] = json!({
         "assistant": crate::services::assistant::enabled(&st),
         "mcp": true,
@@ -708,50 +710,22 @@ struct PasswordBody {
 
 /// `POST /api/v1/me/password` `{current_password, new_password}`: the caller
 /// changes their own password (clients such as the desktop app). Wrong
-/// current passwords are throttled like sign-ins; the web sessions of the
-/// user end, personal access tokens stay. 204 on success.
+/// current passwords count like failed sign-ins (429 with `Retry-After` once
+/// the counter is full, see [`users::change_own_password`]); the web
+/// sessions of the user end, personal access tokens stay. 204 on success.
 async fn change_password(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     ApiJson(body): ApiJson<PasswordBody>,
-) -> AppResult<axum::response::Response> {
-    use axum::response::IntoResponse;
-    let keys = crate::auth::SignInThrottle::keys(&me.username, None);
-    if let Some(wait) = st.sign_in.blocked(&keys) {
-        let minutes = wait.as_secs().div_ceil(60).max(1);
-        let mut response = (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({ "error": { "code": "too_many_requests",
-                "message": format!("Too many failed attempts. Try again in {minutes} minute(s).") } })),
-        )
-            .into_response();
-        if let Ok(v) = axum::http::HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
-            response
-                .headers_mut()
-                .insert(axum::http::header::RETRY_AFTER, v);
-        }
-        return Ok(response);
-    }
-    match users::change_own_password(
+) -> AppResult<StatusCode> {
+    users::change_own_password(
         &st.db,
+        &st.sign_in,
         &me,
         &body.current_password,
         &body.new_password,
         None,
     )
-    .await
-    {
-        Ok(()) => {
-            st.sign_in.succeeded(&me.username);
-            Ok(StatusCode::NO_CONTENT.into_response())
-        }
-        Err(e) => {
-            if body.current_password.is_empty()
-                || matches!(&e, AppError::BadRequest(m) if m.contains("current password"))
-            {
-                st.sign_in.failed(&keys);
-            }
-            Err(e)
-        }
-    }
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }

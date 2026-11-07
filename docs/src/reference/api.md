@@ -47,7 +47,8 @@ Every answer contains only what the token's user may read (see
   the user cannot see are left out without a count.
 * `GET /api/v1/me` lists the user's own memberships in `projects` and,
   in `restricted_projects`, those of them that are restricted. It never
-  names groups the user is not a member of.
+  names groups the user is not a member of. `auth_source` is `local` or
+  `oidc`; only local accounts have a password to change.
 * `GET /api/v1/projects` lists only the groups the user may see; projects
   carry `visibility` (`internal` or `restricted`). `POST /api/v1/projects`
   takes an optional `visibility`; `PUT /api/v1/projects/{code}/visibility`

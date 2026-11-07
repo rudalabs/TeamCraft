@@ -617,6 +617,7 @@ pub(crate) fn is_user_error(e: &AppError) -> bool {
             | AppError::NotFound(_)
             | AppError::PayloadTooLarge(_)
             | AppError::Unavailable(_)
+            | AppError::TooManyRequests { .. }
     )
 }
 

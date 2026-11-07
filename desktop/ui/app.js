@@ -4694,7 +4694,8 @@
       h("p", null, ["Signed in to ", h("strong", { text: state.session.server_url }), " as ", h("strong", { text: state.me.display_name }), " (" + label(state.me.role) + ") on ", h("span", { text: state.session.device })]),
       h("div.row", null, [
         h("button.danger", { type: "button", on: { click: function () { dlg.close(); signOut(); } } }, "Sign out"),
-        h("button", { type: "button", on: { click: function () { dlg.close(); passwordDialog(); } } }, "Change password…"),
+        // single-sign-on accounts have no password here (older servers send no auth_source)
+        state.me.auth_source === "oidc" ? null : h("button", { type: "button", on: { click: function () { dlg.close(); passwordDialog(); } } }, "Change password…"),
         h("button", { type: "button", on: { click: function () { dlg.close(); signOut(true); } } }, "Change server")
       ])
     ]);

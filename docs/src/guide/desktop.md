@@ -93,6 +93,9 @@ and 3D viewer as the web interface; the models are converted by the server.
 *Settings → Appearance*: *TeamCraft* (the default) follows the light or dark
 appearance of the operating system and switches with it, *TeamCraft Light*
 and *TeamCraft Dark* stay fixed, the distribution skins are dark.
+*Settings → Change password…* changes the password of a local account (it
+asks for the current one; wrong ones count like failed sign-ins, and your web
+sessions end); single-sign-on accounts do not see it.
 
 The window is built for daily work: object tabs on top, under them the
 toolbar of the open object with its one next step filled (see

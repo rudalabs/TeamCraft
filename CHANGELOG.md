@@ -17,8 +17,11 @@ Changes on `main` since the `v0.2.0` tag.
 
 ### Added
 
-- The desktop settings have *Change password…* (`POST /api/v1/me/password`,
-  throttled like sign-ins).
+- The desktop settings have *Change password…* (`POST /api/v1/me/password`;
+  hidden for single-sign-on accounts, `GET /api/v1/me` has `auth_source`).
+  Wrong current passwords of the own password change, in the web form and over
+  REST, count like failed sign-ins (429 with `Retry-After`) and are audited as
+  `user.password_failed`.
 - Sign-in, failed sign-in and sign-out are recorded in the audit log, with how
   the user signed in (password, SSO or first-start setup).
 - A sign-in throttle slows down repeated failed sign-ins.
