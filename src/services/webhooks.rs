@@ -545,11 +545,12 @@ pub async fn send_test(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Uuid
 pub async fn retry(pool: &PgPool, actor: &Actor, delivery_id: Uuid) -> AppResult<Delivery> {
     actor.require(Role::Admin)?;
     let mut tx = pool.begin().await?;
-    let row = sqlx::query_as::<_, (Uuid, String, String, bool)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, bool)>(&format!(
         "SELECT d.webhook_id, d.status, w.name, w.active
          FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
-         WHERE d.id = $1 AND (w.project_id IS NULL OR w.project_id <> ALL($2)) FOR UPDATE OF d",
-    )
+         WHERE d.id = $1 AND {} FOR UPDATE OF d",
+        crate::services::access::project_visible("w.project_id", 2)
+    ))
     .bind(delivery_id)
     .bind(&actor.hidden_projects)
     .fetch_optional(&mut *tx)

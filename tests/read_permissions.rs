@@ -3243,11 +3243,14 @@ async fn fourth_review_round_leaks_are_closed() {
         "{}",
         r.text()
     );
+    // mona created the assembly, so she may not review it (four-eyes);
+    // a ROVER editor who did not touch it reviews
+    app.user_in("rita", Role::Editor, &["ROVER"]).await;
     post_ok(
         &app,
         &format!("/api/v1/changes/{chg}/reviewers"),
         &otto,
-        json!({ "username": "mona" }),
+        json!({ "username": "rita" }),
     )
     .await;
     let r = app
