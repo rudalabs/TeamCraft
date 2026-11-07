@@ -80,6 +80,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT",
     "TEAMCRAFT_ASSISTANT_RETENTION_DAYS",
     "TEAMCRAFT_ASSISTANT_RUN_TIMEOUT",
+    "TEAMCRAFT_AUDIT_RETENTION_DAYS",
     "TEAMCRAFT_BIND_ADDR",
     "TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD",
     "TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME",
@@ -110,6 +111,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_OIDC_SCOPES",
     "TEAMCRAFT_OIDC_USERNAME_CLAIM",
     "TEAMCRAFT_OIDC_VIEWER_GROUP",
+    "TEAMCRAFT_PREVIEW_CACHE_MAX_MB",
     "TEAMCRAFT_PREVIEW_MAX_MEMORY_MB",
     "TEAMCRAFT_PREVIEW_MAX_MESH_MB",
     "TEAMCRAFT_PREVIEW_MAX_RESULT_MB",
@@ -249,9 +251,17 @@ pub struct Config {
     pub max_upload_bytes: u64,
     /// Size and memory limits of the 3D preview (`TEAMCRAFT_PREVIEW_MAX_*`).
     pub preview: crate::preview::PreviewLimits,
+    /// Size the preview cache (`<vault>/previews`) is trimmed to by the
+    /// hourly housekeeping, least recently used first
+    /// (`TEAMCRAFT_PREVIEW_CACHE_MAX_MB`; 0 = no limit).
+    pub preview_cache_max_bytes: u64,
     /// Largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/{id}`).
     pub upload_chunk_bytes: u64,
     pub session_ttl: Duration,
+    /// Days the audit log is kept (`TEAMCRAFT_AUDIT_RETENTION_DAYS`; 0 = for
+    /// ever). Older entries are removed by the hourly housekeeping, which
+    /// records the removal as one entry.
+    pub audit_retention_days: u32,
     /// Failed password sign-ins per username within 15 minutes before sign-in
     /// is refused (`TEAMCRAFT_SIGNIN_MAX_FAILURES`; five times as many per
     /// client address; 0 = off). See [`crate::auth::SignInThrottle`].
@@ -279,6 +289,13 @@ pub struct Config {
     /// Which targets outgoing event webhooks may reach.
     pub webhooks: WebhookConfig,
 }
+
+/// Shortest audit log retention (`TEAMCRAFT_AUDIT_RETENTION_DAYS`): a typo
+/// must not empty the audit trail.
+pub const MIN_AUDIT_RETENTION_DAYS: u32 = 30;
+
+/// Largest preview cache limit in MiB (`TEAMCRAFT_PREVIEW_CACHE_MAX_MB`, 16 TiB).
+const MAX_PREVIEW_CACHE_MB: u64 = 16 * 1024 * 1024;
 
 /// Default for how long finished webhook deliveries are kept.
 pub const DEFAULT_WEBHOOK_RETENTION_DAYS: u32 = 30;
@@ -740,6 +757,11 @@ impl Config {
                 )?,
             }
         };
+        // 0 = no limit; at most 16 TiB
+        let preview_cache_max_mb = env.parse_or("TEAMCRAFT_PREVIEW_CACHE_MAX_MB", 0u64)?;
+        if preview_cache_max_mb > MAX_PREVIEW_CACHE_MB {
+            bail!("TEAMCRAFT_PREVIEW_CACHE_MAX_MB must be between 0 (no limit) and {MAX_PREVIEW_CACHE_MB}");
+        }
         let upload_chunk_mb = env.parse_or("TEAMCRAFT_UPLOAD_CHUNK_MB", 16u64)?;
         if !(1..=1024).contains(&upload_chunk_mb) {
             bail!("TEAMCRAFT_UPLOAD_CHUNK_MB must be between 1 and 1024");
@@ -751,6 +773,16 @@ impl Config {
         }
 
         let signin_max_failures = env.parse_or("TEAMCRAFT_SIGNIN_MAX_FAILURES", 10u32)?;
+
+        let audit_retention_days = env.parse_or("TEAMCRAFT_AUDIT_RETENTION_DAYS", 0u32)?;
+        if audit_retention_days != 0
+            && !(MIN_AUDIT_RETENTION_DAYS..=36_500).contains(&audit_retention_days)
+        {
+            bail!(
+                "TEAMCRAFT_AUDIT_RETENTION_DAYS must be 0 (keep for ever) or between \
+                 {MIN_AUDIT_RETENTION_DAYS} and 36500"
+            );
+        }
 
         let cookie_secure = match env.get("TEAMCRAFT_COOKIE_SECURE")? {
             Some(v) => parse_bool(&v).context("TEAMCRAFT_COOKIE_SECURE must be true or false")?,
@@ -859,8 +891,10 @@ impl Config {
             vault_dir,
             max_upload_bytes: max_upload_mb * 1024 * 1024,
             preview,
+            preview_cache_max_bytes: preview_cache_max_mb * 1024 * 1024,
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
+            audit_retention_days,
             signin_max_failures,
             cookie_secure,
             log_format,
@@ -1463,6 +1497,37 @@ mod tests {
             ("TEAMCRAFT_PREVIEW_MAX_STEP_MB", "0"),
         ] {
             assert!(config_from(&[("TEAMCRAFT_DB_PASSWORD", "x"), bad]).is_err());
+        }
+    }
+
+    #[test]
+    fn retention_settings() {
+        let d = config_from(&[("TEAMCRAFT_DB_PASSWORD", "x")]).unwrap();
+        assert_eq!(d.audit_retention_days, 0, "the audit log is kept for ever");
+        assert_eq!(
+            d.preview_cache_max_bytes, 0,
+            "the preview cache has no limit"
+        );
+        let c = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_AUDIT_RETENTION_DAYS", "3650"),
+            ("TEAMCRAFT_PREVIEW_CACHE_MAX_MB", "2048"),
+        ])
+        .unwrap();
+        assert_eq!(c.audit_retention_days, 3650);
+        assert_eq!(c.preview_cache_max_bytes, 2048 * 1024 * 1024);
+        for bad in [
+            ("TEAMCRAFT_AUDIT_RETENTION_DAYS", "1"),
+            ("TEAMCRAFT_AUDIT_RETENTION_DAYS", "29"),
+            ("TEAMCRAFT_AUDIT_RETENTION_DAYS", "36501"),
+            ("TEAMCRAFT_AUDIT_RETENTION_DAYS", "-1"),
+            ("TEAMCRAFT_PREVIEW_CACHE_MAX_MB", "x"),
+            ("TEAMCRAFT_PREVIEW_CACHE_MAX_MB", "16777217"),
+        ] {
+            assert!(
+                config_from(&[("TEAMCRAFT_DB_PASSWORD", "x"), bad]).is_err(),
+                "{bad:?}"
+            );
         }
     }
 

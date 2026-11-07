@@ -9,7 +9,12 @@
 //! ```
 //!
 //! Identical files are stored once, no matter how many revisions reference
-//! them. Blobs are never modified after they were written.
+//! them. Blobs are never modified after they were written. Storing content
+//! that is already there renews the blob's modification time, so the time
+//! says when the blob was last written or stored again: a blob that the
+//! database does not refer to yet (an upload between the vault and its
+//! database row) is always younger than the grace period of the removal of
+//! unreferenced blobs (`services::retention`).
 
 use std::{
     path::{Path, PathBuf},
@@ -32,6 +37,47 @@ pub struct Vault {
 pub struct StoredBlob {
     pub sha256: String,
     pub size: u64,
+}
+
+/// A blob found in the vault (see [`Vault::objects_in`]).
+#[derive(Clone, Debug)]
+pub struct StoredObject {
+    pub sha256: String,
+    pub size: u64,
+    /// When it was written or last stored again.
+    pub modified: SystemTime,
+}
+
+/// Two lower-case hex digits: a directory level of `objects/`.
+fn is_hex_prefix(name: &str) -> bool {
+    name.len() == 2 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Moves a verified file to its content address. When the blob is there
+/// already, the file is dropped and the blob's modification time renewed
+/// (see the module documentation; the content is not touched). If that
+/// fails – the blob was removed a moment ago, or its time cannot be set –
+/// the file takes its place.
+async fn put_in_place(source: &Path, target: &Path) -> AppResult<()> {
+    if fs::try_exists(target).await? {
+        let path = target.to_path_buf();
+        let renewed = tokio::task::spawn_blocking(move || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&path)
+                .and_then(|f| f.set_modified(SystemTime::now()))
+        })
+        .await;
+        if matches!(renewed, Ok(Ok(()))) {
+            fs::remove_file(source).await?;
+            return Ok(());
+        }
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).await?;
+    }
+    fs::rename(source, target).await?;
+    Ok(())
 }
 
 impl Vault {
@@ -214,15 +260,7 @@ impl Vault {
     pub async fn adopt_staged(&self, session: Uuid, sha256: &str) -> AppResult<()> {
         let source = self.staging_path(session);
         let target = self.object_path(sha256)?;
-        if fs::try_exists(&target).await? {
-            fs::remove_file(&source).await?;
-        } else {
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).await?;
-            }
-            fs::rename(&source, &target).await?;
-        }
-        Ok(())
+        put_in_place(&source, &target).await
     }
 
     /// Removes the staging file of a session (no error if there is none).
@@ -258,6 +296,96 @@ impl Vault {
             }
         }
         Ok(stale)
+    }
+
+    /// The two-character directories below `objects/` (`ab` of
+    /// `objects/ab/cd/abcd…`), sorted – the pages of [`Vault::objects_in`].
+    pub async fn object_prefixes(&self) -> AppResult<Vec<String>> {
+        let mut prefixes = Vec::new();
+        let mut entries = fs::read_dir(self.objects_dir()).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            if let Some(name) = entry.file_name().to_str() {
+                if is_hex_prefix(name) && entry.file_type().await?.is_dir() {
+                    prefixes.push(name.to_string());
+                }
+            }
+        }
+        prefixes.sort();
+        Ok(prefixes)
+    }
+
+    /// The blobs below `objects/<prefix>/`, with size and modification time.
+    /// Anything that is not a blob at its content address (another name, a
+    /// file in the wrong directory) is skipped – and never removed.
+    pub async fn objects_in(&self, prefix: &str) -> AppResult<Vec<StoredObject>> {
+        let mut found = Vec::new();
+        if !is_hex_prefix(prefix) {
+            return Ok(found);
+        }
+        let top = self.objects_dir().join(prefix);
+        let mut dirs = fs::read_dir(&top).await?;
+        while let Some(dir) = dirs.next_entry().await? {
+            let Some(second) = dir.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            if !is_hex_prefix(&second) || !dir.file_type().await?.is_dir() {
+                continue;
+            }
+            let mut files = fs::read_dir(dir.path()).await?;
+            while let Some(file) = files.next_entry().await? {
+                let Some(name) = file.file_name().to_str().map(str::to_string) else {
+                    continue;
+                };
+                let at_address = name.len() == 64
+                    && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                    && name[0..2] == *prefix
+                    && name[2..4] == second;
+                if !at_address {
+                    continue;
+                }
+                let meta = file.metadata().await?;
+                if meta.is_file() {
+                    found.push(StoredObject {
+                        sha256: name,
+                        size: meta.len(),
+                        modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                    });
+                }
+            }
+        }
+        Ok(found)
+    }
+
+    /// How long ago a blob was written or last stored again (see
+    /// [`Upload::finish`]); `None` if there is no such blob.
+    pub async fn object_age(&self, sha256: &str) -> AppResult<Option<Duration>> {
+        match fs::metadata(self.object_path(sha256)?).await {
+            Ok(meta) => {
+                let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                Ok(Some(
+                    SystemTime::now()
+                        .duration_since(modified)
+                        .unwrap_or_default(),
+                ))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(AppError::Io(e)),
+        }
+    }
+
+    /// Removes a blob if it was not written or stored again within `grace`.
+    /// Only `services::retention` calls this, after it made sure that the
+    /// database refers to the blob nowhere. Returns whether it was removed.
+    pub async fn remove_object_older_than(&self, sha256: &str, grace: Duration) -> AppResult<bool> {
+        match self.object_age(sha256).await? {
+            Some(age) if age >= grace => {}
+            _ => return Ok(false),
+        }
+        match fs::remove_file(self.object_path(sha256)?).await {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(AppError::Io(e)),
+        }
     }
 
     async fn clean_tmp(&self, older_than: Duration) -> std::io::Result<()> {
@@ -323,15 +451,8 @@ impl Upload {
         drop(file);
         let sha256 = hex::encode(std::mem::take(&mut self.hasher).finalize());
         let target = self.vault.object_path(&sha256)?;
-        if fs::try_exists(&target).await? {
-            // Identical content is already stored.
-            fs::remove_file(&self.tmp_path).await?;
-        } else {
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).await?;
-            }
-            fs::rename(&self.tmp_path, &target).await?;
-        }
+        // identical content may be stored already
+        put_in_place(&self.tmp_path, &target).await?;
         self.finished = true;
         Ok(StoredBlob {
             sha256,
@@ -430,5 +551,83 @@ mod tests {
         assert!(vault.object_path(&"g".repeat(64)).is_err());
         let ok = vault.object_path(&"ab".repeat(32)).unwrap();
         assert!(ok.ends_with(format!("objects/ab/ab/{}", "ab".repeat(32))));
+    }
+
+    /// Sets the modification time of a file `ago` into the past.
+    fn age(path: &Path, ago: Duration) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(SystemTime::now() - ago)
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn lists_blobs_and_removes_only_old_ones() {
+        let root = temp_root();
+        let vault = Vault::open(&root).await.unwrap();
+        let a = vault.store_bytes(b"first").await.unwrap();
+        let b = vault.store_bytes(b"second").await.unwrap();
+        // not blobs at their address: never listed, never removed
+        let a_dir = vault.object_path(&a.sha256).unwrap();
+        let a_dir = a_dir.parent().unwrap();
+        std::fs::write(a_dir.join("notes.txt"), b"x").unwrap();
+        let misplaced = if a.sha256.starts_with("ee") {
+            "dd"
+        } else {
+            "ee"
+        }
+        .repeat(32);
+        std::fs::write(a_dir.join(&misplaced), b"misplaced").unwrap();
+        std::fs::create_dir_all(root.join("objects/zz")).unwrap();
+
+        let mut listed = Vec::new();
+        for prefix in vault.object_prefixes().await.unwrap() {
+            listed.extend(vault.objects_in(&prefix).await.unwrap());
+        }
+        let mut names: Vec<_> = listed.iter().map(|o| o.sha256.clone()).collect();
+        names.sort();
+        let mut expected = vec![a.sha256.clone(), b.sha256.clone()];
+        expected.sort();
+        assert_eq!(names, expected);
+        assert!(vault.objects_in("../..").await.unwrap().is_empty());
+
+        // young blobs stay; old ones go
+        let hour = Duration::from_secs(3600);
+        assert!(!vault
+            .remove_object_older_than(&a.sha256, hour)
+            .await
+            .unwrap());
+        age(&vault.object_path(&a.sha256).unwrap(), 2 * hour);
+        assert!(vault.object_age(&a.sha256).await.unwrap().unwrap() >= hour);
+        // storing the same content again renews the time …
+        vault.store_bytes(b"first").await.unwrap();
+        assert!(vault.object_age(&a.sha256).await.unwrap().unwrap() < hour);
+        assert!(!vault
+            .remove_object_older_than(&a.sha256, hour)
+            .await
+            .unwrap());
+        // … and an old, unrenewed blob is removed once
+        age(&vault.object_path(&a.sha256).unwrap(), 2 * hour);
+        assert!(vault
+            .remove_object_older_than(&a.sha256, hour)
+            .await
+            .unwrap());
+        assert!(!vault.exists(&a.sha256).await);
+        assert!(vault.object_age(&a.sha256).await.unwrap().is_none());
+        assert!(!vault
+            .remove_object_older_than(&a.sha256, hour)
+            .await
+            .unwrap());
+        // a chunked upload of the same content renews the time as well
+        age(&vault.object_path(&b.sha256).unwrap(), 2 * hour);
+        let id = Uuid::new_v4();
+        vault.create_staging(id).await.unwrap();
+        vault.write_staged(id, 0, b"second").await.unwrap();
+        vault.adopt_staged(id, &b.sha256).await.unwrap();
+        assert!(vault.object_age(&b.sha256).await.unwrap().unwrap() < hour);
+        assert!(vault.verify(&b.sha256).await.unwrap());
+        fs::remove_dir_all(root).await.ok();
     }
 }

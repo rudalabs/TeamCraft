@@ -175,6 +175,19 @@ enum VaultCommand {
         #[arg(long)]
         verify_hashes: bool,
     },
+    /// List the stored blobs that nothing in the database refers to any more
+    /// (content of deleted files, abandoned uploads) and that were not
+    /// written within the grace period; remove them only with --apply.
+    /// Referenced content is never removed.
+    Gc {
+        /// Remove the blobs found (default: a dry run that only lists them).
+        #[arg(long)]
+        apply: bool,
+        /// Keep unreferenced blobs written or stored again within this many
+        /// hours (at least 1).
+        #[arg(long, default_value_t = services::retention::DEFAULT_GC_GRACE_HOURS)]
+        grace_hours: u64,
+    },
     /// Compute the missing shape signatures of the similar part search from
     /// the cached 3D previews (each in the isolated preview process).
     Signatures {
@@ -341,6 +354,8 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     }
     teamcraft::delivery::spawn(pool.clone(), delivery);
     let webhook_retention_days = config.webhooks.retention_days;
+    let audit_retention_days = config.audit_retention_days;
+    let preview_cache_max_bytes = config.preview_cache_max_bytes;
     let thread_retention_days = config.assistant.as_ref().map(|a| a.retention_days);
     let state = AppState::new(config, pool.clone()).await?;
     // Outgoing event webhooks (the outbox `webhook_deliveries`).
@@ -367,8 +382,12 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     }
 
     // Housekeeping: remove expired sessions, stale OIDC states, staged imports
-    // and expired chunked uploads (the first tick runs at once, at start-up).
+    // and expired chunked uploads (with their unreferenced blobs), old webhook
+    // deliveries, idle assistant conversations and audit entries past their
+    // retention, and trim the preview cache (the first tick runs at once, at
+    // start-up). See "Data retention" in docs/src/admin/operations.md.
     let vault = state.vault.clone();
+    let previews_dir = state.previews.dir().to_path_buf();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
@@ -378,7 +397,7 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
             }
-            match services::imports::purge_stale(&pool).await {
+            match services::imports::purge_stale(&pool, &vault).await {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed stale staged imports"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "staged import cleanup failed"),
@@ -403,6 +422,25 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "assistant conversation cleanup failed"),
+            }
+            if audit_retention_days > 0 {
+                match services::audit::purge_older_than(&pool, audit_retention_days).await {
+                    Ok(n) if n > 0 => tracing::info!(removed = n, "removed old audit entries"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "audit log retention failed"),
+                }
+            }
+            match services::retention::purge_previews(&pool, &previews_dir, preview_cache_max_bytes)
+                .await
+            {
+                Ok(p) if p.removed > 0 => tracing::info!(
+                    removed = p.removed,
+                    removed_bytes = p.removed_bytes,
+                    kept_bytes = p.kept_bytes,
+                    "trimmed the preview cache"
+                ),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "preview cache cleanup failed"),
             }
         }
     });
@@ -681,6 +719,7 @@ async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
     let verify_hashes = match command {
         VaultCommand::Check { verify_hashes } => verify_hashes,
         VaultCommand::Signatures { convert, jobs } => return shape_signatures(convert, jobs).await,
+        VaultCommand::Gc { apply, grace_hours } => return vault_gc(apply, grace_hours).await,
     };
     let config = load_config()?;
     let pool = db::connect(&config).await?;
@@ -710,6 +749,46 @@ async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// `teamcraft vault gc`: lists (with `apply`: removes) the unreferenced
+/// blobs older than the grace period.
+async fn vault_gc(apply: bool, grace_hours: u64) -> Result<ExitCode> {
+    if grace_hours == 0 {
+        bail!(
+            "--grace-hours must be at least 1: younger blobs may be on their way into the database"
+        );
+    }
+    let grace = Duration::from_secs(grace_hours.saturating_mul(3600));
+    let config = load_config()?;
+    let pool = db::connect(&config).await?;
+    let vault = teamcraft::vault::Vault::open(&config.vault_dir).await?;
+    let report = services::retention::collect_garbage(&pool, &vault, grace, apply).await?;
+    for o in &report.orphans {
+        let what = match (apply, o.removed) {
+            (false, _) => "UNREFERENCED",
+            (true, true) => "REMOVED",
+            // stored again since it was found
+            (true, false) => "KEPT",
+        };
+        println!("{what}  {}  {} bytes", o.sha256, o.size);
+    }
+    let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+    println!(
+        "scanned {} blob(s): {} referenced, {} unreferenced within the grace period of {grace_hours} h (kept), {} unreferenced ({:.1} MiB)",
+        report.scanned,
+        report.referenced,
+        report.recent,
+        report.orphans.len(),
+        mib(report.orphan_bytes()),
+    );
+    if apply {
+        let (n, bytes) = report.removed();
+        println!("removed {n} blob(s) ({:.1} MiB)", mib(bytes));
+    } else if !report.orphans.is_empty() {
+        println!("dry run: nothing removed (use --apply to remove them)");
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `teamcraft vault signatures`: walks the 3D files without a shape
