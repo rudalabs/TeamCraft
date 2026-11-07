@@ -745,11 +745,21 @@ async fn html_errors(State(st): State<AppState>, req: Request, next: Next) -> Re
         };
         return redirect(&to);
     }
+    // the replaced logos, as on the other pages; not for server errors, whose
+    // cause may be the database itself (then the built-in logos are shown)
+    let branding = if info.status.is_server_error() {
+        crate::services::branding::Branding::default()
+    } else {
+        crate::services::branding::current(&st.db)
+            .await
+            .unwrap_or_default()
+    };
     let data = json!({
         "status": info.status.as_u16(),
         "reason": info.status.canonical_reason().unwrap_or("Error"),
         "message": info.message,
         "skin": skin,
+        "branding": branding,
     });
     match render_public(&st, "error.html", data, None) {
         Ok(mut page) => {

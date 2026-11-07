@@ -17,9 +17,15 @@ use crate::{
 };
 
 /// The image of a slot with cache headers; 404 when the built-in logo is in
-/// use (clients then show their own copy). Shared by the web route and the
-/// REST API.
-pub(crate) async fn image(st: &AppState, kind: &str, request: &HeaderMap) -> AppResult<Response> {
+/// use (clients then show their own copy). Shared by the web route
+/// (`public` caching: the sign-in page shows it) and the REST API (`private`,
+/// as every bearer-authenticated answer).
+pub(crate) async fn image(
+    st: &AppState,
+    kind: &str,
+    request: &HeaderMap,
+    public: bool,
+) -> AppResult<Response> {
     let kind = Kind::parse(kind).ok_or_else(|| AppError::not_found("No such logo."))?;
     let logo = branding::get(&st.db, kind)
         .await?
@@ -48,7 +54,11 @@ pub(crate) async fn image(st: &AppState, kind: &str, request: &HeaderMap) -> App
     // the ?v= token in the pages changes with the file
     h.insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=300, must-revalidate"),
+        HeaderValue::from_static(if public {
+            "public, max-age=300, must-revalidate"
+        } else {
+            "private, max-age=300, must-revalidate"
+        }),
     );
     // an SVG opened directly runs in an empty sandbox
     h.insert(
@@ -63,7 +73,7 @@ pub async fn logo(
     Path(kind): Path<String>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    image(&st, &kind, &headers).await
+    image(&st, &kind, &headers, true).await
 }
 
 pub async fn page(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {

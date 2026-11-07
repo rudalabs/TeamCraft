@@ -537,6 +537,14 @@ mod tests {
             "error.html",
             json!({ "status": 404, "reason": "Not Found", "message": "gone", "flash": null, "local_login": true }),
         );
+        let html = render(
+            &env,
+            "error.html",
+            json!({ "status": 404, "reason": "Not Found", "message": "gone", "flash": null, "local_login": true,
+                    "branding": { "wide": "aaaabbbbcccc", "square": null } }),
+        );
+        assert!(html.contains("/branding/wide?v=aaaabbbbcccc"));
+        assert!(!html.contains("TeamCraft_Logo_White.svg"));
 
         let html = render(
             &env,

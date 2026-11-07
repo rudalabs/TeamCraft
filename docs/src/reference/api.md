@@ -304,7 +304,7 @@ the caller cannot read are left out; a successor there is a placeholder with
 | Save As, compare | `POST …/revisions/{code}/save-as` `{number?, name?, project?, files?, bom?}`, `GET …/revisions/{code}/bom/compare?with={code}`        |
 | Similar parts    | `GET …/revisions/{code}/similar` (`limit`, `ignore_scale`, `file`, `wait`) – parts of similar 3D shape, see below                    |
 | Formats          | `GET /formats` – the recognised CAD programs and formats                                                                              |
-| Branding         | `GET /branding` – replaced logos `{wide, square}` (version token or `null`); `GET /branding/{wide|square}` – the image (404 = built-in logo) |
+| Branding         | `GET /branding` – replaced logos `{wide, square}` (version token or `null`) and `{wide_type, square_type}` (content type); `GET /branding/{wide|square}` – the image (404 = built-in logo) |
 | MCP              | `POST /mcp` – Model Context Protocol for AI assistants, see [MCP server](mcp.md)                                                      |
 | Assistant        | `GET/POST /assistant` – the built-in assistant (optional), `context` = the page the caller is on, `thread: true` = ask in the caller's conversation; `GET/DELETE /assistant/thread` – the conversation. See [Ask TeamCraft](../guide/assistant.md#api) |
 

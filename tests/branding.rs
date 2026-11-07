@@ -138,11 +138,31 @@ async fn administrators_replace_and_reset_the_logos() {
         .await
         .json();
     assert!(info["wide"].is_string() && info["square"].is_null());
+    // the desktop app builds the image from bytes and needs the type
+    assert_eq!(info["wide_type"], "image/png");
+    assert!(info["square_type"].is_null());
     let bytes = app
         .api(Method::GET, "/api/v1/branding/wide", &api_admin, None)
         .await;
     assert_eq!(bytes.status, StatusCode::OK);
     assert_eq!(bytes.body, logo);
+    // bearer answers are not for shared caches; the public route is
+    assert!(bytes
+        .header("cache-control")
+        .unwrap()
+        .starts_with("private"));
+    assert!(served
+        .header("cache-control")
+        .unwrap()
+        .starts_with("public"));
+    // error pages show the replaced logo too
+    let error_page = app.get_page("/branding/banner", None).await;
+    assert_eq!(error_page.status, StatusCode::NOT_FOUND);
+    assert!(
+        error_page.text().contains("/branding/wide?v="),
+        "{}",
+        error_page.text()
+    );
     assert_eq!(
         app.api(Method::GET, "/api/v1/branding/square", &api_admin, None)
             .await
@@ -160,6 +180,12 @@ async fn administrators_replace_and_reset_the_logos() {
         svg_response.header("content-type").as_deref(),
         Some("image/svg+xml")
     );
+    let info = app
+        .api(Method::GET, "/api/v1/branding", &api_admin, None)
+        .await
+        .json();
+    assert_eq!(info["square_type"], "image/svg+xml");
+    assert_eq!(info["wide_type"], "image/png");
 
     // replacing changes the version token, so browsers reload the image
     let before = app

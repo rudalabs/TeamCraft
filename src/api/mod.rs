@@ -426,7 +426,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention|impact|simulation_status|result_values, context: {kind?, item?, revision?, change?, request?, project?, view?, rule?, query?, filters?, selected?, shown?}, allow_drafts?, thread?}",
             "GET    /api/v1/assistant/thread                          the caller's conversation (thread: true questions), newest message last",
             "DELETE /api/v1/assistant/thread                          new conversation: deletes the caller's thread",
-            "GET    /api/v1/branding                                  which logos an administrator replaced: {wide, square} = version token or null",
+            "GET    /api/v1/branding                                  which logos an administrator replaced: {wide, square} = version token or null, {wide_type, square_type} = content type",
             "GET    /api/v1/branding/{wide|square}                   the replaced logo (image); 404 = the built-in logo",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
             "GET    /api/v1/items?q=&type=&project=&state=&system=&class=&attr=&value=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo; class = make|purchased|standard; attr + value = custom attribute (value: text contains, yes/no, 12, >=10, <=20, 10..20, empty = has a value)",
@@ -703,14 +703,19 @@ async fn formats(ApiUser(_me): ApiUser) -> Json<Value> {
 }
 
 /// `GET /api/v1/branding`: which logos an administrator replaced (version
-/// tokens; `null` = built-in logo). Clients load the images from
-/// `/api/v1/branding/{wide|square}`.
+/// tokens; `null` = built-in logo) and their content types. Clients load the
+/// images from `/api/v1/branding/{wide|square}`.
 async fn branding_info(
     State(st): State<AppState>,
     ApiUser(_me): ApiUser,
 ) -> AppResult<Json<Value>> {
     let b = crate::services::branding::current(&st.db).await?;
-    Ok(Json(json!({ "wide": b.wide, "square": b.square })))
+    Ok(Json(json!({
+        "wide": b.wide,
+        "square": b.square,
+        "wide_type": b.wide_type,
+        "square_type": b.square_type,
+    })))
 }
 
 /// `GET /api/v1/branding/{kind}`: the replaced logo as an image.
@@ -720,5 +725,5 @@ async fn branding_logo(
     axum::extract::Path(kind): axum::extract::Path<String>,
     headers: axum::http::HeaderMap,
 ) -> AppResult<axum::response::Response> {
-    web::branding_image(&st, &kind, &headers).await
+    web::branding_image(&st, &kind, &headers, false).await
 }
