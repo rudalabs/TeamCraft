@@ -104,14 +104,15 @@
   </section>
 
   <section class="card">
-    <h2>Reviewers</h2>
+    <h2>Reviewers{% if review_round and review_round > 1 %} <span class="small muted">(round {{ review_round }})</span>{% endif %}</h2>
     {% if reviews %}
     <table>
-      <thead><tr><th scope="col">Reviewer</th><th scope="col">Decision</th><th scope="col">Comment</th>{% if can.modify %}<th scope="col"></th>{% endif %}</tr></thead>
+      <thead><tr><th scope="col">Reviewer</th><th scope="col">Decision</th><th scope="col">Comment</th>{% if can.modify or can.replace_reviewer %}<th scope="col"></th>{% endif %}</tr></thead>
       <tbody>
       {% for r in reviews %}
         <tr>
-          <td class="nowrap" title="{{ r.reviewer_username }}">{{ r.reviewer_name }}</td>
+          <td class="nowrap" title="{{ r.reviewer_username }}">{{ r.reviewer_name }}
+            {% if r.absent %}<span class="small block absent-reviewer">Cannot decide: {% if r.absent == "deactivated" %}deactivated{% elif r.absent == "not_editor" %}no longer an editor{% else %}cannot see every item{% endif %}</span>{% endif %}</td>
           <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}</td>
           <td class="pre">{{ r.comment }}</td>
           {% if can.modify %}
@@ -120,12 +121,39 @@
               <button class="small danger" type="submit">Remove</button>
             </form>
           </td>
+          {% elif can.replace_reviewer %}
+          <td class="right">
+            {% if r.decision == "pending" and replacements %}
+            <form class="inline" method="post" action="/changes/{{ change.id }}/reviewers/{{ r.reviewer_id }}/replace">
+              <select name="username" required aria-label="Substitute for {{ r.reviewer_name }}">
+                {% for u in replacements %}<option value="{{ u.username }}">{{ u.display_name }} ({{ u.username }})</option>{% endfor %}
+              </select>
+              <button class="small" type="submit">Replace</button>
+            </form>
+            {% endif %}
+          </td>
           {% endif %}
         </tr>
       {% endfor %}
       </tbody>
     </table>
     {% else %}<p class="empty">No reviewers assigned.</p>{% endif %}
+    {% if earlier_rounds %}
+    <h3>Earlier rounds</h3>
+    <table>
+      <thead><tr><th scope="col">Round</th><th scope="col">Reviewer</th><th scope="col">Decision</th><th scope="col">Comment</th></tr></thead>
+      <tbody>
+      {% for r in earlier_rounds %}
+        <tr>
+          <td class="nowrap">{{ r.round }}</td>
+          <td class="nowrap" title="{{ r.reviewer_username }}">{{ r.reviewer_name }}</td>
+          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}</td>
+          <td class="pre">{{ r.comment }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
     {% if can.modify %}
       {% if candidates %}
       {% if suggested %}

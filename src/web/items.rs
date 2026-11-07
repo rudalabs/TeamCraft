@@ -48,7 +48,18 @@ pub struct ListQuery {
     /// Custom attribute key and the searched value.
     attr: Option<String>,
     value: Option<String>,
+    /// Result values of simulations: `failed`, `passed`, `above_limit`, `below_limit`.
+    result: Option<String>,
+    /// Name of a result value (contains).
+    result_name: Option<String>,
     page: Option<i64>,
+}
+
+fn result_filters() -> Value {
+    json!(domain::ResultFilter::ALL
+        .iter()
+        .map(|f| json!({ "value": f.as_str(), "label": f.label() }))
+        .collect::<Vec<_>>())
 }
 
 fn classifications() -> Value {
@@ -76,6 +87,8 @@ pub async fn list(
         classification: q.class.as_deref().and_then(Classification::parse),
         attribute: q.attr.clone(),
         attribute_value: q.value.clone(),
+        result: q.result.as_deref().and_then(domain::ResultFilter::parse),
+        result_name: q.result_name.clone(),
     };
     let page_no = q.page.unwrap_or(1).max(1);
     // A search value that does not fit the attribute (e.g. "abc" for a
@@ -107,6 +120,8 @@ pub async fn list(
         ("class", q.class.as_deref()),
         ("attr", q.attr.as_deref()),
         ("value", q.value.as_deref()),
+        ("result", q.result.as_deref()),
+        ("result_name", q.result_name.as_deref()),
     ]
     .iter()
     .filter_map(|(k, v)| {
@@ -132,6 +147,8 @@ pub async fn list(
                 "class": q.class.unwrap_or_default(),
                 "attr": q.attr.unwrap_or_default(),
                 "value": q.value.unwrap_or_default(),
+                "result": q.result.unwrap_or_default(),
+                "result_name": q.result_name.unwrap_or_default(),
             },
             "filter_error": filter_error,
             "systems": crate::cadformat::SYSTEMS,
@@ -141,6 +158,7 @@ pub async fn list(
             "states": states(),
             "classifications": classifications(),
             "attribute_defs": attribute_defs,
+            "result_filters": result_filters(),
         }),
     )
 }
@@ -277,6 +295,38 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
         }
         Err(e) => return Err(e),
     };
+    let mut received = received;
+    // Large files sent before in chunks by app.js (field `uploads`): sessions
+    // without a revision, which only join the creation of an item.
+    let early_form: NewItemForm =
+        serde_json::from_value(json!(received.fields)).unwrap_or_default();
+    let sessions = match super::revisions::take_session_uploads(
+        &st,
+        &ctx.me,
+        crate::services::uploads::Scope::NewItem,
+        &mut received,
+    )
+    .await
+    {
+        Ok(ids) => ids,
+        Err(e) if is_user_error(&e) => {
+            let message = e.public_message();
+            if scripted {
+                let back = format!(
+                    "/items/new?type={}&project={}",
+                    util::pct_encode(&early_form.item_type),
+                    util::pct_encode(&early_form.project_id)
+                );
+                return Ok(super::redirect_flash(
+                    &st,
+                    &back,
+                    super::Flash::error(message),
+                ));
+            }
+            return render_new(&st, &ctx, &early_form, Some(message)).await;
+        }
+        Err(e) => return Err(e),
+    };
     let mut form: NewItemForm = serde_json::from_value(json!(received.fields)).unwrap_or_default();
     if form.name.trim().is_empty() {
         if let Some(first) = received.uploads.first() {
@@ -289,6 +339,8 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
     };
     match result {
         Ok(rev) => {
+            crate::services::uploads::forget(&st.db, &st.vault, &sessions).await;
+            super::revisions::warm_previews(&st, &received.uploads);
             let files = match received.uploads.len() {
                 0 => String::new(),
                 1 => " with 1 file".to_string(),

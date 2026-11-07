@@ -72,15 +72,16 @@
   <h2>API tokens</h2>
   {% if tokens %}
   <table>
-    <thead><tr><th scope="col">Name</th><th scope="col">Prefix</th><th scope="col">Created</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"></th></tr></thead>
+    <thead><tr><th scope="col">Name</th><th scope="col">Prefix</th><th scope="col">Scope</th><th scope="col">Created</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"></th></tr></thead>
     <tbody>
     {% for t in tokens %}
       <tr>
         <td>{{ t.name }}</td>
         <td class="mono small">{{ t.token_prefix }}…</td>
+        <td class="small">{{ m.token_scope(t.scope) }}</td>
         <td class="small nowrap">{{ m.time(t.created_at) }}</td>
         <td class="small nowrap">{{ m.time(t.last_used_at) }}</td>
-        <td class="small nowrap">{% if t.expires_at %}{{ m.time(t.expires_at) }}{% else %}never{% endif %}</td>
+        <td class="small nowrap">{{ m.token_expiry(t) }}</td>
         <td class="right">
           <form class="inline" method="post" action="/account/tokens/{{ t.id }}/revoke" data-confirm="Revoke token '{{ t.name }}'?">
             <input type="hidden" name="back" value="/admin/users/{{ user.id }}">

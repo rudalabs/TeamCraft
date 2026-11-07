@@ -78,6 +78,11 @@ pub async fn project_show(
     } else {
         None
     };
+    let review_policy = if can_manage {
+        Some(project_policy::get_review_policy(&st.db, &ctx.me, id).await?)
+    } else {
+        None
+    };
     let admin_modes: Vec<Value> = [AdminRead::Implicit, AdminRead::WithReason, AdminRead::None]
         .iter()
         .map(|m| json!({ "value": m.as_str(), "label": m.label() }))
@@ -104,6 +109,7 @@ pub async fn project_show(
             "can_manage": can_manage,
             "readable": readable,
             "policy": policy,
+            "review_policy": review_policy,
             "admin_modes": admin_modes,
             "elevation_minutes": project_policy::ELEVATION_MINUTES,
             "result_templates": templates,
@@ -246,6 +252,52 @@ pub async fn update_policy(
             back.clone(),
             format!("Administrator access: {}", p.admin_read.label()),
         )
+    })
+}
+
+#[derive(Deserialize)]
+pub struct ReviewPolicyForm {
+    #[serde(default)]
+    min_approvals: String,
+    #[serde(default)]
+    required_reviewers: String,
+    #[serde(default)]
+    role_group: String,
+}
+
+/// `POST /projects/{id}/review-policy` – managers of the group, admins.
+pub async fn update_review_policy(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<ReviewPolicyForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let min = form.min_approvals.trim();
+    let result = match (min.is_empty(), min.parse::<i32>()) {
+        (true, _) => Ok(None),
+        (false, Ok(n)) => Ok(Some(n)),
+        _ => Err(AppError::BadRequest(
+            "Minimum approvals must be a number, or empty for all reviewers.".into(),
+        )),
+    };
+    let result = match result {
+        Ok(min_approvals) => {
+            let input = project_policy::ReviewPolicyInput {
+                min_approvals,
+                required_usernames: form
+                    .required_reviewers
+                    .split(|c: char| c == ',' || c.is_whitespace())
+                    .map(str::to_string)
+                    .collect(),
+                role_group_code: Some(form.role_group),
+            };
+            project_policy::set_review_policy(&st.db, &ctx.me, id, &input).await
+        }
+        Err(e) => Err(e),
+    };
+    finish(&st, result, &back, |_| {
+        (back.clone(), "Saved the review policy".to_string())
     })
 }
 

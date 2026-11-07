@@ -103,3 +103,10 @@ path = "fuzz_targets/resultscan.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "solversummary"
+path = "fuzz_targets/solversummary.rs"
+test = false
+doc = false
+bench = false

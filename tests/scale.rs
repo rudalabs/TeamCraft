@@ -984,9 +984,15 @@ async fn scale_check() {
             .expect("busy user");
         users::actor(&pool, user.id).await.unwrap()
     };
-    let (_, token) = users::create_token(&pool, &actor, "scale check", None)
-        .await
-        .expect("token");
+    let (_, token) = users::create_token(
+        &pool,
+        &actor,
+        "scale check",
+        teamcraft::services::users::TokenLifetime::Unlimited,
+        teamcraft::domain::TokenScope::Full,
+    )
+    .await
+    .expect("token");
     let session = Session { cookie, token };
 
     // The plan pool: auto_explain on every connection (superuser only).

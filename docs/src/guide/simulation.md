@@ -115,6 +115,21 @@ Solver scripts write their results through the REST API
 (`PUT …/simulation/results` replaces the set in one transaction; see the
 [REST API](../reference/api.md#simulations)).
 
+### Solver summary of a file
+
+For solver output a one-line summary appears next to the file on the revision page
+(and in the vault explorer): solver and version, how the run ended (`converged`,
+`END OF JOB`, `fatal`), the last iteration or time step, and the number of `FATAL`
+and `WARNING` lines. It is made at check-in from the **first and the last 64 KiB**
+of the file only, so the counts cover those two windows, not the whole file – the
+line says so. Supported: Fluent transcripts (`.trn`) and report files, Nastran
+`.f06` and decks (`SOL`), STAR-CCM+ macros (`.java`) and batch logs
+(`.log`/`.txt` that name STAR-CCM+). The summary is a hint read from a
+user-written file, never a verified result; the MCP tools mark it as untrusted
+data. The rules follow public documentation and typical output and are **not yet
+checked against real files** of these programs; a file that does not match shows
+no summary. Files stored before the feature have none until they get a new version.
+
 ### Values from files at check-in
 
 Two bounded ways fill the table without typing – neither reads big result
@@ -298,6 +313,30 @@ card of the revision.
 *Compare with another revision* on the Results card puts the values of two
 revisions of the simulation side by side – matched by name and load case,
 with the difference, the relative change and the pass/fail status of both.
+
+## Finding simulations by their results
+
+The item list (*Result values* and *Result name* in the filter bar, `result=`
+and `result_name=` in the URL and in `GET /api/v1/items`) looks at the result
+values of the **latest revision** of simulations:
+
+| `result` | Matches simulations with at least one value that |
+|---|---|
+| `failed` | is outside its limits |
+| `passed` | has limits and is within them |
+| `above_limit` | is above its upper limit |
+| `below_limit` | is below its lower limit |
+
+`result_name` is a case-insensitive "contains" on the value name and can be
+combined with `result` (the same value must match both), the type, project,
+state and text filters. An unknown `result` is refused by the REST API.
+Only items the user may read are found and counted: restricted groups stay
+out of the list and its total.
+
+The dashboard shows a card *Simulations to check*: simulations the user may
+read whose latest revision (not obsolete) has a failed value or is out of
+date (see above), ten at a time, with a link to the search. Bases the user may
+not see never make a simulation appear out of date.
 
 ## Limits of version 1
 

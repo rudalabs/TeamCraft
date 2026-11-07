@@ -10,7 +10,9 @@ use crate::{
     domain::{self, Classification, ItemType, LifecycleState, ProjectVisibility, Role},
     error::{AppError, AppResult},
     models::{Item, ItemSummary, Revision, WhereUsed, WhereUsedLevel},
-    services::{access, attributes, audit, files, notifications, projects, revisions, Page},
+    services::{
+        access, attributes, audit, files, notifications, projects, revisions, simulations, Page,
+    },
 };
 
 pub(crate) const ITEM_SELECT: &str = "
@@ -38,6 +40,11 @@ pub struct ItemFilter {
     /// matching `attribute_value` (see `domain::parse_attribute_condition`).
     pub attribute: Option<String>,
     pub attribute_value: Option<String>,
+    /// Simulations whose latest revision has a result value in this state
+    /// (see `domain::ResultFilter`), optionally only for values whose name
+    /// contains `result_name`.
+    pub result: Option<domain::ResultFilter>,
+    pub result_name: Option<String>,
 }
 
 /// Bind values of an attribute condition: key, LIKE pattern, yes/no, min, max.
@@ -93,7 +100,7 @@ pub async fn search(
     // ("SolidWorks", "NX", "STEP"), $7 = formats of the CAD program filter,
     // $8/$9 = limit/offset, $10 = the actor's hidden project groups,
     // $11 = classification, $12–$16 = attribute key, LIKE pattern, yes/no,
-    // min, max.
+    // min, max, $17 = result filter, $18 = LIKE pattern of a result name.
     // A match is any of: item number, name/description/material or a custom
     // attribute value (substring or full-text), a file name, the extracted
     // text of the current version of a file of the latest revision, or a file
@@ -116,6 +123,15 @@ pub async fn search(
           AND (f.filename ILIKE $1
                OR ($5::text IS NOT NULL AND fv.content_vector @@ to_tsquery('simple', $5))
                OR f.format = ANY($6::text[]))";
+    // A result value of the revision: its name and its state against the limits.
+    const RESULT_MATCH: &str = "($18::text IS NULL OR sr.name ILIKE $18)
+          AND ($17::text IS NULL
+               OR ($17 = 'failed' AND (RESULT_FAILED))
+               OR ($17 = 'passed' AND (sr.lower_limit IS NOT NULL OR sr.upper_limit IS NOT NULL)
+                   AND NOT (RESULT_FAILED))
+               OR ($17 = 'above_limit' AND sr.upper_limit IS NOT NULL AND sr.value > sr.upper_limit)
+               OR ($17 = 'below_limit' AND sr.lower_limit IS NOT NULL AND sr.value < sr.lower_limit))";
+    let result_match = RESULT_MATCH.replace("RESULT_FAILED", simulations::RESULT_FAILED_SQL);
     let visible = access::item_visible("i", 10);
     // conditions on the item itself (also applied to the page of items)
     let item_conditions = format!(
@@ -140,7 +156,9 @@ pub async fn search(
                AND ($15::float8 IS NULL OR CASE WHEN jsonb_typeof(lr.attributes -> $12) = 'number'
                     THEN (lr.attributes ->> $12)::float8 >= $15 ELSE FALSE END)
                AND ($16::float8 IS NULL OR CASE WHEN jsonb_typeof(lr.attributes -> $12) = 'number'
-                    THEN (lr.attributes ->> $12)::float8 <= $16 ELSE FALSE END)))"
+                    THEN (lr.attributes ->> $12)::float8 <= $16 ELSE FALSE END)))
+          AND ($17::text IS NULL AND $18::text IS NULL OR EXISTS (
+                SELECT 1 FROM simulation_results sr WHERE sr.revision_id = lr.id AND {result_match}))"
     );
     let columns = format!(
         "i.id, i.number, i.item_type, i.unit, p.code AS project_code, i.created_at,
@@ -175,6 +193,10 @@ pub async fn search(
         WHERE cf.format = ANY($7::text[])";
     const ATTRIBUTE_CANDIDATES: &str =
         "SELECT cr.item_id FROM revisions cr WHERE cr.attributes ? $12";
+    let result_candidates = format!(
+        "SELECT cr.item_id FROM simulation_results sr JOIN revisions cr ON cr.id = sr.revision_id
+         WHERE {result_match}"
+    );
 
     let classification = filter.classification.map(Classification::as_str);
     let (attr_key, attr_pattern, attr_bool, attr_min, attr_max) =
@@ -186,6 +208,13 @@ pub async fn search(
         .filter(|q| !q.is_empty());
     let pattern = query.map(domain::like_pattern);
     let tsquery = query.and_then(crate::textindex::prefix_query);
+    let result_state = filter.result.map(domain::ResultFilter::as_str);
+    let result_pattern = filter
+        .result_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(domain::like_pattern);
     let item_type = filter.item_type.map(ItemType::as_str);
     let state = filter.state.map(LifecycleState::as_str);
     let named_formats = query
@@ -197,7 +226,7 @@ pub async fn search(
         .filter(|s| !s.is_empty())
         .map(crate::cadformat::ids_of_system);
 
-    let mut narrow = Vec::new();
+    let mut narrow: Vec<&str> = Vec::new();
     if pattern.is_some() {
         narrow.push(TEXT_CANDIDATES);
     }
@@ -209,6 +238,9 @@ pub async fn search(
     }
     if attr_key.is_some() {
         narrow.push(ATTRIBUTE_CANDIDATES);
+    }
+    if result_state.is_some() || result_pattern.is_some() {
+        narrow.push(&result_candidates);
     }
     let candidates: String = narrow
         .iter()
@@ -262,6 +294,8 @@ pub async fn search(
         .bind(attr_bool)
         .bind(attr_min)
         .bind(attr_max)
+        .bind(result_state)
+        .bind(&result_pattern)
         .fetch_all(pool)
         .await?;
     // The window total is there whenever the page has rows; a page behind
@@ -306,6 +340,8 @@ pub async fn search(
             .bind(attr_bool)
             .bind(attr_min)
             .bind(attr_max)
+        .bind(result_state)
+        .bind(&result_pattern)
             .fetch_one(pool)
             .await?
         }

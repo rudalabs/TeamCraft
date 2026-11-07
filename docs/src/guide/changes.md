@@ -113,6 +113,21 @@ touch the files. The user who submitted a change is stored in
 was introduced keep working: only the author is refused on those until they
 are withdrawn and submitted again.
 
+### Review rounds and absent reviewers
+
+When a change is withdrawn or reopened after somebody decided, the decisions
+of that round are kept (table `change_review_rounds`) and the next submit
+starts a new round. The change page shows the current round in the
+*Reviewers* card and the earlier ones under *Earlier rounds*.
+
+A reviewer who has not decided yet but no longer can (account deactivated,
+role below editor, or not a member of a restricted group of an affected item)
+is marked *Cannot decide*. While the change is in review, the author or an
+administrator can replace any pending reviewer by another eligible user; the
+other decisions are kept, the substitute is notified and the audit log gets
+`change.replace_reviewer`. The substitute must pass the same checks as a new
+reviewer (editor role, four-eyes rule, sees every item).
+
 ### Suggested reviewers
 
 Next to the reviewer picker of a draft change, TeamCraft suggests up to

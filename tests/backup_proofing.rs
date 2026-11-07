@@ -262,9 +262,15 @@ async fn a_backup_of_an_older_schema_restores_and_then_migrates() {
     assert_eq!(after, rows);
     // the current API serves the old data and its file contents
     let actor = restored.actor("erika").await;
-    let (_, token) = teamcraft::services::users::create_token(&restored.pool, &actor, "t", None)
-        .await
-        .unwrap();
+    let (_, token) = teamcraft::services::users::create_token(
+        &restored.pool,
+        &actor,
+        "t",
+        teamcraft::services::users::TokenLifetime::Unlimited,
+        teamcraft::domain::TokenScope::Full,
+    )
+    .await
+    .unwrap();
     let file_id: uuid::Uuid =
         sqlx::query_scalar("SELECT id FROM files WHERE filename = 'bracket.step'")
             .fetch_one(&restored.pool)

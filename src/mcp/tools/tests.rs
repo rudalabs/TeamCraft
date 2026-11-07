@@ -504,3 +504,34 @@ fn duplicates_are_grouped_by_content() {
     assert_eq!(g[0]["sha256"], "zz");
     assert_eq!(g[0]["copies"].as_array().unwrap().len(), 2);
 }
+
+#[test]
+fn token_scopes_narrow_the_tool_list() {
+    let all = definitions();
+    let names = |defs: &[Value]| -> Vec<String> {
+        defs.iter()
+            .map(|d| d["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(names(&definitions_for(TokenScope::Full)), names(&all));
+    assert_eq!(names(&definitions_for(TokenScope::McpOnly)), names(&all));
+    let read = definitions_for(TokenScope::ReadOnly);
+    assert!(!read.is_empty() && read.len() < all.len());
+    for d in &all {
+        let name = d["name"].as_str().unwrap();
+        let read_only = d["annotations"]["readOnlyHint"] == true;
+        assert_eq!(is_read_only(name), read_only, "{name}");
+        assert_eq!(read.iter().any(|r| r["name"] == name), read_only, "{name}");
+    }
+    for write in [
+        "create_change_draft",
+        "add_to_change",
+        "create_change_request",
+        "comment_change_request",
+        "propose_result_values",
+    ] {
+        assert!(!is_read_only(write), "{write}");
+    }
+    assert!(is_read_only("search_items"));
+    assert!(!is_read_only("no_such_tool"));
+}
