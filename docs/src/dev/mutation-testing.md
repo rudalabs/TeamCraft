@@ -90,7 +90,8 @@ Workflow *Mutation testing* (`.github/workflows/mutants.yml`):
   fail, a diff that does not match, a tool error) fails the job.
 * **Weekly and by hand** (Actions → Mutation testing → Run workflow): every
   examined file, split over 16 shards (`--shard k/16`), each shard with its
-  own baseline; the *mutants report* job merges the shards' `missed.txt` into
+  own baseline, at most 8 shards at a time (a single run at a time, weekly or
+  manual); the *mutants report* job merges the shards' `missed.txt` into
   one summary, counted per file.
 
 ## Policy

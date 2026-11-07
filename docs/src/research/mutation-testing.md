@@ -161,7 +161,7 @@ and in the step summary, not as a red check.
 
 * **cargo-mutants** (MIT) as a CI tool, no new crate dependency.
 * `.cargo/mutants.toml`: `examine_globs` over the pure, unit-tested modules,
-  `--lib` tests, `mutants` profile, commented `exclude_re`.
+  `--lib` tests, `mutants` profile, empty `exclude_re` (rules are added when a report shows one is needed).
 * Workflow `mutants.yml`: pull requests run `--in-diff` over the touched
   examined files, **report-only** (missed mutants in the step summary and the
   artifact); a weekly and manual full run sharded over a matrix. No PostgreSQL

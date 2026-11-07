@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mutants-${{ github.ref }}-${{ github.event_name }}
+  group: mutants-${{ github.event_name == 'pull_request' && github.ref || 'full' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -80,7 +80,9 @@ jobs:
           CARGO_INCREMENTAL: "1"
         run: |
           status=0
-          cargo mutants --in-place --in-diff git.diff --no-shuffle -vV || status=$?
+          # --in-place allows one job only (about 30 s per mutant): stop with SIGINT
+          # before the job timeout; cargo-mutants keeps the results found so far
+          timeout --signal=INT 80m cargo mutants --in-place --in-diff git.diff --no-shuffle -vV || status=$?
           echo "status=$status" >> "$GITHUB_ENV"
       - name: Summary
         if: always() && steps.select.outputs.count != '0'
@@ -101,10 +103,15 @@ jobs:
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+          # warnings on the changed lines (file:line:col: text)
+          if [ -s "$out/missed.txt" ]; then
+            sed -E 's/^([^:]+):([0-9]+):([0-9]+): (.*)$/::warning file=\1,line=\2,col=\3::missed mutant: \4/' "$out/missed.txt"
+          fi
           # report-only: 2 = missed, 3 = timeouts; everything else means the
           # run itself is broken
           case "${status:-0}" in
             0) ;;
+            124) echo "::warning::mutation run stopped after 80 min, results are partial" ;;
             2|3) echo "::warning::cargo-mutants found missed or timed-out mutants in the changed code (report-only, see the summary)" ;;
             *) echo "::error::cargo-mutants failed with exit code $status"; exit 1 ;;
           esac
@@ -122,6 +129,7 @@ jobs:
     timeout-minutes: 240
     strategy:
       fail-fast: false
+      max-parallel: 8
       matrix:
         # the denominator of --shard below must be the number of shards
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
@@ -163,6 +171,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
           pattern: mutants-shard-*
           path: shards

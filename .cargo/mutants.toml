@@ -24,11 +24,9 @@ examine_globs = [
 
 # Mutants that are equivalent or not worth a test – each with its reason.
 # The pattern matches the mutant's name as `cargo mutants --list` prints it.
-exclude_re = [
-    # Debug/Display output is for logs and error messages; no test should pin
-    # its exact text (user-facing text is tested where it is rendered).
-    "<impl (Debug|Display) for ",
-]
+# Add a rule only when such a mutant shows up in a report, e.g.
+#   "<impl (fmt::)?(Debug|Display) for " for log-only output.
+exclude_re = []
 
 # Unit tests only (see above); the integration tests in tests/ need PostgreSQL.
 # A cargo argument, not a test argument: the build step (`cargo test --no-run`)
