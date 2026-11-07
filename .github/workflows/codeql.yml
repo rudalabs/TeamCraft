@@ -108,5 +108,12 @@ jobs:
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
+      env:
+        # Rust only: our model pack (.github/codeql/extensions/teamcraft-models,
+        # barriers for vault paths). Advanced setup does not pick it up by
+        # itself. The action runs `codeql database run-queries`, which on pull
+        # requests already gets --additional-packs for its diff-range pack, so
+        # that directory is listed here too (a later flag replaces an earlier).
+        CODEQL_ACTION_EXTRA_OPTIONS: ${{ matrix.language == 'rust' && format('{{"database":{{"run-queries":["--additional-packs={0}/.github/codeql/extensions{1}","--model-packs=rudalabs/teamcraft-rust-models"]}}}}', github.workspace, github.event_name == 'pull_request' && format(':{0}/pr-diff-range', runner.temp) || '') || '' }}
       with:
         category: "/language:${{matrix.language}}"
