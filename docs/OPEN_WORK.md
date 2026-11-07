@@ -81,7 +81,9 @@ feature milestone – the features in *What works* are enough; what is missing i
     429 with `Retry-After`)
   - [x] F1 (rest): wrong current passwords of the own password change (web form and `POST /api/v1/me/password`)
     count like failed sign-ins (429 with `Retry-After`, audited as `user.password_failed`)
-  - [ ] F2: scoped PATs (read-only, MCP-only); a shorter or narrower desktop token
+  - [x] F2: scoped PATs (`full` = read+write+approve, `write` = no approving, `read_only`, `mcp_only`;
+    existing and desktop tokens stay `full`; a token cannot mint a wider one). Left: a narrower desktop token by default,
+    per-group scopes, sign-off re-authentication (#152 step 4)
     (also the complement of `TEAMCRAFT_LOCAL_AGENTS=off`, which closes the MCP endpoint for every token but
     not the REST API: a read-only token would narrow what an agent holding a user's own token can do there)
   - [x] F3: sign-in, failed sign-in and sign-out in the audit log (`user.sign_in`, `user.sign_in_failed`,
@@ -330,7 +332,7 @@ real files and belong to section 3 once such files are at hand.
 - [x] Step 1: wider separation of duties (editors and the acting admin cannot review; suggester excludes them).
 - [ ] Step 2: review policy per project group (min approvals, required reviewers, role group).
 - [ ] Step 3: obsolete and supersede through a change order (per-group setting), supersede notifies watchers.
-- [ ] Step 4: token scopes (`approve`) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`).
+- [ ] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`, open).
 - [ ] Step 5: keep review rounds in `change_reviews`.
 - [ ] Step 6: flag and replace absent reviewers, substitutes.
 - [ ] Step 7: item owner and admin handover of a leaving user's work.

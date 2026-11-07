@@ -596,3 +596,82 @@ async fn the_mcp_bridge_forwards_requests_and_reports_errors() {
     assert!(r.stdout.contains("not reachable"), "{}", r.stdout);
     app.teardown().await;
 }
+
+#[tokio::test]
+async fn create_token_prints_a_scoped_token_and_refuses_bad_input() {
+    let app = app_or_skip!();
+    let e = env(&app);
+    app.user("tokenuser", Role::Editor).await;
+
+    let r = run(
+        &e,
+        &[
+            "user",
+            "create-token",
+            "--username",
+            "tokenuser",
+            "--name",
+            "cli token",
+            "--scope",
+            "read_only",
+        ],
+        b"",
+    )
+    .await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    let token = r.stdout.trim().to_string();
+    assert!(token.starts_with("tc_pat_"), "{token}");
+    let me = app
+        .api(axum::http::Method::GET, "/api/v1/me", &token, None)
+        .await;
+    assert_eq!(me.status, StatusCode::OK);
+    assert_eq!(me.json()["token_scope"], "read_only");
+    let audited: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE action = 'token.create'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert!(audited >= 1);
+
+    // a bad scope is refused and prints no token
+    let r = run(
+        &e,
+        &[
+            "user",
+            "create-token",
+            "--username",
+            "tokenuser",
+            "--name",
+            "x",
+            "--scope",
+            "root",
+        ],
+        b"",
+    )
+    .await;
+    assert_ne!(r.code, 0);
+    assert!(r.stdout.trim().is_empty(), "{}", r.stdout);
+
+    // a deactivated account gets no token
+    sqlx::query("UPDATE users SET active = false WHERE username = 'tokenuser'")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let r = run(
+        &e,
+        &[
+            "user",
+            "create-token",
+            "--username",
+            "tokenuser",
+            "--name",
+            "y",
+        ],
+        b"",
+    )
+    .await;
+    assert_ne!(r.code, 0);
+    assert!(r.stderr.contains("deactivated"), "{}", r.stderr);
+    assert!(r.stdout.trim().is_empty());
+    app.teardown().await;
+}

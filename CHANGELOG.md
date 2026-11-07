@@ -17,6 +17,19 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+
+- Scoped personal access tokens (threat model F2, #151 step 6, #152 step 4):
+  a token gets a scope when it is created (account page, `POST /api/v1/tokens`,
+  `teamcraft user create-token --scope`). `full` = read, write and approve
+  (what every token had before; existing tokens and the desktop app's token
+  stay `full`), `write` = read and write but no approving (reviewing a change
+  order, deciding a change request, making a revision obsolete), `read_only` =
+  GET/HEAD and the read-only MCP tools, `mcp_only` = only `POST /api/v1/mcp`.
+  Refusals are 403 and write nothing; a token cannot mint a token with more
+  rights than its own. The desktop app's new tokens now expire after 30 days
+  without use (renewed on every use) instead of a fixed 90 days; existing
+  desktop tokens keep their fixed expiry.
+  Migration `0045` (renumbered at merge).
 - The web *New item* form sends files above 32 MiB in chunks too (resumable, like the revision page); the
   upload sessions may now have no revision and only join the creation of an item. Without JavaScript the form still
   submits all files in one request.
