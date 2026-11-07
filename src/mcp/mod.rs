@@ -73,20 +73,34 @@ fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message.into() } })
 }
 
-/// Told to a local agent when `TEAMCRAFT_LOCAL_AGENTS=off`.
+/// Told to a local agent the desktop app started (marked with
+/// [`LOCAL_AGENT_HEADER`]) when `TEAMCRAFT_LOCAL_AGENTS=off`.
 pub const LOCAL_AGENTS_OFF: &str =
     "Local agents are turned off on this TeamCraft server by the administrator \
 (TEAMCRAFT_LOCAL_AGENTS=off). Use Ask TeamCraft, the assistant configured on the server, instead.";
 
-/// Whether a call must be refused under the local-agent policy: only calls
-/// the desktop app marked as coming from a local agent it started
-/// ([`LOCAL_AGENT_HEADER`]) can be recognised. Pure, for tests.
-pub fn refuses_local_agent(policy: LocalAgents, headers: &HeaderMap) -> bool {
-    !policy.allowed()
-        && headers.get_all(LOCAL_AGENT_HEADER).iter().any(|v| {
-            v.as_bytes()
-                .eq_ignore_ascii_case(LOCAL_AGENT_HEADER_VALUE.as_bytes())
-        })
+/// Told to every other MCP client when `TEAMCRAFT_LOCAL_AGENTS=off`.
+pub const MCP_OFF: &str =
+    "The MCP endpoint is turned off on this TeamCraft server by the administrator \
+(TEAMCRAFT_LOCAL_AGENTS=off): AI agents outside the server are not allowed. Use Ask TeamCraft, \
+the assistant configured on the server, instead.";
+
+/// Why a call must be refused under the local-agent policy, `None` = serve it.
+///
+/// With `off` the whole endpoint is refused for every token: the built-in
+/// assistant calls the tools in-process, so every HTTP MCP client is an agent
+/// outside the server (the desktop's Agent view, the `teamcraft mcp` bridge,
+/// an assistant set up by hand). [`LOCAL_AGENT_HEADER`] only picks the
+/// message; leaving it out changes nothing. Pure, for tests.
+pub fn local_agent_refusal(policy: LocalAgents, headers: &HeaderMap) -> Option<&'static str> {
+    if policy.allowed() {
+        return None;
+    }
+    let marked = headers.get_all(LOCAL_AGENT_HEADER).iter().any(|v| {
+        v.as_bytes()
+            .eq_ignore_ascii_case(LOCAL_AGENT_HEADER_VALUE.as_bytes())
+    });
+    Some(if marked { LOCAL_AGENTS_OFF } else { MCP_OFF })
 }
 
 /// `POST /api/v1/mcp`.
@@ -96,17 +110,16 @@ pub async fn http(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if refuses_local_agent(st.config.local_agents, &headers) {
-        // not audited: the header is the desktop's courtesy, not a security
-        // boundary (the same token works without it)
+    // after ApiUser: without a valid token the answer stays 401
+    if let Some(message) = local_agent_refusal(st.config.local_agents, &headers) {
         tracing::debug!(
             user = %me.username,
-            "MCP call of a local agent refused (TEAMCRAFT_LOCAL_AGENTS=off)"
+            "MCP call refused (TEAMCRAFT_LOCAL_AGENTS=off)"
         );
         return (
             StatusCode::FORBIDDEN,
             [(header::CONTENT_TYPE, "application/json")],
-            error(Value::Null, INVALID_REQUEST, LOCAL_AGENTS_OFF).to_string(),
+            error(Value::Null, INVALID_REQUEST, message).to_string(),
         )
             .into_response();
     }
@@ -286,7 +299,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn local_agent_calls_are_refused_only_when_off() {
+    fn local_agents_off_refuses_every_mcp_client() {
         let mut marked = HeaderMap::new();
         marked.insert(
             LOCAL_AGENT_HEADER,
@@ -297,14 +310,24 @@ mod tests {
         let mut other = HeaderMap::new();
         other.insert(LOCAL_AGENT_HEADER, "cli".parse().unwrap());
         let plain = HeaderMap::new();
-        assert!(refuses_local_agent(LocalAgents::Off, &marked));
-        assert!(refuses_local_agent(LocalAgents::Off, &shouted));
-        assert!(!refuses_local_agent(LocalAgents::Off, &other));
-        assert!(!refuses_local_agent(LocalAgents::Off, &plain));
+        // the header only picks the message: unmarked clients are refused too
+        assert_eq!(
+            local_agent_refusal(LocalAgents::Off, &marked),
+            Some(LOCAL_AGENTS_OFF)
+        );
+        assert_eq!(
+            local_agent_refusal(LocalAgents::Off, &shouted),
+            Some(LOCAL_AGENTS_OFF)
+        );
+        assert_eq!(local_agent_refusal(LocalAgents::Off, &other), Some(MCP_OFF));
+        assert_eq!(local_agent_refusal(LocalAgents::Off, &plain), Some(MCP_OFF));
         for h in [&marked, &shouted, &other, &plain] {
-            assert!(!refuses_local_agent(LocalAgents::Allowed, h));
+            assert_eq!(local_agent_refusal(LocalAgents::Allowed, h), None);
         }
-        assert!(LOCAL_AGENTS_OFF.contains("TEAMCRAFT_LOCAL_AGENTS=off"));
+        for m in [LOCAL_AGENTS_OFF, MCP_OFF] {
+            assert!(m.contains("TEAMCRAFT_LOCAL_AGENTS=off"), "{m}");
+            assert!(m.contains("Ask TeamCraft"), "{m}");
+        }
     }
 
     #[test]

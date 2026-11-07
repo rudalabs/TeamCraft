@@ -842,11 +842,10 @@ pub fn models_of(result: &Value) -> Option<Models> {
 
 // ---------------------------------------------------------------- policy
 
-/// Header on the MCP connection handed to a local agent, so the server can
-/// recognise (and, with `TEAMCRAFT_LOCAL_AGENTS=off`, refuse) it. Same
-/// name and value as `LOCAL_AGENT_HEADER` in the server's `src/config.rs`.
-pub const LOCAL_AGENT_HEADER: &str = "X-TeamCraft-Client";
-pub const LOCAL_AGENT_HEADER_VALUE: &str = "desktop-agent";
+/// Header on the MCP connection handed to a local agent (defined in the
+/// dependency-free `compat.rs`, which the server's tests check against
+/// `LOCAL_AGENT_HEADER` in its `src/config.rs`).
+pub use crate::compat::{LOCAL_AGENT_HEADER, LOCAL_AGENT_HEADER_VALUE};
 
 /// Shown when the server's administrator turned local agents off.
 pub const LOCAL_AGENTS_OFF: &str = "Local agents are turned off on this TeamCraft server: the administrator \

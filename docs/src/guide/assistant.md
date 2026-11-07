@@ -232,7 +232,8 @@ with its own provider.
 Your administrator can turn local agents off for the whole server
 (`TEAMCRAFT_LOCAL_AGENTS=off`, see
 [Local agents](../admin/configuration.md#local-agents)), so that AI use
-goes only through *Ask TeamCraft*. The desktop app then shows no
+goes only through *Ask TeamCraft*. The server then refuses every MCP
+client, also one you set up with your own token, and the desktop app shows no
 **Agent** entry, ends a running agent and refuses to start one with a
 message that names this setting.
 
@@ -286,8 +287,8 @@ message that names this setting.
   server's MCP endpoint (`<server>/api/v1/mcp`) to the agent when the
   session starts, with your desktop sign-in (the personal access token) as
   the `Authorization` header, and marks the connection with
-  `X-TeamCraft-Client: desktop-agent` (so the server can refuse it when
-  local agents are off). The agent can do in TeamCraft exactly what
+  `X-TeamCraft-Client: desktop-agent` (so the server can say precisely
+  why it refuses it when local agents are off). The agent can do in TeamCraft exactly what
   you can do through the MCP tools: read, and draft change orders. It
   cannot submit, approve or release. An agent without support for MCP over
   HTTP gets no TeamCraft tools; the navigator says so.

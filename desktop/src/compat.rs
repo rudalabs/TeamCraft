@@ -1,4 +1,5 @@
 //! Version handshake: does this desktop app fit the server it connects to?
+//! Also the header the server knows a local agent by (shared constants).
 //!
 //! Before 1.0 a minor version may break the REST API, so app and server must
 //! share major and minor version; patch versions never matter. From 1.0 on the
@@ -41,3 +42,12 @@ pub fn notice(app: &str, server: &str) -> Option<String> {
         "This desktop app is version {app}, the server runs {server}. They may not work together. {advice}"
     ))
 }
+
+/// Header on the MCP connection the desktop hands to a local agent (ACP), so
+/// the server can name the reason precisely when its administrator turned
+/// local agents off (`TEAMCRAFT_LOCAL_AGENTS=off`). Here, in this
+/// dependency-free file, so the server's test suite pins it to
+/// `LOCAL_AGENT_HEADER` in `src/config.rs`.
+pub const LOCAL_AGENT_HEADER: &str = "X-TeamCraft-Client";
+/// Value of [`LOCAL_AGENT_HEADER`] on a local agent's MCP calls.
+pub const LOCAL_AGENT_HEADER_VALUE: &str = "desktop-agent";

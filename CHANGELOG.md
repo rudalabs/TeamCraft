@@ -22,10 +22,12 @@ Changes on `main` since the `v0.2.5` tag.
   assistant *Ask TeamCraft* remains. `GET /api/v1/me` reports
   `capabilities.local_agents`; the desktop app hides the Agent view, disables
   *View → Agent*, ends a running agent and refuses to start one;
-  `POST /api/v1/mcp` refuses calls the desktop marks as coming from a local
-  agent (`X-TeamCraft-Client: desktop-agent`). The default `allowed` changes
-  nothing. It cannot stop a user from giving their own token to another MCP
-  client (scoped tokens, F2, are the complement).
+  `POST /api/v1/mcp` refuses every call with `403`, for every token (also
+  the `teamcraft mcp` bridge, agents set up by hand and older desktop apps;
+  the built-in assistant calls the tools inside the server and is not
+  affected), and `capabilities.mcp` turns `false`. The default `allowed`
+  changes nothing. The REST API stays open to a user's own token (scoped
+  tokens, F2, are the complement).
 
 ## [0.2.5] - 2026-11-07
 

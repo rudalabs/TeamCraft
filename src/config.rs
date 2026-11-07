@@ -320,12 +320,13 @@ impl Default for WebhookConfig {
 /// (the desktop app's *Agent* view, an ACP client for Claude Code, Gemini
 /// CLI …) to TeamCraft's tools?
 ///
-/// `Off` is a policy the server reports to its clients
-/// (`GET /api/v1/me` → `capabilities.local_agents`) and enforces where it can
-/// recognise a local agent: the desktop app marks the MCP connection it hands
-/// to an agent with [`LOCAL_AGENT_HEADER`], and `POST /api/v1/mcp` refuses
-/// such calls. It cannot stop a user from giving their own personal access
-/// token to some other MCP client – that needs scoped tokens.
+/// `Off` turns `POST /api/v1/mcp` off for every token (the built-in assistant
+/// calls the tools in-process, so it is not affected) and is reported to
+/// clients (`GET /api/v1/me` → `capabilities.local_agents` and `mcp`), so the
+/// desktop app hides its Agent view. [`LOCAL_AGENT_HEADER`], which the desktop
+/// adds to the MCP connection it hands to an agent, only picks the refusal
+/// message. The REST API stays open to a user's own token – limiting that
+/// needs scoped tokens.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LocalAgents {
     /// The default: the desktop app offers its *Agent* view.

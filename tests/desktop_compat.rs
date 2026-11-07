@@ -42,3 +42,15 @@ fn an_unreadable_server_version_is_not_blocked() {
     assert!(compat::notice("0.2.0", "").is_none());
     assert!(compat::notice("0.2.0", "unknown").is_none());
 }
+
+#[test]
+fn local_agent_header_matches_the_server() {
+    // a rename on one side would silently turn the server's hint off
+    assert!(compat::LOCAL_AGENT_HEADER.eq_ignore_ascii_case(teamcraft::config::LOCAL_AGENT_HEADER));
+    assert_eq!(
+        compat::LOCAL_AGENT_HEADER_VALUE,
+        teamcraft::config::LOCAL_AGENT_HEADER_VALUE
+    );
+    // a valid header name, as the HTTP stack of the agent needs it
+    assert!(axum::http::HeaderName::from_bytes(compat::LOCAL_AGENT_HEADER.as_bytes()).is_ok());
+}

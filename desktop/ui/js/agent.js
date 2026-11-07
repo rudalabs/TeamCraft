@@ -80,7 +80,11 @@ export function applyAgentPolicy() {
   return call("agent_policy").then(function (p) { apply(p.allowed, p.message); }, function () {
     // server not reachable: what GET /me said at sign-in
     var caps = state.me && state.me.capabilities;
-    apply(!(caps && caps.local_agents === false), "Local agents are turned off on this TeamCraft server by the administrator (TEAMCRAFT_LOCAL_AGENTS=off).");
+    var allowed = !(caps && caps.local_agents === false);
+    // agent_policy did not run, so Rust did not end a running agent: do it
+    // here, or the UI would forget a child process that keeps running
+    if (!allowed) call("agent_stop").catch(function () {});
+    apply(allowed, "Local agents are turned off on this TeamCraft server by the administrator (TEAMCRAFT_LOCAL_AGENTS=off).");
   });
 }
 
@@ -533,6 +537,12 @@ export function agentButton(tab) {
 
 /** The rail's Agent view: controls in the navigator, the conversation as a tab. */
 export function renderAgentView() {
+  // a restored or remembered view must not reopen what the server turned off
+  if (!localAgentsAllowed()) {
+    if (findTab("agent")) closeTab("agent");
+    selectView("home");
+    return Promise.resolve();
+  }
   if (!findTab("agent")) openTab({ key: "agent", kind: "agent", title: "Agent" });
   return renderAgentNav();
 }
