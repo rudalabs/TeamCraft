@@ -90,11 +90,26 @@ server, `host:port` otherwise) and click **Sign in with the browser**: the brows
 confirm the sign-in for this computer, the app receives a personal access
 token (valid 90 days, revocable on your account page in the web UI).
 
+Server addresses with plain `http://` to another computer get a warning in the connect dialog
+and in *Settings*: the token and all data would cross the network unencrypted (`localhost` and
+loopback addresses are fine).
+
+Update notice: at most once a day the app asks the GitHub releases API
+(`api.github.com/repos/rudalabs/TeamCraft/releases/latest`, no redirects, 10 s timeout) for the latest
+release. A newer version shows a link in the status bar to the release page; nothing is downloaded or
+installed. *×* hides it until the next version, *Settings → Updates* switches the check off.
+
 Where the app keeps its data:
 
-* settings and the token: the per-user configuration directory
+* settings: the per-user configuration directory
   (`~/.config/io.github.rudalabs.teamcraft`, `~/Library/Application Support/io.github.rudalabs.teamcraft`,
-  `%APPDATA%\io.github.rudalabs.teamcraft`); the token file is readable by the user only;
+  `%APPDATA%\io.github.rudalabs.teamcraft`);
+* the token: the OS keychain (Windows Credential Manager, macOS Keychain, the Secret Service on
+  Linux – GNOME Keyring, KWallet), entry `io.github.rudalabs.teamcraft` / `api-token`. Without a
+  keychain (a Linux session without Secret Service) it falls back to the file `token` in the
+  configuration directory, readable by the user only, and the app warns at the start and in
+  *Settings*; the next start with a keychain moves the file into it (also the file of older app
+  versions). On macOS an unsigned build may ask once whether TeamCraft may use the keychain item (again after an update);
 * the working folder: `Documents/TeamCraft/<project group>/<folder>/<file>` with `Documents/TeamCraft/.teamcraft/state.json` (configurable in *Settings*).
 
 ## Layout
@@ -115,7 +130,8 @@ src/signin.rs      browser sign-in: PKCE, loopback listener on 127.0.0.1
 src/layout.rs      working-folder rules (pure): folder mapping, state.json, Get planning, migration planning
 src/resume.rs      Get resumes a large file half-way: partial file per content, Range/If-Range, SHA-256 check before the rename
 src/workspace.rs   Get, status, read-only handling, check-in, migration of the old layout
-src/settings.rs    settings.json (incl. the configured agents) and the token file
+src/settings.rs    settings.json (incl. the configured agents), the token in the OS keychain (file fallback), http:// check
+src/update.rs      update notice: latest GitHub release at most daily, version comparison
 src/acp.rs         Agent Client Protocol client: agent subprocess, JSON-RPC over stdio, session, permissions, workspace-only reads
 ui/                index.html, app.css (layout), app.js (all views)
 capabilities/      Tauri permissions of the window (dialogs only – files and URLs are opened by Rust)

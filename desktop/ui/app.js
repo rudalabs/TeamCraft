@@ -48,7 +48,9 @@
     active: null,
     worklist: null,
     viewer: null,
-    zoom: 1
+    zoom: 1,
+    update: null, // the newer release the status bar tells about: {version, current}
+    tokenFileWarned: false // the "no keychain" warning shows once per start
   };
 
   // ======================================================================
@@ -435,9 +437,25 @@
     err.textContent = error || "";
     err.classList.toggle("hidden", !error);
     if (step === "server") $("server-url").focus();
+    checkServerUrl($("server-url").value, $("server-http-warning"));
+    checkServerUrl(state.session.server_url || "", $("signin-http-warning"));
+  }
+
+  /** Shows the warning while an address would reach another computer over
+   * plain http:// (src/settings.rs, insecure_http). Per warning, the answer
+   * to the newest address wins. */
+  function checkServerUrl(url, warning) {
+    var mine = warning.checkSeq = (warning.checkSeq || 0) + 1;
+    if (!url.trim()) { warning.classList.add("hidden"); return; }
+    invoke("server_url_insecure", { url: url }).then(function (insecure) {
+      if (mine === warning.checkSeq) warning.classList.toggle("hidden", !insecure);
+    }, function () { if (mine === warning.checkSeq) warning.classList.add("hidden"); });
   }
 
   function initConnect() {
+    $("server-url").addEventListener("input", function () {
+      checkServerUrl($("server-url").value, $("server-http-warning"));
+    });
     $("server-form").addEventListener("submit", function (e) {
       e.preventDefault();
       var url = $("server-url").value;
@@ -517,12 +535,45 @@
     return reloadProjects().catch(function () {});
   }
 
+  var brandingImages = {};
+  /** Blob URL of a replaced logo (cached per version token). */
+  function brandingImage(kind, token) {
+    var key = kind + ":" + token;
+    return brandingImages[key] || (brandingImages[key] = invoke("file_bytes", { kind: "branding-" + kind, id: "" })
+      .then(function (bytes) { return URL.createObjectURL(new Blob([bytes])); }));
+  }
+
+  /** Shows the logos the administrators set: wide in the title bar, square in the rail; built-in ones otherwise. */
+  function applyBranding() {
+    var brand = document.querySelector(".titlebar .brand"), mark = document.querySelector(".rail-mark");
+    if (!mark.dataset.builtin) mark.dataset.builtin = mark.getAttribute("src");
+    function builtinWide() {
+      brand.classList.remove("has-wide");
+      var old = brand.querySelector(".brand-wide");
+      if (old) old.remove();
+    }
+    api("GET", "/branding").then(function (b) {
+      if (b.wide) {
+        brandingImage("wide", b.wide).then(function (url) {
+          var img = brand.querySelector(".brand-wide");
+          if (!img) { img = h("img.brand-wide", { alt: "Logo" }); brand.appendChild(img); }
+          img.src = url;
+          brand.classList.add("has-wide");
+        }, builtinWide);
+      } else { builtinWide(); }
+      if (b.square) {
+        brandingImage("square", b.square).then(function (url) { mark.src = url; }, function () { mark.src = mark.dataset.builtin; });
+      } else { mark.src = mark.dataset.builtin; }
+    }).catch(function () { /* an older server has no branding: built-in logos */ builtinWide(); mark.src = mark.dataset.builtin; });
+  }
+
   function enterShell() {
     return reloadProjects().then(function () {
       $("connect").classList.add("hidden");
       $("shell").classList.remove("hidden");
       $("status-server").textContent = state.session.server_url;
       $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
+      applyBranding();
       initAssistant();
       selectView(state.view);
       renderTabs();
@@ -534,12 +585,57 @@
         if (s && !agent.running) { agent.running = s; agent.busy = s.busy; updateAgentControls(); schedulePaint(true); }
       }, function () {});
       checkWorkspaceLayout();
+      checkTokenStorage();
+      checkUpdate();
     }).catch(function (err) {
       if (!(err && err.status === 401)) showConnect("signin", errorText(err));
     });
   }
 
+  /** Where the sign-in landed: without an OS keychain the token is in a file
+   * (src/settings.rs) – say so once per start; Settings shows it too. */
+  function checkTokenStorage() {
+    invoke("session").then(function (s) {
+      state.session.token_storage = s.token_storage;
+      if (s.token_storage === "file" && !state.tokenFileWarned) {
+        state.tokenFileWarned = true;
+        toast("No keychain available: your sign-in is stored in a file only you can read. Details in Settings.", "error");
+      }
+    }, function () {});
+  }
+
+  // ======================================================================
+  // Update notice: a newer release on GitHub (src/update.rs) – a link to the
+  // release page in the status bar, never a download or an installation
+  // ======================================================================
+
+  function checkUpdate() {
+    if (!state.session.update_check) { showUpdate(null); return; }
+    invoke("check_update").then(showUpdate, function () {});
+  }
+
+  function showUpdate(notice) {
+    state.update = notice || null;
+    $("status-update").classList.toggle("hidden", !notice);
+    if (notice) $("status-update-open").textContent = "TeamCraft " + notice.version + " is available (you have " + notice.current + ")";
+  }
+
+  function initUpdateNotice() {
+    $("status-update-open").addEventListener("click", function () {
+      call("open_release_page").catch(function (e) { toast(errorText(e), "error"); });
+    });
+    $("status-update-dismiss").addEventListener("click", function () {
+      var notice = state.update;
+      showUpdate(null);
+      if (notice) call("dismiss_update", { version: notice.version }).catch(function (e) { toast(errorText(e), "error"); });
+    });
+    // the app may run for days: look again now and then (Rust asks GitHub
+    // at most once a day)
+    setInterval(function () { if (state.me) checkUpdate(); }, 6 * 3600 * 1000);
+  }
+
   function initShell() {
+    initUpdateNotice();
     if (/Mac/.test(navigator.platform)) $("search-kbd").textContent = "⌘F"; // the View → Search shortcut
     document.querySelectorAll(".rail button[data-view]").forEach(function (btn) {
       btn.addEventListener("click", function () {
@@ -4419,6 +4515,22 @@
   }
 
   /** Check-in of an imported item without new files (releases the lock). */
+  /** An item the server returned for an idempotency key of an earlier run
+   * (its answer was lost): still checked out to me → continue as new; checked
+   * in with all its files → done; checked in without them → checked out again
+   * and completed. */
+  function resumeReplayed(rev, it) {
+    if (rev.checked_out_by === state.me.id) return rev;
+    var base = "/items/" + enc(rev.item_number) + "/revisions/" + enc(rev.code);
+    return api("GET", base).then(function (r) {
+      var have = {};
+      (r.files || []).forEach(function (f) { have[String(f.filename).toLowerCase()] = true; });
+      var complete = it.files.every(function (f) { return have[String(f.name).toLowerCase()]; });
+      if (complete) { rev.done = true; return rev; }
+      return api("POST", base + "/checkout").then(function () { return rev; });
+    });
+  }
+
   function checkInImported(rev) {
     return api("POST", "/items/" + enc(rev.item_number) + "/revisions/" + enc(rev.code) + "/checkin");
   }
@@ -4534,8 +4646,14 @@
                 // the same key on every run: an item whose answer was lost is
                 // returned by the server, not created a second time
                 return api("POST", "/items", { item_type: it.type, name: it.name, project: group, number: it.number, idempotency_key: key });
-              });
+              }).then(function (rev) { return pendingNumber ? rev : resumeReplayed(rev, it); });
           return start.then(function (rev) {
+            if (rev.done) {
+              // created and checked in completely by an earlier run whose log was lost
+              log[it.key] = rev.item_number; saveImportLog(group, path, log);
+              created.push({ rev: rev, item: it });
+              return;
+            }
             if (!pendingNumber) {
               // remembered at once, so a second run never creates it twice –
               // pending until its files are in
@@ -4665,6 +4783,15 @@
     var ws = h("input", { type: "text", value: state.session.workspace_dir, spellcheck: "false" });
     var notifyBox = h("div.stack");
     var notify = notificationSettings(notifyBox);
+    var updateCheck = h("input", { type: "checkbox", checked: !!state.session.update_check, on: { change: function () {
+      var on = updateCheck.checked;
+      call("set_update_check", { enabled: on }).then(function () {
+        state.session.update_check = on;
+        checkUpdate();
+      }, function (e) { updateCheck.checked = !on; toast(errorText(e), "error"); });
+    } } });
+    var serverInsecure = h("p.notice.warn.small.hidden", { text: "This server is reached over plain http:// – the token and all data cross the network unencrypted. Ask your administrator for the https:// address." });
+    checkServerUrl(state.session.server_url || "", serverInsecure);
     var skins = h("div.skin-grid", null, SKINS.map(function (s) {
       return h("button.skin-card" + (s.id === current ? ".selected" : ""), {
         type: "button", "data-skin": s.id, title: s.description,
@@ -4694,8 +4821,15 @@
       ]),
       h("h3", { text: "Notifications" }),
       notifyBox,
+      h("h3", { text: "Updates" }),
+      h("label.check", null, [updateCheck, "Tell me when a new version is out"]),
+      h("p.hint", { text: "Asks GitHub for the latest TeamCraft release at most once a day and shows a link in the status bar. Nothing is downloaded or installed by the app." }),
       h("h3", { text: "Account" }),
       h("p", null, ["Signed in to ", h("strong", { text: state.session.server_url }), " as ", h("strong", { text: state.me.display_name }), " (" + label(state.me.role) + ") on ", h("span", { text: state.session.device })]),
+      state.session.token_storage === "file"
+        ? h("p.notice.warn.small", { text: "No keychain available: the sign-in token is stored in a file in the app's settings folder that only your user account can read, not in the system keychain. On Linux, start a Secret Service (GNOME Keyring or KWallet) and restart the app – the token then moves into the keychain." })
+        : h("p.hint", { text: "The sign-in token is kept in the system keychain." }),
+      serverInsecure,
       h("div.row", null, [
         h("button.danger", { type: "button", on: { click: function () { dlg.close(); signOut(); } } }, "Sign out"),
         h("button", { type: "button", on: { click: function () { dlg.close(); signOut(true); } } }, "Change server")

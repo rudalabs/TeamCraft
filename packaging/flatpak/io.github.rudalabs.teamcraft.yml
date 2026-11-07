@@ -25,6 +25,9 @@ finish-args:
   - --device=dri
   # the check-out workspace (Documents/TeamCraft)
   - --filesystem=xdg-documents/TeamCraft:create
+  # the sign-in token in the Secret Service (GNOME Keyring, KWallet); without
+  # it the app keeps the token in a private file and warns
+  - --talk-name=org.freedesktop.secrets
 modules:
   - name: teamcraft-desktop
     buildsystem: simple

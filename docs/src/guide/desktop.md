@@ -88,7 +88,13 @@ check-outs and reviews, and a **local working folder**:
   [ACP agents](assistant.md#acp-agents-in-the-desktop-app).
 
 Sign-in runs through the browser (single sign-on or password, confirmed on a
-TeamCraft page) or with a personal access token. The app uses the same skins
+TeamCraft page) or with a personal access token. The app keeps the token in
+the system keychain (Windows Credential Manager, macOS Keychain, GNOME Keyring
+or KWallet on Linux). Where there is none, it uses a file only your user
+account can read and says so at the start and in *Settings*. An address with
+plain `http://` to another computer gets a warning when you connect: the token
+and all data would cross the network unencrypted – use the `https://` address
+of the server. The app uses the same skins
 and 3D viewer as the web interface; the models are converted by the server.
 *Settings → Appearance*: *TeamCraft* (the default) follows the light or dark
 appearance of the operating system and switches with it, *TeamCraft Light*
@@ -248,3 +254,13 @@ cargo run            # Linux needs the WebKitGTK development packages
 
 The platform guides list the system packages. Installers are not published
 yet; the app is built and tested from source.
+
+## Update notice
+
+Once a day at most, the app asks GitHub for the latest TeamCraft release. If
+it is newer than your version, the status bar shows *TeamCraft x.y.z is
+available* – a link to the release page in your browser. The app never
+downloads or installs anything itself; install the new version as you
+installed this one. *×* hides the notice until the next version;
+*Settings → Updates* switches the check off (for example on computers without
+internet access).

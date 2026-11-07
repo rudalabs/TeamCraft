@@ -163,6 +163,8 @@ fn fill(path: &str, h: &Hidden) -> Option<String> {
             ("{revision_id}", _) => h.revision_id.to_string(),
             ("{item_id}", _) => h.item_id.to_string(),
             ("{user_id}", _) => h.caller.to_string(),
+            // the logos belong to no project group
+            ("{kind}", "branding") => "wide".into(),
             // attribute definitions belong to no project group
             ("{key}", "attributes") => "vendor".into(),
             // an alternate: by number in the REST API, by id in the web UI
