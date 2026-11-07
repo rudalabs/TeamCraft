@@ -85,5 +85,11 @@ lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
 
+# Mutation testing (.cargo/mutants.toml): the test profile without debug
+# info, so each mutant's rebuild links faster.
+[profile.mutants]
+inherits = "test"
+debug = "none"
+
 [target."cfg(unix)".dependencies]
 rlimit = "0.10"

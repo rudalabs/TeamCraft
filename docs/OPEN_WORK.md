@@ -201,6 +201,18 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   `a_non_ascii_letter_in_the_extension_does_not_panic`)
 - [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
 - [x] Coverage measured per PR (`cargo llvm-cov`, PostgreSQL 18 leg of the CI job *tests*, before 2026-11-07 its own job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
+- [ ] Mutation testing (`cargo mutants`, [research](src/research/mutation-testing.md), [how to](src/dev/mutation-testing.md)):
+  `.cargo/mutants.toml` examines the pure modules with `cargo test --lib` (no PostgreSQL); workflow `mutants.yml`
+  runs `--in-diff` on pull requests (report-only) and a weekly sharded full run. Done: `httprange` (0 missed) and
+  `util` (3 missed → 0, `byte_sizes_stop_at_tib`), plus the field mutants of `resultscan::TemplateInput::validated`
+  (7 missed → 0, `template_input_is_stored_normalised`). Next, in this order: `pagecontext` (58 mutants, 5 tests),
+  `src/domain/**` (~500, the rules – lifecycle, roles, revisions, validation; the unit tests sit in `domain/mod.rs`,
+  several submodules have none of their own), `cadformat` (287), `htmltext` (263), `resultscan` (193), `cadrefs`
+  (189), `bomtable` (166), `stepbom` (155) – read the first weekly report, fix or document every missed mutant per
+  module. Then: make the PR job blocking once the examined modules are clean; add `llm/anthropic.rs`,
+  `llm/openai.rs`, `mesh/*` readers and `simmesh`; decide whether services with database tests are worth a second,
+  PostgreSQL-backed run (`--test-package`/integration tests – hours per run); speed up the slowest lib tests
+  (18 s of each mutant's ~30 s is the lib test run)
 - [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
 - [ ] Branch protection on `main` (**maintainer action**, needs admin rights): a ruleset with required checks – fmt and
   clippy, tests on PostgreSQL 16 and 18, build (windows-latest), cargo deny (Cargo.toml), local links and images.

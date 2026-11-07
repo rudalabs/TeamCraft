@@ -42,6 +42,7 @@
 # Development
 
 - [Test coverage map](dev/coverage.md)
+- [Mutation testing](dev/mutation-testing.md)
 - [Fuzzing the file readers](dev/fuzzing.md)
 - [Threat model](dev/threat-model.md)
 - [Accessibility](dev/accessibility.md)
@@ -55,6 +56,7 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [Mutation testing with cargo-mutants](research/mutation-testing.md)
     - [3D preview of NX parts](research/nx-jt-preview.md)
     - [Text from HTML reports](research/html-report-text.md)
     - [Text from PDF reports](research/pdf-text-extraction.md)

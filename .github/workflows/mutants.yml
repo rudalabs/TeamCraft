@@ -1,0 +1,198 @@
+# TeamCraft mutation testing with cargo-mutants (https://mutants.rs): small
+# deliberate changes to the code (a mutant) must make a unit test fail. A
+# missed mutant is behaviour no test checks. What is examined and how:
+# .cargo/mutants.toml (pure modules, `cargo test --lib`, no PostgreSQL);
+# background: docs/src/research/mutation-testing.md, how to read the results:
+# docs/src/dev/mutation-testing.md.
+#
+# Pull requests: only the mutants in code the pull request changes
+# (`--in-diff`), report-only for now – missed mutants appear as warnings, in
+# the step summary and in the artifact *mutants-pr*, the check stays green.
+# A broken run (baseline tests fail, bad diff, tool error) fails the job.
+# Weekly and manual: every examined file, split over a matrix of shards, one
+# merged summary at the end. Nothing is packaged or published.
+name: Mutation testing
+
+on:
+  pull_request:
+    paths:
+      - "src/**"
+      - ".cargo/mutants.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/mutants.yml"
+  schedule:
+    - cron: "23 3 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutants-${{ github.event_name == 'pull_request' && github.ref || 'full' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # results can change between releases (new mutation patterns): one version
+  # for pull requests and full runs, raised on purpose
+  CARGO_MUTANTS_VERSION: "27.1.0"
+
+jobs:
+  in-diff:
+    name: mutants in the diff
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Diff against the base branch
+        id: diff
+        run: |
+          # a/ and b/ prefixes are required; a diff without them silently
+          # selects nothing
+          git diff "origin/${{ github.base_ref }}...HEAD" -- src > git.diff
+          echo "changed Rust lines: $(grep -c '^[+-][^+-]' git.diff || true)"
+      - uses: dtolnay/rust-toolchain@stable
+      # pull requests read the caches of main but do not write their own
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: mutants
+          save-if: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@${{ env.CARGO_MUTANTS_VERSION }}
+      - name: Select the mutants
+        id: select
+        run: |
+          cargo mutants --list --in-diff git.diff > selected.txt
+          count=$(wc -l < selected.txt)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" -eq 0 ]; then
+            echo "No mutants in the changed lines of the examined files (.cargo/mutants.toml)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Run the mutants
+        if: steps.select.outputs.count != '0'
+        env:
+          # each mutant is an incremental rebuild; rust-cache turns it off
+          CARGO_INCREMENTAL: "1"
+        run: |
+          status=0
+          # --in-place allows one job only (about 30 s per mutant): stop with SIGINT
+          # before the job timeout; cargo-mutants keeps the results found so far
+          timeout --signal=INT 80m cargo mutants --in-place --in-diff git.diff --no-shuffle -vV || status=$?
+          echo "status=$status" >> "$GITHUB_ENV"
+      - name: Summary
+        if: always() && steps.select.outputs.count != '0'
+        run: |
+          out=target/mutants.out
+          {
+            echo "## Mutants in this pull request"
+            echo
+            for o in caught missed timeout unviable; do
+              echo "* $o: $( [ -f "$out/$o.txt" ] && wc -l < "$out/$o.txt" || echo 0)"
+            done
+            if [ -s "$out/missed.txt" ]; then
+              echo
+              echo "### Missed – add a test that checks this behaviour, or explain why the mutant is equivalent"
+              echo
+              echo '```text'
+              cat "$out/missed.txt"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          # warnings on the changed lines (file:line:col: text)
+          if [ -s "$out/missed.txt" ]; then
+            sed -E 's/^([^:]+):([0-9]+):([0-9]+): (.*)$/::warning file=\1,line=\2,col=\3::missed mutant: \4/' "$out/missed.txt"
+          fi
+          # report-only: 2 = missed, 3 = timeouts; everything else means the
+          # run itself is broken
+          case "${status:-0}" in
+            0) ;;
+            124) echo "::warning::mutation run stopped after 80 min, results are partial" ;;
+            2|3) echo "::warning::cargo-mutants found missed or timed-out mutants in the changed code (report-only, see the summary)" ;;
+            *) echo "::error::cargo-mutants failed with exit code $status"; exit 1 ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.select.outputs.count != '0'
+        with:
+          name: mutants-pr
+          path: target/mutants.out
+          if-no-files-found: ignore
+
+  full:
+    name: mutants shard ${{ matrix.shard }}
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        # the denominator of --shard below must be the number of shards
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: mutants
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.shard == 0 }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@${{ env.CARGO_MUTANTS_VERSION }}
+      - name: Run the mutants
+        env:
+          CARGO_INCREMENTAL: "1"
+        run: |
+          # every shard runs its own baseline (one build it needs anyway, the
+          # unit tests take seconds) and derives the timeout from it
+          status=0
+          cargo mutants --in-place --no-shuffle --shard ${{ matrix.shard }}/16 || status=$?
+          echo "exit code $status"
+          case "$status" in
+            0|2|3) ;;
+            *) exit "$status" ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-shard-${{ matrix.shard }}
+          path: target/mutants.out
+          if-no-files-found: ignore
+
+  report:
+    name: mutants report
+    needs: full
+    if: always() && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: mutants-shard-*
+          path: shards
+      - name: Summary
+        run: |
+          {
+            echo "## Mutation testing (all examined files)"
+            echo
+            for o in caught missed timeout unviable; do
+              echo "* $o: $(cat shards/*/"$o.txt" 2>/dev/null | wc -l)"
+            done
+            echo
+            echo "### Missed by file"
+            echo
+            echo '```text'
+            cat shards/*/missed.txt 2>/dev/null | cut -d: -f1 | sort | uniq -c | sort -rn
+            echo '```'
+            echo
+            echo "### Missed"
+            echo
+            echo '```text'
+            cat shards/*/missed.txt 2>/dev/null | sort -t: -k1,1 -k2,2n
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
