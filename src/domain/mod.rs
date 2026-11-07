@@ -16,6 +16,7 @@ mod references;
 mod roles;
 mod simulations;
 mod skins;
+mod tokens;
 mod validation;
 
 pub use as_built::*;
@@ -29,6 +30,7 @@ pub use references::*;
 pub use roles::*;
 pub use simulations::*;
 pub use skins::*;
+pub use tokens::*;
 pub use validation::*;
 
 #[cfg(test)]

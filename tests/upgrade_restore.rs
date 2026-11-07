@@ -266,9 +266,15 @@ async fn a_seeded_database_one_migration_behind_upgrades_without_loss() {
 
     // the current server serves the upgraded data
     let actor = other.actor("erika").await;
-    let (_, token) = teamcraft::services::users::create_token(&other.pool, &actor, "up", None)
-        .await
-        .expect("token");
+    let (_, token) = teamcraft::services::users::create_token(
+        &other.pool,
+        &actor,
+        "up",
+        teamcraft::services::users::TokenLifetime::Unlimited,
+        teamcraft::domain::TokenScope::Full,
+    )
+    .await
+    .expect("token");
     let r = other
         .api(
             axum::http::Method::GET,
