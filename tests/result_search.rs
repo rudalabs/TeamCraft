@@ -131,15 +131,9 @@ async fn the_item_search_filters_by_result_values() {
         std::slice::from_ref(&over)
     );
     // a page behind the last one still reports the total
-    let r = app
-        .api(
-            Method::GET,
-            "/api/v1/items?result=failed&limit=1&offset=5",
-            &eng,
-            None,
-        )
-        .await;
-    assert_eq!(r.status, StatusCode::OK);
+    let (found, total) = search(&app, &eng, "result=failed&limit=1&offset=5").await;
+    assert!(found.is_empty());
+    assert_eq!(total, 2);
     // unknown filter
     let r = app
         .api(Method::GET, "/api/v1/items?result=nope", &eng, None)
@@ -189,6 +183,9 @@ async fn restricted_groups_stay_out_of_result_search_and_dashboard() {
         let (found, total) = search(&app, &outsider, query).await;
         assert_eq!(found, std::slice::from_ref(&open), "outsider {query}");
         assert_eq!(total, 1, "the total must not count the restricted group");
+        let (found, total) = search(&app, &outsider, &format!("{query}&limit=1&offset=5")).await;
+        assert!(found.is_empty());
+        assert_eq!(total, 1, "the count query must skip the restricted group");
         let (found, _) = search(&app, &member, query).await;
         let mut both = vec![open.clone(), secret.clone()];
         both.sort();

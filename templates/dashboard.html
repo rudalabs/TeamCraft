@@ -65,7 +65,7 @@
 {% if attention_simulations %}
 <section class="card" id="simulations">
   <div class="card-head">
-    <h2>Simulations to check <span class="count">{{ attention_total }}</span></h2>
+    <h2>Simulations to check <span class="count">{{ attention_total }}{% if attention_capped %}+{% endif %}</span></h2>
     <span class="hint info" title="The latest revision has a result value outside its limits or is based on something that changed.">Failed values or out of date</span>
   </div>
   <div class="table-wrap">
@@ -84,7 +84,7 @@
     </tbody>
   </table>
   </div>
-  {% if attention_total > attention_simulations|length %}<p class="small muted">Showing {{ attention_simulations|length }} of {{ attention_total }}. <a href="/items?type=simulation&amp;result=failed">All with failed values</a></p>{% else %}<p class="small"><a href="/items?type=simulation&amp;result=failed">Search simulations with failed values</a></p>{% endif %}
+  {% if attention_total > attention_simulations|length %}<p class="small muted">Showing {{ attention_simulations|length }} of {{ attention_total }}{% if attention_capped %}+{% endif %}. <a href="/items?type=simulation&amp;result=failed">All with failed values</a></p>{% else %}<p class="small"><a href="/items?type=simulation&amp;result=failed">Search simulations with failed values</a></p>{% endif %}
 </section>
 {% endif %}
 

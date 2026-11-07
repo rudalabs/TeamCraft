@@ -325,7 +325,7 @@ is answered for now: `none` is allowed, but needs a member who is a manager.
 Only finish what is in progress and fix bugs here; see *Direction*. The CAD-program entries are mostly checks with
 real files and belong to section 3 once such files are at hand.
 
-**Ownership and approval rules**
+**Ownership and approval rules ([#152](https://github.com/rudalabs/TeamCraft/issues/152))**
 
 - [x] Step 1: wider separation of duties (editors and the acting admin cannot review; suggester excludes them).
 - [ ] Step 2: review policy per project group (min approvals, required reviewers, role group).

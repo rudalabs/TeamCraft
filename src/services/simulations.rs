@@ -1877,12 +1877,13 @@ pub struct AttentionSimulation {
 
 /// Simulations the actor may read whose latest revision (not obsolete) has a
 /// value outside its limits or an out-of-date basis, the first `limit` by
-/// number, and how many there are in total.
+/// number, how many there are in total, and whether the scan cap was hit
+/// (the total is then a lower bound).
 pub async fn needing_attention(
     pool: &PgPool,
     actor: &Actor,
     limit: usize,
-) -> AppResult<(Vec<AttentionSimulation>, usize)> {
+) -> AppResult<(Vec<AttentionSimulation>, usize, bool)> {
     let mut sims = sqlx::query_as::<_, AttentionSimulation>(&format!(
         "SELECT i.id AS item_id, i.number, lr.name, lr.id AS revision_id, lr.code AS revision_code,
                 lr.state,
@@ -1896,6 +1897,9 @@ pub async fn needing_attention(
              WHERE r.item_id = i.id ORDER BY r.seq DESC LIMIT 1
          ) lr
          WHERE i.item_type = 'simulation' AND lr.state <> 'obsolete' AND {}
+           AND (EXISTS (SELECT 1 FROM simulation_results sr
+                        WHERE sr.revision_id = lr.id AND {RESULT_FAILED_SQL})
+                OR EXISTS (SELECT 1 FROM simulation_bases sb WHERE sb.revision_id = lr.id))
          ORDER BY i.number LIMIT $2",
         access::item_visible("i", 1)
     ))
@@ -1903,6 +1907,7 @@ pub async fn needing_attention(
     .bind(MAX_ATTENTION_SCAN)
     .fetch_all(pool)
     .await?;
+    let capped = sims.len() as i64 >= MAX_ATTENTION_SCAN;
     let ids: Vec<Uuid> = sims.iter().map(|s| s.revision_id).collect();
     let bases = sqlx::query_as::<_, SimulationBasis>(&format!(
         "{BASIS_SELECT} WHERE sb.revision_id = ANY($1)"
@@ -1924,5 +1929,5 @@ pub async fn needing_attention(
     sims.retain(|s| s.failed_count > 0 || !s.out_of_date.is_empty());
     let total = sims.len();
     sims.truncate(limit);
-    Ok((sims, total))
+    Ok((sims, total, capped))
 }

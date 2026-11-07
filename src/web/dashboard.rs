@@ -18,7 +18,7 @@ pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response
         impacts,
         assigned,
         my_requests,
-        (attention, attention_total),
+        (attention, attention_total, attention_capped),
     ) = tokio::try_join!(
         stats::load(&st.db, &ctx.me),
         revisions::checked_out_by(&st.db, &ctx.me),
@@ -45,6 +45,7 @@ pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response
             "my_requests": my_requests,
             "attention_simulations": attention,
             "attention_total": attention_total,
+            "attention_capped": attention_capped,
         }),
     )
 }
