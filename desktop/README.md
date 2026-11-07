@@ -89,6 +89,12 @@ On the first start enter the server address (`localhost:8080` for a local
 server, `host:port` otherwise) and click **Sign in with the browser**: the browser asks you to
 confirm the sign-in for this computer, the app receives a personal access
 token (valid 90 days, revocable on your account page in the web UI).
+When the server runs a version the app does not fit (before 1.0: another
+`major.minor`; from 1.0: another major version or an older minor version), the
+sign-in screen – or, if you are already signed in, a toast in the main window –
+shows a warning once; signing in and working stay possible. The rules are in the
+[support policy](../docs/src/admin/support-policy.md#desktop-app-and-server-versions)
+(`src/compat.rs`).
 
 Server addresses with plain `http://` to another computer get a warning in the connect dialog
 and in *Settings*: the token and all data would cross the network unencrypted (`localhost` and
@@ -127,6 +133,7 @@ src/commands.rs    the commands the UI calls (every network and file access)
 src/api.rs         REST client (/api/v1, bearer token) – the web view never talks to the server
 src/abortable.rs   Cancel of long operations: streamed check-in body that stops half-way, Pack and Go download dropped on cancel
 src/signin.rs      browser sign-in: PKCE, loopback listener on 127.0.0.1
+src/compat.rs      version handshake (pure): does the app fit the server version (also tested by tests/desktop_compat.rs)
 src/layout.rs      working-folder rules (pure): folder mapping, state.json, Get planning, migration planning
 src/resume.rs      Get resumes a large file half-way: partial file per content, Range/If-Range, SHA-256 check before the rename
 src/workspace.rs   Get, status, read-only handling, check-in, migration of the old layout

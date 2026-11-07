@@ -17,6 +17,8 @@ Changes on `main` since the `v0.2.0` tag.
 
 ### Added
 
+- The desktop app tells the user when its version does not fit the server
+  (version handshake, see the support policy).
 - Administrators can replace the wide logo (top left) and the square logo
   (bottom left, tab icon) under *Admin → Branding*; the desktop app shows them
   too. See [Branding](https://rudalabs.github.io/TeamCraft/admin/branding.html).

@@ -74,3 +74,16 @@ problem may be fixed in a newer release of your supported version.
 - Support for a version that is no longer in the table above.
 - Fixes for deployments that ignore the documentation, for example a server that
   is exposed without TLS.
+
+## Desktop app and server versions
+
+The desktop app checks the server's version on the sign-in screen and when its
+main window opens, and shows a warning once per server when the two do not fit:
+
+| App | Server that works |
+|-----|-------------------|
+| `0.x.y` | the same `0.x` (any patch version) |
+| `1.a.y` and later | the same major version and a minor version `a` or newer |
+
+Patch versions never matter. The message does not block the sign-in; it tells
+the user whether to upgrade the server or to install the matching app.

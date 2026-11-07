@@ -147,6 +147,20 @@ pub async fn set_server(state: State<'_, AppState>, url: String) -> CmdResult<St
     Ok(base)
 }
 
+/// Whether this app fits the server version (`compat::notice`): a message for
+/// the user, or `null`. Needs no sign-in; a server that does not answer is not
+/// reported here (other calls show that).
+#[tauri::command]
+pub async fn server_notice(state: State<'_, AppState>) -> CmdResult<Option<String>> {
+    let api = api_of(&state)?;
+    let Ok(index) = api.json(Method::GET, "", None).await else {
+        return Ok(None);
+    };
+    Ok(index["version"]
+        .as_str()
+        .and_then(|server| crate::compat::notice(env!("CARGO_PKG_VERSION"), server)))
+}
+
 fn store_token(state: &State<'_, AppState>, token: String) -> CmdResult<()> {
     let mut s = state.settings.lock().expect("settings lock");
     s.save_token(&state.config_dir, Some(token))
