@@ -17,6 +17,16 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Need-to-know project groups, step 5 (#151): access review of a restricted
+  group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
+  administrators: members with role, group role, source (manual or identity
+  provider), account state and last sign-in (stale after 90 days), the
+  administrator policy and elevations, and a "reviewed" confirmation with an
+  optional note that is dated and audited (`project.access_review`) and keeps
+  the member list as it was. Evidence for auditors as CSV (page and
+  `GET /api/v1/projects/{code}/access-review?format=csv`) or JSON, plus
+  `POST` to confirm and `GET .../access-review/{id}` for the stored member list.
+  The shorter session age for restricted groups (step 2) is not part of this.
 - Data retention and cleanup: the hourly housekeeping now also removes the
   blobs of expired staged imports and upload sessions, trims the preview
   cache (`TEAMCRAFT_PREVIEW_CACHE_MAX_MB`, default no limit) and applies an
@@ -100,7 +110,7 @@ Changes on `main` since the `v0.2.5` tag.
   account is deleted. While a policy is in force an administrator who is no
   manager member cannot loosen it, open the group, link an IdP group or add
   themselves; `/admin/audit` and webhooks honour the rule.
-- Need-to-know project groups, steps 3 and 4 (#151; migration 0053): interface switches per restricted group (`api_tokens`, `mcp`,
+- Need-to-know project groups, steps 3 and 4 (#151; migration 0051): interface switches per restricted group (`api_tokens`, `mcp`,
   `assistant`, `webhooks`, `packages`; a switched-off interface sees the group
   as non-existent), a read and download log (`access_log`: views, file
   downloads, Pack and Go, BOM exports with channel and client address, one

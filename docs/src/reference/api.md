@@ -80,7 +80,10 @@ Every answer contains only what the token's user may read (see
   (`{"admin_read": "implicit"|"with_reason"|"none"}`, managers and admins)
   read and set how administrators read a restricted group;
   `POST /api/v1/projects/{code}/elevations` `{"reason"}` (admins, policy
-  `with_reason`) opens 60 minutes of access, `DELETE` on it ends it. See
+  `with_reason`) opens 60 minutes of access, `DELETE` on it ends it.;
+  `GET /api/v1/projects/{code}/access-review` (`?format=csv`) is the access report of a
+  restricted group, `POST` confirms the review `{"note"}`, `GET …/access-review/{id}` is the
+  member list at that review (managers and admins). See
   [Read permissions](../admin/permissions.md#need-to-know-administrator-access).
 
 ## Creating items, safely repeated

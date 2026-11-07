@@ -137,6 +137,7 @@
 {% if policy %}
 <section class="card" id="need-to-know">
   <h2>Need to know: administrator access</h2>
+  <p><a href="/projects/{{ project.id }}/access-review">Access review and evidence report</a></p>
   {% if not readable %}<p class="hint">Your administrator access to this group is closed: you manage it, but you cannot read its items, files or changes.</p>{% endif %}
   <form class="stack" method="post" action="/projects/{{ project.id }}/policy">
     <label>Administrators who are not members

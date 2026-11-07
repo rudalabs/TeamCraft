@@ -335,7 +335,7 @@ done; steps 3 and 4 are done in part: switches `api_tokens`, `mcp`, `assistant`,
 `teamcraft access-log purge` (views, file downloads, Pack and Go, BOM exports). Left of 3 and 4: switches
 `notification_content`, `external_llm`, `desktop_sync`; log entries for MCP and assistant tool reads and desktop Get;
 optional PDF/image watermark; a log page with filters and paging. Left, in the order of the issue: 2 conditions on
-membership (OIDC claims, allowed networks, shorter sessions); 5 access review page and evidence report; 6 token scopes (F2). Open question 1
+membership (OIDC claims, allowed networks, shorter sessions); 5 access review page and evidence report (done: page, confirmation, CSV/JSON evidence; open: periodic reminder, review-due flag); 6 token scopes (F2). Open question 1
 is answered for now: `none` is allowed, but needs a member who is a manager.
 
 Only finish what is in progress and fix bugs here; see *Direction*. The CAD-program entries are mostly checks with

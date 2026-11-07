@@ -35,6 +35,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "requests/show.html",
     "projects/list.html",
     "projects/show.html",
+    "projects/access_review.html",
     "files/preview.html",
     "admin/users.html",
     "admin/user_edit.html",
@@ -1369,6 +1370,22 @@ mod tests {
             "projects/list.html",
             with_common(json!({ "projects": [project()], "my_projects": [ROCKET] })),
         );
+        let html = render(
+            &env,
+            "projects/access_review.html",
+            with_common(json!({
+                "project_id": OTHER, "max_note": 1000,
+                "report": { "project_code": "ROVER", "project_name": "Rover <x>", "generated_at": TS,
+                    "admin_read": "with_reason", "administrators_outside": 2, "stale_days": 90,
+                    "members": [{ "username": "erika", "display_name": "Erika", "role": "editor", "manager": true,
+                                  "source": "oidc", "active": true, "added_at": TS, "last_login_at": null, "stale": true }],
+                    "elevations": [{ "id": OTHER, "project_id": OTHER, "user_id": OTHER, "username": "root", "reason": "audit <b>",
+                                    "started_at": TS, "expires_at": TS, "ended_at": null, "active": false }],
+                    "reviews": [{ "id": OTHER, "username": "root", "note": "ok", "reviewed_at": TS,
+                                  "admin_read": "none", "member_count": 1 }] },
+            })),
+        );
+        assert!(html.contains("no sign-in for 90 days") && html.contains("audit &lt;b&gt;"));
         let html = render(
             &env,
             "projects/show.html",

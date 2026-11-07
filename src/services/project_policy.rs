@@ -90,7 +90,7 @@ async fn admin_read_of(conn: &mut PgConnection, project_id: Uuid) -> AppResult<A
 }
 
 /// Tells the managers of the group (except the actor) about an access event.
-async fn alert_managers(
+pub(crate) async fn alert_managers(
     conn: &mut PgConnection,
     actor: &Actor,
     project_id: Uuid,

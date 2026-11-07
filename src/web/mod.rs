@@ -349,6 +349,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/projects/{id}/policy", post(admin::update_policy))
         .route("/projects/{id}/access", post(admin::update_access))
         .route(
+            "/projects/{id}/access-review",
+            get(admin::access_review).post(admin::confirm_access_review),
+        )
+        .route(
+            "/projects/{id}/access-review.csv",
+            get(admin::access_review_csv),
+        )
+        .route(
             "/projects/{id}/review-policy",
             post(admin::update_review_policy),
         )
