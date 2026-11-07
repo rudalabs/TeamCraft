@@ -43,6 +43,23 @@ the assembly's layer settings hide (read from `/Root/UG_PART/UG_PART`), as
 in NX. Drawings have no 3D preview;
 stand-alone `.jt` files (JT 10) are not previewed yet.
 
+SOLIDWORKS files from 2015 on are read through their section container
+(`src/swpart.rs`). The 3D preview of a part is the display tessellation
+SOLIDWORKS stores in `Contents/DisplayLists` (`src/mesh/sw.rs`):
+- each face is stored as triangle strips with a unit surface normal per
+  vertex;
+- the per-face vertices are welded on a 1 µm grid;
+- the result is refined along the normals like NX parts and shown in
+  millimetres.
+
+An assembly is put together from the previews of its part files. The
+placements come from the component tree `swXmlContents/COMPINSTANCETREE`
+(`swpart::placements`), using the configuration that was active when the
+file was saved, with sub-assemblies resolved. Suppressed, hidden and
+virtual components are left out, and components are found by the file
+name of their stored path. Files saved before 2015 (OLE compound files) and
+drawings have no 3D preview.
+
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
 files). TeamCraft inflates only the sections it needs, with a hard size

@@ -1023,7 +1023,7 @@ async fn rendered_thumbnail(
         .map_err(store_failed);
     }
     let Some(mesh_path) =
-        crate::services::assemblies::mesh(st, me, file.revision_id, &sha256).await?
+        crate::services::assemblies::mesh(st, me, file.revision_id, &sha256, &file.format).await?
     else {
         return Ok(None);
     };
@@ -1050,7 +1050,8 @@ async fn rendered_thumbnail(
 
 /// The preview image of a CAD file, read once and cached next to the 3D
 /// previews: stored inside the file (Inventor, Solid Edge, SolidWorks, NX
-/// assemblies and drawings) or rendered from the 3D preview (NX parts).
+/// assemblies and drawings) or rendered from the 3D preview (NX parts,
+/// SOLIDWORKS parts and assemblies).
 /// Shared with the REST API.
 pub(crate) async fn thumbnail_response(
     st: &AppState,
@@ -1193,9 +1194,9 @@ pub(crate) async fn mesh_response(
     let format = preview_of(file).ok_or_else(no_preview)?;
     let path = match st.previews.mesh(&st.vault, sha256, format).await {
         Ok(path) => path,
-        // an NX assembly: put together from the previews of its parts
-        Err(e) if format == crate::preview::PreviewFormat::NxPart => {
-            crate::services::assemblies::mesh(st, me, file.revision_id, sha256)
+        // an NX or SOLIDWORKS assembly: put together from its parts' previews
+        Err(e) if format.may_be_assembly() => {
+            crate::services::assemblies::mesh(st, me, file.revision_id, sha256, format.as_str())
                 .await?
                 .ok_or(e)?
         }

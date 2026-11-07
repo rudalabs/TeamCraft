@@ -71,6 +71,13 @@ Changes since the `v0.2.0` tag.
 - 3D preview and thumbnail of NX assemblies, put together from the previews
   of their part files (found by file name, sub-assemblies included);
   components on layers the assembly hides are left out, as in NX.
+- 3D preview of SOLIDWORKS parts (`.sldprt`, 2015 and later) from the
+  display tessellation SOLIDWORKS stores in the file, refined along its
+  exact surface normals like NX parts. SOLIDWORKS assemblies are put
+  together from the previews of their part files, with the placements of
+  their component tree; suppressed and hidden components are left out. The
+  thumbnails of SOLIDWORKS parts and assemblies are rendered from the 3D
+  preview.
 - Desktop app: an update notice. At most once a day the app asks GitHub for
   the latest release and shows a link to it in the status bar; it never
   downloads or installs anything. *Settings → Updates* switches it off.

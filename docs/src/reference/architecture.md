@@ -30,8 +30,11 @@
   clouds and tessellates STEP with the truck kernel (`mesh/step.rs`; an own
   Part 21 reader in `mesh/p21.rs` filters what the kernel gets, AP242
   tessellated geometry is read by `mesh/tessellated.rs`), reads the JT 9
-  tessellation inside NX parts (`mesh/jt.rs`) and refines it along its
-  stored normals (`mesh/pn.rs`); `preview.rs` caches the
+  tessellation inside NX parts (`mesh/jt.rs`) and the display tessellation
+  inside SOLIDWORKS parts (`mesh/sw.rs`) and refines both along their
+  stored normals (`mesh/pn.rs`); NX and SOLIDWORKS assemblies are put
+  together from their parts' previews (`services/assemblies.rs`);
+  `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child
   process with a time limit. The browser only draws the compact
   `TCMESH01` buffer; `simmesh.rs` turns VTK/VTU/VTP and CalculiX `.frd`
@@ -57,7 +60,7 @@
 | `src/assistant.rs`                   | built-in assistant: tool loop over `src/llm` with the MCP tools, markdown rendering |
 | `src/pagecontext.rs`                 | the page context the assistant sidebar sends (kind, identifiers, view, rule, query, rows shown): parsing and caps; the services resolve it with the user's rights |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                         |
-| `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images)            |
+| `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images, assembly placements) |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs`: VTK/VTU/VTP/FRD simulation results with fields  |
 | `src/shape.rs`                       | shape signatures (extents, area, volume, D2 distribution) for the similar part search               |
 | `src/webhooks.rs`                    | event webhooks: outbox worker, HMAC-SHA256 signature, backoff, target (SSRF) guard                   |
