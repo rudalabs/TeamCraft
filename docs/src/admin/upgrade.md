@@ -134,7 +134,7 @@ version (a migration is additive unless it says otherwise):
 | Upgrade                  | Migrations      | What changes                                                                                                                                                                                       |
 |--------------------------|-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | v0.1.0 → v0.2.0          | 0032 – 0035     | New tables for the assistant conversation (0032), result templates and a `source` column (0033), result proposals (0034) and request digests (0035). 0035 replaces the CHECK constraint of notification kinds with a longer list (adds `request_digest`). No data is converted or removed. |
-| main since v0.2.0        | 0036            | `file_versions.export_name` and `export_name_scanned` (default FALSE): the start-up scan reads the STEP header of the stored files once.                                                           |
+| v0.2.0 → v0.2.5          | 0036 – 0039     | `file_versions.export_name` and `export_name_scanned` (default FALSE; the start-up scan reads the STEP header of the stored files once) (0036); new tables for idempotency keys of item creation (0037), custom logos (0038) and as-built records with their deviations (0039). 0039 replaces the CHECK constraint of item types with a longer list (adds `as_built`). No data is converted or removed. |
 
 An older published release first needs the steps of the releases between: a
 database of the **first v0.1.0 tag** (0001 – 0014, 0016 – 0020, 0022) gets
