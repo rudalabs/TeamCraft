@@ -63,8 +63,9 @@ check the parts in (in the assembly's revision or as items of their own,
 under their NX file names) and the assembly shows every component in its
 place, sub-assemblies included (see
 [Research: 3D preview of NX parts](../research/nx-jt-preview.md)).
-Components that are not in TeamCraft are left out. For the rest TeamCraft
-shows what other PLM systems show:
+Components that are not in TeamCraft are left out, and so are components
+on layers the assembly hides in NX. For the rest TeamCraft shows what other
+PLM systems show:
 
 * **A picture of the 3D preview** for NX parts and assemblies: the small
   JPEG NX stores is replaced by an image rendered from the 3D preview

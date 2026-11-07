@@ -87,9 +87,32 @@ preview, and assemblies a 3D preview put together from their parts:
 Decision: `src/nxasm.rs` reads the components, `services::assemblies`
 composes the preview from the parts' previews (cache key = content hashes
 of everything used), the thumbnail of parts and assemblies is drawn from the
-3D preview (`mesh/render.rs`). Not known yet: NX's "hidden component"
-flags (NX's own picture may leave out components the preview shows) and
-units of assemblies modelled in inches (all files seen are in mm).
+3D preview (`mesh/render.rs`).
+
+### Hidden components (layers)
+
+NX leaves components out of its own picture when they sit on a layer the
+assembly hides:
+
+* The `Structure` stream stores the layer of every component that is not on
+  the default layer, as an int map (instance → layer 1..=256). A scan of a
+  large SVN (5 760 `.prt` files) found such a map in exactly three
+  assemblies.
+* The layer settings are in `/Root/UG_PART/UG_PART`, an OM section like the
+  structure stream: one `UGS::LAYER_parameter` object with four masks of 17
+  32-bit words (selectable, visible, two copies with an extra bit), the work
+  layer and the constants 1, 1. Integers there are signed (one byte = value
+  + 1; 13, 21, 29 or 32 bits). The same layout decoded in all 5 760 files.
+* Checked against NX's pictures: an assembly that hides layers 2–255 leaves
+  out exactly its components on layers 9 and 19 (TeamCraft does the same);
+  an assembly with every layer visible shows its components on layers 17
+  and 19.
+
+Known gap: a component can also be invisible because the bodies inside its
+own part sit on hidden layers (a chamber whose own NX picture is empty).
+The lightweight data does not tell which layer a body is on, so such a
+component is still shown. Units of assemblies modelled in inches are not
+handled (all files seen are in mm).
 
 ## Sources
 

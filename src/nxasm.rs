@@ -31,8 +31,12 @@
 //! variable-length (`00..7f`, `80..9f` + 1 byte, `a0..bf` + 2, `e0`/`ff` + 4).
 //!
 //! Rotations are row vectors: a point `p` of the component lands at
-//! `p · R + t`. Everything is read defensively: a stream that does not fit
-//! gives `None`, never a panic.
+//! `p · R + t`. Components moved to another layer are listed in one more
+//! int map (instance → layer); whether a layer is visible is part of the
+//! layer settings in `/Root/UG_PART/UG_PART` ([`visible_layers`]), and
+//! [`kind_of`] leaves out components on hidden layers, as NX does.
+//! Everything is read defensively: a stream that does not fit gives
+//! `None`, never a panic.
 #![deny(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -60,6 +64,8 @@ pub struct Component {
     pub rotation: [[f64; 3]; 3],
     /// Millimetres.
     pub translation: [f64; 3],
+    /// The layer the component was moved to (`None`: the default layer).
+    pub layer: Option<u32>,
 }
 
 impl Component {
@@ -91,7 +97,18 @@ impl Component {
             name: self.name.clone(),
             rotation,
             translation: parent.place(self.translation),
+            layer: self.layer,
         }
+    }
+}
+
+/// The identity placement (the top assembly itself).
+pub fn identity() -> Component {
+    Component {
+        name: String::new(),
+        rotation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        translation: [0.0; 3],
+        layer: None,
     }
 }
 
@@ -104,36 +121,48 @@ pub fn components(bytes: &[u8]) -> Option<Vec<Component>> {
 }
 
 /// What an NX file is for the 3D preview, read with seeks (only the
-/// directory and the structure stream).
+/// directory, the structure stream and the layer settings).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
-    /// It has a tessellation of its own (`/Root/FastLoad/JT`).
-    Part,
-    /// An assembly with these components.
+    /// It has a tessellation of its own (`/Root/FastLoad/JT`) – and maybe
+    /// components besides its own bodies.
+    Part(Vec<Component>),
+    /// An assembly with these (visible) components.
     Assembly(Vec<Component>),
     /// Neither (a drawing, a damaged file, no NX file).
     Other,
 }
 
-/// The [`Kind`] of the NX file at `path`.
+/// Largest stream read for the structure or the layer settings.
+const MAX_STREAM: u64 = 256 * 1024 * 1024;
+
+/// The [`Kind`] of the NX file at `path`. Components on a layer the file's
+/// layer settings make invisible are left out, as NX does.
 pub fn kind_of(path: &std::path::Path) -> std::io::Result<Kind> {
     let file = std::io::BufReader::new(std::fs::File::open(path)?);
     let Some(mut part) = crate::nxpart::NxPart::open(file)? else {
         return Ok(Kind::Other);
     };
-    if part
+    let has_jt = part
         .streams()
         .iter()
-        .any(|s| s.name == crate::nxpart::JT_STREAM)
-    {
-        return Ok(Kind::Part);
-    }
-    let Some(stream) = part.read(STRUCTURE_STREAM, 64 * 1024 * 1024)? else {
-        return Ok(Kind::Other);
+        .any(|s| s.name == crate::nxpart::JT_STREAM);
+    let mut components = match part.read(STRUCTURE_STREAM, MAX_STREAM)? {
+        Some(stream) => structure(&stream).unwrap_or_default(),
+        None => Vec::new(),
     };
-    Ok(match structure(&stream) {
-        Some(c) if !c.is_empty() => Kind::Assembly(c),
-        _ => Kind::Other,
+    if components.iter().any(|c| c.layer.is_some()) {
+        let layers = part
+            .read(UG_PART_STREAM, MAX_STREAM)?
+            .and_then(|u| visible_layers(&u));
+        if let Some(layers) = layers {
+            components.retain(|c| c.layer.is_none_or(|l| layers.is_visible(l)));
+        }
+    }
+    Ok(match (has_jt, components.is_empty()) {
+        (true, _) => Kind::Part(components),
+        (false, false) => Kind::Assembly(components),
+        (false, true) => Kind::Other,
     })
 }
 
@@ -157,6 +186,7 @@ pub fn structure(s: &[u8]) -> Option<Vec<Component>> {
     } else {
         Some(record_map(s, &objects, n, records.len())?)
     };
+    let layers = layer_map(s, &objects, n);
     let mut out = Vec::with_capacity(n);
     for (i, &name_index) in index.iter().enumerate() {
         let name = names.get(name_index.checked_sub(1)?)?.clone();
@@ -164,20 +194,168 @@ pub fn structure(s: &[u8]) -> Option<Vec<Component>> {
             .as_ref()
             .and_then(|m| m.get(i).copied().flatten())
             .and_then(|r| records.get(r));
-        out.push(match record {
-            Some(&(rotation, translation)) => Component {
-                name,
-                rotation,
-                translation,
-            },
-            None => Component {
-                name,
-                rotation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-                translation: [0.0; 3],
-            },
-        });
+        let mut c = identity();
+        c.name = name;
+        if let Some(&(rotation, translation)) = record {
+            c.rotation = rotation;
+            c.translation = translation;
+        }
+        c.layer = layers.get(&i).copied();
+        out.push(c);
     }
     Some(out)
+}
+
+/// The layers of the instances that are not on the default layer: an int
+/// map keyed by instance whose values are layer numbers (1..=256), stored
+/// only for those instances. Maps of sub-assembly occurrences have the same
+/// shape but come in pairs with the same keys; they are left out, and so
+/// is everything when more than one candidate remains. (Checked on every
+/// assembly of a large SVN: the candidates are exactly the assemblies with
+/// components moved to another layer.)
+fn layer_map(
+    s: &[u8],
+    objects: &[(usize, usize)],
+    instances: usize,
+) -> std::collections::HashMap<usize, u32> {
+    let maps: Vec<Vec<(usize, Option<usize>)>> = objects
+        .iter()
+        .filter_map(|&(a, b)| int_map(s, a, b))
+        .filter(|m| !m.is_empty() && m.len() < instances)
+        .collect();
+    let keys = |m: &Vec<(usize, Option<usize>)>| {
+        let mut k: Vec<usize> = m.iter().map(|e| e.0).collect();
+        k.sort_unstable();
+        k
+    };
+    let candidates: Vec<&Vec<(usize, Option<usize>)>> = maps
+        .iter()
+        .filter(|m| {
+            m.iter()
+                .all(|&(k, v)| k < instances && v.is_some_and(|v| (1..=256).contains(&v)))
+        })
+        .filter(|m| maps.iter().filter(|o| keys(o) == keys(m)).count() == 1)
+        .collect();
+    match candidates.as_slice() {
+        [only] => only
+            .iter()
+            .filter_map(|&(k, v)| Some((k, u32::try_from(v?).ok()?)))
+            .collect(),
+        _ => std::collections::HashMap::new(),
+    }
+}
+
+/// The stream with the NX data, which holds the layer settings.
+pub const UG_PART_STREAM: &str = "/Root/UG_PART/UG_PART";
+
+/// Which of the 256 layers are visible.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Layers {
+    visible: [u32; 9],
+    /// The work layer (always visible).
+    pub work: u32,
+}
+
+impl Layers {
+    pub fn is_visible(&self, layer: u32) -> bool {
+        layer == self.work
+            || self
+                .visible
+                .get((layer / 32) as usize)
+                .is_some_and(|w| w >> (layer % 32) & 1 == 1)
+    }
+}
+
+/// A signed OM integer (layer settings): one byte = value + 1, else 13,
+/// 21, 29 or 32 bits.
+fn sint(s: &[u8], at: usize) -> Option<(i64, usize)> {
+    let b = *s.get(at)?;
+    let byte = |k: usize| s.get(at + k).map(|&v| i64::from(v));
+    let (v, n, bits) = match b {
+        0x00..=0x7f => return Some((i64::from(b) - 1, 1)),
+        0x80..=0x9f => ((i64::from(b & 0x1f) << 8) | byte(1)?, 2, 13),
+        0xa0..=0xbf => (
+            (i64::from(b & 0x1f) << 16) | (byte(1)? << 8) | byte(2)?,
+            3,
+            21,
+        ),
+        0xc0..=0xdf => (
+            (i64::from(b & 0x1f) << 24) | (byte(1)? << 16) | (byte(2)? << 8) | byte(3)?,
+            4,
+            29,
+        ),
+        0xe0 | 0xff => (
+            i64::from(u32::from_be_bytes(s.get(at + 1..at + 5)?.try_into().ok()?)),
+            5,
+            32,
+        ),
+        _ => return None,
+    };
+    Some((
+        if v >> (bits - 1) != 0 {
+            v - (1 << bits)
+        } else {
+            v
+        },
+        n,
+    ))
+}
+
+/// The layer settings of an NX file from its `UG_PART` stream: the one
+/// `UGS::LAYER_parameter` object – after `00 5f 01 04 01` four masks of
+/// 17 32-bit words (selectable, visible, and two copies with an extra
+/// bit), the work layer and the constants 1, 1. Mask 1 holds the visible
+/// layers (a superset of mask 0). `None` unless exactly one such object is
+/// found, so a misread never hides anything.
+pub fn visible_layers(ug_part: &[u8]) -> Option<Layers> {
+    const SIGNATURE: [u8; 5] = [0x00, 0x5f, 0x01, 0x04, 0x01];
+    let mut found = None;
+    let mut count = 0;
+    let mut from = 0;
+    while let Some(rel) = ug_part
+        .get(from..)
+        .and_then(|rest| rest.windows(SIGNATURE.len()).position(|w| w == SIGNATURE))
+    {
+        let at = from + rel;
+        from = at + 1;
+        if let Some(layers) = layer_parameter(ug_part, at + SIGNATURE.len()) {
+            count += 1;
+            found = Some(layers);
+        }
+    }
+    if count == 1 {
+        found
+    } else {
+        None
+    }
+}
+
+/// The masks and the work layer of a `LAYER_parameter` starting at `at`.
+fn layer_parameter(s: &[u8], mut at: usize) -> Option<Layers> {
+    let mut masks = [[0u32; 9]; 4];
+    for mask in &mut masks {
+        for word in 0..17 {
+            let (v, n) = sint(s, at)?;
+            at += n;
+            if let Some(slot) = mask.get_mut(word) {
+                *slot = v as u32;
+            }
+        }
+    }
+    let (work, n) = sint(s, at)?;
+    at += n;
+    let (one, n) = sint(s, at)?;
+    at += n;
+    let (another, _) = sint(s, at)?;
+    let [selectable, visible, _, _] = masks;
+    let contained = selectable.iter().zip(&visible).all(|(a, b)| a & !b == 0);
+    if !(1..=256).contains(&work) || one != 1 || another != 1 || !contained {
+        return None;
+    }
+    Some(Layers {
+        visible,
+        work: work as u32,
+    })
 }
 
 fn u32_at(s: &[u8], at: usize) -> Option<usize> {
@@ -561,6 +739,66 @@ mod tests {
         }
     }
 
+    /// A `LAYER_parameter` object: signature, 4 masks of 17 words (here
+    /// one-byte integers = value + 1), work layer, 1, 1.
+    fn layer_parameter_bytes(selectable: u8, visible: u8, work: u8) -> Vec<u8> {
+        let mut b = vec![0x41, 0x00, 0x5f, 0x01, 0x04, 0x01];
+        for first in [selectable, visible, selectable, visible] {
+            b.push(first + 1);
+            b.extend([0x01; 16]);
+        }
+        b.extend([work + 1, 0x02, 0x02, 0x1b]);
+        b
+    }
+
+    #[test]
+    fn layer_settings() {
+        // layer 1 selectable, layers 1 and 2 visible (bits 1 and 2), work layer 1
+        let mut ug = vec![0xAB; 40];
+        ug.extend(layer_parameter_bytes(0b010, 0b110, 1));
+        ug.extend([0xCD; 40]);
+        let layers = visible_layers(&ug).unwrap();
+        assert_eq!(layers.work, 1);
+        assert!(layers.is_visible(1) && layers.is_visible(2));
+        assert!(!layers.is_visible(3) && !layers.is_visible(9) && !layers.is_visible(256));
+        // two candidates or a selectable layer that is not visible: no answer
+        let twice = [ug.clone(), ug.clone()].concat();
+        assert_eq!(visible_layers(&twice), None);
+        assert_eq!(
+            visible_layers(&layer_parameter_bytes(0b1000, 0b0110, 1)),
+            None
+        );
+        assert_eq!(
+            visible_layers(&layer_parameter_bytes(0b10, 0b10, 0)),
+            None,
+            "work layer 0"
+        );
+        // signed integers of the layer settings
+        assert_eq!(sint(&[0x00], 0), Some((-1, 1)));
+        assert_eq!(
+            sint(&[0x9f, 0xfe], 0),
+            Some((-2, 2)),
+            "13-bit −2: all bits but bit 0"
+        );
+        assert_eq!(
+            sint(&[0xe0, 0x80, 0, 0, 0], 0),
+            Some((i64::from(i32::MIN), 5))
+        );
+    }
+
+    #[test]
+    fn assemblies_without_layer_changes_keep_every_component() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/cad/nist/mtc-assembly/nx/NIST mtc crada assembly.prt");
+        let Kind::Assembly(c) = kind_of(&path).unwrap() else {
+            panic!("an assembly");
+        };
+        assert_eq!(c.len(), 36);
+        assert!(c.iter().all(|x| x.layer.is_none()));
+        let part = path.with_file_name("90591A141 HEX NUT.prt");
+        assert!(matches!(kind_of(&part).unwrap(), Kind::Part(_)));
+    }
+
     #[test]
     fn numbers_and_placements() {
         assert_eq!(
@@ -575,7 +813,9 @@ mod tests {
             name: "A".into(),
             rotation: [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
             translation: [10.0, 0.0, 0.0],
+            layer: Some(9),
         };
+        assert_eq!(quarter.within(&identity()).layer, Some(9));
         assert_eq!(quarter.place([1.0, 0.0, 0.0]), [10.0, 1.0, 0.0]);
         let nested = quarter.within(&quarter);
         assert_eq!(

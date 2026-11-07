@@ -38,7 +38,9 @@ part files (`src/nxasm.rs` reads the components and placements from
 Components are found by file name, like file references – in the
 assembly's revision first, otherwise in the latest revision of another
 item – and sub-assemblies are followed up to 8 levels deep; components
-that are not in TeamCraft are left out. Drawings have no 3D preview;
+that are not in TeamCraft are left out, and so are components on a layer
+the assembly's layer settings hide (read from `/Root/UG_PART/UG_PART`), as
+in NX. Drawings have no 3D preview;
 stand-alone `.jt` files (JT 10) are not previewed yet.
 
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of

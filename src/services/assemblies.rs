@@ -38,7 +38,7 @@ use crate::{
     auth::Actor,
     error::{AppError, AppResult},
     mesh::{Mesh, MAX_TRIANGLES},
-    nxasm::{self, Component, Kind},
+    nxasm::{self, Kind},
     preview::PreviewFormat,
     services::access,
     AppState,
@@ -62,7 +62,7 @@ struct Found {
 #[derive(Debug, Default)]
 pub struct Plan {
     /// (content hash of the part file, placement in the top assembly).
-    pub parts: Vec<(String, Component)>,
+    pub parts: Vec<(String, nxasm::Component)>,
     /// Component names that were not found (or could not be read).
     pub missing: Vec<String>,
     /// Hex key of everything used (for the cache).
@@ -127,11 +127,7 @@ pub async fn plan(
     let Kind::Assembly(top) = kind(st, sha256).await? else {
         return Ok(None);
     };
-    let identity = Component {
-        name: String::new(),
-        rotation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-        translation: [0.0; 3],
-    };
+    let identity = nxasm::identity();
     let mut plan = Plan::default();
     let mut hasher = Sha256::new();
     hasher.update(sha256.as_bytes());
@@ -159,20 +155,30 @@ pub async fn plan(
                 let k = kind(st, &file.sha256).await?;
                 kinds.insert(file.sha256.clone(), k);
             }
-            match kinds.get(&file.sha256) {
-                Some(Kind::Part) => {
-                    if plan.parts.len() >= MAX_PLACED {
-                        plan.missing.push(c.name.clone());
-                    } else {
-                        plan.parts.push((file.sha256.clone(), placement));
-                    }
+            // a part may hold components besides its own bodies
+            let (own, children) = match kinds.get(&file.sha256) {
+                Some(Kind::Part(children)) => (true, children),
+                Some(Kind::Assembly(children)) => (false, children),
+                _ => {
+                    plan.missing.push(c.name.clone());
+                    continue;
                 }
-                Some(Kind::Assembly(children)) if path.len() < MAX_DEPTH => {
+            };
+            if own {
+                if plan.parts.len() >= MAX_PLACED {
+                    plan.missing.push(c.name.clone());
+                } else {
+                    plan.parts.push((file.sha256.clone(), placement.clone()));
+                }
+            }
+            if !children.is_empty() {
+                if path.len() < MAX_DEPTH {
                     let mut deeper = path.clone();
                     deeper.push(file.sha256.clone());
                     stack.push((children.clone(), placement, file.revision_id, deeper));
+                } else {
+                    plan.missing.push(c.name.clone());
                 }
-                _ => plan.missing.push(c.name.clone()),
             }
         }
     }
