@@ -1,0 +1,17 @@
+# CodeQL configuration (referenced by the init step in
+# .github/workflows/codeql.yml).
+#
+# Test-only code is left out of the analysis. It is never compiled into the
+# server binary or the image, and the security queries read its fixtures as
+# findings: fixture passwords and nonces as hard-coded credentials, test
+# usernames and ids in assertion messages as cleartext logging (the alerts
+# triaged in docs/OPEN_WORK.md, all false positives). Analysis paths-ignore
+# applies to Rust because it runs with build-mode none.
+#
+# Unit tests inside a production file (`#[cfg(test)] mod tests { … }`) are
+# still analysed. A unit-test module that needs this exclusion moves into its
+# own `tests.rs` file (`#[cfg(test)] mod tests;`), like src/oidc/tests.rs.
+# Never add production code under these patterns.
+paths-ignore:
+  - "tests/**"
+  - "src/**/tests.rs"

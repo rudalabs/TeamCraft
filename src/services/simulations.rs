@@ -1005,7 +1005,7 @@ pub async fn import_results(
             "At most {MAX_RESULTS} result values can be imported at once."
         )));
     }
-    let mut inputs: Vec<ResultInput> = Vec::with_capacity(rows.len());
+    let mut inputs: Vec<ResultInput> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for row in rows {
         let row = row.validated()?;
