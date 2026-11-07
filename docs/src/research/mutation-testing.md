@@ -75,22 +75,28 @@ crate would take days. The pure modules – `domain`, the parsers and readers
 to pin down, and their unit tests run in seconds. TeamCraft therefore starts
 with:
 
-* **`--lib` tests only** (`additional_cargo_test_args = ["--lib"]`): no
-  PostgreSQL, no integration tests, no service container in the workflow;
+* **`--lib` only** (`additional_cargo_args = ["--lib"]`): no PostgreSQL, no
+  integration tests, no service container in the workflow. It has to be a
+  *cargo* argument, not a test argument (`additional_cargo_test_args`): the
+  build step is `cargo test --no-run`, which otherwise compiles all ~70 test
+  binaries for every mutant – the first trial took 2.5 minutes per mutant
+  that way, against 30 s with `--lib` on both steps;
 * **`examine_globs`** listing those pure modules; services, handlers and
   templates stay out until a second phase decides whether DB tests are worth
   the runtime (they would need the PostgreSQL service and one database per
   test run, which `tests/common` already creates);
 * a **`mutants` build profile** (`[profile.mutants]`, inherits `test`, no
-  debug info) – the docs' main recommendation for build time: debug info is a
-  large part of TeamCraft's link time.
+  debug info), as the cargo-mutants book suggests: less to write and link for
+  every mutant.
 
 ### Runtime
 
-Measured on the developer machine (12 threads, 15 GB, `-j 1`, `--lib`): see
-[Measured on httprange](#measured-on-httprange) below. In CI one
-shard runs on a 4-core runner; the incremental rebuild of the lib test target
-dominates, the tests themselves are seconds.
+Measured on the developer machine (12 threads, 15 GB, `-j 1`): baseline
+23 s incremental build + 19 s for the lib tests; then **8–10 s build + 18 s
+tests per mutant, about 30 s**. The lib tests are more than half of it. The
+whole configuration selects ~1 900 mutants: ~16 hours on one machine. On a
+4-core GitHub runner a mutant takes longer; 16 shards of ~120 mutants each
+stay within a few hours per job. Details per module: [first runs](#first-runs).
 
 ### Pull requests: `--in-diff`
 
@@ -165,9 +171,20 @@ and in the step summary, not as a red check.
   When the examined modules are clean, the pull request job becomes blocking
   and the next modules join (`docs/OPEN_WORK.md`).
 
-## Measured on httprange
+## First runs
 
-Filled in by the first local run (see the pull request).
+cargo-mutants 27.1.0, local, `-j 1`, `--lib`, 2026-11-07:
+
+| Module | Mutants | Caught | Missed | Unviable | Time | Gap found |
+|---|---|---|---|---|---|---|
+| `httprange` | 13 | 12 | 0 | 1 | 10 min (with the field mutants below) | none – its tests already pin every boundary |
+| `util` | 40 | 37 → 40 | 3 → 0 | 0 | 22 min | `format_bytes` was never tested beyond MiB: making the unit loop run one step further (`<=`, `len() + 1`, `len() / 1`) went unnoticed and would index past the unit table (a panic for ≥ 1 PiB); test `byte_sizes_stop_at_tib` |
+| `resultscan` (the 11 field mutants of `TemplateInput::validated`) | 11 | 0 → 7 | 7 → 0 | 4 | with the above | no test checked what `validated` *returns*: dropping the trimmed name, file pattern, method, pick, unit, load case or solver from the result (so `..self` stored the raw form input) passed; test `template_input_is_stored_normalised` |
+
+The tool did what it promises on the first try: two modules with good line
+coverage, ten missed mutants, two real gaps – a latent panic and an unnormalised
+stored value. Quirks of 27.1 noted on the way: `--file` adds to `examine_globs`
+instead of narrowing it (use `-F`), and field-deletion mutants ignore `-F`/`-E`.
 
 ## Sources
 

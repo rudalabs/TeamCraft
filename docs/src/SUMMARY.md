@@ -42,6 +42,7 @@
 # Development
 
 - [Test coverage map](dev/coverage.md)
+- [Mutation testing](dev/mutation-testing.md)
 - [Fuzzing the file readers](dev/fuzzing.md)
 - [Threat model](dev/threat-model.md)
 - [Accessibility](dev/accessibility.md)

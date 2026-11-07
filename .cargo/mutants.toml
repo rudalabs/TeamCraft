@@ -1,0 +1,49 @@
+# cargo-mutants configuration (https://mutants.rs, MIT; a tool, not a
+# dependency). Background and decision: docs/src/research/mutation-testing.md,
+# how to run it and read the results: docs/src/dev/mutation-testing.md.
+#
+# Phase 1: only the pure modules whose rules the unit tests are meant to pin
+# down, tested with `cargo test --lib` – no PostgreSQL, no integration tests,
+# seconds per test run. Services, handlers and templates join only with a
+# decision about database tests (docs/OPEN_WORK.md).
+
+# The files whose code is mutated. A new pure module with unit tests belongs
+# here; `cargo mutants --list --file <path>` shows what it would add.
+examine_globs = [
+    "src/domain/**/*.rs",
+    "src/httprange.rs",
+    "src/pagecontext.rs",
+    "src/util.rs",
+    "src/htmltext.rs",
+    "src/resultscan.rs",
+    "src/bomtable.rs",
+    "src/cadformat.rs",
+    "src/cadrefs.rs",
+    "src/stepbom.rs",
+]
+
+# Mutants that are equivalent or not worth a test – each with its reason.
+# The pattern matches the mutant's name as `cargo mutants --list` prints it.
+exclude_re = [
+    # Debug/Display output is for logs and error messages; no test should pin
+    # its exact text (user-facing text is tested where it is rendered).
+    "<impl (Debug|Display) for ",
+]
+
+# Unit tests only (see above); the integration tests in tests/ need PostgreSQL.
+# A cargo argument, not a test argument: the build step (`cargo test --no-run`)
+# would otherwise compile all ~70 test binaries for every mutant.
+additional_cargo_args = ["--lib"]
+
+# Build profile without debug info (Cargo.toml [profile.mutants]): every
+# mutant is an incremental rebuild of the lib test target, and linking the
+# debug info is a large part of it.
+profile = "mutants"
+
+# A mutant that makes a loop endless is stopped after 5 × the baseline test
+# time (cargo-mutants' default, at least 20 s); builds may take up to 10 ×
+# the baseline build.
+build_timeout_multiplier = 10.0
+
+# mutants.out goes under target/ (git-ignored) instead of the tree root.
+output = "target"
