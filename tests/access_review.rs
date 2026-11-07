@@ -144,6 +144,36 @@ async fn report_confirmation_and_evidence() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     assert_eq!(r.json().as_array().unwrap().len(), 1);
 
+    // a plain member (not a manager) is refused everywhere
+    for (method, path, body) in [
+        (
+            Method::GET,
+            "/api/v1/projects/NTK/access-review".to_string(),
+            None,
+        ),
+        (
+            Method::POST,
+            "/api/v1/projects/NTK/access-review".to_string(),
+            Some(json!({ "note": "x" })),
+        ),
+        (
+            Method::GET,
+            format!("/api/v1/projects/NTK/access-review/{id}"),
+            None,
+        ),
+    ] {
+        let r = app.api(method, &path, &viewer, body).await;
+        assert_eq!(r.status, StatusCode::FORBIDDEN, "{path}: {}", r.text());
+    }
+    let vera_cookie = app.login("vera").await;
+    let csv = app
+        .get_page(
+            &format!("/projects/{pid}/access-review.csv"),
+            Some(&vera_cookie),
+        )
+        .await;
+    assert_eq!(csv.status, StatusCode::FORBIDDEN);
+
     // too long a note
     let r = app
         .api(

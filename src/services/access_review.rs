@@ -355,6 +355,13 @@ pub async fn snapshot(
     review_id: Uuid,
 ) -> AppResult<serde_json::Value> {
     projects::get_for_management(pool, actor, project_id).await?;
+    let mut conn = pool.acquire().await?;
+    if !projects::can_manage(&mut conn, actor, project_id).await? {
+        return Err(AppError::Forbidden(
+            "Only the managers of this project group (and administrators) can see its reviews."
+                .into(),
+        ));
+    }
     let row = sqlx::query(
         "SELECT snapshot FROM project_access_reviews WHERE id = $1 AND project_id = $2",
     )
