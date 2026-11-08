@@ -462,6 +462,29 @@
       {% if simulation.results %}<a class="button small" href="/revisions/{{ rev.id }}/simulation/results.csv">CSV</a>{% endif %}
     </div>
   </div>
+  {% if simulation.can_fill_with_ai %}
+  <details class="fill-ai" id="fill-with-ai">
+    <summary class="button small">Fill with AI…</summary>
+    <form method="post" action="/revisions/{{ rev.id }}/simulation/fill-with-ai">
+      <label>What to extract (optional)
+        <textarea name="wanted" rows="3" maxlength="4000" placeholder="e.g. max von Mises stress per load case, max displacement, first three eigenfrequencies"></textarea>
+      </label>
+      <label>Limits to use (optional)
+        <input type="text" name="limits" maxlength="500" placeholder="e.g. upper limit 250 MPa for stress; safety factor lower limit 1.5">
+      </label>
+      {% if simulation.report_files %}
+      <fieldset>
+        <legend>Report files</legend>
+        {% for name in simulation.report_files %}
+        <label class="check"><input type="checkbox" name="file_{{ loop.index0 }}" value="{{ name }}" checked> <span class="mono">{{ name }}</span></label>
+        {% endfor %}
+      </fieldset>
+      {% else %}<p class="hint">This revision has no report file (PDF, HTML or text) yet.</p>{% endif %}
+      <p class="hint">Empty means every key number of the report. These are drafts – nothing becomes a result until you accept it{% if not can.edit %}, and accepting needs the revision checked out{% endif %}. Numbers are quoted from the report; values the report does not contain are listed as not found.</p>
+      <button type="submit">Propose values</button>
+    </form>
+  </details>
+  {% endif %}
   {% set solver_files = files|selectattr("solver_line")|list %}
   {% if solver_files %}
   <ul class="small solver-runs" aria-label="Solver output">

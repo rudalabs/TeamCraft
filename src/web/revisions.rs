@@ -281,6 +281,26 @@ pub async fn show(
             .collect(),
     )
     .to_string();
+    // "Fill with AI…": report files to choose from, and whether the button
+    // is offered (assistant configured, editor of the group, group has not
+    // switched the assistant off).
+    let report_files: Vec<String> = file_list
+        .iter()
+        .filter(|f| crate::services::assistant::is_report_file(&f.filename))
+        .map(|f| f.filename.clone())
+        .collect();
+    let can_fill_with_ai = crate::services::assistant::enabled(&st)
+        && me.can_edit()
+        && me.can_edit_project(rev.project_id)
+        && match rev.project_id {
+            Some(p) => !crate::services::project_policy::denied_groups(
+                &st.db,
+                &[crate::services::project_policy::Interface::Assistant],
+            )
+            .await?
+            .contains(&p),
+            None => true,
+        };
     // Every file together with its version history (newest first).
     let attachments: Vec<serde_json::Value> = file_list
         .into_iter()
@@ -387,6 +407,8 @@ pub async fn show(
             "images": gallery,
             "proposals": proposals,
             "can_decide": me.can_edit() && me.can_edit_project(rev.project_id),
+            "can_fill_with_ai": can_fill_with_ai,
+            "report_files": report_files,
         })
     } else {
         serde_json::Value::Null

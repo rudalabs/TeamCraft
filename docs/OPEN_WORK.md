@@ -439,6 +439,7 @@ real files and belong to section 3 once such files are at hand.
     isolated child); vendor tools on the server (later, desktop only: `starccm+ -info` with the user's licence)
 - [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded, audited, with source); never from big result files
 - [x] Result values proposed by the assistant from PDF/text reports (`propose_result_values`, drafts with a quote, accepted or rejected by a CAD editor); PDF text layer in `read_file_text`
+- [x] "Fill with AI…" on the Results card: a box with what to extract, limits and report files; drafts only, rights and the `assistant` switch respected (#177; open: desktop button, reusable requests per group, *Accept all*)
 - [x] `read_file_text` of plain-text files shows the real text with its lines and decimal numbers (bounded; only geometry as text – ASCII STL, OBJ, KiCad – drops decimals for the search), so text and CSV reports work like PDFs (#141)
 - [ ] Scanned PDF reports (OCR) – not planned; attach a PDF with a text layer or the numbers by hand
 - [x] HTML reports of commercial FEA/CFD tools: own bounded HTML-to-text reader (`src/htmltext.rs`) in the isolated

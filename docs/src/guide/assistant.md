@@ -16,7 +16,7 @@ CAD generation:
 | Revision page         | **Check before release**     | a checklist: blocking items (unreleased BOM children and references, check-outs) and warnings     |
 | Revision page         | **What breaks if I change this?** | the assemblies that use the item (released ones first), open change orders and requests that already touch it, simulations that would go out of date, what to check first |
 | Revision page         | **Are the simulations still valid?** | the simulations based on the item: which are out of date and why, failed results, what to re-run |
-| Simulation page       | **Fill result values from the report** | reads the report (PDF or text) of the revision and proposes result values – drafts with the file and the quoted text; you accept or reject them on the *Results* card (drafts must be allowed) |
+| Simulation page       | **Fill result values from the report** | reads the report (PDF or text) of the revision and proposes result values – drafts with the file and the quoted text; you accept or reject them on the *Results* card (drafts must be allowed); the **Fill with AI…** button on the *Results* card does the same for the values you list |
 | Change order page     | **Brief me for this review** | what changes, the impact on dependents outside the change, risks, questions for the author       |
 | Dashboard             | **What needs my attention**  | an ordered to-do list from your worklist: reviews, impacts, old check-outs, your drafts           |
 | Everywhere            | **Ask**                      | any question, e.g. "Which assemblies use PRT-000012, and are they released?"                     |

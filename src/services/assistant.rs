@@ -255,6 +255,107 @@ async fn run_once(
     ))
 }
 
+/// Longest "use as limits" note of the *Fill with AI* box, in characters.
+pub const MAX_LIMITS_CHARS: usize = 500;
+
+/// Whether a file of a simulation can be a report the assistant reads
+/// (PDF, HTML or text; the extraction is `textindex` / `htmltext` / `pdftext`).
+pub fn is_report_file(filename: &str) -> bool {
+    let ext = filename
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(
+        ext.as_str(),
+        "pdf" | "html" | "htm" | "xhtml" | "txt" | "md" | "rst" | "log" | "out" | "csv" | "tsv"
+    )
+}
+
+/// *Fill with AI…* on the Results card: asks the assistant to propose result
+/// values of a simulation revision from its reports, as drafts (never as
+/// results). `wanted` names the values to extract (empty = every key number),
+/// `limits` is the user's own note on limits, `files` the report files to read
+/// (empty = all). Returns the run and the number of proposals it created.
+///
+/// # Invariants
+///
+/// * **Permission:** the assistant must be configured (`Disabled`/404); the
+///   revision must be readable (hidden = missing, 404) and its group must not
+///   have switched the `assistant` interface off (404, like a hidden group);
+///   the actor must be an editor of the group (403). Pressing the button is
+///   the request for drafts, so they are allowed for this run; accepting
+///   stays a separate step that needs a check-out.
+/// * **Validation:** the revision is a simulation; texts are capped
+///   (`MAX_QUESTION_CHARS`, `MAX_LIMITS_CHARS`); every named file is a file of
+///   this revision (400 otherwise).
+/// * **Steps:** the run is not one transaction; the proposals are written by
+///   the `propose_result_values` tool in its own transaction.
+/// * **Audit:** `assistant.run` as for every run (action, text length, tools,
+///   tokens – never the text or the answer).
+/// * **Notifications / webhooks:** none.
+pub async fn fill_result_values(
+    st: &AppState,
+    me: &Actor,
+    revision_id: uuid::Uuid,
+    wanted: &str,
+    limits: &str,
+    files: &[String],
+) -> AppResult<(Run, usize)> {
+    if !enabled(st) {
+        return Err(AssistantError::Disabled.into_app_error());
+    }
+    let rev = crate::services::revisions::get(&st.db, me, revision_id).await?;
+    let denied = project_policy::denied_groups(&st.db, &[Interface::Assistant]).await?;
+    if rev.project_id.is_some_and(|p| denied.contains(&p)) {
+        return Err(crate::services::access::not_found_revision());
+    }
+    if rev.item_type != crate::domain::ItemType::Simulation.as_str() {
+        return Err(AppError::BadRequest(
+            "Only simulation revisions have result values.".into(),
+        ));
+    }
+    if !me.can_edit() || !me.can_edit_project(rev.project_id) {
+        return Err(AppError::Forbidden(
+            "You may not edit this simulation.".into(),
+        ));
+    }
+    if limits.chars().count() > MAX_LIMITS_CHARS {
+        return Err(AppError::BadRequest(format!(
+            "The limits note is too long (at most {MAX_LIMITS_CHARS} characters)."
+        )));
+    }
+    let known = crate::services::files::list(&st.db, me, revision_id).await?;
+    for name in files {
+        if !known
+            .iter()
+            .any(|f| &f.filename == name && is_report_file(&f.filename))
+        {
+            return Err(AppError::BadRequest(format!(
+                "`{name}` is not a report file of this revision."
+            )));
+        }
+    }
+    let mut question = Question::new(
+        Some("result_values"),
+        Some(wanted),
+        Some(&rev.item_number),
+        Some(&rev.code),
+        None,
+        true,
+    )
+    .map_err(AppError::BadRequest)?;
+    question.limits = limits.trim().to_string();
+    question.files = files.to_vec();
+    let before = crate::services::result_proposals::list(&st.db, me, revision_id, Some("pending"))
+        .await?
+        .len();
+    let run = ask(st, me, question).await?;
+    let after = crate::services::result_proposals::list(&st.db, me, revision_id, Some("pending"))
+        .await?
+        .len();
+    Ok((run, after.saturating_sub(before)))
+}
+
 // ---------------------------------------------------------------------------
 // The page the user is on
 // ---------------------------------------------------------------------------
@@ -545,6 +646,29 @@ mod tests {
             run_timeout: Duration::from_secs(180),
             max_concurrent: 4,
             retention_days: 30,
+        }
+    }
+
+    #[test]
+    fn report_files_are_pdf_html_and_text() {
+        for ok in [
+            "report.pdf",
+            "REPORT.PDF",
+            "r.html",
+            "r.htm",
+            "notes.txt",
+            "solver.out",
+        ] {
+            assert!(is_report_file(ok), "{ok}");
+        }
+        for no in [
+            "model.step",
+            "result.vtk",
+            "noextension",
+            "archive.zip",
+            "pdf",
+        ] {
+            assert!(!is_report_file(no), "{no}");
         }
     }
 

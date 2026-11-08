@@ -244,6 +244,17 @@ of both when they are uploaded, so the assistant can read it with
   `[… middle of the file left out …]` – where a solver writes its status and
   final values.
 
+The **Fill with AI…** button on the *Results* card (shown to editors of the
+group when the server has an assistant and the group has not switched the
+assistant off) opens a box: *What to extract* (the values you want, optional –
+empty means every key number of the report), *Limits to use* (optional, for
+example "upper limit 250 MPa for stress", applied only where it fits a value
+you named) and the report files to read (PDF, HTML or text, all ticked).
+*Propose values* is the request for drafts. Values you asked for that the
+report does not contain are reported as *Not found* and are not proposed;
+numbers are taken as written, never converted. Proposing works without a
+check-out, accepting needs it.
+
 The quick action **Fill result values from the report** on the simulation page
 (drafts must be allowed) – or the MCP tool `propose_result_values` – proposes
 the key numbers the report states. A proposal is a **draft**: it names the
