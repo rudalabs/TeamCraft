@@ -17,6 +17,10 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- 3D preview of CATIA V5 parts (`.CATPart`) from the visualisation (CGR)
+  data CATIA stores in the file, refined along its exact surface normals
+  like NX parts. Their thumbnail is rendered from it. Products are not
+  previewed yet.
 - Need-to-know project groups, step 5 (#151): access review of a restricted
   group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
   administrators: members with role, group role, source (manual or identity

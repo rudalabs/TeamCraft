@@ -30,7 +30,8 @@
   clouds and tessellates STEP with the truck kernel (`mesh/step.rs`; an own
   Part 21 reader in `mesh/p21.rs` filters what the kernel gets, AP242
   tessellated geometry is read by `mesh/tessellated.rs`), reads the JT 9
-  tessellation inside NX parts (`mesh/jt.rs`) and refines it along its
+  tessellation inside NX parts (`mesh/jt.rs`) and the CGR visualisation
+  data inside CATIA V5 parts (`mesh/catia.rs`) and refines both along their
   stored normals (`mesh/pn.rs`); `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child
   process with a time limit. The browser only draws the compact

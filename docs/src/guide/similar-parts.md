@@ -27,8 +27,9 @@ reason you can check.
   for byte-identical copies.
 
 The comparison needs a 3D model with a preview: STEP, a mesh (STL, OBJ,
-PLY, OFF, 3MF, AMF, glTF/GLB, 3DS) or an NX part (`.prt` with its JT
-lightweight representation). Other native CAD files are compared through
+PLY, OFF, 3MF, AMF, glTF/GLB, 3DS), an NX part (`.prt` with its JT
+lightweight representation) or a CATIA V5 part (`.CATPart` with its
+visualisation data). Other native CAD files are compared through
 their STEP export – attach one. NX assemblies are not compared (they hold no
 shape of their own), and neither are point clouds. Simulation result files
 (VTK, VTU, VTP, CalculiX FRD) have a 3D preview too and are currently

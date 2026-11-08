@@ -58,7 +58,11 @@ pub fn supports(format_id: &str) -> bool {
         || format_id.starts_with("solidedge-")
         || matches!(
             format_id,
-            "solidworks-part" | "solidworks-assembly" | "solidworks-drawing" | "nx-part"
+            "solidworks-part"
+                | "solidworks-assembly"
+                | "solidworks-drawing"
+                | "nx-part"
+                | "catia-part"
         )
 }
 
@@ -444,10 +448,11 @@ pub const RENDERED_SIZE: u32 = 512;
 
 /// Formats whose thumbnail is rendered from their 3D preview instead of the
 /// image stored in the file: NX parts (the embedded JPEG is small and poor,
-/// the tessellation in the file is good). Files without a 3D preview (NX
-/// assemblies and drawings) keep the stored image.
+/// the tessellation in the file is good) and CATIA V5 parts (their CGR
+/// visualisation data). Files without a 3D preview (NX assemblies and
+/// drawings) keep the stored image.
 pub fn rendered(format_id: &str) -> bool {
-    format_id == "nx-part"
+    matches!(format_id, "nx-part" | "catia-part")
 }
 
 /// A PNG thumbnail drawn from a cached preview mesh (`TCMESH01`).
@@ -633,8 +638,10 @@ mod tests {
             .exists());
         assert!(cached(dir.path(), "../x", empty.path()).is_err());
         assert!(supports("inventor-assembly") && supports("solidedge-weldment"));
-        assert!(supports("nx-part"));
+        assert!(supports("nx-part") && supports("catia-part"));
         assert!(!supports("inventor-project") && !supports("step"));
+        assert!(rendered("nx-part") && rendered("catia-part"));
+        assert!(!rendered("catia-product") && !rendered("inventor-part"));
     }
 
     #[test]

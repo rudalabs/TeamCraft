@@ -43,6 +43,21 @@ the assembly's layer settings hide (read from `/Root/UG_PART/UG_PART`), as
 in NX. Drawings have no 3D preview;
 stand-alone `.jt` files (JT 10) are not previewed yet.
 
+CATIA V5 parts (`.CATPart`, container `V5_CFV2`) are previewed from the
+visualisation data CATIA saves with them (`src/mesh/catia.rs`). That data is
+the container `CATCGRCont`, a `V5_CFV2` document nested in the file; its
+scene graph holds one uncompressed mesh per body. The reader takes:
+
+* the vertices in millimetres, stored with prefix sharing;
+* the exact surface normals of the curved faces;
+* the triangle lists, strips and fans of each B-rep face.
+
+The mesh is refined along the stored normals like an NX part. A part saved
+without visualisation data has no 3D preview. Products (`.CATProduct`) and
+drawings have none yet: a product references its parts by container id, not
+by file name. Details are in
+[Research: 3D preview of CATIA V5 parts](../research/catia-cgr-preview.md).
+
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
 files). TeamCraft inflates only the sections it needs, with a hard size
