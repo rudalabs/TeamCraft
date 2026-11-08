@@ -214,6 +214,7 @@ fn main() {
             commands::check_update,
             commands::dismiss_update,
             commands::set_update_check,
+            commands::set_checkout_parts,
             commands::open_release_page,
             commands::save_package,
             commands::cancel_package,
