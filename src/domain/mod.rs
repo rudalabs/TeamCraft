@@ -884,6 +884,26 @@ mod tests {
         for t in ItemType::ALL {
             assert_eq!(ItemType::parse(t.as_str()), Some(t));
         }
+        // stored value, label and number prefix of each type (found by cargo
+        // mutants)
+        let types: Vec<(&str, &str, &str)> = ItemType::ALL
+            .iter()
+            .map(|t| (t.as_str(), t.label(), t.number_prefix()))
+            .collect();
+        assert_eq!(
+            types,
+            [
+                ("part", "Part", "PRT"),
+                ("assembly", "Assembly", "ASM"),
+                ("document", "Document", "DOC"),
+                ("software", "Software", "SW"),
+                ("simulation", "Simulation", "SIM"),
+                ("as_built", "As-built", "AB"),
+            ]
+        );
+        assert_eq!(ItemType::parse("As-Built"), Some(ItemType::AsBuilt));
+        assert_eq!(ItemType::parse("as built"), Some(ItemType::AsBuilt));
+        assert_eq!(ItemType::parse("gadget"), None);
         for r in BasisRole::ALL {
             assert_eq!(BasisRole::parse(r.as_str()), Some(r));
         }
