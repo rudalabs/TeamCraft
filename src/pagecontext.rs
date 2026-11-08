@@ -413,4 +413,32 @@ mod tests {
         };
         assert_eq!(revision.label(), "PRT-000009/A · bom (latest released)");
     }
+
+    /// Every page kind has its own label (found by cargo mutants).
+    #[test]
+    fn kind_labels() {
+        let labels = [
+            ("dashboard", "Dashboard"),
+            ("items", "Items list"),
+            ("item", "Item"),
+            ("revision", "Revision"),
+            ("bom", "Bill of materials"),
+            ("where_used", "Where-used"),
+            ("compare", "Comparison"),
+            ("change", "Change order"),
+            ("changes", "Change orders list"),
+            ("request", "Change request"),
+            ("requests", "Change requests list"),
+            ("simulation", "Simulation results"),
+            ("project", "Project group"),
+            ("projects", "Project groups"),
+            ("search", "Search"),
+            ("vault", "Vault explorer"),
+            ("notifications", "Notifications"),
+        ];
+        for (kind, label) in labels {
+            assert_eq!(kind_label(kind), label, "{kind}");
+        }
+        assert_eq!(kind_label("settings"), "Page");
+    }
 }
