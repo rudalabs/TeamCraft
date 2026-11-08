@@ -24,6 +24,7 @@ case "$trimmed" in
 "git push")
     branch="$(git -C "$repo" rev-parse --abbrev-ref HEAD || true)"
     [[ -z $branch || $branch == "HEAD" ]] && deny "Refused: current branch could not be determined."
+    [[ $branch == "main" ]] && deny "Refused: nothing may be pushed from main."
     exit 0
     ;;
 "git pull") exit 0 ;;
