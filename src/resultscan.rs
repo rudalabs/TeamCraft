@@ -1290,6 +1290,25 @@ mod tests {
         assert!(!t.enabled);
     }
 
+    /// Found by cargo mutants: `pick` is `last` by default, `first` stays,
+    /// anything else is refused.
+    #[test]
+    fn template_pick() {
+        let with = |pick: &str| TemplateInput {
+            name: "Max stress".into(),
+            file_pattern: "*.dat".into(),
+            method: "regex".into(),
+            pattern: r"max = (\S+)".into(),
+            pick: pick.into(),
+            enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(with("").validated().unwrap().pick, "last");
+        assert_eq!(with("first").validated().unwrap().pick, "first");
+        assert_eq!(with(" last ").validated().unwrap().pick, "last");
+        assert!(with("middle").validated().is_err());
+    }
+
     /// Found by cargo mutants: both limits of an exchange file are inclusive
     /// and hold beyond the first value past them.
     #[test]
