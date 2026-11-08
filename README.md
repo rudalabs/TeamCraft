@@ -102,7 +102,7 @@ end-to-end tests against a real PostgreSQL.
 
 **Previews and search**
 
-- **3D preview** – STEP, NX parts and assemblies (put together from their part files, hidden layers left out), SketchUp 2021+ models, STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no plug-ins.
+- **3D preview** – STEP, NX parts and assemblies (put together from their part files, hidden layers left out), SketchUp models, STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no plug-ins.
 - **CAD thumbnails** – the preview images stored in Inventor, Solid Edge and SolidWorks files; NX parts and assemblies and SketchUp models get a sharper thumbnail rendered from their 3D preview.
 - **FEA/CFD results** – VTK, VTU/VTP and CalculiX results coloured by a result field, with legend.
 - **Search** – ranked full-text search over numbers, names, materials, file names and file contents.
@@ -366,6 +366,8 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | gltf, quick-xml, zip                 | glTF, 3MF/AMF, Pack and Go               | MIT / Apache-2.0                         |
 | csv, calamine, encoding_rs           | BOM import: CSV, Excel/ODS, Windows-1252 | MIT-Unlicense / MIT / MIT-Apache + BSD-3 |
 | cfb, crc32fast                       | previews stored in CAD files             | MIT / MIT-Apache                         |
+| OpenSKP (Rust port, in `vendor/openskp`, © 2024–2026 Ahsan Mehmood) | SketchUp 3–2020 files in the 3D preview | MIT                     |
+| earcut algorithm (© 2016 Mapbox, ported in `src/mesh/earcut.rs`) | triangulating SketchUp faces | ISC                                 |
 | rust_xlsxwriter                      | Excel export of BOMs and comparisons     | MIT / Apache-2.0                         |
 | reqwest, rustls, lettre              | HTTP client, TLS, e-mail                 | MIT / Apache-2.0                         |
 | argon2, sha2                         | password hashing, content hashes         | MIT / Apache-2.0                         |

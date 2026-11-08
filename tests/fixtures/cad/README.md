@@ -64,7 +64,7 @@ Fusion, FreeCAD or KiCad projects.
 * the Inventor files carry a preview image (PNG);
 * the NX assembly references all eight part files;
 * every STEP file (AP203 and AP242) gets a complete 3D preview; the PMI of the AP242 file is not shown as geometry.
-* the SketchUp 2021+ models get a 3D preview with the triangle counts and boxes of the prototype; older SketchUp files say which version they come from; damaged SketchUp files never panic.
+* every SketchUp file with faces (SketchUp 3 to 2026) gets a 3D preview with the triangle counts and boxes of the prototype, the same model saved by different versions gives the same triangles, files without faces say so; damaged SketchUp files never panic.
 
 Gaps found with these files are ignored tests in the same file – run them
 with `cargo test --test cad_fixtures -- --ignored` – and are listed under

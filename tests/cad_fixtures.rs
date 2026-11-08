@@ -545,26 +545,183 @@ fn sketchup_models_get_a_3d_preview() {
     assert!(s.closed && s.volume > 0.0, "{s:?}");
 }
 
-/// SketchUp files of version 3 to 2020 are recognised; the 3D preview says
-/// which version it would need instead of failing on the old container.
+/// SketchUp files of version 3 to 2020 (the classic container, read by the
+/// vendored OpenSKP walker) get the same 3D preview as the prototype; the
+/// same model saved by different versions gives the same mesh, also across
+/// the two containers. Files without faces say so.
 #[test]
-fn old_sketchup_files_explain_why_they_have_no_3d_preview() {
-    for (name, version) in [
-        ("legacy_v3_synthetic.skp", "SketchUp 3 "),
-        ("nesting_2013.skp", "SketchUp 2013 "),
-        ("chair_and_table.skp", "SketchUp 2017 "),
-        ("gondola_v20.skp", "SketchUp 2020 "),
+fn classic_sketchup_files_get_a_3d_preview() {
+    for (name, triangles, lo, hi) in [
+        (
+            "chair_and_table.skp",
+            352,
+            [-685.8, -254.0, 0.0],
+            [558.8, 254.0, 863.6],
+        ),
+        (
+            "capilla_quiroz_v17.skp",
+            638,
+            [-8298.663, 0.0, -594.839],
+            [19924.861, 5644.155, 3707.783],
+        ),
+        // skewed components (rotation not symmetric)
+        (
+            "gondola_v20.skp",
+            53_269,
+            [46168.913, 3323.771, 0.0],
+            [49988.522, 8140.882, 3140.218],
+        ),
+        (
+            "arcs_2017.skp",
+            33,
+            [1143.0, -127.0, 0.0],
+            [2743.2, 203.2, 0.0],
+        ),
+        (
+            "arcs_2020.skp",
+            33,
+            [1143.0, -127.0, 0.0],
+            [2743.2, 203.2, 0.0],
+        ),
+        (
+            "instance_scale_term_v6.skp",
+            24,
+            [0.0; 3],
+            [533.4, 25.4, 25.4],
+        ),
+        ("nesting_v6.skp", 6, [0.0; 3], [1270.0, 254.0, 0.0]),
+        ("nesting_2013.skp", 6, [0.0; 3], [1270.0, 254.0, 0.0]),
+        ("nesting_2017.skp", 6, [0.0; 3], [1270.0, 254.0, 0.0]),
+        ("nesting_2020.skp", 6, [0.0; 3], [1270.0, 254.0, 0.0]),
+        (
+            "legacy_v3_synthetic.skp",
+            26,
+            [0.0; 3],
+            [9652.0, 762.0, 0.0],
+        ),
+        (
+            "legacy_v4_synthetic.skp",
+            26,
+            [0.0; 3],
+            [9652.0, 762.0, 0.0],
+        ),
+        (
+            "legacy_v5_synthetic.skp",
+            26,
+            [0.0; 3],
+            [9652.0, 762.0, 0.0],
+        ),
+        (
+            "legacy_v6_synthetic.skp",
+            26,
+            [0.0; 3],
+            [9652.0, 762.0, 0.0],
+        ),
+        (
+            "legacy_v2019_synthetic.skp",
+            26,
+            [0.0; 3],
+            [9652.0, 762.0, 0.0],
+        ),
+        ("legacy_v3_textured.skp", 2, [0.0; 3], [508.0, 508.0, 0.0]),
+        ("legacy_v4_textured.skp", 2, [0.0; 3], [508.0, 508.0, 0.0]),
+        ("legacy_v5_textured.skp", 2, [0.0; 3], [508.0, 508.0, 0.0]),
+        (
+            "legacy_v2020_textured.skp",
+            2,
+            [0.0; 3],
+            [508.0, 508.0, 0.0],
+        ),
+        (
+            "annotation_layers_legacy.skp",
+            2,
+            [0.0; 3],
+            [1016.0, 1016.0, 0.0],
+        ),
+        ("legacy_annotations.skp", 2, [0.0; 3], [2540.0, 2540.0, 0.0]),
+        (
+            "legacy_text_arrows_2017.skp",
+            2,
+            [0.0; 3],
+            [1016.0, 1016.0, 0.0],
+        ),
+        ("sdk_saved_2019.skp", 2, [0.0; 3], [254.0, 254.0, 0.0]),
+        ("sdk_saved_2020.skp", 2, [0.0; 3], [254.0, 254.0, 0.0]),
+        (
+            "sdk_saved_sections_2019.skp",
+            2,
+            [0.0; 3],
+            [254.0, 254.0, 0.0],
+        ),
+        (
+            "sdk_saved_sections_2020.skp",
+            2,
+            [0.0; 3],
+            [254.0, 254.0, 0.0],
+        ),
+    ] {
+        let mesh = preview::convert(preview::PreviewFormat::SketchUp, &openskp(name))
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        mesh.check().unwrap();
+        assert_eq!(mesh.triangle_count(), triangles, "{name}");
+        let b = mesh.bounds();
+        for i in 0..3 {
+            assert!((b[i] - lo[i] as f32).abs() < 0.01, "{name}: {b:?}");
+            assert!((b[i + 3] - hi[i] as f32).abs() < 0.01, "{name}: {b:?}");
+        }
+    }
+    // the same model from SketchUp 2013 and 2021: the same triangles
+    let triangles = |name: &str| {
+        let m = mesh::read("sketchup", &std::fs::read(openskp(name)).unwrap()).unwrap();
+        // each triangle as its sorted corners (bits), in any order
+        let mut t: Vec<Vec<[u32; 3]>> = m
+            .indices
+            .chunks_exact(3)
+            .map(|t| {
+                let mut corners: Vec<[u32; 3]> = t
+                    .iter()
+                    .map(|&i| {
+                        let p = &m.positions[i as usize * 3..i as usize * 3 + 3];
+                        [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()]
+                    })
+                    .collect();
+                corners.sort();
+                corners
+            })
+            .collect();
+        t.sort();
+        t
+    };
+    assert_eq!(triangles("nesting_2013.skp"), triangles("nesting_2021.skp"));
+    assert_eq!(triangles("arcs_2017.skp"), triangles("arcs_2021.skp"));
+    for name in [
+        "blank_v17.skp",
+        "legacy_empty_2020.skp",
+        "legacy_textured_colorize_2017.skp",
+        "single_material_v17.skp",
+        "zero_material_custom_layer_v18.skp",
     ] {
         let err = mesh::read("sketchup", &std::fs::read(openskp(name)).unwrap()).unwrap_err();
-        assert!(err.to_string().contains(version), "{name}: {err}");
+        assert!(
+            err.to_string().contains("no visible faces"),
+            "{name}: {err}"
+        );
     }
 }
 
 /// Damaged SketchUp files are errors, never panics: bytes flipped all over
-/// the file and the file cut short.
+/// the file and the file cut short – small files of both containers (2021+
+/// and the classic one from SketchUp 6, 2017 and 2020).
 #[test]
 fn damaged_sketchup_files_never_panic() {
-    for name in ["Untitled.skp", "nesting_2021.skp", "gondola_v20.skp"] {
+    for name in [
+        "nesting_2021.skp",
+        "SU_File.skp",
+        "nesting_v6.skp",
+        "chair_and_table.skp",
+        "legacy_v2019_synthetic.skp",
+        "arcs_2020.skp",
+    ] {
         let data = std::fs::read(openskp(name)).unwrap();
         for at in (0..data.len()).step_by(data.len() / 400 + 1) {
             let mut copy = data.clone();

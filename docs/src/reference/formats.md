@@ -32,8 +32,9 @@ face with an earcut port (`src/mesh/earcut.rs`, holes and loops touching
 themselves included), places nested components and groups (up to 32 levels,
 mirrored ones with reversed triangles) and converts inches to millimetres.
 Hidden faces and instances, hidden layers and image entities are left out.
-Files of SketchUp 3 to 2020 (an MFC object stream) get no 3D preview yet;
-the error names the version. The thumbnail is rendered from the 3D preview.
+Files of SketchUp 3 to 2020 (one MFC object stream) are read by the Rust
+port of OpenSKP (MIT), vendored unchanged in `vendor/openskp`, and placed and
+triangulated the same way. The thumbnail is rendered from the 3D preview.
 
 NX parts (NX 1980 and later) are read through their stream container
 (`SPLMSSTR`, `src/nxpart.rs`): the referenced component files come only from

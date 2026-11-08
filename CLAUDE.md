@@ -108,7 +108,8 @@ src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm 
 src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows shown): parsing and caps only – ids are hints
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
-src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs + PN refinement mesh/pn.rs, SketchUp 2021+: mesh/sketchup.rs + earcut mesh/earcut.rs) → TCMESH01
+src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs + PN refinement mesh/pn.rs, SketchUp: mesh/sketchup.rs + earcut mesh/earcut.rs, 3–2020 files via vendor/openskp) → TCMESH01
+vendor/            vendored third-party crates as path dependencies, unchanged, with their licences (vendor/README.md): openskp (MIT)
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
 src/textindex.rs   text extraction from uploads for the full-text search (plain text with its numbers, STEP/IGES strings;
                    PDF via pdftext, HTML via htmltext – both in the isolated `text-extract` child)

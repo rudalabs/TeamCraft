@@ -450,7 +450,7 @@ pub const RENDERED_SIZE: u32 = 512;
 /// image stored in the file: NX parts (the embedded JPEG is small and poor,
 /// the tessellation in the file is good) and SketchUp models (the preview
 /// shows the geometry the same way as every other format). Files without a
-/// 3D preview (NX assemblies and drawings, SketchUp files before 2021) keep
+/// 3D preview (NX assemblies and drawings, SketchUp files without faces) keep
 /// the stored image.
 pub fn rendered(format_id: &str) -> bool {
     matches!(format_id, "nx-part" | "sketchup")

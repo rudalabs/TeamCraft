@@ -12,8 +12,10 @@
 //! The tags were taken from the format description of OpenSKP
 //! (github.com/iamahsanmehmood/openskp, MIT licence, Copyright (c) 2024-2026
 //! Ahsan Mehmood) and checked against its test files; see
-//! `docs/src/research/sketchup-preview.md`. Files of SketchUp 3 to 2020 (an
-//! MFC object stream) are not read yet.
+//! `docs/src/research/sketchup-preview.md`. Files of SketchUp 3 to 2020 (one
+//! MFC object stream with many version quirks) are read by OpenSKP's own Rust
+//! port, vendored unchanged in `vendor/openskp` (MIT), and placed and
+//! triangulated here the same way.
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read};
@@ -125,20 +127,105 @@ pub(crate) fn read(data: &[u8]) -> Result<Mesh> {
     let head = data.get(..4096).unwrap_or(data);
     let Some(zip_at) = find(head, b"PK\x03\x04") else {
         if find(data.get(..512).unwrap_or(data), b"CVersionMap").is_some() {
-            bail!(
-                "This SketchUp file was saved by SketchUp {} or older; the 3D preview reads \
-                 SketchUp 2021 and later.",
-                major_version(data).map_or("2020".to_string(), |v| match v {
-                    13..=20 => format!("20{v}"),
-                    v => v.to_string(),
-                })
-            );
+            return classic(data);
         }
         bail!("Not a SketchUp file (no model archive).");
     };
     let model = model_dat(data.get(zip_at..).unwrap_or_default())?;
     let scene = Scene::parse(&model)?;
     scene.mesh()
+}
+
+/// SketchUp 3 to 2020: one MFC object stream, read by the vendored OpenSKP
+/// walker (`vendor/openskp`, MIT). A panic in it is caught and reported as
+/// a damaged file, like every other reader error.
+fn classic(data: &[u8]) -> Result<Mesh> {
+    let version = major_version(data).map_or("2020 or older".to_string(), |v| match v {
+        13..=20 => format!("20{v}"),
+        v => v.to_string(),
+    });
+    let parsed = std::panic::catch_unwind(|| {
+        openskp::parse_skp(data, &openskp::ParseOptions::new()).map_err(|e| e.to_string())
+    });
+    let model = match parsed {
+        Ok(Ok(model)) => model,
+        Ok(Err(e)) => bail!("This SketchUp {version} file cannot be read: {e}"),
+        Err(_) => bail!("This SketchUp {version} file is damaged."),
+    };
+    Scene::from_openskp(&model).mesh()
+}
+
+/// An OpenSKP entity id as the key of [`Scene`].
+fn key(id: openskp::EntityId) -> u64 {
+    u64::from_le_bytes(id.to_le_bytes())
+}
+
+/// A definition of OpenSKP's model: faces with their loops resolved to
+/// points, instances with layer ids from `layers` (OpenSKP names layers).
+fn from_openskp_definition(
+    d: &openskp::Definition,
+    image: bool,
+    layers: &HashMap<&str, u64>,
+) -> Definition {
+    let layer = |name: &str| layers.get(name).copied();
+    let faces = d
+        .faces
+        .values()
+        .filter_map(|f| {
+            let loops: Option<Vec<Vec<[f64; 3]>>> = f
+                .loops
+                .iter()
+                .map(|lp| {
+                    lp.iter()
+                        .map(|ce| {
+                            let e = d.edges.get(&ce.edge_id)?;
+                            let v = d.vertices.get(if ce.orientation >= 0 {
+                                &e.v1_id
+                            } else {
+                                &e.v2_id
+                            })?;
+                            [v.x, v.y, v.z]
+                                .iter()
+                                .all(|c| c.is_finite())
+                                .then_some([v.x, v.y, v.z])
+                        })
+                        .collect()
+                })
+                .collect();
+            let loops = loops?;
+            loops.first().is_some_and(|l| l.len() >= 3).then(|| Face {
+                loops,
+                normal: f.normal.unwrap_or([0.0; 3]),
+                hidden: f.hidden,
+                layer: layer(&f.layer),
+            })
+        })
+        .collect();
+    let instances = d
+        .instances
+        .iter()
+        .filter_map(|i| {
+            let mut matrix = [
+                1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0,
+            ];
+            if i.matrix.len() >= 13 && i.matrix.iter().all(|v| v.is_finite()) {
+                for (m, v) in matrix.iter_mut().zip(&i.matrix) {
+                    *m = *v;
+                }
+            }
+            Some(Instance {
+                def: key(i.ref_idx?),
+                matrix,
+                hidden: i.hidden,
+                layer: layer(&i.layer),
+            })
+        })
+        .collect();
+    Definition {
+        image,
+        faces,
+        instances,
+    }
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -436,6 +523,31 @@ struct Scene {
 }
 
 impl Scene {
+    /// The scene of a model read by OpenSKP (SketchUp 3 to 2020).
+    fn from_openskp(model: &openskp::SkpModel) -> Scene {
+        let layers: HashMap<&str, u64> = model
+            .layers
+            .iter()
+            .enumerate()
+            .map(|(k, l)| (l.name.as_str(), k as u64))
+            .collect();
+        let hidden_layers = model
+            .layers
+            .iter()
+            .filter(|l| l.hidden)
+            .filter_map(|l| layers.get(l.name.as_str()).copied())
+            .collect();
+        Scene {
+            definitions: model
+                .definitions
+                .iter()
+                .map(|(id, d)| (key(*id), from_openskp_definition(d, d.is_image, &layers)))
+                .collect(),
+            root: from_openskp_definition(model.root(), false, &layers),
+            hidden_layers,
+        }
+    }
+
     fn parse(model: &[u8]) -> Result<Scene> {
         let mut scene = Scene {
             definitions: HashMap::new(),
@@ -892,7 +1004,7 @@ mod tests {
     }
 
     #[test]
-    fn classic_files_get_a_clear_message() {
+    fn a_damaged_classic_file_names_its_version() {
         let mut data = MAGIC.to_vec();
         for c in "SketchUp Model".encode_utf16() {
             data.extend(c.to_le_bytes());

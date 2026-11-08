@@ -3630,9 +3630,9 @@ async fn nx_part_thumbnails_are_rendered_from_the_3d_preview() {
     app.teardown().await;
 }
 
-/// A SketchUp 2021+ model gets a 3D preview (its faces, components placed)
-/// and a thumbnail rendered from it; a SketchUp 2017 file has no 3D
-/// preview yet and keeps the picture SketchUp stored in it.
+/// SketchUp models of 2021+ and of 2017 get a 3D preview (their faces,
+/// components placed) and a thumbnail rendered from it; a file with no faces
+/// keeps the picture SketchUp stored in it.
 #[tokio::test]
 async fn sketchup_models_get_a_3d_preview_and_a_rendered_thumbnail() {
     let app = app_or_skip!();
@@ -3647,11 +3647,16 @@ async fn sketchup_models_get_a_3d_preview_and_a_rendered_thumbnail() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cad/openskp");
     let new = std::fs::read(dir.join("Untitled.skp")).unwrap();
     let old = std::fs::read(dir.join("capilla_quiroz_v17.skp")).unwrap();
+    let lines = std::fs::read(dir.join("zero_material_custom_layer_v18.skp")).unwrap();
     let files = app
         .api_multipart(
             "/api/v1/items/ASM-000001/revisions/A/files",
             &eng,
-            &[("hall.skp", &new), ("chair.skp", &old)],
+            &[
+                ("hall.skp", &new),
+                ("chapel.skp", &old),
+                ("lines.skp", &lines),
+            ],
             &[],
         )
         .await;
@@ -3689,17 +3694,28 @@ async fn sketchup_models_get_a_3d_preview_and_a_rendered_thumbnail() {
     // IHDR: the rendered size
     assert_eq!(&thumb.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
 
-    let chair = id_of("chair.skp");
-    let r = get(format!("/api/v1/files/{chair}/mesh")).await;
+    // SketchUp 2017: the classic container, read by the vendored OpenSKP walker
+    let chapel = id_of("chapel.skp");
+    let r = get(format!("/api/v1/files/{chapel}/mesh")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.triangle_count(), 638);
+    let thumb = get(format!("/api/v1/files/{chapel}/thumbnail")).await;
+    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
+    assert_eq!(&thumb.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
+
+    // only edges, no faces: no 3D preview, the picture SketchUp stored instead
+    let lines = id_of("lines.skp");
+    let r = get(format!("/api/v1/files/{lines}/mesh")).await;
     assert_ne!(r.status, StatusCode::OK);
-    assert!(r.text().contains("SketchUp 2017"), "{}", r.text());
-    let thumb = get(format!("/api/v1/files/{chair}/thumbnail")).await;
+    assert!(r.text().contains("no visible faces"), "{}", r.text());
+    let thumb = get(format!("/api/v1/files/{lines}/thumbnail")).await;
     assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
     assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
-    assert_ne!(
+    assert_eq!(
         &thumb.body[16..24],
-        &[0, 0, 2, 0, 0, 0, 2, 0],
-        "stored, not rendered"
+        &[0, 0, 1, 0, 0, 0, 1, 0],
+        "the stored 256 × 256 picture"
     );
     app.teardown().await;
 }

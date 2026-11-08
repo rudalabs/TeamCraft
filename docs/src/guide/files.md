@@ -34,7 +34,7 @@ turn, double-click to reset; *Z up / Y up* switches the convention.
 | Previewed           | Formats                                                          |
 |---------------------|------------------------------------------------------------------|
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                   |
-| Native CAD          | NX parts (`.prt`) – the tessellation NX stores in the file; SketchUp 2021+ (`.skp`) – its faces with components and groups |
+| Native CAD          | NX parts (`.prt`) – the tessellation NX stores in the file; SketchUp (`.skp`) – its faces with components and groups |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS |
 | Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces          |
 | Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields |
@@ -72,12 +72,12 @@ place, sub-assemblies included (see
 Components that are not in TeamCraft are left out, and so are components
 on layers the assembly hides in NX.
 
-**SketchUp** models (`.skp`, saved by SketchUp 2021 or later) open in the 3D
-viewer as well: SketchUp stores plain polygons, so TeamCraft triangulates the
-faces (holes included) and places every component and group, nested ones
+**SketchUp** models (`.skp`, SketchUp 3 to the current version) open in the
+3D viewer as well: SketchUp stores plain polygons, so TeamCraft triangulates
+the faces (holes included) and places every component and group, nested ones
 too, in millimetres. Hidden faces, hidden components and everything on a
-hidden tag (layer) are left out; colours and textures are not shown. Files
-of SketchUp 2020 and older keep their stored picture (see
+hidden tag (layer) are left out; colours and textures are not shown. A file
+with only edges and no faces keeps its stored picture (see
 [Research: 3D preview of SketchUp models](../research/sketchup-preview.md)).
 For the rest TeamCraft shows what other PLM systems show:
 

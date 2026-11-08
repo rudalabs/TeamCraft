@@ -79,8 +79,8 @@ Implement `src/mesh/sketchup.rs`: the VFF container (SketchUp 2021+) with an
 own TLV reader on the existing `zip` crate, an earcut triangulation, placement
 of nested components, visibility filtering, units converted to millimetres.
 `.skp` gets the format id `sketchup` in the 3D preview and a thumbnail rendered
-from the mesh. The 40 OpenSKP test files go into `tests/fixtures/cad` with
-their MIT licence.
+from the mesh. The OpenSKP test files go into `tests/fixtures/cad` with
+their MIT licence (all but one 5.5 MB file).
 
 The classic container (SketchUp 3 to 2020) is decided separately: taking over
 OpenSKP's MIT Rust walker with attribution, or leaving it out for now. A git
@@ -89,11 +89,28 @@ classic stream is not worth it.
 
 Not now: colours, materials and textures, edges without faces, scenes.
 
+## Addendum 2026-11-08: SketchUp 3 to 2020
+
+Decision: take over OpenSKP's Rust port. Its `packages/rust` folder (crate
+`openskp` 1.5.0, MIT, no dependencies) is kept **unchanged** in
+`vendor/openskp` (origin, commit and licence in `vendor/README.md`, listed in
+the licence table of the README) and used as a path dependency with a fixed
+version – no git dependency, no crates.io package. `src/mesh/sketchup.rs`
+calls `openskp::parse_skp` only for classic files, catches a panic as a
+damaged file, and places and triangulates OpenSKP's definitions, faces and
+instances exactly like those of its own 2021+ reader (layers are matched by
+name there). The tests expect the triangle counts and boxes of the prototype
+for all 26 classic test files with faces, and the same triangles for a model
+saved by SketchUp 2013, 2017, 2020 and 2021.
+
+The crates.io package of the same name (`openskp` 0.5.0, `hew3d/openskp`) is
+a different project under GPL-3.0 and is not used.
+
 ## Sources
 
 * OpenSKP, MIT licence, © 2024–2026 Ahsan Mehmood, commit `e7b4674`:
   `docs/BINARY_FORMAT.md`, `packages/python/src/openskp/{_core,legacy,scene}.py`,
-  `packages/rust/src/` (read; Python modules run unchanged in the prototype for
-  comparison).
+  `packages/rust/src/` (vendored unchanged in `vendor/openskp` for the classic
+  container; Python modules run unchanged in the prototype for comparison).
 * earcut, mapbox, ISC licence (algorithm ported).
 * No SketchUp installation, no SketchUp SDK; nothing decompiled.
