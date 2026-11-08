@@ -44,6 +44,14 @@ mod tests {
         use serde_json::json;
         assert_eq!(normalize_attribute_key(" Order No. ").unwrap(), "order_no");
         assert_eq!(normalize_attribute_key("length_mm").unwrap(), "length_mm");
+        // separators at the start and in a row fold into nothing or one '_'
+        // (found by cargo mutants)
+        assert_eq!(
+            normalize_attribute_key("--Order -- No").unwrap(),
+            "order_no"
+        );
+        assert_eq!(normalize_attribute_key("/vendor").unwrap(), "vendor");
+        assert_eq!(normalize_attribute_key("a._/b").unwrap(), "a_b");
         for bad in ["", "1abc", "ä", "a/b?", &"a".repeat(41)] {
             assert!(normalize_attribute_key(bad).is_err(), "{bad:?}");
         }
