@@ -29,6 +29,7 @@
 <section class="card viewer-card">
   <div class="viewer-stage">
     <canvas id="viewer-canvas" class="viewer-canvas" tabindex="0" data-src="/file-versions/{{ shown.id }}/mesh"
+            {% if not is_points %}data-notes="/file-versions/{{ shown.id }}/annotations"{% endif %}
             data-name="{{ file.filename }}" aria-label="3D view of {{ file.filename }} version {{ shown.version }}"></canvas>
     {#- the view controls sit on the canvas, so they are never below the fold -#}
     <div class="viewer-tools actions" role="toolbar" aria-label="View">

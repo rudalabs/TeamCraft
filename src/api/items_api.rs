@@ -343,6 +343,57 @@ pub(super) async fn update_attribute(
 }
 
 #[derive(Deserialize)]
+pub(super) struct NoteBody {
+    x: f64,
+    y: f64,
+    z: f64,
+    body: String,
+}
+
+/// `GET /file-versions/{id}/annotations`: notes pinned to the 3D preview.
+pub(super) async fn version_annotations(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(
+        crate::services::annotations::list(&st.db, &me, id).await?
+    )))
+}
+
+/// `POST /file-versions/{id}/annotations` `{x, y, z, body}`.
+pub(super) async fn add_version_annotation(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<NoteBody>,
+) -> AppResult<(StatusCode, Json<Value>)> {
+    let note = crate::services::annotations::add(
+        &st.db,
+        &me,
+        id,
+        crate::services::annotations::NewAnnotation {
+            x: body.x,
+            y: body.y,
+            z: body.z,
+            body: body.body,
+        },
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(json!(note))))
+}
+
+/// `DELETE /annotations/{id}`.
+pub(super) async fn delete_annotation(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<StatusCode> {
+    crate::services::annotations::remove(&st.db, &me, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
 pub(super) struct BulkBody {
     /// `revise` or `obsolete`.
     action: String,

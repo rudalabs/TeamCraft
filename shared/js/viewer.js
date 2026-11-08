@@ -270,6 +270,10 @@
     // Point-to-point measurement: picked model points (0–2) and the decimals
     // shown (remembered per browser).
     var measure = { on: false, points: [], decimals: 2 };
+    // 3D notes of the shown version (options.notes: list/add/remove)
+    var notes = [];
+    var noting = false;
+    var notesApi = options.notes || null;
     try {
       var savedDecimals = Number(window.localStorage.getItem("teamcraft-viewer-decimals"));
       if (savedDecimals >= 0 && savedDecimals <= 6) measure.decimals = savedDecimals;
@@ -495,7 +499,72 @@
       el.appendChild(measureBtn);
       el.appendChild(decimals);
       el.appendChild(result);
+
+      // Notes pinned to the model (design review), when the page offers them.
+      if (notesApi) {
+        var noteBtn = document.createElement("button");
+        noteBtn.type = "button";
+        noteBtn.className = "small";
+        noteBtn.textContent = "Add note";
+        noteBtn.setAttribute("aria-pressed", "false");
+        noteBtn.addEventListener("click", function () {
+          noting = !noting;
+          if (noting && measure.on) measureBtn.click();
+          noteBtn.setAttribute("aria-pressed", String(noting));
+          canvas.classList.toggle("viewer-measuring", noting);
+          result.textContent = noting ? "Click the point the note is about." : "";
+        });
+        measureBtn.addEventListener("click", function () {
+          if (measure.on && noting) noteBtn.click();
+        });
+        notesList = document.createElement("ol");
+        notesList.className = "viewer-notes small";
+        notesList.setAttribute("aria-label", "Notes on the model (blue points)");
+        el.appendChild(noteBtn);
+        el.appendChild(notesList);
+        refreshNotes();
+      }
       return el;
+    }
+    var notesList = null;
+
+    function showNotes() {
+      if (!notesList) return;
+      notesList.textContent = "";
+      notes.forEach(function (n) {
+        var li = document.createElement("li");
+        var text = document.createElement("span");
+        text.textContent = n.body;
+        var meta = document.createElement("span");
+        meta.className = "dim";
+        meta.textContent = " – " + n.author_name + ", " + new Date(n.created_at).toLocaleDateString();
+        li.appendChild(text);
+        li.appendChild(meta);
+        if (n.removable) {
+          var remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "small";
+          remove.textContent = "Remove";
+          remove.setAttribute("aria-label", "Remove the note " + n.body.slice(0, 40));
+          remove.addEventListener("click", function () {
+            notesApi.remove(n.id).then(refreshNotes, noteError);
+          });
+          li.appendChild(document.createTextNode(" "));
+          li.appendChild(remove);
+        }
+        notesList.appendChild(li);
+      });
+    }
+
+    function noteError(err) { setStatus((err && err.message) || String(err), true); }
+
+    function refreshNotes() {
+      if (!notesApi) return;
+      notesApi.list().then(function (list) {
+        notes = list || [];
+        showNotes();
+        redraw();
+      }, noteError);
     }
     var measureView = null;
     var sectionEl = null;
@@ -561,10 +630,11 @@
         gl.disable(gl.BLEND);
         gl.uniform1f(loc.alpha, 1);
       }
-      // measured points and the line between them, always on top
-      if (measure.points.length) {
+      // notes (blue) and measured points with their line (red), always on top
+      function markers(points, color, line) {
+        if (!points.length) return;
         var flat = [];
-        measure.points.forEach(function (q) { flat.push(q[0], q[1], q[2]); });
+        points.forEach(function (q) { flat.push(q[0], q[1], q[2]); });
         gl.bindVertexArray(markerVao);
         gl.bindBuffer(gl.ARRAY_BUFFER, markerBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(flat), gl.DYNAMIC_DRAW);
@@ -572,11 +642,13 @@
         gl.uniform1i(loc.clipOn, 0);
         gl.uniform1i(loc.points, 1);
         gl.uniform1f(loc.size, Math.max(4, Math.round(7 * dpr)));
-        gl.vertexAttrib3f(loc.col, 0.85, 0.2, 0.15);
-        if (measure.points.length === 2) gl.drawArrays(gl.LINES, 0, 2);
-        gl.drawArrays(gl.POINTS, 0, measure.points.length);
+        gl.vertexAttrib3f(loc.col, color[0], color[1], color[2]);
+        if (line && points.length === 2) gl.drawArrays(gl.LINES, 0, 2);
+        gl.drawArrays(gl.POINTS, 0, points.length);
         gl.enable(gl.DEPTH_TEST);
       }
+      markers(notes.map(function (n) { return [n.x, n.y, n.z]; }), [0.15, 0.45, 0.9], false);
+      markers(measure.points, [0.85, 0.2, 0.15], true);
       gl.bindVertexArray(null);
     }
 
@@ -616,10 +688,17 @@
     });
     // a click (not a drag) in measure mode picks a point
     canvas.addEventListener("pointerup", function (e) {
-      if (!measure.on || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4) return;
+      if (!(measure.on || noting) || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4) return;
       var rect = canvas.getBoundingClientRect();
       var hit = pick(e.clientX - rect.left, e.clientY - rect.top);
       if (!hit) return;
+      if (noting) {
+        var text = window.prompt("Note at this point:");
+        if (text && text.trim()) {
+          notesApi.add(hit, text.trim()).then(refreshNotes, noteError);
+        }
+        return;
+      }
       if (measure.points.length === 2) measure.points = [];
       measure.points.push(hit);
       if (measureView) measureView.show();
@@ -766,7 +845,27 @@
   if (canvas && canvas.getAttribute("data-src")) {
     var src = canvas.getAttribute("data-src");
     var stlBtn = document.getElementById("viewer-stl");
+    // 3D notes: <canvas data-notes="/file-versions/{id}/annotations">
+    var notesUrl = canvas.getAttribute("data-notes");
+    function notesRequest(method, url, body) {
+      return fetch(url, {
+        method: method,
+        credentials: "same-origin",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined
+      }).then(function (r) {
+        return r.json().then(function (json) {
+          if (!r.ok) throw new Error((json && json.error && json.error.message) || "The note could not be saved (" + r.status + ").");
+          return json;
+        });
+      });
+    }
     var viewer = mount(canvas, {
+      notes: notesUrl ? {
+        list: function () { return notesRequest("GET", notesUrl); },
+        add: function (p, body) { return notesRequest("POST", notesUrl, { x: p[0], y: p[1], z: p[2], body: body }); },
+        remove: function (id) { return notesRequest("POST", "/annotations/" + encodeURIComponent(id) + "/delete", {}); }
+      } : null,
       statusEl: document.getElementById("viewer-status"),
       resetBtn: document.getElementById("viewer-reset"),
       upBtn: document.getElementById("viewer-up"),

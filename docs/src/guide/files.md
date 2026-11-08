@@ -43,6 +43,14 @@ revision of the item – over the model as a translucent red ghost: red shows
 where the other model sticks out, so added and removed material is visible at
 a glance; sections and measuring work on both.
 
+*Add note* pins a note to a point of the model for a design review: click
+the point, write the note. Notes belong to the shown version of the file,
+appear as blue points with a list below the model, and everyone who may read
+the file sees them and adds their own – also viewers. A note is removed by
+its author or an administrator; adding and removing are recorded in the
+revision's history (`annotation.add` / `annotation.remove`). The REST API
+has the same notes under `/api/v1/file-versions/{id}/annotations`.
+
 | Previewed           | Formats                                                                                                                       |
 |---------------------|-------------------------------------------------------------------------------------------------------------------------------|
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                                                                                |

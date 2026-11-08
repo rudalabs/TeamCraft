@@ -169,6 +169,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(revisions::preview_version),
         )
         .route("/file-versions/{id}/mesh", get(revisions::mesh_version))
+        .route(
+            "/file-versions/{id}/annotations",
+            get(revisions::annotations).post(revisions::add_annotation),
+        )
+        .route(
+            "/annotations/{id}/delete",
+            post(revisions::remove_annotation),
+        )
         // BOM
         .route("/revisions/{id}/bom", get(bom::show))
         .route("/revisions/{id}/bom/compare", get(personal::bom_compare))
