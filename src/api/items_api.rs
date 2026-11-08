@@ -85,7 +85,13 @@ pub(super) async fn list_items(
 #[derive(Deserialize)]
 pub(super) struct CreateItem {
     item_type: String,
+    /// Required, except for a simulation with a `basis` (default: `Simulation – <basis name>`).
+    #[serde(default)]
     name: String,
+    /// Only for `item_type` simulation: the revision it is based on; the item
+    /// is created with the basis link in one transaction. Not combinable with
+    /// `idempotency_key`.
+    basis: Option<NewItemBasis>,
     number: Option<String>,
     unit: Option<String>,
     /// Project code.
@@ -104,6 +110,17 @@ pub(super) struct CreateItem {
     /// Optional client-chosen key (per user): a repeated request returns the
     /// original item (200) instead of creating a second one.
     idempotency_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct NewItemBasis {
+    /// Item number of the basis.
+    item: String,
+    /// Revision code; empty = the latest revision.
+    #[serde(default)]
+    revision: String,
+    /// `geometry` (default), `mesh`, `material`, `load_case` or `other`.
+    role: Option<String>,
 }
 
 /// Custom attribute values of a request body as `key → text` changes.
@@ -161,6 +178,34 @@ pub(super) async fn create_item(
             .unwrap_or_default(),
         attributes: attribute_changes(&body.attributes)?,
     };
+    if let Some(basis) = &body.basis {
+        if body.idempotency_key.is_some() {
+            return Err(AppError::BadRequest(
+                "idempotency_key cannot be combined with basis.".into(),
+            ));
+        }
+        let role = domain::BasisRole::parse(basis.role.as_deref().unwrap_or("geometry"))
+            .ok_or_else(|| {
+                AppError::BadRequest(
+                    "role must be geometry, mesh, material, load_case or other.".into(),
+                )
+            })?;
+        let basis_rev =
+            crate::services::simulations::resolve_basis(&st.db, &me, &basis.item, &basis.revision)
+                .await?;
+        let rev = crate::services::simulations::create_with_basis(
+            &st.db,
+            &me,
+            crate::services::simulations::NewItemFor {
+                item: input,
+                uploads: &[],
+                basis: &basis_rev,
+                role,
+            },
+        )
+        .await?;
+        return Ok((StatusCode::CREATED, Json(json!(rev))).into_response());
+    }
     match body.idempotency_key {
         None => {
             let rev = items::create(&st.db, &me, input).await?;

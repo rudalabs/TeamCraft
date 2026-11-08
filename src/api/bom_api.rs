@@ -165,6 +165,8 @@ pub(super) async fn get_workset(
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<WorksetQuery>,
 ) -> AppResult<Json<Value>> {
+    // groups that switched the desktop Get off look non-existent to it
+    let me = project_policy::narrow(&st.db, me, &[project_policy::Interface::DesktopSync]).await?;
     let rev = revision_at(&st, &me, &number, &code).await?;
     let rule = bom_rule(q.rule.as_deref().filter(|r| !r.trim().is_empty()))?;
     Ok(Json(json!(

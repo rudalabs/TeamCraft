@@ -6,7 +6,7 @@
   <div>
     <h1>Attributes</h1>
     <p class="subtitle">
-      Custom attributes of items – vendor, order number, surface, RoHS … – shown and edited next to name and material,
+      Custom attributes of items – vendor, supplier part number, surface, RoHS … – shown and edited next to name and material,
       versioned with each revision and searchable in <a href="/items">Items</a>.
     </p>
   </div>
@@ -16,7 +16,7 @@
   {% if rows %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Label</th><th scope="col">Key</th><th scope="col">Type</th><th scope="col">Unit</th><th scope="col">Item types</th><th scope="col" class="right">Order</th><th scope="col">Status</th></tr></thead>
+    <thead><tr><th scope="col">Label</th><th scope="col">Key</th><th scope="col">Type</th><th scope="col">Unit</th><th scope="col">Item types</th><th scope="col" class="right">Position</th><th scope="col">Status</th></tr></thead>
     <tbody>
     {% for r in rows %}
       <tr>
@@ -53,7 +53,7 @@
       </label>
       <label>Unit <span class="hint">optional, e.g. mm</span>
         <input type="text" name="unit" maxlength="16"></label>
-      <label>Order <span class="hint">smaller first</span>
+      <label>Position in forms <span class="hint">lower numbers appear first</span>
         <input type="number" name="position" value="{{ next_position }}" step="1"></label>
     </div>
     <label>Choices <span class="hint">choice lists only – one per line</span>

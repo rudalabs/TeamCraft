@@ -281,6 +281,26 @@ pub async fn show(
             .collect(),
     )
     .to_string();
+    // "Fill with AI…": report files to choose from, and whether the button
+    // is offered (assistant configured, editor of the group, group has not
+    // switched the assistant off).
+    let report_files: Vec<String> = file_list
+        .iter()
+        .filter(|f| crate::services::assistant::is_report_file(&f.filename))
+        .map(|f| f.filename.clone())
+        .collect();
+    let can_fill_with_ai = crate::services::assistant::enabled(&st)
+        && me.can_edit()
+        && me.can_edit_project(rev.project_id)
+        && match rev.project_id {
+            Some(p) => !crate::services::project_policy::denied_groups(
+                &st.db,
+                &[crate::services::project_policy::Interface::Assistant],
+            )
+            .await?
+            .contains(&p),
+            None => true,
+        };
     // Every file together with its version history (newest first).
     let attachments: Vec<serde_json::Value> = file_list
         .into_iter()
@@ -349,6 +369,14 @@ pub async fn show(
         "add_to_change": can_work && open_change.is_none(),
         "acknowledge": me.can_edit() && me.can_edit_project(item.project_id),
     });
+    let files_hint = domain::files_hint(
+        state,
+        rev.checked_out_by,
+        me.id,
+        editable,
+        can_work,
+        in_project && !item_has_open_revision,
+    );
     let suggestions = if editable {
         let children: Vec<String> = lines.iter().map(|l| l.child_number.clone()).collect();
         references::suggestions(&file_refs, &children, &outgoing)
@@ -387,6 +415,8 @@ pub async fn show(
             "images": gallery,
             "proposals": proposals,
             "can_decide": me.can_edit() && me.can_edit_project(rev.project_id),
+            "can_fill_with_ai": can_fill_with_ai,
+            "report_files": report_files,
         })
     } else {
         serde_json::Value::Null
@@ -459,6 +489,11 @@ pub async fn show(
                 "kinds": reference_kinds,
             },
             "impact_groups": impacts::group_by_dependent(open_impacts),
+            "files_hint": {
+                "kind": files_hint.as_str(),
+                "can_revise": matches!(files_hint, domain::FilesHint::Frozen { can_revise: true }),
+                "type_hint": domain::files_type_hint(&rev.item_type),
+            },
             "simulation": simulation,
             "based_simulations": based_simulations,
             "as_built": as_built,
@@ -1072,7 +1107,7 @@ async fn rendered_thumbnail(
         .map_err(store_failed);
     }
     let Some(mesh_path) =
-        crate::services::assemblies::mesh(st, me, file.revision_id, &sha256).await?
+        crate::services::assemblies::mesh(st, me, file.revision_id, &sha256, &file.format).await?
     else {
         return Ok(None);
     };
@@ -1099,7 +1134,8 @@ async fn rendered_thumbnail(
 
 /// The preview image of a CAD file, read once and cached next to the 3D
 /// previews: stored inside the file (Inventor, Solid Edge, SolidWorks, NX
-/// assemblies and drawings) or rendered from the 3D preview (NX parts).
+/// assemblies and drawings) or rendered from the 3D preview (NX parts,
+/// SOLIDWORKS parts and assemblies).
 /// Shared with the REST API.
 pub(crate) async fn thumbnail_response(
     st: &AppState,
@@ -1243,9 +1279,9 @@ pub(crate) async fn mesh_response(
     let format = preview_of(file).ok_or_else(no_preview)?;
     let path = match st.previews.mesh(&st.vault, sha256, format).await {
         Ok(path) => path,
-        // an NX assembly: put together from the previews of its parts
-        Err(e) if format == crate::preview::PreviewFormat::NxPart => {
-            crate::services::assemblies::mesh(st, me, file.revision_id, sha256)
+        // an NX or SOLIDWORKS assembly: put together from its parts' previews
+        Err(e) if format.may_be_assembly() => {
+            crate::services::assemblies::mesh(st, me, file.revision_id, sha256, format.as_str())
                 .await?
                 .ok_or(e)?
         }

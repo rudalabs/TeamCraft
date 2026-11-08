@@ -330,10 +330,9 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 ### 4. Parked features
 
 **Need-to-know project groups (#151)** – step 1 (administrator access: policy, reason-based elevation, `none`) is
-done; steps 3 and 4 are done in part: switches `api_tokens`, `mcp`, `assistant`, `webhooks`, `packages`
-(`project_policy::narrow` per channel, `tests/interface_switches.rs`) and the read and download log with retention and
-`teamcraft access-log purge` (views, file downloads, Pack and Go, BOM exports). Left of 3 and 4: switches
-`notification_content`, `external_llm`, `desktop_sync`; log entries for MCP and assistant tool reads and desktop Get;
+done; steps 3 and 4 are done in part: switches `api_tokens`, `mcp`, `assistant`, `webhooks`, `packages`, `notification_content`, `external_llm`,
+`desktop_sync` (`project_policy::narrow` per channel, `tests/interface_switches.rs`) and the read and download log with retention and
+`teamcraft access-log purge` (views, file downloads, Pack and Go, BOM exports). Left of 3 and 4: log entries for MCP and assistant tool reads and desktop Get;
 optional PDF/image watermark; a log page with filters and paging. Left, in the order of the issue: 2 conditions on
 membership (OIDC claims, allowed networks, shorter sessions); 5 access review page and evidence report (done: page, confirmation, CSV/JSON evidence; open: periodic reminder, review-due flag); 6 token scopes (F2). Open question 1
 is answered for now: `none` is allowed, but needs a member who is a manager.
@@ -345,17 +344,24 @@ real files and belong to section 3 once such files are at hand.
 
 - [x] Step 1: wider separation of duties (editors and the acting admin cannot review; suggester excludes them).
 - [x] Step 2: review policy per project group (min approvals, required reviewers, role group). Left: show the policy on the change page, notify when a role group has no eligible reviewer. (After submit only the parts the assigned reviewers can meet count, instead of a frozen snapshot.)
-- [ ] Step 3: obsolete and supersede through a change order (per-group setting), supersede notifies watchers.
-- [ ] Step 4: token scopes (`approve`) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`).
+- [x] Step 3: obsolete and supersede through a change order (group setting `obsolete_requires_change`, obsolete and supersede lines on a change order applied on release, supersede notifies watchers). Left: an `obsolete_requires_change` toggle in the desktop app; lines from MCP and the desktop app.
+- [ ] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`, open).
 - [x] Step 5: keep review rounds (`change_review_rounds`, `changes.review_round`; change page and API show earlier rounds).
 - [x] Step 6: flag and replace absent reviewers (substitutes per user: still open).
-- [ ] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`, open).
-- [ ] Step 5: keep review rounds in `change_reviews`.
-- [ ] Step 6: flag and replace absent reviewers, substitutes.
 - [x] Step 7: item owner and admin handover of a leaving user's work (owner on the item page; notifying the new owner and a CLI command are not done).
 - [ ] Step 8: approvals in the package manifest, audit log export, hash chain.
 - [ ] Step 9: requester cannot triage own request; separate approval of *use as is* deviations.
 - [x] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
+
+**Offboarding for high-turnover teams ([#173](https://github.com/rudalabs/TeamCraft/issues/173))**
+
+- [x] Step 0: runbook "When someone leaves" in `docs/src/admin/users.md`.
+- [ ] Step 1: holdings report per user (admin user page, group managers, REST, CLI), filtered by the viewer's rights.
+- [x] Step 2: inactive lock holders count as gone, only active managers count, a deactivated user's IdP membership can be removed, submit refuses a deactivated reviewer, *Demote* manager.
+- [x] Step 3: bulk release of another user's check-outs (`checkouts::release_held`; admin user page, group member list).
+- [ ] Step 4: deactivation as an offboarding step (release / hand over / revoke tokens), CLI `user deactivate`.
+- [x] Step 5: managers of every affected group withdraw, reopen, cancel or take over a deactivated author's change.
+- [ ] Steps 6–10: manager release with a reason, groups without an active manager, season handover, IdP-driven offboarding, desktop working folder.
 
 **Desktop app**
 
@@ -442,6 +448,7 @@ real files and belong to section 3 once such files are at hand.
     isolated child); vendor tools on the server (later, desktop only: `starccm+ -info` with the user's licence)
 - [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded, audited, with source); never from big result files
 - [x] Result values proposed by the assistant from PDF/text reports (`propose_result_values`, drafts with a quote, accepted or rejected by a CAD editor); PDF text layer in `read_file_text`
+- [x] "Fill with AI…" on the Results card: a box with what to extract, limits and report files; drafts only, rights and the `assistant` switch respected (#177; open: desktop button, reusable requests per group, *Accept all*)
 - [x] `read_file_text` of plain-text files shows the real text with its lines and decimal numbers (bounded; only geometry as text – ASCII STL, OBJ, KiCad – drops decimals for the search), so text and CSV reports work like PDFs (#141)
 - [ ] Scanned PDF reports (OCR) – not planned; attach a PDF with a text layer or the numbers by hand
 - [x] HTML reports of commercial FEA/CFD tools: own bounded HTML-to-text reader (`src/htmltext.rs`) in the isolated
@@ -451,6 +458,8 @@ real files and belong to section 3 once such files are at hand.
 - [ ] HTML reports: MHTML (`.mht`) and ZIP-packed multi-file reports (unpacking needs its own caps, see F13); text hidden
   by a style sheet (not inline) is not detected
 - [x] Result values in the item search (failed, passed, above/below limit, by name) and a dashboard card for failing or out-of-date simulations; left: an *out of date* search filter, the `result` filter in the MCP `search_items` tool and in saved searches
+- [x] New simulation from a part/assembly revision in the web UI and `POST /items` with `basis`: prefilled form, basis
+  linked in the same transaction ([#178](https://github.com/rudalabs/TeamCraft/issues/178)); left: several bases at once
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
 - [x] Retention for large result files (`files.retention = 'latest'`): per file, old versions removed after a grace period, never for released revisions (`teamcraft vault purge-versions`); left: a size-based default for new files

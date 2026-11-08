@@ -99,6 +99,9 @@ when the group is opened.
 | `assistant` | the built-in assistant, including the page context of a question |
 | `webhooks` | outgoing webhooks: no webhook receives events of the group, scoped or not; an event that mentions the group in a change order is sent without the change |
 | `packages` | Pack and Go and BOM downloads (CSV, Excel): the root item's group answers 403, items of such groups inside a structure are left out like restricted items of non-members |
+| `notification_content` | e-mail and chat notifications (not the in-app list): a notification about the group, or naming an item or change order of it, is sent with only a generic text ("new <instance> notification") and the link, also as a direct chat message; the recipient reads the text after signing in |
+| `external_llm` | the built-in assistant, unless the configured provider's base URL is on the administrator's list of internal / self-hosted URLs (`TEAMCRAFT_ASSISTANT_INTERNAL_URLS`, see [Configuration](configuration.md)); with `assistant` on and `external_llm` off the group is usable only with an internal model server |
+| `desktop_sync` | the desktop app's Get (working set `GET /api/v1/items/{number}/revisions/{code}/workset`): the root item's group answers "not found", items of such groups inside a structure are left out. The rest of the desktop app follows `api_tokens` |
 
 `{"interfaces": {"mcp": false, "webhooks": false}, "read_log": true,
 "log_retention_days": 365}` – every field is optional. Switching an
@@ -107,9 +110,8 @@ an interface again, switching the log off or changing the retention is, while
 administrators are limited by the administrator policy above, for the
 managers (like loosening that policy). Every change is audited
 (`project.interfaces`, old and new values) and notifies the other managers.
-Not covered yet: e-mail and chat notification content, an external LLM
-provider list (`external_llm`) and the desktop working folder as separate
-switches (the desktop app follows `api_tokens`).
+The in-app notification list and the notification e-mails of other groups
+are not affected by `notification_content`.
 
 **Read and download log.** With `read_log` on, the group writes `access_log`
 entries (separate from the audit log): who (user name kept as text), when,
@@ -165,7 +167,7 @@ into another group, needs a manager of the source group or an administrator
 By default every reviewer of a change order must approve. A manager of a
 project group (or an administrator) can set a policy on the group page
 (*Review policy*) or with `PUT /api/v1/projects/{code}/review-policy`
-(`{"min_approvals": 2, "required_reviewers": ["carl"], "role_group": "QA"}`;
+(`{"min_approvals": 2, "required_reviewers": ["carl"], "role_group": "QA", "obsolete_requires_change": false}`;
 `GET` shows it to anybody who sees the group):
 
 * **Minimum approvals** – this many approvals release the change; empty means
@@ -192,6 +194,42 @@ reader cannot see is never named: the policy shows it as hidden and the submit
 message says "a required role group". Changes are audited
 (`project.review_policy`, with the previous values). Step 2 of
 [#152](https://github.com/rudalabs/TeamCraft/issues/152).
+
+### Obsolete and supersede only through a change order
+
+Obsoleting a released revision is final and flags its dependents, and a
+supersession tells designers not to use an item any more. By default one CAD
+editor of the group can do both at once. The same form (*Review policy* on the
+group page) has a checkbox, `obsolete_requires_change` in the API
+(`PUT /api/v1/projects/{code}/review-policy`; omitted: unchanged, default off),
+that moves both through review:
+
+* With the setting **on**, *Mark obsolete* and *Supersede* on items of the group
+  answer **409** for everybody, administrators included. Other groups are not
+  affected.
+* A change order can carry an **obsolete** or **supersede** line next to its
+  release lines (change page, *On release*; `POST /api/v1/changes/{number}/items`
+  with `{"item": …, "action": "obsolete"}` or `{"item": …, "action":
+  "supersede", "successor": "PRT-000012"}`; the revision defaults to the item's
+  latest). It needs a *released* revision that is in no other open change; a
+  supersede line needs a visible successor item, not the item itself and no
+  circle (400/409). The lines are allowed in every group, the setting only
+  forbids the direct way.
+* The policy of the group (minimum approvals, required reviewers, role group)
+  applies to the change; nothing happens before the last approval. Then, in the
+  same transaction as the release, each revision becomes obsolete (impacts on
+  dependents, `revision.obsoleted` webhook and notification as for a direct
+  obsolete) and a supersede line also records *superseded by*. If a line cannot
+  be applied any more (the revision was obsoleted in the meantime, the
+  supersession would close a circle) the approval fails with 409 and the whole
+  release stays undone. Rejecting or withdrawing the change changes nothing on
+  the released revisions.
+* Supersede **notifies the watchers** of the superseded item, whether declared
+  directly (with the setting off) or through a change order. Watchers who may
+  not see the successor get the text without its number; the change page shows
+  such a successor as *restricted*.
+
+Step 3 of [#152](https://github.com/rudalabs/TeamCraft/issues/152).
 
 ## What outsiders see of links
 
@@ -231,6 +269,14 @@ withdraw or cancel, but not approve blind. Adding a reviewer, assigning a
 request and the reviewer suggestions need it as well: whether somebody can
 see a hidden item would tell who belongs to its group, so an author who
 cannot see every item gets no suggestions and cannot add reviewers.
+A change cannot be submitted while one of its reviewers is deactivated.
+
+Only the author of a change order and administrators edit, submit,
+withdraw, reopen or cancel it. When the author is **deactivated**, a manager
+of *every* project group the change touches may also withdraw, reopen or
+cancel it, or take it over (it becomes theirs; audited as
+`change.handover`). A change without items, or with an item outside any
+group, has no such manager.
 
 ## Notifications, e-mail, chat, webhooks, assistant
 
@@ -287,15 +333,23 @@ back with the access, check-outs stay (the removal message says how many).
 A manager of the group (or an admin) cancels them on the revision page or
 with `POST /api/v1/items/{number}/revisions/{code}/cancel-checkout`:
 managers may release the check-outs of users who are no longer members of
-the group.
+the group or who are deactivated. *Release N check-outs* in the member list
+releases all of one person's check-outs in the group at once (each audited
+on its own); administrators release everything a user holds from the user
+page. See [When someone leaves](users.md#when-someone-leaves).
 
 Memberships synchronised from the identity provider change only at the
 user's next SSO login; a user removed from the IdP group keeps access until
 then, and indefinitely with an API token. Revoke the user's tokens or
 deactivate the user as well. Such a membership stays synchronised when its
-holder is made a manager, and TeamCraft refuses to remove it (it would
-come back at the next SSO login): remove the user from the IdP group, or
-have an administrator unlink the group or deactivate the user. A manually
+holder is made a manager (*Demote* lowers it again), and TeamCraft refuses
+to remove it while the user is active (it would come back at the next SSO
+login): remove the user from the IdP group, or have an administrator unlink
+the group or deactivate the user. Once the user is deactivated, a manager
+or administrator can remove it: SSO refuses deactivated users, so it cannot
+come back. A group needs at least one *active* manager; deactivated managers
+do not count when a manager leaves, is removed or is demoted (administrators
+may still do so). A manually
 added member who is also in the linked IdP group comes back (synchronised)
 at their next SSO login after being removed.
 

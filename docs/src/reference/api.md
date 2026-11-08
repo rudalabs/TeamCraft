@@ -88,6 +88,13 @@ Every answer contains only what the token's user may read (see
 
 ## Creating items, safely repeated
 
+For a simulation, `POST /items` also takes `basis: {item, revision?, role?}`
+(role `geometry` by default, `mesh`, `material`, `load_case`, `other`): the item
+is created with the basis link in one transaction, `name` and `description`
+default from the basis and the current version of its STEP (else first CAD) file
+is pinned. A hidden or unknown basis is 404, an invalid role 400, `basis` on
+another item type or together with `idempotency_key` 400.
+
 `POST /items` takes `{item_type, name, project, number?, unit?, description?,
 material?, mass_kg?, unit_cost?, classification?, attributes?}` and answers
 **201** with the new revision `A`. A client that lost the answer (timeout,
@@ -357,7 +364,7 @@ the caller cannot read are left out; a successor there is a placeholder with
 | Change requests  | `GET/POST /change-requests`, `GET/PATCH /change-requests/{number}`, `comments`, `items`, `triage`, `assign`, `decide`, `reopen`, `withdraw`, `create-change`, `link-change`, `attachments`, `watch` |
 | Simulations      | `GET/POST /projects/{code}/result-templates`, `PUT/DELETE /result-templates/{id}`, `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
 | As-built         | `GET …/as-built`, `PUT …/as-built/record`, `GET/POST …/as-built/deviations`, `PATCH/DELETE /as-built-deviations/{id}`, `GET /items/{number}/built-units`, `POST …/revisions/{code}/built-units` |
-| Changes          | `GET/POST /changes`, items, reviewers, `suggested-reviewers`, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact` |
+| Changes          | `GET/POST /changes`, items (`{item, revision?, action?: release\|obsolete\|supersede, successor?}`), reviewers, `suggested-reviewers`, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact` |
 | Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                 |
 | Notifications    | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                   |
 | Personal         | `GET /favorites`, `POST/DELETE /items/{number}/favorite`, `GET/POST /searches`, `DELETE /searches/{id}`                               |

@@ -102,8 +102,8 @@ end-to-end tests against a real PostgreSQL.
 
 **Previews and search**
 
-- **3D preview** – STEP, NX parts and assemblies (put together from their part files, hidden layers left out), STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no plug-ins.
-- **CAD thumbnails** – the preview images stored in Inventor, Solid Edge and SolidWorks files; NX parts and assemblies get a sharper thumbnail rendered from their 3D preview.
+- **3D preview** – STEP, NX and SOLIDWORKS parts and assemblies (assemblies put together from their part files, hidden components left out), STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no plug-ins.
+- **CAD thumbnails** – the preview images stored in Inventor and Solid Edge files; NX and SOLIDWORKS parts and assemblies get a sharper thumbnail rendered from their 3D preview.
 - **FEA/CFD results** – VTK, VTU/VTP and CalculiX results coloured by a result field, with legend.
 - **Search** – ranked full-text search over numbers, names, materials, file names and file contents.
 - **Similar parts** – on every revision with a STEP or mesh file, existing parts of similar 3D shape and size, with the reason for each hit.
@@ -135,11 +135,11 @@ end-to-end tests against a real PostgreSQL.
 - **Roles and read permissions** – viewer, editor and admin roles; restricted project groups visible only to their members.
 - **Single sign-on** – any OpenID Connect provider, with group synchronisation.
 - **Numbering schemes** – generated item numbers per project group from `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`.
-- **Custom attributes** – vendor, order number, RoHS … as text, number, yes/no or choice list per item type, versioned with each revision; in-house, purchased and standard parts; search by attribute value.
+- **Custom attributes** – vendor, supplier part number, RoHS … as text, number, yes/no or choice list per item type, versioned with each revision; in-house, purchased and standard parts; search by attribute value.
 - **Notifications** – in-app, e-mail and Mattermost; watch items, changes and change requests.
 - **Event webhooks** – signed JSON for releases, changes and simulation results, retried with backoff.
 - **Audit log** – every modification and every sign-in (password, SSO, failed attempts) with user, time and details; repeated failed sign-ins are slowed down.
-- **Branding** – replace the wide and the square logo under *Admin → Branding*; the desktop app shows them too.
+- **Branding** – replace the wide and the square logo and rename the header ("TeamCraft PLM" → your name and subtitle) under *Admin → Branding*; the desktop app shows them too. The footer, About and licence notices stay TeamCraft.
 - **Monitoring** – `/healthz`, `/readyz` and Prometheus metrics at `/metrics` (requests, database pool, outbox backlogs, preview queue), enabled with a token.
 - **Backup and restore** – one command for database and vault (see below).
 
@@ -171,6 +171,7 @@ there is no separate enterprise edition.
 
 - **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – membership conditions (IdP claims, networks, session age) (administrator access with a reason, interface switches per group, a read and download log and access reviews with an evidence report are built).
 - **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – obsolete through change orders, sign-off with re-authentication, substitutes, approvals in exports (review policies per group, review rounds, item owners and admin handover are built).
+- **Offboarding for high-turnover teams** ([#173](https://github.com/rudalabs/TeamCraft/issues/173)) – a holdings report per user, deactivation as one offboarding step, groups without an active manager, season handover (managers already release a leaver's check-outs in bulk, demote managers and take over a deactivated author's change order; see [When someone leaves](https://rudalabs.github.io/TeamCraft/admin/users.html#when-someone-leaves)).
 - **Scoped access tokens** – personal access tokens limited to read-only or MCP-only use.
 
 TeamCraft is a community project without commercial support or a service

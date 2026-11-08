@@ -216,7 +216,7 @@ pub async fn revision_files(
 
 /// The folders of the workspace the files of a revision live in, with the
 /// server folder each stands for; without files the project group folder.
-fn revision_dirs(project: Option<&str>, files: &[ServerFile]) -> Vec<(String, String)> {
+pub(crate) fn revision_dirs(project: Option<&str>, files: &[ServerFile]) -> Vec<(String, String)> {
     let mut dirs: BTreeMap<String, String> = BTreeMap::new();
     for f in files {
         dirs.entry(layout::local_dir_rel(project, &f.folder))
@@ -640,6 +640,8 @@ struct Found {
 async fn new_local_files(
     root: &Path,
     project: Option<&str>,
+    item: &str,
+    code: &str,
     files: &[ServerFile],
     state: &State,
 ) -> Result<Vec<(String, PathBuf, String)>, ApiError> {
@@ -653,6 +655,13 @@ async fn new_local_files(
         .map(|f| safe_name(&f.filename).to_lowercase())
         .collect();
     let mut out = Vec::new();
+    // files added with "Add files…" are new whatever they are called
+    for p in crate::addfiles::pending(root, item, code) {
+        let path = layout::join_rel(root, &p.rel);
+        if !names.contains(&safe_name(&p.name).to_lowercase()) && path.is_file() {
+            out.push((p.name, path, p.folder));
+        }
+    }
     if files.is_empty() {
         return Ok(out);
     }
@@ -676,6 +685,7 @@ async fn new_local_files(
                 || state.get(&rel).is_some()
                 || !stems.contains(&layout::stem_of(&logical))
                 || !seen.insert(logical.to_lowercase())
+                || out.iter().any(|(n, _, _)| n.eq_ignore_ascii_case(&logical))
             {
                 continue;
             }
@@ -766,7 +776,7 @@ pub async fn status(
             clash_with,
         });
     }
-    for (name, path, _) in new_local_files(root, project, &rev.files, &state).await? {
+    for (name, path, _) in new_local_files(root, project, item, code, &rev.files, &state).await? {
         let rel = layout::rel_of(root, &path).unwrap_or_default();
         found.push(Found {
             name,
@@ -956,7 +966,7 @@ pub async fn check_in(
     let rev = revision_files(api, project, item, code).await?;
     let mut state = State::load(root);
     let before = state.clone();
-    let news = new_local_files(root, project, &rev.files, &state).await?;
+    let news = new_local_files(root, project, item, code, &rev.files, &state).await?;
     let mut files = Vec::new();
     let mut bases = serde_json::Map::new();
     let mut folders = serde_json::Map::new();
@@ -1018,6 +1028,8 @@ pub async fn check_in(
             transfer,
         )
         .await?;
+    let uploaded: Vec<String> = files.iter().map(|(n, _)| n.clone()).collect();
+    crate::addfiles::forget(root, item, code, &uploaded);
     // The checked-in content is the new base of the local files, and the
     // lock is gone: everything unchanged becomes read-only (best effort –
     // the check-in itself has succeeded).

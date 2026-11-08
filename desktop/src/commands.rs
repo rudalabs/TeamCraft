@@ -18,7 +18,7 @@ use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Notify;
 
 use crate::{
-    acp,
+    acp, addfiles,
     api::{self, Api, ApiError, Transfer},
     bomimport, cadexport, folderimport, layout,
     settings::{self, Settings, TokenStorage},
@@ -1528,4 +1528,81 @@ mod agent_tests {
         ];
         assert!(parse_profiles(twice).is_err());
     }
+}
+
+/// *Add files…*: asks for the files to add with the native open dialog
+/// (several at once). Empty = cancelled.
+#[tauri::command]
+pub async fn pick_files(app: AppHandle) -> CmdResult<Vec<PathBuf>> {
+    use tauri_plugin_dialog::DialogExt;
+    tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Files to add")
+            .blocking_pick_files()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|p| p.into_path().ok())
+            .collect()
+    })
+    .await
+    .map_err(|e| ApiError::local(format!("The file dialog failed: {e}")))
+}
+
+/// *Add files…*: what copying `paths` into the working folder would do
+/// (which names become new versions or replace a local file).
+#[tauri::command]
+pub async fn workspace_add_plan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project: Option<String>,
+    item: String,
+    code: String,
+    paths: Vec<PathBuf>,
+    subfolder: String,
+) -> CmdResult<Vec<addfiles::PlanItem>> {
+    let api = signed_in_api(&state)?;
+    let rev = workspace::revision_files(&api, project.as_deref(), &item, &code).await?;
+    addfiles::plan(
+        &workspace_root(&app, &state),
+        project.as_deref(),
+        &rev.files,
+        &paths,
+        &subfolder,
+    )
+}
+
+/// *Add files…*: copies the files into the working folder of a revision
+/// the user has checked out; the originals stay where they are. Names in
+/// `confirmed` may replace existing content. *Check in…* lists the copies as
+/// new files.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn workspace_add_files(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project: Option<String>,
+    item: String,
+    code: String,
+    paths: Vec<PathBuf>,
+    subfolder: String,
+    confirmed: Vec<String>,
+) -> CmdResult<Value> {
+    let api = signed_in_api(&state)?;
+    let root = workspace_root(&app, &state);
+    let rev = workspace::revision_files(&api, project.as_deref(), &item, &code).await?;
+    if !rev.locked_by_me {
+        return Err(ApiError::local(format!(
+            "Check out {item}/{code} first – files can only be added under your check-out."
+        )));
+    }
+    let plan = addfiles::plan(&root, project.as_deref(), &rev.files, &paths, &subfolder)?;
+    let (copied, skipped) = addfiles::copy_in(&root, &plan, &confirmed)?;
+    let done: Vec<addfiles::PlanItem> = plan
+        .into_iter()
+        .filter(|p| copied.contains(&p.name))
+        .collect();
+    addfiles::record(&root, &item, &code, &done)
+        .map_err(|e| ApiError::local(format!("Cannot remember the added files: {e}")))?;
+    Ok(json!({ "copied": copied, "skipped": skipped }))
 }

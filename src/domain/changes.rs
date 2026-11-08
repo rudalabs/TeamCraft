@@ -489,3 +489,80 @@ impl RequestDecision {
         }
     }
 }
+
+/// What a line of a change order does when the change is released.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineAction {
+    /// Releases an in-work revision (the classic line).
+    Release,
+    /// Marks a released revision obsolete.
+    Obsolete,
+    /// Marks a released revision obsolete and declares its item superseded by another item.
+    Supersede,
+}
+
+impl LineAction {
+    pub const ALL: [LineAction; 3] = [
+        LineAction::Release,
+        LineAction::Obsolete,
+        LineAction::Supersede,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LineAction::Release => "release",
+            LineAction::Obsolete => "obsolete",
+            LineAction::Supersede => "supersede",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<LineAction> {
+        let raw = raw.trim().to_ascii_lowercase();
+        LineAction::ALL.into_iter().find(|a| a.as_str() == raw)
+    }
+
+    /// The lifecycle state the revision of the line must be in when the line is added.
+    pub fn required_state(self) -> crate::domain::LifecycleState {
+        match self {
+            LineAction::Release => crate::domain::LifecycleState::InWork,
+            LineAction::Obsolete | LineAction::Supersede => crate::domain::LifecycleState::Released,
+        }
+    }
+}
+
+#[cfg(test)]
+mod line_action_tests {
+    use super::*;
+    use crate::domain::LifecycleState;
+
+    #[test]
+    fn parses_and_round_trips() {
+        for a in LineAction::ALL {
+            assert_eq!(LineAction::parse(a.as_str()), Some(a));
+        }
+        assert_eq!(
+            LineAction::parse(" Supersede "),
+            Some(LineAction::Supersede)
+        );
+        assert_eq!(LineAction::parse("delete"), None);
+        assert_eq!(LineAction::parse(""), None);
+    }
+
+    #[test]
+    fn actions_need_a_released_revision_and_release_an_in_work_one() {
+        assert_eq!(LineAction::Release.required_state(), LifecycleState::InWork);
+        assert_eq!(
+            LineAction::Obsolete.required_state(),
+            LifecycleState::Released
+        );
+        assert_eq!(
+            LineAction::Supersede.required_state(),
+            LifecycleState::Released
+        );
+        // an action line is valid only because the lifecycle allows the transition
+        assert!(LineAction::Obsolete
+            .required_state()
+            .can_transition_to(LifecycleState::Obsolete));
+    }
+}

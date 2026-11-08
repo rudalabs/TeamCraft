@@ -171,6 +171,12 @@ mod tests {
         json!({ "id": ME, "username": "max", "display_name": "Max Muster", "initials": "MM", "avatar": 3, "role": "admin", "skin": "arch", "is_admin": true, "can_edit": true })
     }
 
+    /// The Files card hint of `revisions/show.html` (`kind` as
+    /// `domain::FilesHint::as_str`), shaped like `web::revisions::show` sends it.
+    fn files_hint(kind: &str) -> Value {
+        json!({ "kind": kind, "can_revise": kind == "frozen", "type_hint": "STEP, drawings, <reports>" })
+    }
+
     fn revision(state: &str, checked_out: bool) -> Value {
         json!({
             "id": "33333333-3333-4333-8333-333333333333", "item_id": "44444444-4444-4444-8444-444444444444",
@@ -613,6 +619,26 @@ mod tests {
                 "types": [{ "value": "part", "label": "Part" }], "units": units(),
             })),
         );
+        // new simulation based on a revision
+        let html = render(
+            &env,
+            "items/new.html",
+            with_common(json!({
+                "form": { "item_type": "simulation", "number": "", "name": "Simulation – Bracket",
+                          "description": "Analysis.", "project_id": "", "basis": OTHER,
+                          "basis_role": "geometry", "unit": "", "material": "", "mass_kg": "",
+                          "unit_cost": "" },
+                "error": null, "projects": [project()],
+                "types": [{ "value": "simulation", "label": "Simulation" }], "units": units(),
+                "basis": { "revision_id": OTHER, "item_number": "PRT-000002", "code": "A",
+                           "label": "PRT-000002/A", "name": "Bracket <1>" },
+                "basis_roles": [{ "value": "geometry", "label": "Geometry" }],
+                "basis_other_group": true, "number_hint": "SIM-000007",
+            })),
+        );
+        assert!(html.contains("PRT-000002") && html.contains("SIM-000007"));
+        assert!(html.contains("Bracket &lt;1&gt;"));
+        assert!(!html.contains("name=\"mass_kg\""));
 
         // alternates, supersession and replace in assemblies
         let linked = |number: &str, restricted: bool| {
@@ -682,6 +708,7 @@ mod tests {
                 &env,
                 "revisions/show.html",
                 with_common(json!({
+                    "files_hint": files_hint(if state == "released" { "frozen" } else if checked_out { "upload" } else { "checkout" }),
                     "rev": revision(state, checked_out), "item": item(), "revisions": [revision(state, checked_out)],
                     "hidden": { "parents": 2, "incoming": 1, "changes": 1, "simulations": 0 },
                     "is_latest": false, "latest_id": OTHER, "files": [file.clone(), native.clone(), unknown.clone()], "native_without_preview": state == "released", "lines": [bom_line.clone()],
@@ -850,6 +877,7 @@ mod tests {
                 &env,
                 "revisions/show.html",
                 with_common(json!({
+                    "files_hint": files_hint(if editable { "upload" } else { "frozen" }),
                     "rev": rev.clone(), "item": sim_item, "revisions": [rev.clone(), revision("released", false)],
                     "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0 },
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -917,6 +945,7 @@ mod tests {
             &env,
             "revisions/show.html",
             with_common(json!({
+                "files_hint": files_hint("hidden"),
                 "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
                 "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 1 },
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -979,6 +1008,7 @@ mod tests {
                 &env,
                 "revisions/show.html",
                 with_common(json!({
+                    "files_hint": files_hint(if editable { "upload" } else { "frozen" }),
                     "rev": rev.clone(), "item": unit_item, "revisions": [rev.clone()],
                     "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0, "units": 0 },
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -1034,6 +1064,7 @@ mod tests {
             &env,
             "revisions/show.html",
             with_common(json!({
+                "files_hint": files_hint("frozen"),
                 "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
                 "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0, "units": 2 },
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -1227,7 +1258,7 @@ mod tests {
                                  "revision_state": "released", "relation": "bom", "via_number": "PRT-000001",
                                  "in_change": false }],
                     "can": { "modify": true, "edit_text": true, "submit": true, "withdraw": true, "reopen": true,
-                             "cancel": true, "review": true, "replace_reviewer": true },
+                             "cancel": true, "review": true, "replace_reviewer": true, "take_over": true },
                 })),
             );
             assert!(
@@ -1236,6 +1267,10 @@ mod tests {
                     && html.contains("&lt;too thin&gt;")
                     && html.contains("/reviewers/"),
                 "{status}: rounds and absent reviewers"
+            );
+            assert!(
+                html.contains("/take-over\""),
+                "{status}: a manager takes over a deactivated author's change"
             );
             if status == "in_review" {
                 let mut ctx = json!({
@@ -1392,7 +1427,11 @@ mod tests {
             with_common(json!({
                 "project": project(),
                 "members": [{ "user_id": OTHER, "username": "erika", "display_name": "Erika", "role": "editor",
-                              "active": true, "source": "oidc", "added_at": TS, "manager": true }],
+                              "active": true, "source": "oidc", "added_at": TS, "manager": true, "checkouts": 0 },
+                            { "user_id": "33333333-3333-4333-8333-333333333333", "username": "lena", "display_name": "Lena <gone>", "role": "editor",
+                              "active": false, "source": "oidc", "added_at": TS, "manager": false, "checkouts": 40 }],
+                "former_holders": [{ "user_id": OTHER, "username": "tom", "display_name": "Tom <left>",
+                                     "active": true, "checkouts": 3 }],
                 "candidates": [user()], "is_member": true, "can_edit": true, "oidc_enabled": true,
                 "can_manage": true,
                 "result_templates": [{ "id": OTHER, "project_id": OTHER, "name": "Pressure <drop>", "file_pattern": "*.log",
@@ -1411,6 +1450,23 @@ mod tests {
         assert!(html.contains("Add template"), "managers add templates");
         assert!(html.contains("manager"), "project managers are marked");
         assert!(html.contains("Add member"), "managers add members");
+        assert!(html.contains("/demote\""), "managers demote managers");
+        assert!(
+            html.contains("Release 40 check-outs") && html.contains("Lena &lt;gone&gt;"),
+            "a deactivated member's check-outs can be released"
+        );
+        assert!(
+            html.contains("/members/33333333-3333-4333-8333-333333333333/remove\""),
+            "a deactivated member's IdP membership can be removed"
+        );
+        assert!(
+            !html.contains(&format!("/members/{OTHER}/remove\"")),
+            "an active member's IdP membership cannot"
+        );
+        assert!(
+            html.contains("Former members still holding") && html.contains("Release 3 check-outs"),
+            "former holders are listed"
+        );
         assert!(
             html.contains("ROCKET-PRT-2026-0001"),
             "next numbers are shown"
@@ -1458,7 +1514,7 @@ mod tests {
             "admin/user_edit.html",
             with_common(json!({
                 "user": user(), "roles": roles(), "oidc_enabled": false, "memberships": [project()],
-                "handover_targets": [user()],
+                "handover_targets": [user()], "held_checkouts": 40,
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
                              "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": null },
                            { "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,
@@ -1575,6 +1631,7 @@ mod tests {
             run_timeout: std::time::Duration::from_secs(180),
             max_concurrent: 4,
             retention_days: 30,
+            internal_urls: Vec::new(),
         };
         use crate::config::LocalAgents;
         // the notice, and what the desktop app's Agent view runs on

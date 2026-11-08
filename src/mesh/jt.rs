@@ -187,7 +187,7 @@ fn read_jt(jt: &[u8]) -> Result<Mesh> {
 }
 
 /// Subdivision level so that the refined mesh stays near the budget.
-fn refine_level(triangles: usize) -> usize {
+pub(super) fn refine_level(triangles: usize) -> usize {
     let mut level = 3;
     while level > 1 && triangles.saturating_mul(level * level) > REFINE_BUDGET {
         level -= 1;

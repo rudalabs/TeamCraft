@@ -59,6 +59,18 @@
 </section>
 
 <section class="card">
+  <h2>Check-outs</h2>
+  {% if held_checkouts > 0 %}
+  <p>{{ user.display_name }} has {{ held_checkouts }} revisions checked out.</p>
+  <form class="inline" method="post" action="/admin/users/{{ user.id }}/release-checkouts"
+        data-confirm="Release all {{ held_checkouts }} check-outs of {{ user.display_name }}? Changes they have not checked in stay in their working folder.">
+    <button type="submit">Release all {{ held_checkouts }}</button>
+  </form>
+  <p class="hint">Each release is audited and {{ user.display_name }} is notified (unless deactivated). Revisions of groups whose need-to-know policy hides them from administrators are not counted; a manager of the group releases those.</p>
+  {% else %}<p class="empty">No check-outs in the groups you can read.</p>{% endif %}
+</section>
+
+<section class="card">
   <h2>Project groups</h2>
   {% if memberships %}
   <ul class="tag-row">

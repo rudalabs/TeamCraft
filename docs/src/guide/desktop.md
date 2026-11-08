@@ -232,6 +232,18 @@ progress dialog. Per file: missing – downloaded read-only; up to date –
 skipped; an unchanged older copy – updated; changed here, checked out by you,
 or a different file at the same place – kept untouched and listed (*kept – your
 local changes*, *name clash*). Cancelling leaves no partial file.
+**Add files.** *Add files…* (Files section and *More ▾* of a revision) takes
+files from a file picker, checks the revision out first if you have not,
+and **copies** them into its working folder – the originals are never moved
+or changed. New files go into the revision's main folder or a sub-folder of
+it. A file with the name of an existing file becomes its next version and
+asks first (unticked files are not added). The copies appear as *new*
+files in *Check in…* – also files with an unrelated name, which TeamCraft
+remembers in `.teamcraft/added.json` until they are checked in – or tick
+*Check in now*. The Files section explains why the button is disabled:
+checked out by someone else (add after check-in), in review, or released
+(frozen: *Revise* and add the files to the new revision). Dropping files
+onto the window is not supported yet.
 
 **Get.** *Get…* on a revision resolves its structure on the server – the
 multi-level BOM with the revision rule you choose (*latest*: the newest
