@@ -31,6 +31,7 @@ pub mod fuzz_harness;
 pub mod htmltext;
 pub mod httprange;
 pub mod llm;
+pub mod malware;
 pub mod mcp;
 pub mod mesh;
 pub mod metrics;
@@ -101,12 +102,15 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(config: Config, db: PgPool) -> anyhow::Result<AppState> {
-        let vault = Vault::open(&config.vault_dir).await.with_context(|| {
-            format!(
-                "cannot open the file vault at {}",
-                config.vault_dir.display()
-            )
-        })?;
+        let vault = Vault::open(&config.vault_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "cannot open the file vault at {}",
+                    config.vault_dir.display()
+                )
+            })?
+            .with_scanner(config.clamd.clone());
         let mut templates =
             templates::environment(&config.instance_name).context("loading templates failed")?;
         if let Some(a) = &config.assistant {

@@ -74,7 +74,25 @@ limit as a whole, and a
 reverse proxy in front must allow request bodies of one chunk (`client_max_body_size` ≥ `TEAMCRAFT_UPLOAD_CHUNK_MB`) –
 or of the largest
 multipart upload. Make sure the vault's disk has room for the unfinished
-uploads too: each user may hold 16 of them for 24 hours.
+uploads too: each user may hold 16 of them for 24 hours. Storage quotas per
+user and for the whole vault are set with the CLI, see
+[Storage quotas](operations.md#storage-quotas).
+
+### Malware scanning
+
+| Variable                 | Default | Meaning                                                                                                         |
+|--------------------------|---------|-----------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_CLAMD_ADDR`   | –       | ClamAV daemon that scans every upload: `host:port` (e.g. `clamav:3310`) or `unix:/run/clamav/clamd.ctl`; unset = no scan |
+| `TEAMCRAFT_CLAMD_MAX_MB` | `25`    | larger files are stored without a scan (logged); match clamd's `StreamMaxLength`, 1–4096                        |
+
+With a scanner, every file is sent to clamd (`INSTREAM`) before it is moved
+into the vault – uploads, check-ins, chunked uploads, imports. Infected
+content is refused (`400`, the signature name in the message) and never
+stored; a chunked upload starts over. When the daemon cannot be reached, the
+upload is refused with `503` instead of stored unscanned. ClamAV is a separate
+service (e.g. the `clamav/clamav` image next to TeamCraft); raise its
+`StreamMaxLength` together with `TEAMCRAFT_CLAMD_MAX_MB` to scan large CAD
+files too.
 
 ### Data retention
 

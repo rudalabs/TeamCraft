@@ -175,9 +175,6 @@ from this list (see `OPEN_WORK.md` and the git history for what was done).
   ([Siemens Blog](https://blogs.sw.siemens.com/teamcenter/product/teamcenter-community/); [TeamCraft GitHub](https://github.com/rudalabs/TeamCraft))
 - **File-content indexing — High — TeamCraft: present.** Search text inside managed files, not just object metadata.
   ([TeamCraft GitHub](https://github.com/rudalabs/TeamCraft))
-- **Virus/malware scanning for uploads — Medium-high — TeamCraft: missing/unclear.** Enterprise vaults benefit from
-  server-side file scanning, while TeamCraft's published security work focuses on parsers, limits and integrity rather
-  than malware scanning. ([TeamCraft GitHub](https://github.com/rudalabs/TeamCraft/blob/main/docs/OPEN_WORK.md))
 - **Vault integrity checker — High — TeamCraft: planned.** Detect mismatches between database records and physical
   blobs; TeamCraft lists `vault check` as part of its GA criteria.
   ([TeamCraft GitHub](https://github.com/rudalabs/TeamCraft/blob/main/docs/OPEN_WORK.md))

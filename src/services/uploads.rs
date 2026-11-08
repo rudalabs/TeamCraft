@@ -511,8 +511,15 @@ pub async fn complete_in(
                     session.filename, session.received_bytes, session.total_bytes
                 )));
             }
-            let (blob, staged) = match staged_blob(vault, &session).await {
-                Ok(found) => found,
+            // Moving the staging file into the vault scans it for malware:
+            // infected content is refused (400) like a content mismatch.
+            let found = match staged_blob(vault, &session).await {
+                Ok((blob, true)) => vault.adopt_staged(id, &blob.sha256).await.map(|()| blob),
+                Ok((blob, false)) => Ok(blob),
+                Err(e) => Err(e),
+            };
+            let blob = match found {
+                Ok(blob) => blob,
                 Err(e @ (AppError::BadRequest(_) | AppError::Conflict(_))) => {
                     // Start over at offset 0 (also clears a recorded hash
                     // whose blob is missing, so new chunks are accepted).
@@ -530,9 +537,6 @@ pub async fn complete_in(
                 }
                 Err(e) => return Err(e),
             };
-            if staged {
-                vault.adopt_staged(id, &blob.sha256).await?;
-            }
             sqlx::query("UPDATE upload_sessions SET stored_sha256 = $2 WHERE id = $1")
                 .bind(id)
                 .bind(&blob.sha256)
