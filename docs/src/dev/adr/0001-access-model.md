@@ -44,6 +44,18 @@ assistant, notifications, e-mail, Mattermost and webhooks.
 * Copying out of a restricted group declassifies content, so Save As across
   the boundary is limited to managers of the source group
   (`items::ensure_may_take_out`, used by `services::save_as`).
+* A need-to-know policy (`project_policies.admin_read`, #151 step 1) fills
+  the hidden groups of administrators too (`access::hidden_of_user`): the
+  guards stay the only place that decides. Administrators keep *maintaining*
+  such a group (`projects::get_for_management`, `require_manager`) without
+  reading it; elevations are rows in `project_elevations`, never deleted.
+* Interface switches (`project_policies.api_tokens`, `mcp`, `assistant`,
+  `webhooks`, `packages`, #151 step 3) also feed the hidden groups, per
+  channel: `project_policy::narrow` hides the denied groups from the actor of
+  that channel (`Actor::without_groups`), webhook outbox inserts check the
+  switch in SQL. The read log (`access_log`, step 4) is a separate table
+  written by `services::access_log`; `tests/interface_switches.rs` reads the
+  sources and fails when an interface lacks its check.
 * There are no per-object ACLs and no per-membership access levels; a
   read-only member is a member with the global viewer role.
 

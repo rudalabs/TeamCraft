@@ -5,6 +5,8 @@
 //! are enforced identically for both.
 
 pub mod access;
+pub mod access_log;
+pub mod access_review;
 pub mod as_built;
 pub mod assemblies;
 pub mod assistant;
@@ -25,8 +27,10 @@ pub mod insights;
 pub mod interchange;
 pub mod items;
 pub mod notifications;
+pub mod ownership;
 pub mod package;
 pub mod personal;
+pub mod project_policy;
 pub mod projects;
 pub mod readiness;
 pub mod references;
@@ -34,6 +38,7 @@ pub mod request_digests;
 pub mod requests;
 pub mod result_proposals;
 pub mod result_templates;
+pub mod retention;
 pub mod reviewers;
 pub mod revisions;
 pub mod save_as;

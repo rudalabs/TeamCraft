@@ -16,6 +16,7 @@ mod references;
 mod roles;
 mod simulations;
 mod skins;
+mod tokens;
 mod validation;
 
 pub use as_built::*;
@@ -29,6 +30,7 @@ pub use references::*;
 pub use roles::*;
 pub use simulations::*;
 pub use skins::*;
+pub use tokens::*;
 pub use validation::*;
 
 #[cfg(test)]
@@ -137,6 +139,19 @@ mod tests {
             Some(ProjectVisibility::Restricted)
         );
         assert_eq!(ProjectVisibility::parse("secret"), None);
+    }
+
+    #[test]
+    fn admin_read_parse() {
+        for m in [AdminRead::Implicit, AdminRead::WithReason, AdminRead::None] {
+            assert_eq!(AdminRead::parse(m.as_str()), Some(m));
+            assert!(!m.label().is_empty());
+        }
+        assert_eq!(
+            AdminRead::parse(" With_Reason "),
+            Some(AdminRead::WithReason)
+        );
+        assert_eq!(AdminRead::parse("always"), None);
     }
 
     #[test]
@@ -565,6 +580,29 @@ mod tests {
     }
 
     #[test]
+    fn separation_of_duties() {
+        use uuid::Uuid;
+        let (author, admin, editor, other) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let editors = [editor];
+        let check = |who, submitter| conflicting_reviewer(who, author, submitter, &editors);
+        assert_eq!(check(author, None), Some(ReviewConflict::Author));
+        assert_eq!(check(editor, None), Some(ReviewConflict::Editor));
+        assert_eq!(check(admin, Some(admin)), Some(ReviewConflict::Submitter));
+        assert_eq!(check(admin, None), None);
+        assert_eq!(check(other, Some(admin)), None);
+        // the author wins over the other reasons
+        assert_eq!(
+            conflicting_reviewer(author, author, Some(author), &[author]),
+            Some(ReviewConflict::Author)
+        );
+    }
+
+    #[test]
     fn review_outcomes() {
         use Decision::*;
         assert_eq!(review_outcome(&[]), ReviewOutcome::Pending);
@@ -581,6 +619,107 @@ mod tests {
             review_outcome(&[Pending, Rejected]),
             ReviewOutcome::Rejected
         );
+    }
+
+    #[test]
+    fn review_policy_outcomes() {
+        use uuid::Uuid;
+        use Decision::*;
+        let (a, b, c) = (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3));
+        let none = ReviewRequirement::default();
+        // the default equals the old rule
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Pending)], &none),
+            ReviewOutcome::Pending
+        );
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Approved)], &none),
+            ReviewOutcome::Approved
+        );
+        assert_eq!(review_outcome_with(&[], &none), ReviewOutcome::Pending);
+        // two of three
+        let two = ReviewRequirement {
+            min_approvals: Some(2),
+            ..Default::default()
+        };
+        let votes = [(a, Approved), (b, Approved), (c, Pending)];
+        assert_eq!(review_outcome_with(&votes, &two), ReviewOutcome::Approved);
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Pending), (c, Pending)], &two),
+            ReviewOutcome::Pending
+        );
+        // a rejection still rejects
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Approved), (c, Rejected)], &two),
+            ReviewOutcome::Rejected
+        );
+        // a required person
+        let need_c = ReviewRequirement {
+            min_approvals: Some(1),
+            required_users: vec![(c, "Carl".into())],
+            ..Default::default()
+        };
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (c, Pending)], &need_c),
+            ReviewOutcome::Pending
+        );
+        assert_eq!(
+            review_outcome_with(&[(a, Pending), (c, Approved)], &need_c),
+            ReviewOutcome::Approved
+        );
+        // a role group
+        let qa = ReviewRequirement {
+            min_approvals: Some(1),
+            role_groups: vec![RoleRequirement {
+                label: "QA".into(),
+                members: vec![b],
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Pending)], &qa),
+            ReviewOutcome::Pending
+        );
+        assert_eq!(
+            review_outcome_with(&[(a, Approved), (b, Approved)], &qa),
+            ReviewOutcome::Approved
+        );
+        // min larger than the reviewers is capped (submit refuses it earlier)
+        let ten = ReviewRequirement {
+            min_approvals: Some(10),
+            ..Default::default()
+        };
+        assert_eq!(
+            review_outcome_with(&[(a, Approved)], &ten),
+            ReviewOutcome::Approved
+        );
+    }
+
+    #[test]
+    fn review_policy_combination_and_shortfalls() {
+        use uuid::Uuid;
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        assert_eq!(combine_min_approvals(&[]), None);
+        assert_eq!(combine_min_approvals(&[Some(2), None]), None);
+        assert_eq!(combine_min_approvals(&[Some(2), Some(3)]), Some(3));
+        let req = ReviewRequirement {
+            min_approvals: Some(3),
+            required_users: vec![(b, "Bea".into())],
+            role_groups: vec![RoleRequirement {
+                label: "QA".into(),
+                members: vec![b],
+            }],
+        };
+        let s = policy_shortfalls(&[a], &req);
+        assert_eq!(s.len(), 3, "{s:?}");
+        assert!(s[0].contains("3 approvals") && s[0].contains("only 1 reviewer is"));
+        assert!(s[1].contains("Bea"));
+        assert!(s[2].contains("QA"));
+        assert!(policy_shortfalls(&[a, b, Uuid::from_u128(3)], &req).is_empty());
+        assert!(policy_shortfalls(&[], &ReviewRequirement::default()).is_empty());
+        let rest = attainable(&req, &[a]);
+        assert!(rest.required_users.is_empty() && rest.role_groups.is_empty());
+        assert_eq!(attainable(&req, &[a, b]), req);
     }
 
     #[test]
@@ -715,6 +854,19 @@ mod tests {
     }
 
     #[test]
+    fn result_filter_names_round_trip() {
+        for f in ResultFilter::ALL {
+            assert_eq!(ResultFilter::parse(f.as_str()), Some(f));
+            assert!(!f.label().is_empty());
+        }
+        assert_eq!(ResultFilter::parse(" failed "), Some(ResultFilter::Failed));
+        assert_eq!(ResultFilter::parse("fail"), None);
+        assert_eq!(ResultFilter::parse_field(None).unwrap(), None);
+        assert_eq!(ResultFilter::parse_field(Some("  ")).unwrap(), None);
+        assert!(ResultFilter::parse_field(Some("nope")).is_err());
+    }
+
+    #[test]
     fn result_pass_fail() {
         use ResultStatus::{Fail, Pass};
         assert_eq!(result_status(5.0, None, None), ResultStatus::NoLimits);
@@ -748,8 +900,10 @@ mod tests {
 
     #[test]
     fn password_policy() {
-        assert!(validate_password("short").is_err());
-        assert!(validate_password("long enough pw").is_ok());
+        // generated at the boundary, not literal phrases: a password literal
+        // reads as a hard-coded credential (CodeQL) and says less about the rule
+        assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN - 1)).is_err());
+        assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN)).is_ok());
     }
 
     #[test]

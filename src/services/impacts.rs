@@ -73,19 +73,20 @@ pub async fn redact_all(
     let mut changes: Vec<Uuid> = rows.iter().filter_map(|i| i.change_id).collect();
     changes.sort_unstable();
     changes.dedup();
-    let visible: Vec<Uuid> = if changes.is_empty() || actor.is_admin() {
-        changes
-    } else {
-        sqlx::query_scalar(&format!(
-            "SELECT c.id FROM changes c WHERE c.id = ANY($1) AND {}",
-            access::change_visible("c", 2, 3)
-        ))
-        .bind(&changes)
-        .bind(actor.id)
-        .bind(&actor.hidden_projects)
-        .fetch_all(&mut *conn)
-        .await?
-    };
+    let visible: Vec<Uuid> =
+        if changes.is_empty() || (actor.is_admin() && actor.hidden_projects.is_empty()) {
+            changes
+        } else {
+            sqlx::query_scalar(&format!(
+                "SELECT c.id FROM changes c WHERE c.id = ANY($1) AND {}",
+                access::change_visible("c", 2, 3)
+            ))
+            .bind(&changes)
+            .bind(actor.id)
+            .bind(&actor.hidden_projects)
+            .fetch_all(&mut *conn)
+            .await?
+        };
     Ok(rows
         .into_iter()
         .map(|i| {

@@ -110,6 +110,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/items/new", get(items::new_form))
         .route("/items/{id}", get(items::show))
         .route("/items/{id}/master", post(items::update_master))
+        .route("/items/{id}/owner", post(items::set_owner))
         .route("/items/{id}/delete", post(items::delete))
         // alternates, supersession, multi-level where-used, replace in assemblies
         .route("/items/{id}/where-used", get(interchange::where_used))
@@ -155,6 +156,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/files/{id}/thumbnail", get(revisions::thumbnail))
         .route("/files/{id}/delete", post(revisions::delete_file))
         .route("/files/{id}/folder", post(revisions::set_file_folder))
+        .route("/files/{id}/retention", post(revisions::set_file_retention))
         .route("/files/{id}/restore", post(revisions::restore_version))
         .route("/files/{id}/preview", get(revisions::preview))
         .route("/files/{id}/mesh", get(revisions::mesh))
@@ -291,6 +293,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/changes/{id}/reviewers/{user_id}/remove",
             post(changes::remove_reviewer),
         )
+        .route(
+            "/changes/{id}/reviewers/{user_id}/replace",
+            post(changes::replace_reviewer),
+        )
         .route("/changes/{id}/submit", post(changes::submit))
         .route("/changes/{id}/review", post(changes::review))
         .route("/changes/{id}/withdraw", post(changes::withdraw))
@@ -340,6 +346,22 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/projects/{id}/numbering", post(admin::update_numbering))
         .route("/projects/{id}/visibility", post(admin::update_visibility))
+        .route("/projects/{id}/policy", post(admin::update_policy))
+        .route("/projects/{id}/access", post(admin::update_access))
+        .route(
+            "/projects/{id}/access-review",
+            get(admin::access_review).post(admin::confirm_access_review),
+        )
+        .route(
+            "/projects/{id}/access-review.csv",
+            get(admin::access_review_csv),
+        )
+        .route(
+            "/projects/{id}/review-policy",
+            post(admin::update_review_policy),
+        )
+        .route("/projects/{id}/elevate", post(admin::elevate))
+        .route("/projects/{id}/elevate/end", post(admin::end_elevation))
         .route("/projects/{id}/members", post(admin::add_member))
         .route(
             "/projects/{id}/result-templates",
@@ -359,7 +381,9 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(admin::user_edit).post(admin::update_user),
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
+        .route("/admin/users/{id}/handover", post(admin::handover))
         .route("/admin/audit", get(admin::audit))
+        .route("/admin/ai", get(admin::ai))
         .route("/admin/branding", get(branding::page))
         .route(
             "/admin/branding/{kind}",

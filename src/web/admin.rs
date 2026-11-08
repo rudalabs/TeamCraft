@@ -2,7 +2,8 @@
 
 use axum::{
     extract::{Path, Query, State},
-    response::Response,
+    http::header,
+    response::{IntoResponse, Response},
     Form,
 };
 use serde::Deserialize;
@@ -11,10 +12,13 @@ use uuid::Uuid;
 
 use super::{finish, pagination, render, WebCtx, PER_PAGE};
 use crate::{
-    domain::{self, ProjectVisibility, Role},
+    domain::{self, AdminRead, ProjectVisibility, Role},
     error::{AppError, AppResult},
     resultscan::TemplateInput,
-    services::{audit, projects, result_templates, users, Page},
+    services::{
+        access_log, access_review, audit, ownership, project_policy, projects, result_templates,
+        users, Page,
+    },
     util, AppState,
 };
 
@@ -27,7 +31,7 @@ fn roles() -> Value {
 }
 
 pub async fn projects(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
-    let list = projects::list(&st.db, &ctx.me, false).await?;
+    let list = projects::list_managed(&st.db, &ctx.me).await?;
     render(
         &st,
         &ctx,
@@ -49,7 +53,7 @@ pub async fn project_show(
     Query(q): Query<ProjectQuery>,
 ) -> AppResult<Response> {
     let (project, members, can_manage) = tokio::try_join!(
-        projects::get(&st.db, &ctx.me, id),
+        projects::get_for_management(&st.db, &ctx.me, id),
         projects::members(&st.db, id),
         projects::is_manager(&st.db, &ctx.me, id),
     )?;
@@ -65,7 +69,48 @@ pub async fn project_show(
             ),
             Err(e) => return Err(e),
         };
-    let templates = result_templates::list(&st.db, &ctx.me, id).await?;
+    // An administrator whose need-to-know policy hides the group maintains
+    // it here but reads nothing of its content.
+    let readable = ctx.me.can_see_project(Some(id));
+    let templates = if readable {
+        result_templates::list(&st.db, &ctx.me, id).await?
+    } else {
+        Vec::new()
+    };
+    let policy = if can_manage && project.visibility == "restricted" {
+        Some(project_policy::get(&st.db, &ctx.me, id).await?)
+    } else {
+        None
+    };
+    let interface_rows: Vec<Value> = match &policy {
+        Some(p) => project_policy::Interface::ALL
+            .iter()
+            .map(|i| {
+                json!({ "name": i.as_str(), "label": i.label(),
+                        "allowed": p.access.interfaces.allowed(*i) })
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let access_entries = match &policy {
+        Some(_) if readable => {
+            let filter = access_log::Filter {
+                limit: Some(50),
+                ..Default::default()
+            };
+            access_log::list(&st.db, &ctx.me, id, &filter).await?
+        }
+        _ => Vec::new(),
+    };
+    let review_policy = if can_manage {
+        Some(project_policy::get_review_policy(&st.db, &ctx.me, id).await?)
+    } else {
+        None
+    };
+    let admin_modes: Vec<Value> = [AdminRead::Implicit, AdminRead::WithReason, AdminRead::None]
+        .iter()
+        .map(|m| json!({ "value": m.as_str(), "label": m.label() }))
+        .collect();
     let all_users = if can_manage {
         users::list(&st.db)
             .await?
@@ -86,6 +131,13 @@ pub async fn project_show(
             "is_member": ctx.me.projects.contains(&id),
             "can_edit": ctx.me.can_edit_project(Some(id)),
             "can_manage": can_manage,
+            "readable": readable,
+            "policy": policy,
+            "review_policy": review_policy,
+            "admin_modes": admin_modes,
+            "interface_rows": interface_rows,
+            "access_entries": access_entries,
+            "elevation_minutes": project_policy::ELEVATION_MINUTES,
             "result_templates": templates,
             "oidc_enabled": st.config.oidc.is_some(),
             "numbering": numbering,
@@ -202,6 +254,177 @@ pub async fn update_project(
 }
 
 #[derive(Deserialize)]
+pub struct PolicyForm {
+    #[serde(default)]
+    admin_read: String,
+}
+
+/// `POST /projects/{id}/policy` – managers of the group, admins.
+pub async fn update_policy(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<PolicyForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = match AdminRead::parse(&form.admin_read) {
+        Some(m) => project_policy::set_admin_read(&st.db, &ctx.me, id, m).await,
+        None => Err(AppError::BadRequest(
+            "Choose how administrators read the group.".into(),
+        )),
+    };
+    finish(&st, result, &back, |p| {
+        (
+            back.clone(),
+            format!("Administrator access: {}", p.admin_read.label()),
+        )
+    })
+}
+
+#[derive(Deserialize)]
+pub struct AccessForm {
+    #[serde(default)]
+    api_tokens: Option<String>,
+    #[serde(default)]
+    mcp: Option<String>,
+    #[serde(default)]
+    assistant: Option<String>,
+    #[serde(default)]
+    webhooks: Option<String>,
+    #[serde(default)]
+    packages: Option<String>,
+    #[serde(default)]
+    read_log: Option<String>,
+    #[serde(default)]
+    retention_days: String,
+}
+
+/// `POST /projects/{id}/access` – managers of the group, admins: interface
+/// switches (a ticked box allows the interface) and the read log.
+pub async fn update_access(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<AccessForm>,
+) -> AppResult<Response> {
+    use project_policy::Interface;
+    let back = format!("/projects/{id}");
+    let retention = form.retention_days.trim();
+    let days = if retention.is_empty() {
+        Ok(None)
+    } else {
+        retention.parse::<i32>().map(Some).map_err(|_| {
+            AppError::BadRequest("The retention is a number of days (or empty).".into())
+        })
+    };
+    let result = match days {
+        Ok(days) => {
+            let update = project_policy::AccessUpdate {
+                interfaces: vec![
+                    (Interface::ApiTokens, form.api_tokens.is_some()),
+                    (Interface::Mcp, form.mcp.is_some()),
+                    (Interface::Assistant, form.assistant.is_some()),
+                    (Interface::Webhooks, form.webhooks.is_some()),
+                    (Interface::Packages, form.packages.is_some()),
+                ],
+                read_log: Some(form.read_log.is_some()),
+                log_retention_days: Some(days),
+            };
+            project_policy::set_access(&st.db, &ctx.me, id, update).await
+        }
+        Err(e) => Err(e),
+    };
+    finish(&st, result, &back, |_| {
+        (back.clone(), "Interfaces and read log saved.".to_string())
+    })
+}
+
+#[derive(Deserialize)]
+pub struct ReviewPolicyForm {
+    #[serde(default)]
+    min_approvals: String,
+    #[serde(default)]
+    required_reviewers: String,
+    #[serde(default)]
+    role_group: String,
+}
+
+/// `POST /projects/{id}/review-policy` – managers of the group, admins.
+pub async fn update_review_policy(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<ReviewPolicyForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let min = form.min_approvals.trim();
+    let result = match (min.is_empty(), min.parse::<i32>()) {
+        (true, _) => Ok(None),
+        (false, Ok(n)) => Ok(Some(n)),
+        _ => Err(AppError::BadRequest(
+            "Minimum approvals must be a number, or empty for all reviewers.".into(),
+        )),
+    };
+    let result = match result {
+        Ok(min_approvals) => {
+            let input = project_policy::ReviewPolicyInput {
+                min_approvals,
+                required_usernames: form
+                    .required_reviewers
+                    .split(|c: char| c == ',' || c.is_whitespace())
+                    .map(str::to_string)
+                    .collect(),
+                role_group_code: Some(form.role_group),
+            };
+            project_policy::set_review_policy(&st.db, &ctx.me, id, &input).await
+        }
+        Err(e) => Err(e),
+    };
+    finish(&st, result, &back, |_| {
+        (back.clone(), "Saved the review policy".to_string())
+    })
+}
+
+#[derive(Deserialize)]
+pub struct ElevateForm {
+    #[serde(default)]
+    reason: String,
+}
+
+/// `POST /projects/{id}/elevate` – administrators, policy `with_reason`.
+pub async fn elevate(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<ElevateForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = project_policy::elevate(&st.db, &ctx.me, id, &form.reason).await;
+    finish(&st, result, &back, |e| {
+        (
+            back.clone(),
+            format!(
+                "Administrator access opened until {}",
+                e.expires_at.format("%H:%M UTC")
+            ),
+        )
+    })
+}
+
+/// `POST /projects/{id}/elevate/end` – ends the running elevation early.
+pub async fn end_elevation(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = project_policy::end_elevation(&st.db, &ctx.me, id).await;
+    finish(&st, result, &back, |()| {
+        (back.clone(), "Administrator access ended".to_string())
+    })
+}
+
+#[derive(Deserialize)]
 pub struct MemberForm {
     #[serde(default)]
     username: String,
@@ -287,6 +510,21 @@ pub async fn update_visibility(
     })
 }
 
+/// `GET /admin/ai`: which AI the users have – the local-agent switch and the
+/// server-side assistant (provider, model, host, limits; never the key).
+pub async fn ai(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
+    ctx.me.require(Role::Admin)?;
+    render(
+        &st,
+        &ctx,
+        "admin/ai.html",
+        crate::services::assistant::admin_overview(
+            st.config.local_agents,
+            st.config.assistant.as_ref(),
+        ),
+    )
+}
+
 pub async fn users(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
     ctx.me.require(Role::Admin)?;
     let list = users::list(&st.db).await?;
@@ -362,12 +600,18 @@ pub async fn user_edit(
     ctx.me.require(Role::Admin)?;
     let user = users::get(&st.db, id).await?;
     let tokens = users::list_tokens(&st.db, id).await?;
+    let handover_targets: Vec<_> = users::reviewer_candidates(&st.db)
+        .await?
+        .into_iter()
+        .filter(|u| u.id != id)
+        .collect();
     let memberships = projects::memberships_of(&st.db, id).await?;
     render(
         &st,
         &ctx,
         "admin/user_edit.html",
         json!({
+            "handover_targets": handover_targets,
             "user": user,
             "tokens": tokens,
             "memberships": memberships,
@@ -465,8 +709,13 @@ pub async fn audit(
         action: clean(&q.action),
     };
     let page_no = q.page.unwrap_or(1).max(1);
-    let (entries, total) =
-        audit::list(&st.db, &filter, Page::from_page_number(Some(page_no), 100)).await?;
+    let (entries, total) = audit::list(
+        &st.db,
+        &ctx.me,
+        &filter,
+        Page::from_page_number(Some(page_no), 100),
+    )
+    .await?;
     let base_query = [
         ("entity_type", filter.entity_type.as_deref()),
         ("username", filter.username.as_deref()),
@@ -582,4 +831,105 @@ pub async fn delete_result_template(
             format!("Extraction template {} removed.", t.name),
         )
     })
+}
+
+/// `GET /projects/{id}/access-review` – managers of the group, admins.
+pub async fn access_review(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let report = access_review::report(&st.db, &ctx.me, id).await?;
+    render(
+        &st,
+        &ctx,
+        "projects/access_review.html",
+        json!({ "project_id": id, "report": report, "max_note": access_review::MAX_NOTE_CHARS }),
+    )
+}
+
+#[derive(Deserialize)]
+pub struct ReviewForm {
+    #[serde(default)]
+    note: String,
+}
+
+/// `POST /projects/{id}/access-review` – confirms the review.
+pub async fn confirm_access_review(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<ReviewForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}/access-review");
+    let result = access_review::confirm(&st.db, &ctx.me, id, &form.note).await;
+    finish(&st, result, &back, |r| {
+        (
+            back.clone(),
+            format!("Access review confirmed ({} members)", r.member_count),
+        )
+    })
+}
+
+/// `GET /projects/{id}/access-review.csv` – the evidence report.
+pub async fn access_review_csv(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let report = access_review::report(&st.db, &ctx.me, id).await?;
+    let filename = format!("{}_access_review.csv", report.project_code);
+    Ok((
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                util::content_disposition(&filename),
+            ),
+        ],
+        access_review::to_csv(&report),
+    )
+        .into_response())
+}
+
+#[derive(Deserialize)]
+pub struct HandoverForm {
+    to: Uuid,
+}
+
+/// Moves the work of a user to another one and shows what was moved.
+pub async fn handover(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<HandoverForm>,
+) -> AppResult<Response> {
+    let back = format!("/admin/users/{id}");
+    let result = ownership::hand_over(&st.db, &ctx.me, id, form.to).await;
+    finish(&st, result, &back, |report| {
+        (back.clone(), handover_summary(&report))
+    })
+}
+
+/// Flash text of a hand-over: counts and the first objects that stayed.
+fn handover_summary(report: &ownership::HandoverReport) -> String {
+    let mut text = format!(
+        "Handed over the work of {} to {}: {} items, {} changes, {} requests, {} reviews.",
+        report.from_name,
+        report.to_name,
+        report.count("item"),
+        report.count("change"),
+        report.count("request"),
+        report.count("review"),
+    );
+    if !report.skipped.is_empty() {
+        text.push_str(&format!(" {} not moved:", report.skipped.len()));
+        for e in report.skipped.iter().take(4) {
+            text.push_str(&format!(" {} {} ({});", e.kind, e.number, e.reason));
+        }
+    }
+    if report.truncated {
+        text.push_str(" More remains: run the hand-over again.");
+    }
+    text
 }

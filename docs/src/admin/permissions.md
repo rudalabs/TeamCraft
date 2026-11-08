@@ -38,9 +38,160 @@ members to give read-only access. Linking a group to an identity-provider
 group (`oidc_group`) stays with administrators, because it grants read
 access.
 
+## Need to know: administrator access
+
+By default an administrator reads every restricted group. A restricted group
+can limit that (*Project groups → the group → Need to know*, managers and
+administrators; `PUT /api/v1/projects/{code}/policy`
+`{"admin_read": "implicit" | "with_reason" | "none"}`):
+
+* **implicit** – today's behaviour, the default (also when no policy was ever
+  set);
+* **with a reason** – an administrator who is not a member sees the group as
+  "not found" until they open an **elevation** with a written reason (10 to
+  1000 characters; `POST /api/v1/projects/{code}/elevations`, or the form on
+  the group page). It lasts 60 minutes, can be ended early
+  (`DELETE …/elevations`) and is audited (`project.elevate`, with the reason).
+  The group's managers get a notification, and the group page lists every
+  elevation with administrator, reason and time;
+* **none** – administrators still manage the group (members, policy, the
+  settings on the group page) but read nothing in it. An administrator cannot
+  add themselves as a member or make themselves a manager: a manager of the
+  group does that. There is no elevation under `none`.
+
+Every change of the policy is audited (`project.policy`, with the previous
+value) and notifies the other managers. The policy applies to restricted
+groups only and needs at least one member who is a manager, so the group can
+be recovered; opening the group to all users makes the policy inert.
+While a policy is in force, an administrator who is no manager member can
+still add or remove other members, tighten the policy and rename the group,
+but cannot loosen the policy, open the group to all users, link another
+identity-provider group, add themselves or become a manager (403): those
+would undo the policy in one call. What an administrator can still do is
+limited by design: add *another* user (a manager sees it in the audit log),
+see that the group exists (code and name), and change operator-level things
+(database, backups, the command line) outside the application. A group
+linked to an identity-provider group before the policy was set keeps that
+link, so an administrator in that IdP group is a member. Webhooks cannot be
+scoped to, or redirected for, a hidden group; their deliveries are not shown.
+The elevation history keeps the username when an account is deleted;
+deleting the group deletes its history (the audit log keeps the records). The rule
+is part of the actor's hidden groups (`access::hidden_of_user`), so every
+guard, the audit feed, change orders, notifications and the assistant honour
+it without a check of their own. This is step 1 of
+[#151](https://github.com/rudalabs/TeamCraft/issues/151); conditions on
+membership are not built yet (see `docs/OPEN_WORK.md`); steps 3 and 4 and
+step 5, the access review, follow below.
+
+### Interface switches and the read log (need to know, steps 3 and 4)
+
+A restricted group can also close channels through which its data could
+leave the web UI, and can log who reads it (*Project groups → the group →
+Need to know: interfaces and read log*, managers and administrators;
+`PUT /api/v1/projects/{code}/policy`). Everything is allowed and nothing is
+logged by default; the switches build on a restricted group and are inert
+when the group is opened.
+
+| Switch | Denied: the group looks non-existent to … |
+|---|---|
+| `api_tokens` | REST requests, MCP and the desktop app that sign in with a personal access token (the browser session still works) |
+| `mcp` | MCP tools (also through `teamcraft mcp`, which uses a token) |
+| `assistant` | the built-in assistant, including the page context of a question |
+| `webhooks` | outgoing webhooks: no webhook receives events of the group, scoped or not; an event that mentions the group in a change order is sent without the change |
+| `packages` | Pack and Go and BOM downloads (CSV, Excel): the root item's group answers 403, items of such groups inside a structure are left out like restricted items of non-members |
+
+`{"interfaces": {"mcp": false, "webhooks": false}, "read_log": true,
+"log_retention_days": 365}` – every field is optional. Switching an
+interface off or the log on is open to managers and administrators; allowing
+an interface again, switching the log off or changing the retention is, while
+administrators are limited by the administrator policy above, for the
+managers (like loosening that policy). Every change is audited
+(`project.interfaces`, old and new values) and notifies the other managers.
+Not covered yet: e-mail and chat notification content, an external LLM
+provider list (`external_llm`) and the desktop working folder as separate
+switches (the desktop app follows `api_tokens`).
+
+**Read and download log.** With `read_log` on, the group writes `access_log`
+entries (separate from the audit log): who (user name kept as text), when,
+channel (`web` or `api`), kind (`view` of an item or revision page,
+`download` of a file or file version, `package` for Pack and Go, `export` for
+a BOM CSV or Excel file), the object (number or file name, kept as text) and
+the client address (with the same reverse-proxy rule as the sign-in
+throttle). Repeated reads of the same object by the same user through the
+same channel within five minutes are one entry, so a resumed or ranged
+download is logged once. A read that cannot be logged does not happen. Groups
+that do not log write nothing. A Pack and Go or BOM export writes one
+entry for every logging group inside the structure, not only for the root
+item's group; a refused one writes nothing. The managers and administrators
+read the log, but only while they may read the group (an administrator shut
+out by `admin_read` gets "not found"; the labels are item content). They read the
+newest entries on the group page, or `GET
+/api/v1/projects/{code}/access-log?user=&kind=&since=&until=&limit=`. Not
+logged yet: MCP and assistant tool reads, desktop Get, thumbnails and
+previews.
+
+**Retention and purge.** `log_retention_days` (1 to 36500, empty = keep) is
+applied by `teamcraft access-log purge` (run it from cron or a timer):
+without options each group's own retention, `--project CODE` limits it to one
+group, `--older-than-days N` deletes everything older than that instead.
+Every run is audited (`access_log.purge`, with the count). The database
+backup contains the log.
+
+### Access review
+
+Managers of a restricted group and administrators open *Access review* on the
+group page (`/projects/{id}/access-review`). It lists every member with the
+account role, the role in the group, the source (added by hand or synchronised
+from the identity provider), whether the account is active, the last sign-in
+(flagged when there was none for 90 days) and the date the membership began,
+then the administrator policy (with the number of active administrators who are
+not members) and the administrator elevations with their reasons. *I reviewed
+the access* confirms the review with an optional note: the confirmation is
+dated, audited (`project.access_review`), tells the other managers and stores
+the member list as it was, so the question "who had access at the time" is
+answered later (`GET /api/v1/projects/{code}/access-review/{id}`). The evidence
+report is a CSV (one row per member, elevation and confirmed review, formula-safe)
+or the same data as JSON (`GET /api/v1/projects/{code}/access-review`, with
+`?format=csv` for the CSV). The page is for restricted groups only; elevations
+are listed up to the newest 100 and reviews up to the newest 50 (the audit log
+keeps all).
+
 Moving an item out of a restricted group, or copying it with *Save As*
 into another group, needs a manager of the source group or an administrator
 – both declassify the item.
+
+## Review policy per project group
+
+By default every reviewer of a change order must approve. A manager of a
+project group (or an administrator) can set a policy on the group page
+(*Review policy*) or with `PUT /api/v1/projects/{code}/review-policy`
+(`{"min_approvals": 2, "required_reviewers": ["carl"], "role_group": "QA"}`;
+`GET` shows it to anybody who sees the group):
+
+* **Minimum approvals** – this many approvals release the change; empty means
+  all reviewers. A single rejection always rejects the change.
+* **Required reviewers** – people who must be reviewers of every change that
+  touches the group and approve it.
+* **Role group** – another project group (e.g. `QA`); at least one approval
+  must come from one of its members.
+
+A change that touches several groups must meet the policy of each: the
+strictest minimum applies (a group without a value wants all reviewers), the
+required people and role groups add up. `submit` refuses a change that cannot
+meet them (409, naming what is missing: too few reviewers, a required person
+who is not a reviewer, no reviewer from the role group; a required person
+who may not review it, e.g. its author, gets a message of its own); the outcome
+of the review uses the same policy when a reviewer decides, so reviewers who
+have not decided yet stay pending once the change is released. The policy is
+read at decision time, not frozen at submit, but only the parts the assigned
+reviewers can still meet count (reviewers change in Draft only), so a policy
+edit after submit cannot strand a change in review. Deactivated people and
+people below the editor role do not count. Items without a project group count
+like a group without a policy: all reviewers must approve. A role group the
+reader cannot see is never named: the policy shows it as hidden and the submit
+message says "a required role group". Changes are audited
+(`project.review_policy`, with the previous values). Step 2 of
+[#152](https://github.com/rudalabs/TeamCraft/issues/152).
 
 ## What outsiders see of links
 
@@ -232,5 +383,6 @@ These are inherent to a shared instance and documented on purpose:
   records the removal (with the item's note) in its history and tells its
   people, without telling the deleter about requests they cannot see.
 * Response times of hidden and missing objects are not equalised.
-* Backups, the command line and `/admin/audit` contain everything
-  (operators and administrators).
+* Backups and the command line contain everything (operators). `/admin/audit`
+  omits and redacts entries about groups hidden from the administrator by a
+  need-to-know policy.

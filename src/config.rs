@@ -80,6 +80,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT",
     "TEAMCRAFT_ASSISTANT_RETENTION_DAYS",
     "TEAMCRAFT_ASSISTANT_RUN_TIMEOUT",
+    "TEAMCRAFT_AUDIT_RETENTION_DAYS",
     "TEAMCRAFT_BIND_ADDR",
     "TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD",
     "TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME",
@@ -94,6 +95,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_DB_USER",
     "TEAMCRAFT_ENV_FILE",
     "TEAMCRAFT_INSTANCE_NAME",
+    "TEAMCRAFT_LOCAL_AGENTS",
     "TEAMCRAFT_LOCAL_LOGIN",
     "TEAMCRAFT_LOG_FORMAT",
     "TEAMCRAFT_MAIL_FROM",
@@ -111,12 +113,14 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_OIDC_SCOPES",
     "TEAMCRAFT_OIDC_USERNAME_CLAIM",
     "TEAMCRAFT_OIDC_VIEWER_GROUP",
+    "TEAMCRAFT_PREVIEW_CACHE_MAX_MB",
     "TEAMCRAFT_PREVIEW_MAX_MEMORY_MB",
     "TEAMCRAFT_PREVIEW_MAX_MESH_MB",
     "TEAMCRAFT_PREVIEW_MAX_RESULT_MB",
     "TEAMCRAFT_PREVIEW_MAX_STEP_MB",
     "TEAMCRAFT_PUBLIC_URL",
     "TEAMCRAFT_REQUEST_DIGEST_HOURS",
+    "TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS",
     "TEAMCRAFT_SERVER",
     "TEAMCRAFT_SESSION_TTL_HOURS",
     "TEAMCRAFT_SIGNIN_MAX_FAILURES",
@@ -250,9 +254,22 @@ pub struct Config {
     pub max_upload_bytes: u64,
     /// Size and memory limits of the 3D preview (`TEAMCRAFT_PREVIEW_MAX_*`).
     pub preview: crate::preview::PreviewLimits,
+    /// Size the preview cache (`<vault>/previews`) is trimmed to by the
+    /// hourly housekeeping, least recently used first
+    /// (`TEAMCRAFT_PREVIEW_CACHE_MAX_MB`; 0 = no limit).
+    pub preview_cache_max_bytes: u64,
     /// Largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/{id}`).
     pub upload_chunk_bytes: u64,
     pub session_ttl: Duration,
+    /// Days the audit log is kept (`TEAMCRAFT_AUDIT_RETENTION_DAYS`; 0 = for
+    /// ever). Older entries are removed by the hourly housekeeping, which
+    /// records the removal as one entry.
+    pub audit_retention_days: u32,
+    /// Days after which the old versions of files with the retention `latest`
+    /// are removed by the hourly housekeeping
+    /// (`TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS`; 0 = only the CLI removes
+    /// them). Files keep every version unless someone sets `latest`.
+    pub retention_latest_grace_days: u32,
     /// Failed password sign-ins per username within 15 minutes before sign-in
     /// is refused (`TEAMCRAFT_SIGNIN_MAX_FAILURES`; five times as many per
     /// client address; 0 = off). See [`crate::auth::SignInThrottle`].
@@ -279,9 +296,20 @@ pub struct Config {
     pub mattermost: Option<MattermostConfig>,
     /// The built-in assistant (Anthropic or an OpenAI-compatible API). `None` = disabled.
     pub assistant: Option<AssistantConfig>,
+    /// Whether users may connect their own local agents (the desktop app's
+    /// *Agent* view, ACP) to TeamCraft's tools (`TEAMCRAFT_LOCAL_AGENTS`).
+    /// `Off` leaves only the server-side assistant. See [`LocalAgents`].
+    pub local_agents: LocalAgents,
     /// Which targets outgoing event webhooks may reach.
     pub webhooks: WebhookConfig,
 }
+
+/// Shortest audit log retention (`TEAMCRAFT_AUDIT_RETENTION_DAYS`): a typo
+/// must not empty the audit trail.
+pub const MIN_AUDIT_RETENTION_DAYS: u32 = 30;
+
+/// Largest preview cache limit in MiB (`TEAMCRAFT_PREVIEW_CACHE_MAX_MB`, 16 TiB).
+const MAX_PREVIEW_CACHE_MB: u64 = 16 * 1024 * 1024;
 
 /// Default for how long finished webhook deliveries are kept.
 pub const DEFAULT_WEBHOOK_RETENTION_DAYS: u32 = 30;
@@ -308,6 +336,56 @@ impl Default for WebhookConfig {
             allow_private: false,
             retention_days: DEFAULT_WEBHOOK_RETENTION_DAYS,
         }
+    }
+}
+
+/// `TEAMCRAFT_LOCAL_AGENTS`: may users connect their own local AI agents
+/// (the desktop app's *Agent* view, an ACP client for Claude Code, Gemini
+/// CLI …) to TeamCraft's tools?
+///
+/// `Off` turns `POST /api/v1/mcp` off for every token (the built-in assistant
+/// calls the tools in-process, so it is not affected) and is reported to
+/// clients (`GET /api/v1/me` → `capabilities.local_agents` and `mcp`), so the
+/// desktop app's Agent view runs on the server-side assistant (or shows that
+/// AI is off without one). [`LOCAL_AGENT_HEADER`], which the desktop
+/// adds to the MCP connection it hands to an agent, only picks the refusal
+/// message. The REST API stays open to a user's own token – limiting that
+/// needs scoped tokens.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LocalAgents {
+    /// The default: the desktop app's *Agent* view may run a local agent.
+    #[default]
+    Allowed,
+    /// Only the server-side assistant (*Ask TeamCraft*; in the desktop app
+    /// the *Agent* view's company AI).
+    Off,
+}
+
+/// Header the desktop app adds to the MCP connection it hands to a local
+/// agent (value [`LOCAL_AGENT_HEADER_VALUE`]).
+pub const LOCAL_AGENT_HEADER: &str = "x-teamcraft-client";
+/// Value of [`LOCAL_AGENT_HEADER`] on a local agent's MCP calls.
+pub const LOCAL_AGENT_HEADER_VALUE: &str = "desktop-agent";
+
+impl LocalAgents {
+    /// Parses `allowed` or `off` (case-insensitive, surrounding blanks ignored).
+    pub fn parse(raw: &str) -> Result<LocalAgents> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "allowed" => Ok(LocalAgents::Allowed),
+            "off" => Ok(LocalAgents::Off),
+            other => bail!("TEAMCRAFT_LOCAL_AGENTS must be 'allowed' or 'off', got '{other}'"),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LocalAgents::Allowed => "allowed",
+            LocalAgents::Off => "off",
+        }
+    }
+
+    pub fn allowed(self) -> bool {
+        self == LocalAgents::Allowed
     }
 }
 
@@ -743,6 +821,11 @@ impl Config {
                 )?,
             }
         };
+        // 0 = no limit; at most 16 TiB
+        let preview_cache_max_mb = env.parse_or("TEAMCRAFT_PREVIEW_CACHE_MAX_MB", 0u64)?;
+        if preview_cache_max_mb > MAX_PREVIEW_CACHE_MB {
+            bail!("TEAMCRAFT_PREVIEW_CACHE_MAX_MB must be between 0 (no limit) and {MAX_PREVIEW_CACHE_MB}");
+        }
         let upload_chunk_mb = env.parse_or("TEAMCRAFT_UPLOAD_CHUNK_MB", 16u64)?;
         if !(1..=1024).contains(&upload_chunk_mb) {
             bail!("TEAMCRAFT_UPLOAD_CHUNK_MB must be between 1 and 1024");
@@ -760,6 +843,27 @@ impl Config {
             .filter(|t| !t.is_empty());
         if metrics_token.as_ref().is_some_and(|t| t.len() < 16) {
             bail!("TEAMCRAFT_METRICS_TOKEN must be at least 16 characters");
+        }
+
+        let audit_retention_days = env.parse_or("TEAMCRAFT_AUDIT_RETENTION_DAYS", 0u32)?;
+        if audit_retention_days != 0
+            && !(MIN_AUDIT_RETENTION_DAYS..=36_500).contains(&audit_retention_days)
+        {
+            bail!(
+                "TEAMCRAFT_AUDIT_RETENTION_DAYS must be 0 (keep for ever) or between \
+                 {MIN_AUDIT_RETENTION_DAYS} and 36500"
+            );
+        }
+
+        let retention_latest_grace_days = env.parse_or(
+            "TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS",
+            crate::services::retention::DEFAULT_LATEST_GRACE_DAYS,
+        )?;
+        if retention_latest_grace_days > crate::services::retention::MAX_LATEST_GRACE_DAYS {
+            bail!(
+                "TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS must be between 0 (no automatic removal) and {}",
+                crate::services::retention::MAX_LATEST_GRACE_DAYS
+            );
         }
 
         let cookie_secure = match env.get("TEAMCRAFT_COOKIE_SECURE")? {
@@ -838,6 +942,10 @@ impl Config {
             None => None,
         };
         let assistant = assistant_config(&env)?;
+        let local_agents = match env.get("TEAMCRAFT_LOCAL_AGENTS")? {
+            Some(raw) => LocalAgents::parse(&raw)?,
+            None => LocalAgents::Allowed,
+        };
 
         let webhooks = WebhookConfig {
             allowed_hosts: match env.get("TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS")? {
@@ -869,8 +977,11 @@ impl Config {
             vault_dir,
             max_upload_bytes: max_upload_mb * 1024 * 1024,
             preview,
+            preview_cache_max_bytes: preview_cache_max_mb * 1024 * 1024,
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
+            audit_retention_days,
+            retention_latest_grace_days,
             signin_max_failures,
             metrics_token,
             cookie_secure,
@@ -883,6 +994,7 @@ impl Config {
             request_digest_hours,
             mattermost,
             assistant,
+            local_agents,
             webhooks,
         })
     }
@@ -890,7 +1002,7 @@ impl Config {
     /// Password-free summary for the startup log.
     pub fn summary(&self) -> String {
         format!(
-            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} request_digest={}h mattermost_notifications={} assistant={} webhook_targets={}",
+            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} request_digest={}h mattermost_notifications={} assistant={} local_agents={} webhook_targets={}",
             self.bind_addr,
             self.public_url,
             self.database_display,
@@ -908,6 +1020,7 @@ impl Config {
                 .as_ref()
                 .map_or("off", |m| if m.direct { "direct" } else { "channel" }),
             self.assistant.as_ref().map_or_else(|| "off".to_string(), |a| a.label()),
+            self.local_agents.as_str(),
             match (
                 self.webhooks.allowed_hosts.is_empty(),
                 self.webhooks.allow_private
@@ -1487,6 +1600,107 @@ mod tests {
         ] {
             assert!(config_from(&[("TEAMCRAFT_DB_PASSWORD", "x"), bad]).is_err());
         }
+    }
+
+    #[test]
+    fn latest_retention_grace_days() {
+        let d = config_from(&[("TEAMCRAFT_DB_PASSWORD", "x")]).unwrap();
+        assert_eq!(d.retention_latest_grace_days, 7);
+        for (raw, want) in [("0", 0), ("1", 1), ("3650", 3650)] {
+            let c = config_from(&[
+                ("TEAMCRAFT_DB_PASSWORD", "x"),
+                ("TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS", raw),
+            ])
+            .unwrap();
+            assert_eq!(c.retention_latest_grace_days, want, "{raw}");
+        }
+        for bad in ["3651", "-1", "x"] {
+            assert!(
+                config_from(&[
+                    ("TEAMCRAFT_DB_PASSWORD", "x"),
+                    ("TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS", bad)
+                ])
+                .is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn retention_settings() {
+        let d = config_from(&[("TEAMCRAFT_DB_PASSWORD", "x")]).unwrap();
+        assert_eq!(d.audit_retention_days, 0, "the audit log is kept for ever");
+        assert_eq!(
+            d.preview_cache_max_bytes, 0,
+            "the preview cache has no limit"
+        );
+        let c = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_AUDIT_RETENTION_DAYS", "3650"),
+            ("TEAMCRAFT_PREVIEW_CACHE_MAX_MB", "2048"),
+        ])
+        .unwrap();
+        assert_eq!(c.audit_retention_days, 3650);
+        assert_eq!(c.preview_cache_max_bytes, 2048 * 1024 * 1024);
+        for bad in [
+            ("TEAMCRAFT_AUDIT_RETENTION_DAYS", "1"),
+            ("TEAMCRAFT_AUDIT_RETENTION_DAYS", "29"),
+            ("TEAMCRAFT_AUDIT_RETENTION_DAYS", "36501"),
+            ("TEAMCRAFT_AUDIT_RETENTION_DAYS", "-1"),
+            ("TEAMCRAFT_PREVIEW_CACHE_MAX_MB", "x"),
+            ("TEAMCRAFT_PREVIEW_CACHE_MAX_MB", "16777217"),
+        ] {
+            assert!(
+                config_from(&[("TEAMCRAFT_DB_PASSWORD", "x"), bad]).is_err(),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_agents_switch() {
+        let base = ("TEAMCRAFT_DB_PASSWORD", "x");
+        // the default changes nothing: local agents are allowed
+        let cfg = config_from(&[base]).unwrap();
+        assert_eq!(cfg.local_agents, LocalAgents::Allowed);
+        assert!(cfg.summary().contains("local_agents=allowed"));
+        for (raw, want) in [
+            ("allowed", LocalAgents::Allowed),
+            ("off", LocalAgents::Off),
+            (" OFF ", LocalAgents::Off),
+            ("Allowed", LocalAgents::Allowed),
+            // an empty value counts as unset, like for every variable
+            ("", LocalAgents::Allowed),
+        ] {
+            let cfg = config_from(&[base, ("TEAMCRAFT_LOCAL_AGENTS", raw)]).unwrap();
+            assert_eq!(cfg.local_agents, want, "{raw:?}");
+        }
+        let off = config_from(&[base, ("TEAMCRAFT_LOCAL_AGENTS", "off")]).unwrap();
+        assert!(!off.local_agents.allowed());
+        assert!(off.summary().contains("local_agents=off"));
+        // a typo must not silently leave agents allowed: refused at start
+        for bad in ["false", "no", "disabled", "on", "of"] {
+            let err = config_from(&[base, ("TEAMCRAFT_LOCAL_AGENTS", bad)])
+                .err()
+                .unwrap_or_else(|| panic!("{bad:?} accepted"));
+            assert!(err.to_string().contains("TEAMCRAFT_LOCAL_AGENTS"), "{err}");
+        }
+    }
+
+    #[test]
+    fn local_agents_file_variant() {
+        let dir = std::env::temp_dir().join(format!("tc-local-agents-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("local_agents");
+        std::fs::write(&file, "off\n").unwrap();
+        let path = file.to_string_lossy().to_string();
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "x"),
+            ("TEAMCRAFT_LOCAL_AGENTS_FILE", &path),
+        ])
+        .unwrap();
+        assert_eq!(cfg.local_agents, LocalAgents::Off);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn assistant_from(pairs: &[(&str, &str)]) -> Result<Option<AssistantConfig>> {

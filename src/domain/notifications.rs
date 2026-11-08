@@ -24,6 +24,9 @@ pub enum NotificationKind {
     /// The periodic e-mail of the change requests that wait for triage in a
     /// project group you edit (`services::request_digests`).
     RequestDigest,
+    /// Security notice for the managers of a need-to-know group: an
+    /// administrator opened an elevation or added themselves. Cannot be muted.
+    AccessAlert,
     /// Test message from the account page.
     Test,
 }
@@ -49,6 +52,7 @@ impl NotificationKind {
             NotificationKind::Unlock => "unlock",
             NotificationKind::ChangeRequest => "change_request",
             NotificationKind::RequestDigest => "request_digest",
+            NotificationKind::AccessAlert => "access_alert",
             NotificationKind::Test => "test",
         }
     }
@@ -66,6 +70,7 @@ impl NotificationKind {
             NotificationKind::RequestDigest => {
                 "E-mail digest of new change requests waiting for triage in my project groups"
             }
+            NotificationKind::AccessAlert => "Access to a need-to-know group",
             NotificationKind::Test => "Test messages",
         }
     }
@@ -79,6 +84,7 @@ impl NotificationKind {
             NotificationKind::Unlock,
             NotificationKind::ChangeRequest,
             NotificationKind::RequestDigest,
+            NotificationKind::AccessAlert,
             NotificationKind::Test,
         ]
         .into_iter()

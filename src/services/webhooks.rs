@@ -110,6 +110,15 @@ pub struct Delivery {
     pub delivered_at: Option<DateTime<Utc>>,
 }
 
+/// SQL guard: the delivery is not one of a webhook scoped to a group the need-to-know
+/// policy hides from the administrator (the payload holds the group's content);
+/// `$n` = the hidden groups.
+fn hook_free(n: usize) -> String {
+    format!(
+        "NOT EXISTS (SELECT 1 FROM webhooks hw WHERE hw.id = webhook_id AND hw.project_id = ANY(${n}))"
+    )
+}
+
 const DELIVERY_SELECT: &str = "
     SELECT id, webhook_id, event_id, event, payload, status, attempts, next_attempt_at,
            last_status_code, last_error, created_at, updated_at, delivered_at
@@ -179,8 +188,16 @@ fn new_secret() -> (String, String) {
     (secret, hint)
 }
 
-async fn ensure_project(conn: &mut PgConnection, project_id: Option<Uuid>) -> AppResult<()> {
+async fn ensure_project(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    project_id: Option<Uuid>,
+) -> AppResult<()> {
     if let Some(id) = project_id {
+        // a group the need-to-know policy hides from the administrator answers like a missing one
+        if actor.hidden_projects.contains(&id) {
+            return Err(AppError::BadRequest("Unknown project group.".into()));
+        }
         let exists =
             sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)")
                 .bind(id)
@@ -261,7 +278,7 @@ pub async fn create(
             "There are already {MAX_WEBHOOKS} webhooks; delete one first."
         )));
     }
-    ensure_project(&mut tx, input.project_id).await?;
+    ensure_project(&mut tx, actor, input.project_id).await?;
     let (secret, hint) = new_secret();
     let id = Uuid::new_v4();
     sqlx::query(
@@ -318,7 +335,16 @@ pub async fn update(
     let v = validate(policy, &input)?;
     let mut tx = pool.begin().await?;
     let (old_name, old_url, was_active) = lock(&mut tx, id).await?;
-    ensure_project(&mut tx, input.project_id).await?;
+    // a webhook scoped to a hidden group cannot be redirected either
+    let old_project: Option<Uuid> =
+        sqlx::query_scalar("SELECT project_id FROM webhooks WHERE id = $1")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if old_project.is_some_and(|p| actor.hidden_projects.contains(&p)) {
+        return Err(AppError::not_found("Webhook not found."));
+    }
+    ensure_project(&mut tx, actor, input.project_id).await?;
     sqlx::query(
         "UPDATE webhooks SET name = $2, url = $3, events = $4, project_id = $5, active = $6,
                 updated_at = now()
@@ -519,12 +545,14 @@ pub async fn send_test(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Uuid
 pub async fn retry(pool: &PgPool, actor: &Actor, delivery_id: Uuid) -> AppResult<Delivery> {
     actor.require(Role::Admin)?;
     let mut tx = pool.begin().await?;
-    let row = sqlx::query_as::<_, (Uuid, String, String, bool)>(
+    let row = sqlx::query_as::<_, (Uuid, String, String, bool)>(&format!(
         "SELECT d.webhook_id, d.status, w.name, w.active
          FROM webhook_deliveries d JOIN webhooks w ON w.id = d.webhook_id
-         WHERE d.id = $1 FOR UPDATE OF d",
-    )
+         WHERE d.id = $1 AND {} FOR UPDATE OF d",
+        crate::services::access::project_visible("w.project_id", 2)
+    ))
     .bind(delivery_id)
+    .bind(&actor.hidden_projects)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found("Delivery not found."))?;
@@ -570,21 +598,28 @@ pub async fn deliveries(
 ) -> AppResult<Vec<Delivery>> {
     actor.require(Role::Admin)?;
     Ok(sqlx::query_as::<_, Delivery>(&format!(
-        "{DELIVERY_SELECT} WHERE webhook_id = $1 ORDER BY created_at DESC, id LIMIT $2"
+        "{DELIVERY_SELECT} WHERE webhook_id = $1 AND {}
+         ORDER BY created_at DESC, id LIMIT $2",
+        hook_free(3)
     ))
     .bind(webhook_id)
     .bind(limit.clamp(1, 200))
+    .bind(&actor.hidden_projects)
     .fetch_all(pool)
     .await?)
 }
 
 pub async fn get_delivery(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Delivery> {
     actor.require(Role::Admin)?;
-    sqlx::query_as::<_, Delivery>(&format!("{DELIVERY_SELECT} WHERE id = $1"))
-        .bind(id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| AppError::not_found("Delivery not found."))
+    sqlx::query_as::<_, Delivery>(&format!(
+        "{DELIVERY_SELECT} WHERE id = $1 AND {}",
+        hook_free(2)
+    ))
+    .bind(id)
+    .bind(&actor.hidden_projects)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::not_found("Delivery not found."))
 }
 
 // ---------------------------------------------------------------------------
@@ -659,7 +694,12 @@ pub async fn emit(
            -- the webhook as a reader: its own group and the internal groups
            AND NOT EXISTS (SELECT 1 FROM projects rp
                            WHERE rp.id = ANY($4) AND rp.visibility = 'restricted'
-                             AND rp.id IS DISTINCT FROM w.project_id)",
+                             AND rp.id IS DISTINCT FROM w.project_id)
+           -- a group that switched webhooks off sends nothing, scoped or not
+           AND NOT EXISTS (SELECT 1 FROM project_policies wp
+                           JOIN projects wpp ON wpp.id = wp.project_id
+                           WHERE wp.project_id = ANY($4) AND wpp.visibility = 'restricted'
+                             AND NOT wp.webhooks)",
     )
     .bind(event_id)
     .bind(event.as_str())
@@ -710,11 +750,19 @@ pub(crate) async fn emit_each(
          CROSS JOIN LATERAL (
              SELECT EXISTS (SELECT 1 FROM projects cp
                             WHERE cp.id = ANY($5) AND cp.visibility = 'restricted'
-                              AND cp.id IS DISTINCT FROM w.project_id) AS strip
+                              AND cp.id IS DISTINCT FROM w.project_id)
+                    OR EXISTS (SELECT 1 FROM project_policies wp
+                               JOIN projects wpp ON wpp.id = wp.project_id
+                               WHERE wp.project_id = ANY($5) AND wpp.visibility = 'restricted'
+                                 AND NOT wp.webhooks) AS strip
          ) s
          WHERE NOT EXISTS (SELECT 1 FROM projects rp
                            WHERE rp.id = e.project_id AND rp.visibility = 'restricted'
-                             AND rp.id IS DISTINCT FROM w.project_id)",
+                             AND rp.id IS DISTINCT FROM w.project_id)
+           AND NOT EXISTS (SELECT 1 FROM project_policies wp
+                           JOIN projects wpp ON wpp.id = wp.project_id
+                           WHERE wp.project_id = e.project_id AND wpp.visibility = 'restricted'
+                             AND NOT wp.webhooks)",
     )
     .bind(event.as_str())
     .bind(&ids)

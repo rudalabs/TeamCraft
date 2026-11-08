@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Access review {{ report.project_code }}{% endblock %}
+{% block nav_projects %}active{% endblock %}
+{% block tc_context %}data-tc-kind="project" data-tc-id="{{ project_id }}"{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Access review: {{ report.project_code }}</h1>
+    <p class="subtitle">Who may read the restricted group {{ report.project_name }}, as of {{ m.time(report.generated_at) }}. Check the list, then confirm: the confirmation is dated, audited and keeps this member list.</p>
+  </div>
+  <div class="actions">
+    <a class="button" href="/projects/{{ project_id }}/access-review.csv">Download evidence (CSV)</a>
+    <a class="button" href="/projects/{{ project_id }}">Back to the group</a>
+  </div>
+</div>
+
+<section class="card">
+  <h2>Administrator policy</h2>
+  <p>Administrators who are not members: <strong>{% if report.admin_read == "implicit" %}read the group{% elif report.admin_read == "with_reason" %}need a time-limited elevation with a reason{% else %}do not read the group{% endif %}</strong>.
+    {{ report.administrators_outside }} active administrator(s) are not members.</p>
+</section>
+
+<section class="card">
+  <h2>Members ({{ report.members | length }})</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">User</th><th scope="col">Role</th><th scope="col">Group role</th><th scope="col">Source</th><th scope="col">Account</th><th scope="col">Last sign-in</th><th scope="col">Member since</th></tr></thead>
+    <tbody>
+    {% for u in report.members %}
+    <tr>
+      <td>{{ u.display_name }} <span class="muted small">{{ u.username }}</span></td>
+      <td>{{ u.role }}</td>
+      <td>{% if u.manager %}manager{% else %}member{% endif %}</td>
+      <td>{% if u.source == "oidc" %}identity provider{% else %}manual{% endif %}</td>
+      <td>{% if u.active %}active{% else %}<span class="badge badge-obsolete">disabled</span>{% endif %}</td>
+      <td>{% if u.last_login_at %}{{ m.time(u.last_login_at) }}{% else %}never{% endif %}{% if u.stale %} <span class="badge badge-in_review">no sign-in for {{ report.stale_days }} days</span>{% endif %}</td>
+      <td>{{ m.time(u.added_at) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Administrator elevations</h2>
+  {% if report.elevations %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Administrator</th><th scope="col">Reason</th><th scope="col">From</th><th scope="col">Until</th></tr></thead>
+    <tbody>
+    {% for e in report.elevations %}
+    <tr><td>{{ e.username }}</td><td>{{ e.reason }}</td><td>{{ m.time(e.started_at) }}</td>
+        <td>{% if e.ended_at %}{{ m.time(e.ended_at) }} (ended){% else %}{{ m.time(e.expires_at) }}{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">No administrator has opened access to this group.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Confirm the review</h2>
+  <form class="stack" method="post" action="/projects/{{ project_id }}/access-review">
+    <label>Note <span class="hint">optional, kept with the confirmation</span>
+      <textarea name="note" maxlength="{{ max_note }}"></textarea>
+    </label>
+    <div class="actions"><button class="primary" type="submit">I reviewed the access</button></div>
+  </form>
+  <h3>Confirmed reviews</h3>
+  {% if report.reviews %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Date</th><th scope="col">Reviewed by</th><th scope="col">Members</th><th scope="col">Note</th></tr></thead>
+    <tbody>
+    {% for r in report.reviews %}
+    <tr><td>{{ m.time(r.reviewed_at) }}</td><td>{{ r.username }}</td><td>{{ r.member_count }}</td><td>{{ r.note }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">This group has not been reviewed yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

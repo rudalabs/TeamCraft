@@ -29,7 +29,7 @@ use crate::{
     domain::{self, BaseVersion},
     error::{AppError, AppResult},
     models::Revision,
-    services::files,
+    services::{files, retention},
     vault::{StoredBlob, Vault},
 };
 
@@ -49,7 +49,9 @@ const SESSION_SELECT: &str = "
 pub struct UploadSession {
     pub id: Uuid,
     pub user_id: Uuid,
-    pub revision_id: Uuid,
+    /// The revision the file joins; `None` for an upload that joins the
+    /// creation of a new item (web "New item" form).
+    pub revision_id: Option<Uuid>,
     pub filename: String,
     pub content_type: String,
     /// The announced size.
@@ -96,7 +98,8 @@ impl UploadSession {
 /// What a client announces when it starts an upload.
 #[derive(Clone, Debug)]
 pub struct NewSession {
-    pub revision_id: Uuid,
+    /// `None`: the file joins a new item (needs the editor role).
+    pub revision_id: Option<Uuid>,
     pub filename: String,
     pub size: u64,
     pub sha256: Option<String>,
@@ -239,9 +242,12 @@ async fn load(
 ///
 /// # Invariants
 ///
-/// * **Permission:** CAD editor in the project group with the revision in work
-///   and checked out by the actor (`files::ensure_can_attach`; hidden = 404,
-///   403 / 409 otherwise). The session belongs to the actor alone.
+/// * **Permission:** with a revision: CAD editor in the project group with the
+///   revision in work and checked out by the actor (`files::ensure_can_attach`;
+///   hidden = 404, 403 / 409 otherwise). Without one (new-item session): only
+///   the editor role, no `base` allowed; the session can only join
+///   `items::create_with_files`, which checks the project group (including
+///   restricted groups). The session belongs to the actor alone.
 /// * **Locks:** the actor's user row (`FOR NO KEY UPDATE`), which serialises the
 ///   quota check: at most 16 unexpired sessions per user (409).
 /// * **Steps:** the staging file is created before the commit and removed again
@@ -273,8 +279,19 @@ pub async fn create(
         .as_deref()
         .map(domain::normalize_folder)
         .transpose()?;
-    let rev = files::ensure_can_attach(pool, actor, new.revision_id).await?;
-    if let Some(base) = &new.base {
+    let rev = match new.revision_id {
+        Some(revision_id) => Some(files::ensure_can_attach(pool, actor, revision_id).await?),
+        None => {
+            actor.require(domain::Role::Editor)?;
+            if new.base.is_some() {
+                return Err(AppError::BadRequest(
+                    "A new item has no files to base the upload on.".into(),
+                ));
+            }
+            None
+        }
+    };
+    if let (Some(base), Some(rev)) = (&new.base, &rev) {
         files::precheck_base(pool, rev.id, &filename, base, sha256.as_deref()).await?;
     }
     let content_type = files::clean_content_type(new.content_type.as_deref());
@@ -314,7 +331,7 @@ pub async fn create(
     )
     .bind(id)
     .bind(actor.id)
-    .bind(rev.id)
+    .bind(rev.as_ref().map(|r| r.id))
     .bind(&filename)
     .bind(&content_type)
     .bind(total)
@@ -415,7 +432,9 @@ pub async fn append(
 /// # Invariants
 ///
 /// * **Permission:** the actor's own session (404 otherwise); `revision_id`,
-///   when given, must be the session's revision (400).
+///   when given, must be the session's revision (400). [`complete_in`] applies the [`Scope`]
+///   rules: `NewItem` accepts only sessions without a revision, `Revision(id)`
+///   only that revision, `Any` whatever the session allows.
 /// * **Locks:** the session row (`FOR UPDATE`).
 /// * **Data:** all bytes must have arrived (409 otherwise). Size and announced
 ///   SHA-256 are verified; a mismatch (400) or lost staging data (409) resets
@@ -433,15 +452,45 @@ pub async fn complete(
     id: Uuid,
     revision_id: Option<Uuid>,
 ) -> AppResult<files::Upload> {
+    let scope = match revision_id {
+        Some(rid) => Scope::Revision(rid),
+        None => Scope::Any,
+    };
+    complete_in(pool, vault, actor, id, scope).await
+}
+
+/// Where a finished upload may be used.
+#[derive(Clone, Copy, Debug)]
+pub enum Scope {
+    /// Wherever the session allows it.
+    Any,
+    /// Only the given revision (400 otherwise).
+    Revision(Uuid),
+    /// Only the creation of a new item: sessions without a revision (400 otherwise).
+    NewItem,
+}
+
+/// [`complete`] with the [`Scope`] the caller will store the file in; the
+/// invariants are those of [`complete`].
+pub async fn complete_in(
+    pool: &PgPool,
+    vault: &Vault,
+    actor: &Actor,
+    id: Uuid,
+    scope: Scope,
+) -> AppResult<files::Upload> {
     let mut tx = pool.begin().await?;
     let session = load(&mut tx, actor, id, true).await?;
-    if let Some(rid) = revision_id {
-        if session.revision_id != rid {
-            return Err(AppError::BadRequest(format!(
-                "The upload of {} belongs to another revision.",
-                session.filename
-            )));
-        }
+    let allowed = match scope {
+        Scope::Any => true,
+        Scope::Revision(rid) => session.revision_id == Some(rid),
+        Scope::NewItem => session.revision_id.is_none(),
+    };
+    if !allowed {
+        return Err(AppError::BadRequest(format!(
+            "The upload of {} belongs to another revision or to a new item.",
+            session.filename
+        )));
     }
     let stored = match &session.stored_sha256 {
         Some(sha) if vault.exists(sha).await => Some(sha.clone()),
@@ -554,6 +603,7 @@ pub async fn forget(pool: &PgPool, vault: &Vault, ids: &[Uuid]) {
 ///
 /// * **Permission:** the actor's own session; storing then has the checks of
 ///   [`files::check_in`] or [`files::attach`] (checked out by the actor).
+///   Sessions without a revision are refused (400).
 /// * **Steps:** completing the session (size and SHA-256 verified) and storing
 ///   it are two transactions. When storing fails, the verified content stays
 ///   in the session and `finish` can be repeated without sending the bytes
@@ -570,14 +620,16 @@ pub async fn finish(
     check_in: bool,
 ) -> AppResult<Finished> {
     let session = get(pool, actor, id).await?;
+    let revision_id = session.revision_id.ok_or_else(|| {
+        AppError::BadRequest("This upload belongs to a new item, not to a revision.".into())
+    })?;
     let upload = complete(pool, vault, actor, id, None).await?;
     let uploads = std::slice::from_ref(&upload);
     let (stored, revision) = if check_in {
-        let (rev, stored) =
-            files::check_in(pool, actor, session.revision_id, uploads, comment).await?;
+        let (rev, stored) = files::check_in(pool, actor, revision_id, uploads, comment).await?;
         (stored, Some(rev))
     } else {
-        let stored = files::attach(pool, actor, session.revision_id, uploads, comment).await?;
+        let stored = files::attach(pool, actor, revision_id, uploads, comment).await?;
         (stored, None)
     };
     forget(pool, vault, &[id]).await;
@@ -610,13 +662,45 @@ pub async fn abort(pool: &PgPool, vault: &Vault, actor: &Actor, id: Uuid) -> App
 }
 
 /// Removes expired sessions with their data, and staging files that have no
-/// session any more (e.g. after a crash between the two). Returns the number
-/// of sessions removed.
+/// session any more (e.g. after a crash between the two). Content that was
+/// verified and moved into the vault but never became a file version goes
+/// too – unless something else refers to it or it was stored again within
+/// [`retention::IN_FLIGHT_GRACE`]; such a session stays (expired, unusable)
+/// until the next run. Returns the number of sessions removed.
 pub async fn purge_expired(pool: &PgPool, vault: &Vault) -> AppResult<u64> {
-    let expired: Vec<Uuid> =
-        sqlx::query_scalar("DELETE FROM upload_sessions WHERE expires_at <= now() RETURNING id")
-            .fetch_all(pool)
-            .await?;
+    let mut expired: Vec<Uuid> = sqlx::query_scalar(
+        "DELETE FROM upload_sessions WHERE expires_at <= now() AND stored_sha256 IS NULL
+         RETURNING id",
+    )
+    .fetch_all(pool)
+    .await?;
+    let stored: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM upload_sessions WHERE expires_at <= now() AND stored_sha256 IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+    for id in stored {
+        let mut tx = pool.begin().await?;
+        // the blob is released as seen without this session
+        let Some(sha256) = sqlx::query_scalar::<_, String>(
+            "DELETE FROM upload_sessions WHERE id = $1 AND expires_at <= now()
+             RETURNING stored_sha256",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        else {
+            continue;
+        };
+        if retention::release_blob(&mut tx, vault, &sha256, retention::IN_FLIGHT_GRACE).await?
+            == retention::Release::Recent
+        {
+            tx.rollback().await?;
+        } else {
+            tx.commit().await?;
+            expired.push(id);
+        }
+    }
     for id in &expired {
         vault.remove_staged(*id).await?;
     }

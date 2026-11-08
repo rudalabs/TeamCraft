@@ -2,7 +2,8 @@
 
 Where the tests are, where they are thin, and what to write next. The page
 is the answer to *"which code can break without a test noticing?"* – it is
-meant to be updated, not admired. Last measured: 2026-11-06, from the CI
+meant to be updated, not admired. Whether the tests *check* what they run is
+the job of [mutation testing](mutation-testing.md). Last measured: 2026-11-06, from the CI
 job *coverage* on `main` at `b4cf014` (release 0.2.0; it contains #89–#95
 and the proofing tests).
 

@@ -149,7 +149,7 @@ end-to-end tests against a real PostgreSQL.
 - **Desktop app** – Linux, macOS and Windows client with a local working folder, *Get* of whole assemblies, an import wizard, an Agent view, and an update notice (never installs anything itself).
 - **REST API** – everything the UI does, with personal access tokens.
 - **MCP server** – AI assistants such as Claude Code search, explain BOMs and draft changes with your rights, never approving anything.
-- **Ask TeamCraft (optional)** – a sidebar on every page (web and desktop) that knows which page you are on, keeps your conversation and, with your own key for Anthropic, OpenAI, Azure OpenAI or any OpenAI-compatible service, or a local model (Ollama, vLLM), drafts release notes and answers questions with your rights, read-only by default.
+- **Ask TeamCraft (optional)** – a sidebar on every page (in the desktop app: the company AI of the Agent view) that knows which page you are on, keeps your conversation and, with your own key for Anthropic, OpenAI, Azure OpenAI or any OpenAI-compatible service, or a local model (Ollama, vLLM), drafts release notes and answers questions with your rights, read-only by default.
 
 ## Enterprise management
 
@@ -159,19 +159,18 @@ there is no separate enterprise edition.
 
 | Area | What TeamCraft offers |
 |------|-----------------------|
-| **Identity and access** | Single sign-on with any OpenID Connect provider (Keycloak, Entra ID, Google, Authentik …), IdP groups mapped to roles and project groups; viewer / editor / admin roles; [restricted project groups](https://rudalabs.github.io/TeamCraft/admin/permissions.html) that stay invisible to outsiders, even inside BOMs, search, notifications and the AI assistant. |
-| **Traceability** | An [audit log](https://rudalabs.github.io/TeamCraft/admin/operations.html) of every change and every sign-in, failed attempts included; four-eyes change orders where authors cannot approve their own work; released data that never changes; as-built records per serial number. |
-| **Company AI instead of shadow AI** | *Ask TeamCraft* runs on the AI service the organisation chooses – Anthropic, OpenAI, Azure OpenAI, any OpenAI-compatible endpoint or a local model (Ollama, vLLM). The key stays on the server and never reaches a browser or the desktop app; the assistant works with each user's rights, read-only by default, and every question is audited (without its content). |
+| **Identity and access** | Single sign-on with any OpenID Connect provider (Keycloak, Entra ID, Google, Authentik …), IdP groups mapped to roles and project groups; viewer / editor / admin roles; [restricted project groups](https://rudalabs.github.io/TeamCraft/admin/permissions.html) that stay invisible to outsiders, even inside BOMs, search, notifications and the AI assistant; per group, administrators can be limited to audited, time-limited access with a written reason, or to managing without reading; personal access tokens can be scoped (full, write without approving, read-only, MCP-only). |
+| **Traceability** | An [audit log](https://rudalabs.github.io/TeamCraft/admin/operations.html) of every change and every sign-in, failed attempts included; four-eyes change orders where nobody who wrote, prepared or changed the data can approve it; released data that never changes; as-built records per serial number. |
+| **Company AI instead of shadow AI** | *Ask TeamCraft* runs on the AI service the organisation chooses – Anthropic, OpenAI, Azure OpenAI, any OpenAI-compatible endpoint or a local model (Ollama, vLLM). The key stays on the server and never reaches a browser or the desktop app; the assistant works with each user's rights, read-only by default, and every question is audited (without its content). In the desktop app it is the *Agent* view's company AI. Administrators can switch off local AI agents (`TEAMCRAFT_LOCAL_AGENTS=off`): the desktop app's Agent then runs on the company AI only – data-loss prevention, with Admin → AI showing the setup. |
 | **Operations** | [Docker install](https://rudalabs.github.io/TeamCraft/admin/docker.html) with one script, [backup and restore](https://rudalabs.github.io/TeamCraft/admin/operations.html#backups) of database and vault in one command, `/healthz` and `/readyz` probes, [Prometheus metrics](https://rudalabs.github.io/TeamCraft/admin/operations.html#metrics-for-prometheus), documented [upgrades](https://rudalabs.github.io/TeamCraft/admin/upgrade.html) and a [support policy](https://rudalabs.github.io/TeamCraft/admin/support-policy.html). |
 | **Integration** | REST API, an MCP server for AI tools, signed [event webhooks](https://rudalabs.github.io/TeamCraft/admin/webhooks.html), e-mail and Mattermost notifications. |
 | **Your look** | Your own logos under *Admin → Branding*, shown in the web UI and the desktop app. |
 | **Configuration** | Everything through environment variables, each also as `*_FILE` for Docker or Kubernetes secrets – see the [configuration reference](https://rudalabs.github.io/TeamCraft/admin/configuration.html). |
 
-**In progress** – open pull requests and issues, not in a release yet:
+**Planned** – open issues, not done yet:
 
-- **Company AI only** ([#154](https://github.com/rudalabs/TeamCraft/pull/154)) – administrators can switch off the desktop app's own local AI agents, so employees use the organisation's configured AI instead of their own tools (data-loss prevention).
-- **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – stricter access and interface control per project group.
-- **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – wider separation of duties, review policies per project group, sign-off and handover.
+- **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – membership conditions (IdP claims, networks, session age) (administrator access with a reason, interface switches per group, a read and download log and access reviews with an evidence report are built).
+- **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – obsolete through change orders, sign-off with re-authentication, substitutes, approvals in exports (review policies per group, review rounds, item owners and admin handover are built).
 - **Scoped access tokens** – personal access tokens limited to read-only or MCP-only use.
 
 TeamCraft is a community project without commercial support or a service

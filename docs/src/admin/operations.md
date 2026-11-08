@@ -9,6 +9,7 @@
 | `teamcraft migrate`                        | apply migrations without starting the server                           |
 | `teamcraft assistant check`                | test the [assistant](../admin/configuration.md#assistant-optional) setup: reachable, key, model, tool calls (no database needed, never prints the key) |
 | `teamcraft rescan-references [--format id]` | read the CAD file references of the stored files again (default: SOLIDWORKS assemblies and drawings), e.g. after an update that reads a format better |
+| `teamcraft access-log purge [--project CODE] [--older-than-days N]` | delete read log entries of restricted groups older than the group's retention (or than N days), audited |
 | `teamcraft vault signatures [--convert] [--jobs N]` | compute the missing shape signatures of the [similar part search](../guide/similar-parts.md) from the cached 3D previews (`--convert`: also files without a preview yet), N (1–2, default 2) at a time in the isolated preview process |
 | `teamcraft backup <dir>`                   | write database and vault backup (`pg_dump`)                            |
 | `teamcraft restore <dir> [--force]`        | verify and restore a backup (`pg_restore`)                             |
@@ -168,6 +169,66 @@ requests – and uploads the report as the artifact `scale-report`:
 `report.md` (the timing table: queries per request, slowest statement,
 sequential scans on big tables), `plans.md` (every plan) and `results.json`.
 How to run it locally is described in `CONTRIBUTING.md`.
+
+## Data retention
+
+The server's hourly housekeeping removes what is no longer needed. Nothing
+the database still refers to is ever removed. Removals of product data (old
+file versions) and of audit entries are recorded in the audit log; caches,
+expired sessions, staged uploads and unreferenced blobs (also `vault gc
+--apply`) are removed without an entry.
+
+| What                                                        | Rule                                                                                         |
+|-------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| Sessions, OIDC states, stale desktop codes                  | removed when expired                                                                         |
+| Staged BOM imports and unfinished chunked uploads           | removed when expired, with their vault blobs unless something refers to them                 |
+| Webhook deliveries, idle assistant conversations            | `TEAMCRAFT_WEBHOOK_RETENTION_DAYS`, `TEAMCRAFT_ASSISTANT_RETENTION_DAYS`                      |
+| Audit log                                                   | `TEAMCRAFT_AUDIT_RETENTION_DAYS` (default: for ever); one `audit.purge` entry per removal     |
+| Preview cache                                               | previews of blobs the database no longer refers to, files of old cache versions and leftovers; `TEAMCRAFT_PREVIEW_CACHE_MAX_MB` trims the rest |
+| Old versions of files set to *keep only the latest version* | after `TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS` (default 7), see below                          |
+
+### Keep only the latest version (large result files)
+
+Every upload of a file name is a new version and the vault keeps all of them
+(default, `retention = all`). For files that change with every run and are
+large – simulation results, measurement series – that adds up. Whoever holds
+the check-out of a revision can switch a file to **keep only the latest
+version** (*⋯ → Keep only the latest version* on the revision page, or
+`PATCH /api/v1/files/{id}` with `{"retention": "latest"}`; back with *Keep all
+versions* / `"all"`; recorded as `file.retention`). Nothing is removed at
+that moment.
+
+The housekeeping then removes a version once a newer version has replaced it
+for at least `TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS` days, so a mistaken
+upload can still be rolled back within the grace period. It never removes
+
+* the newest version of a file,
+* anything of a revision that is not *in work* – revisions under review,
+  **released** and obsolete revisions keep every version,
+* files that keep all versions.
+
+Each removal is one `file.purge_versions` audit entry per file (versions,
+hashes, bytes) in the transaction of the removal. The vault blobs that
+nothing refers to afterwards are removed from disk; content that another file
+still uses stays.
+
+```sh
+teamcraft vault purge-versions                 # dry run: list what would go
+teamcraft vault purge-versions --apply         # remove it
+teamcraft vault purge-versions --grace-days 1  # another grace period
+```
+
+The command uses `TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS` (or 7 when that is
+`0`) unless `--grace-days` is given, and works while the server runs.
+
+### Orphaned vault content
+
+`teamcraft vault gc` lists the blobs in the vault that no file, version,
+attachment, staged import or upload session names and that were not written
+within the grace period (`--grace-hours`, default 24, at least 1); `--apply`
+removes them. Run it after deleting files, or after `purge-versions` left
+content behind that was younger than an hour. Back up before the first
+`--apply`.
 
 ## Metrics for Prometheus
 

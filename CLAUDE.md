@@ -14,6 +14,7 @@ License: MPL-2.0 (`LICENSE`). No organisation-specific branding or deployment.
 | Format (CI-enforced)   | `cargo fmt --all`                                                                                                                  |
 | Lint (CI-enforced)     | `cargo clippy --all-targets -- -D warnings`                                                                                        |
 | Unit tests, no DB      | `cargo test --lib`                                                                                                                 |
+| Mutation tests         | `cargo mutants -F '^src/<module>\.rs:'` (pure modules of `.cargo/mutants.toml`, `--lib` only; results in `target/mutants.out/`) |
 | Start the dev database | `docker compose up -d db` (trust auth on 127.0.0.1; status: `docker compose ps`)                                                   |
 | All tests              | `cargo test` (needs the dev database)                                                                                              |
 | Run the server         | `cargo run` → <http://localhost:8080> (reads the optional `secrets/.env`)                                                          |
@@ -145,6 +146,7 @@ platforms/         short build-and-test guides: linux.md, macos.md, windows.md
 Dockerfile         server image (rust builder → distroless/cc, non-root, HEALTHCHECK), built by CI only
 deploy/            production Docker install: docker-compose.yml (teamcraft + postgres), teamcraft.env.example, install.sh
 .github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 16/18, macOS/Windows builds), docs.yml, desktop.yml, scale.yml (manual/weekly scale check, tests/scale.rs),
+                   mutants.yml (cargo-mutants: PR diff report-only, weekly sharded full run; .cargo/mutants.toml),
                    release.yml (binaries, installers, image + Docker install smoke test)
 desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part of the server build)
 ```

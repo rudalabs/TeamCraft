@@ -6,7 +6,6 @@ import { $, ICONS, api, append, badge, call, dialog, enc, errorText, fmtDate, fm
 import { canEdit, canEditProject, savePackage, watchTool } from "./shell.js";
 import { typeIcon } from "./navigator.js";
 import { openTab, reloadActive, renderActive, renderTabs, table } from "./tabs.js";
-import { assistantEnabled, openAssistant } from "./assistant.js";
 import { agentButton } from "./agent.js";
 import { groupImpacts, impactGroup, revChanges, revHistory, revReferences } from "./references.js";
 import { checkinDialog, doCancelCheckout, doCheckout, doObsolete, doRevise, editDialog, getStructureDialog, openFile, openWorkspaceFolder, releaseDialog, revViewer, revWorkspace } from "./workspace.js";
@@ -180,9 +179,6 @@ export function renderRevision(tab, body, toolbar) {
       tool("Request change…" + (d.requests.length ? " (" + d.requests.length + ")" : ""), "request", function () { requestChangeDialog(rev, null); },
         { title: "Report a problem or propose a change to " + rev.item_number + "/" + rev.code + " (change request)" }),
       watchTool(tab, "items", rev.item_number, d.watching),
-      assistantEnabled() ? tool("Ask…", "ask", function () {
-        openAssistant(true);
-      }, { title: "Ask TeamCraft (Ctrl+5): release notes, release check or any question about this revision" }) : null,
       agentButton(tab)
     ]),
     moreMenu([

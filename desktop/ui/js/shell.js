@@ -6,8 +6,7 @@ import { $, ICONS, api, badge, call, clear, dialog, enc, errorText, fmtDate, fmt
 import { checkServerVersion, showConnect } from "./connect.js";
 import { navHead, selectView } from "./navigator.js";
 import { activeTab, closeTab, renderActive, renderTabs } from "./tabs.js";
-import { initAssistant } from "./assistant.js";
-import { agent, agentProfiles, openAgent, schedulePaint, updateAgentControls } from "./agent.js";
+import { agent, agentProfiles, applyAiPolicy, localAgentsAllowed, openAgent, schedulePaint, updateAgentControls } from "./agent.js";
 import { openRevision } from "./revision.js";
 import { impactGroups } from "./references.js";
 import { SYNC_LABEL, checkWorkspaceLayout } from "./workspace.js";
@@ -100,14 +99,18 @@ export function enterShell() {
     $("status-ws").textContent = "Workspace: " + state.session.workspace_dir;
     checkServerVersion();
     applyBranding();
-    initAssistant();
     selectView(state.view);
     renderTabs();
     renderActive();
     refreshWorklistCount();
     pollNotifications(true);
-    // an agent that kept running while the window reloaded
-    agentProfiles().then(function () { return call("agent_status"); }).then(function (s) {
+    // the Agent view's backend: the server's policy (TEAMCRAFT_LOCAL_AGENTS, the
+    // company AI) and the user's pick; then an agent that kept running while
+    // the window reloaded
+    applyAiPolicy(true).then(function () {
+      if (!localAgentsAllowed()) return null;
+      return agentProfiles().then(function () { return call("agent_status"); });
+    }).then(function (s) {
       if (s && !agent.running) { agent.running = s; agent.busy = s.busy; updateAgentControls(); schedulePaint(true); }
     }, function () {});
     checkWorkspaceLayout();
@@ -177,8 +180,14 @@ export function initShell() {
   });
   $("open-settings").addEventListener("click", openSettings);
   $("open-notifications").addEventListener("click", function () { selectView("notifications"); });
-  // New notifications: bell count and a toast, every minute while signed in.
-  setInterval(function () { if (state.me) pollNotifications(false); }, 60000);
+  // New notifications: bell count and a toast, every minute while signed in;
+  // and the server's AI policy, so a changed TEAMCRAFT_LOCAL_AGENTS or
+  // company AI reaches the Agent view (and ends a local agent) without a restart.
+  setInterval(function () {
+    if (!state.me) return;
+    pollNotifications(false);
+    applyAiPolicy().catch(function () {});
+  }, 60000);
   initSplitter();
   // back from the CAD program: is the next step of my check-out still right?
   window.addEventListener("focus", function () {

@@ -17,6 +17,143 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Need-to-know project groups, step 5 (#151): access review of a restricted
+  group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
+  administrators: members with role, group role, source (manual or identity
+  provider), account state and last sign-in (stale after 90 days), the
+  administrator policy and elevations, and a "reviewed" confirmation with an
+  optional note that is dated and audited (`project.access_review`) and keeps
+  the member list as it was. Evidence for auditors as CSV (page and
+  `GET /api/v1/projects/{code}/access-review?format=csv`) or JSON, plus
+  `POST` to confirm and `GET .../access-review/{id}` for the stored member list.
+  The shorter session age for restricted groups (step 2) is not part of this.
+- Data retention and cleanup: the hourly housekeeping now also removes the
+  blobs of expired staged imports and upload sessions, trims the preview
+  cache (`TEAMCRAFT_PREVIEW_CACHE_MAX_MB`, default no limit) and applies an
+  optional audit log retention (`TEAMCRAFT_AUDIT_RETENTION_DAYS`, default
+  keep for ever; one `audit.purge` entry per removal). New command
+  `teamcraft vault gc` (dry run unless `--apply`) lists and removes vault
+  blobs nothing refers to.
+- Retention for large result files: a file can be set to *keep only the
+  latest version* (`files.retention = 'latest'`, migration 0052; revision
+  page menu, `PATCH /api/v1/files/{id}` `{"retention"}`, audit
+  `file.retention`). Superseded versions are removed after
+  `TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS` (default 7) by the housekeeping and
+  by `teamcraft vault purge-versions` (dry run unless `--apply`) – never the
+  newest version and never anything of a revision that is not in work;
+  audited as `file.purge_versions`. The default stays `all`.
+
+- Item owner and hand-over (#152 step 7, migration 0050): `items.owner_id`
+  (default: the creator) is shown on the item page and changed by the
+  managers of the group and administrators (`item.owner`). Administrators
+  hand over a leaving user's item ownerships, draft and rejected change
+  orders, open change requests and pending reviews to another user in one
+  transaction on *Users* → user → *Hand over work*; a message after the
+  redirect gives the counts and the first objects that stayed (restricted
+  group, already a reviewer, four-eyes); numbers the acting administrator
+  may not read (need-to-know) are shown as "restricted item"; every object
+  has its own audit entry.
+- Reviewer suggestions show people who changed the affected revisions as
+  *knows the item, cannot review* (`cannot_review` in the REST and MCP
+  answers, desktop app, change page) instead of hiding them.
+- Result values in the item search and on the dashboard: filters
+  `result` (`failed`, `passed`, `above_limit`, `below_limit`) and
+  `result_name` on the item list, `GET /api/v1/items` and the web filter bar,
+  and a dashboard card *Simulations to check* (failed values or out-of-date
+  basis). Restricted groups stay out of results and totals. No migration.
+- Solver summary per file version, step 3 of `docs/src/research/solver-files.md`
+  (migration 0049, nullable `file_versions.solver_summary`): for Fluent transcripts and report files, Nastran `.f06`
+  and decks, STAR-CCM+ macros and batch logs, one line with solver, version, how
+  the run ended, last iteration and FATAL/WARNING counts of the first and last
+  64 KiB. Shown on the file row and the simulation page, in the REST file list and
+  the MCP `get_revision` files (marked untrusted). The rules are unverified
+  against real files.
+- Review rounds and absent reviewers (#152, steps 5 and 6): withdrawing or
+  reopening a change after decisions keeps them as an earlier round
+  (`change_review_rounds`, `changes.review_round`, migration 0048). The change page and
+  `GET /api/v1/changes/{number}` show earlier rounds and flag pending
+  reviewers who cannot decide (deactivated, demoted, blind to an item). The
+  author or an administrator replaces a pending reviewer while the change is in
+  review (`POST /api/v1/changes/{number}/reviewers/{old}/replace`, audited
+  `change.replace_reviewer`); other decisions are kept.
+- Review policy per project group, step 2 of #152 (migration 0047): minimum approvals (default all), required reviewers and
+  an optional role group (e.g. QA) whose member must approve. `submit` refuses a
+  change that cannot meet the policy of every affected group; the review outcome
+  uses it. Form on the group page, `GET`/`PUT /api/v1/projects/{code}/review-policy`.
+  Nothing changes for groups without a policy.
+  Review fixes: admins maintain a group hidden by need-to-know, a role group the
+  reader cannot see is not named, only the parts of the policy the assigned
+  reviewers can meet count after submit, a required person who is the author
+  gets a specific message, ungrouped items count as "all reviewers".
+- Scoped personal access tokens (threat model F2, #151 step 6, #152 step 4):
+  a token gets a scope when it is created (account page, `POST /api/v1/tokens`,
+  `teamcraft user create-token --scope`). `full` = read, write and approve
+  (what every token had before; existing tokens and the desktop app's token
+  stay `full`), `write` = read and write but no approving (reviewing a change
+  order, deciding a change request, making a revision obsolete), `read_only` =
+  GET/HEAD and the read-only MCP tools, `mcp_only` = only `POST /api/v1/mcp`.
+  Refusals are 403 and write nothing; a token cannot mint a token with more
+  rights than its own. The desktop app's new tokens now expire after 30 days
+  without use (renewed on every use) instead of a fixed 90 days; existing
+  desktop tokens keep their fixed expiry.
+  Migration `0046`.
+- The web *New item* form sends files above 32 MiB in chunks too (resumable, like the revision page); the
+  upload sessions may now have no revision and only join the creation of an item. Without JavaScript the form still
+  submits all files in one request.
+- Need-to-know project groups, step 1 (#151): a restricted group can limit
+  administrator access (`project_policies`, migration 0043): `with_reason`
+  (time-limited, audited elevation with a written reason; managers are
+  notified) or `none` (administrators manage but do not read). Web form on
+  the group page and `GET`/`PUT /api/v1/projects/{code}/policy`,
+  `POST`/`DELETE /api/v1/projects/{code}/elevations`. Nothing changes for
+  groups without a policy. Migration 0044 keeps the elevation history when an
+  account is deleted. While a policy is in force an administrator who is no
+  manager member cannot loosen it, open the group, link an IdP group or add
+  themselves; `/admin/audit` and webhooks honour the rule.
+- Need-to-know project groups, steps 3 and 4 (#151; migration 0051): interface switches per restricted group (`api_tokens`, `mcp`,
+  `assistant`, `webhooks`, `packages`; a switched-off interface sees the group
+  as non-existent), a read and download log (`access_log`: views, file
+  downloads, Pack and Go, BOM exports with channel and client address, one
+  entry per object and user within five minutes) with a retention per group,
+  `teamcraft access-log purge` (audited), `GET /api/v1/projects/{code}/access-log`
+  and a form and table on the group page. `tests/interface_switches.rs` fails
+  when an interface has no switch or no code applies it. Everything is allowed
+  and nothing is logged by default.
+
+- Wider separation of duties (#152, step 1): a reviewer must not have created
+  the change, submitted it (an administrator acting for the author) or changed
+  the revisions under review (revision creator, file uploader, logged edits).
+  Checked when adding a reviewer, on submit and on every decision. The
+  reviewer suggestions never offer such users. An administrator who prepared
+  the draft for the author (items, reviewers, edits, submit; read from the
+  audit log) cannot review it either. Migrations `0041`/`0042` add
+  `changes.submitted_by` and `changes.four_eyes`. Upgrade: changes already in
+  review keep working (only the author is refused); the editor and preparer
+  checks apply to drafts and to every later submit.
+
+- Company AI instead of shadow AI (data-loss prevention):
+  `TEAMCRAFT_LOCAL_AGENTS=off` lets administrators turn off local AI agents
+  (the desktop app's *Agent* view, ACP), so that AI use goes through the
+  server-side assistant *Ask TeamCraft* with the provider and key the
+  organisation configured (Anthropic, OpenAI/Azure, or a local
+  OpenAI-compatible server), its per-question audit and its limits; the key
+  never reaches a client. `GET /api/v1/me` reports
+  `capabilities.local_agents`; the desktop app ends a running agent (it
+  asks again when the Agent view opens, every minute and before every
+  message) and refuses to start one, and its *Agent* view (`Ctrl/Cmd+4`) runs on the
+  company AI automatically, with no local option (or, without a configured
+  assistant, shows that AI is switched off by the administrator). When the
+  server offers both, *Company AI* / *Local agent* in the Agent toolbar
+  switches between them, remembered per server and user;
+  `POST /api/v1/mcp` refuses every call with `403`, for every token (also
+  the `teamcraft mcp` bridge, agents set up by hand and older desktop apps;
+  the built-in assistant calls the tools inside the server and is not
+  affected), and `capabilities.mcp` turns `false`. The default `allowed`
+  changes nothing. The REST API stays open to a user's own token (scoped
+  tokens, F2, are the complement): cooperative enforcement, not a barrier.
+- **Admin → AI** (`/admin/ai`): the local-agent setting, the MCP endpoint's
+  state and the configured assistant (provider, model, host, limits, whether
+  a key is set – never the key).
 - HTML reports of FEA/CFD tools (`.html`, `.htm`) are read as text for the
   search, `read_file_text` and `propose_result_values` (#141): table rows as
   lines with ` | ` between the cells, numbers and units as written, entities
@@ -24,9 +161,30 @@ Changes on `main` since the `v0.2.5` tag.
   skipped and nothing is fetched. An own bounded reader (`src/htmltext.rs`)
   runs in the isolated `teamcraft text-extract` child (`--format html`) with
   the limits of the PDF reader; new fuzz target `htmltext`.
+- Files of ANSYS Fluent, STAR-CCM+ and Simcenter 3D are recognised more
+  precisely: NX `.sim`/`.fem`/`.afm` by their `SPLMSSTR` container, text
+  `.fem` as OptiStruct deck, `.dat` Nastran decks written by Simcenter 3D,
+  `.f04`/`.pch`, Fluent meshes (`.msh`, `.msh.h5`), gzip-compressed and HDF5
+  case/data/mesh files (checked by signature), projects (`.flprj`), `.cdat`,
+  journals (`.jou`), transcripts (`.trn`) and report files
+  (`report-file-*.out`), STAR-CCM+ solution histories (`.simh`) and macros
+  (`.java` naming STAR-CCM+), Gmsh meshes. Transcripts, journals, macros and
+  Nastran text output are indexed as text; a large plain-text file keeps its
+  last 64 KiB in the search text and `read_file_text`.
+- Extraction templates: a new method `table` for whitespace-separated tables
+  with quoted column names (Fluent report files; migration 0040), and
+  `pick = last` reads the last 2 MB of a file larger than 2 MB first. New
+  fuzz targets `cadformat` and `resultscan`.
 
 ### Changed
 
+- Desktop: *Ask TeamCraft* and *Agent* are one view. The company AI (the
+  server's assistant, with page context, quick actions, the drafts checkbox
+  and the conversation kept on the server) is a backend of the *Agent* view
+  (`Ctrl/Cmd+4`, the *Agent* button of revision and change tabs); the *Ask*
+  rail button, the drawer beside the tabs, *View → Ask TeamCraft*
+  (`Ctrl/Cmd+5`) and the *Ask…* toolbar buttons are gone. The web UI keeps
+  its sidebar.
 - Extraction templates for `.html` files run on the extracted text instead of
   the raw markup.
 - Text and CSV files keep their lines and decimal numbers in the stored text,

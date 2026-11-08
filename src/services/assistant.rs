@@ -10,7 +10,10 @@ use crate::{
     auth::Actor,
     error::{AppError, AppResult},
     pagecontext::PageContext,
-    services::{assistant_threads as threads, audit},
+    services::{
+        assistant_threads as threads, audit,
+        project_policy::{self, Interface},
+    },
     AppState,
 };
 
@@ -170,6 +173,9 @@ async fn run_once(
     let Ok(_permit) = client.permits.try_acquire() else {
         return Err(AssistantError::Busy.into_app_error());
     };
+    // groups that switched the assistant off are hidden from the page context too
+    let narrowed = project_policy::narrow(&st.db, me.clone(), &[Interface::Assistant]).await?;
+    let me = &narrowed;
     let allow_drafts = question.allow_drafts && me.can_edit();
     let system = assistant::system_prompt(me, allow_drafts);
     let instruction = question.instruction();
@@ -487,4 +493,88 @@ pub async fn ask_with_page(
     }
     run.context = Some(note);
     Ok(run)
+}
+
+/// What *Admin → AI* shows: the local-agent switch (`TEAMCRAFT_LOCAL_AGENTS`)
+/// and the server-side assistant (provider, model, host, limits). Never the
+/// API key or the URL path – only whether a key is set. Pure, for tests.
+pub fn admin_overview(
+    local_agents: crate::config::LocalAgents,
+    assistant: Option<&crate::config::AssistantConfig>,
+) -> Value {
+    // the mode in one word, for the summary line of the page
+    let mode = match (local_agents.allowed(), assistant.is_some()) {
+        (false, true) => "company-ai",
+        (false, false) => "no-ai",
+        (true, true) => "both",
+        (true, false) => "local-only",
+    };
+    json!({
+        "mode": mode,
+        "local_agents": local_agents.as_str(),
+        "local_agents_allowed": local_agents.allowed(),
+        "assistant": assistant.map(|a| json!({
+            "provider": a.provider.as_str(),
+            "model": a.model,
+            "host": a.host(),
+            "key_set": a.api_key.is_some(),
+            "max_steps": a.max_steps,
+            "max_tokens": a.max_tokens,
+            "max_concurrent": a.max_concurrent,
+            "run_timeout_secs": a.run_timeout.as_secs(),
+            "retention_days": a.retention_days,
+        })),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AssistantConfig, AssistantProvider, LocalAgents};
+    use std::time::Duration;
+
+    fn sample(key: Option<&str>) -> AssistantConfig {
+        AssistantConfig {
+            provider: AssistantProvider::OpenAiCompatible,
+            base_url: "https://ai.example.internal/v1/secret-path".into(),
+            api_key: key.map(str::to_string),
+            model: "llama-4-70b".into(),
+            max_steps: 8,
+            max_tokens: 2048,
+            request_timeout: Duration::from_secs(60),
+            run_timeout: Duration::from_secs(180),
+            max_concurrent: 4,
+            retention_days: 30,
+        }
+    }
+
+    #[test]
+    fn admin_overview_names_provider_and_model_but_never_the_key() {
+        let cfg = sample(Some("sk-very-secret-key"));
+        let v = admin_overview(LocalAgents::Off, Some(&cfg));
+        assert_eq!(v["mode"], "company-ai");
+        assert_eq!(v["local_agents"], "off");
+        assert_eq!(v["assistant"]["provider"], "openai-compatible");
+        assert_eq!(v["assistant"]["model"], "llama-4-70b");
+        assert_eq!(v["assistant"]["host"], "ai.example.internal");
+        assert_eq!(v["assistant"]["key_set"], true);
+        let text = v.to_string();
+        assert!(!text.contains("sk-very-secret-key"), "{text}");
+        assert!(!text.contains("secret-path"), "host only: {text}");
+
+        let v = admin_overview(LocalAgents::Off, None);
+        assert_eq!(v["mode"], "no-ai");
+        assert!(v["assistant"].is_null());
+        assert_eq!(
+            admin_overview(LocalAgents::Allowed, Some(&cfg))["mode"],
+            "both"
+        );
+        assert_eq!(
+            admin_overview(LocalAgents::Allowed, None)["mode"],
+            "local-only"
+        );
+        // a local server without a key
+        let v = admin_overview(LocalAgents::Allowed, Some(&sample(None)));
+        assert_eq!(v["assistant"]["key_set"], false);
+    }
 }

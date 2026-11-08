@@ -62,6 +62,32 @@
   {% else %}<p class="empty">Nothing to review.</p>{% endif %}
 </section>
 
+{% if attention_simulations %}
+<section class="card" id="simulations">
+  <div class="card-head">
+    <h2>Simulations to check <span class="count">{{ attention_total }}{% if attention_capped %}+{% endif %}</span></h2>
+    <span class="hint info" title="The latest revision has a result value outside its limits or is based on something that changed.">Failed values or out of date</span>
+  </div>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Simulation</th><th>Name</th><th>Rev</th><th>Results</th><th>Out of date</th></tr></thead>
+    <tbody>
+    {% for s in attention_simulations %}
+    <tr>
+      <td class="nowrap mono"><a href="/revisions/{{ s.revision_id }}">{{ s.number }}</a></td>
+      <td>{{ s.name }}</td>
+      <td class="mono">{{ s.revision_code }}</td>
+      <td>{% if s.failed_count %}<span class="badge badge-fail">{{ s.failed_count }} of {{ s.result_count }} failed</span>{% else %}<span class="muted">ok</span>{% endif %}</td>
+      <td class="small">{% if s.out_of_date %}{{ s.out_of_date|join("; ") }}{% else %}<span class="muted">no</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if attention_total > attention_simulations|length %}<p class="small muted">Showing {{ attention_simulations|length }} of {{ attention_total }}{% if attention_capped %}+{% endif %}. <a href="/items?type=simulation&amp;result=failed">All with failed values</a></p>{% else %}<p class="small"><a href="/items?type=simulation&amp;result=failed">Search simulations with failed values</a></p>{% endif %}
+</section>
+{% endif %}
+
 {% if impact_groups %}
 <section class="card" id="impacts">
   <div class="card-head">

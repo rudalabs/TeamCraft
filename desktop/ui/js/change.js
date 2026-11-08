@@ -5,7 +5,6 @@
 import { api, append, badge, call, clear, enc, errorText, fmtDate, h, label, lockBadge, moreMenu, priorityBadge, run, state, toast, tool, toolGroup } from "./core.js";
 import { canEdit, refreshWorklistCount, watchTool } from "./shell.js";
 import { openTab, recordLink, reloadActive, renderTabs, table } from "./tabs.js";
-import { assistantEnabled, openAssistant } from "./assistant.js";
 import { agentButton } from "./agent.js";
 import { dd, dt, openRevision } from "./revision.js";
 import { relationText } from "./references.js";
@@ -40,6 +39,13 @@ export function suggestedReviewers(number) {
     r.suggestions.forEach(function (s, i) {
       var whyId = "suggested-why-" + number + "-" + i;
       var why = h("p.hint", { id: whyId, text: s.reasons.join("; ") });
+      if (s.cannot_review) {
+        box.appendChild(h("div.suggestion", null, [
+          h("p", null, [h("strong", { text: s.display_name }), " ", h("span.badge", { text: "knows the item, cannot review" })]),
+          why,
+        ]));
+        return;
+      }
       var add = h("button.small", { type: "button", "aria-describedby": whyId, on: { click: function () {
         add.disabled = true;
         run("Adding " + s.display_name, function () {
@@ -96,9 +102,6 @@ export function renderChange(tab, body, toolbar) {
     ]),
     toolGroup("Collaborate", [
       watchTool(tab, "changes", c.number, !!tab.data.watching),
-      assistantEnabled() ? tool("Ask…", "ask", function () {
-        openAssistant(true);
-      }, { title: "Ask TeamCraft (Ctrl+5): a briefing for the review – what changes, impact, risks, open questions" }) : null,
       agentButton(tab)
     ]),
     moreMenu([

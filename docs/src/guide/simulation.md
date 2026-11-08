@@ -16,6 +16,28 @@ formats](../reference/formats.md#simulation-models-and-results-fea-cfd)
 (VTK, CalculiX, Nastran, ANSYS, Abaqus, OpenFOAM, Fluent, STAR-CCM+, CGNS,
 Exodus II, LS-DYNA, …) but does not parse them.
 
+### Fluent, STAR-CCM+ and Simcenter 3D files
+
+* **Simcenter 3D (NX CAE):** `.sim`, `.fem` and `.afm` are recognised as NX
+  simulation files by the `SPLMSSTR` container NX writes them in. The Nastran
+  deck Simcenter 3D writes as `.dat` (`SOL`, `CEND`, `BEGIN BULK`, a `$`
+  comment naming Nastran or Simcenter) is a *Nastran input deck*; `.f06`,
+  `.f04`, `.pch` and `.op2` are Nastran results. A text `.fem` is an
+  OptiStruct/HyperMesh deck, not an NX FE model.
+* **Fluent:** case, data and mesh files – legacy (`.cas`, `.dat`, `.msh`),
+  gzip-compressed (`.cas.gz`, …, checked by the gzip magic) and HDF5
+  (`.cas.h5`, `.dat.h5`, `.msh.h5`, checked by the HDF5 signature) – plus the
+  project (`.flprj`), CFD-Post data (`.cdat`), journals (`.jou`), transcripts
+  (`.trn`) and report files (`report-file-*.out`).
+* **STAR-CCM+:** the `.sim` (when its beginning names STAR-CCM+), the
+  solution history (`.simh`) and macros (`.java` files that name STAR-CCM+ or
+  import its API – other Java sources stay unclassified).
+
+None of the binary files (`.sim`, `.simh`, `.op2`, HDF5, legacy binary data)
+is parsed beyond its first bytes. The text files – transcripts, report
+files, journals, macros, `.f06`/`.f04`/`.pch` – are read as text for the
+search, the assistant and the extraction templates (below).
+
 ## Based on – what was simulated
 
 The **Based on** card of a simulation revision lists the revisions it was
@@ -93,6 +115,21 @@ Solver scripts write their results through the REST API
 (`PUT …/simulation/results` replaces the set in one transaction; see the
 [REST API](../reference/api.md#simulations)).
 
+### Solver summary of a file
+
+For solver output a one-line summary appears next to the file on the revision page
+(and in the vault explorer): solver and version, how the run ended (`converged`,
+`END OF JOB`, `fatal`), the last iteration or time step, and the number of `FATAL`
+and `WARNING` lines. It is made at check-in from the **first and the last 64 KiB**
+of the file only, so the counts cover those two windows, not the whole file – the
+line says so. Supported: Fluent transcripts (`.trn`) and report files, Nastran
+`.f06` and decks (`SOL`), STAR-CCM+ macros (`.java`) and batch logs
+(`.log`/`.txt` that name STAR-CCM+). The summary is a hint read from a
+user-written file, never a verified result; the MCP tools mark it as untrusted
+data. The rules follow public documentation and typical output and are **not yet
+checked against real files** of these programs; a file that does not match shows
+no summary. Files stored before the feature have none until they get a new version.
+
 ### Values from files at check-in
 
 Two bounded ways fill the table without typing – neither reads big result
@@ -123,7 +160,9 @@ checked out.
 **Extraction templates.** Managers of a project group (and administrators)
 define templates on the group's page, or through the REST API. A template
 finds one number in a small *text* file (`.txt`, `.csv`, `.log`, `.out`,
-`.dat`, `.rpt`, `.html`, … – only the first 2 MB are read). An HTML report is
+`.dat`, `.rpt`, `.html`, Fluent `.trn` and `.jou`, Nastran `.f06`, `.f04` and
+`.pch`, STAR-CCM+ `.java`, … – the first 2 MB are read, and with `pick = last`
+the last 2 MB of a larger file as well). An HTML report is
 not read as markup: the template sees the text TeamCraft extracted from it
 (see below), one line per table row with the cells separated by ` | `, so
 `Maximum stress \| ([-+0-9.eE]+) \| MPa` finds the row
@@ -135,8 +174,8 @@ paragraphs above the table contain; an empty header cell keeps its column).
 |---|---|
 | `name` | the result's name (with `load_case`: the key of the value) |
 | `file_pattern` | file names it applies to, `*` and `?`, case-insensitive, e.g. `*.log` |
-| `method` | `regex`: the first capture group of `pattern` on a line is the number; `csv`: the column `csv_column` (header name), optionally only the row where `csv_key_column` = `csv_key_value` |
-| `pick` | `last` (default) or `first` match – a solver log reports the final value last |
+| `method` | `regex`: the first capture group of `pattern` on a line is the number; `csv`: the column `csv_column` (header name), optionally only the row where `csv_key_column` = `csv_key_value`; `table`: the same for a whitespace-separated table with quoted column names (Fluent's `report-file-*.out`) |
+| `pick` | `last` (default) or `first` match – a solver log reports the final value last. `last` reads the end of a file larger than 2 MB first (its last 2 MB, from the first whole line on) and falls back to the beginning; a `csv`/`table` header always comes from the beginning. `first` reads the beginning only |
 | `unit`, `lower_limit`, `upper_limit`, `load_case`, `solver` | stored with the value; the limits decide pass or fail |
 | `enabled` | switch a template off without deleting it |
 
@@ -149,6 +188,29 @@ to the line in the HTML file. A template that does not
 match does nothing; templates belong to one group and apply to simulations of
 that group only. Values typed in by hand are overwritten by a template or the
 exchange file with the same name and load case on the next check-in.
+
+A value found in the end of a large file shows its place counted from the
+end (`run.trn: line 3 from the end`), because the lines before it were not
+read.
+
+**Fluent report files.** A report file (`report-file-0.out`, written by the
+report definitions of a run) looks like this:
+
+```text
+"report-def-0-rfile"
+"Iteration" "pressure-drop" "flow-time"
+("Iteration" "pressure-drop" "flow-time")
+1 2.53e+02 0.001
+2 2.49e+02 0.002
+```
+
+A `table` template with `csv_column = pressure-drop` and `pick = last` reads
+the value of the last row (`2.49e+02`); with `csv_key_column = Iteration` and
+`csv_key_value = 500` it reads the row of iteration 500 instead. STAR-CCM+
+exports its monitors and reports as CSV (`csv` method). For Simcenter 3D /
+Nastran a `regex` template on the `.f06` works for numbers that stand on one
+line; the tables in the middle of a large `.f06` are better written to an
+exchange file by a post-script.
 
 ### Values from a report (assistant)
 
@@ -174,8 +236,13 @@ of both when they are uploaded, so the assistant can read it with
   linked pages (a report with a `report_files/` folder) are never fetched or
   followed – attach a sub-page as its own file if its numbers are needed.
   MHTML (`.mht`) and ZIP-packed reports are not read.
-* **Text** (`.txt`, `.csv`, `.tsv`, `.log`, `.md`, …): the text itself, line by
-  line with its decimal numbers (the first 4 MB, 200 000 characters).
+* **Text** (`.txt`, `.csv`, `.tsv`, `.log`, `.md`, the solver logs, report
+  files and scripts `.out`, `.trn`, `.jou`, `.f06`, `.f04`, `.pch`, `.java`, …):
+  the text itself, line by line with its decimal numbers (the first 4 MB,
+  200 000 characters). A larger file keeps its **end** as well – the last
+  64 KiB (at most 50 000 characters) after the marker
+  `[… middle of the file left out …]` – where a solver writes its status and
+  final values.
 
 The quick action **Fill result values from the report** on the simulation page
 (drafts must be allowed) – or the MCP tool `propose_result_values` – proposes
@@ -246,6 +313,30 @@ card of the revision.
 *Compare with another revision* on the Results card puts the values of two
 revisions of the simulation side by side – matched by name and load case,
 with the difference, the relative change and the pass/fail status of both.
+
+## Finding simulations by their results
+
+The item list (*Result values* and *Result name* in the filter bar, `result=`
+and `result_name=` in the URL and in `GET /api/v1/items`) looks at the result
+values of the **latest revision** of simulations:
+
+| `result` | Matches simulations with at least one value that |
+|---|---|
+| `failed` | is outside its limits |
+| `passed` | has limits and is within them |
+| `above_limit` | is above its upper limit |
+| `below_limit` | is below its lower limit |
+
+`result_name` is a case-insensitive "contains" on the value name and can be
+combined with `result` (the same value must match both), the type, project,
+state and text filters. An unknown `result` is refused by the REST API.
+Only items the user may read are found and counted: restricted groups stay
+out of the list and its total.
+
+The dashboard shows a card *Simulations to check*: simulations the user may
+read whose latest revision (not obsolete) has a failed value or is out of
+date (see above), ten at a time, with a link to the search. Bases the user may
+not see never make a simulation appear out of date.
 
 ## Limits of version 1
 

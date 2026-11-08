@@ -25,12 +25,37 @@ use crate::{
     models::{AttributeDef, FileRecord, Revision},
     preview::PreviewFormat,
     services::{
+        access_log::{self, AccessCtx},
         as_built, attributes, audit, bom, changes, files, impacts, interchange, items,
-        notifications, projects, references, requests, result_proposals, revisions, similar,
-        simulations, uploads,
+        notifications, ownership, projects, references, requests, result_proposals, revisions,
+        similar, simulations, uploads,
     },
     thumbnail, util, AppState,
 };
+
+/// Logs a file download when the file's group keeps a read log.
+async fn log_file(
+    st: &AppState,
+    log: &AccessCtx,
+    me: &Actor,
+    file_id: Uuid,
+    filename: &str,
+) -> AppResult<()> {
+    let project_id = access_log::project_of_file(&st.db, file_id).await?;
+    access_log::record(
+        &st.db,
+        log,
+        me,
+        access_log::Subject {
+            kind: access_log::Kind::Download,
+            project_id,
+            object_type: "file",
+            object_id: Some(file_id),
+            label: filename,
+        },
+    )
+    .await
+}
 
 /// A stored attribute value as text for display and form fields
 /// (`true` → `yes`, `12.0` → `12`).
@@ -119,10 +144,12 @@ const WHERE_USED_SHOWN: usize = 200;
 pub async fn show(
     State(st): State<AppState>,
     ctx: WebCtx,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
 ) -> AppResult<Response> {
     let me = &ctx.me;
     let rev = revisions::get(&st.db, me, id).await?;
+    access_log::record_revision(&st.db, &log, me, &rev, access_log::Kind::View).await?;
     let item = items::get(&st.db, me, rev.item_id).await?;
     // independent queries run concurrently
     let (
@@ -294,6 +321,15 @@ pub async fn show(
         Vec::new()
     };
     let in_project = revisions::ensure_project_access(&rev, me).is_ok();
+    let owner_manageable = match item.project_id {
+        Some(p) => projects::is_manager(&st.db, me, p).await?,
+        None => me.is_admin(),
+    };
+    let owner_candidates = if owner_manageable {
+        ownership::owner_candidates(&st.db, item.project_id).await?
+    } else {
+        Vec::new()
+    };
     let can = json!({
         "edit": editable,
         "checkout": can_work && rev.checked_out_by.is_none(),
@@ -309,6 +345,7 @@ pub async fn show(
             && rev_changes.is_empty()
             && hidden_changes == 0,
         "master": in_project,
+        "owner": owner_manageable,
         "add_to_change": can_work && open_change.is_none(),
         "acknowledge": me.can_edit() && me.can_edit_project(item.project_id),
     });
@@ -435,6 +472,7 @@ pub async fn show(
             "open_change": open_change,
             "drafts": drafts,
             "history": history,
+            "owner_candidates": owner_candidates,
             "projects": projects,
             "units": COMMON_UNITS,
             "where_used_more": where_used_more,
@@ -590,7 +628,8 @@ pub async fn checkin(
         }
         let mut received = receive_uploads(&st, &mut multipart).await?;
         // Large files sent before in chunks by app.js (field `uploads`).
-        let sessions = take_session_uploads(&st, &ctx.me, id, &mut received).await?;
+        let sessions =
+            take_session_uploads(&st, &ctx.me, uploads::Scope::Revision(id), &mut received).await?;
         let result =
             files::check_in(&st.db, &ctx.me, id, &received.uploads, &received.comment).await;
         if result.is_ok() {
@@ -744,7 +783,13 @@ pub(crate) async fn upload_files(
 ) -> AppResult<Vec<files::Stored>> {
     files::ensure_can_attach(&st.db, actor, revision_id).await?;
     let mut received = receive_uploads(st, multipart).await?;
-    let sessions = take_session_uploads(st, actor, revision_id, &mut received).await?;
+    let sessions = take_session_uploads(
+        st,
+        actor,
+        uploads::Scope::Revision(revision_id),
+        &mut received,
+    )
+    .await?;
     let stored = files::attach(
         &st.db,
         actor,
@@ -767,7 +812,7 @@ pub(crate) async fn upload_files(
 pub(crate) async fn take_session_uploads(
     st: &AppState,
     actor: &Actor,
-    revision_id: Uuid,
+    scope: uploads::Scope,
     received: &mut Received,
 ) -> AppResult<Vec<Uuid>> {
     let Some(raw) = received.fields.get("uploads") else {
@@ -783,8 +828,7 @@ pub(crate) async fn take_session_uploads(
         received.fields.get("folders").map(String::as_str),
     )?;
     for id in &ids {
-        let mut upload =
-            uploads::complete(&st.db, &st.vault, actor, *id, Some(revision_id)).await?;
+        let mut upload = uploads::complete_in(&st.db, &st.vault, actor, *id, scope).await?;
         let key = files::stored_name(&upload.filename).to_lowercase();
         if upload.base.is_none() {
             upload.base = bases.get(&key).cloned();
@@ -932,10 +976,12 @@ pub(crate) async fn blob_response_ranged(
 pub(crate) async fn file_response(
     st: &AppState,
     me: &Actor,
+    log: &AccessCtx,
     file_id: Uuid,
     headers: &HeaderMap,
 ) -> AppResult<Response> {
     let f = files::get(&st.db, me, file_id).await?;
+    log_file(st, log, me, f.id, &f.filename).await?;
     blob_response_ranged(
         st,
         &f.sha256,
@@ -952,10 +998,12 @@ pub(crate) async fn file_response(
 pub(crate) async fn version_response(
     st: &AppState,
     me: &Actor,
+    log: &AccessCtx,
     version_id: Uuid,
     headers: &HeaderMap,
 ) -> AppResult<Response> {
     let (v, filename) = files::get_version(&st.db, me, version_id).await?;
+    log_file(st, log, me, v.file_id, &filename).await?;
     let versioned = match filename.rsplit_once('.') {
         Some((stem, ext)) if !stem.is_empty() => format!("{stem}.v{}.{ext}", v.version),
         _ => format!("{filename}.v{}", v.version),
@@ -974,10 +1022,11 @@ pub(crate) async fn version_response(
 pub async fn download(
     State(st): State<AppState>,
     WebUser(me): WebUser,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    file_response(&st, &me, id, &headers).await
+    file_response(&st, &me, &log, id, &headers).await
 }
 
 /// The thumbnail of a format that is rendered from its 3D preview (NX
@@ -1104,10 +1153,11 @@ pub async fn thumbnail(
 pub async fn download_version(
     State(st): State<AppState>,
     WebUser(me): WebUser,
+    log: AccessCtx,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    version_response(&st, &me, id, &headers).await
+    version_response(&st, &me, &log, id, &headers).await
 }
 
 /// 3D preview page of the current version of a file.
@@ -1294,6 +1344,43 @@ pub async fn set_file_folder(
                 format!("{} is now at the top of the project group", file.filename)
             } else {
                 format!("{} is now in {}/", file.filename, file.folder)
+            },
+        )
+    })
+}
+
+#[derive(Deserialize)]
+pub struct RetentionForm {
+    retention: String,
+    back: Option<String>,
+}
+
+/// Keeps every version of a file or only the latest one (the housekeeping
+/// removes older versions after a grace period) while the revision is
+/// checked out.
+pub async fn set_file_retention(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<RetentionForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = match crate::domain::FileRetention::parse(&form.retention) {
+        Some(retention) => files::set_retention(&st.db, &ctx.me, id, retention).await,
+        None => Err(AppError::BadRequest(
+            "The retention is all or latest.".into(),
+        )),
+    };
+    finish(&st, result, &back, |file| {
+        (
+            format!("/revisions/{}#files", file.revision_id),
+            if file.retention == "latest" {
+                format!(
+                    "{}: only the latest version is kept, older versions are removed after the grace period",
+                    file.filename
+                )
+            } else {
+                format!("{}: every version is kept", file.filename)
             },
         )
     })

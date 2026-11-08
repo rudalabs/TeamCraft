@@ -504,10 +504,15 @@ async fn personal_access_tokens_expire_are_revoked_and_die_with_the_account() {
     assert_eq!(ok(token.clone()).await, StatusCode::UNAUTHORIZED);
 
     // revoked: only by its owner (or an administrator)
-    let (record, fresh) =
-        teamcraft::services::users::create_token(&app.pool, &erika, "ci", Some(30))
-            .await
-            .unwrap();
+    let (record, fresh) = teamcraft::services::users::create_token(
+        &app.pool,
+        &erika,
+        "ci",
+        teamcraft::services::users::TokenLifetime::Days(30),
+        teamcraft::domain::TokenScope::Full,
+    )
+    .await
+    .unwrap();
     assert_eq!(ok(fresh.clone()).await, StatusCode::OK);
     let max = app.actor("max").await;
     let err = teamcraft::services::users::revoke_token(&app.pool, &max, record.id)
@@ -527,9 +532,15 @@ async fn personal_access_tokens_expire_are_revoked_and_die_with_the_account() {
     assert_eq!(audited, 1);
 
     // a deactivated account: every token stops working
-    let (_, third) = teamcraft::services::users::create_token(&app.pool, &erika, "ci2", None)
-        .await
-        .unwrap();
+    let (_, third) = teamcraft::services::users::create_token(
+        &app.pool,
+        &erika,
+        "ci2",
+        teamcraft::services::users::TokenLifetime::Unlimited,
+        teamcraft::domain::TokenScope::Full,
+    )
+    .await
+    .unwrap();
     assert_eq!(ok(third.clone()).await, StatusCode::OK);
     sqlx::query("UPDATE users SET active = false WHERE username = 'erika'")
         .execute(&app.pool)

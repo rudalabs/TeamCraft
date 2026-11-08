@@ -263,7 +263,7 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 
 .shell {
   display: grid;
-  grid-template-columns: var(--rail) var(--nav-width) 1px minmax(0, 1fr) auto;
+  grid-template-columns: var(--rail) var(--nav-width) 1px minmax(0, 1fr);
   grid-template-rows: 40px minmax(0, 1fr) 24px;
   height: 100vh;
 }
@@ -354,12 +354,6 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .workarea > .tabs { order: 1; }
 .workarea > .toolbar { order: 2; }
 .workarea > .tab-body { order: 3; }
-
-/* Ask TeamCraft: a drawer beside the tabs (shared/css/assistant.css, shared/js/assistant.js). */
-#assistant-drawer { grid-row: 2; grid-column: 5; }
-@media (max-width: 960px) {
-  #assistant-drawer { position: fixed; z-index: 30; top: 40px; bottom: 24px; right: 0; max-width: 92vw; box-shadow: var(--shadow-pop); }
-}
 
 .statusbar {
   grid-column: 1 / -1;
@@ -961,17 +955,14 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 .import-report-head.warn { color: var(--st-review-fg); }
 .import-report ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
 
-/* Assistant ("Ask TeamCraft") */
+/* Markdown answers and quick-prompt chips (company AI and local agent) */
 .assistant-quick { display: flex; gap: 6px; flex-wrap: wrap; }
-.assistant-answer { max-height: 52vh; overflow: auto; padding: 4px 12px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
-.assistant-answer > h3 { margin: 8px 0 6px; font-size: 13px; }
 .assistant-text { line-height: 20px; max-width: 72ch; }
 .assistant-text h3 { margin: 12px 0 4px; font-size: 13px; color: var(--text); }
 .assistant-text h4 { margin: 10px 0 4px; font-size: 13px; color: var(--text-muted); }
 .assistant-text ul, .assistant-text ol { margin: 4px 0 8px; padding-left: 20px; }
 .assistant-text pre { overflow-x: auto; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface-sunken); }
 .assistant-text .table-wrap { overflow-x: auto; margin: 4px 0 10px; }
-.assistant-answer .badge { margin: 0 2px 2px 0; }
 
 /* Agent (ACP): navigator controls, conversation tab, settings */
 .agent-nav { display: grid; gap: 8px; margin: 0 4px 0 8px; }
@@ -984,6 +975,10 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 .agent-plan .status-in_progress { color: var(--text); font-weight: 600; }
 
 .tab-body > .agent-panel { height: 100%; }
+/* the company AI in the Agent tab: the shared assistant panel in inline mode */
+.tab-body > .tc-assistant.tc-a-inline { height: 100%; max-width: 980px; margin: 0 auto; }
+/* the backend switch in the Agent toolbar: Company AI | Local agent */
+.toolbar .agent-switch .tool[aria-pressed="true"] { background: var(--selected); border-color: var(--selected); font-weight: 600; }
 .agent-panel { display: flex; flex-direction: column; gap: 12px; max-width: 980px; margin: 0 auto; min-height: 0; }
 .agent-log { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; padding: 4px 4px 12px; }
 .agent-empty { max-width: 640px; margin: 32px auto; color: var(--text-muted); }

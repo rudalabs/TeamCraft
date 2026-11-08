@@ -98,7 +98,7 @@
 
 {% if new_token %}
 <section class="card">
-  <h2>New API token “{{ new_token.name }}”</h2>
+  <h2>New API token “{{ new_token.name }}” ({{ m.token_scope(new_token.scope) }})</h2>
   <p>Copy the token now – it is shown only once and cannot be recovered.</p>
   <div class="token-box" id="new-token">{{ new_token.value }}</div>
   <div class="actions"><button type="button" data-copy="new-token">Copy</button></div>
@@ -110,17 +110,18 @@
 <div class="grid grid-2">
   <section class="card">
     <h2>API tokens</h2>
-    <p class="hint">Personal access tokens authenticate scripts and tools against the REST API at <span class="mono">{{ api_base }}</span> with your permissions.</p>
+    <p class="hint">Personal access tokens authenticate scripts and tools against the REST API at <span class="mono">{{ api_base }}</span> with your permissions. A scope narrows a token further: <em>read-only</em> tokens may only read (GET requests and the read-only MCP tools), <em>MCP only</em> tokens may only call the MCP endpoint for AI assistants. Give each script or assistant its own token with the narrowest scope it needs.</p>
     {% if tokens %}
     <table>
-      <thead><tr><th scope="col">Name</th><th scope="col">Prefix</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Prefix</th><th scope="col">Scope</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"></th></tr></thead>
       <tbody>
       {% for t in tokens %}
         <tr>
           <td>{{ t.name }}</td>
           <td class="mono small">{{ t.token_prefix }}…</td>
+          <td class="small">{{ m.token_scope(t.scope) }}</td>
           <td class="small nowrap">{{ m.time(t.last_used_at) }}</td>
-          <td class="small nowrap">{% if t.expires_at %}{{ m.time(t.expires_at) }}{% else %}never{% endif %}</td>
+          <td class="small nowrap">{{ m.token_expiry(t) }}</td>
           <td class="right">
             <form class="inline" method="post" action="/account/tokens/{{ t.id }}/revoke" data-confirm="Revoke token '{{ t.name }}'?">
               <button class="small danger" type="submit">Revoke</button>
@@ -139,6 +140,12 @@
         <option value="90" selected>90 days</option>
         <option value="365">1 year</option>
         <option value="never">never expires</option>
+      </select>
+      <select name="scope" aria-label="Scope">
+        <option value="full" selected>full access</option>
+        <option value="write">read and write (no approving)</option>
+        <option value="read_only">read-only</option>
+        <option value="mcp_only">MCP only</option>
       </select>
       <button type="submit">Create</button>
     </form>
