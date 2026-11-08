@@ -352,6 +352,21 @@ mod tests {
         assert_eq!(avatar_tint("admin"), avatar_tint("admin"));
         assert!((1..=6).contains(&avatar_tint("")));
         assert!((1..=6).contains(&avatar_tint("someone else")));
+        // FNV-1a is stable across builds: the tint of a user never changes,
+        // and all six tints are used (found by cargo mutants)
+        assert_eq!(
+            [
+                avatar_tint("admin"),
+                avatar_tint("erika"),
+                avatar_tint("max"),
+                avatar_tint("")
+            ],
+            [3, 2, 6, 2]
+        );
+        let mut tints: Vec<u32> = (0..60).map(|i| avatar_tint(&format!("user{i}"))).collect();
+        tints.sort_unstable();
+        tints.dedup();
+        assert_eq!(tints, [1, 2, 3, 4, 5, 6]);
     }
 
     // --- skins.css: token blocks and contrast --------------------------------
