@@ -564,9 +564,10 @@ real files and belong to section 3 once such files are at hand.
 ### 5. Feature demand (backlog)
 
 What users ask of PLM/PDM systems (reviews of Teamcenter, Vistapoint, Dokuly, OdooPLM and others, Siemens community
-enhancement requests), reduced to what TeamCraft does not have yet. Already present, done or out of reach without
-licensed CAD programs (native CAD add-ins, automatic drawing PDF/DXF) is left out. Like section 4, these are
-candidates, not commitments: a feature needs an issue with a reason first (see *Direction*).
+enhancement requests), reduced to what TeamCraft does not have yet; what is present or done is left out. Entries
+that need the CAD programs themselves (add-ins, generated drawings) are listed too – they need a Windows machine
+with licensed CAD software to build and test. Like section 4, these are candidates, not commitments: a feature
+needs an issue with a reason first (see *Direction*).
 
 #### Core data, CAD and vault
 
@@ -579,6 +580,14 @@ candidates, not commitments: a feature needs an issue with a reason first (see *
 - [ ] Central conversion queue for previews and derivatives with retries and a failure view
 - [ ] 3D preview of more native formats; IFC geometry in the viewer
 - [ ] PMI in the 3D preview, also PMI authored on assemblies
+- [ ] Native CAD add-ins (see the research entry in section 4): check in/out, search, revise, BOM and references inside
+  SolidWorks, Inventor, Solid Edge (occurrence semantics), Creo, CATIA, AutoCAD (xrefs) and Revit/BIM; NX comparable
+  to a managed mode (Save As, revise, structure, numbering)
+- [ ] ECAD/EPLAN integration: electrical design files and their BOM connectivity as first-class data, not
+  attachments
+- [ ] Derivatives generated on check-in or release – STEP, drawing PDF, DXF, Parasolid – through the CAD programs
+  (the desktop app's Inventor/Solid Edge STEP export is a first step)
+- [ ] Restore drills: back up and restore the data of each release in CI, not only the current one
 
 #### Search, metadata and usability
 
@@ -653,6 +662,16 @@ candidates, not commitments: a feature needs an issue with a reason first (see *
 - [ ] Migration tooling from Teamcenter, Windchill, Aras and SOLIDWORKS PDM
 - [ ] GA proofs: production readiness, migration and concurrency safety, scale validation, external security review,
   support and versioning policy
+
+#### Product and community
+
+- [ ] Staged adoption: start as a plain vault with versions and add changes, workflows and configuration later –
+  simple defaults, enterprise depth switched on per installation or group; CAD-centric wording over database terms
+- [ ] Documentation for every feature (user, admin, API, MCP), kept complete as features change
+- [ ] Feature requests in the open with voting and a visible status (GitHub Discussions or issue reactions, linked
+  from this roadmap), and a shorter path from request to release
+- [ ] A commercial or priority support option for companies that need one (outside the code; a decision of the
+  maintainers)
 
 ## Done
 
