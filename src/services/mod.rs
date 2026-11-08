@@ -15,6 +15,7 @@ pub mod attributes;
 pub mod audit;
 pub mod bom;
 pub mod bom_compare;
+pub mod bom_references;
 pub mod branding;
 pub mod changes;
 pub mod checkouts;

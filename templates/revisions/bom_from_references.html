@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}BOM from CAD references {{ rev.item_number }}/{{ rev.code }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block tc_context %}data-tc-kind="revision" data-tc-item="{{ rev.item_number }}" data-tc-revision="{{ rev.code }}" data-tc-view="bom-from-references"{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a><span>BOM from CAD references</span></p>
+    <h1>Create BOM from CAD references</h1>
+    <p class="subtitle">The parts the CAD files of <span class="mono">{{ rev.item_number }}/{{ rev.code }}</span> use and TeamCraft has. Quantities are the instances counted in the CAD file where it tells them.</p>
+  </div>
+</div>
+{% if not editable and not can_checkout %}
+<p class="notice">Check out the revision to create the BOM from the CAD references.</p>
+{% elif not editable %}
+<p class="notice">The revision is not checked out by you: check out to create the BOM.</p>
+{% endif %}
+<section class="card">
+  {% if plan.children %}
+  <form method="post" action="/revisions/{{ rev.id }}/bom/from-references">
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">Add</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col" class="num">Qty</th><th scope="col">Quantity from</th><th scope="col">Referenced by</th><th scope="col">Status</th></tr></thead>
+      <tbody>
+      {% for c in plan.children %}
+        <tr>
+          <td>{% if c.status == "new" or c.status == "differs" %}<input type="checkbox" name="child" value="{{ c.item_number }}" {% if c.selected %}checked{% endif %} aria-label="Add {{ c.item_number }}">{% endif %}</td>
+          <td class="mono nowrap">{{ c.item_number }}</td>
+          <td>{{ c.item_name }}</td>
+          <td class="num">{{ c.quantity_text }}</td>
+          <td>{{ c.quantity_label }}</td>
+          <td class="small muted">{{ c.via }}</td>
+          <td>{{ c.status_label }}{% if c.status == "differs" %}: BOM {{ c.bom_quantity_text }}, CAD {{ c.quantity_text }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if differs %}
+    <label class="check"><input type="checkbox" name="update_quantities" value="1"> Also change the quantity of the ticked lines that differ</label>
+    {% endif %}
+    <div class="actions">
+      {% if editable %}
+      <button type="submit">Add the ticked lines</button>
+      {% elif can_checkout %}
+      <button type="submit" name="checkout" value="1">Check out and create</button>
+      {% endif %}
+      <a class="button small" href="/revisions/{{ rev.id }}">Cancel</a>
+    </div>
+  </form>
+  {% else %}
+  <p class="empty">The CAD files of this revision lead to no further items.</p>
+  {% endif %}
+  {% if plan.hidden %}<p class="small muted">{{ plan.hidden }} hidden item(s) are used as well.</p>{% endif %}
+</section>
+{% if plan.not_in_teamcraft %}
+<section class="card">
+  <h2>Not in TeamCraft</h2>
+  <ul class="plain-list">
+    {% for u in plan.not_in_teamcraft %}<li><span class="mono">{{ u.name }}</span> <span class="small muted">· {{ u.via }}</span></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% if plan.excluded %}
+<p class="small muted">Left out (excluded from the BOM in the CAD file): {% for n in plan.excluded %}{{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+{% endif %}
+{% endblock %}

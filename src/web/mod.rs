@@ -171,6 +171,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/file-versions/{id}/mesh", get(revisions::mesh_version))
         // BOM
         .route("/revisions/{id}/bom", get(bom::show))
+        .route(
+            "/revisions/{id}/bom/from-references",
+            get(bom::from_references).post(bom::apply_from_references),
+        )
         .route("/revisions/{id}/bom/compare", get(personal::bom_compare))
         .route(
             "/revisions/{id}/bom/compare.xlsx",

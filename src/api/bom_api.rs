@@ -270,3 +270,25 @@ pub(super) async fn delete_bom_line(
     bom::remove(&st.db, &me, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// The BOM the CAD references of the revision lead to (read-only).
+pub(super) async fn get_bom_from_references(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+) -> AppResult<Response> {
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    Ok(Json(bom_references::plan(&st, &me, rev.id).await?).into_response())
+}
+
+/// Adds the chosen children of the plan as BOM lines (one transaction).
+pub(super) async fn post_bom_from_references(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    ApiJson(body): ApiJson<bom_references::ApplyRequest>,
+) -> AppResult<Response> {
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    let result = bom_references::apply(&st, &me, rev.id, &body).await?;
+    Ok((StatusCode::OK, Json(json!(result))).into_response())
+}
