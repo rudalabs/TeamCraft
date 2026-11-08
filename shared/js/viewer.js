@@ -12,7 +12,8 @@
 //
 // Mouse: drag = rotate, wheel = zoom, double-click = reset. Touch: one finger
 // rotates, pinch zooms. Keyboard (canvas focused): arrows rotate, +/- zoom,
-// 0 resets.
+// 0 resets. Below the canvas a section plane (X, Y or Z, position, side)
+// cuts the model open.
 (function () {
   "use strict";
 
@@ -224,11 +225,15 @@
 
     // Flat shading from screen-space derivatives: no normals have to be
     // transferred, and every face is lit from the viewer's side.
+    // Section plane (model coordinates): fragments on its positive side are
+    // cut away, so the inside shows; cut faces seen from behind stay dark.
     var VERT = "#version 300 es\nin vec3 aPos; in vec3 aCol; uniform mat4 uMvp; uniform mat4 uMv; uniform float uSize;\n" +
-      "out vec3 vView; out vec3 vCol;\n" +
-      "void main() { vCol = aCol; vView = (uMv * vec4(aPos, 1.0)).xyz; gl_Position = uMvp * vec4(aPos, 1.0); gl_PointSize = uSize; }";
-    var FRAG = "#version 300 es\nprecision highp float; in vec3 vView; in vec3 vCol; uniform bool uPoints; out vec4 frag;\n" +
-      "void main() { if (uPoints) { frag = vec4(vCol, 1.0); return; }\n" +
+      "out vec3 vView; out vec3 vCol; out vec3 vModel;\n" +
+      "void main() { vCol = aCol; vModel = aPos; vView = (uMv * vec4(aPos, 1.0)).xyz; gl_Position = uMvp * vec4(aPos, 1.0); gl_PointSize = uSize; }";
+    var FRAG = "#version 300 es\nprecision highp float; in vec3 vView; in vec3 vCol; in vec3 vModel;\n" +
+      "uniform bool uPoints; uniform bool uClipOn; uniform vec4 uClip; out vec4 frag;\n" +
+      "void main() { if (uClipOn && dot(vModel, uClip.xyz) > uClip.w) discard;\n" +
+      "  if (uPoints) { frag = vec4(vCol, 1.0); return; }\n" +
       "  vec3 n = normalize(cross(dFdx(vView), dFdy(vView)));\n" +
       "  float d = max(dot(n, normalize(vec3(0.35, 0.55, 1.0))), 0.0);\n" +
       "  float rim = pow(1.0 - max(n.z, 0.0), 3.0) * 0.18;\n" +
@@ -252,8 +257,22 @@
       mvp: gl.getUniformLocation(program, "uMvp"),
       mv: gl.getUniformLocation(program, "uMv"),
       size: gl.getUniformLocation(program, "uSize"),
-      points: gl.getUniformLocation(program, "uPoints")
+      points: gl.getUniformLocation(program, "uPoints"),
+      clipOn: gl.getUniformLocation(program, "uClipOn"),
+      clip: gl.getUniformLocation(program, "uClip")
     };
+    // axis: -1 = off, 0/1/2 = X/Y/Z; at: 0..1 of the model's extent on it
+    var section = { axis: -1, at: 0.5, flip: false };
+
+    // [nx, ny, nz, d] of the section plane, or null when it is off.
+    function clipPlane() {
+      if (section.axis < 0 || !loaded) return null;
+      var b = loaded.bounds, a = section.axis;
+      var pos = b[a] + section.at * (b[a + 3] - b[a]);
+      var n = [0, 0, 0];
+      n[a] = section.flip ? -1 : 1;
+      return [n[0], n[1], n[2], section.flip ? -pos : pos];
+    }
 
     var drawable = null;
     // zUp: CAD convention (NX, CATIA, FreeCAD, 3D printing); toggle for Y-up exports.
@@ -314,6 +333,59 @@
     }
     var legendView = null;
 
+    // Section controls below the canvas: axis (off/X/Y/Z), position, side.
+    function sectionControls() {
+      var el = document.createElement("div");
+      el.className = "viewer-legend viewer-section";
+      el.setAttribute("role", "group");
+      el.setAttribute("aria-label", "Section plane");
+      var axis = document.createElement("select");
+      axis.className = "small";
+      axis.setAttribute("aria-label", "Section plane");
+      [["-1", "No section"], ["0", "Section X"], ["1", "Section Y"], ["2", "Section Z"]].forEach(function (o) {
+        var opt = document.createElement("option");
+        opt.value = o[0];
+        opt.textContent = o[1];
+        axis.appendChild(opt);
+      });
+      var at = document.createElement("input");
+      at.type = "range";
+      at.min = "0";
+      at.max = "1000";
+      at.value = "500";
+      at.disabled = true;
+      at.setAttribute("aria-label", "Section position");
+      var flipLabel = document.createElement("label");
+      flipLabel.className = "small";
+      var flip = document.createElement("input");
+      flip.type = "checkbox";
+      flip.disabled = true;
+      flipLabel.appendChild(flip);
+      flipLabel.appendChild(document.createTextNode(" flip"));
+      var where = document.createElement("span");
+      where.className = "viewer-legend-value";
+      function update() {
+        section.axis = Number(axis.value);
+        section.at = Number(at.value) / 1000;
+        section.flip = flip.checked;
+        at.disabled = flip.disabled = section.axis < 0;
+        var plane = clipPlane();
+        where.textContent = plane
+          ? "XYZ".charAt(section.axis) + " = " + formatValue(Math.abs(plane[3]))
+          : "";
+        redraw();
+      }
+      axis.addEventListener("change", update);
+      at.addEventListener("input", update);
+      flip.addEventListener("change", update);
+      el.appendChild(axis);
+      el.appendChild(at);
+      el.appendChild(where);
+      el.appendChild(flipLabel);
+      return el;
+    }
+    var sectionEl = null;
+
     function frame(mesh) {
       var b = mesh.bounds;
       var size = [b[3] - b[0], b[4] - b[1], b[5] - b[2]];
@@ -352,6 +424,9 @@
       gl.uniformMatrix4fv(loc.mv, false, viewM);
       gl.uniform1f(loc.size, Math.max(1, Math.round(1.5 * dpr)));
       gl.uniform1i(loc.points, drawable.points ? 1 : 0);
+      var plane = clipPlane();
+      gl.uniform1i(loc.clipOn, plane ? 1 : 0);
+      if (plane) gl.uniform4f(loc.clip, plane[0], plane[1], plane[2], plane[3]);
       gl.bindVertexArray(drawable.vao);
       if (!drawable.colored) gl.vertexAttrib3f(loc.col, baseColor[0], baseColor[1], baseColor[2]);
       if (drawable.points) gl.drawArrays(gl.POINTS, 0, drawable.count);
@@ -458,6 +533,8 @@
           legendView.show(mesh.fields[0]);
           canvas.insertAdjacentElement("beforebegin", legendView.el);
         }
+        sectionEl = sectionControls();
+        canvas.insertAdjacentElement("afterend", sectionEl);
         canvas.setAttribute("data-ready", "true");
         if (options.onReady) options.onReady();
         redraw();
@@ -502,6 +579,7 @@
         disposed = true;
         if (scheme && scheme.removeEventListener) scheme.removeEventListener("change", onScheme);
         if (legendView) legendView.el.remove();
+        if (sectionEl) sectionEl.remove();
         windowListeners.forEach(function (l) { window.removeEventListener(l[0], l[1]); });
         var lose = gl.getExtension("WEBGL_lose_context");
         if (lose) lose.loseContext();

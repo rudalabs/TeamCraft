@@ -29,7 +29,10 @@ for the files they reference.
 
 Meshes, point clouds and STEP models open in a WebGL viewer in the browser
 and in the desktop app. Drag to rotate, wheel or pinch to zoom, arrow keys to
-turn, double-click to reset; *Z up / Y up* switches the convention.
+turn, double-click to reset; *Z up / Y up* switches the convention. Below the
+model, *Section X / Y / Z* cuts it open along a plane: the slider moves the
+plane through the model (its position is shown in model units), *flip* keeps
+the other side – for a look inside housings and assemblies.
 
 | Previewed           | Formats                                                                                                                       |
 |---------------------|-------------------------------------------------------------------------------------------------------------------------------|
