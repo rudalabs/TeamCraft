@@ -29,6 +29,10 @@ hex = "0.4"
 # BOM import from CAD exports: CSV (MIT/Unlicense), Excel/ODS (MIT), Windows-1252 CSV (MIT/Apache)
 csv = "1"
 calamine = "0.38"
+# QR codes on item labels, rendered as SVG (MIT/Apache-2.0, pure Rust)
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+# Encrypted backups: XChaCha20-Poly1305 in the STREAM construction (RustCrypto, Apache-2.0/MIT)
+chacha20poly1305 = { version = "0.10", features = ["stream"] }
 # Preview images embedded in Inventor / Solid Edge / SolidWorks files (OLE compound files, MIT)
 cfb = "0.10"
 crc32fast = "1"

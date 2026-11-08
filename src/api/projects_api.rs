@@ -269,6 +269,9 @@ pub(super) struct SetReviewPolicy {
     /// Code of the role group (empty or null: none).
     #[serde(default)]
     role_group: Option<String>,
+    /// Obsolete and supersede only through a change order (omitted: unchanged).
+    #[serde(default)]
+    obsolete_requires_change: Option<bool>,
 }
 
 /// `PUT /api/v1/projects/{code}/review-policy` – managers and admins.
@@ -283,6 +286,7 @@ pub(super) async fn review_policy_set(
         min_approvals: body.min_approvals,
         required_usernames: body.required_reviewers,
         role_group_code: body.role_group,
+        obsolete_requires_change: body.obsolete_requires_change,
     };
     Ok(Json(json!(
         project_policy::set_review_policy(&st.db, &me, project.id, &input).await?

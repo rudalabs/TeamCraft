@@ -100,9 +100,13 @@ fn damaged() -> anyhow::Error {
     anyhow!("The JT file is damaged.")
 }
 
-/// The 3D preview of a stand-alone JT 10 file: every visible tri-strip
-/// shape at its place, in millimetres, one part per occurrence.
+/// The 3D preview of a stand-alone JT file. JT 10: every visible tri-strip
+/// shape at its place, in millimetres, one part per occurrence; JT 9 (as NX
+/// writes it) goes to the reader of the JT inside NX parts.
 pub(crate) fn read(data: &[u8]) -> Result<Mesh> {
+    if data.starts_with(b"Version 9.") {
+        return super::jt::read_file(data);
+    }
     let file = JtFile::open(data)?;
     let graph = Graph::read(&file.segment(file.lsg)?.ok_or_else(damaged)?)?;
     let (occurrences, scale) = graph.occurrences()?;
@@ -217,7 +221,7 @@ impl<'a> JtFile<'a> {
             .and_then(|m| m.parse().ok())
             .unwrap_or(0);
         if major != 10 {
-            bail!("The JT file has version {number} – the 3D preview reads JT 10.");
+            bail!("The JT file has version {number} – the 3D preview reads JT 9 and 10.");
         }
         ensure!(
             super::bytes_at::<1>(data, 80)? == [0],
@@ -1137,12 +1141,16 @@ mod tests {
     }
 
     #[test]
-    fn not_jt_10_is_an_error() {
+    fn other_versions_and_garbage_are_errors() {
         assert!(read(b"not a JT file").is_err());
+        let mut eight = b"Version 8.1 JT".to_vec();
+        eight.resize(200, b' ');
+        let err = read(&eight).unwrap_err().to_string();
+        assert!(err.contains("reads JT 9 and 10"), "{err}");
+        // JT 9 goes to the NX reader, which rejects this one as damaged
         let mut nine = b"Version 9.5 JT".to_vec();
-        nine.resize(200, b' ');
-        let err = read(&nine).unwrap_err().to_string();
-        assert!(err.contains("reads JT 10"), "{err}");
+        nine.resize(200, 0);
+        assert!(read(&nine).is_err());
         let mut ten = b"Version 10.5 JT".to_vec();
         ten.resize(200, 0);
         assert!(read(&ten).is_err());

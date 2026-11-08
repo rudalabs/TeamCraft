@@ -17,13 +17,22 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
-- 3D preview of stand-alone JT files (`.jt`, version 10, ISO 14306): parts
-  and whole assemblies from one file – the scene graph (LZMA via the
-  pure-Rust `lzma-rs`, MIT) with transforms, units and hidden nodes, each
-  shape's finest level of detail through the JT 9 topology coder plus the
-  JT 10 integer codecs, hash-checked and refined along its normals. The
-  thumbnail is rendered from the 3D preview. Verified with the NIST box
-  assembly (36 placements equal to NX, sizes equal to NIST's STEP files).
+- 3D preview of stand-alone JT 10 files (`.jt`, ISO 14306): parts and whole
+  assemblies from one file – the scene graph (LZMA via the pure-Rust
+  `lzma-rs`, MIT) with transforms, units and hidden nodes, each shape's
+  finest level of detail through the JT 9 topology coder plus the JT 10
+  integer codecs, hash-checked and refined along its normals. The thumbnail
+  is rendered from the 3D preview. Verified with the NIST box assembly (36
+  placements equal to NX, sizes equal to NIST's STEP files). JT 9 files
+  keep the reader of #200.
+- Branding (#184): administrators rename the header name and subtitle ("TeamCraft PLM") under *Admin → Branding*;
+  effective at once in the web
+  header, page titles, sign-in page, notification e-mails and the desktop
+  title bar. `GET /api/v1/branding` returns `display_name` and `subtitle`,
+  `PUT /api/v1/branding/name` sets them (admins). The footer, About, version
+  and licence notices stay TeamCraft. `TEAMCRAFT_INSTANCE_NAME` is now only
+  the default.
+
 - Need-to-know project groups, step 5 (#151): access review of a restricted
   group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
   administrators: members with role, group role, source (manual or identity
@@ -60,8 +69,8 @@ Changes on `main` since the `v0.2.5` tag.
   group, already a reviewer, four-eyes); numbers the acting administrator
   may not read (need-to-know) are shown as "restricted item"; every object
   has its own audit entry.
-- Reviewer suggestions show people who changed the affected revisions as
-  *knows the item, cannot review* (`cannot_review` in the REST and MCP
+- Reviewer suggestions show people who changed the affected revisions as *knows the item, cannot review*
+  (`cannot_review` in the REST and MCP
   answers, desktop app, change page) instead of hiding them.
 - Result values in the item search and on the dashboard: filters
   `result` (`failed`, `passed`, `above_limit`, `below_limit`) and
@@ -76,14 +85,15 @@ Changes on `main` since the `v0.2.5` tag.
   the MCP `get_revision` files (marked untrusted). The rules are unverified
   against real files.
 - Review rounds and absent reviewers (#152, steps 5 and 6): withdrawing or
-  reopening a change after decisions keeps them as an earlier round
-  (`change_review_rounds`, `changes.review_round`, migration 0048). The change page and
+  reopening a change after decisions keeps them as an earlier round (`change_review_rounds`, `changes.review_round`,
+  migration 0048). The change page and
   `GET /api/v1/changes/{number}` show earlier rounds and flag pending
   reviewers who cannot decide (deactivated, demoted, blind to an item). The
   author or an administrator replaces a pending reviewer while the change is in
   review (`POST /api/v1/changes/{number}/reviewers/{old}/replace`, audited
   `change.replace_reviewer`); other decisions are kept.
-- Review policy per project group, step 2 of #152 (migration 0047): minimum approvals (default all), required reviewers and
+- Review policy per project group, step 2 of #152 (migration 0047): minimum approvals (default all), required reviewers
+  and
   an optional role group (e.g. QA) whose member must approve. `submit` refuses a
   change that cannot meet the policy of every affected group; the review outcome
   uses it. Form on the group page, `GET`/`PUT /api/v1/projects/{code}/review-policy`.
@@ -94,8 +104,8 @@ Changes on `main` since the `v0.2.5` tag.
   gets a specific message, ungrouped items count as "all reviewers".
 - Scoped personal access tokens (threat model F2, #151 step 6, #152 step 4):
   a token gets a scope when it is created (account page, `POST /api/v1/tokens`,
-  `teamcraft user create-token --scope`). `full` = read, write and approve
-  (what every token had before; existing tokens and the desktop app's token
+  `teamcraft user create-token --scope`). `full` = read, write and approve (what every token had before; existing tokens
+  and the desktop app's token
   stay `full`), `write` = read and write but no approving (reviewing a change
   order, deciding a change request, making a revision obsolete), `read_only` =
   GET/HEAD and the read-only MCP tools, `mcp_only` = only `POST /api/v1/mcp`.
@@ -117,7 +127,8 @@ Changes on `main` since the `v0.2.5` tag.
   account is deleted. While a policy is in force an administrator who is no
   manager member cannot loosen it, open the group, link an IdP group or add
   themselves; `/admin/audit` and webhooks honour the rule.
-- Need-to-know project groups, steps 3 and 4 (#151; migration 0051): interface switches per restricted group (`api_tokens`, `mcp`,
+- Need-to-know project groups, steps 3 and 4 (#151; migration 0051): interface switches per restricted group
+  (`api_tokens`, `mcp`,
   `assistant`, `webhooks`, `packages`; a switched-off interface sees the group
   as non-existent), a read and download log (`access_log`: views, file
   downloads, Pack and Go, BOM exports with channel and client address, one
@@ -139,8 +150,8 @@ Changes on `main` since the `v0.2.5` tag.
   checks apply to drafts and to every later submit.
 
 - Company AI instead of shadow AI (data-loss prevention):
-  `TEAMCRAFT_LOCAL_AGENTS=off` lets administrators turn off local AI agents
-  (the desktop app's *Agent* view, ACP), so that AI use goes through the
+  `TEAMCRAFT_LOCAL_AGENTS=off` lets administrators turn off local AI agents (the desktop app's *Agent* view, ACP), so
+  that AI use goes through the
   server-side assistant *Ask TeamCraft* with the provider and key the
   organisation configured (Anthropic, OpenAI/Azure, or a local
   OpenAI-compatible server), its per-question audit and its limits; the key
@@ -173,22 +184,28 @@ Changes on `main` since the `v0.2.5` tag.
   `.fem` as OptiStruct deck, `.dat` Nastran decks written by Simcenter 3D,
   `.f04`/`.pch`, Fluent meshes (`.msh`, `.msh.h5`), gzip-compressed and HDF5
   case/data/mesh files (checked by signature), projects (`.flprj`), `.cdat`,
-  journals (`.jou`), transcripts (`.trn`) and report files
-  (`report-file-*.out`), STAR-CCM+ solution histories (`.simh`) and macros
-  (`.java` naming STAR-CCM+), Gmsh meshes. Transcripts, journals, macros and
+  journals (`.jou`), transcripts (`.trn`) and report files (`report-file-*.out`), STAR-CCM+ solution histories (`.simh`)
+  and macros (`.java` naming STAR-CCM+), Gmsh meshes. Transcripts, journals, macros and
   Nastran text output are indexed as text; a large plain-text file keeps its
   last 64 KiB in the search text and `read_file_text`.
 - Extraction templates: a new method `table` for whitespace-separated tables
   with quoted column names (Fluent report files; migration 0040), and
   `pick = last` reads the last 2 MB of a file larger than 2 MB first. New
   fuzz targets `cadformat` and `resultscan`.
+- 3D preview of SOLIDWORKS parts (`.sldprt`, 2015 and later) from the
+  display tessellation SOLIDWORKS stores in the file, refined along its
+  exact surface normals like NX parts. SOLIDWORKS assemblies are put
+  together from the previews of their part files, with the placements of
+  their component tree; suppressed and hidden components are left out. The
+  thumbnails of SOLIDWORKS parts and assemblies are rendered from the 3D
+  preview.
 
 ### Changed
 
 - Desktop: *Ask TeamCraft* and *Agent* are one view. The company AI (the
   server's assistant, with page context, quick actions, the drafts checkbox
-  and the conversation kept on the server) is a backend of the *Agent* view
-  (`Ctrl/Cmd+4`, the *Agent* button of revision and change tabs); the *Ask*
+  and the conversation kept on the server) is a backend of the *Agent* view (`Ctrl/Cmd+4`, the *Agent* button of
+  revision and change tabs); the *Ask*
   rail button, the drawer beside the tabs, *View → Ask TeamCraft*
   (`Ctrl/Cmd+5`) and the *Ask…* toolbar buttons are gone. The web UI keeps
   its sidebar.
@@ -205,8 +222,7 @@ Changes since the `v0.2.0` tag.
 
 ### Added
 
-- The desktop app tells the user when its version does not fit the server
-  (version handshake, see the support policy).
+- The desktop app tells the user when its version does not fit the server (version handshake, see the support policy).
 - The desktop settings dialog has the notification settings of the web account
   page (what to be told about, e-mail, Mattermost, send a test);
   `GET /api/v1/notifications/settings` also returns the form description.
@@ -215,8 +231,8 @@ Changes since the `v0.2.0` tag.
   Wrong current passwords of the own password change, in the web form and over
   REST, count like failed sign-ins (429 with `Retry-After`) and are audited as
   `user.password_failed`.
-- Administrators can replace the wide logo (top left) and the square logo
-  (bottom left, tab icon) under *Admin → Branding*; the desktop app shows them
+- Administrators can replace the wide logo (top left) and the square logo (bottom left, tab icon) under *Admin →
+  Branding*; the desktop app shows them
   too. See [Branding](https://rudalabs.github.io/TeamCraft/admin/branding.html).
 - `GET /metrics` in the Prometheus text format (request counts and latency,
   database pool, outbox backlogs, 3D preview queue), enabled by

@@ -3721,6 +3721,127 @@ async fn nx_assemblies_are_put_together_from_their_parts() {
     app.teardown().await;
 }
 
+/// Width × height of a PNG.
+fn png_size(png: &[u8]) -> (u32, u32) {
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    let be = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+    (be(16), be(20))
+}
+
+/// A SOLIDWORKS assembly is shown with the previews of its parts, placed
+/// as its component tree says (the NIST assembly: 36 instances of 8
+/// parts); parts and assemblies get thumbnails drawn from the 3D preview,
+/// an assembly without its parts keeps the image stored in the file.
+#[tokio::test]
+async fn solidworks_assemblies_are_put_together_from_their_parts() {
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    for name in ["Crada", "Lonely"] {
+        app.api(
+            Method::POST,
+            "/api/v1/items",
+            &eng,
+            Some(json!({ "item_type": "assembly", "name": name, "project": "GEARBOX" })),
+        )
+        .await;
+    }
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/cad/nist/mtc-assembly/solidworks");
+    let assembly = "nist_mtc_crada_assembly_rev-D.SLDASM";
+    let upload = |item: &'static str, name: &'static str| {
+        let data = std::fs::read(dir.join(name)).unwrap();
+        let app = &app;
+        let eng = &eng;
+        async move {
+            let files = app
+                .api_multipart(
+                    &format!("/api/v1/items/{item}/revisions/A/files"),
+                    eng,
+                    &[(name, data.as_slice())],
+                    &[],
+                )
+                .await;
+            assert_eq!(
+                files.status,
+                StatusCode::CREATED,
+                "{name}: {}",
+                files.text()
+            );
+            files.json()[0]["id"].as_str().unwrap().to_string()
+        }
+    };
+    // the assembly alone: none of its parts is in TeamCraft
+    let lonely = upload("ASM-000002", assembly).await;
+    let thumb = |id: String| {
+        let app = &app;
+        let eng = &eng;
+        async move {
+            let r = app
+                .api(
+                    Method::GET,
+                    &format!("/api/v1/files/{id}/thumbnail"),
+                    eng,
+                    None,
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+            assert_eq!(r.header("content-type").as_deref(), Some("image/png"));
+            png_size(&r.body)
+        }
+    };
+    assert_eq!(thumb(lonely.clone()).await, (640, 480), "the stored image");
+
+    let asm_id = upload("ASM-000001", assembly).await;
+    let mut part_id = String::new();
+    for name in [
+        "nist_mtc_crada_box_rev-D.SLDPRT",
+        "nist_mtc_crada_cover_rev-B.SLDPRT",
+        "nist_mtc_crada_plate_rev-A.SLDPRT",
+        "nist_mtc_crada_polycarb-window.SLDPRT",
+        "90591A141_ZINC PLATED STEEL HEX NUT.SLDPRT",
+        "91274A118_COATED ALLOY STEEL SOCKET HEAD CAP SCREW.SLDPRT",
+        "91274A141_COATED ALLOY STEEL SOCKET HEAD CAP SCREW.SLDPRT",
+        "91304A112_BLUE FLAT-HEAD SOCKET CAP SCREW.SLDPRT",
+    ] {
+        let id = upload("ASM-000001", name).await;
+        if name.starts_with("nist_mtc_crada_box") {
+            part_id = id;
+        }
+    }
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{asm_id}/mesh"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.parts, 36, "every instance placed");
+    let b = mesh.bounds();
+    // the box is 152.4 × 101.6 mm; screws stand out on top
+    assert!((b[3] - b[0] - 152.4).abs() < 1.0, "{b:?}");
+    assert!((b[4] - b[1] - 101.6).abs() < 1.0, "{b:?}");
+    let again = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{asm_id}/mesh"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(again.body, r.body, "cached");
+
+    let side = teamcraft::thumbnail::RENDERED_SIZE;
+    let rendered = (side, side);
+    assert_eq!(thumb(asm_id).await, rendered);
+    assert_eq!(thumb(part_id).await, rendered);
+    app.teardown().await;
+}
+
 /// A stand-alone JT 10 file carries its parts and its assembly: one upload
 /// gives the placed 3D preview (the NIST assembly: 36 instances of 8
 /// parts) and a thumbnail rendered from it.
@@ -3776,7 +3897,7 @@ async fn jt_files_show_their_assembly_in_3d() {
         .await;
     assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
     assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
-    assert_eq!(&thumb.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
+    assert_eq!(png_size(&thumb.body), (512, 512));
     app.teardown().await;
 }
 

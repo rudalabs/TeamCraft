@@ -17,28 +17,29 @@ TeamCraft uses [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`.
   changes to the configuration, the REST API, the database schema and the
   command line. Each release note says what the upgrade needs.
 - **From 1.0 on**:
-  - a **patch** release (`1.0.1`) fixes bugs and security problems and does
-    not change behaviour that users rely on;
-  - a **minor** release (`1.1.0`) adds features and stays compatible: an
-    upgrade within the major version does not need manual changes beyond the
-    release notes;
-  - a **major** release (`2.0.0`) may break compatibility. Its release notes
-    list every breaking change and the steps for the upgrade.
+    - a **patch** release (`1.0.1`) fixes bugs and security problems and does
+      not change behaviour that users rely on;
+    - a **minor** release (`1.1.0`) adds features and stays compatible: an
+      upgrade within the major version does not need manual changes beyond the
+      release notes;
+    - a **major** release (`2.0.0`) may break compatibility. Its release notes
+      list every breaking change and the steps for the upgrade.
 - A **pre-release** (`1.0.0-rc.1`) is for testing. It gets no fixes beyond the
   next candidate or the final release.
 
 Database migrations are part of the upgrade. A release never changes an
-existing migration; a new migration is added instead. Back up the database and the vault before any upgrade, as described in
+existing migration; a new migration is added instead. Back up the database and the vault before any upgrade, as
+described in
 [Operations](operations.md#backups).
 
 ## Which versions receive fixes
 
-| Version                          | Receives                                            |
-|----------------------------------|-----------------------------------------------------|
-| Latest minor (`1.x`)             | all fixes: bugs, security problems                  |
-| Previous minor                   | security fixes, for six months after the next minor |
-| Older minors                     | none; upgrade to a supported minor                  |
-| `0.x` (before 1.0)               | only `main`                                         |
+| Version              | Receives                                            |
+|----------------------|-----------------------------------------------------|
+| Latest minor (`1.x`) | all fixes: bugs, security problems                  |
+| Previous minor       | security fixes, for six months after the next minor |
+| Older minors         | none; upgrade to a supported minor                  |
+| `0.x` (before 1.0)   | only `main`                                         |
 
 From 1.0 on, when a new minor version is released, the previous minor version
 keeps receiving **security fixes for six months** after that release. After
@@ -80,9 +81,9 @@ problem may be fixed in a newer release of your supported version.
 The desktop app checks the server's version on the sign-in screen and when its
 main window opens, and shows a warning once per server when the two do not fit:
 
-| App | Server that works |
-|-----|-------------------|
-| `0.x.y` | the same `0.x` (any patch version) |
+| App               | Server that works                                       |
+|-------------------|---------------------------------------------------------|
+| `0.x.y`           | the same `0.x` (any patch version)                      |
 | `1.a.y` and later | the same major version and a minor version `a` or newer |
 
 Patch versions never matter. The message does not block the sign-in; it tells

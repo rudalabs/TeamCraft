@@ -1,10 +1,12 @@
-//! 3D previews of NX assemblies.
+//! 3D previews of NX and SOLIDWORKS assemblies.
 //!
-//! An NX assembly stores no tessellation of its own, only its components
-//! and their placements (`nxasm`). The preview is put together from the
-//! previews of the component files:
+//! An assembly's preview is put together from the previews of its
+//! component files, with the placements the assembly stores: NX in its
+//! structure stream (`nxasm`), SOLIDWORKS in its component tree
+//! (`swpart::placements`, sub-assemblies already resolved there).
 //!
-//! 1. The components are found **by file name** (`NAME.prt`), the way file
+//! 1. The components are found **by file name** (`NAME.prt` for NX, the
+//!    file name of the stored path for SOLIDWORKS), the way file
 //!    references are matched (`references::files_of_revision`): a file of
 //!    the assembly's own revision first, otherwise the latest revision of
 //!    another item the viewer may see. Components that are not in
@@ -58,8 +60,49 @@ struct Found {
     revision_id: Uuid,
 }
 
+/// The CAD system of an assembly: how its components are named and which
+/// files may be components.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Family {
+    Nx,
+    SolidWorks,
+}
+
+impl Family {
+    fn of(format: &str) -> Option<Family> {
+        match format {
+            "nx-part" => Some(Family::Nx),
+            "solidworks-assembly" => Some(Family::SolidWorks),
+            _ => None,
+        }
+    }
+
+    /// The lower-case file name of a component.
+    fn key(self, name: &str) -> String {
+        match self {
+            Family::Nx => format!("{}.prt", name.to_lowercase()),
+            Family::SolidWorks => name.to_lowercase(),
+        }
+    }
+
+    fn accepts(self, format: &str) -> bool {
+        match self {
+            Family::Nx => format == "nx-part",
+            Family::SolidWorks => matches!(format, "solidworks-part" | "solidworks-assembly"),
+        }
+    }
+
+    /// The preview format of the parts.
+    fn part_format(self) -> PreviewFormat {
+        match self {
+            Family::Nx => PreviewFormat::NxPart,
+            Family::SolidWorks => PreviewFormat::SwPart,
+        }
+    }
+}
+
 /// The parts of an assembly with their placements in the assembly.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Plan {
     /// (content hash of the part file, placement in the top assembly).
     pub parts: Vec<(String, nxasm::Component)>,
@@ -67,18 +110,20 @@ pub struct Plan {
     pub missing: Vec<String>,
     /// Hex key of everything used (for the cache).
     pub key: String,
+    /// The preview format of the parts.
+    pub part_format: PreviewFormat,
 }
 
-/// Finds the component files by name (lower case `name.prt`).
+/// Finds the component files by their lower-case file names.
 async fn resolve(
     pool: &PgPool,
     actor: &Actor,
     revision_id: Uuid,
-    names: &[String],
+    keys: &[String],
 ) -> AppResult<HashMap<String, Found>> {
-    let keys: Vec<String> = names
+    let keys: Vec<String> = keys
         .iter()
-        .map(|n| format!("{}.prt", n.to_lowercase()))
+        .cloned()
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -108,38 +153,73 @@ async fn resolve(
     Ok(out)
 }
 
-/// What the file of a blob is (read with seeks, off the async runtime).
-async fn kind(st: &AppState, sha256: &str) -> AppResult<Kind> {
+/// Largest component tree read from a SOLIDWORKS assembly.
+const MAX_TREE: u64 = 64 * 1024 * 1024;
+
+/// What the file of a blob is (read with seeks, off the async runtime). A
+/// SOLIDWORKS part has no components; a SOLIDWORKS assembly lists its
+/// parts, sub-assemblies resolved.
+async fn kind(st: &AppState, sha256: &str, format: &str) -> AppResult<Kind> {
     let path = st.vault.object_path(sha256)?;
-    tokio::task::spawn_blocking(move || nxasm::kind_of(&path).unwrap_or(Kind::Other))
-        .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("reading the assembly failed: {e}")))
+    let format = format.to_string();
+    tokio::task::spawn_blocking(move || match format.as_str() {
+        "solidworks-part" => Kind::Part(Vec::new()),
+        "solidworks-assembly" => solidworks_assembly(&path).unwrap_or(Kind::Other),
+        _ => nxasm::kind_of(&path).unwrap_or(Kind::Other),
+    })
+    .await
+    .map_err(|e| AppError::Other(anyhow::anyhow!("reading the assembly failed: {e}")))
 }
 
-/// The parts of the NX assembly `sha256` (a file of `revision_id`), or
-/// `None` when it is no assembly.
+fn solidworks_assembly(path: &std::path::Path) -> std::io::Result<Kind> {
+    let file = std::io::BufReader::new(std::fs::File::open(path)?);
+    let Some(mut sw) = crate::swpart::SwContainer::open(file)? else {
+        return Ok(Kind::Other);
+    };
+    Ok(
+        match sw
+            .read(crate::swpart::COMPONENT_TREE_SECTION, MAX_TREE)?
+            .and_then(|xml| crate::swpart::placements(&xml))
+        {
+            Some(parts) if !parts.is_empty() => Kind::Assembly(parts),
+            _ => Kind::Other,
+        },
+    )
+}
+
+/// The parts of the assembly `sha256` (a file of `revision_id` in the
+/// format `format`), or `None` when it is no assembly.
 pub async fn plan(
     st: &AppState,
     actor: &Actor,
     revision_id: Uuid,
     sha256: &str,
+    format: &str,
 ) -> AppResult<Option<Plan>> {
-    let Kind::Assembly(top) = kind(st, sha256).await? else {
+    let Some(family) = Family::of(format) else {
+        return Ok(None);
+    };
+    let Kind::Assembly(top) = kind(st, sha256, format).await? else {
         return Ok(None);
     };
     let identity = nxasm::identity();
-    let mut plan = Plan::default();
+    let mut plan = Plan {
+        parts: Vec::new(),
+        missing: Vec::new(),
+        key: String::new(),
+        part_format: family.part_format(),
+    };
     let mut hasher = Sha256::new();
     hasher.update(sha256.as_bytes());
     // (components, placement of the assembly, its revision, path of hashes)
     let mut stack = vec![(top, identity, revision_id, vec![sha256.to_string()])];
     while let Some((components, parent, revision, path)) = stack.pop() {
-        let names: Vec<String> = components.iter().map(|c| c.name.clone()).collect();
-        let found = resolve(&st.db, actor, revision, &names).await?;
+        let keys: Vec<String> = components.iter().map(|c| family.key(&c.name)).collect();
+        let found = resolve(&st.db, actor, revision, &keys).await?;
         let mut kinds: HashMap<String, Kind> = HashMap::new();
         for c in components.iter().rev() {
             let placement = c.within(&parent);
-            let Some(file) = found.get(&format!("{}.prt", c.name.to_lowercase())) else {
+            let Some(file) = found.get(&family.key(&c.name)) else {
                 plan.missing.push(c.name.clone());
                 hasher.update(b"\0missing:");
                 hasher.update(c.name.as_bytes());
@@ -147,12 +227,12 @@ pub async fn plan(
             };
             hasher.update(b"\0");
             hasher.update(file.sha256.as_bytes());
-            if file.format != "nx-part" || path.contains(&file.sha256) {
+            if !family.accepts(&file.format) || path.contains(&file.sha256) {
                 plan.missing.push(c.name.clone());
                 continue;
             }
             if !kinds.contains_key(&file.sha256) {
-                let k = kind(st, &file.sha256).await?;
+                let k = kind(st, &file.sha256, &file.format).await?;
                 kinds.insert(file.sha256.clone(), k);
             }
             // a part may hold components besides its own bodies
@@ -187,15 +267,16 @@ pub async fn plan(
     Ok(Some(plan))
 }
 
-/// The composed preview mesh of an NX assembly (cached), or `None` when
-/// the file is no assembly or none of its parts is in TeamCraft.
+/// The composed preview mesh of an assembly (cached), or `None` when the
+/// file is no assembly or none of its parts is in TeamCraft.
 pub async fn mesh(
     st: &AppState,
     actor: &Actor,
     revision_id: Uuid,
     sha256: &str,
+    format: &str,
 ) -> AppResult<Option<PathBuf>> {
-    let Some(plan) = plan(st, actor, revision_id, sha256).await? else {
+    let Some(plan) = plan(st, actor, revision_id, sha256, format).await? else {
         return Ok(None);
     };
     let path = st.previews.assembly_path(sha256, &plan.key)?;
@@ -208,11 +289,7 @@ pub async fn mesh(
         if meshes.contains_key(part) {
             continue;
         }
-        if let Ok(p) = st
-            .previews
-            .mesh(&st.vault, part, PreviewFormat::NxPart)
-            .await
-        {
+        if let Ok(p) = st.previews.mesh(&st.vault, part, plan.part_format).await {
             meshes.insert(part.clone(), p);
         }
     }

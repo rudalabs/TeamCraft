@@ -8,7 +8,7 @@ use axum::{
     Form,
 };
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
@@ -281,6 +281,26 @@ pub async fn show(
             .collect(),
     )
     .to_string();
+    // "Fill with AI…": report files to choose from, and whether the button
+    // is offered (assistant configured, editor of the group, group has not
+    // switched the assistant off).
+    let report_files: Vec<String> = file_list
+        .iter()
+        .filter(|f| crate::services::assistant::is_report_file(&f.filename))
+        .map(|f| f.filename.clone())
+        .collect();
+    let can_fill_with_ai = crate::services::assistant::enabled(&st)
+        && me.can_edit()
+        && me.can_edit_project(rev.project_id)
+        && match rev.project_id {
+            Some(p) => !crate::services::project_policy::denied_groups(
+                &st.db,
+                &[crate::services::project_policy::Interface::Assistant],
+            )
+            .await?
+            .contains(&p),
+            None => true,
+        };
     // Every file together with its version history (newest first).
     let attachments: Vec<serde_json::Value> = file_list
         .into_iter()
@@ -290,6 +310,7 @@ pub async fn show(
             let mut value = json!(f);
             value["versions"] = json!(versions);
             value["preview"] = json!(preview);
+            value["used_by"] = json!(used_by_warning(&f.filename, &file_referrers));
             value
         })
         .collect();
@@ -349,6 +370,25 @@ pub async fn show(
         "add_to_change": can_work && open_change.is_none(),
         "acknowledge": me.can_edit() && me.can_edit_project(item.project_id),
     });
+    // CAD files of this revision that lead to other items (assemblies and
+    // NX models): offers "Create BOM from CAD references"
+    let cad_structure = file_refs.iter().any(|f| {
+        matches!(
+            f.format_kind,
+            Some(crate::cadformat::FormatKind::Assembly | crate::cadformat::FormatKind::Model)
+        ) && f
+            .references
+            .iter()
+            .any(|r| r.matches.iter().any(|m| !m.same_revision))
+    });
+    let files_hint = domain::files_hint(
+        state,
+        rev.checked_out_by,
+        me.id,
+        editable,
+        can_work,
+        in_project && !item_has_open_revision,
+    );
     let suggestions = if editable {
         let children: Vec<String> = lines.iter().map(|l| l.child_number.clone()).collect();
         references::suggestions(&file_refs, &children, &outgoing)
@@ -387,6 +427,8 @@ pub async fn show(
             "images": gallery,
             "proposals": proposals,
             "can_decide": me.can_edit() && me.can_edit_project(rev.project_id),
+            "can_fill_with_ai": can_fill_with_ai,
+            "report_files": report_files,
         })
     } else {
         serde_json::Value::Null
@@ -441,6 +483,7 @@ pub async fn show(
             "native_without_preview": native_without_preview,
             "similar": similar_parts,
             "lines": lines,
+            "cad_structure": cad_structure,
             "where_used": where_used,
             "interchange": interchange,
             "hidden": {
@@ -459,6 +502,11 @@ pub async fn show(
                 "kinds": reference_kinds,
             },
             "impact_groups": impacts::group_by_dependent(open_impacts),
+            "files_hint": {
+                "kind": files_hint.as_str(),
+                "can_revise": matches!(files_hint, domain::FilesHint::Frozen { can_revise: true }),
+                "type_hint": domain::files_type_hint(&rev.item_type),
+            },
             "simulation": simulation,
             "based_simulations": based_simulations,
             "as_built": as_built,
@@ -1072,7 +1120,7 @@ async fn rendered_thumbnail(
         .map_err(store_failed);
     }
     let Some(mesh_path) =
-        crate::services::assemblies::mesh(st, me, file.revision_id, &sha256).await?
+        crate::services::assemblies::mesh(st, me, file.revision_id, &sha256, &file.format).await?
     else {
         return Ok(None);
     };
@@ -1099,7 +1147,8 @@ async fn rendered_thumbnail(
 
 /// The preview image of a CAD file, read once and cached next to the 3D
 /// previews: stored inside the file (Inventor, Solid Edge, SolidWorks, NX
-/// assemblies and drawings) or rendered from the 3D preview (NX parts).
+/// assemblies and drawings) or rendered from the 3D preview (NX parts,
+/// SOLIDWORKS parts and assemblies).
 /// Shared with the REST API.
 pub(crate) async fn thumbnail_response(
     st: &AppState,
@@ -1170,6 +1219,85 @@ pub async fn preview(
     preview_page(&st, &ctx, file, current).await
 }
 
+/// The where-used warning of a file before it is removed: the readable CAD
+/// files of other items that reference it ("ASM-000001/B frame.iam", at most
+/// three named, then "and n more"); empty when nothing references it.
+fn used_by_warning(
+    filename: &str,
+    referrers: &[crate::services::references::FileReferrer],
+) -> String {
+    let users: Vec<String> = referrers
+        .iter()
+        .filter(|r| r.referenced.eq_ignore_ascii_case(filename))
+        .map(|r| format!("{}/{} {}", r.item_number, r.revision_code, r.filename))
+        .collect();
+    match users.len() {
+        0 => String::new(),
+        n => {
+            let named = users[..n.min(3)].join(", ");
+            let more = if n > 3 {
+                format!(" and {} more", n - 3)
+            } else {
+                String::new()
+            };
+            format!(
+                " It is still referenced by {n} file{} of other items: {named}{more} – their references break.",
+                if n == 1 { "" } else { "s" }
+            )
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct NoteBody {
+    x: f64,
+    y: f64,
+    z: f64,
+    body: String,
+}
+
+/// `GET /file-versions/{id}/annotations`: the 3D notes (JSON, viewer.js).
+pub async fn annotations(
+    State(st): State<AppState>,
+    crate::auth::WebUser(me): crate::auth::WebUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<axum::Json<Value>> {
+    let notes = crate::services::annotations::list(&st.db, &me, id).await?;
+    Ok(axum::Json(json!(notes)))
+}
+
+/// `POST /file-versions/{id}/annotations`: pins a note (JSON, viewer.js).
+pub async fn add_annotation(
+    State(st): State<AppState>,
+    crate::auth::WebUser(me): crate::auth::WebUser,
+    Path(id): Path<Uuid>,
+    crate::api::ApiJson(body): crate::api::ApiJson<NoteBody>,
+) -> AppResult<axum::Json<Value>> {
+    let note = crate::services::annotations::add(
+        &st.db,
+        &me,
+        id,
+        crate::services::annotations::NewAnnotation {
+            x: body.x,
+            y: body.y,
+            z: body.z,
+            body: body.body,
+        },
+    )
+    .await?;
+    Ok(axum::Json(json!(note)))
+}
+
+/// `POST /annotations/{id}/delete`: removes a note (JSON, viewer.js).
+pub async fn remove_annotation(
+    State(st): State<AppState>,
+    crate::auth::WebUser(me): crate::auth::WebUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<axum::Json<Value>> {
+    crate::services::annotations::remove(&st.db, &me, id).await?;
+    Ok(axum::Json(json!({ "deleted": true })))
+}
+
 /// 3D preview page of a specific (older) version of a file.
 pub async fn preview_version(
     State(st): State<AppState>,
@@ -1206,6 +1334,13 @@ async fn preview_page(
         .find(|v| v.version == version)
         .cloned()
         .ok_or_else(|| AppError::not_found("File version not found."))?;
+    // earlier/later models of the same file for the graphical comparison
+    // (meshes only: point clouds and result fields are not overlaid)
+    let compare = if format.is_point_cloud() || format.is_result() {
+        Vec::new()
+    } else {
+        files::compare_candidates(&st.db, &ctx.me, file.id, &shown.sha256).await?
+    };
     // start the conversion while the browser loads the page (with the
     // shape signature, unless it is a point cloud)
     if format.is_point_cloud() {
@@ -1222,6 +1357,7 @@ async fn preview_page(
             "shown": shown,
             "is_current": shown.version == file.version,
             "versions": versions,
+            "compare": compare,
             "rev": rev,
             "format": format.as_str(),
             "is_brep": format.is_brep(),
@@ -1243,9 +1379,9 @@ pub(crate) async fn mesh_response(
     let format = preview_of(file).ok_or_else(no_preview)?;
     let path = match st.previews.mesh(&st.vault, sha256, format).await {
         Ok(path) => path,
-        // an NX assembly: put together from the previews of its parts
-        Err(e) if format == crate::preview::PreviewFormat::NxPart => {
-            crate::services::assemblies::mesh(st, me, file.revision_id, sha256)
+        // an NX or SOLIDWORKS assembly: put together from its parts' previews
+        Err(e) if format.may_be_assembly() => {
+            crate::services::assemblies::mesh(st, me, file.revision_id, sha256, format.as_str())
                 .await?
                 .ok_or(e)?
         }
@@ -1399,4 +1535,45 @@ pub async fn delete_file(
             format!("Removed {}", file.filename),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::services::references::FileReferrer;
+    use uuid::Uuid;
+
+    fn referrer(number: &str, filename: &str, referenced: &str) -> FileReferrer {
+        FileReferrer {
+            item_id: Uuid::nil(),
+            item_number: number.into(),
+            revision_id: Uuid::nil(),
+            revision_code: "A".into(),
+            revision_state: "in_work".into(),
+            item_name: "Frame".into(),
+            file_id: Uuid::nil(),
+            filename: filename.into(),
+            referenced: referenced.into(),
+            export_name: false,
+        }
+    }
+
+    #[test]
+    fn removing_a_referenced_file_warns_with_its_users() {
+        assert_eq!(super::used_by_warning("bracket.prt", &[]), "");
+        let one = [referrer("ASM-000001", "frame.asm", "Bracket.PRT")];
+        let text = super::used_by_warning("bracket.prt", &one);
+        assert!(
+            text.contains("1 file of other items: ASM-000001/A frame.asm"),
+            "{text}"
+        );
+        let many: Vec<_> = (1..=5)
+            .map(|i| referrer(&format!("ASM-00000{i}"), "frame.asm", "bracket.prt"))
+            .collect();
+        let text = super::used_by_warning("bracket.prt", &many);
+        assert!(
+            text.contains("5 files") && text.contains("and 2 more"),
+            "{text}"
+        );
+        assert_eq!(super::used_by_warning("other.prt", &many), "");
+    }
 }

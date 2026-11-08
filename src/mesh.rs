@@ -33,6 +33,7 @@ mod p21;
 mod pn;
 pub mod render;
 mod step;
+mod sw;
 mod tessellated;
 
 pub use step::MAX_STEP_BYTES;
@@ -429,6 +430,10 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "step" => step::read(data)?,
         "nx-part" => jt::read_nx(data)?,
         "jt" => jt10::read(data)?,
+        "solidworks-part" => sw::read_part(data)?,
+        "solidworks-assembly" => bail!(
+            "A SOLIDWORKS assembly is shown with the previews of its parts (found by file name)."
+        ),
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
         "calculix-frd" => crate::simmesh::frd(data)?,

@@ -11,6 +11,13 @@ is kept in **revisions** `A, B, …, Y, AA, …` (I, O, Q, S, X and Z are
 skipped, as in ASME Y14.35). A revision carries the attributes (name,
 description, material, mass, unit cost), the files and the bill of materials.
 
+Next to the number on the revision page, *Copy number* puts the item number
+on the clipboard (the item list has a small copy button per row), and
+*Label* opens a printable label with a QR code. The code holds the short link
+`<public URL>/i/<number>`, which opens the item's latest revision after
+sign-in – for parts, fixtures and prototypes on the shelf. The QR code is
+also available as SVG (`/items/{id}/qr.svg`) for label printers.
+
 ## Lifecycle
 
 ```text
@@ -19,26 +26,28 @@ description, material, mass, unit cost), the files and the bill of materials.
   └──reject/withdraw┘
 ```
 
-| Transition           | How                                                                               | Who                                                                      |
-|----------------------|-----------------------------------------------------------------------------------|--------------------------------------------------------------------------|
-| WIP → In Review      | submit a change order containing the revision                                     | the change's author (CAD editor of the item's project group) or an admin |
-| In Review → Released | automatically when every reviewer approved – all revisions of the change together | the assigned reviewers, never the author or someone who changed the data   |
-| In Review → WIP      | a reviewer rejects with a reason, or the author withdraws                         | reviewers; author or admin                                               |
-| Released → Obsolete  | *Mark obsolete* (final)                                                           | CAD editors of the project group, admins                                 |
+| Transition           | How                                                                                                         | Who                                                                                                                |
+|----------------------|-------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| WIP → In Review      | submit a change order containing the revision                                                               | the change's author (CAD editor of the item's project group) or an admin                                           |
+| In Review → Released | automatically when every reviewer approved – all revisions of the change together                           | the assigned reviewers, never the author or someone who changed the data                                           |
+| In Review → WIP      | a reviewer rejects with a reason, or the author withdraws                                                   | reviewers; author or admin                                                                                         |
+| Released → Obsolete  | *Mark obsolete* (final), or an *obsolete* / *supersede* line of a change order, applied when it is released | CAD editors of the project group, admins – or, when the group requires a change order, the reviewers of the change |
 
 Only WIP revisions change, and only while they are checked out. Released
 data never changes – further work happens in a new revision (*Revise*).
 
 ## Project groups and roles
 
-| Role       | May                                                                                                 |
-| Viewer     | read internal project groups and the restricted groups they belong to, raise and discuss change requests |
-| Viewer     | read everything, raise and discuss change requests                                                  |
-| CAD editor | create and change items of the project groups they belong to, create project groups, review changes, triage and decide change requests on their groups |
-| Admin      | everything, plus users, all project groups and lock overrides                                       |
+| Role | May |
+| Viewer | read internal project groups and the restricted groups they belong to, raise and discuss change requests |
+| Viewer | read everything, raise and discuss change requests |
+| CAD editor | create and change items of the project groups they belong to, create project groups, review changes,
+triage and decide change requests on their groups |
+| Admin | everything, plus users, all project groups and lock overrides |
 
 Every item belongs to a **project group** – a product or product line, a
-machine, a customer project, a building, a vehicle or a rover. CAD editors start their own groups and become their **managers**:
+machine, a customer project, a building, a vehicle or a rover. CAD editors start their own groups and become their
+**managers**:
 managers edit the group and add or remove members. A group can also be bound
 to a group of the identity provider (administrators only); its members are
 then synchronised at every single sign-on.
@@ -54,15 +63,15 @@ this on the group's page; see
 
 Each project group has a **numbering scheme** for the numbers TeamCraft
 generates when the number field is left empty – in the web UI, the REST API,
-the BOM import and *Save as*. Managers set it on the group's page, where
-*Preview* shows the next number per item type before anything is saved.
+the BOM import and *Save as*. Managers set it on the group's page, where *Preview* shows the next number per item type
+before anything is saved.
 
-| Placeholder | Becomes                                                                 |
-|-------------|-------------------------------------------------------------------------|
-| `{PROJECT}` | the project code, e.g. `ROVER`                                          |
-| `{TYPE}`    | `PRT`, `ASM`, `DOC`, `SW`, `SIM` or `AB`                                |
+| Placeholder | Becomes                                                                  |
+|-------------|--------------------------------------------------------------------------|
+| `{PROJECT}` | the project code, e.g. `ROVER`                                           |
+| `{TYPE}`    | `PRT`, `ASM`, `DOC`, `SW`, `SIM` or `AB`                                 |
 | `{YYYY}`    | the year of creation (UTC); `{YY}` its last two digits, `{MM}` the month |
-| `{SEQ:n}`   | the sequence, zero-padded to *n* digits (1–12); exactly once            |
+| `{SEQ:n}`   | the sequence, zero-padded to *n* digits (1–12); exactly once             |
 
 Everything else is literal text from `A–Z 0–9 . _ -`. The built-in scheme is
 `{TYPE}-{SEQ:6}`; `{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}` gives `ROVER-PRT-2026-0007`.
@@ -77,8 +86,8 @@ convention – and existing items never change their numbers.
 ## Attributes and classification
 
 Besides name, description, material, mass and unit cost, a revision can
-carry **custom attributes** that administrators define under
-*Admin → Attributes*: a label, a key for the API (`vendor`, `length_mm`), a
+carry **custom attributes** that administrators define under *Admin → Attributes*: a label, a key for the API (`vendor`,
+`length_mm`), a
 type – text, number, yes/no or a choice list – an optional unit, the item
 types it applies to and its position in the forms. Values are edited with
 the other attributes while the revision is in work, frozen on release and
@@ -95,10 +104,10 @@ choices match a part of the value, yes/no attributes `yes` or `no`, numbers
 the attribute. The search box also finds attribute values.
 
 The **BOM import** fills both for the items it creates: a *BOM structure* or
-procurement column sets the classification (*Normal*, *Phantom* → in-house;
-*Purchased*, *Kaufteil* → purchased; *Content Center*, *Normteil* → standard
-part), and a column whose header is the label or key of an active attribute
-(*Vendor*, `length_mm`) fills that attribute. A value that does not fit – text
+procurement column sets the classification (*Normal*, *Phantom* → in-house; *Purchased*, *Kaufteil* → purchased;
+*Content Center*, *Normteil* → standard
+part), and a column whose header is the label or key of an active attribute (*Vendor*, `length_mm`) fills that
+attribute. A value that does not fit – text
 in a number column, a choice that does not exist, an attribute that does not
 apply to the item type – is left out with a warning. The preview lists which
 columns become attributes and which are not imported; existing items are not

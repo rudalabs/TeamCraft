@@ -167,6 +167,8 @@ fn fill(path: &str, h: &Hidden) -> Option<String> {
             ("{kind}", "branding") => "wide".into(),
             // attribute definitions belong to no project group
             ("{key}", "attributes") => "vendor".into(),
+            // a reviewer of the hidden change: an existing member of the hidden group
+            ("{username}", "reviewers") => "member_viewer".into(),
             // an alternate: by number in the REST API, by id in the web UI
             ("{alternate}", _) if path.starts_with("/api/") => h.item_number.clone(),
             ("{alternate}", _) => h.item_id.to_string(),
@@ -3382,6 +3384,8 @@ async fn fourth_review_round_leaks_are_closed() {
         page: Default::default(),
         history: Vec::new(),
         thread: false,
+        limits: String::new(),
+        files: Vec::new(),
     };
     let tools = McpTools::new(&app.state, &mona_actor);
     tools.note_context(&question(&hs)).await;

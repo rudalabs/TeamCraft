@@ -18,7 +18,7 @@ use crate::{
     domain::{self, BaseVersion, FileSyncState, ServerFile},
     error::{AppError, AppResult},
     models::Revision,
-    services::{files, revisions},
+    services::{access, files, projects, revisions},
 };
 
 /// A file of the client's workspace, as the client reports it.
@@ -284,6 +284,132 @@ pub async fn check_in_all(
         outcomes.push(CheckInOutcome::of(&rev, result));
     }
     Ok(outcomes)
+}
+
+/// Most check-outs one [`release_held`] run releases.
+pub const MAX_RELEASE: i64 = 1000;
+
+/// Releases the check-outs `holder` still has – in every group, or only in
+/// `project` – for a leaver (issue #173). Each release goes through
+/// `revisions::cancel_checkout` in its own transaction, so the permission
+/// rule stays in one place, every release is audited
+/// (`revision.checkout_forced_release`) and one refusal does not stop the
+/// others; the outcome lists every revision.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor. Administrators release in every group they
+///   can read; anyone else needs to manage `project` ("not found" for a hidden
+///   group, 403 otherwise) or, without `project`, at least one group (403),
+///   and only check-outs in the groups they manage are considered. Per
+///   revision `cancel_checkout` decides: a manager only releases the locks of
+///   users who are no longer members or are deactivated; the rest are listed
+///   as refused.
+/// * **Visibility:** revisions the actor may not read are left out, as if
+///   they did not exist (a need-to-know group with `admin_read = none` hides
+///   its revisions from administrators too).
+/// * **Bounds:** at most [`MAX_RELEASE`] revisions per run.
+/// * **Audit / notifications:** those of `cancel_checkout`, per revision.
+/// * **Atomic:** one transaction per revision.
+pub async fn release_held(
+    pool: &PgPool,
+    actor: &Actor,
+    holder: Uuid,
+    project: Option<Uuid>,
+) -> AppResult<Vec<CheckInOutcome>> {
+    actor.require(domain::Role::Editor)?;
+    let managed: Option<Vec<Uuid>> = if actor.is_admin() {
+        if let Some(p) = project {
+            projects::get_for_management(pool, actor, p).await?;
+        }
+        None
+    } else {
+        if let Some(p) = project {
+            let mut conn = pool.acquire().await?;
+            projects::require_manager(&mut conn, actor, p).await?;
+        }
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT project_id FROM project_members WHERE user_id = $1 AND manager",
+        )
+        .bind(actor.id)
+        .fetch_all(pool)
+        .await?;
+        if ids.is_empty() {
+            return Err(AppError::Forbidden(
+                "Only managers of a project group and administrators can release other users' \
+                 check-outs."
+                    .into(),
+            ));
+        }
+        Some(ids)
+    };
+    let held = sqlx::query_as::<_, Revision>(&format!(
+        "{} WHERE r.checked_out_by = $1 AND {}
+           AND ($3::uuid IS NULL OR i.project_id = $3)
+           AND ($4::uuid[] IS NULL OR i.project_id = ANY($4))
+         ORDER BY i.number, r.code LIMIT $5",
+        revisions::REVISION_SELECT,
+        access::item_visible("i", 2)
+    ))
+    .bind(holder)
+    .bind(&actor.hidden_projects)
+    .bind(project)
+    .bind(managed.as_deref())
+    .bind(MAX_RELEASE)
+    .fetch_all(pool)
+    .await?;
+    let mut outcomes = Vec::with_capacity(held.len());
+    for rev in held {
+        let result = revisions::cancel_checkout(pool, actor, rev.id)
+            .await
+            .map(|_| ());
+        outcomes.push(CheckInOutcome::of(&rev, result));
+    }
+    Ok(outcomes)
+}
+
+/// How many revisions `holder` has checked out that the actor may read – the
+/// number [`release_held`] would look at for an administrator.
+pub async fn held_count(pool: &PgPool, actor: &Actor, holder: Uuid) -> AppResult<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(*) FROM revisions r JOIN items i ON i.id = r.item_id
+         WHERE r.checked_out_by = $1 AND {}",
+        access::item_visible("i", 2)
+    ))
+    .bind(holder)
+    .bind(&actor.hidden_projects)
+    .fetch_one(pool)
+    .await?)
+}
+
+/// `"Released 4 check-outs; 1 refused: PRT-000003/A (…)"` for a flash message.
+pub fn release_summary(outcomes: &[CheckInOutcome]) -> String {
+    let ok = outcomes.iter().filter(|o| o.ok).count();
+    let failed: Vec<String> = outcomes
+        .iter()
+        .filter(|o| !o.ok)
+        .take(5)
+        .map(|o| {
+            format!(
+                "{}/{} ({})",
+                o.item_number,
+                o.code,
+                o.error.as_deref().unwrap_or("refused")
+            )
+        })
+        .collect();
+    let refused = outcomes.len() - ok;
+    let head = match ok {
+        0 if refused == 0 => return "No check-outs to release.".into(),
+        1 => "Released 1 check-out".to_string(),
+        n => format!("Released {n} check-outs"),
+    };
+    if refused == 0 {
+        format!("{head}.")
+    } else {
+        let more = if refused > failed.len() { ", …" } else { "" };
+        format!("{head}; {refused} refused: {}{more}", failed.join(", "))
+    }
 }
 
 /// `"Checked in 4 revisions; 1 failed: PRT-000003/A (…)"` for a flash message.

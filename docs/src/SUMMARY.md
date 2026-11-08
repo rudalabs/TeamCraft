@@ -56,6 +56,7 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [3D preview of SOLIDWORKS files](research/solidworks-display-preview.md)
     - [Mutation testing with cargo-mutants](research/mutation-testing.md)
     - [3D preview of NX parts](research/nx-jt-preview.md)
     - [3D preview of stand-alone JT files](research/jt10-preview.md)

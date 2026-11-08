@@ -12,6 +12,23 @@
   </div>
 </div>
 
+<section class="card" id="header-name">
+  <h2>Header name</h2>
+  <p class="hint">The name next to the logo at the top left of the web header and the desktop title bar (shown there unless a wide logo is set),
+    in page titles, e-mails and on the sign-in page. Leave the name empty to use the default ({{ default_name }}).
+    Renaming the instance never renames the software: the footer, About, version and licence notices stay TeamCraft.</p>
+  <form class="stack" method="post" action="/admin/branding/name">
+    <label>Display name <span class="hint">up to {{ max_name }} characters, plain text</span>
+      <input type="text" name="display_name" value="{{ branding.display_name or '' }}" maxlength="{{ max_name }}" placeholder="{{ default_name }}">
+    </label>
+    <label>Subtitle <span class="hint">up to {{ max_subtitle }} characters; empty for none, default {{ default_subtitle }}</span>
+      <input type="text" name="subtitle" value="{{ branding.subtitle }}" maxlength="{{ max_subtitle }}">
+    </label>
+    <button class="primary" type="submit">Save</button>
+  </form>
+  <p class="meta">Preview: <span class="brand-name">{{ branding.display_name or default_name }}</span> <span class="brand-sub">{{ branding.subtitle }}</span></p>
+</section>
+
 <div class="logo-slots">
   {% for s in slots %}
   <section class="card logo-slot" id="logo-{{ s.kind }}">

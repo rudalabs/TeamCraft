@@ -82,9 +82,12 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_ASSISTANT_RETENTION_DAYS",
     "TEAMCRAFT_ASSISTANT_RUN_TIMEOUT",
     "TEAMCRAFT_AUDIT_RETENTION_DAYS",
+    "TEAMCRAFT_BACKUP_PASSPHRASE",
     "TEAMCRAFT_BIND_ADDR",
     "TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD",
     "TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME",
+    "TEAMCRAFT_CLAMD_ADDR",
+    "TEAMCRAFT_CLAMD_MAX_MB",
     "TEAMCRAFT_COOKIE_SECURE",
     "TEAMCRAFT_DATABASE_URL",
     "TEAMCRAFT_DB_HOST",
@@ -261,6 +264,12 @@ pub struct Config {
     pub preview_cache_max_bytes: u64,
     /// Largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/{id}`).
     pub upload_chunk_bytes: u64,
+    /// Malware scan of uploads with a ClamAV daemon (`TEAMCRAFT_CLAMD_ADDR`,
+    /// `TEAMCRAFT_CLAMD_MAX_MB`); `None` = no scan.
+    pub clamd: Option<crate::malware::ScannerConfig>,
+    /// Passphrase of encrypted backups (`TEAMCRAFT_BACKUP_PASSPHRASE`, used by
+    /// `teamcraft backup --encrypt` and the restore). Secret – never log it.
+    pub backup_passphrase: Option<String>,
     pub session_ttl: Duration,
     /// Days the audit log is kept (`TEAMCRAFT_AUDIT_RETENTION_DAYS`; 0 = for
     /// ever). Older entries are removed by the hourly housekeeping, which
@@ -895,6 +904,40 @@ impl Config {
         if !(1..=1024).contains(&upload_chunk_mb) {
             bail!("TEAMCRAFT_UPLOAD_CHUNK_MB must be between 1 and 1024");
         }
+        let clamd_max_mb = env.parse_or("TEAMCRAFT_CLAMD_MAX_MB", 25u64)?;
+        if !(1..=4096).contains(&clamd_max_mb) {
+            bail!("TEAMCRAFT_CLAMD_MAX_MB must be between 1 and 4096");
+        }
+        let clamd = match env
+            .get("TEAMCRAFT_CLAMD_ADDR")?
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+        {
+            Some(addr) => {
+                let unix = addr.strip_prefix("unix:");
+                if unix.is_some_and(|p| !p.starts_with('/'))
+                    || (unix.is_none() && !addr.contains(':'))
+                {
+                    bail!("TEAMCRAFT_CLAMD_ADDR must be host:port or unix:/path/to/clamd.socket");
+                }
+                Some(crate::malware::ScannerConfig {
+                    addr,
+                    max_bytes: clamd_max_mb * 1024 * 1024,
+                    timeout: Duration::from_secs(120),
+                })
+            }
+            None => None,
+        };
+        let backup_passphrase = env
+            .get("TEAMCRAFT_BACKUP_PASSPHRASE")?
+            .map(|p| p.trim_end_matches(['\r', '\n']).to_string())
+            .filter(|p| !p.is_empty());
+        if backup_passphrase
+            .as_ref()
+            .is_some_and(|p| p.chars().count() < 12)
+        {
+            bail!("TEAMCRAFT_BACKUP_PASSPHRASE must have at least 12 characters");
+        }
 
         let session_ttl_hours = env.parse_or("TEAMCRAFT_SESSION_TTL_HOURS", 72u64)?;
         if session_ttl_hours == 0 {
@@ -1044,6 +1087,8 @@ impl Config {
             preview,
             preview_cache_max_bytes: preview_cache_max_mb * 1024 * 1024,
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
+            clamd,
+            backup_passphrase,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
             audit_retention_days,
             retention_latest_grace_days,
@@ -1067,13 +1112,14 @@ impl Config {
     /// Password-free summary for the startup log.
     pub fn summary(&self) -> String {
         format!(
-            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} request_digest={}h mattermost_notifications={} assistant={} local_agents={} webhook_targets={}",
+            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB malware_scan={} session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} request_digest={}h mattermost_notifications={} assistant={} local_agents={} webhook_targets={}",
             self.bind_addr,
             self.public_url,
             self.database_display,
             self.vault_dir.display(),
             self.max_upload_bytes / (1024 * 1024),
             self.upload_chunk_bytes / (1024 * 1024),
+            self.clamd.as_ref().map_or("off", |c| c.addr.as_str()),
             self.session_ttl.as_secs() / 3600,
             self.cookie_secure,
             self.oidc.as_ref().map(|o| o.issuer_url.as_str()).unwrap_or("disabled"),
@@ -1291,6 +1337,7 @@ mod tests {
         assert_eq!(cfg.public_url, "http://localhost:8080");
         assert_eq!(cfg.max_upload_bytes, 512 * 1024 * 1024);
         assert_eq!(cfg.upload_chunk_bytes, 16 * 1024 * 1024);
+        assert!(cfg.clamd.is_none(), "no malware scan by default");
         assert_eq!(cfg.request_digest_hours, 24, "daily digests");
         assert!(!cfg.cookie_secure);
         assert_eq!(cfg.log_format, LogFormat::Text);
@@ -1298,6 +1345,41 @@ mod tests {
         assert_eq!(cfg.database_display, "teamcraft@localhost:5432/teamcraft");
         assert_eq!(cfg.database_password.as_deref(), Some("secret"));
         assert!(!cfg.summary().contains("secret"));
+    }
+
+    #[test]
+    fn malware_scanner_settings() {
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "secret"),
+            ("TEAMCRAFT_CLAMD_ADDR", "clamav:3310"),
+            ("TEAMCRAFT_CLAMD_MAX_MB", "100"),
+        ])
+        .unwrap();
+        let clamd = cfg.clamd.as_ref().unwrap();
+        assert_eq!(clamd.addr, "clamav:3310");
+        assert_eq!(clamd.max_bytes, 100 * 1024 * 1024);
+        assert!(cfg.summary().contains("malware_scan=clamav:3310"));
+        let unix = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "secret"),
+            ("TEAMCRAFT_CLAMD_ADDR", "unix:/run/clamav/clamd.ctl"),
+        ])
+        .unwrap();
+        assert_eq!(unix.clamd.unwrap().max_bytes, 25 * 1024 * 1024);
+        for bad in ["clamav", "unix:relative.sock"] {
+            assert!(
+                config_from(&[
+                    ("TEAMCRAFT_DB_PASSWORD", "secret"),
+                    ("TEAMCRAFT_CLAMD_ADDR", bad)
+                ])
+                .is_err(),
+                "{bad}"
+            );
+        }
+        assert!(config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "secret"),
+            ("TEAMCRAFT_CLAMD_MAX_MB", "0")
+        ])
+        .is_err());
     }
 
     #[test]
