@@ -1246,6 +1246,12 @@ mod tests {
             decode(b"Temperature 20 \xC2", false),
             "Temperature 20 \u{FFFD}"
         );
+        // more bad bytes than valid multi-byte characters: Windows-1252
+        // (found by cargo mutants: the bad bytes were never counted)
+        assert_eq!(decode(b"\xC2\xB5 a\xFC b\xFC c\xFC", false), "Âµ aü bü cü");
+        assert_eq!(decode(b"\xC2\xB5 \xC2\xB0 a\xFC", false), "µ ° a\u{FFFD}");
+        // bad bytes without any valid multi-byte character: Windows-1252
+        assert_eq!(decode(b"a\xFC b\xE4", false), "aü bä");
     }
 
     #[test]
