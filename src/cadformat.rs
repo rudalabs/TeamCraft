@@ -1478,6 +1478,9 @@ mod tests {
         assert!(ids_named_by("step").contains(&"step".to_string()));
         assert!(ids_named_by("bracket").is_empty());
         assert!(ids_named_by("x").is_empty());
+        // by the full program name only: neither id, short name nor alias
+        // matches "Autodesk Inventor" (found by cargo mutants)
+        assert!(ids_named_by("Autodesk Inventor").contains(&"inventor-part".to_string()));
         assert_eq!(ids_of_system("inventor").len(), 5);
     }
 
