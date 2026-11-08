@@ -74,7 +74,7 @@ exclude_re = [
     # resultscan::compile_regex: the lazy-DFA cache limit only changes speed –
     # when the cache is full the regex crate falls back to a slower engine
     # with the same matches; the compile-time `size_limit` is tested.
-    "src/resultscan.rs:431:42: replace \\* with \\+ in compile_regex",
+    "src/resultscan.rs:431:42: replace \\* with (\\+|/) in compile_regex",
 ]
 
 # Unit tests only (see above); the integration tests in tests/ need PostgreSQL.
