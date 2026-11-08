@@ -108,6 +108,7 @@ mod tests {
         assert_eq!(attribute_input_text(&json!(3)).unwrap(), "3");
         assert_eq!(attribute_input_text(&json!(true)).unwrap(), "true");
         assert_eq!(attribute_input_text(&json!(null)).unwrap(), "");
+        assert_eq!(attribute_input_text(&json!("Bosch")).unwrap(), "Bosch");
         assert!(attribute_input_text(&json!([1])).is_err());
 
         let c = |t, raw| parse_attribute_condition("X", t, raw).unwrap();
