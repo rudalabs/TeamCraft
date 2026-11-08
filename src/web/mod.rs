@@ -280,6 +280,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/new", get(changes::new_form))
         .route("/changes/{id}", get(changes::show).post(changes::update))
         .route("/changes/{id}/items", post(changes::add_item))
+        .route("/changes/{id}/actions", post(changes::add_action))
         .route(
             "/changes/{id}/dependencies",
             post(changes::add_dependencies),

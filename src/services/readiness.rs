@@ -344,7 +344,7 @@ pub async fn check(conn: &mut PgConnection, change_id: Uuid) -> AppResult<Readin
         "WITH cr AS (
              SELECT ci.revision_id, r.item_id
              FROM change_items ci JOIN revisions r ON r.id = ci.revision_id
-             WHERE ci.change_id = $1
+             WHERE ci.change_id = $1 AND ci.action = 'release'
          ),
          deps AS (
              SELECT b.parent_revision_id AS revision_id, b.child_item_id AS item_id, 'bom'::text AS relation

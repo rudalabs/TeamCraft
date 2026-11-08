@@ -349,7 +349,7 @@ pub async fn search(
     Ok((rows.into_iter().map(|r| r.item).collect(), total))
 }
 
-pub(crate) async fn get_unchecked(pool: &PgPool, id: Uuid) -> AppResult<Item> {
+pub(crate) async fn get_unchecked(pool: impl sqlx::PgExecutor<'_>, id: Uuid) -> AppResult<Item> {
     sqlx::query_as::<_, Item>(&format!("{ITEM_SELECT} WHERE i.id = $1"))
         .bind(id)
         .fetch_optional(pool)

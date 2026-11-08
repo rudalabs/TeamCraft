@@ -24,7 +24,7 @@ description, material, mass, unit cost), the files and the bill of materials.
 | WIP → In Review      | submit a change order containing the revision                                     | the change's author (CAD editor of the item's project group) or an admin |
 | In Review → Released | automatically when every reviewer approved – all revisions of the change together | the assigned reviewers, never the author or someone who changed the data   |
 | In Review → WIP      | a reviewer rejects with a reason, or the author withdraws                         | reviewers; author or admin                                               |
-| Released → Obsolete  | *Mark obsolete* (final)                                                           | CAD editors of the project group, admins                                 |
+| Released → Obsolete  | *Mark obsolete* (final), or an *obsolete* / *supersede* line of a change order, applied when it is released | CAD editors of the project group, admins – or, when the group requires a change order, the reviewers of the change |
 
 Only WIP revisions change, and only while they are checked out. Released
 data never changes – further work happens in a new revision (*Revise*).
