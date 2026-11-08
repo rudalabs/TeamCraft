@@ -105,11 +105,11 @@ end-to-end tests against a real PostgreSQL.
 
 **Previews and search**
 
-- **3D preview** – STEP, NX and SOLIDWORKS parts and assemblies (assemblies put together from their part files, hidden
-  components left out), STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no
-  plug-ins.
-- **CAD thumbnails** – the preview images stored in Inventor and Solid Edge files; NX and SOLIDWORKS parts and
-  assemblies get a sharper thumbnail rendered from their 3D preview.
+- **3D preview** – STEP, NX, SOLIDWORKS and Inventor parts and assemblies (assemblies put together from their part
+  files, hidden components left out), STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the
+  server, no plug-ins.
+- **CAD thumbnails** – the preview images stored in Inventor drawings and Solid Edge files; NX, SOLIDWORKS and Inventor
+  parts and assemblies get a sharper thumbnail rendered from their 3D preview.
 - **FEA/CFD results** – VTK, VTU/VTP and CalculiX results coloured by a result field, with legend.
 - **Search** – ranked full-text search over numbers, names, materials, file names and file contents.
 - **Similar parts** – on every revision with a STEP or mesh file, existing parts of similar 3D shape and size, with the

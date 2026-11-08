@@ -27,6 +27,7 @@ use std::io::{Cursor, Read};
 
 use anyhow::{anyhow, bail, Context, Result};
 
+mod inventor;
 mod jt;
 mod p21;
 mod pn;
@@ -432,6 +433,10 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "solidworks-part" => sw::read_part(data)?,
         "solidworks-assembly" => bail!(
             "A SOLIDWORKS assembly is shown with the previews of its parts (found by file name)."
+        ),
+        "inventor-part" => inventor::read_part(data)?,
+        "inventor-assembly" => bail!(
+            "An Inventor assembly is shown with the previews of its parts (found by file name)."
         ),
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,

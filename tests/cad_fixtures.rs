@@ -319,6 +319,74 @@ fn damaged_solidworks_parts_never_panic() {
     }
 }
 
+/// Inventor parts show the display tessellation they store, welded on its
+/// exact coordinates and refined along its normals; ctc-01 has the bounding
+/// box of its NX and STEP versions.
+#[test]
+fn inventor_parts_get_a_closed_3d_preview() {
+    for (rel, min, max) in [
+        (
+            "ctc-01/inventor-2021/INV_nist_ctc_01_asme1_2021.ipt",
+            [0.0, 0.0, -100.0],
+            [800.0, 450.0, 50.0],
+        ),
+        (
+            "ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt",
+            [-31.5, -31.5, 0.0],
+            [31.5, 31.5, 3.009],
+        ),
+    ] {
+        assert_eq!(
+            preview::PreviewFormat::of(rel),
+            Some(preview::PreviewFormat::InvPart)
+        );
+        let mesh = preview::convert(preview::PreviewFormat::InvPart, &fixture(rel))
+            .unwrap_or_else(|e| panic!("{rel}: {e}"));
+        mesh.check().unwrap();
+        // 1 560 and 2 404 stored triangles, refined
+        assert!(
+            mesh.triangle_count() > 5_000,
+            "{rel}: {}",
+            mesh.triangle_count()
+        );
+        assert!(is_closed(&mesh), "{rel}: the mesh is not closed");
+        let b = mesh.bounds();
+        for i in 0..3 {
+            assert!((b[i] - min[i]).abs() < 0.05, "{rel}: {b:?}");
+            assert!((b[i + 3] - max[i]).abs() < 0.05, "{rel}: {b:?}");
+        }
+        let s = teamcraft::shape::compute(&mesh).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        assert!(s.is_valid() && s.closed && s.volume > 0.0, "{rel}: {s:?}");
+    }
+}
+
+/// A damaged Inventor part is an error, never a panic: bytes all over a
+/// real part are overwritten, and the file is cut short.
+#[test]
+fn damaged_inventor_parts_never_panic() {
+    let rel = "ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt";
+    let bytes = std::fs::read(fixture(rel)).unwrap();
+    for cut in (0..bytes.len()).step_by(bytes.len() / 40) {
+        let _ = mesh::read("inventor-part", &bytes[..cut]);
+        let _ = teamcraft::invasm::components(&bytes[..cut]);
+    }
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    for _ in 0..40 {
+        let mut damaged = bytes.clone();
+        for _ in 0..16 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let at = (state % damaged.len() as u64) as usize;
+            damaged[at] = (state >> 32) as u8;
+        }
+        if let Ok(mesh) = mesh::read("inventor-part", &damaged) {
+            mesh.check().unwrap();
+        }
+        let _ = teamcraft::invasm::components(&damaged);
+    }
+}
+
 /// A damaged JT stream is an error, never a panic: every byte of the
 /// shape segment of a real part is flipped in turn (in steps).
 #[test]

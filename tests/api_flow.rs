@@ -3842,6 +3842,201 @@ async fn solidworks_assemblies_are_put_together_from_their_parts() {
     app.teardown().await;
 }
 
+/// An Inventor assembly as Inventor stores it, reduced to what the preview
+/// reads: the placement segment and `UFRxDoc` (see `src/invasm.rs`).
+/// `occurrences`: (index into `files`, visible, translation in cm).
+fn inventor_assembly(files: &[&str], occurrences: &[(usize, bool, [f64; 3])]) -> Vec<u8> {
+    use std::io::Write;
+    let zlib = |data: &[u8]| {
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        z.write_all(data).unwrap();
+        z.finish().unwrap()
+    };
+    let text16 = |s: &str| {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        let mut out = (units.len() as u32).to_le_bytes().to_vec();
+        out.extend(units.iter().flat_map(|u| u.to_le_bytes()));
+        out
+    };
+    // AmRxSegment: one placement (class 0x232792BC) per occurrence
+    let mut sections = Vec::new();
+    for (k, (_, _, t)) in occurrences.iter().enumerate() {
+        let mut p = vec![0u8; 10];
+        if k == 0 {
+            p.extend(0x203u32.to_le_bytes());
+        }
+        let ones: u32 = 1 | 1 << 5 | 1 << 10 | 1 << 15;
+        let zeros: u32 = [1, 2, 4, 6, 8, 9, 12, 13, 14]
+            .iter()
+            .map(|b| 1u32 << b)
+            .sum();
+        p.extend((ones | zeros << 16).to_le_bytes());
+        for v in t {
+            p.extend(v.to_le_bytes());
+        }
+        let mut tail = vec![0u8; 124];
+        tail[112..116].copy_from_slice(&(k as u32 + 1).to_le_bytes());
+        p.extend(tail);
+        sections.push(p);
+    }
+    let mut meta = b"\x19\x00\x00\x00RSe Meta Stream Version 8\x08\x00".to_vec();
+    meta.extend([0; 16]);
+    meta.extend(text16("AmRxSegment"));
+    meta.extend([0; 28]);
+    for _ in 0..2 {
+        meta.extend(19u32.to_le_bytes());
+        meta.extend(b"01/01/2026 00:00:00");
+    }
+    meta.push(1);
+    let mut body = vec![0u8; 14];
+    body.extend((sections.len() as u32).to_le_bytes());
+    for s in &sections {
+        body.extend((0x8000_0000 | s.len() as u32).to_le_bytes());
+    }
+    // list size; no revision entries, no third list (each with its size)
+    body.extend([0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0]);
+    // the class table: one class
+    body.extend(1u32.to_le_bytes());
+    body.extend(0x2327_92BCu32.to_le_bytes());
+    body.extend([0; 24]);
+    meta.extend(zlib(&body));
+    let mut data = Vec::new();
+    for s in &sections {
+        data.extend([0, 1, 0, 0]);
+        data.extend(s);
+        data.extend((s.len() as u32).to_le_bytes());
+        data.push(0);
+    }
+    let mut stream = vec![0u8; 18];
+    stream.extend(zlib(&data));
+    // UFRxDoc: header, file table, occurrence records
+    let mut doc = vec![0x55; 0x50];
+    doc.extend((files.len() as u32).to_le_bytes());
+    doc.extend(text16(""));
+    doc.extend(0u32.to_le_bytes());
+    for (k, f) in files.iter().enumerate() {
+        doc.extend(text16(&format!(r"C:\Users\someone\Design\{f}")));
+        doc.extend(113u32.to_le_bytes());
+        doc.extend(text16("Workspace"));
+        doc.extend([0, 0]);
+        doc.extend(text16(""));
+        doc.extend([0; 8]);
+        doc.extend([0x11; 32]);
+        for v in [k as u32 + 1, 1, 0x23, 1] {
+            doc.extend(v.to_le_bytes());
+        }
+    }
+    doc.extend([0; 6]);
+    doc.extend((occurrences.len() as u32).to_le_bytes());
+    for (k, (file, visible, _)) in occurrences.iter().enumerate() {
+        doc.extend([0; 4]);
+        for v in [*file as u32 + 1, k as u32 + 1, k as u32 + 1, 1] {
+            doc.extend(v.to_le_bytes());
+        }
+        doc.extend(text16(&format!("{}:{}", files[*file], k + 1)));
+        doc.extend([0, 0, 0, 0, 0, 0, 0x80, if *visible { 0x20 } else { 0x60 }]);
+        doc.extend([0xEE; 40]);
+    }
+    doc.extend([0; 29]);
+    let mut ole = cfb::CompoundFile::create(std::io::Cursor::new(Vec::new())).unwrap();
+    ole.create_storage("/RSeStorage").unwrap();
+    for (name, bytes) in [
+        ("/RSeStorage/Mrx", &meta),
+        ("/RSeStorage/Brx", &stream),
+        ("/UFRxDoc", &doc),
+    ] {
+        ole.create_stream(name).unwrap().write_all(bytes).unwrap();
+    }
+    ole.flush().unwrap();
+    ole.into_inner().into_inner()
+}
+
+/// Inventor parts get a thumbnail rendered from their 3D preview; an
+/// assembly is put together from its parts and sub-assemblies, without
+/// the components it hides.
+#[tokio::test]
+async fn inventor_assemblies_are_put_together_from_their_parts() {
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "assembly", "name": "Station", "project": "GEARBOX" })),
+    )
+    .await;
+    let nist = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cad/nist");
+    let ctc =
+        std::fs::read(nist.join("ctc-01/inventor-2021/INV_nist_ctc_01_asme1_2021.ipt")).unwrap();
+    let ftc =
+        std::fs::read(nist.join("ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt")).unwrap();
+    // Station: ctc-01 at the origin, the sub-assembly 1 m along x, a
+    // hidden ftc-11 1 m along -x; Holder: ftc-11 at its origin
+    let station = inventor_assembly(
+        &["ctc.ipt", "Holder.iam", "ftc.ipt"],
+        &[
+            (0, true, [0.0; 3]),
+            (1, true, [100.0, 0.0, 0.0]),
+            (2, false, [-100.0, 0.0, 0.0]),
+        ],
+    );
+    let holder = inventor_assembly(&["FTC.IPT"], &[(0, true, [0.0; 3])]);
+    let mut ids = Vec::new();
+    for (name, data) in [
+        ("Station.iam", &station),
+        ("Holder.iam", &holder),
+        ("ctc.ipt", &ctc),
+        ("ftc.ipt", &ftc),
+    ] {
+        let files = app
+            .api_multipart(
+                "/api/v1/items/ASM-000001/revisions/A/files",
+                &eng,
+                &[(name, data.as_slice())],
+                &[],
+            )
+            .await;
+        assert_eq!(
+            files.status,
+            StatusCode::CREATED,
+            "{name}: {}",
+            files.text()
+        );
+        ids.push(files.json()[0]["id"].as_str().unwrap().to_string());
+    }
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{}/mesh", ids[0]),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.parts, 2, "ctc-01 and the sub-assembly's ftc-11");
+    let b = mesh.bounds();
+    // ctc-01 spans x 0..800 mm, ftc-11 ends 1 000 + 31.5 mm out
+    assert!(b[0].abs() < 0.1 && (b[3] - 1031.5).abs() < 0.1, "{b:?}");
+    for id in [&ids[0], &ids[2]] {
+        let r = app
+            .api(
+                Method::GET,
+                &format!("/api/v1/files/{id}/thumbnail"),
+                &eng,
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+        assert_eq!(r.header("content-type").as_deref(), Some("image/png"));
+        let side = teamcraft::thumbnail::RENDERED_SIZE;
+        assert_eq!(png_size(&r.body), (side, side));
+    }
+    app.teardown().await;
+}
+
 /// The most used Teamcenter working features: favorites, saved
 /// searches, Save As and the BOM comparison.
 #[tokio::test]

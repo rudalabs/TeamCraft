@@ -191,6 +191,13 @@ Changes on `main` since the `v0.2.5` tag.
   their component tree; suppressed and hidden components are left out. The
   thumbnails of SOLIDWORKS parts and assemblies are rendered from the 3D
   preview.
+- 3D preview of Inventor parts (`.ipt`) from the display tessellation
+  Inventor stores in the file, welded and refined along its exact surface
+  normals like NX and SOLIDWORKS parts. Inventor assemblies (`.iam`) are
+  put together from the previews of their part and sub-assembly files, with
+  the placements stored in the assembly; hidden components are left out.
+  The thumbnails of Inventor parts and assemblies are rendered from the 3D
+  preview. New fuzz target `invpart`.
 
 ### Changed
 

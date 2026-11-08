@@ -31,8 +31,9 @@
   Part 21 reader in `mesh/p21.rs` filters what the kernel gets, AP242
   tessellated geometry is read by `mesh/tessellated.rs`), reads the JT 9
   tessellation inside NX parts (`mesh/jt.rs`) and the display tessellation
-  inside SOLIDWORKS parts (`mesh/sw.rs`) and refines both along their
-  stored normals (`mesh/pn.rs`); NX and SOLIDWORKS assemblies are put
+  inside SOLIDWORKS parts (`mesh/sw.rs`) and Inventor parts
+  (`mesh/inventor.rs`) and refines them along their stored normals
+  (`mesh/pn.rs`); NX, SOLIDWORKS and Inventor assemblies are put
   together from their parts' previews (`services/assemblies.rs`);
   `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child
@@ -61,6 +62,7 @@
 | `src/pagecontext.rs`                 | the page context the assistant sidebar sends (kind, identifiers, view, rule, query, rows shown): parsing and caps; the services resolve it with the user's rights |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                                                                                      |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images, assembly placements)                                                    |
+| `src/invpart.rs`, `src/invasm.rs`   | Inventor segments below `RSeStorage`; assembly components and placements (`UFRxDoc`, `AmRxSegment`)                                                               |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs`: VTK/VTU/VTP/FRD simulation results with fields                                                                |
 | `src/shape.rs`                       | shape signatures (extents, area, volume, D2 distribution) for the similar part search                                                                             |
 | `src/webhooks.rs`                    | event webhooks: outbox worker, HMAC-SHA256 signature, backoff, target (SSRF) guard                                                                                |

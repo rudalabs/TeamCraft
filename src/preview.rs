@@ -169,6 +169,10 @@ pub enum PreviewFormat {
     SwPart,
     /// SOLIDWORKS assemblies: put together from the previews of their parts.
     SwAssembly,
+    /// Inventor parts: the display tessellation they store.
+    InvPart,
+    /// Inventor assemblies: put together from the previews of their parts.
+    InvAssembly,
     Pts,
     Xyz,
     Las,
@@ -180,7 +184,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 21] = [
+    pub const ALL: [PreviewFormat; 23] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -195,6 +199,8 @@ impl PreviewFormat {
         PreviewFormat::Jt,
         PreviewFormat::SwPart,
         PreviewFormat::SwAssembly,
+        PreviewFormat::InvPart,
+        PreviewFormat::InvAssembly,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
         PreviewFormat::Las,
@@ -231,6 +237,8 @@ impl PreviewFormat {
             PreviewFormat::Jt => "jt",
             PreviewFormat::SwPart => "solidworks-part",
             PreviewFormat::SwAssembly => "solidworks-assembly",
+            PreviewFormat::InvPart => "inventor-part",
+            PreviewFormat::InvAssembly => "inventor-assembly",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
             PreviewFormat::Las => "las",
@@ -256,9 +264,12 @@ impl PreviewFormat {
 
     /// Assemblies whose preview is put together from their parts' previews
     /// (`services::assemblies`): NX files without a lightweight
-    /// representation of their own, SOLIDWORKS assemblies.
+    /// representation of their own, SOLIDWORKS and Inventor assemblies.
     pub fn may_be_assembly(self) -> bool {
-        matches!(self, PreviewFormat::NxPart | PreviewFormat::SwAssembly)
+        matches!(
+            self,
+            PreviewFormat::NxPart | PreviewFormat::SwAssembly | PreviewFormat::InvAssembly
+        )
     }
 
     pub fn is_point_cloud(self) -> bool {
@@ -972,7 +983,15 @@ mod tests {
             PreviewFormat::of("Rover.sldasm"),
             Some(PreviewFormat::SwAssembly)
         );
-        assert_eq!(PreviewFormat::of("Bracket.ipt"), None, "native CAD");
+        assert_eq!(
+            PreviewFormat::of("Bracket.ipt"),
+            Some(PreviewFormat::InvPart)
+        );
+        assert_eq!(
+            PreviewFormat::of("Pump.IAM"),
+            Some(PreviewFormat::InvAssembly)
+        );
+        assert_eq!(PreviewFormat::of("Bracket.par"), None, "native CAD");
         assert_eq!(
             PreviewFormat::of("plate.iges"),
             None,

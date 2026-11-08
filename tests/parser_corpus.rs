@@ -18,6 +18,7 @@ fn fixture_types(target: &str) -> Option<&'static [&'static str]> {
         "htmltext" => &["html", "htm", "txt", "tsv"],
         "swpart" => &["sldprt", "sldasm", "slddrw"],
         "nxpart" => &["prt"],
+        "invpart" => &["ipt", "iam"],
         "thumbnail" => &[
             "ipt", "iam", "sldprt", "sldasm", "prt", "catpart", "par", "asm",
         ],
@@ -165,6 +166,7 @@ fn every_target_has_seeds_or_fixtures_of_its_own() {
     for (target, ext) in [
         ("swpart", "sldasm"),
         ("nxpart", "prt"),
+        ("invpart", "ipt"),
         ("thumbnail", "ipt"),
     ] {
         assert!(
