@@ -1499,6 +1499,55 @@ mod tests {
         assert!(!looks_binary(&bom), "a BOM means text");
     }
 
+    /// Found by cargo mutants: the raw layout of the reader (before `tidy`
+    /// smooths it) – blank lines, cell separators, rows, end tags.
+    #[test]
+    fn raw_layout() {
+        let cases = [
+            // one blank line between paragraphs, none before the first
+            ("<p>a</p><p>b</p>", "a\n\nb\n\n"),
+            // empty leading cell: the separator without its leading space
+            (
+                "<table><tr><th></th><th>Min</th><th>Max</th></tr>\
+                 <tr><td>p</td><td>1</td><td>2</td></tr></table><p>end</p>",
+                "| Min | Max\np | 1 | 2\n\nend\n\n",
+            ),
+            // after </td> a block is no longer inside the cell
+            ("<table><tr><td>a</td><div>b</div></tr></table>", "a\nb\n\n"),
+            // </tr> ends the line
+            ("<table><tr><td>a</td></tr>b</table>", "a\nb\n\n"),
+            // </table> of a nested table returns to the outer cell
+            (
+                "<table><tr><td>a<table><tr><td>b</td></tr></table>c</td><td>d</td></tr></table>",
+                "a\n\nb\n\nc | d\n\n",
+            ),
+            // the end tag of a block ends the line
+            ("<div>a</div>b", "a\nb"),
+            // </pre> ends the preformatted text
+            ("<pre>a  b</pre>c   d", "a  b\n\nc d"),
+            // a <br> inside a hidden cell does not keep the next cell hidden
+            ("<table><tr><td hidden>x<br><td>1.5</table>", "| 1.5\n\n"),
+            // the alt text of an image keeps its spaces inside <pre> only
+            ("<pre><img alt='a  b'></pre>", "a  b\n\n"),
+            ("<p><img alt='a  b'></p>", "a b\n\n"),
+        ];
+        for (html, raw) in cases {
+            assert_eq!(to_text(html), raw, "{html}");
+        }
+        // an element nested past MAX_DEPTH inside a hidden one: the rest of
+        // the page stays hidden, even after as many end tags
+        let html = format!(
+            "<p>shown</p><div hidden>{}secret{}leak</div><p>after</p>",
+            "<div>".repeat(MAX_DEPTH + 40),
+            "</div>".repeat(MAX_DEPTH + 10),
+        );
+        let t = to_text(&html);
+        assert!(
+            t.contains("shown") && !t.contains("leak") && !t.contains("after"),
+            "{t}"
+        );
+    }
+
     /// Found by cargo mutants: the text stops at `MAX_CHARS` characters.
     #[test]
     fn the_text_is_capped() {
