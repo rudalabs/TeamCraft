@@ -52,6 +52,7 @@ mod tests {
         );
         assert_eq!(normalize_attribute_key("/vendor").unwrap(), "vendor");
         assert_eq!(normalize_attribute_key("a._/b").unwrap(), "a_b");
+        assert_eq!(normalize_attribute_key(&"a".repeat(40)).unwrap().len(), 40);
         for bad in ["", "1abc", "ä", "a/b?", &"a".repeat(41)] {
             assert!(normalize_attribute_key(bad).is_err(), "{bad:?}");
         }
