@@ -344,6 +344,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/file-versions/{id}/content", get(download_version))
         .route("/files/{id}/mesh", get(file_mesh))
         .route("/file-versions/{id}/mesh", get(version_mesh))
+        .route(
+            "/file-versions/{id}/annotations",
+            get(version_annotations).post(add_version_annotation),
+        )
+        .route(
+            "/annotations/{id}",
+            axum::routing::delete(delete_annotation),
+        )
         .route("/changes", get(list_changes).post(create_change))
         .route("/changes/{number}", get(get_change))
         .route("/changes/{number}/items", post(add_change_item))
@@ -611,6 +619,9 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/files/{id}/versions",
             "POST   /api/v1/files/{id}/restore                        {version}",
             "GET    /api/v1/file-versions/{id}/content           resumable like /files/{id}/content",
+            "GET    /api/v1/file-versions/{id}/annotations       notes pinned to points of the 3D preview",
+            "POST   /api/v1/file-versions/{id}/annotations       {x, y, z, body} – a note at a model point (everyone who reads the file)",
+            "DELETE /api/v1/annotations/{id}                     remove a note (its author or an administrator)",
             "DELETE /api/v1/files/{id}",
             "GET    /api/v1/changes?status=",
             "POST   /api/v1/changes                                   {title, description?, priority?}",

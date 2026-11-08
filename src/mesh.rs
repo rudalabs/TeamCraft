@@ -428,6 +428,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "las" => las(data)?,
         "step" => step::read(data)?,
         "nx-part" => jt::read_nx(data)?,
+        "jt" => jt::read_file(data)?,
         "solidworks-part" => sw::read_part(data)?,
         "solidworks-assembly" => bail!(
             "A SOLIDWORKS assembly is shown with the previews of its parts (found by file name)."

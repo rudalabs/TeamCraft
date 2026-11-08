@@ -231,13 +231,13 @@
       "out vec3 vView; out vec3 vCol; out vec3 vModel;\n" +
       "void main() { vCol = aCol; vModel = aPos; vView = (uMv * vec4(aPos, 1.0)).xyz; gl_Position = uMvp * vec4(aPos, 1.0); gl_PointSize = uSize; }";
     var FRAG = "#version 300 es\nprecision highp float; in vec3 vView; in vec3 vCol; in vec3 vModel;\n" +
-      "uniform bool uPoints; uniform bool uClipOn; uniform vec4 uClip; out vec4 frag;\n" +
+      "uniform bool uPoints; uniform bool uClipOn; uniform vec4 uClip; uniform float uAlpha; out vec4 frag;\n" +
       "void main() { if (uClipOn && dot(vModel, uClip.xyz) > uClip.w) discard;\n" +
       "  if (uPoints) { frag = vec4(vCol, 1.0); return; }\n" +
       "  vec3 n = normalize(cross(dFdx(vView), dFdy(vView)));\n" +
       "  float d = max(dot(n, normalize(vec3(0.35, 0.55, 1.0))), 0.0);\n" +
       "  float rim = pow(1.0 - max(n.z, 0.0), 3.0) * 0.18;\n" +
-      "  frag = vec4(vCol * (0.25 + 0.75 * d) + rim, 1.0); }";
+      "  frag = vec4(vCol * (0.25 + 0.75 * d) + rim, uAlpha); }";
 
     function shader(type, source) {
       var s = gl.createShader(type);
@@ -259,13 +259,21 @@
       size: gl.getUniformLocation(program, "uSize"),
       points: gl.getUniformLocation(program, "uPoints"),
       clipOn: gl.getUniformLocation(program, "uClipOn"),
-      clip: gl.getUniformLocation(program, "uClip")
+      clip: gl.getUniformLocation(program, "uClip"),
+      alpha: gl.getUniformLocation(program, "uAlpha")
     };
+    // Graphical comparison: another version drawn as a translucent red ghost
+    // over the model, in the same model coordinates.
+    var ghost = null;
     // axis: -1 = off, 0/1/2 = X/Y/Z; at: 0..1 of the model's extent on it
     var section = { axis: -1, at: 0.5, flip: false };
     // Point-to-point measurement: picked model points (0–2) and the decimals
     // shown (remembered per browser).
     var measure = { on: false, points: [], decimals: 2 };
+    // 3D notes of the shown version (options.notes: list/add/remove)
+    var notes = [];
+    var noting = false;
+    var notesApi = options.notes || null;
     try {
       var savedDecimals = Number(window.localStorage.getItem("teamcraft-viewer-decimals"));
       if (savedDecimals >= 0 && savedDecimals <= 6) measure.decimals = savedDecimals;
@@ -491,7 +499,72 @@
       el.appendChild(measureBtn);
       el.appendChild(decimals);
       el.appendChild(result);
+
+      // Notes pinned to the model (design review), when the page offers them.
+      if (notesApi) {
+        var noteBtn = document.createElement("button");
+        noteBtn.type = "button";
+        noteBtn.className = "small";
+        noteBtn.textContent = "Add note";
+        noteBtn.setAttribute("aria-pressed", "false");
+        noteBtn.addEventListener("click", function () {
+          noting = !noting;
+          if (noting && measure.on) measureBtn.click();
+          noteBtn.setAttribute("aria-pressed", String(noting));
+          canvas.classList.toggle("viewer-measuring", noting);
+          result.textContent = noting ? "Click the point the note is about." : "";
+        });
+        measureBtn.addEventListener("click", function () {
+          if (measure.on && noting) noteBtn.click();
+        });
+        notesList = document.createElement("ol");
+        notesList.className = "viewer-notes small";
+        notesList.setAttribute("aria-label", "Notes on the model (blue points)");
+        el.appendChild(noteBtn);
+        el.appendChild(notesList);
+        refreshNotes();
+      }
       return el;
+    }
+    var notesList = null;
+
+    function showNotes() {
+      if (!notesList) return;
+      notesList.textContent = "";
+      notes.forEach(function (n) {
+        var li = document.createElement("li");
+        var text = document.createElement("span");
+        text.textContent = n.body;
+        var meta = document.createElement("span");
+        meta.className = "dim";
+        meta.textContent = " – " + n.author_name + ", " + new Date(n.created_at).toLocaleDateString();
+        li.appendChild(text);
+        li.appendChild(meta);
+        if (n.removable) {
+          var remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "small";
+          remove.textContent = "Remove";
+          remove.setAttribute("aria-label", "Remove the note " + n.body.slice(0, 40));
+          remove.addEventListener("click", function () {
+            notesApi.remove(n.id).then(refreshNotes, noteError);
+          });
+          li.appendChild(document.createTextNode(" "));
+          li.appendChild(remove);
+        }
+        notesList.appendChild(li);
+      });
+    }
+
+    function noteError(err) { setStatus((err && err.message) || String(err), true); }
+
+    function refreshNotes() {
+      if (!notesApi) return;
+      notesApi.list().then(function (list) {
+        notes = list || [];
+        showNotes();
+        redraw();
+      }, noteError);
     }
     var measureView = null;
     var sectionEl = null;
@@ -539,13 +612,29 @@
       gl.uniform1i(loc.clipOn, plane ? 1 : 0);
       if (plane) gl.uniform4f(loc.clip, plane[0], plane[1], plane[2], plane[3]);
       gl.bindVertexArray(drawable.vao);
+      gl.uniform1f(loc.alpha, 1);
       if (!drawable.colored) gl.vertexAttrib3f(loc.col, baseColor[0], baseColor[1], baseColor[2]);
       if (drawable.points) gl.drawArrays(gl.POINTS, 0, drawable.count);
       else gl.drawElements(gl.TRIANGLES, drawable.count, gl.UNSIGNED_INT, 0);
-      // measured points and the line between them, always on top
-      if (measure.points.length) {
+      // the compared model on top: where it sticks out of the model, it is
+      // red; where it lies inside, the model hides it
+      if (ghost) {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false);
+        gl.uniform1f(loc.alpha, 0.45);
+        gl.bindVertexArray(ghost.vao);
+        gl.vertexAttrib3f(loc.col, 0.9, 0.25, 0.2);
+        gl.drawElements(gl.TRIANGLES, ghost.count, gl.UNSIGNED_INT, 0);
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+        gl.uniform1f(loc.alpha, 1);
+      }
+      // notes (blue) and measured points with their line (red), always on top
+      function markers(points, color, line) {
+        if (!points.length) return;
         var flat = [];
-        measure.points.forEach(function (q) { flat.push(q[0], q[1], q[2]); });
+        points.forEach(function (q) { flat.push(q[0], q[1], q[2]); });
         gl.bindVertexArray(markerVao);
         gl.bindBuffer(gl.ARRAY_BUFFER, markerBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(flat), gl.DYNAMIC_DRAW);
@@ -553,11 +642,13 @@
         gl.uniform1i(loc.clipOn, 0);
         gl.uniform1i(loc.points, 1);
         gl.uniform1f(loc.size, Math.max(4, Math.round(7 * dpr)));
-        gl.vertexAttrib3f(loc.col, 0.85, 0.2, 0.15);
-        if (measure.points.length === 2) gl.drawArrays(gl.LINES, 0, 2);
-        gl.drawArrays(gl.POINTS, 0, measure.points.length);
+        gl.vertexAttrib3f(loc.col, color[0], color[1], color[2]);
+        if (line && points.length === 2) gl.drawArrays(gl.LINES, 0, 2);
+        gl.drawArrays(gl.POINTS, 0, points.length);
         gl.enable(gl.DEPTH_TEST);
       }
+      markers(notes.map(function (n) { return [n.x, n.y, n.z]; }), [0.15, 0.45, 0.9], false);
+      markers(measure.points, [0.85, 0.2, 0.15], true);
       gl.bindVertexArray(null);
     }
 
@@ -597,10 +688,17 @@
     });
     // a click (not a drag) in measure mode picks a point
     canvas.addEventListener("pointerup", function (e) {
-      if (!measure.on || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4) return;
+      if (!(measure.on || noting) || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4) return;
       var rect = canvas.getBoundingClientRect();
       var hit = pick(e.clientX - rect.left, e.clientY - rect.top);
       if (!hit) return;
+      if (noting) {
+        var text = window.prompt("Note at this point:");
+        if (text && text.trim()) {
+          notesApi.add(hit, text.trim()).then(refreshNotes, noteError);
+        }
+        return;
+      }
       if (measure.points.length === 2) measure.points = [];
       measure.points.push(hit);
       if (measureView) measureView.show();
@@ -713,8 +811,21 @@
       return buffer;
     }
 
+    // Shows another model (a TCMESH01 buffer) as a red ghost over this one,
+    // or removes it (null). Point clouds are not compared.
+    function compare(buffer) {
+      ghost = null;
+      if (buffer) {
+        var other = parseMesh(buffer);
+        if (!other.indices) throw new Error("Only triangle models can be compared.");
+        ghost = upload({ positions: other.positions, indices: other.indices, fields: [], colors: null });
+      }
+      redraw();
+    }
+
     return {
       exportStl: exportStl,
+      compare: compare,
       dispose: function () {
         disposed = true;
         if (scheme && scheme.removeEventListener) scheme.removeEventListener("change", onScheme);
@@ -734,7 +845,27 @@
   if (canvas && canvas.getAttribute("data-src")) {
     var src = canvas.getAttribute("data-src");
     var stlBtn = document.getElementById("viewer-stl");
+    // 3D notes: <canvas data-notes="/file-versions/{id}/annotations">
+    var notesUrl = canvas.getAttribute("data-notes");
+    function notesRequest(method, url, body) {
+      return fetch(url, {
+        method: method,
+        credentials: "same-origin",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined
+      }).then(function (r) {
+        return r.json().then(function (json) {
+          if (!r.ok) throw new Error((json && json.error && json.error.message) || "The note could not be saved (" + r.status + ").");
+          return json;
+        });
+      });
+    }
     var viewer = mount(canvas, {
+      notes: notesUrl ? {
+        list: function () { return notesRequest("GET", notesUrl); },
+        add: function (p, body) { return notesRequest("POST", notesUrl, { x: p[0], y: p[1], z: p[2], body: body }); },
+        remove: function (id) { return notesRequest("POST", "/annotations/" + encodeURIComponent(id) + "/delete", {}); }
+      } : null,
       statusEl: document.getElementById("viewer-status"),
       resetBtn: document.getElementById("viewer-reset"),
       upBtn: document.getElementById("viewer-up"),
@@ -749,6 +880,27 @@
         });
       }
     });
+    // Graphical comparison with another revision/version (shown in red).
+    var compareSel = document.getElementById("viewer-compare");
+    if (compareSel) {
+      compareSel.addEventListener("change", function () {
+        var status = document.getElementById("viewer-status");
+        if (!compareSel.value) { viewer.compare(null); return; }
+        var label = compareSel.options[compareSel.selectedIndex].textContent;
+        fetch(compareSel.value, { credentials: "same-origin" })
+          .then(function (r) {
+            if (!r.ok) throw new Error("The preview of " + label + " failed (" + r.status + ").");
+            return r.arrayBuffer();
+          })
+          .then(function (buffer) {
+            viewer.compare(buffer);
+            if (status) status.textContent = "Red: " + label + " – where it sticks out of the shown model.";
+          })
+          .catch(function (err) {
+            if (status) { status.textContent = err.message || String(err); status.className = "flash flash-error"; }
+          });
+      });
+    }
     // STL export of a STEP/3MF/… model, e.g. for 3D printing.
     if (stlBtn) {
       stlBtn.addEventListener("click", function () {

@@ -603,6 +603,45 @@ pub async fn versions(pool: &PgPool, actor: &Actor, file_id: Uuid) -> AppResult<
     versions_unchecked(pool, file_id).await
 }
 
+/// A model the 3D preview can be compared with: another version of the
+/// same file, or a version of the file of the same name in another revision
+/// of the item (graphical revision comparison).
+#[derive(Clone, Debug, serde::Serialize, sqlx::FromRow)]
+pub struct CompareCandidate {
+    pub version_id: Uuid,
+    pub code: String,
+    pub version: i32,
+    pub sha256: String,
+}
+
+/// The models a file version can be compared with, newest revision and
+/// version first (at most 50; versions with the same content as `shown`
+/// are left out). The file's item is readable, so are its other revisions.
+pub async fn compare_candidates(
+    pool: &PgPool,
+    actor: &Actor,
+    file_id: Uuid,
+    shown_sha256: &str,
+) -> AppResult<Vec<CompareCandidate>> {
+    let file = get(pool, actor, file_id).await?;
+    Ok(sqlx::query_as::<_, CompareCandidate>(
+        "SELECT v.id AS version_id, r.code, v.version, v.sha256
+         FROM file_versions v
+         JOIN files f ON f.id = v.file_id
+         JOIN revisions r ON r.id = f.revision_id
+         WHERE r.item_id = (SELECT item_id FROM revisions WHERE id = $1)
+           AND lower(f.filename) = lower($2)
+           AND v.sha256 <> $3
+         ORDER BY r.seq DESC, v.version DESC
+         LIMIT 50",
+    )
+    .bind(file.revision_id)
+    .bind(&file.filename)
+    .bind(shown_sha256)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// A file version (with the file name) the actor may read.
 pub async fn get_version(
     pool: &PgPool,

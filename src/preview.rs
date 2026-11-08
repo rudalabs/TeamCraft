@@ -163,6 +163,8 @@ pub enum PreviewFormat {
     Step,
     /// Siemens NX parts: the lightweight (JT) representation they store.
     NxPart,
+    /// Standalone JT visualisation files (JT 9).
+    Jt,
     /// SOLIDWORKS parts: the display tessellation they store.
     SwPart,
     /// SOLIDWORKS assemblies: put together from the previews of their parts.
@@ -178,7 +180,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 20] = [
+    pub const ALL: [PreviewFormat; 21] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -190,6 +192,7 @@ impl PreviewFormat {
         PreviewFormat::ThreeDs,
         PreviewFormat::Step,
         PreviewFormat::NxPart,
+        PreviewFormat::Jt,
         PreviewFormat::SwPart,
         PreviewFormat::SwAssembly,
         PreviewFormat::Pts,
@@ -225,6 +228,7 @@ impl PreviewFormat {
             PreviewFormat::ThreeDs => "3ds",
             PreviewFormat::Step => "step",
             PreviewFormat::NxPart => "nx-part",
+            PreviewFormat::Jt => "jt",
             PreviewFormat::SwPart => "solidworks-part",
             PreviewFormat::SwAssembly => "solidworks-assembly",
             PreviewFormat::Pts => "pts",

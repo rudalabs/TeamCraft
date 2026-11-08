@@ -8,7 +8,7 @@ use axum::{
     Form,
 };
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 
@@ -1206,6 +1206,56 @@ pub async fn preview(
     preview_page(&st, &ctx, file, current).await
 }
 
+#[derive(Deserialize)]
+pub struct NoteBody {
+    x: f64,
+    y: f64,
+    z: f64,
+    body: String,
+}
+
+/// `GET /file-versions/{id}/annotations`: the 3D notes (JSON, viewer.js).
+pub async fn annotations(
+    State(st): State<AppState>,
+    crate::auth::WebUser(me): crate::auth::WebUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<axum::Json<Value>> {
+    let notes = crate::services::annotations::list(&st.db, &me, id).await?;
+    Ok(axum::Json(json!(notes)))
+}
+
+/// `POST /file-versions/{id}/annotations`: pins a note (JSON, viewer.js).
+pub async fn add_annotation(
+    State(st): State<AppState>,
+    crate::auth::WebUser(me): crate::auth::WebUser,
+    Path(id): Path<Uuid>,
+    crate::api::ApiJson(body): crate::api::ApiJson<NoteBody>,
+) -> AppResult<axum::Json<Value>> {
+    let note = crate::services::annotations::add(
+        &st.db,
+        &me,
+        id,
+        crate::services::annotations::NewAnnotation {
+            x: body.x,
+            y: body.y,
+            z: body.z,
+            body: body.body,
+        },
+    )
+    .await?;
+    Ok(axum::Json(json!(note)))
+}
+
+/// `POST /annotations/{id}/delete`: removes a note (JSON, viewer.js).
+pub async fn remove_annotation(
+    State(st): State<AppState>,
+    crate::auth::WebUser(me): crate::auth::WebUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<axum::Json<Value>> {
+    crate::services::annotations::remove(&st.db, &me, id).await?;
+    Ok(axum::Json(json!({ "deleted": true })))
+}
+
 /// 3D preview page of a specific (older) version of a file.
 pub async fn preview_version(
     State(st): State<AppState>,
@@ -1242,6 +1292,13 @@ async fn preview_page(
         .find(|v| v.version == version)
         .cloned()
         .ok_or_else(|| AppError::not_found("File version not found."))?;
+    // earlier/later models of the same file for the graphical comparison
+    // (meshes only: point clouds and result fields are not overlaid)
+    let compare = if format.is_point_cloud() || format.is_result() {
+        Vec::new()
+    } else {
+        files::compare_candidates(&st.db, &ctx.me, file.id, &shown.sha256).await?
+    };
     // start the conversion while the browser loads the page (with the
     // shape signature, unless it is a point cloud)
     if format.is_point_cloud() {
@@ -1258,6 +1315,7 @@ async fn preview_page(
             "shown": shown,
             "is_current": shown.version == file.version,
             "versions": versions,
+            "compare": compare,
             "rev": rev,
             "format": format.as_str(),
             "is_brep": format.is_brep(),
