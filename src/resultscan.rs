@@ -1279,6 +1279,26 @@ mod tests {
         assert!(!scannable("pipe.cas.h5") && !scannable("run.op2"));
     }
 
+    /// Found by cargo mutants: the most frequent delimiter wins, a tie keeps
+    /// the earlier one of `, ; tab |`, and no delimiter means a comma.
+    #[test]
+    fn csv_delimiter() {
+        let lines = |s: &[&str]| s.iter().map(|l| l.to_string()).collect::<Vec<_>>();
+        assert_eq!(delimiter(&lines(&["a;b;c", "1;2;3"])), b';');
+        assert_eq!(
+            delimiter(&lines(&["a\tb", "1,5\t2,5"])),
+            b',',
+            "2 commas vs 2 tabs"
+        );
+        assert_eq!(
+            delimiter(&lines(&["a;b", "1,2"])),
+            b',',
+            "a tie keeps the comma"
+        );
+        assert_eq!(delimiter(&lines(&["a|b|c"])), b'|');
+        assert_eq!(delimiter(&lines(&["just text"])), b',');
+    }
+
     /// Found by cargo mutants: a template sent without `enabled` (REST API)
     /// is enabled.
     #[test]
