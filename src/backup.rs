@@ -27,7 +27,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use sqlx::postgres::{PgConnectOptions, PgSslMode};
 
-use crate::config::Config;
+use crate::{backupcrypt::BackupKey, config::Config};
 
 const MANIFEST_FILE: &str = "manifest.json";
 const DUMP_FILE: &str = "db.dump";
@@ -39,19 +39,26 @@ struct Manifest {
     created_at_unix: u64,
     app_version: String,
     vault_objects: u64,
+    /// SHA-256 of the plain dump (also when the file is encrypted).
     db_dump_sha256: String,
+    /// Key derivation and cipher of an encrypted backup (`backupcrypt`);
+    /// `None` = plain files.
+    encryption: Option<serde_json::Value>,
 }
 
 impl Manifest {
     fn to_json(&self) -> String {
-        serde_json::to_string_pretty(&json!({
+        let mut value = json!({
             "format": MANIFEST_FORMAT,
             "created_at_unix": self.created_at_unix,
             "app_version": self.app_version,
             "vault_objects": self.vault_objects,
             "db_dump_sha256": self.db_dump_sha256,
-        }))
-        .expect("the manifest is always serializable")
+        });
+        if let Some(encryption) = &self.encryption {
+            value["encryption"] = encryption.clone();
+        }
+        serde_json::to_string_pretty(&value).expect("the manifest is always serializable")
     }
 
     fn from_json(text: &str) -> Result<Self> {
@@ -87,6 +94,7 @@ impl Manifest {
             app_version: string_field("app_version")?,
             vault_objects: number_field("vault_objects")?,
             db_dump_sha256,
+            encryption: value.get("encryption").filter(|v| !v.is_null()).cloned(),
         })
     }
 }
@@ -156,8 +164,28 @@ fn ssl_mode_str(mode: PgSslMode) -> &'static str {
 /// what it wrote (the directory, if it created it), so nothing is left that
 /// looks like a backup; the manifest is written last and renamed into place.
 pub async fn backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
+    backup_with(config, dir, None).await
+}
+
+/// Like [`backup`], with every file encrypted with a key derived from
+/// `passphrase` (see [`crate::backupcrypt`]). The plain dump exists only
+/// for the moment between `pg_dump` and its encryption, inside `dir`.
+pub async fn backup_encrypted(
+    config: &Config,
+    dir: &Path,
+    passphrase: &str,
+) -> Result<BackupSummary> {
+    let key = BackupKey::new(passphrase)?;
+    backup_with(config, dir, Some(&key)).await
+}
+
+async fn backup_with(
+    config: &Config,
+    dir: &Path,
+    key: Option<&BackupKey>,
+) -> Result<BackupSummary> {
     let created = prepare_target(dir)?;
-    match write_backup(config, dir).await {
+    match write_backup(config, dir, key).await {
         Ok(summary) => Ok(summary),
         Err(error) => {
             discard_partial(dir, created);
@@ -166,17 +194,34 @@ pub async fn backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
     }
 }
 
-async fn write_backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
+async fn write_backup(
+    config: &Config,
+    dir: &Path,
+    key: Option<&BackupKey>,
+) -> Result<BackupSummary> {
     let database = DatabaseArgs::from_config(config);
     let dump = dir.join(DUMP_FILE);
-    run(dump_command(&database, &dump), "pg_dump")?;
-    if !dump.is_file() {
-        bail!("pg_dump did not create '{}'", dump.display());
+    let plain_dump = match key {
+        Some(_) => dir.join(format!("{DUMP_FILE}.plain")),
+        None => dump.clone(),
+    };
+    run(dump_command(&database, &plain_dump), "pg_dump")?;
+    if !plain_dump.is_file() {
+        bail!("pg_dump did not create '{}'", plain_dump.display());
     }
-    let db_dump_bytes = fs::metadata(&dump)
-        .with_context(|| format!("cannot read '{}'", dump.display()))?
-        .len();
-    let db_dump_sha256 = sha256_file(&dump)?;
+    let (db_dump_sha256, db_dump_bytes) = match key {
+        Some(key) => {
+            let result = crate::backupcrypt::encrypt_file(key, &plain_dump, &dump);
+            let _ = fs::remove_file(&plain_dump);
+            result?
+        }
+        None => {
+            let bytes = fs::metadata(&dump)
+                .with_context(|| format!("cannot read '{}'", dump.display()))?
+                .len();
+            (sha256_file(&dump)?, bytes)
+        }
+    };
 
     // Read after the dump: a content is stored in the vault before the row
     // that names it is committed, so everything the dump refers to is listed.
@@ -184,7 +229,7 @@ async fn write_backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
     let target_objects = dir.join(VAULT_DIR).join("objects");
     fs::create_dir_all(&target_objects)
         .with_context(|| format!("cannot create '{}'", target_objects.display()))?;
-    let copied = copy_checked_objects(&config.vault_dir.join("objects"), &target_objects)?;
+    let copied = copy_checked_objects(&config.vault_dir.join("objects"), &target_objects, key)?;
     let missing: Vec<&String> = referenced
         .iter()
         .filter(|hash| !copied.contains(hash.as_str()))
@@ -202,6 +247,7 @@ async fn write_backup(config: &Config, dir: &Path) -> Result<BackupSummary> {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         vault_objects: copied.len() as u64,
         db_dump_sha256: db_dump_sha256.clone(),
+        encryption: key.map(BackupKey::manifest_entry),
     };
     let manifest_path = dir.join(MANIFEST_FILE);
     let partial = dir.join(format!("{MANIFEST_FILE}.partial"));
@@ -232,6 +278,7 @@ async fn referenced_hashes(config: &Config) -> Result<Vec<String>> {
 fn copy_checked_objects(
     source_objects: &Path,
     target_objects: &Path,
+    key: Option<&BackupKey>,
 ) -> Result<std::collections::HashSet<String>> {
     let mut copied = std::collections::HashSet::new();
     for object in collect_objects(source_objects)? {
@@ -246,14 +293,20 @@ fn copy_checked_objects(
             fs::create_dir_all(parent)
                 .with_context(|| format!("cannot create '{}'", parent.display()))?;
         }
-        fs::copy(&object.path, &target).with_context(|| {
-            format!(
-                "cannot copy vault object '{}' to '{}'",
-                object.path.display(),
-                target.display()
-            )
-        })?;
-        let actual = sha256_file(&target)?;
+        let actual = match key {
+            // encrypted on the way; the hash is of the plain content read
+            Some(key) => crate::backupcrypt::encrypt_file(key, &object.path, &target)?.0,
+            None => {
+                fs::copy(&object.path, &target).with_context(|| {
+                    format!(
+                        "cannot copy vault object '{}' to '{}'",
+                        object.path.display(),
+                        target.display()
+                    )
+                })?;
+                sha256_file(&target)?
+            }
+        };
         if actual != object.hash {
             bail!(
                 "vault object {} is corrupt (its content is {actual}); restore it from an \
@@ -288,11 +341,46 @@ fn discard_partial(dir: &Path, created: bool) {
 /// Verifies a backup directory and restores it into the configured database
 /// and vault. A database that already contains tables requires `force`.
 pub async fn restore(config: &Config, dir: &Path, force: bool) -> Result<RestoreSummary> {
-    let manifest = verify_backup(dir)?;
+    restore_with(config, dir, force, None).await
+}
+
+/// Like [`restore`]; an encrypted backup needs its `passphrase`. The dump is
+/// decrypted to a temporary file in the vault's `tmp/` for `pg_restore` and
+/// removed afterwards; objects are decrypted straight into the vault.
+pub async fn restore_with(
+    config: &Config,
+    dir: &Path,
+    force: bool,
+    passphrase: Option<&str>,
+) -> Result<RestoreSummary> {
+    let (manifest, key) = verify_backup_with(dir, passphrase)?;
     ensure_database_empty(config, force).await?;
     let database = DatabaseArgs::from_config(config);
-    let dump = dir.join(DUMP_FILE);
-    if let Err(error) = run(restore_command(&database, &dump), "pg_restore") {
+    let mut dump = dir.join(DUMP_FILE);
+    let mut temporary = None;
+    if let Some(key) = &key {
+        let tmp = config.vault_dir.join("tmp");
+        fs::create_dir_all(&tmp).with_context(|| format!("cannot create '{}'", tmp.display()))?;
+        let plain = tmp.join(format!("restore-{}.dump", std::process::id()));
+        let _ = fs::remove_file(&plain);
+        let mut out = std::io::BufWriter::new(
+            fs::File::create_new(&plain)
+                .with_context(|| format!("cannot create '{}'", plain.display()))?,
+        );
+        if let Err(e) = crate::backupcrypt::decrypt_file(key, &dump, &mut out) {
+            drop(out);
+            let _ = fs::remove_file(&plain);
+            return Err(e);
+        }
+        drop(out);
+        dump = plain.clone();
+        temporary = Some(plain);
+    }
+    let restored = run(restore_command(&database, &dump), "pg_restore");
+    if let Some(plain) = &temporary {
+        let _ = fs::remove_file(plain);
+    }
+    if let Err(error) = restored {
         bail!(
             "{error:#} – the database is unchanged (the restore runs in one transaction); \
              restore a backup that is older than the database (e.g. from before an upgrade) \
@@ -303,7 +391,12 @@ pub async fn restore(config: &Config, dir: &Path, force: bool) -> Result<Restore
     let target_objects = config.vault_dir.join("objects");
     fs::create_dir_all(&target_objects)
         .with_context(|| format!("cannot create '{}'", target_objects.display()))?;
-    let stats = copy_objects(&dir.join(VAULT_DIR).join("objects"), &target_objects, true)?;
+    let stats = copy_objects_with(
+        &dir.join(VAULT_DIR).join("objects"),
+        &target_objects,
+        true,
+        key.as_ref(),
+    )?;
 
     Ok(RestoreSummary {
         vault_objects: manifest.vault_objects as usize,
@@ -462,10 +555,21 @@ fn collect_objects(objects_root: &Path) -> Result<Vec<ObjectFile>> {
     Ok(objects)
 }
 
+#[cfg(test)]
 fn copy_objects(
     source_objects: &Path,
     target_objects: &Path,
     skip_existing: bool,
+) -> Result<CopyStats> {
+    copy_objects_with(source_objects, target_objects, skip_existing, None)
+}
+
+/// Copies (with a key: decrypts) the objects of a backup into a vault.
+fn copy_objects_with(
+    source_objects: &Path,
+    target_objects: &Path,
+    skip_existing: bool,
+    key: Option<&BackupKey>,
 ) -> Result<CopyStats> {
     let mut stats = CopyStats::default();
     for object in collect_objects(source_objects)? {
@@ -492,13 +596,40 @@ fn copy_objects(
             fs::create_dir_all(parent)
                 .with_context(|| format!("cannot create '{}'", parent.display()))?;
         }
-        fs::copy(&object.path, &target).with_context(|| {
-            format!(
-                "cannot copy vault object '{}' to '{}'",
-                object.path.display(),
-                target.display()
-            )
-        })?;
+        if let Some(key) = key {
+            // decrypted next to its place and moved in once its content is checked
+            let partial = target.with_extension("partial");
+            let _ = fs::remove_file(&partial);
+            let mut out = std::io::BufWriter::new(
+                fs::File::create_new(&partial)
+                    .with_context(|| format!("cannot create '{}'", partial.display()))?,
+            );
+            let sha = crate::backupcrypt::decrypt_file(key, &object.path, &mut out);
+            drop(out);
+            match sha {
+                Ok(sha) if sha == object.hash => fs::rename(&partial, &target)
+                    .with_context(|| format!("cannot write '{}'", target.display()))?,
+                Ok(sha) => {
+                    let _ = fs::remove_file(&partial);
+                    bail!(
+                        "vault object {} is corrupt (its content is {sha})",
+                        object.hash
+                    );
+                }
+                Err(e) => {
+                    let _ = fs::remove_file(&partial);
+                    return Err(e);
+                }
+            }
+        } else {
+            fs::copy(&object.path, &target).with_context(|| {
+                format!(
+                    "cannot copy vault object '{}' to '{}'",
+                    object.path.display(),
+                    target.display()
+                )
+            })?;
+        }
         stats.copied += 1;
     }
     Ok(stats)
@@ -544,11 +675,45 @@ fn now_unix() -> u64 {
         .unwrap_or_default()
 }
 
+/// Whether the backup in `dir` is encrypted (from its manifest).
+pub fn is_encrypted(dir: &Path) -> Result<bool> {
+    let manifest_path = dir.join(MANIFEST_FILE);
+    let text = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("cannot read '{}'", manifest_path.display()))?;
+    Ok(Manifest::from_json(&text)?.encryption.is_some())
+}
+
+#[cfg(test)]
 fn verify_backup(dir: &Path) -> Result<Manifest> {
+    verify_backup_with(dir, None).map(|(manifest, _)| manifest)
+}
+
+/// SHA-256 of a backup file's plain content (decrypted on the way when the
+/// backup is encrypted; authentication failures are errors).
+fn backup_file_sha(path: &Path, key: Option<&BackupKey>) -> Result<String> {
+    match key {
+        Some(key) => crate::backupcrypt::decrypt_file(key, path, &mut std::io::sink()),
+        None => sha256_file(path),
+    }
+}
+
+/// Checks a backup directory completely (manifest, dump, every object) and
+/// returns its manifest and – for an encrypted backup – the key.
+fn verify_backup_with(
+    dir: &Path,
+    passphrase: Option<&str>,
+) -> Result<(Manifest, Option<BackupKey>)> {
     let manifest_path = dir.join(MANIFEST_FILE);
     let text = fs::read_to_string(&manifest_path)
         .with_context(|| format!("cannot read '{}'", manifest_path.display()))?;
     let manifest = Manifest::from_json(&text)?;
+    let key = match (&manifest.encryption, passphrase) {
+        (Some(entry), Some(passphrase)) => Some(BackupKey::from_manifest(passphrase, entry)?),
+        (Some(_), None) => bail!(
+            "the backup is encrypted: set TEAMCRAFT_BACKUP_PASSPHRASE (or _FILE) or enter the passphrase"
+        ),
+        (None, _) => None,
+    };
 
     let dump = dir.join(DUMP_FILE);
     let metadata =
@@ -556,7 +721,7 @@ fn verify_backup(dir: &Path) -> Result<Manifest> {
     if !metadata.is_file() {
         bail!("'{}' is not a file", dump.display());
     }
-    let actual = sha256_file(&dump)?;
+    let actual = backup_file_sha(&dump, key.as_ref())?;
     if actual != manifest.db_dump_sha256 {
         bail!(
             "database dump checksum mismatch: manifest {}, file {}",
@@ -575,7 +740,7 @@ fn verify_backup(dir: &Path) -> Result<Manifest> {
         );
     }
     for object in &objects {
-        let actual = sha256_file(&object.path)?;
+        let actual = backup_file_sha(&object.path, key.as_ref())?;
         if actual != object.hash {
             bail!(
                 "vault object {} is corrupt (file content is {})",
@@ -584,7 +749,7 @@ fn verify_backup(dir: &Path) -> Result<Manifest> {
             );
         }
     }
-    Ok(manifest)
+    Ok((manifest, key))
 }
 
 fn connection_args(database: &DatabaseArgs) -> Vec<OsString> {
@@ -714,6 +879,7 @@ mod tests {
             app_version: "0.1.0".into(),
             vault_objects: 3,
             db_dump_sha256: sha256_bytes(b"dump"),
+            encryption: None,
         };
         assert_eq!(Manifest::from_json(&manifest.to_json()).unwrap(), manifest);
         assert!(Manifest::from_json("{").is_err());
@@ -830,6 +996,7 @@ mod tests {
                 app_version: "0.1.0".into(),
                 vault_objects: 1,
                 db_dump_sha256: sha256_bytes(dump),
+                encryption: None,
             }
             .to_json(),
         )
@@ -840,6 +1007,67 @@ mod tests {
         let error = verify_backup(&dir).unwrap_err().to_string();
         assert!(error.contains("checksum mismatch"), "{error}");
         fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn encrypted_backups_verify_and_restore_only_with_the_passphrase() {
+        let pass = "correct horse battery staple";
+        let key = BackupKey::new(pass).unwrap();
+        let source = temp_dir("enc-source");
+        let dir = temp_dir("enc-backup");
+        let plain_dump = source.join("db.dump");
+        fs::write(&plain_dump, b"database dump").unwrap();
+        crate::backupcrypt::encrypt_file(&key, &plain_dump, &dir.join(DUMP_FILE)).unwrap();
+        let vault_objects = source.join("objects");
+        let hash = write_object(&vault_objects, b"file one");
+        let backup_objects = dir.join(VAULT_DIR).join("objects");
+        let copied = copy_checked_objects(&vault_objects, &backup_objects, Some(&key)).unwrap();
+        assert!(copied.contains(&hash));
+        let stored = object_path_under(&backup_objects, &hash).unwrap();
+        assert_ne!(fs::read(&stored).unwrap(), b"file one", "stored encrypted");
+        fs::write(
+            dir.join(MANIFEST_FILE),
+            Manifest {
+                created_at_unix: 1,
+                app_version: "0.1.0".into(),
+                vault_objects: 1,
+                db_dump_sha256: sha256_bytes(b"database dump"),
+                encryption: Some(key.manifest_entry()),
+            }
+            .to_json(),
+        )
+        .unwrap();
+        assert!(is_encrypted(&dir).unwrap());
+
+        let (manifest, found) = verify_backup_with(&dir, Some(pass)).unwrap();
+        assert_eq!(manifest.vault_objects, 1);
+        assert!(found.is_some());
+        let error = verify_backup_with(&dir, None).unwrap_err().to_string();
+        assert!(error.contains("encrypted"), "{error}");
+        let error = verify_backup_with(&dir, Some("a wrong passphrase"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("wrong backup passphrase"), "{error}");
+
+        // decrypted into a vault, checked against the name
+        let target = temp_dir("enc-target");
+        let key = found.unwrap();
+        let stats = copy_objects_with(&backup_objects, &target, true, Some(&key)).unwrap();
+        assert_eq!(stats.copied, 1);
+        assert_eq!(
+            fs::read(object_path_under(&target, &hash).unwrap()).unwrap(),
+            b"file one"
+        );
+
+        // a changed byte is caught by the authentication
+        let mut bytes = fs::read(&stored).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        fs::write(&stored, bytes).unwrap();
+        assert!(verify_backup_with(&dir, Some(pass)).is_err());
+        for d in [source, dir, target] {
+            fs::remove_dir_all(d).ok();
+        }
     }
 
     #[test]
@@ -854,6 +1082,7 @@ mod tests {
             app_version: "0.1.0".into(),
             vault_objects: 1,
             db_dump_sha256: sha256_bytes(dump),
+            encryption: None,
         };
         fs::write(dir.join(MANIFEST_FILE), manifest.to_json()).unwrap();
 

@@ -67,6 +67,13 @@ export function brandingImage(kind, token, type) {
   return brandingImages[key];
 }
 
+/** Title bar texts from GET /branding; an older server sends none: built-in TeamCraft / PLM. About and Settings stay TeamCraft. */
+export function brandTexts(b) {
+  var name = b && typeof b.display_name === "string" && b.display_name.trim() ? b.display_name.trim() : "TeamCraft";
+  var sub = b && typeof b.subtitle === "string" ? b.subtitle : "PLM";
+  return { name: name, subtitle: sub };
+}
+
 /** Shows the logos the administrators set: wide in the title bar, square in the rail; built-in ones otherwise. */
 export function applyBranding() {
   var brand = document.querySelector(".titlebar .brand"), mark = document.querySelector(".rail-mark");
@@ -77,6 +84,10 @@ export function applyBranding() {
     if (old) old.remove();
   }
   api("GET", "/branding").then(function (b) {
+    var texts = brandTexts(b);
+    document.getElementById("brand-name").textContent = texts.name;
+    document.getElementById("brand-sub").textContent = texts.subtitle;
+    document.getElementById("brand-sub").hidden = !texts.subtitle;
     if (b.wide) {
       brandingImage("wide", b.wide, b.wide_type).then(function (url) {
         var img = brand.querySelector(".brand-wide");

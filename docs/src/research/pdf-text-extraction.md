@@ -8,14 +8,14 @@ on 2026-11-05.
 
 ## Candidates
 
-| Crate | Licence | What it is | Notes |
-|---|---|---|---|
-| [`lopdf`](https://crates.io/crates/lopdf) 0.36 | MIT | low-level PDF object model; `extract_text` is a helper on top | few dependencies; the text helper is basic |
-| [`pdf-extract`](https://crates.io/crates/pdf-extract) 0.12 | MIT | text extraction with font and CMap handling, built on `lopdf` | long-established; panics on damaged input |
-| [`pdf_oxide`](https://crates.io/crates/pdf_oxide) 0.3 | MIT OR Apache-2.0 | parser and text extraction with recovery of damaged files, reading order | young (one maintainer), larger dependency tree (about 150 crates with default features, all MIT/Apache/Zlib/Unlicense/Unicode); optional features (OCR, rendering, signatures) are off |
-| [`pdf`](https://crates.io/crates/pdf) 0.10 (pdf-rs) | MIT | object model, no text extraction | not a text extractor on its own |
-| `pdfium-render`, `mupdf` | C libraries / AGPL | – | excluded: no C dependencies (pure Rust rule), AGPL |
-| `oxidize-pdf` | GPL | – | excluded: licence |
+| Crate                                                      | Licence            | What it is                                                               | Notes                                                                                                                                                                                  |
+|------------------------------------------------------------|--------------------|--------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [`lopdf`](https://crates.io/crates/lopdf) 0.36             | MIT                | low-level PDF object model; `extract_text` is a helper on top            | few dependencies; the text helper is basic                                                                                                                                             |
+| [`pdf-extract`](https://crates.io/crates/pdf-extract) 0.12 | MIT                | text extraction with font and CMap handling, built on `lopdf`            | long-established; panics on damaged input                                                                                                                                              |
+| [`pdf_oxide`](https://crates.io/crates/pdf_oxide) 0.3      | MIT OR Apache-2.0  | parser and text extraction with recovery of damaged files, reading order | young (one maintainer), larger dependency tree (about 150 crates with default features, all MIT/Apache/Zlib/Unlicense/Unicode); optional features (OCR, rendering, signatures) are off |
+| [`pdf`](https://crates.io/crates/pdf) 0.10 (pdf-rs)        | MIT                | object model, no text extraction                                         | not a text extractor on its own                                                                                                                                                        |
+| `pdfium-render`, `mupdf`                                   | C libraries / AGPL | –                                                                        | excluded: no C dependencies (pure Rust rule), AGPL                                                                                                                                     |
+| `oxidize-pdf`                                              | GPL                | –                                                                        | excluded: licence                                                                                                                                                                      |
 
 ## Test
 
@@ -24,12 +24,12 @@ report) and, for each, a copy truncated to 60 %, three copies with 40 flipped
 bytes, plus 10 bytes of garbage. Release build, text of the first 50 pages,
 panics caught.
 
-| Case | `lopdf` | `pdf-extract` | `pdf_oxide` |
-|---|---|---|---|
-| undamaged files (4) | 3 of 4 ok (1 error: ToUnicode CMap), 15–35 ms | 4 of 4 ok, 40–230 ms | 4 of 4 ok, 55–185 ms |
-| truncated (4) | 4 errors (cross-reference table) | 4 errors | **4 of 4 ok** (page tree rebuilt by scanning) |
-| damaged (9) | 3 ok, 5 errors | **5 panics**, 1 error, 3 ok | 8 ok, 1 error, no panic |
-| garbage | error | error | error |
+| Case                | `lopdf`                                       | `pdf-extract`               | `pdf_oxide`                                   |
+|---------------------|-----------------------------------------------|-----------------------------|-----------------------------------------------|
+| undamaged files (4) | 3 of 4 ok (1 error: ToUnicode CMap), 15–35 ms | 4 of 4 ok, 40–230 ms        | 4 of 4 ok, 55–185 ms                          |
+| truncated (4)       | 4 errors (cross-reference table)              | 4 errors                    | **4 of 4 ok** (page tree rebuilt by scanning) |
+| damaged (9)         | 3 ok, 5 errors                                | **5 panics**, 1 error, 3 ok | 8 ok, 1 error, no panic                       |
+| garbage             | error                                         | error                       | error                                         |
 
 The text quality of the three agrees where all succeed (the character counts
 differ by a few per cent: ligatures, hyphenation, spacing).
@@ -38,7 +38,8 @@ differ by a few per cent: ligatures, hyphenation, spacing).
 
 **`pdf_oxide`, with default features off except `legacy-crypto`** (no ICC colour
 management; the old RC4/MD5 encryption stays supported, because PDFs from
-solvers and Office are sometimes encrypted with an empty user password). Reasons: it is the only candidate that returned text from
+solvers and Office are sometimes encrypted with an empty user password). Reasons: it is the only candidate that returned
+text from
 truncated and damaged files without panicking – reports that were cut off by an
 interrupted upload or a flaky export are exactly the files people have – and it
 is as fast as the others. The price is a young crate and a bigger dependency

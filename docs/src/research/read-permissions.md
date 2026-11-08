@@ -6,11 +6,11 @@ systems scope *read* access and what TeamCraft adopts. Date: 2026-11-05.
 
 ## How other systems do it
 
-| System | Unit of access | Default | Read grant | Notes |
-|---|---|---|---|---|
-| Onshape | document (and folders); teams and the company/enterprise as grantees | private to the owner | share a document with users, teams or the whole company; permission levels view / copy / export / edit | a document shared "view only" can still forbid export or copy; enterprise admins see everything |
-| GitHub | repository | public or private chosen at creation; organisation base permission (read / none) | membership of the organisation or a team that has the repository | a private repository answers **404**, never 403, to outsiders, so its existence is not confirmed |
-| Typical PDM/PLM (Teamcenter, Windchill, Vault Professional) | project, context, folder or library; access control lists per object type and lifecycle state | everything inside a context is visible to its members | context membership plus role; rules per state ("released documents visible to all, in-work only to the team") | powerful, but rule sets become hard to audit; most installations use "project = visibility boundary" |
+| System                                                      | Unit of access                                                                                | Default                                                                          | Read grant                                                                                                    | Notes                                                                                                |
+|-------------------------------------------------------------|-----------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|
+| Onshape                                                     | document (and folders); teams and the company/enterprise as grantees                          | private to the owner                                                             | share a document with users, teams or the whole company; permission levels view / copy / export / edit        | a document shared "view only" can still forbid export or copy; enterprise admins see everything      |
+| GitHub                                                      | repository                                                                                    | public or private chosen at creation; organisation base permission (read / none) | membership of the organisation or a team that has the repository                                              | a private repository answers **404**, never 403, to outsiders, so its existence is not confirmed     |
+| Typical PDM/PLM (Teamcenter, Windchill, Vault Professional) | project, context, folder or library; access control lists per object type and lifecycle state | everything inside a context is visible to its members                            | context membership plus role; rules per state ("released documents visible to all, in-work only to the team") | powerful, but rule sets become hard to audit; most installations use "project = visibility boundary" |
 
 Common ground:
 
@@ -34,9 +34,8 @@ Common ground:
   request "not everybody may see every repository".
 - **404 like GitHub.** A hidden item, file, change or group answers exactly
   like a missing one.
-- **Links across the boundary** follow the PDM practice: an outgoing link
-  (BOM line, reference, simulation basis) stays as a *placeholder* row
-  ("restricted item", quantity and find number kept, identity removed);
+- **Links across the boundary** follow the PDM practice: an outgoing link (BOM line, reference, simulation basis) stays
+  as a *placeholder* row ("restricted item", quantity and find number kept, identity removed);
   incoming links (where-used, referrers) are dropped and only counted.
 - **Change orders and requests** have no group of their own. They are visible
   to their author, reviewers or assignee, admins and anyone who can see every

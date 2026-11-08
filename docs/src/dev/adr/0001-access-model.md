@@ -42,8 +42,7 @@ assistant, notifications, e-mail, Mattermost and webhooks.
 * Lists that leave entries out say how many (`X-Hidden-Count` in the REST API,
   "+N …" in the UI).
 * Copying out of a restricted group declassifies content, so Save As across
-  the boundary is limited to managers of the source group
-  (`items::ensure_may_take_out`, used by `services::save_as`).
+  the boundary is limited to managers of the source group (`items::ensure_may_take_out`, used by `services::save_as`).
 * A need-to-know policy (`project_policies.admin_read`, #151 step 1) fills
   the hidden groups of administrators too (`access::hidden_of_user`): the
   guards stay the only place that decides. Administrators keep *maintaining*
@@ -74,10 +73,10 @@ From the research note:
 
 ## Where it is held
 
-| What | Where |
-|------|-------|
-| Deny list on the actor | `Actor::hidden_projects`, `Actor::can_see_project` in `src/auth.rs` |
-| The only SQL guard writer | `src/services/access.rs` |
-| Handlers never call `*_unchecked`; nobody but `access` writes a guard | `tests/no_unchecked_in_handlers.rs` |
-| Every web route, REST route and MCP tool leaks nothing to an outsider | `tests/read_permissions.rs` (routes read from the router sources) |
-| Handlers never touch SQL themselves | proposed in #96 (`tests/architecture_guards.rs`) |
+| What                                                                  | Where                                                               |
+|-----------------------------------------------------------------------|---------------------------------------------------------------------|
+| Deny list on the actor                                                | `Actor::hidden_projects`, `Actor::can_see_project` in `src/auth.rs` |
+| The only SQL guard writer                                             | `src/services/access.rs`                                            |
+| Handlers never call `*_unchecked`; nobody but `access` writes a guard | `tests/no_unchecked_in_handlers.rs`                                 |
+| Every web route, REST route and MCP tool leaks nothing to an outsider | `tests/read_permissions.rs` (routes read from the router sources)   |
+| Handlers never touch SQL themselves                                   | proposed in #96 (`tests/architecture_guards.rs`)                    |

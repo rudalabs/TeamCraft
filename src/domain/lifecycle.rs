@@ -101,13 +101,13 @@ pub const LIFECYCLE_RULES: [TransitionRule; 4] = [
         from: LifecycleState::InReview,
         to: LifecycleState::InWork,
         how: "A reviewer rejects the change (with a reason) or its author withdraws it.",
-        who: "Any assigned reviewer; the author of the change or an admin.",
+        who: "Any assigned reviewer; the author of the change or an admin (for a deactivated author also a manager of every affected project group).",
     },
     TransitionRule {
         from: LifecycleState::Released,
         to: LifecycleState::Obsolete,
-        how: "Mark obsolete – final, cannot be undone.",
-        who: "CAD editors of the item's project group, admins.",
+        how: "Mark obsolete – final, cannot be undone. Directly, or through a change order with an obsolete or supersede line, applied when the change is released.",
+        who: "Directly: CAD editors of the item's project group, admins – unless the group requires a change order (then 409). Through a change order: the reviewers of the change approve it (four-eyes principle as for every release).",
     },
 ];
 

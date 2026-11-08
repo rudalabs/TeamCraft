@@ -10,7 +10,9 @@
   <div>
     <p class="crumbs"><a href="/items">Items</a>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% endif %}<span>{{ rev.item_number }}</span></p>
     <div class="title-row">
-      <h1><span class="id">{{ rev.item_number }}/{{ rev.code }}</span> · {{ rev.name }}</h1>
+      <h1><span class="id"><span id="item-number">{{ rev.item_number }}</span>/{{ rev.code }}</span> · {{ rev.name }}</h1>
+      <button type="button" class="small" data-copy="item-number" title="Copy the item number to the clipboard" aria-label="Copy the item number {{ rev.item_number }}">Copy number</button>
+      <a class="button small" href="/items/{{ item.id }}/label" title="Printable label with a QR code that opens this item">Label</a>
       <form method="post" action="/items/{{ item.id }}/favorite">
         <input type="hidden" name="favorite" value="{% if favorite %}0{% else %}1{% endif %}">
         <input type="hidden" name="back" value="{{ back }}">
@@ -48,6 +50,7 @@
     <details class="menu">
       <summary class="button">More <span class="chev" aria-hidden="true"></span></summary>
       <div class="menu-pop menu-right">
+        {% if me.role != "viewer" and rev.item_type in ["part", "assembly"] %}<a href="/items/new?type=simulation&amp;basis={{ rev.id }}" title="A new simulation prefilled from this revision, with it as its basis">New simulation…</a>{% endif %}
         {% if me.role != "viewer" %}<a href="/revisions/{{ rev.id }}/save-as" title="A new item with the attributes, files and BOM of this revision">Save as…</a>{% endif %}
         {% if can.add_to_change %}<a href="/changes/new?revision={{ rev.id }}">Release via new change…</a>{% endif %}
         <a href="/requests/new?revision={{ rev.id }}" title="Report a problem or propose a change to {{ rev.item_number }}/{{ rev.code }} (change request)">Request change…{% if open_requests %}<span class="badge badge-count" title="{{ open_requests|length }} open change request(s)">{{ open_requests|length }}</span>{% endif %}</a>
@@ -314,7 +317,7 @@
               {% endif %}
               <a href="/requests/new?revision={{ rev.id }}&amp;file={{ f.filename|urlencode }}" title="Request a change to {{ f.filename }}">Request change…</a>
               {% if can.edit %}
-              <form method="post" action="/files/{{ f.id }}/delete" data-confirm="Remove {{ f.filename }} and all its versions from this revision?">
+              <form method="post" action="/files/{{ f.id }}/delete" data-confirm="Remove {{ f.filename }} and all its versions from this revision?{{ f.used_by }}">
                 <input type="hidden" name="back" value="{{ back }}#files">
                 <button class="danger" type="submit">Remove</button>
               </form>
@@ -361,15 +364,37 @@
   <p class="hint">Downloads in the browser are for single files and for viewing. For CAD work use the
     TeamCraft desktop app: it keeps one working folder per project group with the folder structure shown here
     (<span class="mono">TeamCraft/{% if rev.project_code %}{{ rev.project_code }}{% else %}&lt;group&gt;{% endif %}/&lt;folder&gt;/&lt;file&gt;</span>), gets whole assemblies and keeps files you have not checked out read-only.</p>
-  {% if can.edit %}
-  <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data" data-chunked="{{ rev.id }}">
+  {% set fh = files_hint %}
+  {% if fh.kind == "upload" %}
+  <form class="inline files-upload" id="add-files" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data" data-chunked="{{ rev.id }}" data-dropzone>
     <input type="hidden" name="bases" value="{{ file_bases }}">
     <input type="file" name="file" multiple required aria-label="Files to upload">
     <input type="text" name="comment" maxlength="2000" placeholder="Comment (optional)" aria-label="Comment">
     <button type="submit">Upload</button>
-    <span class="hint">same file name = new version · max. {{ max_upload_mb }} MiB per file · <a href="/formats">CAD formats</a></span>
+    <span class="hint">same file name = new version · max. {{ max_upload_mb }} MiB per file · drop files onto this card · <a href="/formats">CAD formats</a></span>
   </form>
+  {% elif fh.kind == "checkout" %}
+  <div class="notice files-hint" id="add-files">
+    <p>To add or replace files, check out this revision.</p>
+    <form method="post" action="/revisions/{{ rev.id }}/checkout?back=%2Frevisions%2F{{ rev.id }}%23files">
+      <button class="primary" type="submit" title="Take the exclusive edit lock and open the upload form here">Check out and add files</button>
+    </form>
+  </div>
+  {% elif fh.kind == "locked" %}
+  <p class="notice files-hint" id="add-files">Checked out by {{ rev.checked_out_by_name }} since {{ m.time(rev.checked_out_at) }} – files can be added after check-in.{% if me.is_admin %} Administrators can force-unlock it from the <em>More</em> menu.{% endif %}</p>
+  {% elif fh.kind == "review" %}
+  <p class="notice files-hint" id="add-files">This revision is in review and frozen – files can be added once the change is decided, or to a new revision.</p>
+  {% elif fh.kind == "frozen" %}
+  <div class="notice files-hint" id="add-files">
+    <p>{{ rev.state|label }} revisions are frozen – revise to add files to a new revision.</p>
+    {% if fh.can_revise %}
+    <form method="post" action="/revisions/{{ rev.id }}/revise" data-confirm="Create a new revision of {{ rev.item_number }} based on {{ rev.code }}?">
+      <button type="submit">Revise</button>
+    </form>
+    {% endif %}
+  </div>
   {% endif %}
+  {% if fh.type_hint and fh.kind != "hidden" %}<p class="hint files-type-hint">Typical files: {{ fh.type_hint }}</p>{% endif %}
   {% if native_without_preview %}
   <p class="hint">No 3D preview for native CAD files – the preview image stored in Inventor, Solid Edge and SolidWorks files is shown next to them. For the model in 3D, attach a STEP export (<em>Save as → STEP AP242</em>); the desktop app can create it with your own Inventor or Solid Edge.</p>
   {% endif %}
@@ -462,6 +487,29 @@
       {% if simulation.results %}<a class="button small" href="/revisions/{{ rev.id }}/simulation/results.csv">CSV</a>{% endif %}
     </div>
   </div>
+  {% if simulation.can_fill_with_ai %}
+  <details class="fill-ai" id="fill-with-ai">
+    <summary class="button small">Fill with AI…</summary>
+    <form method="post" action="/revisions/{{ rev.id }}/simulation/fill-with-ai">
+      <label>What to extract (optional)
+        <textarea name="wanted" rows="3" maxlength="4000" placeholder="e.g. max von Mises stress per load case, max displacement, first three eigenfrequencies"></textarea>
+      </label>
+      <label>Limits to use (optional)
+        <input type="text" name="limits" maxlength="500" placeholder="e.g. upper limit 250 MPa for stress; safety factor lower limit 1.5">
+      </label>
+      {% if simulation.report_files %}
+      <fieldset>
+        <legend>Report files</legend>
+        {% for name in simulation.report_files %}
+        <label class="check"><input type="checkbox" name="file_{{ loop.index0 }}" value="{{ name }}" checked> <span class="mono">{{ name }}</span></label>
+        {% endfor %}
+      </fieldset>
+      {% else %}<p class="hint">This revision has no report file (PDF, HTML or text) yet.</p>{% endif %}
+      <p class="hint">Empty means every key number of the report. These are drafts – nothing becomes a result until you accept it{% if not can.edit %}, and accepting needs the revision checked out{% endif %}. Numbers are quoted from the report; values the report does not contain are listed as not found.</p>
+      <button type="submit">Propose values</button>
+    </form>
+  </details>
+  {% endif %}
   {% set solver_files = files|selectattr("solver_line")|list %}
   {% if solver_files %}
   <ul class="small solver-runs" aria-label="Solver output">
@@ -933,7 +981,7 @@
   </div>
   {% elif not hidden.simulations %}<p class="empty">No simulation is based on {{ rev.item_number }} yet.</p>{% endif %}
   {{ m.hidden_count(hidden.simulations, "simulations") }}
-  {% if me.role != "viewer" %}<p class="hint">Create an item of type <a href="/items/new?type=simulation">Simulation</a> and add {{ rev.item_number }}/{{ rev.code }} as its basis.</p>{% endif %}
+  {% if me.role != "viewer" %}<p class="actions"><a class="button" href="/items/new?type=simulation&amp;basis={{ rev.id }}" title="Creates a simulation prefilled from this revision, with it as its basis">New simulation based on {{ rev.item_number }}/{{ rev.code }}</a></p>{% endif %}
 </section>
 {% endif %}
 

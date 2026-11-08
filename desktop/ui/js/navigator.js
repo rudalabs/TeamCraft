@@ -14,6 +14,7 @@ import { openRequest } from "./requests.js";
 import { newItemDialog } from "./dialogs.js";
 import { getProjectsDialog } from "./group-sync.js";
 import { importFolderDialog } from "./folder-import.js";
+import { cutLevel, describe, normalizeMode, pathKey, quantityText, rootNodes, usageBadge } from "./structure.js";
 
 // ======================================================================
 // Navigator views
@@ -78,6 +79,7 @@ export function drawHome() {
     if (!list.length) return null;
     return [h("p.section-title", { text: title }), h("ul.tree", null, list.map(projectNode))];
   }
+  nav.appendChild(modeToggle());
   append(nav, group("My project groups", mine));
   append(nav, group(mine.length ? "Other project groups" : "All project groups", others));
 }
@@ -106,6 +108,7 @@ export function projectNode(p) {
 export function loadProjectItems(p, ul, count) {
   clear(ul);
   ul.appendChild(h("li.loading", { text: "Loading" }));
+  if (navMode() === "structure") return loadStructureRoots(p, ul, count);
   return api("GET", "/items?project=" + enc(p.code) + "&limit=500").then(function (r) {
     clear(ul);
     count.textContent = String(r.total);
@@ -263,5 +266,144 @@ export function renderSearch() {
     nav.appendChild(navHead("Search"));
     nav.appendChild(h("p.small.muted", { text: r.total + " result" + (r.total === 1 ? "" : "s") + " for “" + q + "”" }));
     nav.appendChild(r.items.length ? h("ul.tree", null, r.items.map(function (it) { return itemNode(it); })) : h("p.empty", { text: "Nothing found." }));
+  });
+}
+
+// ---------------------------------------------------------------- structure view
+
+var MODE_KEY = "teamcraft.navigator.mode";
+
+/** All items (flat list) or Structure; remembered per computer. */
+export function navMode() {
+  if (!state.navMode) {
+    try { state.navMode = normalizeMode(window.localStorage.getItem(MODE_KEY)); } catch (e) { state.navMode = "all"; }
+  }
+  return state.navMode;
+}
+
+export function setNavMode(mode) {
+  state.navMode = normalizeMode(mode);
+  try { window.localStorage.setItem(MODE_KEY, state.navMode); } catch (e) { /* not remembered */ }
+  if (state.view === "home") selectView("home");
+}
+
+/** The toggle in the head of the project list. */
+function modeToggle() {
+  var mode = navMode();
+  return h("div.nav-filter", null, [["all", "All items"], ["structure", "Structure"]].map(function (m) {
+    return h("button.chip" + (m[0] === mode ? ".active" : ""), {
+      type: "button", title: m[0] === "all" ? "Every item of a group, alphabetically" : "Assemblies with their parts; parts used nowhere else at the top",
+      "aria-pressed": String(m[0] === mode), on: { click: function () { setNavMode(m[0]); } }
+    }, m[1]);
+  }));
+}
+
+/** Redraws the project list after a lock changed: every row of a shared part
+ *  shows the new state at once. */
+export function refreshStructure() {
+  if (state.view === "home" && navMode() === "structure") selectView("home");
+}
+
+function structureRule() {
+  return state.structureRule === "released" ? "released" : "latest";
+}
+
+/** Top-level items of a group; every assembly expands into its parts. */
+function loadStructureRoots(p, ul, count) {
+  return api("GET", "/projects/" + enc(p.code) + "/structure?limit=500").then(function (r) {
+    clear(ul);
+    var top = rootNodes(r);
+    count.textContent = String(top.total);
+    if (!top.nodes.length) {
+      ul.appendChild(h("li.empty", { text: "No items yet." }));
+      return;
+    }
+    top.nodes.forEach(function (n) { ul.appendChild(structureNode(n, "grp:" + p.code)); });
+    var cut = cutLevel(top.nodes, top.total, true);
+    if (cut.hidden) ul.appendChild(h("li.empty", { text: "… and " + cut.hidden + " more – use the search or All items" }));
+  }, function (err) {
+    clear(ul);
+    ul.appendChild(h("li.notice.error", { text: errorText(err) }));
+  });
+}
+
+/** One line of the structure view (a BOM line below an assembly, or a top-level item). */
+export function structureNode(n, parentKey) {
+  var d = describe(n, structureRule());
+  var key = pathKey(parentKey, n.item_number || ("line" + n.find_number));
+  var open = d.expandable && !!state.expanded[key];
+  var children = h("ul.tree" + (open ? "" : ".hidden"));
+  var twisty = d.expandable ? h("button.twisty-btn", {
+    type: "button", "aria-expanded": String(open), "aria-label": (open ? "Hide" : "Show") + " the parts of " + d.label,
+    on: { click: function (ev) {
+      ev.stopPropagation();
+      state.expanded[key] = !state.expanded[key];
+      twisty.textContent = state.expanded[key] ? "▾" : "▸";
+      twisty.setAttribute("aria-expanded", String(!!state.expanded[key]));
+      children.classList.toggle("hidden", !state.expanded[key]);
+      if (state.expanded[key]) loadStructureChildren(n, key, children, false);
+    } }
+  }, open ? "▾" : "▸") : h("span.twisty");
+  var meta = [];
+  var qty = quantityText(n);
+  if (qty) meta.push(h("span.dim", { text: qty }));
+  if (n.code) meta.push(badge(n.state));
+  if (n.checked_out_by_name) {
+    var mine = state.me && n.checked_out_by_name === state.me.display_name;
+    meta.push(h("span.lock-owner", { title: "Checked out by " + n.checked_out_by_name }, [lockIcon(mine), " " + n.checked_out_by_name]));
+  }
+  var usage = usageBadge(n);
+  if (usage) {
+    meta.push(h("button.link.small", {
+      type: "button", title: "Used in " + n.used_in + " assemblies – open the Where used tab",
+      on: { click: function (ev) { ev.stopPropagation(); openRevision(n.item_number, n.code, "whereused"); } }
+    }, usage));
+  }
+  var node = h("div.node" + (state.active === "rev:" + n.item_number + ":" + n.code ? ".selected" : "") + (d.kind === "restricted" ? ".restricted" : ""), {
+    title: d.openable ? n.item_number + "/" + n.code + " – " + n.name : d.placeholder,
+    "data-item": n.item_number || "",
+    on: { click: function () {
+      if (!d.openable) return;
+      markTwins(n.item_number);
+      openRevision(n.item_number, n.code);
+    } }
+  }, [
+    twisty, h("span.ico", { text: n.item_type ? typeIcon(n.item_type) : "•" }),
+    d.kind === "revision"
+      ? h("span.label", null, [h("span.mono", { text: d.label }), " ", n.name])
+      : h("span.label.dim", { text: d.kind === "restricted" ? d.placeholder : d.label + " – " + d.placeholder }),
+    h("span.meta", null, meta)
+  ]);
+  if (open) loadStructureChildren(n, key, children, false);
+  return h("li", null, [node, children]);
+}
+
+/** Highlights the other appearances of a shared part in the expanded tree. */
+function markTwins(number) {
+  document.querySelectorAll("#navigator .node.twin").forEach(function (el) { el.classList.remove("twin"); });
+  document.querySelectorAll("#navigator .node[data-item]").forEach(function (el) {
+    if (el.getAttribute("data-item") === number) el.classList.add("twin");
+  });
+}
+
+/** The parts of an assembly, one level, loaded when it is expanded. */
+function loadStructureChildren(n, key, ul, showAll) {
+  clear(ul);
+  ul.appendChild(h("li.loading", { text: "Loading" }));
+  return api("GET", "/items/" + enc(n.item_number) + "/revisions/" + enc(n.code) + "/structure?rule=" + structureRule()).then(function (r) {
+    clear(ul);
+    var cut = cutLevel(r.nodes, r.total, showAll);
+    if (!r.nodes.length) {
+      ul.appendChild(h("li.empty", { text: "No BOM lines." }));
+      return;
+    }
+    cut.shown.forEach(function (c) { ul.appendChild(structureNode(c, key)); });
+    if (cut.hidden) {
+      ul.appendChild(h("li", null, h("button.link.small", { type: "button", on: { click: function () { loadStructureChildren(n, key, ul, true); } } },
+        "show all " + r.total + " lines")));
+    }
+  }, function (err) {
+    clear(ul);
+    ul.appendChild(h("li.notice.error", { text: errorText(err) }));
   });
 }

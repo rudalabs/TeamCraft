@@ -18,7 +18,7 @@ use tauri_plugin_opener::OpenerExt;
 use tokio::sync::Notify;
 
 use crate::{
-    acp,
+    acp, addfiles,
     api::{self, Api, ApiError, Transfer},
     bomimport, cadexport, folderimport, layout,
     settings::{self, Settings, TokenStorage},
@@ -90,6 +90,8 @@ pub struct Session {
     pub token_storage: Option<TokenStorage>,
     /// The daily check for a newer release is switched on.
     pub update_check: bool,
+    /// Check-out of an assembly also gets its parts.
+    pub checkout_parts: bool,
 }
 
 #[tauri::command]
@@ -98,6 +100,7 @@ pub fn session(app: AppHandle, state: State<'_, AppState>) -> Session {
     Session {
         token_storage: s.token.as_ref().and(s.token_storage),
         update_check: s.update_check != Some(false),
+        checkout_parts: s.checkout_parts != Some(false),
         server_url: s.server_url.clone(),
         signed_in: s.token.is_some(),
         skin: s.skin.clone().unwrap_or_else(|| "teamcraft".into()),
@@ -479,7 +482,7 @@ fn progress_events(
     })
 }
 
-/// Check out: takes the lock on the server and copies the files into the
+/// Check out: takes the lock on the server (on this revision only) and copies the files into the
 /// working folder; the files of the revision become writable.
 #[tauri::command]
 pub async fn workspace_checkout(
@@ -501,9 +504,23 @@ pub async fn workspace_checkout(
     )
     .await?;
     let (cancel, mut progress) = progress_events(&app, &state);
+    let root = workspace_root(&app, &state);
+    // only the assembly is locked; its parts come read-only, as in Get
+    if snapshot(&state).checkout_parts != Some(false) {
+        return workspace::checkout_with_structure(
+            &api,
+            &root,
+            &item,
+            &code,
+            "latest",
+            &cancel,
+            &mut progress,
+        )
+        .await;
+    }
     workspace::download_revision(
         &api,
-        &workspace_root(&app, &state),
+        &root,
         project.as_deref(),
         &item,
         &code,
@@ -762,6 +779,13 @@ pub fn dismiss_update(state: State<'_, AppState>, version: String) -> CmdResult<
     let version = update::tag_version(&version)
         .ok_or_else(|| ApiError::local(format!("'{version}' is not a version.")))?;
     update_settings(&state, |s| s.update_dismissed = Some(version))?;
+    Ok(())
+}
+
+/// *Settings → Workspace*: a check-out of an assembly gets its parts too.
+#[tauri::command]
+pub fn set_checkout_parts(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    update_settings(&state, |s| s.checkout_parts = Some(enabled))?;
     Ok(())
 }
 
@@ -1504,4 +1528,81 @@ mod agent_tests {
         ];
         assert!(parse_profiles(twice).is_err());
     }
+}
+
+/// *Add files…*: asks for the files to add with the native open dialog
+/// (several at once). Empty = cancelled.
+#[tauri::command]
+pub async fn pick_files(app: AppHandle) -> CmdResult<Vec<PathBuf>> {
+    use tauri_plugin_dialog::DialogExt;
+    tokio::task::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("Files to add")
+            .blocking_pick_files()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|p| p.into_path().ok())
+            .collect()
+    })
+    .await
+    .map_err(|e| ApiError::local(format!("The file dialog failed: {e}")))
+}
+
+/// *Add files…*: what copying `paths` into the working folder would do
+/// (which names become new versions or replace a local file).
+#[tauri::command]
+pub async fn workspace_add_plan(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project: Option<String>,
+    item: String,
+    code: String,
+    paths: Vec<PathBuf>,
+    subfolder: String,
+) -> CmdResult<Vec<addfiles::PlanItem>> {
+    let api = signed_in_api(&state)?;
+    let rev = workspace::revision_files(&api, project.as_deref(), &item, &code).await?;
+    addfiles::plan(
+        &workspace_root(&app, &state),
+        project.as_deref(),
+        &rev.files,
+        &paths,
+        &subfolder,
+    )
+}
+
+/// *Add files…*: copies the files into the working folder of a revision
+/// the user has checked out; the originals stay where they are. Names in
+/// `confirmed` may replace existing content. *Check in…* lists the copies as
+/// new files.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn workspace_add_files(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project: Option<String>,
+    item: String,
+    code: String,
+    paths: Vec<PathBuf>,
+    subfolder: String,
+    confirmed: Vec<String>,
+) -> CmdResult<Value> {
+    let api = signed_in_api(&state)?;
+    let root = workspace_root(&app, &state);
+    let rev = workspace::revision_files(&api, project.as_deref(), &item, &code).await?;
+    if !rev.locked_by_me {
+        return Err(ApiError::local(format!(
+            "Check out {item}/{code} first – files can only be added under your check-out."
+        )));
+    }
+    let plan = addfiles::plan(&root, project.as_deref(), &rev.files, &paths, &subfolder)?;
+    let (copied, skipped) = addfiles::copy_in(&root, &plan, &confirmed)?;
+    let done: Vec<addfiles::PlanItem> = plan
+        .into_iter()
+        .filter(|p| copied.contains(&p.name))
+        .collect();
+    addfiles::record(&root, &item, &code, &done)
+        .map_err(|e| ApiError::local(format!("Cannot remember the added files: {e}")))?;
+    Ok(json!({ "copied": copied, "skipped": skipped }))
 }

@@ -36,49 +36,49 @@ files** (see *Open questions*).
 
 ### ANSYS Fluent
 
-| File | What it is | Content | Role in TeamCraft |
-|---|---|---|---|
-| `.cas.h5`, `.dat.h5`, `.msh.h5` | case, data, mesh in the *Common Fluids Format* (CFF, the default since 2020 R1) | HDF5 | case/mesh = input, data = result (large) |
-| `.cas`, `.dat`, `.msh` (+ `.gz`) | legacy case, data, mesh | `(index …)` sections: `(0 "comment")`, `(1 "header")`, `(2 dims)`, `(10 …)` nodes …; binary sections use the prefixes `20…`/`30…` (single/double precision) and end with `End of Binary Section 2010` | input / result |
-| `.cdat` | legacy data interpolated to the nodes, for CFD-Post | binary | result (large) |
-| `.flprj` + `<name>.cffdb/` | Fluent project ("managed project"): groups related case/data files and stores relative paths | project file + folder | input (the folder holds the CFF files) |
-| `<name>-<n>-<iter>.dat.h5` … | autosaves of a run | HDF5 | result series: keep only the selected step |
-| `.jou` | journal: TUI/Scheme commands (`/file/read-case …`, `/solve/iterate 500`) | text | input (run script) |
-| `.trn` | transcript of a session or batch run: banner with the version, residual table per iteration, messages | text | log |
-| `report-file-*.out` | report file of the report definitions: a quoted title line, a header with quoted column names (`"Iteration" "report-def-0" …`), then one row per iteration or time step | text, whitespace-separated | **result values** (last row) |
-| exported XY plots, `.csv` from *Export* | quantities and plots | text | result values |
-| `cleanup-fluent-<host>-<pid>.sh` / `.bat` | written by every Fluent session to kill stray processes | script | **ignore** |
+| File                                      | What it is                                                                                                                                                              | Content                                                                                                                                                                                               | Role in TeamCraft                          |
+|-------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------|
+| `.cas.h5`, `.dat.h5`, `.msh.h5`           | case, data, mesh in the *Common Fluids Format* (CFF, the default since 2020 R1)                                                                                         | HDF5                                                                                                                                                                                                  | case/mesh = input, data = result (large)   |
+| `.cas`, `.dat`, `.msh` (+ `.gz`)          | legacy case, data, mesh                                                                                                                                                 | `(index …)` sections: `(0 "comment")`, `(1 "header")`, `(2 dims)`, `(10 …)` nodes …; binary sections use the prefixes `20…`/`30…` (single/double precision) and end with `End of Binary Section 2010` | input / result                             |
+| `.cdat`                                   | legacy data interpolated to the nodes, for CFD-Post                                                                                                                     | binary                                                                                                                                                                                                | result (large)                             |
+| `.flprj` + `<name>.cffdb/`                | Fluent project ("managed project"): groups related case/data files and stores relative paths                                                                            | project file + folder                                                                                                                                                                                 | input (the folder holds the CFF files)     |
+| `<name>-<n>-<iter>.dat.h5` …              | autosaves of a run                                                                                                                                                      | HDF5                                                                                                                                                                                                  | result series: keep only the selected step |
+| `.jou`                                    | journal: TUI/Scheme commands (`/file/read-case …`, `/solve/iterate 500`)                                                                                                | text                                                                                                                                                                                                  | input (run script)                         |
+| `.trn`                                    | transcript of a session or batch run: banner with the version, residual table per iteration, messages                                                                   | text                                                                                                                                                                                                  | log                                        |
+| `report-file-*.out`                       | report file of the report definitions: a quoted title line, a header with quoted column names (`"Iteration" "report-def-0" …`), then one row per iteration or time step | text, whitespace-separated                                                                                                                                                                            | **result values** (last row)               |
+| exported XY plots, `.csv` from *Export*   | quantities and plots                                                                                                                                                    | text                                                                                                                                                                                                  | result values                              |
+| `cleanup-fluent-<host>-<pid>.sh` / `.bat` | written by every Fluent session to kill stray processes                                                                                                                 | script                                                                                                                                                                                                | **ignore**                                 |
 
 ### Simcenter STAR-CCM+
 
-| File | What it is | Content | Role |
-|---|---|---|---|
-| `.sim` | the simulation: geometry, mesh, setup **and** solution in one file | **undocumented binary** – no public description of the header; Siemens documents only `starccm+ -info file.sim` (prints the version used to create the file, iterations, serial/parallel) | input and result in one, often GBs |
-| `.sim~` | backup of the previous save | as `.sim` | ignore (the desktop app already skips names ending in `~`) |
-| `.simh` | solution history (fields over time steps) | binary | result (large, never parsed) |
-| `.java` | macros (recorded or written) | text; recorded macros begin with a comment that names the macro and the STAR-CCM+ version that wrote it | input (run script) |
-| plot and table exports `.csv` | monitors, reports, XY plots | text, comma-separated, quoted headers | **result values** |
-| scene/plot hardcopies `.png` | pictures | image | gallery on the *Results* card (exists) |
-| simulation report `.html`/`.pdf` | exported report | HTML / PDF | report (PDF works today; HTML: #141) |
-| batch log (stdout redirected, `.log`/`.txt`) | banner with version, iteration table, stop messages such as *Stopping criterion … satisfied* | text | log |
-| `.ccm`, `.dmprj` | STAR-CCM+ export / Design Manager project | binary / project | input; not read |
+| File                                         | What it is                                                                                   | Content                                                                                                                                                                                   | Role                                                       |
+|----------------------------------------------|----------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
+| `.sim`                                       | the simulation: geometry, mesh, setup **and** solution in one file                           | **undocumented binary** – no public description of the header; Siemens documents only `starccm+ -info file.sim` (prints the version used to create the file, iterations, serial/parallel) | input and result in one, often GBs                         |
+| `.sim~`                                      | backup of the previous save                                                                  | as `.sim`                                                                                                                                                                                 | ignore (the desktop app already skips names ending in `~`) |
+| `.simh`                                      | solution history (fields over time steps)                                                    | binary                                                                                                                                                                                    | result (large, never parsed)                               |
+| `.java`                                      | macros (recorded or written)                                                                 | text; recorded macros begin with a comment that names the macro and the STAR-CCM+ version that wrote it                                                                                   | input (run script)                                         |
+| plot and table exports `.csv`                | monitors, reports, XY plots                                                                  | text, comma-separated, quoted headers                                                                                                                                                     | **result values**                                          |
+| scene/plot hardcopies `.png`                 | pictures                                                                                     | image                                                                                                                                                                                     | gallery on the *Results* card (exists)                     |
+| simulation report `.html`/`.pdf`             | exported report                                                                              | HTML / PDF                                                                                                                                                                                | report (PDF works today; HTML: #141)                       |
+| batch log (stdout redirected, `.log`/`.txt`) | banner with version, iteration table, stop messages such as *Stopping criterion … satisfied* | text                                                                                                                                                                                      | log                                                        |
+| `.ccm`, `.dmprj`                             | STAR-CCM+ export / Design Manager project                                                    | binary / project                                                                                                                                                                          | input; not read                                            |
 
 ### Simcenter 3D (NX CAE) with Simcenter Nastran
 
-| File | What it is | Content | Role |
-|---|---|---|---|
-| `<model>.prt` | master CAD part | NX part (`SPLMSSTR` container since NX 1980) | the **basis**: a part item of its own |
-| `<model>_fem1_i.prt` | idealized part (defeatured, split copy of the master) | NX part | input of the FE model |
-| `<model>_fem1.fem` | FE model: mesh, materials, physical properties | NX part file with a CAE extension (same container – to be verified) | input (can be a *Mesh* basis) |
-| `<model>_sim1.sim` | simulation: solutions, loads, constraints, references the `.fem` | NX part file (same container – to be verified) | input |
-| `.afm` | assembly FEM (references several `.fem`) | NX part file | input |
-| `<sim>-<solution>.dat` | solver deck that Simcenter 3D writes for Nastran | text, bulk data (`SOL`, `CEND`, `BEGIN BULK`, `$` comments with the translator version) | input |
-| `.f06` | print output: tables, messages, `FATAL` / `END OF JOB` | text, can be hundreds of MB with full printout | log / result |
-| `.f04`, `.log`, `.diag` | execution summary, solver log | text | log |
-| `.op2` | binary results (Fortran records, the first records hold a date and the label `NASTRAN FORT TAPE ID CODE`) | binary | result (large, never parsed) |
-| `.h5` | HDF5 results (MSC Nastran; newer Simcenter Nastran releases – to be verified) | HDF5 | result (large, never parsed) |
-| `.pch` | punch output | text | result |
-| scratch (`.MASTER`, `.DBALL`, `.SCRATCH`, …) | solver work files | binary | **ignore** |
+| File                                         | What it is                                                                                                | Content                                                                                 | Role                                  |
+|----------------------------------------------|-----------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------|---------------------------------------|
+| `<model>.prt`                                | master CAD part                                                                                           | NX part (`SPLMSSTR` container since NX 1980)                                            | the **basis**: a part item of its own |
+| `<model>_fem1_i.prt`                         | idealized part (defeatured, split copy of the master)                                                     | NX part                                                                                 | input of the FE model                 |
+| `<model>_fem1.fem`                           | FE model: mesh, materials, physical properties                                                            | NX part file with a CAE extension (same container – to be verified)                     | input (can be a *Mesh* basis)         |
+| `<model>_sim1.sim`                           | simulation: solutions, loads, constraints, references the `.fem`                                          | NX part file (same container – to be verified)                                          | input                                 |
+| `.afm`                                       | assembly FEM (references several `.fem`)                                                                  | NX part file                                                                            | input                                 |
+| `<sim>-<solution>.dat`                       | solver deck that Simcenter 3D writes for Nastran                                                          | text, bulk data (`SOL`, `CEND`, `BEGIN BULK`, `$` comments with the translator version) | input                                 |
+| `.f06`                                       | print output: tables, messages, `FATAL` / `END OF JOB`                                                    | text, can be hundreds of MB with full printout                                          | log / result                          |
+| `.f04`, `.log`, `.diag`                      | execution summary, solver log                                                                             | text                                                                                    | log                                   |
+| `.op2`                                       | binary results (Fortran records, the first records hold a date and the label `NASTRAN FORT TAPE ID CODE`) | binary                                                                                  | result (large, never parsed)          |
+| `.h5`                                        | HDF5 results (MSC Nastran; newer Simcenter Nastran releases – to be verified)                             | HDF5                                                                                    | result (large, never parsed)          |
+| `.pch`                                       | punch output                                                                                              | text                                                                                    | result                                |
+| scratch (`.MASTER`, `.DBALL`, `.SCRATCH`, …) | solver work files                                                                                         | binary                                                                                  | **ignore**                            |
 
 The `_fem1`, `_fem1_i` and `_sim1` suffixes are what Simcenter 3D proposes
 by default. They are a convention that users can change, so TeamCraft may use
@@ -92,23 +92,23 @@ not an NX FE model.
 
 ### 1. Recognition (format detection, within the 1024-byte head)
 
-| Rule | Why |
-|---|---|
-| `.sim` / `.fem` / `.afm` starting with `SPLMSSTR` → `nx-simulation` | NX writes all its part files in this container, so this is a **positive** NX test. The current rule only has a negative test (it falls back to NX) |
-| `.sim` naming STAR-CCM+ in the head → `starccm-sim` (unchanged) | the only cheap clue; unverified |
-| `.sim` with neither → keep the current fallback (NX), and mark the detection as uncertain (format note "content not recognised") | older NX releases (before 1980) and STAR-CCM+ files without the marker both end up here; a wrong STAR-CCM+ label is worse than an honest "uncertain" |
-| text `.fem` → new `optistruct-deck` (or unclassified), binary non-NX `.fem` → unclassified | collision with OptiStruct |
-| `.dat` with Nastran bulk-data markers (`SOL `, `CEND`, `BEGIN BULK`, `INIT MASTER`, a `$` comment naming Nastran/Simcenter) → `nastran-bulk` | Simcenter 3D writes its decks as `.dat`; today they stay unclassified because `.dat` only counts for Fluent |
-| `.f04`, `.pch` → Nastran (log/result), text only | complete the Nastran set |
-| `.cas.h5`, `.dat.h5`, `.msh.h5` by name **and** the HDF5 signature `\x89HDF\r\n\x1a\n` at offset 0 or 512 (HDF5 allows a user block in front) | name alone accepts any file |
-| `.cas.gz`, `.dat.gz`, `.msh.gz` by name and the gzip magic `1f 8b` | legacy compressed Fluent files are common in archives |
-| `.msh` with Fluent sections `(0 `, `(1 `, `(2 `, `(10 ` → `fluent-mesh`; `$MeshFormat` → Gmsh (if listed); other → unclassified | Gmsh also uses `.msh` |
-| `.flprj` → `fluent-project`; `.cdat` → Fluent result; `.jou` → Fluent journal (text); `.trn` → Fluent transcript (text); `.simh` → STAR-CCM+ solution history; `.op2` only when not text | complete the sets |
-| `report-file-*.out` and other `.out` files whose first line is a quoted title and second a quoted header → Fluent report file | for the template support below |
+| Rule                                                                                                                                                                                     | Why                                                                                                                                                  |
+|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `.sim` / `.fem` / `.afm` starting with `SPLMSSTR` → `nx-simulation`                                                                                                                      | NX writes all its part files in this container, so this is a **positive** NX test. The current rule only has a negative test (it falls back to NX)   |
+| `.sim` naming STAR-CCM+ in the head → `starccm-sim` (unchanged)                                                                                                                          | the only cheap clue; unverified                                                                                                                      |
+| `.sim` with neither → keep the current fallback (NX), and mark the detection as uncertain (format note "content not recognised")                                                         | older NX releases (before 1980) and STAR-CCM+ files without the marker both end up here; a wrong STAR-CCM+ label is worse than an honest "uncertain" |
+| text `.fem` → new `optistruct-deck` (or unclassified), binary non-NX `.fem` → unclassified                                                                                               | collision with OptiStruct                                                                                                                            |
+| `.dat` with Nastran bulk-data markers (`SOL `, `CEND`, `BEGIN BULK`, `INIT MASTER`, a `$` comment naming Nastran/Simcenter) → `nastran-bulk`                                             | Simcenter 3D writes its decks as `.dat`; today they stay unclassified because `.dat` only counts for Fluent                                          |
+| `.f04`, `.pch` → Nastran (log/result), text only                                                                                                                                         | complete the Nastran set                                                                                                                             |
+| `.cas.h5`, `.dat.h5`, `.msh.h5` by name **and** the HDF5 signature `\x89HDF\r\n\x1a\n` at offset 0 or 512 (HDF5 allows a user block in front)                                            | name alone accepts any file                                                                                                                          |
+| `.cas.gz`, `.dat.gz`, `.msh.gz` by name and the gzip magic `1f 8b`                                                                                                                       | legacy compressed Fluent files are common in archives                                                                                                |
+| `.msh` with Fluent sections `(0 `, `(1 `, `(2 `, `(10 ` → `fluent-mesh`; `$MeshFormat` → Gmsh (if listed); other → unclassified                                                          | Gmsh also uses `.msh`                                                                                                                                |
+| `.flprj` → `fluent-project`; `.cdat` → Fluent result; `.jou` → Fluent journal (text); `.trn` → Fluent transcript (text); `.simh` → STAR-CCM+ solution history; `.op2` only when not text | complete the sets                                                                                                                                    |
+| `report-file-*.out` and other `.out` files whose first line is a quoted title and second a quoted header → Fluent report file                                                            | for the template support below                                                                                                                       |
 
 HDF5 files are **never opened as HDF5** by the server, not even to read
-attributes. Pure-Rust HDF5 readers exist under MIT/Apache-2.0
-(`hdf5-pure`, `rust-hdf5`, `rustyhdf5-format`), but they are young (first
+attributes. Pure-Rust HDF5 readers exist under MIT/Apache-2.0 (`hdf5-pure`, `rust-hdf5`, `rustyhdf5-format`), but they
+are young (first
 releases in 2026) and an HDF5 object header parser is a large attack surface.
 The signature is enough for recognition. Reading the Fluent version from the
 CFF attributes is not worth that surface. Revisit this only if a concrete need
@@ -120,16 +120,16 @@ A small **solver summary** per file version is worth having for the
 following, all read from text and all bounded (head **and tail** of at most
 64 KiB each, never the middle of a large file):
 
-| File | Summary |
-|---|---|
-| Fluent `.trn` | solver version (banner), last iteration / time step, "solution is converged" yes/no, last residuals line |
-| Fluent `report-file-*.out` | column names, number of rows, the last row (iteration and values) |
-| Fluent `.jou` | files read and written (`/file/read-case…`, `/file/write-…`) – used as references, like `cadrefs` |
-| STAR-CCM+ `.java` | the version from the header comment; `.sim` files the macro loads or saves (`resolvePath("….sim")`) as references |
-| STAR-CCM+ batch log | version, last iteration, stopping criterion message |
-| Nastran `.f06` | solver name and version (page header), **run status** from the tail: `END OF JOB`, number of `FATAL` / `WARNING` messages (counted only in the head/tail windows, so the counts are labelled "in the last 64 KiB") |
-| Nastran `.dat`/`.bdf` | `SOL` number, the translator/solver version comment |
-| NX `.sim`/`.fem`/`.afm` | the referenced files from the `ExternalReferences` streams of the `SPLMSSTR` container (the reader in `src/nxpart.rs`, if these streams exist in CAE parts – to be verified) |
+| File                       | Summary                                                                                                                                                                                                            |
+|----------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Fluent `.trn`              | solver version (banner), last iteration / time step, "solution is converged" yes/no, last residuals line                                                                                                           |
+| Fluent `report-file-*.out` | column names, number of rows, the last row (iteration and values)                                                                                                                                                  |
+| Fluent `.jou`              | files read and written (`/file/read-case…`, `/file/write-…`) – used as references, like `cadrefs`                                                                                                                  |
+| STAR-CCM+ `.java`          | the version from the header comment; `.sim` files the macro loads or saves (`resolvePath("….sim")`) as references                                                                                                  |
+| STAR-CCM+ batch log        | version, last iteration, stopping criterion message                                                                                                                                                                |
+| Nastran `.f06`             | solver name and version (page header), **run status** from the tail: `END OF JOB`, number of `FATAL` / `WARNING` messages (counted only in the head/tail windows, so the counts are labelled "in the last 64 KiB") |
+| Nastran `.dat`/`.bdf`      | `SOL` number, the translator/solver version comment                                                                                                                                                                |
+| NX `.sim`/`.fem`/`.afm`    | the referenced files from the `ExternalReferences` streams of the `SPLMSSTR` container (the reader in `src/nxpart.rs`, if these streams exist in CAE parts – to be verified)                                       |
 
 Things such as *max stress from the `.f06`* are **not** read automatically.
 The relevant tables sit in the middle of a file that can be hundreds of MB,
@@ -159,9 +159,8 @@ which the viewer already reads.
 One simulation item = one analysis (unchanged). For each program:
 
 * **Simcenter 3D:** the `.sim` with its `.fem`, `.afm` and idealized
-  `_i.prt` files and the solver files of its solutions
-  (`<sim>-<solution>.*`) form **one simulation item**. The master `.prt` is
-  **not** copied into it. It is the *Geometry* basis, pinned to the file
+  `_i.prt` files and the solver files of its solutions (`<sim>-<solution>.*`) form **one simulation item**. The master
+  `.prt` is **not** copied into it. It is the *Geometry* basis, pinned to the file
   version that was simulated. If several `.sim` files in a folder share one
   `.fem`, the `.fem` and its idealized part become their own item (type
   simulation, role *Mesh* basis of each simulation). The reference chain
@@ -181,8 +180,8 @@ One simulation item = one analysis (unchanged). For each program:
   `.sim` imported from CAD keeps no file references we can read).
 
 Roles of files inside the item (shown as a small label, used by the desktop
-import and by retention): **model/input**, **result**, **log**, **report**,
-**picture**, **script**. The role follows from the format (kind
+import and by retention): **model/input**, **result**, **log**, **report**, **picture**, **script**. The role follows
+from the format (kind
 `Simulation` / `Result` plus the new log/script/report formats). It is not
 stored per file.
 
@@ -190,17 +189,17 @@ stored per file.
 
 * **Ignore** `cleanup-fluent-*`, Nastran scratch files and solver lock files,
   in addition to the existing backup rules (`.sim~` is already ignored).
-* **Group** by the rules in section 4: the `.sim`/`.fem` chain for Simcenter 3D
-  (from the stream directory, falling back to the `_simN`/`_femN` name
+* **Group** by the rules in section 4: the `.sim`/`.fem` chain for Simcenter 3D (from the stream directory, falling back
+  to the `_simN`/`_femN` name
   convention), the case stem for Fluent, the `.sim` stem for STAR-CCM+.
 * **Size:** show the size of each result file, and leave results above a
   threshold (default: the preview limit, 64 MB) unticked in the check-in.
   Autosave series are unticked except for the last step. STAR-CCM+ `.sim`
-  files stay ticked (they are the model) with a hint that saving after
-  *Clear Solution* makes them small, if the team does not need the solution in
+  files stay ticked (they are the model) with a hint that saving after *Clear Solution* makes them small, if the team
+  does not need the solution in
   the vault.
-* **Basis:** for Simcenter 3D the import proposes the master part's item as
-  *Geometry* basis when it is in the vault (or in the same import). The user
+* **Basis:** for Simcenter 3D the import proposes the master part's item as *Geometry* basis when it is in the vault (or
+  in the same import). The user
   confirms it.
 * Check-in of large results needs the open retention rule (`files.retention =
   'latest'`) and uses the chunked resumable upload (already built).
@@ -210,22 +209,22 @@ stored per file.
 In order of value:
 
 1. **Exchange file written by the run.** Document short, tested snippets that
-   write `teamcraft-results.csv` at the end of a run: a STAR-CCM+ Java macro
-   (report values → CSV), a Fluent journal/PyFluent script (report
+   write `teamcraft-results.csv` at the end of a run: a STAR-CCM+ Java macro (report values → CSV), a Fluent
+   journal/PyFluent script (report
    definitions → CSV) and a Nastran/pyNastran post-script. These are
    documentation only, and they are the most reliable path because the team
    decides which numbers matter.
 2. **Templates over text outputs**, with two small extensions to
    `resultscan`:
-   * `pick = last` reads the **tail** (last 2 MB) instead of the head. Today a
-     long transcript or report file has its final values beyond the first
-     2 MB, where templates never look.
-   * a `table` method for whitespace-separated tables with quoted headers
-     (Fluent `report-file-*.out`): column by header name, last (or first)
-     row. STAR-CCM+ CSV exports already work with the `csv` method. They
-     need a *last row* pick when there is no key column.
-   * add `trn`, `f06`, `f04`, `pch`, `jou`, `java` to `resultscan::scannable`
-     and to the plain-text kinds of `textindex`.
+    * `pick = last` reads the **tail** (last 2 MB) instead of the head. Today a
+      long transcript or report file has its final values beyond the first
+      2 MB, where templates never look.
+    * a `table` method for whitespace-separated tables with quoted headers (Fluent `report-file-*.out`): column by
+      header name, last (or first)
+      row. STAR-CCM+ CSV exports already work with the `csv` method. They
+      need a *last row* pick when there is no key column.
+    * add `trn`, `f06`, `f04`, `pch`, `jou`, `java` to `resultscan::scannable`
+      and to the plain-text kinds of `textindex`.
 3. **Reports:** PDF works today; HTML reports (STAR-CCM+, Simcenter 3D,
    Fluent's report export) come with #141. Plan both together with the
    plain-text `read_file_text` fix: the assistant should read the *real*

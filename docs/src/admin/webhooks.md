@@ -6,26 +6,26 @@ channel*. An administrator registers a URL for a set of events; TeamCraft
 then sends each event as a signed JSON `POST`. The format is generic – any
 CI server, ERP connector, automation tool or small script can receive it.
 
-Webhooks are managed on the page **Webhooks** (administrators only, next to
-*Users*) or through the [REST API](../reference/api.md#webhooks-administrators).
+Webhooks are managed on the page **Webhooks** (administrators only, next to *Users*) or through
+the [REST API](../reference/api.md#webhooks-administrators).
 Creating, changing, deleting, rotating the secret, sending a test and
 retrying are recorded in the audit log (with the receiver's host, never the
 full URL or the secret).
 
 ## Events
 
-| Event                     | Sent when                                                              | Objects in the payload             |
-|---------------------------|------------------------------------------------------------------------|------------------------------------|
-| `revision.released`       | a change is released – one event per released revision                 | `revision`, `change`               |
-| `revision.obsoleted`      | a released revision is made obsolete                                   | `revision`                         |
-| `change.submitted`        | a change is submitted for review                                       | `change`, `revisions`              |
-| `change.approved`         | a reviewer approves (`review.change_status` tells whether it released) | `change`, `review`, `revisions`    |
-| `change.rejected`         | a reviewer rejects – the change is rejected                            | `change`, `review`, `revisions`    |
-| `change.released`         | the last approval releases the change                                  | `change`, `revisions`              |
-| `change_request.created`  | a change request is raised                                             | `change_request`, `items`          |
-| `change_request.decided`  | a change request is accepted, rejected or deferred                     | `change_request`, `decision`       |
-| `simulation.result_added` | a result value is added, or a result table is imported                 | `revision`, `result` or `import`   |
-| `ping`                    | *Send test* (cannot be subscribed)                                     | `webhook`, `message`               |
+| Event                     | Sent when                                                              | Objects in the payload           |
+|---------------------------|------------------------------------------------------------------------|----------------------------------|
+| `revision.released`       | a change is released – one event per released revision                 | `revision`, `change`             |
+| `revision.obsoleted`      | a released revision is made obsolete                                   | `revision`                       |
+| `change.submitted`        | a change is submitted for review                                       | `change`, `revisions`            |
+| `change.approved`         | a reviewer approves (`review.change_status` tells whether it released) | `change`, `review`, `revisions`  |
+| `change.rejected`         | a reviewer rejects – the change is rejected                            | `change`, `review`, `revisions`  |
+| `change.released`         | the last approval releases the change                                  | `change`, `revisions`            |
+| `change_request.created`  | a change request is raised                                             | `change_request`, `items`        |
+| `change_request.decided`  | a change request is accepted, rejected or deferred                     | `change_request`, `decision`     |
+| `simulation.result_added` | a result value is added, or a result table is imported                 | `revision`, `result` or `import` |
+| `ping`                    | *Send test* (cannot be subscribed)                                     | `webhook`, `message`             |
 
 A webhook can be limited to one project group: it then receives only events
 about items of that group (for a change: any of its revisions; for a change
@@ -96,8 +96,8 @@ not stored. Redirects are not followed: configure the final URL.
 
 The secret (`tc_whsec_…`) is shown once when the webhook is created or the
 secret is rotated; afterwards only a hint (`tc_whsec_…1a2b`) is visible.
-Compute HMAC-SHA256 over the **raw request body** with the secret as key
-(its UTF-8 bytes, prefix included) and compare it with the header in
+Compute HMAC-SHA256 over the **raw request body** with the secret as key (its UTF-8 bytes, prefix included) and compare
+it with the header in
 constant time. Reject requests whose signature does not match.
 
 Shell (e.g. a CI step that received the body in `$BODY`):
@@ -146,8 +146,8 @@ repeats; the payload's `occurred_at` lets you drop very old requests.
 
 A delivery that does not get a `2xx` answer (error status, timeout, refused
 connection) is retried after about 1, 2, 4, 8, 16, 32 and 64 minutes – each
-delay with up to 25 % jitter – and marked **failed** after 8 attempts
-(roughly two hours). The webhook's page lists the latest deliveries with
+delay with up to 25 % jitter – and marked **failed** after 8 attempts (roughly two hours). The webhook's page lists the
+latest deliveries with
 status, attempts, HTTP status and the last error, shows each payload, and
 has **Retry** (a fresh set of attempts, tried at once) and **Send test**.
 
@@ -174,8 +174,8 @@ reach internal services (server-side request forgery), TeamCraft checks
 every address it connects to, at connection time and after DNS resolution:
 
 * **Default:** public addresses only. Loopback (`127.0.0.0/8`, `::1`),
-  private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), shared
-  (`100.64/10`), link-local (`169.254/16` including cloud metadata
+  private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), shared (`100.64/10`), link-local (`169.254/16` including
+  cloud metadata
   endpoints, `fe80::/10`) and similar ranges are refused, also when they
   are written as IPv4-mapped, NAT64 or 6to4 IPv6 addresses.
 * **`TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS`** (recommended for on-premises
