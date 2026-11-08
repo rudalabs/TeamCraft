@@ -16,6 +16,7 @@ pub mod audit;
 pub mod bom;
 pub mod bom_compare;
 pub mod branding;
+pub mod bulk;
 pub mod changes;
 pub mod checkouts;
 pub mod desktop;

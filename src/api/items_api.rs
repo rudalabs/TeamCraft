@@ -343,6 +343,30 @@ pub(super) async fn update_attribute(
 }
 
 #[derive(Deserialize)]
+pub(super) struct BulkBody {
+    /// `revise` or `obsolete`.
+    action: String,
+    /// Item numbers; the latest revision of each is acted on.
+    items: Vec<String>,
+}
+
+/// `POST /items/bulk`: revise or obsolete the latest revision of many items,
+/// each in its own transaction; the outcome lists every item.
+pub(super) async fn items_bulk(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Json(body): Json<BulkBody>,
+) -> AppResult<Json<Value>> {
+    let action = crate::services::bulk::Action::parse(&body.action)
+        .ok_or_else(|| AppError::BadRequest("The action must be 'revise' or 'obsolete'.".into()))?;
+    let results = crate::services::bulk::apply(&st.db, &me, action, &body.items).await?;
+    let ok = results.iter().filter(|r| r.ok).count();
+    Ok(Json(
+        json!({ "results": results, "ok": ok, "failed": results.len() - ok }),
+    ))
+}
+
+#[derive(Deserialize)]
 pub(super) struct DuplicatesQuery {
     name: String,
     #[serde(rename = "type")]

@@ -121,6 +121,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/items", get(list_items).post(create_item))
         .route("/items/duplicates", get(item_duplicates))
+        .route("/items/bulk", post(items_bulk))
         .route("/items/{number}", get(get_item).patch(update_item))
         .route("/attributes", get(list_attributes).post(create_attribute))
         .route("/attributes/{key}", patch(update_attribute))
@@ -510,6 +511,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items?q=&type=&project=&state=&system=&class=&attr=&value=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo; class = make|purchased|standard; attr + value = custom attribute (value: text contains, yes/no, 12, >=10, <=20, 10..20, empty = has a value)",
             "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?, classification?, attributes?}",
             "GET    /api/v1/items/duplicates?name=&type=&limit=        readable items with a similar name (check before creating one)",
+            "POST   /api/v1/items/bulk                                {action: revise|obsolete, items: [number]} – the latest revision of each item, one by one (at most 200)",
             "GET    /api/v1/items/{number}",
             "PATCH  /api/v1/items/{number}                            {project?, unit?, classification?: make|purchased|standard} – master data",
             "GET    /api/v1/attributes?all=                           custom attribute definitions (all=true: also deactivated ones)",
