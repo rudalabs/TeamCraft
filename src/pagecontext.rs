@@ -396,5 +396,21 @@ mod tests {
         assert!(note.contains("change order: ECO-000003"));
         assert!(note.contains("rows shown: PRT-000001"));
         assert!(note.contains("a hint, not data"));
+        // an item with and without a revision (found by cargo mutants)
+        let item = PageContext {
+            kind: "item".into(),
+            item: Some("PRT-000009".into()),
+            ..Default::default()
+        };
+        assert_eq!(item.label(), "PRT-000009");
+        let revision = PageContext {
+            kind: "revision".into(),
+            item: Some("PRT-000009".into()),
+            revision: Some("A".into()),
+            view: Some("bom".into()),
+            rule: Some("latest_released".into()),
+            ..Default::default()
+        };
+        assert_eq!(revision.label(), "PRT-000009/A · bom (latest released)");
     }
 }
