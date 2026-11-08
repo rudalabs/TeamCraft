@@ -112,6 +112,88 @@ pub fn mesh(data: &[u8]) {
     }
 }
 
+/// File names whose format `cadformat::detect` decides by content (the
+/// solver files of Fluent, STAR-CCM+ and Simcenter 3D among them).
+const DETECT_NAMES: &[&str] = &[
+    "a.sim", "a.fem", "a.afm", "a.dat", "a.msh", "a.out", "a.java", "a.op2", "a.trn", "a.jou",
+    "a.cas.h5", "a.msh.h5", "a.dat.gz", "a.prt", "a.asm", "a.sc", "a.db", "a.e",
+];
+
+/// Format detection over the first `HEAD_LEN` bytes, as at an upload.
+pub fn cadformat(data: &[u8]) {
+    let head = data.get(..crate::cadformat::HEAD_LEN).unwrap_or(data);
+    for name in DETECT_NAMES {
+        let _ = crate::cadformat::detect(name, head);
+    }
+}
+
+/// Extraction templates of every method over the input as a file's head
+/// and as its tail.
+pub fn resultscan(data: &[u8]) {
+    use crate::resultscan::{extract_with_tail, ResultTemplate};
+    let template =
+        |method: &str, pattern: &str, column: &str, key: &str, pick: &str| ResultTemplate {
+            id: uuid::Uuid::nil(),
+            project_id: uuid::Uuid::nil(),
+            name: format!("{method}-{pick}-{key}"),
+            file_pattern: "*".into(),
+            method: method.into(),
+            pattern: pattern.into(),
+            csv_column: column.into(),
+            csv_key_column: key.into(),
+            csv_key_value: if key.is_empty() {
+                String::new()
+            } else {
+                "1".into()
+            },
+            pick: pick.into(),
+            unit: String::new(),
+            lower_limit: None,
+            upper_limit: None,
+            load_case: String::new(),
+            solver: String::new(),
+            enabled: true,
+            created_at: chrono::DateTime::UNIX_EPOCH,
+            updated_at: chrono::DateTime::UNIX_EPOCH,
+        };
+    let templates = [
+        template("regex", r"value:\s*([-+0-9.eE]+)", "", "", "last"),
+        template("regex", r"([-+0-9.eE]+)", "", "", "first"),
+        template("csv", "", "value", "", "last"),
+        template("csv", "", "value", "iteration", "first"),
+        template("table", "", "value", "", "last"),
+        template("table", "", "value", "Iteration", "last"),
+    ];
+    let half = data.len() / 2;
+    let (head, tail) = data.split_at(half);
+    let _ = extract_with_tail("report-file-0.out", data, &[], &templates);
+    let _ = extract_with_tail("report-file-0.out", head, tail, &templates);
+    let _ = crate::resultscan::parse_exchange(crate::resultscan::EXCHANGE_CSV, data);
+    let _ = crate::resultscan::parse_exchange(crate::resultscan::EXCHANGE_JSON, data);
+}
+
+/// The solver summary of every supported format over the input as a
+/// file's head and as its head and tail, and the window cut.
+pub fn solversummary(data: &[u8]) {
+    let half = data.len() / 2;
+    let (head, tail) = data.split_at(half);
+    for id in [
+        "fluent-transcript",
+        "fluent-report",
+        "nastran-f06",
+        "nastran-bulk",
+        "starccm-macro",
+        "starccm-log",
+        "",
+    ] {
+        let _ = crate::solversummary::summarize(id, data, &[]);
+        let (h, t) = crate::solversummary::windows(head, tail);
+        let _ = crate::solversummary::summarize(id, &h, &t);
+        let (h, t) = crate::solversummary::windows(data, &[]);
+        let _ = crate::solversummary::summarize(id, &h, &t);
+    }
+}
+
 /// The STEP tessellation through `truck` (slow, catches the kernel's
 /// panics itself; the server runs it in a child process with a time limit).
 pub fn mesh_step(data: &[u8]) {
@@ -133,6 +215,9 @@ pub const TARGETS: &[Target] = &[
     ("htmltext", htmltext),
     ("mesh", mesh),
     ("mesh_step", mesh_step),
+    ("cadformat", cadformat),
+    ("resultscan", resultscan),
+    ("solversummary", solversummary),
 ];
 
 /// A panic hook that prints the message and nothing else: panics a reader

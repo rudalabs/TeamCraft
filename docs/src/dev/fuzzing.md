@@ -19,7 +19,10 @@ allocate what a file only claims.
 The targets are `stepbom`, `swpart`, `nxpart`, `cadrefs`, `bomtable`,
 `thumbnail`, `textindex`, `htmltext` (HTML reports and the charset detection of text files), `mesh` (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS,
 points, LAS, VTK legacy and XML, CalculiX FRD) and `mesh_step` (the STEP
-tessellation through `truck`, kept apart because it is slow).
+tessellation through `truck`, kept apart because it is slow), `cadformat` (the
+format detection over a file's first 1024 bytes) and `resultscan` (the
+extraction templates and the exchange file) and `solversummary` (the solver
+summary of Fluent, Nastran and STAR-CCM+ output).
 
 Two readers catch panics of a library on purpose: the STEP kernel in
 `mesh::step` (its preview conversion also runs in a child process with a
@@ -34,7 +37,7 @@ Every reader of untrusted files denies `clippy::unwrap_used`, `expect_used`,
 `indexing_slicing`, `panic` and `unreachable` with `#![deny(...)]` at the
 top of the module. These are `swpart`, `mesh` with its submodules,
 `simmesh`, `stepbom`, `nxpart`, `thumbnail`, `cadrefs`, `bomtable`,
-`textindex`, `htmltext` and `resultscan`, and `config` too. Clippy in CI therefore
+`textindex`, `htmltext`, `resultscan` and `cadformat`, and `config` too. Clippy in CI therefore
 refuses a new `data[at]`, `data[a..b]` or `.unwrap()` there. Read through the
 bounded helpers in `mesh` (`bytes_at`, `u16_le`, `u32_le`, `f32_le`, `range`,
 `quads`) or `get`, slice patterns (`let [x, y, z] = *v.as_slice() else { … }`),

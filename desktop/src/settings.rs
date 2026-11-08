@@ -115,6 +115,11 @@ pub struct Settings {
     /// applied at the next start if the agent still offers it.
     #[serde(default)]
     pub agent_models: std::collections::BTreeMap<String, String>,
+    /// The Agent view's backend the user picked, per server and user
+    /// (`"<server_url> <username>"` → `"company"` or `"local"`). Only a
+    /// preference: the server's policy decides what is available.
+    #[serde(default)]
+    pub agent_backends: std::collections::BTreeMap<String, String>,
     /// Look for a newer release on GitHub (at most once a day); `None` = on.
     pub update_check: Option<bool>,
     /// When the release check last ran (seconds since the Unix epoch).
@@ -176,7 +181,40 @@ fn write_token_file(dir: &Path, token: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Most remembered Agent view backends (servers × users).
+pub const MAX_AGENT_BACKENDS: usize = 32;
+
 impl Settings {
+    /// Key of [`Settings::agent_backends`]: the configured server and the
+    /// signed-in user; `None` without either.
+    fn agent_backend_key(&self, username: &str) -> Option<String> {
+        let server = self.server_url.as_deref()?;
+        (!username.is_empty()).then(|| format!("{server} {username}"))
+    }
+
+    /// The backend this user picked last on this server, if any.
+    pub fn stored_agent_backend(&self, username: &str) -> Option<crate::acp::AgentBackend> {
+        let key = self.agent_backend_key(username)?;
+        self.agent_backends
+            .get(&key)
+            .and_then(|b| crate::acp::AgentBackend::parse(b.as_str()))
+    }
+
+    /// Remembers the user's pick (bounded: when the map is full, the first
+    /// keys in sort order give way).
+    pub fn remember_agent_backend(&mut self, username: &str, backend: crate::acp::AgentBackend) {
+        let Some(key) = self.agent_backend_key(username) else {
+            return;
+        };
+        while self.agent_backends.len() >= MAX_AGENT_BACKENDS
+            && !self.agent_backends.contains_key(&key)
+        {
+            self.agent_backends.pop_first();
+        }
+        self.agent_backends
+            .insert(key, backend.as_str().to_string());
+    }
+
     /// Reads the settings and the token (OS keychain); missing or broken
     /// files give the defaults.
     pub fn load(dir: &Path) -> Settings {
@@ -454,6 +492,44 @@ mod tests {
         assert!(keychain.stored.borrow().is_none());
         let loaded = Settings::load_with(dir.path(), &keychain);
         assert!(loaded.token.is_none() && loaded.token_storage.is_none());
+    }
+
+    #[test]
+    fn the_agent_backend_is_kept_per_server_and_user() {
+        use crate::acp::AgentBackend;
+        let dir = tempfile::tempdir().unwrap();
+        let keychain = FakeKeychain::new(true);
+        let mut s = Settings::load_with(dir.path(), &keychain);
+        // no server yet: nothing to key it by
+        s.remember_agent_backend("lina", AgentBackend::Company);
+        assert!(s.agent_backends.is_empty());
+        s.server_url = Some("https://plm.example.org".into());
+        s.remember_agent_backend("lina", AgentBackend::Company);
+        s.remember_agent_backend("", AgentBackend::Local);
+        s.save(dir.path()).unwrap();
+        let mut loaded = Settings::load_with(dir.path(), &keychain);
+        assert_eq!(
+            loaded.stored_agent_backend("lina"),
+            Some(AgentBackend::Company)
+        );
+        assert_eq!(loaded.stored_agent_backend("tom"), None);
+        assert_eq!(loaded.agent_backends.len(), 1);
+        loaded.server_url = Some("https://other.example.org".into());
+        assert_eq!(loaded.stored_agent_backend("lina"), None);
+        // a value an older or newer app wrote is ignored, not an error
+        loaded
+            .agent_backends
+            .insert("https://other.example.org lina".into(), "off".into());
+        assert_eq!(loaded.stored_agent_backend("lina"), None);
+        // bounded
+        for n in 0..(MAX_AGENT_BACKENDS + 5) {
+            loaded.remember_agent_backend(&format!("user{n}"), AgentBackend::Local);
+        }
+        assert_eq!(loaded.agent_backends.len(), MAX_AGENT_BACKENDS);
+        assert_eq!(
+            loaded.stored_agent_backend(&format!("user{}", MAX_AGENT_BACKENDS + 4)),
+            Some(AgentBackend::Local)
+        );
     }
 
     #[test]

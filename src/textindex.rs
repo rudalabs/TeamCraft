@@ -59,7 +59,10 @@ fn kind_of(filename: &str) -> Kind {
         "step" | "stp" | "p21" | "iges" | "igs" => Kind::QuotedStrings,
         "txt" | "md" | "csv" | "tsv" | "json" | "xml" | "yaml" | "yml" | "toml" | "ini" | "cfg"
         | "log" | "kicad_pro" | "net" | "sch" | "plmxml" | "scad" | "eng" | "rse" | "tex"
-        | "rst" | "py" | "rs" | "c" | "h" | "cpp" | "hpp" | "m" => Kind::PlainText,
+        | "rst" | "py" | "rs" | "c" | "h" | "cpp" | "hpp" | "m"
+        // solver logs, report files, print output and scripts (Fluent,
+        // STAR-CCM+, Nastran)
+        | "out" | "trn" | "f06" | "f04" | "pch" | "jou" | "java" => Kind::PlainText,
         _ => Kind::None,
     }
 }
@@ -138,12 +141,17 @@ fn is_decimal_number(word: &str) -> bool {
             .all(|c| c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))
 }
 
-/// Reads (the beginning of) a stored file and extracts its text.
+/// Reads (the beginning of) a stored file and extracts its text. A large
+/// plain-text file (solver log, print output) keeps its end as well: the
+/// text of the beginning, the marker [`TAIL_MARK`] and the text of the last
+/// `TAIL_READ` (64 KiB) bytes – where a solver writes its status and final
+/// values. The end is only added when the beginning was text and the end is
+/// text in the same encoding (no NUL, no UTF-16 byte order mark at the start).
 pub async fn extract_file(path: &Path, filename: &str) -> String {
     if kind_of(filename) == Kind::None {
         return String::new();
     }
-    let Ok(file) = tokio::fs::File::open(path).await else {
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
         return String::new();
     };
     match kind_of(filename) {
@@ -151,16 +159,107 @@ pub async fn extract_file(path: &Path, filename: &str) -> String {
         Kind::Html => return crate::htmltext::extract_file(file).await,
         _ => {}
     }
+    let len = file.metadata().await.map(|m| m.len()).unwrap_or(0);
     let mut content = Vec::new();
-    if file.take(MAX_READ).read_to_end(&mut content).await.is_err() {
+    if (&mut file)
+        .take(MAX_READ)
+        .read_to_end(&mut content)
+        .await
+        .is_err()
+    {
         return String::new();
     }
+    let tail = if kind_of(filename) == Kind::PlainText && len > 2 * TAIL_READ {
+        read_tail(&mut file, TAIL_READ).await
+    } else {
+        Vec::new()
+    };
     // CPU work on up to MAX_READ bytes: off the async worker threads, so
     // other requests are not held up by a large upload
     let filename = filename.to_string();
-    tokio::task::spawn_blocking(move || extract(&filename, &content))
-        .await
-        .unwrap_or_default()
+    tokio::task::spawn_blocking(move || {
+        let text = extract(&filename, &content);
+        let cut = len > MAX_READ || text.chars().count() >= MAX_TEXT;
+        if cut && tail_usable(&content, &text, &tail) {
+            with_tail(text, &tail)
+        } else {
+            text
+        }
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Bytes read from the end of a large plain-text file.
+const TAIL_READ: u64 = 64 * 1024;
+
+/// Whether the end of a file may follow the text of its beginning: the
+/// beginning gave text (a binary file gives none), the end holds no NUL
+/// (binary data, zero padding, UTF-16), and the beginning has no byte order
+/// mark other than UTF-8's – the end has no mark of its own and would be
+/// decoded in another encoding.
+fn tail_usable(head: &[u8], head_text: &str, tail: &[u8]) -> bool {
+    let same_encoding = encoding_rs::Encoding::for_bom(head)
+        .is_none_or(|(encoding, _)| encoding == encoding_rs::UTF_8);
+    !tail.is_empty() && !head_text.is_empty() && !tail.contains(&0) && same_encoding
+}
+
+/// Between the beginning and the end of a file whose middle was left out.
+pub const TAIL_MARK: &str = "\n[… middle of the file left out …]\n";
+
+/// The text of a file's beginning followed by [`TAIL_MARK`] and the text of
+/// its end (`tail` starts at a line), together at most [`MAX_TEXT`]
+/// characters: the end keeps at most a quarter of them.
+fn with_tail(head_text: String, tail: &[u8]) -> String {
+    let tail_text = plain_text(&crate::htmltext::decode(tail, false));
+    let tail_chars = tail_text.chars().count();
+    let keep = MAX_TEXT / 4;
+    let tail_text: String = tail_text
+        .chars()
+        .skip(tail_chars.saturating_sub(keep))
+        .collect();
+    if tail_text.is_empty() {
+        return head_text;
+    }
+    let room = MAX_TEXT
+        .saturating_sub(tail_text.chars().count())
+        .saturating_sub(TAIL_MARK.chars().count());
+    let mut out: String = head_text.chars().take(room).collect();
+    out.push_str(TAIL_MARK);
+    out.push_str(&tail_text);
+    out
+}
+
+/// The last `max` bytes of an open file, starting at a line: the first, cut
+/// line is dropped (unless the whole file fits). Never reads more than `max`
+/// bytes, whatever the file's size; empty on any error. It takes the file
+/// the caller already opened (seeking it), so a file is opened once.
+pub async fn read_tail(file: &mut tokio::fs::File, max: u64) -> Vec<u8> {
+    use tokio::io::AsyncSeekExt;
+    let Ok(len) = file.metadata().await.map(|m| m.len()) else {
+        return Vec::new();
+    };
+    let start = len.saturating_sub(max);
+    if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+        return Vec::new();
+    }
+    let mut tail = Vec::new();
+    if file.take(max).read_to_end(&mut tail).await.is_err() {
+        return Vec::new();
+    }
+    if start == 0 {
+        return tail;
+    }
+    from_next_line(tail)
+}
+
+/// The bytes after the first line break (a cut line is no line); nothing
+/// when there is no line break at all.
+fn from_next_line(bytes: Vec<u8>) -> Vec<u8> {
+    match bytes.iter().position(|b| *b == b'\n') {
+        Some(at) => bytes.get(at + 1..).unwrap_or_default().to_vec(),
+        None => Vec::new(),
+    }
 }
 
 /// The contents of all `'…'` strings (STEP uses `''` for a quote inside a string).
@@ -393,5 +492,88 @@ mod tests {
         );
         assert_eq!(prefix_query("  ' & | !  "), None);
         assert_eq!(prefix_query("Düse"), Some("düse:*".into()));
+    }
+
+    #[test]
+    fn solver_text_files_are_plain_text() {
+        for name in [
+            "run.trn",
+            "x.F06",
+            "x.f04",
+            "x.pch",
+            "run.jou",
+            "Macro.java",
+            "report-file-0.out",
+        ] {
+            assert!(indexes(name), "{name}");
+        }
+        assert_eq!(
+            extract("run.trn", b"  500  1.234e-05\n"),
+            "  500  1.234e-05"
+        );
+        assert_eq!(extract("a.out", b"\x7fELF\x02\x01\x00\x00"), "", "binary");
+    }
+
+    #[test]
+    fn the_end_of_a_large_text_follows_the_beginning() {
+        let head = "a".repeat(MAX_TEXT);
+        let out = with_tail(head, b"Iteration 500\nsolution is converged\n");
+        assert_eq!(out.chars().count(), MAX_TEXT);
+        assert!(out.ends_with(&format!("{TAIL_MARK}Iteration 500\nsolution is converged")));
+        // the end keeps at most a quarter of the text, its last part
+        let long_tail = format!("{}\nlast line", "b".repeat(MAX_TEXT / 2));
+        let out = with_tail("head".into(), long_tail.as_bytes());
+        assert!(out.starts_with("head\n[…"));
+        assert!(out.ends_with("last line"));
+        assert!(out.chars().count() <= MAX_TEXT);
+        // an empty end changes nothing
+        assert_eq!(with_tail("head".into(), b""), "head");
+        assert_eq!(from_next_line(b"cut line\nwhole\n".to_vec()), b"whole\n");
+        assert!(from_next_line(b"no line break".to_vec()).is_empty());
+    }
+
+    #[test]
+    fn the_end_follows_only_a_text_beginning_in_the_same_encoding() {
+        assert!(tail_usable(b"Iteration 1\n", "Iteration 1", b"converged\n"));
+        assert!(
+            tail_usable(b"\xEF\xBB\xBFlog\n", "log", b"converged\n"),
+            "UTF-8 BOM"
+        );
+        // binary file: the beginning gave no text
+        assert!(!tail_usable(b"\x7fELF\x02\x01\x00", "", b"converged\n"));
+        // the end holds binary data or zero padding
+        assert!(!tail_usable(b"log\n", "log", b"end\x00\x00\x00"));
+        // UTF-16: the end has no byte order mark of its own
+        assert!(!tail_usable(b"\xFF\xFEl\x00", "l", b"e\x00n\x00d\x00"));
+        assert!(!tail_usable(b"\xFE\xFF\x00l", "l", b"end"));
+        assert!(!tail_usable(b"log\n", "log", b""));
+    }
+
+    #[tokio::test]
+    async fn read_tail_starts_at_a_line_and_reads_at_most_max() {
+        let dir = std::env::temp_dir().join(format!("tc-tail-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("run.trn");
+        std::fs::write(&path, b"first line\nsecond line\nthird\n").unwrap();
+        let open = || async { tokio::fs::File::open(&path).await.unwrap() };
+        assert_eq!(read_tail(&mut open().await, 12).await, b"third\n");
+        assert_eq!(
+            read_tail(&mut open().await, 1000).await,
+            b"first line\nsecond line\nthird\n"
+        );
+        // a large file: the text keeps the beginning and the end
+        let mut big = "x 1.5\n".repeat(1_000_000);
+        big.push_str("solution is converged\n");
+        std::fs::write(&path, big.as_bytes()).unwrap();
+        let text = extract_file(&path, "run.trn").await;
+        assert!(text.starts_with("x 1.5\n"));
+        assert!(
+            text.ends_with(&format!("{}solution is converged", "")),
+            "{}",
+            &text[text.len() - 40..]
+        );
+        assert!(text.contains(TAIL_MARK));
+        assert!(text.chars().count() <= MAX_TEXT);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

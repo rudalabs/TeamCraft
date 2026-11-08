@@ -1,5 +1,8 @@
-//! Append-only audit trail of every change to product data and users.
+//! Append-only audit trail of every change to product data and users (only
+//! the optional retention, [`purge_older_than`], removes old entries – and
+//! records that it did).
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
@@ -185,6 +188,78 @@ async fn insert(
     Ok(())
 }
 
+/// Removes the audit entries older than `retention_days` (housekeeping,
+/// `TEAMCRAFT_AUDIT_RETENTION_DAYS`; the caller skips it for 0 = keep for
+/// ever) and records the removal as one `audit.purge` entry with the count
+/// and the time span removed – in one transaction, so entries never vanish
+/// without that record. Returns the number of entries removed.
+///
+/// # Invariants
+///
+/// * **Permission:** none – the server's housekeeping, no actor ("system").
+/// * **Data:** only entries older than the cut-off, except the entries separation
+///   of duties still reads: logged edits (`reviewers::EDIT_ACTIONS`) of revisions
+///   that are still in work or review and preparing actions
+///   (`changes::PREPARE_ACTIONS`) of changes that are not yet released or
+///   cancelled – otherwise an editor could drop out of the four-eyes check; a retention of 0 days is
+///   refused (400).
+/// * **Audit:** one `audit.purge` entry when something was removed (only
+///   administrators see it, like every entry without an item, change or
+///   group).
+/// * **Atomic:** one transaction.
+pub async fn purge_older_than(pool: &PgPool, retention_days: u32) -> AppResult<u64> {
+    if retention_days == 0 {
+        return Err(crate::error::AppError::BadRequest(
+            "An audit log retention of 0 days means keeping the entries.".into(),
+        ));
+    }
+    let mut tx = pool.begin().await?;
+    let (removed, oldest, newest): (i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
+        sqlx::query_as(
+            "WITH gone AS (
+                 DELETE FROM audit_log a
+                 WHERE a.at < now() - make_interval(days => $1)
+                   AND NOT (a.entity_type = 'revision' AND a.action = ANY($2)
+                            AND EXISTS (SELECT 1 FROM revisions r
+                                        WHERE r.id = a.entity_id
+                                          AND r.state IN ('in_work', 'in_review')))
+                   AND NOT (a.entity_type = 'change' AND a.action = ANY($3)
+                            AND EXISTS (SELECT 1 FROM changes c
+                                        WHERE c.id = a.entity_id
+                                          AND c.status IN ('draft', 'in_review', 'rejected')))
+                 RETURNING a.at
+             )
+             SELECT COUNT(*), MIN(at), MAX(at) FROM gone",
+        )
+        .bind(i32::try_from(retention_days).unwrap_or(i32::MAX))
+        .bind(crate::services::reviewers::EDIT_ACTIONS)
+        .bind(crate::services::changes::PREPARE_ACTIONS)
+        .fetch_one(&mut *tx)
+        .await?;
+    if removed > 0 {
+        record(
+            &mut tx,
+            None,
+            "audit.purge",
+            "audit",
+            None,
+            format!(
+                "Removed {removed} audit entries older than {retention_days} days \
+                 (TEAMCRAFT_AUDIT_RETENTION_DAYS)"
+            ),
+            serde_json::json!({
+                "removed": removed,
+                "retention_days": retention_days,
+                "oldest": oldest,
+                "newest": newest,
+            }),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(u64::try_from(removed).unwrap_or_default())
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct AuditFilter {
     pub entity_type: Option<String>,
@@ -193,33 +268,88 @@ pub struct AuditFilter {
 }
 
 /// Lists audit entries, newest first. Returns the page and the total count.
-/// Administrators only (`/admin/audit`): unfiltered.
+/// Administrators only (`/admin/audit`): every entry except those about
+/// items, changes, requests or groups the administrator's need-to-know
+/// policy hides (see `visible_clause`); entries that name such items are
+/// redacted.
 pub async fn list(
     pool: &PgPool,
+    actor: &Actor,
     filter: &AuditFilter,
     page: Page,
 ) -> AppResult<(Vec<AuditEntry>, i64)> {
-    const WHERE: &str = "WHERE ($1::text IS NULL OR entity_type = $1)
-                           AND ($2::text IS NULL OR username = $2)
-                           AND ($3::text IS NULL OR action = $3)";
+    // $1..$3 filter, $4 limit, $5 offset, $6 hidden groups, $7 admin, $8 actor
+    let filter_sql = "($1::text IS NULL OR a.entity_type = $1)
+                      AND ($2::text IS NULL OR a.username = $2)
+                      AND ($3::text IS NULL OR a.action = $3)";
+    let joins = "LEFT JOIN revisions sr ON a.entity_type = 'revision' AND sr.id = a.entity_id
+         LEFT JOIN items si ON si.id = CASE a.entity_type WHEN 'item' THEN a.entity_id
+                                                          WHEN 'revision' THEN sr.item_id END";
+    let visible = visible_clause(6, 7, 8);
+    // the count has no limit and offset: hidden groups, admin and actor are $4..$6
+    let count_visible = visible_clause(4, 5, 6);
     let entries = sqlx::query_as::<_, AuditEntry>(&format!(
-        "SELECT id, at, user_id, username, action, entity_type, entity_id, summary, details
-         FROM audit_log {WHERE} ORDER BY at DESC, id DESC LIMIT $4 OFFSET $5"
+        "SELECT {cols} FROM audit_log a {joins}
+         WHERE {filter_sql} AND ({visible})
+         ORDER BY a.at DESC, a.id DESC LIMIT $4 OFFSET $5",
+        cols = columns(6, 8),
     ))
     .bind(filter.entity_type.as_deref())
     .bind(filter.username.as_deref())
     .bind(filter.action.as_deref())
     .bind(page.limit)
     .bind(page.offset)
+    .bind(&actor.hidden_projects)
+    .bind(actor.is_admin())
+    .bind(actor.id)
     .fetch_all(pool)
     .await?;
-    let total = sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM audit_log {WHERE}"))
-        .bind(filter.entity_type.as_deref())
-        .bind(filter.username.as_deref())
-        .bind(filter.action.as_deref())
-        .fetch_one(pool)
-        .await?;
-    Ok((entries, total))
+    let total = sqlx::query_scalar::<_, i64>(&format!(
+        "SELECT COUNT(*) FROM audit_log a {joins} WHERE {filter_sql} AND ({count_visible})"
+    ))
+    .bind(filter.entity_type.as_deref())
+    .bind(filter.username.as_deref())
+    .bind(filter.action.as_deref())
+    .bind(&actor.hidden_projects)
+    .bind(actor.is_admin())
+    .bind(actor.id)
+    .fetch_one(pool)
+    .await?;
+    Ok((redact(entries), total))
+}
+
+/// The row filter of the audit feeds; expects the joins `sr` (revision) and
+/// `si` (item of an item or revision entry) on `audit_log a`. `hidden`,
+/// `admin` and `actor` are the parameter numbers of the actor's hidden
+/// groups, its administrator flag and its id.
+///
+/// * administrators see every entry except those about an item, revision,
+///   change, request or group they may not read (a deleted subject stays
+///   visible, as without a policy);
+/// * everybody else sees the entries about subjects they may read, plus
+///   their own user, webhook and assistant entries.
+fn visible_clause(hidden: usize, admin: usize, actor: usize) -> String {
+    format!(
+        "(${admin} AND NOT (
+               (a.entity_type IN ('item', 'revision') AND si.id IS NOT NULL AND NOT {item})
+            OR (a.entity_type = 'change' AND EXISTS (
+                   SELECT 1 FROM changes c WHERE c.id = a.entity_id AND NOT {change}))
+            OR (a.entity_type = 'change_request' AND EXISTS (
+                   SELECT 1 FROM change_requests cr WHERE cr.id = a.entity_id AND NOT {request}))
+            OR (a.entity_type = 'project' AND NOT {project})))
+         OR (NOT ${admin} AND (
+               (a.entity_type IN ('item', 'revision') AND si.id IS NOT NULL AND {item})
+            OR (a.entity_type = 'change' AND EXISTS (
+                   SELECT 1 FROM changes c WHERE c.id = a.entity_id AND {change}))
+            OR (a.entity_type = 'change_request' AND EXISTS (
+                   SELECT 1 FROM change_requests cr WHERE cr.id = a.entity_id AND {request}))
+            OR (a.entity_type = 'project' AND {project})
+            OR (a.entity_type IN ('user', 'webhook', 'assistant') AND a.user_id = ${actor})))",
+        item = access::item_visible("si", hidden),
+        change = access::change_visible("c", actor, hidden),
+        request = access::request_visible("cr", actor, hidden),
+        project = access::project_visible("a.entity_id", hidden),
+    )
 }
 
 /// Columns of a readable entry; `$n` = the actor's hidden groups, `$actor`
@@ -297,20 +427,10 @@ pub async fn recent(pool: &PgPool, actor: &Actor, limit: i64) -> AppResult<Vec<A
          LEFT JOIN revisions sr ON a.entity_type = 'revision' AND sr.id = a.entity_id
          LEFT JOIN items si ON si.id = CASE a.entity_type WHEN 'item' THEN a.entity_id
                                                           WHEN 'revision' THEN sr.item_id END
-         WHERE $3
-            OR (a.entity_type IN ('item', 'revision') AND si.id IS NOT NULL AND {item})
-            OR (a.entity_type = 'change' AND EXISTS (
-                   SELECT 1 FROM changes c WHERE c.id = a.entity_id AND {change}))
-            OR (a.entity_type = 'change_request' AND EXISTS (
-                   SELECT 1 FROM change_requests cr WHERE cr.id = a.entity_id AND {request}))
-            OR (a.entity_type = 'project' AND {project})
-            OR (a.entity_type IN ('user', 'webhook', 'assistant') AND a.user_id = $4)
+         WHERE {visible}
          ORDER BY a.at DESC, a.id DESC LIMIT $1",
         cols = columns(2, 4),
-        item = access::item_visible("si", 2),
-        change = access::change_visible("c", 4, 2),
-        request = access::request_visible("cr", 4, 2),
-        project = access::project_visible("a.entity_id", 2),
+        visible = visible_clause(2, 3, 4),
     ))
     .bind(limit)
     .bind(&actor.hidden_projects)

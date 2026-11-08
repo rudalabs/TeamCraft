@@ -43,12 +43,22 @@ pub(super) fn bom_rule(raw: Option<&str>) -> AppResult<RevisionRule> {
 pub(super) async fn get_bom_xlsx(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
+    log: AccessCtx,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<BomQuery>,
 ) -> AppResult<Response> {
     let rev = revision_at(&st, &me, &number, &code).await?;
     let rule = bom_rule(q.rule.as_deref())?;
-    let tree = bom::tree(&st.db, &me, rev.id, rule).await?;
+    let reader = project_policy::package_actor(&st.db, &me, rev.project_id).await?;
+    let tree = bom::tree(&st.db, &reader, rev.id, rule).await?;
+    access_log::record_structure(
+        &st.db,
+        &log,
+        &me,
+        access_log::Kind::Export,
+        &bom::tree_revision_ids(&tree),
+    )
+    .await?;
     let filename = format!(
         "{}_{}_bom_{}.xlsx",
         rev.item_number,
@@ -124,6 +134,7 @@ pub(super) struct PackageQuery {
 pub(super) async fn get_package(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
+    log: AccessCtx,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<PackageQuery>,
 ) -> AppResult<Response> {
@@ -134,7 +145,7 @@ pub(super) async fn get_package(
         })?;
     }
     let rule = web::package_rule(q.rule.as_deref(), &rev.state);
-    web::package_response(package::build(&st.db, &st.vault, &me, rev.id, rule).await?)
+    web::package_response(package::build(&st.db, &st.vault, &me, rev.id, rule, &log).await?)
 }
 
 #[derive(Deserialize)]

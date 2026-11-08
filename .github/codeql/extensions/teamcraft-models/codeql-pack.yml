@@ -1,0 +1,10 @@
+# CodeQL model pack: facts about TeamCraft's own code that the analysis cannot
+# infer. GitHub's CodeQL action picks up packs under .github/codeql/extensions
+# automatically.
+name: rudalabs/teamcraft-rust-models
+version: 0.0.1
+library: true
+extensionTargets:
+  codeql/rust-all: "*"
+dataExtensions:
+  - models/*.model.yml

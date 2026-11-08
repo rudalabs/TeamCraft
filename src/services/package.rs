@@ -27,7 +27,10 @@ use crate::{
     auth::Actor,
     domain::RevisionRule,
     error::{AppError, AppResult},
-    services::{bom, files, revisions},
+    services::{
+        access_log::{self, AccessCtx},
+        bom, files, project_policy, revisions,
+    },
     vault::Vault,
 };
 
@@ -52,8 +55,12 @@ pub async fn build(
     actor: &Actor,
     root_revision_id: Uuid,
     rule: RevisionRule,
+    log: &AccessCtx,
 ) -> AppResult<Package> {
     let root = revisions::get(pool, actor, root_revision_id).await?;
+    // groups that switched packages off: the root refuses, other items are left out
+    let narrowed = project_policy::package_actor(pool, actor, root.project_id).await?;
+    let actor = &narrowed;
     let tree = bom::tree(pool, actor, root_revision_id, rule).await?;
 
     // Every revision of the structure once: the root, then depth first.
@@ -86,6 +93,8 @@ pub async fn build(
     }
 
     let ids: Vec<Uuid> = revs.iter().map(|r| r.0).collect();
+    // one read log entry per group of the structure that logs (the root's too)
+    access_log::record_structure(pool, log, actor, access_log::Kind::Package, &ids).await?;
     let mut files_of = files::list_many_by_revision(pool, &ids).await?;
     let mut entries = Vec::new();
     let mut manifest_revisions = Vec::new();

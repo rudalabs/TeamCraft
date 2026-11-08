@@ -64,17 +64,19 @@ pub fn scans(format_id: &str) -> bool {
 /// drawing can reference (parts, assemblies, drawings, models, exchange,
 /// mesh, visualisation and electronics formats – not simulation models or
 /// results, documents, templates
-/// or archives).
+/// or archives). Fluent meshes (`.msh.h5`, `.msh.gz`) are solver input like
+/// the plain `.msh`, which the name alone does not classify: not collected.
 fn is_referencable(name: &str) -> bool {
     cadformat::detect(name, &[]).is_some_and(|f| {
-        !matches!(
-            f.kind,
-            FormatKind::Document
-                | FormatKind::Other
-                | FormatKind::Simulation
-                | FormatKind::Result
-                | FormatKind::Manufacturing
-        )
+        !f.id.starts_with("fluent-")
+            && !matches!(
+                f.kind,
+                FormatKind::Document
+                    | FormatKind::Other
+                    | FormatKind::Simulation
+                    | FormatKind::Result
+                    | FormatKind::Manufacturing
+            )
     })
 }
 
@@ -444,6 +446,15 @@ mod tests {
 
     fn utf16(s: &str) -> Vec<u8> {
         s.encode_utf16().flat_map(u16::to_le_bytes).collect()
+    }
+
+    #[test]
+    fn fluent_meshes_are_not_referencable() {
+        for name in ["pipe.msh.gz", "pipe.msh.h5", "pipe.msh", "pipe.cas.h5"] {
+            assert!(!is_referencable(name), "{name}");
+        }
+        assert!(is_referencable("pipe.stl"));
+        assert!(!extensions().contains(&"msh.gz"));
     }
 
     #[test]

@@ -11,7 +11,7 @@
 
 <div class="card">
   {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
-  <form class="stack" method="post" action="/items" enctype="multipart/form-data">
+  <form class="stack" method="post" action="/items" enctype="multipart/form-data" data-chunked="new-item">
     <label>Files <span class="hint">the CAD model with its drawing and a STEP export for the 3D preview – the item is created together with them</span>
       <input type="file" name="file" multiple data-fill-name="new-item-name" data-fill-type="new-item-type">
     </label>

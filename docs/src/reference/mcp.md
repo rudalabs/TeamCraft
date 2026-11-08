@@ -34,11 +34,21 @@ session id. Protocol revisions `2025-06-18`, `2025-03-26` and `2024-11-05`
 are accepted. Without a valid token the endpoint answers like the rest of
 the API, with `401` and a JSON error.
 
+With `TEAMCRAFT_LOCAL_AGENTS=off` the endpoint refuses every call with
+`403` and a JSON-RPC error naming the setting, for every token: the
+desktop app's agent, the `teamcraft mcp` bridge and any other client
+(`GET /api/v1/me` then reports `capabilities.mcp: false`). The built-in
+assistant is not affected. See
+[Local agents](../admin/configuration.md#local-agents) for what this
+setting can and cannot enforce.
+
 ## Setup
 
 Create a personal access token under **Account → API tokens**. Give it an
 expiry, and give each assistant or machine its own token so you can revoke
-it on its own.
+it on its own. Prefer a scoped token: `read_only` (only the read-only tools),
+`write` (all tools, but no approving on the REST API) or `mcp_only` (see
+[Token scopes](api.md#token-scopes)).
 
 ### Claude Code
 

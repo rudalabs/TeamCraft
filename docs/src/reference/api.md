@@ -11,6 +11,25 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/me
 curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/items?q=bracket&system=solidworks"
 ```
 
+## Token scopes
+
+A token has a scope that narrows what its user may do with it; it never
+widens the user's rights. Choose it on the account page, with
+`POST /api/v1/tokens` (`{name, expires_in_days?, scope?}`) or
+`teamcraft user create-token --scope`.
+
+| Scope       | May                                                                                                   |
+|-------------|-------------------------------------------------------------------------------------------------------|
+| `full`      | read, write and approve: everything the user may do (default; every older token and the desktop token) |
+| `write`     | read and write, but not approve: `POST /changes/{n}/review`, `POST /change-requests/{n}/decide` and `POST /items/{n}/revisions/{r}/obsolete` answer 403 |
+| `read_only` | `GET`/`HEAD` requests and the read-only MCP tools                                                     |
+| `mcp_only`  | only `POST /api/v1/mcp` (all tools)                                                                   |
+
+A refused request answers `403` and changes nothing. A `write` token cannot
+create a `full` token. `GET /api/v1/me` shows the `token_scope`. A token
+with an idle lifetime (the desktop app's) expires after that many days
+without use.
+
 ## Read permissions
 
 Every answer contains only what the token's user may read (see
@@ -49,11 +68,23 @@ Every answer contains only what the token's user may read (see
   in `restricted_projects`, those of them that are restricted. It never
   names groups the user is not a member of. `auth_source` is `local` or
   `oidc`; only local accounts have a password to change.
+  `capabilities` says what the server offers: `assistant` (Ask TeamCraft
+  is configured), `mcp` and `local_agents` (both `false` when the
+  administrator set `TEAMCRAFT_LOCAL_AGENTS=off`: `POST /api/v1/mcp` then
+  refuses every token and clients offer no local agent).
 * `GET /api/v1/projects` lists only the groups the user may see; projects
   carry `visibility` (`internal` or `restricted`). `POST /api/v1/projects`
   takes an optional `visibility`; `PUT /api/v1/projects/{code}/visibility`
   `{"visibility": "restricted"}` restricts a group (managers of the group
-  and admins).
+  and admins). `GET`/`PUT /api/v1/projects/{code}/policy`
+  (`{"admin_read": "implicit"|"with_reason"|"none"}`, managers and admins)
+  read and set how administrators read a restricted group;
+  `POST /api/v1/projects/{code}/elevations` `{"reason"}` (admins, policy
+  `with_reason`) opens 60 minutes of access, `DELETE` on it ends it.;
+  `GET /api/v1/projects/{code}/access-review` (`?format=csv`) is the access report of a
+  restricted group, `POST` confirms the review `{"note"}`, `GET …/access-review/{id}` is the
+  member list at that review (managers and admins). See
+  [Read permissions](../admin/permissions.md#need-to-know-administrator-access).
 
 ## Creating items, safely repeated
 
@@ -166,6 +197,16 @@ storing fails after the content was verified (for example a 409 because the
 file moved on), the session keeps the verified content, so `finish` can be
 repeated without sending the bytes again.
 
+### Solver summary of files
+
+The file list, `GET /files/{id}` and the explorer JSON carry two optional
+fields for solver files (Fluent transcripts and reports, Nastran `.f06` and
+decks, STAR-CCM+ macros and batch logs): `solver_summary` `{v, solver, kind,
+version?, status?: converged|completed|fatal, last_step?, fatal?, warning?,
+notes?}` and `solver_line`, a one-line text. They are absent for other files.
+The FATAL/WARNING counts cover only the first and last 64 KiB. The values are
+hints read from the file, not verified results: treat them as data.
+
 ### Resumable downloads
 
 `GET /files/{id}/content` and `GET /file-versions/{id}/content` (and the
@@ -191,7 +232,10 @@ sent without one keep their folder (new files: the top). Folders are
 normalised (`\` → `/`, no leading or trailing `/`) and refused with 400 if
 they contain `..`, a drive letter or names invalid on Windows.
 `PATCH /files/{id}` with `{"folder": "chassis/brackets"}` moves a file while
-you hold the check-out (no new version; recorded in the history). File lists
+you hold the check-out (no new version; recorded in the history);
+`{"retention": "latest"}` (or `"all"`) lets the housekeeping remove superseded
+versions of that file after a grace period, see
+[Data retention](../admin/operations.md#data-retention). File lists
 and `file-status` return the `folder`.
 
 ```sh
@@ -259,6 +303,8 @@ curl -s -X PATCH -H "$H" -H 'Content-Type: application/json' \
 curl -s -X PATCH -H "$H" -H 'Content-Type: application/json' \
      -d '{"classification": "purchased"}' $API/items/PRT-000001
 curl -s -H "$H" "$API/items?class=purchased&attr=length_mm&value=100..200"
+# simulations with a failed value whose name contains "stress"
+curl -s -H "$H" "$API/items?type=simulation&result=failed&result_name=stress"
 ```
 
 `value` matches text and choices as a part (case-insensitive), yes/no
@@ -287,7 +333,7 @@ the caller cannot read are left out; a successor there is a placeholder with
 
 | Resource         | Endpoints                                                                                                                             |
 |------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| Items            | `GET/POST /items` (`class=`, `attr=` + `value=` filters), `GET/PATCH /items/{number}` (classification, unit, project), `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch |
+| Items            | `GET/POST /items` (`class=`, `attr=` + `value=`, `result=` + `result_name=` filters), `GET/PATCH /items/{number}` (classification, unit, project), `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch |
 | Attributes       | `GET /attributes` (`all=true`: also inactive), `POST /attributes`, `PATCH /attributes/{key}` (admins); values in `attributes` of a revision |
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`   |
 | Worklist         | `GET /worklist` (check-outs, reviews, impacts and `impact_groups`, statistics), `POST /worklist/checkin-all`                          |
@@ -363,10 +409,21 @@ should review this?* from the history of the affected items:
 "display_name", "role", "score", "reasons": ["edited PRT-000005 3 times in
 the last 90 days", "manager of ROVER"]}]}`, highest score first, ties by
 name. Only active CAD editors and admins are suggested; the author and the
-assigned reviewers never are. It only reads – add a suggestion with
+assigned reviewers never are. Users who changed the affected revisions come
+last with `"cannot_review": true` (four-eyes): show them, do not add them. It only reads – add a suggestion with
 `POST /changes/{number}/reviewers`. See
 [Suggested reviewers](../guide/changes.md#suggested-reviewers) for the
 sources and points.
+
+### Review rounds and absent reviewers
+
+`GET /changes/{number}` returns `review_round`, `earlier_rounds` (reviews of
+the rounds before) and, per entry of `reviews`, `absent` (`deactivated`,
+`not_editor`, `cannot_see_items` or `null`; set only for a pending reviewer
+who cannot decide). `POST /changes/{number}/reviewers/{old_username}/replace`
+with `{"username": "<substitute>"}` replaces a pending reviewer while the
+change is in review (author or admin; 409 when it is not in review or the
+reviewer has decided).
 
 ## Change requests (ECR)
 
@@ -374,7 +431,9 @@ Every signed-in user – viewers included – raises change requests and
 comments on them; CAD editors of the project groups of the affected items
 (and admins) triage and decide. `GET /change-requests/{number}` returns the
 request with its `items`, `comments`, `attachments`, linked `changes`,
-`history` and `can` (the actions the caller may take). See
+`history` and `can` (the actions the caller may take). A request names at
+most 100 affected `items` (an item named twice is listed once; more distinct items are refused with 400
+before any item is looked up). See
 [Change requests](../guide/changes.md) for the flow.
 
 ```sh
@@ -417,7 +476,7 @@ checked out by the caller.
 | `PATCH/DELETE /simulation-results/{id}`                       | change any field (`null` clears a limit) or remove                                                                             |
 | `GET …/revisions/{code}/simulation/compare?with={code}`       | `{before, after, summary, diffs}` – matched by name and load case, with `delta` and `delta_percent`                           |
 | `GET /items/{number}/simulations`                             | simulations whose latest revision is based on the item, with `out_of_date` and `open_impact_id`                               |
-| `GET/POST /projects/{code}/result-templates` | extraction templates of a group (read: whoever sees the group; write: its managers and admins): `{name, file_pattern, method: regex\|csv, pattern \| csv_column [csv_key_column, csv_key_value], pick?: first\|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?}` |
+| `GET/POST /projects/{code}/result-templates` | extraction templates of a group (read: whoever sees the group; write: its managers and admins): `{name, file_pattern, method: regex\|csv\|table, pattern \| csv_column [csv_key_column, csv_key_value], pick?: first\|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?}` |
 | `PUT/DELETE /result-templates/{id}`                          | replace (same fields) or remove a template                                                                                     |
 | `GET …/revisions/{code}/simulation/proposals?status=` | values the assistant proposed from reports (`pending` default, `accepted`, `rejected`, `all`): `{proposals: [{name, value, unit, limits, load_case, source_file, source_version, quote, status, proposed_by_name}]}` |
 | `POST /simulation-proposals/{id}/accept`, `…/reject`  | CAD editors of the group; accepting makes it a result value (same name and load case = update) and needs the revision checked out |

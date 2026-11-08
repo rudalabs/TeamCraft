@@ -18,7 +18,7 @@ use argon2::{
     Argon2,
 };
 use axum::{
-    extract::FromRequestParts,
+    extract::{FromRequestParts, OriginalUri},
     http::{header, request::Parts, HeaderMap},
 };
 use rand::{rngs::OsRng, RngCore};
@@ -28,7 +28,7 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
-    domain::Role,
+    domain::{Role, TokenScope},
     error::{AppError, AppResult},
     services, AppState,
 };
@@ -61,6 +61,19 @@ impl Actor {
     /// without a group, readable by everyone).
     pub fn can_see_project(&self, project_id: Option<Uuid>) -> bool {
         project_id.is_none_or(|p| !self.hidden_projects.contains(&p))
+    }
+
+    /// The same actor without the read rights to `groups` (an interface that
+    /// is switched off for them, see `services::project_policy`): they are
+    /// hidden like groups the user is no member of.
+    pub fn without_groups(mut self, groups: &[Uuid]) -> Actor {
+        for g in groups {
+            if !self.hidden_projects.contains(g) {
+                self.hidden_projects.push(*g);
+            }
+        }
+        self.projects.retain(|p| !groups.contains(p));
+        self
     }
 
     /// A webhook evaluated as a virtual reader: it sees its own group and
@@ -167,8 +180,11 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
 
 /// A valid hash used to spend the same time on unknown usernames as on
 /// wrong passwords, so login timing does not reveal which users exist.
+/// It hashes a random value made at start-up: the hash never verifies
+/// anything (the unknown-user branch always answers `false`), so the code
+/// holds no fixed "dummy password" either.
 static DUMMY_HASH: LazyLock<String> =
-    LazyLock::new(|| hash_password("teamcraft-dummy-password").expect("hashing works"));
+    LazyLock::new(|| hash_password(&random_hex()).expect("hashing works"));
 
 /// Runs Argon2 on the blocking thread pool (it is deliberately CPU heavy).
 pub async fn hash_password_async(password: String) -> AppResult<String> {
@@ -196,9 +212,14 @@ pub async fn verify_password_async(password: String, hash: Option<String>) -> bo
 
 /// Generates a random token with 256 bits of entropy, e.g. `tc_pat_3f9a…`.
 pub fn generate_token(prefix: &str) -> String {
+    format!("{prefix}{}", random_hex())
+}
+
+/// 256 random bits from the OS, hex-encoded (64 characters).
+fn random_hex() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
-    format!("{prefix}{}", hex::encode(bytes))
+    hex::encode(bytes)
 }
 
 /// Tokens are high-entropy, so a fast hash is sufficient for storage.
@@ -279,6 +300,9 @@ impl FromRequestParts<AppState> for WebUser {
 }
 
 /// Extracts the user of an API request from a bearer token.
+///
+/// Built on [`ApiCaller`], so the token's scope is enforced on every API
+/// route that takes an `ApiUser`.
 pub struct ApiUser(pub Actor);
 
 impl FromRequestParts<AppState> for ApiUser {
@@ -288,25 +312,96 @@ impl FromRequestParts<AppState> for ApiUser {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        if let Some(actor) = parts.extensions.get::<Actor>() {
-            return Ok(ApiUser(actor.clone()));
+        let caller = ApiCaller::from_request_parts(parts, state).await?;
+        Ok(ApiUser(caller.actor))
+    }
+}
+
+/// The user of an API request and the scope of its token. Refuses (403) a
+/// request outside the scope: a `read_only` token may only send `GET`/`HEAD`
+/// requests and post to the MCP endpoint (whose dispatcher allows it the
+/// read-only tools only), an `mcp_only` token may only post to the MCP
+/// endpoint (`domain::TokenScope::allows_request`).
+#[derive(Clone, Debug)]
+pub struct ApiCaller {
+    pub actor: Actor,
+    pub scope: TokenScope,
+}
+
+impl FromRequestParts<AppState> for ApiCaller {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let caller = if let Some(caller) = parts.extensions.get::<ApiCaller>() {
+            caller.clone()
+        } else if let Some(actor) = parts.extensions.get::<Actor>() {
+            // resolved from a browser session by `WebUser`: no token, no scope
+            ApiCaller {
+                actor: actor.clone(),
+                scope: TokenScope::Full,
+            }
+        } else {
+            let token = parts
+                .headers
+                .get(header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| {
+                    v.strip_prefix("Bearer ")
+                        .or_else(|| v.strip_prefix("bearer "))
+                })
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .ok_or(AppError::Unauthorized)?;
+            let (actor, scope) = services::users::actor_for_api_token(&state.db, token)
+                .await?
+                .ok_or(AppError::Unauthorized)?;
+            let caller = ApiCaller { actor, scope };
+            parts.extensions.insert(caller.actor.clone());
+            parts.extensions.insert(caller.clone());
+            caller
+        };
+        // the full path: routes nested under /api/v1 see only their own part
+        let path = parts
+            .extensions
+            .get::<OriginalUri>()
+            .map_or_else(|| parts.uri.path(), |uri| uri.0.path());
+        if !caller.scope.allows_request(parts.method.as_str(), path) {
+            return Err(AppError::Forbidden(caller.scope.refusal().into()));
         }
-        let token = parts
+        Ok(caller)
+    }
+}
+
+/// Channel and client address of a request, for the read log of restricted
+/// groups (`services::access_log`). Never rejects: a bearer token means the
+/// API channel, otherwise the browser session.
+impl FromRequestParts<AppState> for services::access_log::AccessCtx {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let bearer = parts
             .headers
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| {
-                v.strip_prefix("Bearer ")
-                    .or_else(|| v.strip_prefix("bearer "))
-            })
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-            .ok_or(AppError::Unauthorized)?;
-        let actor = services::users::actor_for_api_token(&state.db, token)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
-        parts.extensions.insert(actor.clone());
-        Ok(ApiUser(actor))
+            .is_some_and(|v| v.len() > 7 && v[..7].eq_ignore_ascii_case("bearer "));
+        let peer = parts
+            .extensions
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .map(|c| c.0.ip());
+        Ok(services::access_log::AccessCtx {
+            channel: if bearer {
+                services::access_log::Channel::Api
+            } else {
+                services::access_log::Channel::Web
+            },
+            client: client_address(&parts.headers, peer),
+        })
     }
 }
 
@@ -516,11 +611,13 @@ mod tests {
 
     #[test]
     fn password_hash_round_trip() {
-        let hash = hash_password("correct horse battery").unwrap();
+        // random passwords: no hard-coded credential, even in a test
+        let (password, other) = (random_hex(), random_hex());
+        let hash = hash_password(&password).unwrap();
         assert!(hash.starts_with("$argon2id$"));
-        assert!(verify_password("correct horse battery", &hash));
-        assert!(!verify_password("wrong password", &hash));
-        assert!(!verify_password("anything", "not-a-hash"));
+        assert!(verify_password(&password, &hash));
+        assert!(!verify_password(&other, &hash));
+        assert!(!verify_password(&password, "not-a-hash"));
     }
 
     #[test]

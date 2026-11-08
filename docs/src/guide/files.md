@@ -7,6 +7,12 @@ The revision page lists the version history of every file; any version can
 be downloaded (`name.v2.ext`), previewed, or **restored** – a rollback that
 stores the old content as a new version, so history is never rewritten.
 
+**Large result files.** A file can be set to *keep only the latest version*
+(*⋯ → Keep only the latest version*, while you hold the check-out): older
+versions are then removed after a grace period (default 7 days) as long as the
+revision is in work – released revisions keep all of their versions. See
+[Data retention](../admin/operations.md#data-retention).
+
 The vault is content-addressed (SHA-256): identical files are stored once,
 and `teamcraft vault check --verify-hashes` proves that nothing was altered.
 

@@ -78,7 +78,10 @@ must never be committed.
 CI runs these checks on every pull request: the tests against PostgreSQL 16
 and 18 on Linux (with coverage on one leg), the server build on Windows, the
 desktop app on Linux, macOS and Windows; `main` adds the macOS server build and
-more desktop runners (`.github/workflows/`).
+more desktop runners (`.github/workflows/`). A pull request that changes a
+pure module also gets a mutation-testing report for the changed lines
+(report-only for now, see
+[mutation testing](docs/src/dev/mutation-testing.md)).
 Run them locally first:
 
 ```sh
@@ -111,6 +114,7 @@ warnings and errors (`RUST_LOG` selects more), so a `500` shows its cause.
 | the desktop app   | `cargo fmt/clippy/test --manifest-path desktop/Cargo.toml`          |
 | the documentation | `mdbook build docs` (mdBook 0.5) and `scripts/check-doc-links.sh`   |
 | the web UI        | check the changed pages in a browser (no CSP errors in the console) |
+| a pure module in `.cargo/mutants.toml` | `cargo mutants -F '^src/<module>\.rs:'` – every missed mutant gets a unit test or a reason ([mutation testing](docs/src/dev/mutation-testing.md)) |
 
 ### Scale check
 

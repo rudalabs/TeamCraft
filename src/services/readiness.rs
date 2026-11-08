@@ -83,7 +83,7 @@ pub struct ChangeAccess {
 
 impl ChangeAccess {
     fn visible_to(&self, actor: &crate::auth::Actor) -> bool {
-        actor.is_admin()
+        (actor.is_admin() && self.projects.iter().all(|p| actor.can_see_project(*p)))
             || self.created_by == actor.id
             || self.reviewers.contains(&actor.id)
             || (!self.projects.is_empty()

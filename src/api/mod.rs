@@ -10,6 +10,7 @@ mod change_requests;
 mod interchange_api;
 mod personal;
 mod simulations;
+mod tokens_api;
 pub(crate) mod uploads_api;
 mod webhooks;
 
@@ -36,15 +37,16 @@ use uuid::Uuid;
 use crate::{
     auth::{Actor, ApiUser},
     domain::{
-        self, ChangeStatus, Decision, ItemType, LifecycleState, Priority, ProjectVisibility,
-        ReferenceKind, RevisionRule,
+        self, AdminRead, ChangeStatus, Decision, ItemType, LifecycleState, Priority,
+        ProjectVisibility, ReferenceKind, RevisionRule,
     },
     error::{AppError, AppResult},
     models::Revision,
     services::{
-        attributes, audit, bom, changes, checkouts, desktop, files, impacts, imports, items,
-        notifications, package, projects, references, requests, reviewers, revisions, similar,
-        stats, uploads, users, workset, Page,
+        access_log::{self, AccessCtx},
+        access_review, attributes, audit, bom, changes, checkouts, desktop, files, impacts,
+        imports, items, notifications, package, project_policy, projects, references, requests,
+        reviewers, revisions, similar, stats, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -69,6 +71,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/me", get(me))
         .route("/me/password", post(change_password))
         .route("/desktop/token", post(desktop_token))
+        .route(
+            "/tokens",
+            get(tokens_api::list_tokens).post(tokens_api::create_token),
+        )
+        .route("/tokens/{id}", delete(tokens_api::revoke_token))
         .route("/worklist", get(worklist))
         .route("/worklist/checkin-all", post(checkin_all))
         .route("/mcp", post(crate::mcp::http).get(crate::mcp::http_get))
@@ -82,6 +89,27 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/branding/{kind}", get(branding_logo))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{code}/visibility", put(set_project_visibility))
+        .route(
+            "/projects/{code}/policy",
+            get(project_policy_get).put(project_policy_set),
+        )
+        .route("/projects/{code}/access-log", get(project_access_log))
+        .route(
+            "/projects/{code}/access-review",
+            get(project_access_review).post(project_access_review_confirm),
+        )
+        .route(
+            "/projects/{code}/access-review/{review_id}",
+            get(project_access_review_snapshot),
+        )
+        .route(
+            "/projects/{code}/review-policy",
+            get(review_policy_get).put(review_policy_set),
+        )
+        .route(
+            "/projects/{code}/elevations",
+            post(project_elevate).delete(project_elevation_end),
+        )
         .route(
             "/projects/{code}/members",
             get(project_members).post(add_project_member),
@@ -312,6 +340,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{number}", get(get_change))
         .route("/changes/{number}/items", post(add_change_item))
         .route("/changes/{number}/reviewers", post(add_change_reviewer))
+        .route(
+            "/changes/{number}/reviewers/{username}/replace",
+            post(replace_change_reviewer),
+        )
         .route("/changes/{number}/readiness", get(change_readiness))
         .route(
             "/changes/{number}/suggested-reviewers",
@@ -435,13 +467,26 @@ async fn index() -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
-            "GET    /api/v1/me",
+            "GET    /api/v1/me                                        the caller, its groups and token_scope",
             "POST   /api/v1/me/password                            {current_password, new_password} – change own password (throttled; ends web sessions)",
             "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts, and grouped by dependent revision as impact_groups), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
+            "GET    /api/v1/tokens                                    your personal access tokens (name, prefix, scope, expiry; never the value)",
+            "POST   /api/v1/tokens                                    {name, expires_in_days?: 1..3650 (absent = never), scope?: full|write|read_only|mcp_only} – the value is answered once",
+            "DELETE /api/v1/tokens/{id}                               revoke a token (your own; admins: any)",
             "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
+            "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
+            "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages: bool}, read_log?, log_retention_days?} need-to-know policy – managers and admins",
+            "GET    /api/v1/projects/{code}/access-log               ?user=&kind=view|download|package|export&since=&until=&limit= read and download log (groups with read_log) – managers and admins",
+            "GET    /api/v1/projects/{code}/review-policy            review policy: min approvals, required reviewers, role group",
+            "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?} – managers and admins",
+            "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
+            "GET    /api/v1/projects/{code}/access-review            access report of a restricted group (members, source, last sign-in, policy, elevations, reviews); ?format=csv – managers and admins",
+            "POST   /api/v1/projects/{code}/access-review            {note} confirm the access review (dated, audited) – managers and admins",
+            "GET    /api/v1/projects/{code}/access-review/{id}       the member list as it was at a confirmed review",
+            "DELETE /api/v1/projects/{code}/elevations               ends the administrator's running access",
             "GET    /api/v1/projects/{code}/members",
             "POST   /api/v1/projects/{code}/members                   {username, manager?} – managers and admins",
             "GET    /api/v1/projects/{code}/numbering?scheme=         next generated item numbers per type; scheme = preview another scheme",
@@ -522,7 +567,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/built-units                units built to the design item (older design revision? open deviations?)",
             "POST   /api/v1/items/{number}/revisions/{code}/built-units  {serial_number?, built_on?, number?, name?, note?, project?, with_bom?: true} – records a unit built to this design revision",
             "GET    /api/v1/projects/{code}/result-templates         extraction templates of the group (see the simulation guide)",
-            "POST   /api/v1/projects/{code}/result-templates         {name, file_pattern, method: regex|csv, pattern | csv_column [csv_key_column, csv_key_value], pick?: first|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?} – managers and admins",
+            "POST   /api/v1/projects/{code}/result-templates         {name, file_pattern, method: regex|csv|table, pattern | csv_column [csv_key_column, csv_key_value], pick?: first|last, unit?, lower_limit?, upper_limit?, load_case?, solver?, enabled?} – managers and admins",
             "PUT    /api/v1/result-templates/{id}                    the same fields; replaces the template",
             "DELETE /api/v1/result-templates/{id}",
             "GET    /api/v1/impacts                                   open impacts on items of my project groups",
@@ -547,7 +592,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/files",
             "POST   /api/v1/items/{number}/revisions/{code}/files     multipart/form-data, field 'file' (same name = new version), 'comment', 'bases', 'folder' (in the project group) or 'folders' = {\"name\": \"folder\"}",
             "GET    /api/v1/files/{id}",
-            "PATCH  /api/v1/files/{id}                                {folder} – its place in the working folder (revision checked out by you)",
+            "PATCH  /api/v1/files/{id}                                {folder?, retention?} – its place in the working folder; retention all | latest (old versions of a latest file are removed after a grace period) – revision checked out by you",
             "GET    /api/v1/files/{id}/content                   resumable: Range: bytes=N- with If-Range: \"<sha256>\" (ETag) → 206",
             "GET    /api/v1/files/{id}/thumbnail                      preview image stored in Inventor, Solid Edge and SolidWorks files (PNG or BMP, 404 if none)",
             "GET    /api/v1/files/{id}/versions",
@@ -560,6 +605,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/changes/{number}/impact                   impact analysis: items that depend on its revisions",
             "POST   /api/v1/changes/{number}/items                    {item, revision?}",
             "POST   /api/v1/changes/{number}/reviewers                {username}",
+            "POST   /api/v1/changes/{number}/reviewers/{old}/replace  {username}: replace a pending reviewer while in review",
             "GET    /api/v1/changes/{number}/suggested-reviewers?limit=  ranked reviewer suggestions with reasons (never assigns)",
             "GET    /api/v1/changes/{number}/readiness                release readiness: unreleased (blocking) and obsolete or file-scan (warning) dependencies",
             "POST   /api/v1/changes/{number}/dependencies             add the in-work revisions of all unreleased dependencies, level by level",
@@ -593,16 +639,23 @@ async fn index() -> Json<Value> {
     }))
 }
 
-async fn me(State(st): State<AppState>, ApiUser(me): ApiUser) -> AppResult<Json<Value>> {
+async fn me(
+    State(st): State<AppState>,
+    crate::auth::ApiCaller { actor: me, scope }: crate::auth::ApiCaller,
+) -> AppResult<Json<Value>> {
     // `hidden_projects` is never serialized; the client learns only which of
     // its own groups are restricted (for a badge).
     let mut body = json!(me);
     body["restricted_projects"] = json!(projects::restricted_memberships(&st.db, &me).await?);
+    body["token_scope"] = json!(scope);
     // "local" or "oidc": a client offers "Change password" only for local accounts
     body["auth_source"] = json!(users::get(&st.db, me.id).await?.auth_source);
     body["capabilities"] = json!({
         "assistant": crate::services::assistant::enabled(&st),
-        "mcp": true,
+        // TEAMCRAFT_LOCAL_AGENTS=off refuses POST /api/v1/mcp for every token
+        // and the desktop's Agent view then runs on the server-side assistant
+        "mcp": st.config.local_agents.allowed(),
+        "local_agents": st.config.local_agents.allowed(),
     });
     Ok(Json(body))
 }

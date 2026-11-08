@@ -203,6 +203,18 @@ pub async fn show(
     } else {
         Vec::new()
     };
+    let can_replace = is_owner && status == ChangeStatus::InReview;
+    let replacements: Vec<_> = if can_replace {
+        users::reviewer_candidates(&st.db)
+            .await?
+            .into_iter()
+            .filter(|u| u.id != change.created_by && !reviews.iter().any(|r| r.reviewer_id == u.id))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let earlier_rounds = changes::earlier_rounds(&st.db, id).await?;
+    let review_round = changes::review_round(&st.db, id).await?;
     // Who knows the affected items: one-click suggestions next to the picker.
     let suggested = if modifiable && !candidates.is_empty() {
         reviewers::suggest(&st.db, me, id, reviewers::DEFAULT_LIMIT).await?
@@ -224,6 +236,7 @@ pub async fn show(
         "reopen": is_owner && status == ChangeStatus::Rejected,
         "cancel": is_owner && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
         "review": my_pending_review,
+        "replace_reviewer": can_replace,
     });
     render(
         &st,
@@ -242,6 +255,9 @@ pub async fn show(
             "items": affected,
             "reviews": reviews,
             "candidates": candidates,
+            "replacements": replacements,
+            "earlier_rounds": earlier_rounds,
+            "review_round": review_round,
             "suggested": suggested,
             "history": history,
             "priorities": priorities(),
@@ -398,6 +414,22 @@ pub async fn remove_reviewer(
     let result = changes::remove_reviewer(&st.db, &ctx.me, id, user_id).await;
     finish(&st, result, &back, |_| {
         (back.clone(), "Removed the reviewer".into())
+    })
+}
+
+pub async fn replace_reviewer(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
+    Form(form): Form<ReviewerForm>,
+) -> AppResult<Response> {
+    let back = format!("/changes/{id}");
+    let result = changes::replace_reviewer(&st.db, &ctx.me, id, user_id, &form.username).await;
+    finish(&st, result, &back, |_| {
+        (
+            back.clone(),
+            format!("Replaced the reviewer by {}", form.username.trim()),
+        )
     })
 }
 

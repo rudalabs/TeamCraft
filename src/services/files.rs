@@ -17,7 +17,7 @@ use crate::{
     auth::Actor,
     cadformat::{self, CadFormat},
     cadrefs,
-    domain::{self, BaseConflict, BaseVersion, ServerFile},
+    domain::{self, BaseConflict, BaseVersion, FileRetention, ServerFile},
     error::{AppError, AppResult},
     models::{FileRecord, FileVersion, Revision},
     services::{access, audit, references, revisions},
@@ -28,7 +28,9 @@ use crate::{
 const FILE_SELECT: &str = "
     SELECT f.id, f.revision_id, f.filename, f.content_type, f.size_bytes, f.sha256,
            f.uploaded_by, u.display_name AS uploaded_by_name, f.uploaded_at,
-           f.current_version AS version, COALESCE(f.format, '') AS format, f.folder
+           f.current_version AS version, COALESCE(f.format, '') AS format, f.folder, f.retention,
+           (SELECT cv.solver_summary FROM file_versions cv
+            WHERE cv.file_id = f.id AND cv.version = f.current_version) AS solver_summary
     FROM files f JOIN users u ON u.id = f.uploaded_by";
 
 const VERSION_SELECT: &str = "
@@ -62,6 +64,13 @@ pub struct Upload {
     /// for result values from exchange files and templates; empty for other
     /// files.
     pub scan_head: Vec<u8>,
+    /// The end of a text file larger than `resultscan::SCAN_MAX_BYTES` (at most
+    /// as many bytes, starting at a line) for templates with `pick = last`;
+    /// empty when `scan_head` holds the whole file.
+    pub scan_tail: Vec<u8>,
+    /// Solver summary (`solversummary`) computed from the head and tail
+    /// read for the result scan; `None` for other files.
+    pub solver_summary: Option<serde_json::Value>,
 }
 
 /// The name a file gets on the server – the key for bases and versions.
@@ -161,14 +170,31 @@ impl Upload {
         client_content_type: &str,
     ) -> Upload {
         let mut scan_head = Vec::new();
+        let mut scan_tail = Vec::new();
+        let mut sum_head = Vec::new();
+        let mut sum_tail = Vec::new();
         let mut export_name = None;
         let (format, content_text, references) = match vault.object_path(&blob.sha256) {
             Ok(path) => {
                 let html = crate::htmltext::is_html(&filename);
                 if crate::resultscan::scannable(&filename) && !html {
-                    scan_head = read_head(&path, crate::resultscan::SCAN_MAX_BYTES).await;
+                    (scan_head, scan_tail) = read_head_and_tail(
+                        &path,
+                        crate::resultscan::SCAN_MAX_BYTES,
+                        blob.size > crate::resultscan::SCAN_MAX_BYTES,
+                    )
+                    .await;
                 }
                 let format = cadformat::detect_stored(&path, &filename).await;
+                if scan_head.is_empty()
+                    && !html
+                    && crate::solversummary::applies(format.map(|f| f.id), &filename)
+                {
+                    // solver decks (.bdf, .nas) are not result-scannable: read only
+                    // the summary windows
+                    let w = crate::solversummary::WINDOW as u64;
+                    (sum_head, sum_tail) = read_head_and_tail(&path, w, blob.size > w).await;
+                }
                 let references = match format {
                     Some(f) if cadrefs::scans(f.id) => cadrefs::scan_file(&path, &filename).await,
                     _ => Vec::new(),
@@ -186,6 +212,12 @@ impl Upload {
             }
             Err(_) => (cadformat::detect(&filename, &[]), String::new(), Vec::new()),
         };
+        let (sh, st) = if scan_head.is_empty() {
+            (&sum_head, &sum_tail)
+        } else {
+            (&scan_head, &scan_tail)
+        };
+        let solver_summary = summary_of(format, &filename, sh, st);
         Upload {
             content_type: cadformat::content_type(format, client_content_type),
             blob,
@@ -196,9 +228,29 @@ impl Upload {
             export_name,
             base: None,
             folder: None,
+            solver_summary,
             scan_head,
+            scan_tail,
         }
     }
+}
+
+/// The solver summary of a file from the head and tail of the result scan
+/// (`None` for files without rules or content that does not fit).
+fn summary_of(
+    format: Option<&'static CadFormat>,
+    filename: &str,
+    head: &[u8],
+    tail: &[u8],
+) -> Option<serde_json::Value> {
+    use crate::solversummary as ss;
+    let id = format.map(|f| f.id);
+    if head.is_empty() || !ss::applies(id, filename) {
+        return None;
+    }
+    let (head, tail) = ss::windows(head, tail);
+    let id = id.filter(|i| *i != "text");
+    ss::summarize(id.unwrap_or(""), &head, &tail).map(|s| s.to_json())
 }
 
 /// At most `max` bytes of a text, cut at a character boundary.
@@ -210,15 +262,22 @@ fn head_of(text: &str, max: u64) -> Vec<u8> {
     text.as_bytes().get(..end).unwrap_or_default().to_vec()
 }
 
-/// The first `max` bytes of a file (never more, whatever its size).
-async fn read_head(path: &std::path::Path, max: u64) -> Vec<u8> {
+/// The first `max` bytes of a file (never more, whatever its size) and,
+/// with `tail`, its last `max` bytes starting at a line
+/// ([`crate::textindex::read_tail`]); the file is opened once.
+async fn read_head_and_tail(path: &std::path::Path, max: u64, tail: bool) -> (Vec<u8>, Vec<u8>) {
     use tokio::io::AsyncReadExt;
-    let Ok(file) = tokio::fs::File::open(path).await else {
-        return Vec::new();
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
+        return (Vec::new(), Vec::new());
     };
     let mut head = Vec::new();
-    let _ = file.take(max).read_to_end(&mut head).await;
-    head
+    let _ = (&mut file).take(max).read_to_end(&mut head).await;
+    let tail = if tail {
+        crate::textindex::read_tail(&mut file, max).await
+    } else {
+        Vec::new()
+    };
+    (head, tail)
 }
 
 /// Scans the current versions that were stored before reference tracking
@@ -365,6 +424,11 @@ pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String])
 
 fn with_format(mut file: FileRecord) -> FileRecord {
     file.format_info = cadformat::info(&file.format);
+    file.solver_line = file
+        .solver_summary
+        .as_ref()
+        .and_then(crate::solversummary::Summary::from_json)
+        .map(|s| s.line());
     file
 }
 
@@ -882,8 +946,9 @@ pub(crate) async fn store_uploads(
             let version_id = Uuid::new_v4();
             sqlx::query(
                 "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
-                                            uploaded_by, content_text, export_name, export_name_scanned)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE)",
+                                            uploaded_by, content_text, export_name, export_name_scanned,
+                                            solver_summary)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, $11)",
             )
             .bind(version_id)
             .bind(file_id)
@@ -895,6 +960,7 @@ pub(crate) async fn store_uploads(
             .bind(actor.id)
             .bind(&upload.content_text)
             .bind(&upload.export_name)
+            .bind(&upload.solver_summary)
             .execute(&mut *conn)
             .await?;
             references::store_file_references(conn, version_id, &upload.references).await?;
@@ -1023,6 +1089,74 @@ pub async fn set_folder(
             .bind(rev.id)
             .execute(&mut *tx)
             .await?;
+    }
+    tx.commit().await?;
+    get(pool, actor, file_id).await
+}
+
+/// Chooses what happens to the old versions of a file: `all` keeps every
+/// version, `latest` lets the housekeeping remove the versions a newer one
+/// replaced (see `services::retention::purge_superseded_versions`).
+///
+/// # Invariants
+///
+/// * **Permission:** the file is visible to the actor ("not found" otherwise),
+///   its revision is checked out by the actor (409 otherwise) and editable
+///   (`revisions::ensure_editable`: in work, CAD editor of its group).
+/// * **Locks:** the revision row (`revisions::lock`) and the file row
+///   (`FOR UPDATE`).
+/// * **Audit:** `file.retention`, only when the setting actually changes.
+/// * **Data:** nothing is removed here; the removal is the housekeeping's.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
+pub async fn set_retention(
+    pool: &PgPool,
+    actor: &Actor,
+    file_id: Uuid,
+    retention: FileRetention,
+) -> AppResult<FileRecord> {
+    let file = get(pool, actor, file_id).await?;
+    let mut tx = pool.begin().await?;
+    let rev = revisions::lock(&mut tx, file.revision_id).await?;
+    revisions::ensure_editable(&rev, actor)?;
+    let current =
+        sqlx::query_scalar::<_, String>("SELECT retention FROM files WHERE id = $1 FOR UPDATE")
+            .bind(file_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    if current != retention.as_str() {
+        sqlx::query("UPDATE files SET retention = $2 WHERE id = $1")
+            .bind(file_id)
+            .bind(retention.as_str())
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE revisions SET updated_at = now() WHERE id = $1")
+            .bind(rev.id)
+            .execute(&mut *tx)
+            .await?;
+        audit::record(
+            &mut tx,
+            Some(actor),
+            "file.retention",
+            "revision",
+            Some(rev.id),
+            format!(
+                "{} of {}: {}",
+                file.filename,
+                revisions::label(&rev),
+                match retention {
+                    FileRetention::All => "keep every version",
+                    FileRetention::Latest => "keep only the latest version",
+                }
+            ),
+            json!({
+                "item_id": rev.item_id,
+                "file_id": file_id,
+                "from": current,
+                "to": retention.as_str(),
+            }),
+        )
+        .await?;
     }
     tx.commit().await?;
     get(pool, actor, file_id).await
@@ -1204,9 +1338,9 @@ pub async fn restore_version(
     sqlx::query(
         "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
                                     uploaded_by, content_text, references_scanned, export_name,
-                                    export_name_scanned)
+                                    export_name_scanned, solver_summary)
          SELECT $1, file_id, $2, sha256, size_bytes, content_type, $3, $4, content_text, references_scanned,
-                export_name, export_name_scanned
+                export_name, export_name_scanned, solver_summary
          FROM file_versions WHERE id = $5",
     )
     .bind(new_version_id)

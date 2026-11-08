@@ -75,6 +75,11 @@ enum Command {
         #[arg(long = "format")]
         formats: Vec<String>,
     },
+    /// The read and download log of restricted groups.
+    AccessLog {
+        #[command(subcommand)]
+        command: AccessLogCommand,
+    },
     /// Bridge an MCP client that speaks stdio (e.g. Claude Desktop) to the
     /// MCP endpoint of a TeamCraft server. The personal access token is read
     /// from TEAMCRAFT_TOKEN or --token-file.
@@ -161,6 +166,23 @@ enum UserCommand {
     },
     /// List all accounts.
     List,
+    /// Create a personal access token for an account (e.g. for a CI job or
+    /// an MCP client) and print it once on standard output.
+    CreateToken {
+        #[arg(long)]
+        username: String,
+        /// Name shown on the account page, e.g. "nightly export".
+        #[arg(long)]
+        name: String,
+        /// full (read, write, approve), write (no approving), read_only
+        /// (GET requests and read-only MCP tools) or mcp_only (only the MCP
+        /// endpoint)
+        #[arg(long, default_value = "full")]
+        scope: String,
+        /// Lifetime in days (1–3650); without it the token never expires.
+        #[arg(long)]
+        expires_days: Option<i64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -172,12 +194,54 @@ enum AssistantCommand {
 }
 
 #[derive(Subcommand)]
+enum AccessLogCommand {
+    /// Delete old entries and record that in the audit log. Without
+    /// --older-than-days each group keeps its log for its own retention
+    /// (groups without one keep everything).
+    Purge {
+        /// Only this project group (code).
+        #[arg(long)]
+        project: Option<String>,
+        /// Delete everything older than this many days instead of using the
+        /// retention of the groups.
+        #[arg(long)]
+        older_than_days: Option<i32>,
+    },
+}
+
+#[derive(Subcommand)]
 enum VaultCommand {
     /// Check that every file referenced in the database exists in the vault.
     Check {
         /// Also re-hash every blob to detect corruption (slow).
         #[arg(long)]
         verify_hashes: bool,
+    },
+    /// List the stored blobs that nothing in the database refers to any more
+    /// (content of deleted files, abandoned uploads) and that were not
+    /// written within the grace period; remove them only with --apply.
+    /// Referenced content is never removed.
+    Gc {
+        /// Remove the blobs found (default: a dry run that only lists them).
+        #[arg(long)]
+        apply: bool,
+        /// Keep unreferenced blobs written or stored again within this many
+        /// hours (at least 1).
+        #[arg(long, default_value_t = services::retention::DEFAULT_GC_GRACE_HOURS)]
+        grace_hours: u64,
+    },
+    /// List the superseded versions of files whose retention is `latest`
+    /// (set per file) that the housekeeping would remove; remove them only
+    /// with --apply. Only revisions in work are touched, the newest version
+    /// of a file is never removed.
+    PurgeVersions {
+        /// Remove the versions found (default: a dry run that only lists them).
+        #[arg(long)]
+        apply: bool,
+        /// Remove a version this many days after a newer version replaced it
+        /// (default: TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS, at least 1).
+        #[arg(long)]
+        grace_days: Option<u32>,
     },
     /// Compute the missing shape signatures of the similar part search from
     /// the cached 3D previews (each in the isolated preview process).
@@ -276,6 +340,7 @@ async fn run(cli: Cli) -> ExitCode {
         Command::Vault { command } => vault_command(command).await,
         Command::Assistant { command } => assistant_command(command).await,
         Command::RescanReferences { formats } => rescan_references(formats).await,
+        Command::AccessLog { command } => access_log_command(command).await,
     };
     match result {
         Ok(code) => code,
@@ -351,6 +416,9 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     }
     teamcraft::delivery::spawn(pool.clone(), delivery);
     let webhook_retention_days = config.webhooks.retention_days;
+    let audit_retention_days = config.audit_retention_days;
+    let latest_grace_days = config.retention_latest_grace_days;
+    let preview_cache_max_bytes = config.preview_cache_max_bytes;
     let thread_retention_days = config.assistant.as_ref().map(|a| a.retention_days);
     let state = AppState::new(config, pool.clone()).await?;
     // Outgoing event webhooks (the outbox `webhook_deliveries`).
@@ -377,8 +445,12 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     }
 
     // Housekeeping: remove expired sessions, stale OIDC states, staged imports
-    // and expired chunked uploads (the first tick runs at once, at start-up).
+    // and expired chunked uploads (with their unreferenced blobs), old webhook
+    // deliveries, idle assistant conversations and audit entries past their
+    // retention, and trim the preview cache (the first tick runs at once, at
+    // start-up). See "Data retention" in docs/src/admin/operations.md.
     let vault = state.vault.clone();
+    let previews_dir = state.previews.dir().to_path_buf();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
@@ -388,7 +460,7 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
             }
-            match services::imports::purge_stale(&pool).await {
+            match services::imports::purge_stale(&pool, &vault).await {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed stale staged imports"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "staged import cleanup failed"),
@@ -413,6 +485,45 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "assistant conversation cleanup failed"),
+            }
+            if latest_grace_days > 0 {
+                match services::retention::purge_superseded_versions(
+                    &pool,
+                    &vault,
+                    latest_grace_days,
+                    true,
+                )
+                .await
+                {
+                    Ok(p) if !p.files.is_empty() => tracing::info!(
+                        files = p.files.len(),
+                        versions = p.versions(),
+                        bytes = p.bytes(),
+                        blobs_removed = p.blobs_removed,
+                        "removed superseded versions of latest-only files"
+                    ),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "version retention failed"),
+                }
+            }
+            if audit_retention_days > 0 {
+                match services::audit::purge_older_than(&pool, audit_retention_days).await {
+                    Ok(n) if n > 0 => tracing::info!(removed = n, "removed old audit entries"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "audit log retention failed"),
+                }
+            }
+            match services::retention::purge_previews(&pool, &previews_dir, preview_cache_max_bytes)
+                .await
+            {
+                Ok(p) if p.removed > 0 => tracing::info!(
+                    removed = p.removed,
+                    removed_bytes = p.removed_bytes,
+                    kept_bytes = p.kept_bytes,
+                    "trimmed the preview cache"
+                ),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "preview cache cleanup failed"),
             }
         }
     });
@@ -569,7 +680,12 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 .execute(&pool)
                 .await?;
             }
-            println!(
+            // The `user` commands write their report with `writeln!`, not
+            // `println!`: a closed pipe (`teamcraft user list | head`) is
+            // then an error, not a panic. The report holds account names,
+            // roles and groups the operator asked for – never a password.
+            writeln!(
+                std::io::stdout(),
                 "created user '{}' with role {}{}",
                 user.username,
                 user.role,
@@ -581,7 +697,7 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                         projects.join(", ").to_uppercase()
                     )
                 }
-            );
+            )?;
         }
         UserCommand::SetPassword { username } => {
             let user = services::users::find_by_username(&pool, &username)
@@ -589,21 +705,61 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 .with_context(|| format!("no user named '{username}'"))?;
             let password = read_new_password()?;
             services::users::set_password(&pool, None, user.id, &password).await?;
-            println!(
+            writeln!(
+                std::io::stdout(),
                 "password of '{}' updated; existing sessions were signed out",
                 user.username
-            );
+            )?;
+        }
+        UserCommand::CreateToken {
+            username,
+            name,
+            scope,
+            expires_days,
+        } => {
+            let scope = teamcraft::domain::TokenScope::parse(&scope)
+                .context("scope must be full, write, read_only or mcp_only")?;
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            if !user.active {
+                bail!("the account '{username}' is deactivated");
+            }
+            let actor = services::users::actor(&pool, user.id).await?;
+            let (record, token) = services::users::create_token(
+                &pool,
+                &actor,
+                &name,
+                services::users::TokenLifetime::fixed(expires_days),
+                scope,
+            )
+            .await?;
+            writeln!(
+                std::io::stderr(),
+                "created token '{}' ({}) for '{}', expires {}; it is shown only once:",
+                record.name,
+                scope.label(),
+                user.username,
+                record
+                    .expires_at
+                    .map_or_else(|| "never".to_string(), |t| t.format("%Y-%m-%d").to_string())
+            )?;
+            println!("{token}");
         }
         UserCommand::List => {
-            println!(
+            let users = services::users::list(&pool).await?;
+            let mut out = std::io::stdout().lock();
+            writeln!(
+                out,
                 "{:<24} {:<10} {:<6} {:<7} DISPLAY NAME",
                 "USERNAME", "ROLE", "SOURCE", "ACTIVE"
-            );
-            for u in services::users::list(&pool).await? {
-                println!(
+            )?;
+            for u in users {
+                writeln!(
+                    out,
                     "{:<24} {:<10} {:<6} {:<7} {}",
                     u.username, u.role, u.auth_source, u.active, u.display_name
-                );
+                )?;
             }
         }
     }
@@ -629,6 +785,26 @@ fn read_new_password() -> Result<String> {
         }
         Ok(password)
     }
+}
+
+/// `teamcraft access-log purge`.
+async fn access_log_command(command: AccessLogCommand) -> Result<ExitCode> {
+    let AccessLogCommand::Purge {
+        project,
+        older_than_days,
+    } = command;
+    let config = load_config()?;
+    let pool = db::connect(&config).await?;
+    let project_id = match project.as_deref() {
+        Some(code) => Some(services::access_log::project_id_by_code(&pool, code).await?),
+        None => None,
+    };
+    let n = services::access_log::purge(&pool, project_id, older_than_days).await?;
+    println!(
+        "purged {n} access log entr{}",
+        if n == 1 { "y" } else { "ies" }
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn rescan_references(mut formats: Vec<String>) -> Result<ExitCode> {
@@ -691,6 +867,10 @@ async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
     let verify_hashes = match command {
         VaultCommand::Check { verify_hashes } => verify_hashes,
         VaultCommand::Signatures { convert, jobs } => return shape_signatures(convert, jobs).await,
+        VaultCommand::Gc { apply, grace_hours } => return vault_gc(apply, grace_hours).await,
+        VaultCommand::PurgeVersions { apply, grace_days } => {
+            return vault_purge_versions(apply, grace_days).await
+        }
     };
     let config = load_config()?;
     let pool = db::connect(&config).await?;
@@ -720,6 +900,90 @@ async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// `teamcraft vault gc`: lists (with `apply`: removes) the unreferenced
+/// blobs older than the grace period.
+async fn vault_gc(apply: bool, grace_hours: u64) -> Result<ExitCode> {
+    if grace_hours == 0 {
+        bail!(
+            "--grace-hours must be at least 1: younger blobs may be on their way into the database"
+        );
+    }
+    let grace = Duration::from_secs(grace_hours.saturating_mul(3600));
+    let config = load_config()?;
+    let pool = db::connect(&config).await?;
+    let vault = teamcraft::vault::Vault::open(&config.vault_dir).await?;
+    let report = services::retention::collect_garbage(&pool, &vault, grace, apply).await?;
+    for o in &report.orphans {
+        let what = match (apply, o.removed) {
+            (false, _) => "UNREFERENCED",
+            (true, true) => "REMOVED",
+            // stored again since it was found
+            (true, false) => "KEPT",
+        };
+        println!("{what}  {}  {} bytes", o.sha256, o.size);
+    }
+    let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+    println!(
+        "scanned {} blob(s): {} referenced, {} unreferenced within the grace period of {grace_hours} h (kept), {} unreferenced ({:.1} MiB)",
+        report.scanned,
+        report.referenced,
+        report.recent,
+        report.orphans.len(),
+        mib(report.orphan_bytes()),
+    );
+    if apply {
+        let (n, bytes) = report.removed();
+        println!("removed {n} blob(s) ({:.1} MiB)", mib(bytes));
+    } else if !report.orphans.is_empty() {
+        println!("dry run: nothing removed (use --apply to remove them)");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `teamcraft vault purge-versions`: lists (with `apply`: removes) the
+/// superseded versions of files with the retention `latest`.
+async fn vault_purge_versions(apply: bool, grace_days: Option<u32>) -> Result<ExitCode> {
+    let config = load_config()?;
+    let grace_days = match (grace_days, config.retention_latest_grace_days) {
+        (Some(days), _) => days,
+        // the automatic removal is off; the command needs a period
+        (None, 0) => services::retention::DEFAULT_LATEST_GRACE_DAYS,
+        (None, days) => days,
+    };
+    let pool = db::connect(&config).await?;
+    let vault = teamcraft::vault::Vault::open(&config.vault_dir).await?;
+    let report =
+        services::retention::purge_superseded_versions(&pool, &vault, grace_days, apply).await?;
+    let what = if apply { "REMOVED" } else { "SUPERSEDED" };
+    for f in &report.files {
+        let versions: Vec<String> = f.versions.iter().map(|v| format!("v{v}")).collect();
+        println!(
+            "{what}  {} {}  {}  {} ({} bytes)",
+            f.item_number,
+            f.revision,
+            f.filename,
+            versions.join(" "),
+            f.bytes
+        );
+    }
+    let mib = |bytes: u64| bytes as f64 / (1024.0 * 1024.0);
+    println!(
+        "{} version(s) of {} file(s) replaced for more than {grace_days} day(s) ({:.1} MiB)",
+        report.versions(),
+        report.files.len(),
+        mib(report.bytes()),
+    );
+    if apply {
+        println!(
+            "removed {} vault blob(s) nothing refers to",
+            report.blobs_removed
+        );
+    } else if !report.files.is_empty() {
+        println!("dry run: nothing removed (use --apply to remove them)");
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `teamcraft vault signatures`: walks the 3D files without a shape

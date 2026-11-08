@@ -35,6 +35,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "requests/show.html",
     "projects/list.html",
     "projects/show.html",
+    "projects/access_review.html",
     "files/preview.html",
     "admin/users.html",
     "admin/user_edit.html",
@@ -44,6 +45,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "admin/webhooks.html",
     "admin/webhook_edit.html",
     "admin/branding.html",
+    "admin/ai.html",
     "desktop/authorize.html",
     "formats.html",
     "imports/upload.html",
@@ -187,7 +189,8 @@ mod tests {
         json!({
             "id": "44444444-4444-4444-8444-444444444444", "number": "PRT-000001", "item_type": "part",
             "unit": "each", "project_id": null, "project_code": "ROCKET", "created_by": ME,
-            "created_by_name": "Max Muster", "created_at": TS
+            "created_by_name": "Max Muster", "created_at": TS,
+            "owner_id": ME, "owner_name": "Max Muster"
         })
     }
 
@@ -376,7 +379,7 @@ mod tests {
                 .map(|k| json!({ "value": k.as_str(), "label": k.label() })).collect::<Vec<_>>(),
         });
         let can_all = json!({ "edit": true, "checkout": true, "checkin": true, "cancel_checkout": true,
-                              "revise": true, "obsolete": true, "delete": true, "master": true,
+                              "revise": true, "obsolete": true, "delete": true, "master": true, "owner": true,
                               "add_to_change": true, "acknowledge": true });
 
         let html = render(
@@ -1207,19 +1210,49 @@ mod tests {
                     "items": [{ "revision_id": OTHER, "item_id": ME, "item_number": "PRT-000001", "code": "A",
                                 "name": "Bracket", "state": "in_work", "checked_out_by_name": "Erika" }],
                     "reviews": [{ "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
-                                  "decision": "approved", "comment": "ok", "decided_at": TS }],
+                                  "decision": "approved", "comment": "ok", "decided_at": TS, "absent": null },
+                                 { "reviewer_id": ME, "reviewer_username": "gone", "reviewer_name": "Gone <G>",
+                                  "decision": "pending", "comment": "", "decided_at": null, "absent": "deactivated" }],
+                    "replacements": [user()], "review_round": 2,
+                    "earlier_rounds": [{ "round": 1, "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
+                                         "decision": "rejected", "comment": "<too thin>", "decided_at": TS, "closed_at": TS }],
                     "candidates": [user()], "history": [audit_entry()], "priorities": ["low", "normal"],
                     "suggested": [{ "user_id": OTHER, "username": "max", "display_name": "Max <M>", "role": "editor",
                                     "score": 7, "reasons": ["edited PRT-000001 3 times in the last 90 days",
-                                                            "manager of ROVER"] }],
+                                                            "manager of ROVER"] },
+                                  { "user_id": ME, "username": "erika", "display_name": "Erika", "role": "editor",
+                                    "score": 5, "cannot_review": true, "reasons": ["edited PRT-000001 once in the last 90 days"] }],
                     "impact": [{ "root_item_id": ME, "level": 1, "item_id": OTHER, "item_number": "ASM-000001",
                                  "item_name": "Stage", "revision_id": OTHER, "revision_code": "A",
                                  "revision_state": "released", "relation": "bom", "via_number": "PRT-000001",
                                  "in_change": false }],
                     "can": { "modify": true, "edit_text": true, "submit": true, "withdraw": true, "reopen": true,
-                             "cancel": true, "review": true },
+                             "cancel": true, "review": true, "replace_reviewer": true },
                 })),
             );
+            assert!(
+                html.contains("Earlier rounds")
+                    && html.contains("Cannot decide: deactivated")
+                    && html.contains("&lt;too thin&gt;")
+                    && html.contains("/reviewers/"),
+                "{status}: rounds and absent reviewers"
+            );
+            if status == "in_review" {
+                let mut ctx = json!({
+                    "change": change(status), "status_label": "In review",
+                    "reviews": [{ "reviewer_id": ME, "reviewer_username": "gone", "reviewer_name": "Gone <G>",
+                                  "decision": "pending", "comment": "", "decided_at": null, "absent": "deactivated" }],
+                    "replacements": [user()], "review_round": 1, "earlier_rounds": [],
+                    "items": [], "candidates": [], "history": [], "priorities": ["low", "normal"],
+                    "suggested": [], "impact": [],
+                    "can": { "modify": false, "review": false, "replace_reviewer": true },
+                });
+                let html = render(&env, "changes/show.html", with_common(ctx.take()));
+                assert!(
+                    html.contains("/replace") && html.contains("Substitute for"),
+                    "the replace form of an absent reviewer"
+                );
+            }
             assert!(
                 html.contains("Impact analysis") && html.contains("uses PRT-000001 in its BOM"),
                 "impact analysis on the change page"
@@ -1339,6 +1372,22 @@ mod tests {
         );
         let html = render(
             &env,
+            "projects/access_review.html",
+            with_common(json!({
+                "project_id": OTHER, "max_note": 1000,
+                "report": { "project_code": "ROVER", "project_name": "Rover <x>", "generated_at": TS,
+                    "admin_read": "with_reason", "administrators_outside": 2, "stale_days": 90,
+                    "members": [{ "username": "erika", "display_name": "Erika", "role": "editor", "manager": true,
+                                  "source": "oidc", "active": true, "added_at": TS, "last_login_at": null, "stale": true }],
+                    "elevations": [{ "id": OTHER, "project_id": OTHER, "user_id": OTHER, "username": "root", "reason": "audit <b>",
+                                    "started_at": TS, "expires_at": TS, "ended_at": null, "active": false }],
+                    "reviews": [{ "id": OTHER, "username": "root", "note": "ok", "reviewed_at": TS,
+                                  "admin_read": "none", "member_count": 1 }] },
+            })),
+        );
+        assert!(html.contains("no sign-in for 90 days") && html.contains("audit &lt;b&gt;"));
+        let html = render(
+            &env,
             "projects/show.html",
             with_common(json!({
                 "project": project(),
@@ -1370,6 +1419,32 @@ mod tests {
         assert!(html.contains("value=\"{PROJECT}-{TYPE}-{YYYY}-{SEQ:4}\""));
         assert!(html.contains("&lt;bad&gt;"), "scheme errors are escaped");
         assert!(html.contains("/numbering\""), "managers edit the scheme");
+        let html = render(
+            &env,
+            "projects/show.html",
+            with_common(json!({
+                "project": project(), "members": [], "candidates": [], "is_member": true,
+                "can_edit": true, "oidc_enabled": false, "can_manage": true, "readable": true,
+                "result_templates": [],
+                "policy": { "admin_read": "implicit", "access": { "read_log": true, "log_retention_days": 90,
+                    "interfaces": { "api_tokens": true, "mcp": false, "assistant": true, "webhooks": true, "packages": true } } },
+                "admin_modes": [{ "value": "implicit", "label": "Implicit" }],
+                "interface_rows": [{ "name": "mcp", "label": "MCP <server>", "allowed": false }],
+                "access_entries": [{ "id": OTHER, "at": TS, "username": "erika", "channel": "api", "kind": "download",
+                    "label": "<b>secret.step</b>", "client_address": "10.0.0.1" }],
+                "numbering": { "scheme": "{TYPE}-{SEQ:6}", "is_default": true, "next": [] },
+                "scheme_input": "", "previewing": false, "scheme_error": null, "default_scheme": "{TYPE}-{SEQ:6}",
+            })),
+        );
+        assert!(
+            html.contains("/access\""),
+            "managers edit the interfaces and the log"
+        );
+        assert!(html.contains("MCP &lt;server&gt;"));
+        assert!(
+            html.contains("&lt;b&gt;secret.step"),
+            "log labels are escaped"
+        );
         render(
             &env,
             "admin/users.html",
@@ -1383,8 +1458,11 @@ mod tests {
             "admin/user_edit.html",
             with_common(json!({
                 "user": user(), "roles": roles(), "oidc_enabled": false, "memberships": [project()],
+                "handover_targets": [user()],
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
-                             "last_used_at": null, "expires_at": TS }],
+                             "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": null },
+                           { "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,
+                             "last_used_at": TS, "expires_at": TS, "scope": "read_only", "idle_days": 30 }],
             })),
         );
         render(
@@ -1485,6 +1563,63 @@ mod tests {
             !html.contains("/admin/branding/square/reset"),
             "no reset for the built-in logo"
         );
+        // Admin → AI in every mode: provider and model shown, the key never
+        let company_ai = crate::config::AssistantConfig {
+            provider: crate::config::AssistantProvider::Anthropic,
+            base_url: "https://api.anthropic.com/v1".into(),
+            api_key: Some("sk-ant-never-shown".into()),
+            model: "claude-opus-5-5".into(),
+            max_steps: 8,
+            max_tokens: 4096,
+            request_timeout: std::time::Duration::from_secs(60),
+            run_timeout: std::time::Duration::from_secs(180),
+            max_concurrent: 4,
+            retention_days: 30,
+        };
+        use crate::config::LocalAgents;
+        // the notice, and what the desktop app's Agent view runs on
+        for (agents, assistant, says, desktop) in [
+            (
+                LocalAgents::Off,
+                Some(&company_ai),
+                "Company AI only",
+                "company AI (no local option)",
+            ),
+            (
+                LocalAgents::Off,
+                None,
+                "users have no AI in TeamCraft",
+                "a notice that AI is switched off",
+            ),
+            (
+                LocalAgents::Allowed,
+                Some(&company_ai),
+                "TEAMCRAFT_LOCAL_AGENTS=off",
+                "the user chooses: company AI or local agent",
+            ),
+            (
+                LocalAgents::Allowed,
+                None,
+                "No assistant is configured",
+                "<dd>local agent</dd>",
+            ),
+        ] {
+            let html = render(
+                &env,
+                "admin/ai.html",
+                with_common(crate::services::assistant::admin_overview(
+                    agents, assistant,
+                )),
+            );
+            assert!(html.contains(says), "{agents:?}: {says}");
+            assert!(html.contains(desktop), "{agents:?}: {desktop}");
+            assert!(!html.contains("sk-ant-never-shown"), "the key leaked");
+            if assistant.is_some() {
+                assert!(html.contains("claude-opus-5-5"), "model shown");
+                assert!(html.contains("api.anthropic.com"), "host shown");
+                assert!(html.contains("set (not shown)"));
+            }
+        }
         let html = render(
             &env,
             "admin/webhook_edit.html",
@@ -1523,7 +1658,7 @@ mod tests {
             with_common(json!({
                 "req": { "port": 53682, "state": "abcdefghijklmnop", "challenge": "c".repeat(43),
                          "device": "Leo's <MacBook>" },
-                "token_days": 90,
+                "token_days": 30,
             })),
         );
         assert!(
@@ -1535,7 +1670,10 @@ mod tests {
             &env,
             "account.html",
             with_common(json!({
-                "user": user(), "tokens": [], "new_token": { "name": "ci", "value": "tc_pat_secret" },
+                "user": user(),
+                "tokens": [{ "id": ME, "name": "assistant", "token_prefix": "tc_pat_abc123", "created_at": TS,
+                             "last_used_at": null, "expires_at": null, "scope": "mcp_only", "idle_days": null }],
+                "new_token": { "name": "ci", "value": "tc_pat_secret", "scope": "read_only" },
                 "api_base": "http://localhost:8080/api/v1",
                 "skins": crate::domain::SKINS,
                 "notify": {
@@ -1550,6 +1688,12 @@ mod tests {
             })),
         );
         assert!(html.contains("tc_pat_secret"));
+        assert!(
+            html.contains("“ci” (read-only)")
+                && html.contains("MCP only")
+                && html.contains("name=\"scope\""),
+            "token scopes"
+        );
         assert!(
             html.contains("value=\"review_requested\" checked")
                 && html.contains("value=\"item_update\" >")

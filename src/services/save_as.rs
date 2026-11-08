@@ -115,9 +115,9 @@ pub async fn save_as(
     if input.with_files {
         files = sqlx::query(
             "INSERT INTO files (id, revision_id, filename, content_type, size_bytes, sha256,
-                                uploaded_by, uploaded_at, format, folder)
+                                uploaded_by, uploaded_at, format, folder, retention)
              SELECT gen_random_uuid(), $2, filename, content_type, size_bytes, sha256, $3, now(), format,
-                    folder
+                    folder, retention
              FROM files WHERE revision_id = $1",
         )
         .bind(src.id)
@@ -131,11 +131,11 @@ pub async fn save_as(
         sqlx::query(
             "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
                                         uploaded_by, uploaded_at, content_text, references_scanned,
-                                        export_name, export_name_scanned)
+                                        export_name, export_name_scanned, solver_summary)
              SELECT gen_random_uuid(), f.id, 1, f.sha256, f.size_bytes, f.content_type,
                     'Copied from ' || $3, $4, now(),
                     COALESCE(ov.content_text, ''), COALESCE(ov.references_scanned, FALSE),
-                    ov.export_name, COALESCE(ov.export_name_scanned, FALSE)
+                    ov.export_name, COALESCE(ov.export_name_scanned, FALSE), ov.solver_summary
              FROM files f
              LEFT JOIN files ofl ON ofl.revision_id = $2 AND ofl.filename = f.filename
              LEFT JOIN file_versions ov ON ov.file_id = ofl.id AND ov.version = ofl.current_version

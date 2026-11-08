@@ -448,14 +448,19 @@ const CLAIM: &str = "
 /// SQL condition on a delivery `d` of webhook `w`: one of the event's
 /// project groups is restricted now and is not the webhook's own group. The
 /// webhook may no longer read the event (the group was restricted after the
-/// delivery was queued), so it is not sent.
-const WITHHELD: &str = "EXISTS (SELECT 1 FROM projects rp
+/// delivery was queued), or a group of the event switched webhooks off, so it
+/// is not sent.
+const WITHHELD: &str = "(EXISTS (SELECT 1 FROM projects rp
                                  WHERE rp.id = ANY(d.projects) AND rp.visibility = 'restricted'
-                                   AND rp.id IS DISTINCT FROM w.project_id)";
+                                   AND rp.id IS DISTINCT FROM w.project_id)
+    OR EXISTS (SELECT 1 FROM project_policies wp
+                                 JOIN projects wpp ON wpp.id = wp.project_id
+                                 WHERE wp.project_id = ANY(d.projects) AND wpp.visibility = 'restricted'
+                                   AND NOT wp.webhooks))";
 
 /// The text recorded on a withheld delivery.
 pub const WITHHELD_ERROR: &str =
-    "Not sent: a project group of the event was restricted after it was queued.";
+    "Not sent: a project group of the event was restricted, or switched webhooks off, after it was queued.";
 
 fn claim_sql(filter: &str) -> String {
     CLAIM

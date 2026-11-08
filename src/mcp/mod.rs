@@ -19,12 +19,18 @@ pub mod tools;
 use axum::{
     body::Bytes,
     extract::State,
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde_json::{json, Value};
 
-use crate::{auth::Actor, auth::ApiUser, AppState};
+use crate::{
+    auth::{Actor, ApiCaller},
+    config::{LocalAgents, LOCAL_AGENT_HEADER, LOCAL_AGENT_HEADER_VALUE},
+    domain::TokenScope,
+    services::project_policy::{self, Interface},
+    AppState,
+};
 
 /// Newest protocol revision spoken; offered when a client asks for another.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -68,8 +74,63 @@ fn error(id: Value, code: i64, message: impl Into<String>) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message.into() } })
 }
 
+/// Told to a local agent the desktop app started (marked with
+/// [`LOCAL_AGENT_HEADER`]) when `TEAMCRAFT_LOCAL_AGENTS=off`.
+pub const LOCAL_AGENTS_OFF: &str =
+    "Local agents are turned off on this TeamCraft server by the administrator \
+(TEAMCRAFT_LOCAL_AGENTS=off). Use the company AI configured on the server instead: \
+Company AI in the desktop app's Agent view (Ask TeamCraft in the web UI).";
+
+/// Told to every other MCP client when `TEAMCRAFT_LOCAL_AGENTS=off`.
+pub const MCP_OFF: &str =
+    "The MCP endpoint is turned off on this TeamCraft server by the administrator \
+(TEAMCRAFT_LOCAL_AGENTS=off): AI agents outside the server are not allowed. Use the company AI \
+configured on the server instead: Ask TeamCraft in the web UI or Company AI in the desktop \
+app's Agent view.";
+
+/// Why a call must be refused under the local-agent policy, `None` = serve it.
+///
+/// With `off` the whole endpoint is refused for every token: the built-in
+/// assistant calls the tools in-process, so every HTTP MCP client is an agent
+/// outside the server (the desktop's Agent view, the `teamcraft mcp` bridge,
+/// an assistant set up by hand). [`LOCAL_AGENT_HEADER`] only picks the
+/// message; leaving it out changes nothing. Pure, for tests.
+pub fn local_agent_refusal(policy: LocalAgents, headers: &HeaderMap) -> Option<&'static str> {
+    if policy.allowed() {
+        return None;
+    }
+    let marked = headers.get_all(LOCAL_AGENT_HEADER).iter().any(|v| {
+        v.as_bytes()
+            .eq_ignore_ascii_case(LOCAL_AGENT_HEADER_VALUE.as_bytes())
+    });
+    Some(if marked { LOCAL_AGENTS_OFF } else { MCP_OFF })
+}
+
 /// `POST /api/v1/mcp`.
-pub async fn http(State(st): State<AppState>, ApiUser(me): ApiUser, body: Bytes) -> Response {
+pub async fn http(
+    State(st): State<AppState>,
+    ApiCaller { actor: me, scope }: ApiCaller,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    // after ApiUser: without a valid token the answer stays 401
+    if let Some(message) = local_agent_refusal(st.config.local_agents, &headers) {
+        tracing::debug!(
+            user = %me.username,
+            "MCP call refused (TEAMCRAFT_LOCAL_AGENTS=off)"
+        );
+        return (
+            StatusCode::FORBIDDEN,
+            [(header::CONTENT_TYPE, "application/json")],
+            error(Value::Null, INVALID_REQUEST, message).to_string(),
+        )
+            .into_response();
+    }
+    // groups that switched MCP off look non-existent to every tool
+    let me = match project_policy::narrow(&st.db, me, &[Interface::Mcp]).await {
+        Ok(me) => me,
+        Err(e) => return e.into_response(),
+    };
     let reply = match serde_json::from_slice::<Value>(&body) {
         Err(e) => Some(error(Value::Null, PARSE_ERROR, format!("parse error: {e}"))),
         Ok(Value::Array(batch)) if batch.is_empty() => {
@@ -81,13 +142,13 @@ pub async fn http(State(st): State<AppState>, ApiUser(me): ApiUser, body: Bytes)
         Ok(Value::Array(batch)) => {
             let mut replies = Vec::new();
             for msg in batch {
-                if let Some(r) = handle(&st, &me, msg).await {
+                if let Some(r) = handle(&st, &me, scope, msg).await {
                     replies.push(r);
                 }
             }
             (!replies.is_empty()).then_some(Value::Array(replies))
         }
-        Ok(msg) => handle(&st, &me, msg).await,
+        Ok(msg) => handle(&st, &me, scope, msg).await,
     };
     match reply {
         Some(r) => ([(header::CONTENT_TYPE, "application/json")], r.to_string()).into_response(),
@@ -180,12 +241,12 @@ pub fn negotiate(asked: Option<&str>) -> &'static str {
 }
 
 /// One JSON-RPC message in, at most one out (notifications get none).
-pub async fn handle(st: &AppState, me: &Actor, msg: Value) -> Option<Value> {
+pub async fn handle(st: &AppState, me: &Actor, scope: TokenScope, msg: Value) -> Option<Value> {
     match classify(msg) {
         Message::Silent => None,
         Message::Invalid(reply) => Some(reply),
         Message::Request { id, method, params } => {
-            Some(match request(st, me, &method, &params).await {
+            Some(match request(st, me, scope, &method, &params).await {
                 Ok(result) => response(id, result),
                 Err((code, message)) => error(id, code, message),
             })
@@ -196,6 +257,7 @@ pub async fn handle(st: &AppState, me: &Actor, msg: Value) -> Option<Value> {
 async fn request(
     st: &AppState,
     me: &Actor,
+    scope: TokenScope,
     method: &str,
     params: &Value,
 ) -> Result<Value, (i64, String)> {
@@ -209,11 +271,16 @@ async fn request(
                     "prompts": { "listChanged": false },
                 },
                 "serverInfo": { "name": "teamcraft", "title": "TeamCraft PDM", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": format!("{INSTRUCTIONS}\n\nSigned in as {} ({}).", me.display_name, me.role.as_str()),
+                "instructions": format!(
+                    "{INSTRUCTIONS}\n\nSigned in as {} ({}).{}",
+                    me.display_name,
+                    me.role.as_str(),
+                    if scope == TokenScope::ReadOnly { " This token is read-only: only the read-only tools are listed." } else { "" }
+                ),
             }))
         }
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({ "tools": tools::definitions() })),
+        "tools/list" => Ok(json!({ "tools": tools::definitions_for(scope) })),
         "tools/call" => {
             let name = params
                 .get("name")
@@ -221,6 +288,9 @@ async fn request(
                 .ok_or((INVALID_PARAMS, "missing tool `name`".to_string()))?;
             if !tools::exists(name) {
                 return Err((INVALID_PARAMS, format!("unknown tool `{name}`")));
+            }
+            if !scope.allows_tool(tools::is_read_only(name)) {
+                return Ok(tools::failure(scope.refusal()));
             }
             let args = match params.get("arguments") {
                 None | Some(Value::Null) => json!({}),
@@ -244,6 +314,38 @@ async fn request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_agents_off_refuses_every_mcp_client() {
+        let mut marked = HeaderMap::new();
+        marked.insert(
+            LOCAL_AGENT_HEADER,
+            LOCAL_AGENT_HEADER_VALUE.parse().unwrap(),
+        );
+        let mut shouted = HeaderMap::new();
+        shouted.insert("X-TeamCraft-Client", "Desktop-Agent".parse().unwrap());
+        let mut other = HeaderMap::new();
+        other.insert(LOCAL_AGENT_HEADER, "cli".parse().unwrap());
+        let plain = HeaderMap::new();
+        // the header only picks the message: unmarked clients are refused too
+        assert_eq!(
+            local_agent_refusal(LocalAgents::Off, &marked),
+            Some(LOCAL_AGENTS_OFF)
+        );
+        assert_eq!(
+            local_agent_refusal(LocalAgents::Off, &shouted),
+            Some(LOCAL_AGENTS_OFF)
+        );
+        assert_eq!(local_agent_refusal(LocalAgents::Off, &other), Some(MCP_OFF));
+        assert_eq!(local_agent_refusal(LocalAgents::Off, &plain), Some(MCP_OFF));
+        for h in [&marked, &shouted, &other, &plain] {
+            assert_eq!(local_agent_refusal(LocalAgents::Allowed, h), None);
+        }
+        for m in [LOCAL_AGENTS_OFF, MCP_OFF] {
+            assert!(m.contains("TEAMCRAFT_LOCAL_AGENTS=off"), "{m}");
+            assert!(m.contains("Ask TeamCraft"), "{m}");
+        }
+    }
 
     #[test]
     fn requests_notifications_and_garbage_are_told_apart() {

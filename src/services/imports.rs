@@ -44,7 +44,7 @@ use crate::{
     services::{
         access, attributes, audit, bom,
         files::{self, Upload},
-        items, revisions,
+        items, retention, revisions,
     },
     stepbom,
     vault::{StoredBlob, Vault},
@@ -1145,10 +1145,11 @@ async fn staged_of(vault: &Vault, row: StagedRow) -> AppResult<Staged> {
 pub async fn staged(pool: &PgPool, vault: &Vault, actor: &Actor, id: Uuid) -> AppResult<Staged> {
     let row = sqlx::query_as::<_, StagedRow>(
         "SELECT id, filename, options, content, sha256 FROM staged_imports
-         WHERE id = $1 AND user_id = $2",
+         WHERE id = $1 AND user_id = $2 AND created_at >= now() - make_interval(hours => $3)",
     )
     .bind(id)
     .bind(actor.id)
+    .bind(STAGED_HOURS)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| AppError::not_found(GONE))?;
@@ -1188,10 +1189,12 @@ pub async fn run_staged(
     let mut tx = pool.begin().await?;
     let row = sqlx::query_as::<_, StagedRow>(
         "SELECT id, filename, options, content, sha256 FROM staged_imports
-         WHERE id = $1 AND user_id = $2 FOR UPDATE",
+         WHERE id = $1 AND user_id = $2 AND created_at >= now() - make_interval(hours => $3)
+         FOR UPDATE",
     )
     .bind(id)
     .bind(actor.id)
+    .bind(STAGED_HOURS)
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found(GONE))?;
@@ -1216,12 +1219,25 @@ pub async fn run_staged(
 }
 
 /// Discards a staged upload; returns its options (to go back to the target).
+/// A table goes at once. A STEP file is only marked expired: its row is
+/// unusable from now on, and [`purge_stale`] removes it together with its
+/// blob once the blob is past the grace period of the vault clean-up.
 pub async fn discard(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<ImportOptions> {
     let options = sqlx::query_scalar::<_, sqlx::types::Json<ImportOptions>>(
-        "DELETE FROM staged_imports WHERE id = $1 AND user_id = $2 RETURNING options",
+        "WITH tables AS (
+             DELETE FROM staged_imports WHERE id = $1 AND user_id = $2 AND sha256 IS NULL
+             RETURNING options
+         ), steps AS (
+             UPDATE staged_imports
+                SET created_at = now() - make_interval(hours => $3) - interval '1 second'
+              WHERE id = $1 AND user_id = $2 AND sha256 IS NOT NULL
+             RETURNING options
+         )
+         SELECT options FROM tables UNION ALL SELECT options FROM steps",
     )
     .bind(id)
     .bind(actor.id)
+    .bind(STAGED_HOURS)
     .fetch_optional(pool)
     .await?
     .map(|o| o.0)
@@ -1229,15 +1245,51 @@ pub async fn discard(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Import
     Ok(options)
 }
 
-/// Removes staged uploads older than [`STAGED_HOURS`] (housekeeping).
-pub async fn purge_stale(pool: &PgPool) -> AppResult<u64> {
-    Ok(sqlx::query(
-        "DELETE FROM staged_imports WHERE created_at < now() - make_interval(hours => $1)",
+/// Removes staged uploads older than [`STAGED_HOURS`] and discarded ones
+/// (housekeeping), the blobs of STEP files with them – unless something
+/// else refers to the blob (a file made from the same content, another
+/// staged upload) or it was stored again within
+/// [`retention::IN_FLIGHT_GRACE`]; such a staged upload stays (expired)
+/// until the next run. Returns the number of staged uploads removed.
+pub async fn purge_stale(pool: &PgPool, vault: &Vault) -> AppResult<u64> {
+    let mut removed = sqlx::query(
+        "DELETE FROM staged_imports
+         WHERE sha256 IS NULL AND created_at < now() - make_interval(hours => $1)",
     )
     .bind(STAGED_HOURS)
     .execute(pool)
     .await?
-    .rows_affected())
+    .rows_affected();
+    let steps: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM staged_imports
+         WHERE sha256 IS NOT NULL AND created_at < now() - make_interval(hours => $1)",
+    )
+    .bind(STAGED_HOURS)
+    .fetch_all(pool)
+    .await?;
+    for id in steps {
+        let mut tx = pool.begin().await?;
+        // the blob is released as seen without this row
+        let Some(sha256) = sqlx::query_scalar::<_, String>(
+            "DELETE FROM staged_imports WHERE id = $1 RETURNING sha256",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        else {
+            continue;
+        };
+        match retention::release_blob(&mut tx, vault, &sha256, retention::IN_FLIGHT_GRACE).await? {
+            retention::Release::Recent => tx.rollback().await?,
+            retention::Release::Removed
+            | retention::Release::Referenced
+            | retention::Release::Missing => {
+                tx.commit().await?;
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
 }
 
 #[cfg(test)]

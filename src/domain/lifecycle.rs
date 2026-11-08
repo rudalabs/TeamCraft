@@ -95,7 +95,7 @@ pub const LIFECYCLE_RULES: [TransitionRule; 4] = [
         from: LifecycleState::InReview,
         to: LifecycleState::Released,
         how: "Automatically when every reviewer of the change has approved; all its revisions are released together.",
-        who: "The assigned reviewers: CAD editors or admins, never the author (four-eyes principle).",
+        who: "The assigned reviewers: CAD editors or admins, never the author, the submitter or anyone who changed the revisions (four-eyes principle).",
     },
     TransitionRule {
         from: LifecycleState::InReview,
@@ -152,4 +152,33 @@ pub fn revision_seq(code: &str) -> Option<i32> {
         n = n * base + digit + 1;
     }
     i32::try_from(n).ok().filter(|n| *n >= 1)
+}
+
+/// What happens to the old versions of a file when a newer one is uploaded
+/// (`files.retention`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileRetention {
+    /// Every version is kept (the default).
+    All,
+    /// Only the newest version is kept: older versions are removed by the
+    /// housekeeping after a grace period, as long as the revision is in work.
+    Latest,
+}
+
+impl FileRetention {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FileRetention::All => "all",
+            FileRetention::Latest => "latest",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<FileRetention> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "all" => Some(FileRetention::All),
+            "latest" => Some(FileRetention::Latest),
+            _ => None,
+        }
+    }
 }
