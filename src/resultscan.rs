@@ -895,6 +895,11 @@ mod tests {
         assert!(!glob_matches("*.log", "a.logx"));
         assert!(glob_matches("a*b*c", "aXXbYYc"));
         assert!(!glob_matches("a*b*c", "aXXbYY"));
+        // trailing stars match nothing as well (found by cargo mutants)
+        assert!(glob_matches("summary*", "summary"));
+        assert!(glob_matches("run.log**", "run.log"));
+        assert!(glob_matches("*", ""));
+        assert!(!glob_matches("summary*x", "summary"));
         // pathological patterns stay fast
         let name = "a".repeat(5000);
         assert!(!glob_matches(
