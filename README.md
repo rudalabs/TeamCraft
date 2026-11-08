@@ -139,7 +139,7 @@ end-to-end tests against a real PostgreSQL.
 - **Notifications** – in-app, e-mail and Mattermost; watch items, changes and change requests.
 - **Event webhooks** – signed JSON for releases, changes and simulation results, retried with backoff.
 - **Audit log** – every modification and every sign-in (password, SSO, failed attempts) with user, time and details; repeated failed sign-ins are slowed down.
-- **Branding** – replace the wide and the square logo under *Admin → Branding*; the desktop app shows them too.
+- **Branding** – replace the wide and the square logo and rename the header ("TeamCraft PLM" → your name and subtitle) under *Admin → Branding*; the desktop app shows them too. The footer, About and licence notices stay TeamCraft.
 - **Monitoring** – `/healthz`, `/readyz` and Prometheus metrics at `/metrics` (requests, database pool, outbox backlogs, preview queue), enabled with a token.
 - **Backup and restore** – one command for database and vault (see below).
 

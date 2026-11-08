@@ -385,6 +385,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/admin/audit", get(admin::audit))
         .route("/admin/ai", get(admin::ai))
         .route("/admin/branding", get(branding::page))
+        .route("/admin/branding/name", post(branding::set_name))
         .route(
             "/admin/branding/{kind}",
             post(branding::upload).layer(DefaultBodyLimit::max(
