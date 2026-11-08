@@ -38,6 +38,10 @@ exclude_re = [
     # digits, which the dot is not, and a name always has at least one
     # character before the dot.
     "src/cadrefs.rs:162:76: replace \\+ with \\* in names_in",
+    # cadrefs::names_in: `stem > 0` vs `stem >= 0` – the same condition also
+    # needs a letter or digit among the first `stem` characters, which an
+    # empty stem never has.
+    "src/cadrefs.rs:170:17: replace > with >= in names_in",
 ]
 
 # Unit tests only (see above); the integration tests in tests/ need PostgreSQL.
