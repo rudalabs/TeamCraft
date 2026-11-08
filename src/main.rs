@@ -166,6 +166,15 @@ enum UserCommand {
     },
     /// List all accounts.
     List,
+    /// Show the storage usage and quota of an account; with --mb set the
+    /// quota (counted over the sizes of the versions the user stored).
+    Quota {
+        #[arg(long)]
+        username: String,
+        /// New quota in MiB, or `none` for no limit.
+        #[arg(long)]
+        mb: Option<String>,
+    },
     /// Create a personal access token for an account (e.g. for a CI job or
     /// an MCP client) and print it once on standard output.
     CreateToken {
@@ -253,6 +262,13 @@ enum VaultCommand {
         /// preview processes).
         #[arg(long, default_value_t = teamcraft::preview::MAX_PARALLEL)]
         jobs: usize,
+    },
+    /// Show the storage usage and quota of the whole vault; with --mb set
+    /// the quota (counted over the sizes of all stored versions).
+    Quota {
+        /// New quota in MiB, or `none` for no limit.
+        #[arg(long)]
+        mb: Option<String>,
     },
 }
 
@@ -746,6 +762,28 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
             )?;
             println!("{token}");
         }
+        UserCommand::Quota { username, mb } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            if let Some(mb) = mb {
+                let limit = services::quotas::parse_limit_mb(&mb).map_err(anyhow::Error::msg)?;
+                services::quotas::set_user_quota(
+                    &pool,
+                    &teamcraft::auth::Actor::system(),
+                    user.id,
+                    limit,
+                )
+                .await?;
+            }
+            let usage = services::quotas::user_usage(&pool, user.id).await?;
+            writeln!(
+                std::io::stdout(),
+                "{}: {}",
+                user.username,
+                describe_usage(&usage)
+            )?;
+        }
         UserCommand::List => {
             let users = services::users::list(&pool).await?;
             let mut out = std::io::stdout().lock();
@@ -764,6 +802,18 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `12.0 MB of 1.0 GB used` / `12.0 MB used, no quota`.
+fn describe_usage(usage: &services::quotas::Usage) -> String {
+    let used = teamcraft::util::format_bytes(usage.used);
+    match usage.limit {
+        Some(limit) => format!(
+            "{used} of {} used (storage quota)",
+            teamcraft::util::format_bytes(limit)
+        ),
+        None => format!("{used} used, no storage quota"),
+    }
 }
 
 /// Prompts twice on a terminal, otherwise reads one line from stdin
@@ -863,6 +913,20 @@ async fn assistant_command(command: AssistantCommand) -> Result<ExitCode> {
     })
 }
 
+/// `teamcraft vault quota [--mb N|none]`.
+async fn vault_quota(mb: Option<String>) -> Result<ExitCode> {
+    let config = load_config()?;
+    let pool = db::connect(&config).await?;
+    db::migrate(&pool).await?;
+    if let Some(mb) = mb {
+        let limit = services::quotas::parse_limit_mb(&mb).map_err(anyhow::Error::msg)?;
+        services::quotas::set_vault_quota(&pool, &teamcraft::auth::Actor::system(), limit).await?;
+    }
+    let usage = services::quotas::vault_usage(&pool).await?;
+    println!("vault: {}", describe_usage(&usage));
+    Ok(ExitCode::SUCCESS)
+}
+
 async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
     let verify_hashes = match command {
         VaultCommand::Check { verify_hashes } => verify_hashes,
@@ -871,6 +935,7 @@ async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
         VaultCommand::PurgeVersions { apply, grace_days } => {
             return vault_purge_versions(apply, grace_days).await
         }
+        VaultCommand::Quota { mb } => return vault_quota(mb).await,
     };
     let config = load_config()?;
     let pool = db::connect(&config).await?;

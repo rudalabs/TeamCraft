@@ -249,7 +249,8 @@ async fn load(
 ///   `items::create_with_files`, which checks the project group (including
 ///   restricted groups). The session belongs to the actor alone.
 /// * **Locks:** the actor's user row (`FOR NO KEY UPDATE`), which serialises the
-///   quota check: at most 16 unexpired sessions per user (409).
+///   quota check: at most 16 unexpired sessions per user (409); the announced
+///   size must fit the storage quotas (413, `services::quotas`).
 /// * **Steps:** the staging file is created before the commit and removed again
 ///   when the commit fails.
 /// * **Audit, notifications, webhooks:** none.
@@ -319,6 +320,8 @@ pub async fn create(
             "You have {open} unfinished uploads – finish or cancel some first."
         )));
     }
+    // Storage quotas, before any bytes are sent (storing checks them again).
+    crate::services::quotas::ensure_room(&mut tx, actor.id, total).await?;
     let id = Uuid::new_v4();
     let session = sqlx::query_as::<_, UploadSession>(
         "INSERT INTO upload_sessions (id, user_id, revision_id, filename, content_type,

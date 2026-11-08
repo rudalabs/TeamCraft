@@ -32,6 +32,7 @@ pub mod package;
 pub mod personal;
 pub mod project_policy;
 pub mod projects;
+pub mod quotas;
 pub mod readiness;
 pub mod references;
 pub mod request_digests;

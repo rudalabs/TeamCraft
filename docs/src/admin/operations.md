@@ -230,6 +230,27 @@ removes them. Run it after deleting files, or after `purge-versions` left
 content behind that was younger than an hour. Back up before the first
 `--apply`.
 
+### Storage quotas
+
+Optional limits keep one user – or all of them together – from filling the
+disk. Both count the sizes of the stored file versions (identical content
+stored twice counts twice; versions removed by the retention free their
+share). Without a quota (the default) nothing is limited.
+
+```sh
+teamcraft user quota --username max             # usage and quota of one account
+teamcraft user quota --username max --mb 20480  # 20 GiB for max
+teamcraft user quota --username max --mb none   # no limit
+teamcraft vault quota                           # usage and quota of the vault
+teamcraft vault quota --mb 2097152              # 2 TiB in total
+```
+
+An upload, check-in, import or new item that would go beyond a quota is
+refused with `413` and stores nothing; a chunked upload is refused when it
+starts, before any bytes are sent. Lowering a quota never removes anything –
+the user just cannot store more. Changes are recorded as `user.quota` and
+`vault.quota` in the audit log.
+
 ## Metrics for Prometheus
 
 Set `TEAMCRAFT_METRICS_TOKEN` (at least 16 characters, also as `_FILE`) and

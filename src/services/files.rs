@@ -864,6 +864,7 @@ pub(crate) async fn store_uploads(
     // iterations bracket.prt.6 and .7) share one base, which only the first
     // of them is checked against – the later ones build on it.
     let mut seen = std::collections::HashSet::new();
+    let mut added_versions = false;
     for upload in uploads {
         let filename = stored_name(&upload.filename);
         let first_of_name = seen.insert(filename.to_lowercase());
@@ -943,6 +944,7 @@ pub(crate) async fn store_uploads(
             }
         };
         if changed {
+            added_versions = true;
             let version_id = Uuid::new_v4();
             sqlx::query(
                 "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
@@ -990,6 +992,11 @@ pub(crate) async fn store_uploads(
             version,
             changed,
         });
+    }
+    // Storage quotas (counted with the versions just inserted): over the
+    // limit, the caller's transaction is rolled back with a 413.
+    if added_versions {
+        crate::services::quotas::ensure_room(conn, actor.id, 0).await?;
     }
     sqlx::query("UPDATE revisions SET updated_at = now() WHERE id = $1")
         .bind(rev.id)
