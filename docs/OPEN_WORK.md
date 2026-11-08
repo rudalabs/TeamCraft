@@ -448,6 +448,8 @@ real files and belong to section 3 once such files are at hand.
 - [ ] HTML reports: MHTML (`.mht`) and ZIP-packed multi-file reports (unpacking needs its own caps, see F13); text hidden
   by a style sheet (not inline) is not detected
 - [x] Result values in the item search (failed, passed, above/below limit, by name) and a dashboard card for failing or out-of-date simulations; left: an *out of date* search filter, the `result` filter in the MCP `search_items` tool and in saved searches
+- [x] New simulation from a part/assembly revision in the web UI and `POST /items` with `basis`: prefilled form, basis
+  linked in the same transaction ([#178](https://github.com/rudalabs/TeamCraft/issues/178)); left: several bases at once
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
 - [x] Retention for large result files (`files.retention = 'latest'`): per file, old versions removed after a grace period, never for released revisions (`teamcraft vault purge-versions`); left: a size-based default for new files

@@ -613,6 +613,26 @@ mod tests {
                 "types": [{ "value": "part", "label": "Part" }], "units": units(),
             })),
         );
+        // new simulation based on a revision
+        let html = render(
+            &env,
+            "items/new.html",
+            with_common(json!({
+                "form": { "item_type": "simulation", "number": "", "name": "Simulation – Bracket",
+                          "description": "Analysis.", "project_id": "", "basis": OTHER,
+                          "basis_role": "geometry", "unit": "", "material": "", "mass_kg": "",
+                          "unit_cost": "" },
+                "error": null, "projects": [project()],
+                "types": [{ "value": "simulation", "label": "Simulation" }], "units": units(),
+                "basis": { "revision_id": OTHER, "item_number": "PRT-000002", "code": "A",
+                           "label": "PRT-000002/A", "name": "Bracket <1>" },
+                "basis_roles": [{ "value": "geometry", "label": "Geometry" }],
+                "basis_other_group": true, "number_hint": "SIM-000007",
+            })),
+        );
+        assert!(html.contains("PRT-000002") && html.contains("SIM-000007"));
+        assert!(html.contains("Bracket &lt;1&gt;"));
+        assert!(!html.contains("name=\"mass_kg\""));
 
         // alternates, supersession and replace in assemblies
         let linked = |number: &str, restricted: bool| {

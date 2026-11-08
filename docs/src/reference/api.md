@@ -88,6 +88,13 @@ Every answer contains only what the token's user may read (see
 
 ## Creating items, safely repeated
 
+For a simulation, `POST /items` also takes `basis: {item, revision?, role?}`
+(role `geometry` by default, `mesh`, `material`, `load_case`, `other`): the item
+is created with the basis link in one transaction, `name` and `description`
+default from the basis and the current version of its STEP (else first CAD) file
+is pinned. A hidden or unknown basis is 404, an invalid role 400, `basis` on
+another item type or together with `idempotency_key` 400.
+
 `POST /items` takes `{item_type, name, project, number?, unit?, description?,
 material?, mass_kg?, unit_cost?, classification?, attributes?}` and answers
 **201** with the new revision `A`. A client that lost the answer (timeout,

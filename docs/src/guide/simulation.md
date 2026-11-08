@@ -58,6 +58,22 @@ Like BOM lines the basis links belong to the simulation revision: they
 change only while it is checked out, *Revise* copies them, and they are
 frozen when the simulation is released.
 
+**New simulation from a part or assembly.** On the page of a part or assembly
+revision, *New simulation based on PRT-000002/A* (card *Simulations* and the
+*More* menu) opens the new-item form prefilled from that revision: the basis
+line with a role select (geometry by default), the type fixed to Simulation, the
+name `Simulation – <name of the basis>`, a description with the basis
+revision and material, and the project group of the basis (or your first group
+when you may not create items there – the form says so). Unit, classification,
+material, mass and cost do not apply to a simulation and are hidden; the item
+number is generated from the group's scheme (the hint shows the next one).
+Creating adds the basis link in the same transaction: the current version of the
+STEP file of the basis revision (else its first CAD file) is pinned, without a
+file the revision alone is linked. You land on the basis card of the new
+simulation, which is checked out to you. A basis you may not read behaves like
+a missing one: the plain form is shown and nothing of it is echoed. Further
+bases are added on the Basis card.
+
 The part or assembly shows the other side in its **Simulations** card: every
 simulation whose latest revision is based on it, with state, failed results
 and whether it is up to date.
@@ -349,5 +365,5 @@ not see never make a simulation appear out of date.
   chunked, resumable uploads and a retention rule for intermediate results
   are open work.
 * The desktop app shows simulation items and their files; creating a
-  simulation *from* a part revision and checking out the basis files are
+  simulation *from* a part revision (web: done) and checking out the basis files are
   planned.
