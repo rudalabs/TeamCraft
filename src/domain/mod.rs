@@ -129,6 +129,11 @@ mod tests {
         for t in AttributeType::ALL {
             assert_eq!(AttributeType::parse(t.as_str()), Some(t));
         }
+        // the labels on the item and attribute pages (found by cargo mutants)
+        let labels: Vec<&str> = Classification::ALL.iter().map(|k| k.label()).collect();
+        assert_eq!(labels, ["In-house", "Purchased", "Standard part"]);
+        let labels: Vec<&str> = AttributeType::ALL.iter().map(|t| t.label()).collect();
+        assert_eq!(labels, ["Text", "Number", "Yes/no", "Choice list"]);
     }
 
     #[test]
