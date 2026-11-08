@@ -1504,6 +1504,10 @@ mod tests {
     fn the_text_is_capped() {
         // the 200 000th character falls inside a word, not on a trimmed line end
         let html = "<p>abcde</p>".repeat(60_000);
+        // the reader stops by itself (tidy would cap again, hiding a missing stop)
+        let raw = to_text(&html).chars().count();
+        // one character over the limit, then the blank line of the paragraph
+        assert_eq!(raw, MAX_CHARS + 3);
         let n = text(&html).chars().count();
         assert_eq!(n, MAX_CHARS);
     }
