@@ -1234,6 +1234,16 @@ mod tests {
             text_of(b"<meta charset='x-user-defined'><p>\xC3\xBC</p>"),
             "Ã¼"
         );
+        // a longer UTF-16 page has many NUL bytes but a BOM: text, not
+        // binary (found by cargo mutants)
+        let mut long16 = vec![0xFF, 0xFE];
+        for u in "<p>Pressure drop 4.5 bar at the nozzle inlet</p>".encode_utf16() {
+            long16.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(
+            text_of(&long16),
+            "Pressure drop 4.5 bar at the nozzle inlet"
+        );
         // not at the start, and after a <meta> without a charset
         assert_eq!(
             text_of(b"<!DOCTYPE html><meta name=x><META CHARSET=windows-1252><p>\xC3\xBC</p>"),
@@ -1454,6 +1464,29 @@ mod tests {
             "Mass flow | 2.25"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Found by cargo mutants: at least 16 control bytes and more than 10 %
+    /// of the head make a file binary; tabs and line ends are text.
+    #[test]
+    fn binary_needs_16_control_bytes_and_ten_percent() {
+        let with_controls = |n: usize, len: usize| {
+            let mut b = vec![0x01; n];
+            b.resize(len, b'a');
+            b
+        };
+        assert!(looks_binary(&with_controls(16, 100)));
+        assert!(!looks_binary(&with_controls(15, 100)), "fewer than 16");
+        assert!(!looks_binary(&with_controls(16, 160)), "exactly 10 %");
+        assert!(looks_binary(&with_controls(16, 159)));
+        assert!(
+            !looks_binary(&[b'\t', b'\n', b'\r', 0x0C].repeat(20)),
+            "white space"
+        );
+        assert!(!looks_binary(b""));
+        let mut bom = vec![0xFF, 0xFE];
+        bom.extend(std::iter::repeat_n(0u8, 100));
+        assert!(!looks_binary(&bom), "a BOM means text");
     }
 
     /// The documented limits (found by cargo mutants: a behavioural test
