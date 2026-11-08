@@ -1043,6 +1043,11 @@ mod tests {
         // reads as a hard-coded credential (CodeQL) and says less about the rule
         assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN - 1)).is_err());
         assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN)).is_ok());
+        // at most 1024 bytes (found by cargo mutants)
+        assert!(validate_password(&"x".repeat(1024)).is_ok());
+        for n in [1025, 1026] {
+            assert!(validate_password(&"x".repeat(n)).is_err(), "{n}");
+        }
     }
 
     #[test]
