@@ -1240,6 +1240,12 @@ mod tests {
             "<meta charset=windows-1252>ü"
         );
         assert_eq!(decode(b"a\xFCb", false), "aüb");
+        // ASCII cut inside a multi-byte sequence at the end: still UTF-8,
+        // not Windows-1252 "Â" (found by cargo mutants)
+        assert_eq!(
+            decode(b"Temperature 20 \xC2", false),
+            "Temperature 20 \u{FFFD}"
+        );
     }
 
     #[test]
