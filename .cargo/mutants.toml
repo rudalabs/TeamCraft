@@ -42,6 +42,17 @@ exclude_re = [
     # needs a letter or digit among the first `stem` characters, which an
     # empty stem never has.
     "src/cadrefs.rs:170:17: replace > with >= in names_in",
+    # cadrefs::step_file_name_entity: searching FILE_NAME from 7 bytes before
+    # `HEADER;` finds the same one – nine bytes ending before `HEADER;` cannot
+    # start within those seven.
+    "src/cadrefs.rs:257:43: replace \\+ with - in step_file_name_entity",
+    # cadrefs::step_file_name_entity: starting the depth scan at `FILE_NAME`
+    # instead of at its `(` only adds letters, which change neither depth nor
+    # string state; without a `(` both return None.
+    "src/cadrefs.rs:261:67: replace == with != in step_file_name_entity",
+    # cadrefs::step_file_name_entity: without the escaped-quote arm, `''`
+    # toggles the string state twice, which ends in the same state.
+    "src/cadrefs.rs:268:22: replace match guard in_string && .* with false in step_file_name_entity",
 ]
 
 # Unit tests only (see above); the integration tests in tests/ need PostgreSQL.

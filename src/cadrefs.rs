@@ -837,6 +837,29 @@ mod tests {
         assert_eq!(runs(b"ABCDEFGHIJ", Some(&(5..6))), ["ABCDE"]);
     }
 
+    /// Found by cargo mutants: the end of the HEADER section is searched
+    /// after `HEADER;` – also when the header starts far into the file and
+    /// right after an `ENDSEC;`.
+    #[test]
+    fn the_file_name_entity_is_found_inside_the_header_only() {
+        let entity = b"FILE_NAME('it''s a) b.stp','',(''),(''),'','','')";
+        let file = |before_header: &str| {
+            let mut c = format!("ISO-10303-21;{before_header}HEADER;\n").into_bytes();
+            let at = c.len();
+            c.extend_from_slice(entity);
+            c.extend_from_slice(b";\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n");
+            (c, at)
+        };
+        let comment = format!("\n/* {} */\n", "x".repeat(400));
+        let (content, at) = file(&comment);
+        assert_eq!(step_file_name_entity(&content), Some(at..at + entity.len()));
+        let (content, at) = file("\nENDSEC;");
+        assert_eq!(step_file_name_entity(&content), Some(at..at + entity.len()));
+        // FILE_NAME after the end of the header is not the entity
+        let late = b"ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1=FILE_NAME('x');\nENDSEC;\n";
+        assert_eq!(step_file_name_entity(late), None);
+    }
+
     /// Found by cargo mutants: a non-printable unit ends a UTF-16 run.
     #[test]
     fn utf16_runs_end_at_non_printable_units() {
