@@ -837,6 +837,31 @@ mod tests {
         assert_eq!(runs(b"ABCDEFGHIJ", Some(&(5..6))), ["ABCDE"]);
     }
 
+    /// Found by cargo mutants: a non-printable unit ends a UTF-16 run.
+    #[test]
+    fn utf16_runs_end_at_non_printable_units() {
+        let utf16 = |s: &str| {
+            s.encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<u8>>()
+        };
+        let runs = |content: &[u8], skip: Option<&std::ops::Range<usize>>| {
+            let mut out = Vec::new();
+            utf16_runs(content, skip, |r| out.push(r.to_string()));
+            out
+        };
+        let mut content = utf16("ABCDE");
+        content.extend_from_slice(&[0, 0]);
+        content.extend(utf16("Größe"));
+        let found = runs(&content, None);
+        assert!(found.contains(&"ABCDE".to_string()), "{found:?}");
+        assert!(found.contains(&"Größe".to_string()), "{found:?}");
+        assert!(found.iter().all(|r| !r.contains('\0')), "{found:?}");
+        // a skipped byte splits the run: both halves are too short
+        let found = runs(&utf16("ABCDEFGH"), Some(&(8..9)));
+        assert!(found.iter().all(|r| r.chars().count() < 8), "{found:?}");
+    }
+
     /// The documented limits (found by cargo mutants: a behavioural test
     /// would have to scan more than 32 MiB).
     #[test]
