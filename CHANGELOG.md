@@ -17,6 +17,13 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- 3D preview of stand-alone JT files (`.jt`, version 10, ISO 14306): parts
+  and whole assemblies from one file – the scene graph (LZMA via the
+  pure-Rust `lzma-rs`, MIT) with transforms, units and hidden nodes, each
+  shape's finest level of detail through the JT 9 topology coder plus the
+  JT 10 integer codecs, hash-checked and refined along its normals. The
+  thumbnail is rendered from the 3D preview. Verified with the NIST box
+  assembly (36 placements equal to NX, sizes equal to NIST's STEP files).
 - Need-to-know project groups, step 5 (#151): access review of a restricted
   group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
   administrators: members with role, group role, source (manual or identity

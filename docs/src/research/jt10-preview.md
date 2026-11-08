@@ -44,7 +44,9 @@ NX keeps inside its parts ([3D preview of NX parts](nx-jt-preview.md)).
     word array;
   * vertex coordinates as raw `f32` bits (Lag-1 predicted) or quantised
     codes; normals as one packet of combined Deering codes
-    (sextant, octant, θ, ψ from the top);
+    (octant, sextant, θ, ψ from the top – as the text of the
+    specification says; the sample code in its Annex B swaps octant and
+    sextant);
   * NX writes two blocks the specification does not list (a length plus a
     constant 16-byte id after the vertex bindings, and five bytes before the
     first packet); the reader recognises them by the length and otherwise
@@ -80,8 +82,9 @@ Implement: `src/mesh/jt10.rs` reads stand-alone JT 10 files (format id
 `jt`): container with LZMA, scene graph with transforms, units and hidden
 nodes, LOD 0 of every tri-strip shape, refined like NX parts and placed per
 instance; the hashes are checked. The thumbnail of a `.jt` file is rendered
-from its 3D preview. JT 9 stand-alone files go through the existing JT 9
-path.
+from its 3D preview. Stand-alone JT 8 and 9 files get a clear message
+(no openly licensed test file; their scene graph uses the older element
+layout).
 
 Not now: shattered files (a partition that names another `.jt` file),
 polygon-set LODs, colours and materials, PMI, the B-rep segments (XT, ULP,

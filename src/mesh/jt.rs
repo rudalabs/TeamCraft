@@ -33,18 +33,18 @@ use anyhow::{anyhow, bail, ensure, Result};
 use super::{check_triangles, ends_early, Mesh};
 
 /// Largest symbol count of one packet.
-const MAX_VALUES: usize = 1 << 24;
+pub(super) const MAX_VALUES: usize = 1 << 24;
 /// Nested packets (chopper halves, out-of-band values) at most.
-const MAX_DEPTH: u32 = 6;
+pub(super) const MAX_DEPTH: u32 = 6;
 /// Largest face degree / vertex valence of the dual mesh.
 const MAX_DEGREE: i32 = 1 << 16;
 /// Largest number of incidences (sum of degrees) of the dual mesh.
 const MAX_INCIDENCES: usize = 3 * super::MAX_TRIANGLES;
 /// Bits a decoder may read past the end of its code text (look-ahead of
 /// the arithmetic decoder); more means the data is damaged.
-const BIT_SLACK: usize = 64;
+pub(super) const BIT_SLACK: usize = 64;
 /// Object type of the Tri-Strip Set Shape LOD element.
-const TRI_STRIP_SET_LOD: [u8; 16] = guid(
+pub(super) const TRI_STRIP_SET_LOD: [u8; 16] = guid(
     0x10dd_10ab,
     0x2ac8,
     0x11d1,
@@ -56,7 +56,7 @@ const TO_MM: f64 = 1000.0;
 const REFINE_BUDGET: usize = 500_000;
 
 /// A GUID as stored in the file (first three fields little endian).
-const fn guid(a: u32, b: u16, c: u16, d: [u8; 8]) -> [u8; 16] {
+pub(super) const fn guid(a: u32, b: u16, c: u16, d: [u8; 8]) -> [u8; 16] {
     let a = a.to_le_bytes();
     let b = b.to_le_bytes();
     let c = c.to_le_bytes();
@@ -187,7 +187,7 @@ fn read_jt(jt: &[u8]) -> Result<Mesh> {
 }
 
 /// Subdivision level so that the refined mesh stays near the budget.
-fn refine_level(triangles: usize) -> usize {
+pub(super) fn refine_level(triangles: usize) -> usize {
     let mut level = 3;
     while level > 1 && triangles.saturating_mul(level * level) > REFINE_BUDGET {
         level -= 1;
@@ -206,7 +206,7 @@ pub(crate) struct Lod {
 }
 
 impl Lod {
-    fn normals_valid(&self) -> bool {
+    pub(super) fn normals_valid(&self) -> bool {
         !self.normals.is_empty()
             && self.normal_triangles.len() == self.triangles.len()
             && self
@@ -273,7 +273,16 @@ fn read_tri_strip_set(r: &mut Reader<'_>) -> Result<Lod> {
     } else {
         Vec::new()
     };
+    build_lod(symbols, points, normals)
+}
 
+/// Runs the dual mesh coder and turns its dual vertices (the polygons of the
+/// mesh) into triangles with a normal index per corner.
+pub(super) fn build_lod(
+    symbols: Symbols,
+    points: Vec<[f64; 3]>,
+    normals: Vec<[f64; 3]>,
+) -> Result<Lod> {
     let mut decoder = MeshDecoder::new(symbols);
     decoder.run()?;
     let dual = decoder.mesh;
@@ -413,7 +422,7 @@ fn read_normals(r: &mut Reader<'_>) -> Result<Vec<[f64; 3]>> {
 }
 
 /// Lookup tables of the Deering normal code.
-struct DeeringTable {
+pub(super) struct DeeringTable {
     theta: Vec<(f64, f64)>,
     psi: Vec<(f64, f64)>,
 }
@@ -421,7 +430,7 @@ struct DeeringTable {
 impl DeeringTable {
     const BITS: u32 = 13;
 
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let size = 1usize << Self::BITS;
         let max_psi = 0.615_479_709_f64;
         let mut theta = Vec::with_capacity(size + 1);
@@ -435,7 +444,7 @@ impl DeeringTable {
         DeeringTable { theta, psi }
     }
 
-    fn normal(
+    pub(super) fn normal(
         &self,
         sextant: i32,
         octant: i32,
@@ -474,52 +483,52 @@ impl DeeringTable {
 // ---------------------------------------------------------------------------
 
 /// Little-endian reader over a byte slice.
-struct Reader<'a> {
-    data: &'a [u8],
-    at: usize,
+pub(super) struct Reader<'a> {
+    pub(super) data: &'a [u8],
+    pub(super) at: usize,
 }
 
 impl<'a> Reader<'a> {
-    fn at(data: &'a [u8], at: usize) -> Self {
+    pub(super) fn at(data: &'a [u8], at: usize) -> Self {
         Reader { data, at }
     }
 
-    fn take(&mut self, n: usize) -> Result<&'a [u8]> {
+    pub(super) fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         let end = self.at.checked_add(n).ok_or_else(|| ends_early(self.at))?;
         let s = super::range(self.data, self.at, end)?;
         self.at = end;
         Ok(s)
     }
 
-    fn array<const N: usize>(&mut self) -> Result<[u8; N]> {
+    pub(super) fn array<const N: usize>(&mut self) -> Result<[u8; N]> {
         let v = super::bytes_at(self.data, self.at)?;
         self.at += N;
         Ok(v)
     }
 
-    fn u8(&mut self) -> Result<u8> {
+    pub(super) fn u8(&mut self) -> Result<u8> {
         Ok(self.array::<1>()?[0])
     }
 
-    fn i16(&mut self) -> Result<i16> {
+    pub(super) fn i16(&mut self) -> Result<i16> {
         self.array().map(i16::from_le_bytes)
     }
 
-    fn i32(&mut self) -> Result<i32> {
+    pub(super) fn i32(&mut self) -> Result<i32> {
         self.array().map(i32::from_le_bytes)
     }
 
-    fn u32(&mut self) -> Result<u32> {
+    pub(super) fn u32(&mut self) -> Result<u32> {
         self.array().map(u32::from_le_bytes)
     }
 
-    fn f32(&mut self) -> Result<f32> {
+    pub(super) fn f32(&mut self) -> Result<f32> {
         self.array().map(f32::from_le_bytes)
     }
 
     /// A count of items of at least `item_bytes` bytes each that must fit
     /// into the rest of the data.
-    fn count(&mut self, item_bytes: usize) -> Result<usize> {
+    pub(super) fn count(&mut self, item_bytes: usize) -> Result<usize> {
         let n = usize::try_from(self.i32()?).map_err(|_| damaged())?;
         let rest = self.data.len().saturating_sub(self.at);
         ensure!(
@@ -532,18 +541,18 @@ impl<'a> Reader<'a> {
 
 /// Bits, most significant first; reading past the end gives zeros up to
 /// [`BIT_SLACK`] bits, then an error.
-struct Bits {
-    data: Vec<u8>,
-    pos: usize,
+pub(super) struct Bits {
+    pub(super) data: Vec<u8>,
+    pub(super) pos: usize,
 }
 
 impl Bits {
-    fn new(data: Vec<u8>) -> Self {
+    pub(super) fn new(data: Vec<u8>) -> Self {
         Bits { data, pos: 0 }
     }
 
     /// Code text: little-endian 32-bit words, each read from its top bit.
-    fn words(raw: &[u8]) -> Self {
+    pub(super) fn words(raw: &[u8]) -> Self {
         let mut data = Vec::with_capacity(raw.len());
         for w in raw.chunks_exact(4) {
             data.extend(w.iter().rev());
@@ -551,7 +560,7 @@ impl Bits {
         Bits::new(data)
     }
 
-    fn u(&mut self, n: u32) -> Result<u32> {
+    pub(super) fn u(&mut self, n: u32) -> Result<u32> {
         ensure!(n <= 32, damaged());
         let n = n as usize;
         let end = self.pos.checked_add(n).ok_or_else(damaged)?;
@@ -570,7 +579,7 @@ impl Bits {
         Ok(v as u32)
     }
 
-    fn s(&mut self, n: u32) -> Result<i32> {
+    pub(super) fn s(&mut self, n: u32) -> Result<i32> {
         if n == 0 {
             return Ok(0);
         }
@@ -589,10 +598,10 @@ impl Bits {
 
 /// One entry of a probability context: symbol, count, value.
 #[derive(Clone, Copy, Debug)]
-struct Entry {
-    symbol: i64,
-    occurrences: u64,
-    value: i32,
+pub(super) struct Entry {
+    pub(super) symbol: i64,
+    pub(super) occurrences: u64,
+    pub(super) value: i32,
 }
 
 #[derive(Debug)]
@@ -804,7 +813,7 @@ fn bitlength(bits: &mut Bits, count: usize) -> Result<Vec<i32>> {
 
 /// Arithmetic codec with one probability context; escape symbols (-2)
 /// take the next out-of-band value.
-fn arithmetic(bits: &mut Bits, count: usize, context: &[Entry], oob: &[i32]) -> Result<Vec<i32>> {
+pub(super) fn arithmetic(bits: &mut Bits, count: usize, context: &[Entry], oob: &[i32]) -> Result<Vec<i32>> {
     let total: u64 = context.iter().map(|e| e.occurrences).sum();
     ensure!(total > 0 && total <= 0xFFFF, damaged());
     let mut out = Vec::with_capacity(count);
@@ -868,7 +877,7 @@ fn arithmetic(bits: &mut Bits, count: usize, context: &[Entry], oob: &[i32]) -> 
 }
 
 /// Lag-1 prediction (the first four values are stored as they are).
-fn lag1(mut v: Vec<i32>) -> Vec<i32> {
+pub(super) fn lag1(mut v: Vec<i32>) -> Vec<i32> {
     for i in 4..v.len() {
         if let (Some(&prev), Some(cur)) = (v.get(i - 1), v.get(i)) {
             let next = prev.wrapping_add(*cur);
@@ -884,17 +893,21 @@ fn lag1(mut v: Vec<i32>) -> Vec<i32> {
 // dual mesh coder
 // ---------------------------------------------------------------------------
 
-/// The decoded symbol streams that drive the mesh coder.
-struct Symbols {
-    degrees: [Vec<i32>; 8],
-    valences: Vec<i32>,
-    groups: Vec<i32>,
-    attr_masks: [Vec<i32>; 8],
-    attr_masks_30: Vec<i32>,
-    attr_masks_4: Vec<i32>,
-    attr_masks_large: Vec<i32>,
-    split_faces: Vec<i32>,
-    split_positions: Vec<i32>,
+/// The decoded symbol streams that drive the mesh coder. The upper bits of
+/// the 8th attribute-mask context are two packets in JT 9 (bits 30.. and
+/// 60..) and one in JT 10 (bits 32..).
+#[derive(Default)]
+pub(super) struct Symbols {
+    pub degrees: [Vec<i32>; 8],
+    pub valences: Vec<i32>,
+    pub groups: Vec<i32>,
+    pub attr_masks: [Vec<i32>; 8],
+    pub attr_masks_30: Vec<i32>,
+    pub attr_masks_4: Vec<i32>,
+    pub attr_masks_32: Vec<i32>,
+    pub attr_masks_large: Vec<i32>,
+    pub split_faces: Vec<i32>,
+    pub split_positions: Vec<i32>,
 }
 
 impl Symbols {
@@ -937,6 +950,7 @@ impl Symbols {
             attr_masks,
             attr_masks_30: next()?,
             attr_masks_4: next()?,
+            attr_masks_32: Vec::new(),
             attr_masks_large: next()?,
             split_faces: next()?,
             split_positions: next()?,
@@ -1238,7 +1252,8 @@ impl MeshDecoder {
             if c == 7 {
                 let hi30 = self.s.attr_masks_30.get(pos).copied().unwrap_or(0) as u32 as u64;
                 let hi4 = self.s.attr_masks_4.get(pos).copied().unwrap_or(0) as u32 as u64;
-                mask |= (hi30 << 30) | (hi4 << 60);
+                let hi32 = self.s.attr_masks_32.get(pos).copied().unwrap_or(0) as u32 as u64;
+                mask |= (hi30 << 30) | (hi4 << 60) | (hi32 << 32);
             }
             vec![mask as u32, (mask >> 32) as u32]
         } else {

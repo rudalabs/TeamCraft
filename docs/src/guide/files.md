@@ -35,6 +35,7 @@ turn, double-click to reset; *Z up / Y up* switches the convention.
 |---------------------|------------------------------------------------------------------|
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                   |
 | Native CAD          | NX parts (`.prt`) – the tessellation NX stores in the file      |
+| Visualisation       | JT 10 (`.jt`) – parts and whole assemblies, placed              |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS |
 | Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces          |
 | Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields |
@@ -73,6 +74,10 @@ Components that are not in TeamCraft are left out, and so are components
 on layers the assembly hides in NX. For the rest TeamCraft shows what other
 PLM systems show:
 
+* **JT files** (`.jt`, version 10) carry parts and assembly in one file:
+  the 3D preview shows every instance in its place, and the file's picture
+  is rendered from it (see
+  [Research: 3D preview of stand-alone JT files](../research/jt10-preview.md)).
 * **A picture of the 3D preview** for NX parts and assemblies: the small
   JPEG NX stores is replaced by an image rendered from the 3D preview
   (512 × 512 PNG, transparent background), drawn once and cached; an

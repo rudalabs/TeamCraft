@@ -40,8 +40,18 @@ assembly's revision first, otherwise in the latest revision of another
 item – and sub-assemblies are followed up to 8 levels deep; components
 that are not in TeamCraft are left out, and so are components on a layer
 the assembly's layer settings hide (read from `/Root/UG_PART/UG_PART`), as
-in NX. Drawings have no 3D preview;
-stand-alone `.jt` files (JT 10) are not previewed yet.
+in NX. Drawings have no 3D preview.
+
+Stand-alone `.jt` files of JT version 10 (`src/mesh/jt10.rs`) carry their
+parts and their assembly in one file: the scene graph (an LZMA-compressed
+segment) gives every shape occurrence with its transform, the units of the
+model and the nodes NX marks hidden (section and trace-line geometry);
+each shape's finest level of detail is decoded with the JT 9 topology
+coder plus the newer integer codecs, its hash checked, refined along the
+stored normals within the same budget as NX parts and placed per
+instance. Not read: JT 8 and 9 stand-alone files, files that keep their
+parts in other `.jt` files ("shattered"), colours, PMI and the B-rep
+segments.
 
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
@@ -88,7 +98,7 @@ Edge's OLE container); `.sc` must be a SolidCraft ZIP or JSON design.
 | IGES                     | `.iges` `.igs`                                |
 | Parasolid                | `.x_t` `.xmt_txt` `.x_b` `.xmt_bin`           |
 | ACIS                     | `.sat` `.sab`                                 |
-| JT (ISO 14306), PLM XML  | `.jt` (refs), `.plmxml`                       |
+| JT (ISO 14306), PLM XML  | `.jt` (3D for JT 10, refs), `.plmxml`         |
 | OpenCascade BREP, VDA-FS | `.brep` `.brp`, `.vda`                        |
 | 3D PDF (U3D / PRC)       | `.pdf` – recognised by its embedded 3D stream |
 

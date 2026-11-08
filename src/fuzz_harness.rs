@@ -31,6 +31,7 @@ pub const MESH_FORMATS: &[&str] = &[
     "3ds",
     "pts",
     "las",
+    "jt",
     "vtk-legacy",
     "vtk-unstructured",
     "calculix-frd",

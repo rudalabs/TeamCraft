@@ -395,8 +395,9 @@ real files and belong to section 3 once such files are at hand.
 
 - [ ] Test real STEP exports of the CAD programs, assembly placements (`mapped_item` – parts of an assembly can
   overlap) and length units
-- [ ] Readers for IGES, BREP, Parasolid, JT, FBX, DAE, USD and E57 – recognised, not previewed (no pure-Rust readers
-  yet; candidate: `e57` crate)
+- [ ] Readers for IGES, BREP, Parasolid, FBX, DAE, USD and E57 – recognised, not previewed (no pure-Rust readers
+  yet; candidate: `e57` crate). JT 10 is read (`src/mesh/jt10.rs`); open there: JT 8/9 stand-alone files and
+  shattered JT files (parts in other `.jt` files) – no openly licensed test files yet
 
 **Simulation management (FEA/CFD)**
 
