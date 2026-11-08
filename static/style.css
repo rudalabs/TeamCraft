@@ -998,6 +998,10 @@ details.payload pre {
 .viewer-legend select { width: auto; max-width: 100%; }
 .viewer-legend-value { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .viewer-legend-bar { width: min(16rem, 40vw); height: 0.6rem; border: 1px solid var(--border-strong); border-radius: 999px; }
+/* section plane and measuring (inserted by viewer.js below the canvas) */
+.viewer-section { margin: var(--space-2) 0 0; }
+.viewer-section input[type="range"] { width: min(14rem, 40vw); }
+canvas.viewer-measuring { cursor: crosshair; }
 
 /* Vault explorer: folder tree | items | detail */
 .explorer { display: grid; grid-template-columns: 240px minmax(0, 1fr) 320px; gap: var(--space-4); align-items: start; }

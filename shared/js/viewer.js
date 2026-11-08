@@ -263,6 +263,65 @@
     };
     // axis: -1 = off, 0/1/2 = X/Y/Z; at: 0..1 of the model's extent on it
     var section = { axis: -1, at: 0.5, flip: false };
+    // Point-to-point measurement: picked model points (0–2) and the decimals
+    // shown (remembered per browser).
+    var measure = { on: false, points: [], decimals: 2 };
+    try {
+      var savedDecimals = Number(window.localStorage.getItem("teamcraft-viewer-decimals"));
+      if (savedDecimals >= 0 && savedDecimals <= 6) measure.decimals = savedDecimals;
+    } catch (e) { /* storage blocked: the default */ }
+    // what the last frame used, for picking: rotation, projection scale, aspect
+    var lastFrame = null;
+    var markerBuffer = gl.createBuffer();
+    var markerVao = gl.createVertexArray();
+    gl.bindVertexArray(markerVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, markerBuffer);
+    gl.enableVertexAttribArray(loc.pos);
+    gl.vertexAttribPointer(loc.pos, 3, gl.FLOAT, false, 0, 0);
+    gl.disableVertexAttribArray(loc.col);
+    gl.bindVertexArray(null);
+
+    // The model point under canvas pixel (x, y), or null: the nearest
+    // triangle the view ray hits (Möller–Trumbore), not cut away by the
+    // section plane. Points of a point cloud are not picked.
+    function pick(x, y) {
+      if (!loaded || !loaded.indices || !lastFrame) return null;
+      var ndcX = 2 * x / canvas.clientWidth - 1, ndcY = 1 - 2 * y / canvas.clientHeight;
+      var R = lastFrame.rot, c = view.center;
+      // R^T · v: back from view to model orientation
+      function back(v) {
+        return [0, 1, 2].map(function (i) { return R[i * 4] * v[0] + R[i * 4 + 1] * v[1] + R[i * 4 + 2] * v[2]; });
+      }
+      var o = back([0, 0, view.dist]);
+      o = [o[0] + c[0], o[1] + c[1], o[2] + c[2]];
+      var d = back([ndcX * lastFrame.aspect / lastFrame.f, ndcY / lastFrame.f, -1]);
+      var plane = clipPlane();
+      var p = loaded.positions, idx = loaded.indices, best = Infinity;
+      for (var t = 0; t < idx.length; t += 3) {
+        var a = idx[t] * 3, b = idx[t + 1] * 3, e = idx[t + 2] * 3;
+        var e1x = p[b] - p[a], e1y = p[b + 1] - p[a + 1], e1z = p[b + 2] - p[a + 2];
+        var e2x = p[e] - p[a], e2y = p[e + 1] - p[a + 1], e2z = p[e + 2] - p[a + 2];
+        var px = d[1] * e2z - d[2] * e2y, py = d[2] * e2x - d[0] * e2z, pz = d[0] * e2y - d[1] * e2x;
+        var det = e1x * px + e1y * py + e1z * pz;
+        if (Math.abs(det) < 1e-12) continue;
+        var inv = 1 / det;
+        var sx = o[0] - p[a], sy = o[1] - p[a + 1], sz = o[2] - p[a + 2];
+        var u = (sx * px + sy * py + sz * pz) * inv;
+        if (u < 0 || u > 1) continue;
+        var qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
+        var v = (d[0] * qx + d[1] * qy + d[2] * qz) * inv;
+        if (v < 0 || u + v > 1) continue;
+        var dist = (e2x * qx + e2y * qy + e2z * qz) * inv;
+        if (dist <= 0 || dist >= best) continue;
+        var hit = [o[0] + d[0] * dist, o[1] + d[1] * dist, o[2] + d[2] * dist];
+        if (plane && hit[0] * plane[0] + hit[1] * plane[1] + hit[2] * plane[2] > plane[3]) continue;
+        best = dist;
+        var found = hit;
+      }
+      return best < Infinity ? found : null;
+    }
+
+    function fixed(v) { return v.toFixed(measure.decimals); }
 
     // [nx, ny, nz, d] of the section plane, or null when it is off.
     function clipPlane() {
@@ -371,7 +430,7 @@
         at.disabled = flip.disabled = section.axis < 0;
         var plane = clipPlane();
         where.textContent = plane
-          ? "XYZ".charAt(section.axis) + " = " + formatValue(Math.abs(plane[3]))
+          ? "XYZ".charAt(section.axis) + " = " + fixed(section.flip ? -plane[3] : plane[3])
           : "";
         redraw();
       }
@@ -382,8 +441,59 @@
       el.appendChild(at);
       el.appendChild(where);
       el.appendChild(flipLabel);
+
+      // Measure: click two points on the model; decimals of every length shown.
+      var measureBtn = document.createElement("button");
+      measureBtn.type = "button";
+      measureBtn.className = "small";
+      measureBtn.textContent = "Measure";
+      measureBtn.setAttribute("aria-pressed", "false");
+      var decimals = document.createElement("select");
+      decimals.className = "small";
+      decimals.setAttribute("aria-label", "Decimal places");
+      for (var dp = 0; dp <= 6; dp++) {
+        var opt = document.createElement("option");
+        opt.value = String(dp);
+        opt.textContent = dp + (dp === 1 ? " decimal" : " decimals");
+        decimals.appendChild(opt);
+      }
+      decimals.value = String(measure.decimals);
+      var result = document.createElement("span");
+      result.className = "viewer-legend-value";
+      result.setAttribute("aria-live", "polite");
+      measureView = {
+        show: function () {
+          var q = measure.points;
+          if (!measure.on) result.textContent = "";
+          else if (q.length === 0) result.textContent = "Click a point on the model.";
+          else if (q.length === 1) result.textContent = "Click a second point.";
+          else {
+            var dx = q[1][0] - q[0][0], dy = q[1][1] - q[0][1], dz = q[1][2] - q[0][2];
+            result.textContent = "Distance " + fixed(Math.hypot(dx, dy, dz)) +
+              " (ΔX " + fixed(Math.abs(dx)) + ", ΔY " + fixed(Math.abs(dy)) + ", ΔZ " + fixed(Math.abs(dz)) + ", model units)";
+          }
+        }
+      };
+      measureBtn.addEventListener("click", function () {
+        measure.on = !measure.on;
+        measure.points = [];
+        measureBtn.setAttribute("aria-pressed", String(measure.on));
+        canvas.classList.toggle("viewer-measuring", measure.on);
+        measureView.show();
+        redraw();
+      });
+      decimals.addEventListener("change", function () {
+        measure.decimals = Number(decimals.value);
+        try { window.localStorage.setItem("teamcraft-viewer-decimals", decimals.value); } catch (e) { /* blocked */ }
+        measureView.show();
+        update();
+      });
+      el.appendChild(measureBtn);
+      el.appendChild(decimals);
+      el.appendChild(result);
       return el;
     }
+    var measureView = null;
     var sectionEl = null;
 
     function frame(mesh) {
@@ -419,6 +529,7 @@
       var model = multiply(rot, translation(-c[0], -c[1], -c[2]));
       var viewM = multiply(translation(0, 0, -view.dist), model);
       var proj = perspective(Math.PI / 4, w / h, Math.max(view.dist - view.radius * 4, view.radius / 100), view.dist + view.radius * 4);
+      lastFrame = { rot: rot, f: 1 / Math.tan(Math.PI / 8), aspect: w / h };
       gl.useProgram(program);
       gl.uniformMatrix4fv(loc.mvp, false, multiply(proj, viewM));
       gl.uniformMatrix4fv(loc.mv, false, viewM);
@@ -431,6 +542,22 @@
       if (!drawable.colored) gl.vertexAttrib3f(loc.col, baseColor[0], baseColor[1], baseColor[2]);
       if (drawable.points) gl.drawArrays(gl.POINTS, 0, drawable.count);
       else gl.drawElements(gl.TRIANGLES, drawable.count, gl.UNSIGNED_INT, 0);
+      // measured points and the line between them, always on top
+      if (measure.points.length) {
+        var flat = [];
+        measure.points.forEach(function (q) { flat.push(q[0], q[1], q[2]); });
+        gl.bindVertexArray(markerVao);
+        gl.bindBuffer(gl.ARRAY_BUFFER, markerBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(flat), gl.DYNAMIC_DRAW);
+        gl.disable(gl.DEPTH_TEST);
+        gl.uniform1i(loc.clipOn, 0);
+        gl.uniform1i(loc.points, 1);
+        gl.uniform1f(loc.size, Math.max(4, Math.round(7 * dpr)));
+        gl.vertexAttrib3f(loc.col, 0.85, 0.2, 0.15);
+        if (measure.points.length === 2) gl.drawArrays(gl.LINES, 0, 2);
+        gl.drawArrays(gl.POINTS, 0, measure.points.length);
+        gl.enable(gl.DEPTH_TEST);
+      }
       gl.bindVertexArray(null);
     }
 
@@ -462,9 +589,22 @@
 
     var pointers = {};
     var pinch = null;
+    var downAt = null;
     canvas.addEventListener("pointerdown", function (e) {
       canvas.setPointerCapture(e.pointerId);
       pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+      downAt = { x: e.clientX, y: e.clientY };
+    });
+    // a click (not a drag) in measure mode picks a point
+    canvas.addEventListener("pointerup", function (e) {
+      if (!measure.on || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4) return;
+      var rect = canvas.getBoundingClientRect();
+      var hit = pick(e.clientX - rect.left, e.clientY - rect.top);
+      if (!hit) return;
+      if (measure.points.length === 2) measure.points = [];
+      measure.points.push(hit);
+      if (measureView) measureView.show();
+      redraw();
     });
     canvas.addEventListener("pointermove", function (e) {
       var prev = pointers[e.pointerId];
