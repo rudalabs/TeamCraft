@@ -60,6 +60,21 @@ mod tests {
             parse_attribute_choices("Steel; steel\n Aluminium \n\n").unwrap(),
             ["Steel", "Aluminium"]
         );
+        // both limits are inclusive (found by cargo mutants)
+        assert!(parse_attribute_choices(&"x".repeat(100)).is_ok());
+        for n in [101, 102] {
+            assert!(parse_attribute_choices(&"x".repeat(n)).is_err(), "{n}");
+        }
+        let choices = |n: usize| {
+            (0..n)
+                .map(|i| format!("c{i}"))
+                .collect::<Vec<_>>()
+                .join(";")
+        };
+        assert_eq!(parse_attribute_choices(&choices(200)).unwrap().len(), 200);
+        for n in [201, 202] {
+            assert!(parse_attribute_choices(&choices(n)).is_err(), "{n}");
+        }
 
         let none: [String; 0] = [];
         let v = |t, raw| parse_attribute_value("X", t, &none, raw);
