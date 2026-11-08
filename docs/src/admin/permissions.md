@@ -99,6 +99,9 @@ when the group is opened.
 | `assistant` | the built-in assistant, including the page context of a question |
 | `webhooks` | outgoing webhooks: no webhook receives events of the group, scoped or not; an event that mentions the group in a change order is sent without the change |
 | `packages` | Pack and Go and BOM downloads (CSV, Excel): the root item's group answers 403, items of such groups inside a structure are left out like restricted items of non-members |
+| `notification_content` | e-mail and chat notifications (not the in-app list): a notification about the group, or naming an item or change order of it, is sent with only a generic text ("new <instance> notification") and the link, also as a direct chat message; the recipient reads the text after signing in |
+| `external_llm` | the built-in assistant, unless the configured provider's base URL is on the administrator's list of internal / self-hosted URLs (`TEAMCRAFT_ASSISTANT_INTERNAL_URLS`, see [Configuration](configuration.md)); with `assistant` on and `external_llm` off the group is usable only with an internal model server |
+| `desktop_sync` | the desktop app's Get (working set `GET /api/v1/items/{number}/revisions/{code}/workset`): the root item's group answers "not found", items of such groups inside a structure are left out. The rest of the desktop app follows `api_tokens` |
 
 `{"interfaces": {"mcp": false, "webhooks": false}, "read_log": true,
 "log_retention_days": 365}` – every field is optional. Switching an
@@ -107,9 +110,8 @@ an interface again, switching the log off or changing the retention is, while
 administrators are limited by the administrator policy above, for the
 managers (like loosening that policy). Every change is audited
 (`project.interfaces`, old and new values) and notifies the other managers.
-Not covered yet: e-mail and chat notification content, an external LLM
-provider list (`external_llm`) and the desktop working folder as separate
-switches (the desktop app follows `api_tokens`).
+The in-app notification list and the notification e-mails of other groups
+are not affected by `notification_content`.
 
 **Read and download log.** With `read_log` on, the group writes `access_log`
 entries (separate from the audit log): who (user name kept as text), when,

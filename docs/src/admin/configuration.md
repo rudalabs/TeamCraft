@@ -192,6 +192,7 @@ buttons are hidden and `/assistant` and `POST /api/v1/assistant` answer
 | `TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT` | `180`                                      | seconds for one HTTP call, 5–3600 (a model on a CPU may need more)                                                                                       |
 | `TEAMCRAFT_ASSISTANT_RUN_TIMEOUT`     | `240` (at least the request timeout)       | seconds for a whole question, at least the request timeout                                                                                               |
 | `TEAMCRAFT_ASSISTANT_MAX_CONCURRENT`  | `4`                                        | questions running at the same time on the server, 1–64                                                                                                   |
+| `TEAMCRAFT_ASSISTANT_INTERNAL_URLS`   | –                                          | comma or space separated base URLs of internal / self-hosted model servers (`http(s)://host[:port][/path]`, no credentials). Project groups that switched `external_llm` off allow the assistant only when `TEAMCRAFT_ASSISTANT_BASE_URL` is one of them or below one (same scheme, host and port, path prefix at a segment boundary) |
 | `TEAMCRAFT_ASSISTANT_RETENTION_DAYS`  | `30`                                       | days an idle assistant conversation (one per user, text of questions and answers only) is kept before it is deleted, 1–365                                |
 
 With only `TEAMCRAFT_ANTHROPIC_API_KEY` (and optionally the model and the

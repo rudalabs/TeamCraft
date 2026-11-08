@@ -704,7 +704,7 @@ impl Tools for McpTools<'_> {
         let me = match crate::services::project_policy::narrow(
             &self.state.db,
             me,
-            &[crate::services::project_policy::Interface::Assistant],
+            &crate::services::assistant::switches(self.state.config.assistant.as_ref()),
         )
         .await
         {

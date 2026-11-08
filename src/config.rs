@@ -72,6 +72,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_ANTHROPIC_API_KEY",
     "TEAMCRAFT_ASSISTANT_API_KEY",
     "TEAMCRAFT_ASSISTANT_BASE_URL",
+    "TEAMCRAFT_ASSISTANT_INTERNAL_URLS",
     "TEAMCRAFT_ASSISTANT_MAX_CONCURRENT",
     "TEAMCRAFT_ASSISTANT_MAX_STEPS",
     "TEAMCRAFT_ASSISTANT_MAX_TOKENS",
@@ -500,6 +501,10 @@ pub struct AssistantConfig {
     pub max_concurrent: usize,
     /// Days an idle conversation (thread) is kept before it is deleted.
     pub retention_days: u32,
+    /// Base URLs the administrator marked as internal / self-hosted (without a
+    /// trailing slash). Groups that switched `external_llm` off allow the
+    /// assistant only when [`AssistantConfig::is_internal`].
+    pub internal_urls: Vec<String>,
 }
 
 impl std::fmt::Debug for AssistantConfig {
@@ -515,6 +520,7 @@ impl std::fmt::Debug for AssistantConfig {
             .field("run_timeout", &self.run_timeout)
             .field("max_concurrent", &self.max_concurrent)
             .field("retention_days", &self.retention_days)
+            .field("internal_urls", &self.internal_urls)
             .finish()
     }
 }
@@ -531,6 +537,13 @@ impl AssistantConfig {
     /// `provider:model@host` for logs and the startup summary.
     pub fn label(&self) -> String {
         format!("{}:{}@{}", self.provider.as_str(), self.model, self.host())
+    }
+
+    /// Whether the provider base URL is on the administrator's internal list.
+    pub fn is_internal(&self) -> bool {
+        self.internal_urls
+            .iter()
+            .any(|u| url_is_under(&self.base_url, u))
     }
 
     /// A warning when the key would travel over plain `http` to a host that
@@ -680,6 +693,7 @@ fn assistant_config<F: Fn(&str) -> Option<String>>(
     if !(1..=365).contains(&retention_days) {
         bail!("TEAMCRAFT_ASSISTANT_RETENTION_DAYS must be between 1 and 365");
     }
+    let internal_urls = internal_urls(env)?;
     Ok(Some(AssistantConfig {
         provider,
         base_url,
@@ -691,7 +705,58 @@ fn assistant_config<F: Fn(&str) -> Option<String>>(
         run_timeout: Duration::from_secs(run_timeout),
         max_concurrent,
         retention_days,
+        internal_urls,
     }))
+}
+
+/// Whether `base_url` is `listed` or below it: same scheme, host and port, and
+/// the path of `listed` is a prefix at a segment boundary.
+pub fn url_is_under(base_url: &str, listed: &str) -> bool {
+    let (Ok(a), Ok(b)) = (reqwest::Url::parse(base_url), reqwest::Url::parse(listed)) else {
+        return false;
+    };
+    if a.scheme() != b.scheme()
+        || a.host_str().map(str::to_ascii_lowercase) != b.host_str().map(str::to_ascii_lowercase)
+        || a.port_or_known_default() != b.port_or_known_default()
+    {
+        return false;
+    }
+    let (pa, pb) = (
+        a.path().trim_end_matches('/'),
+        b.path().trim_end_matches('/'),
+    );
+    pa == pb || pa.starts_with(&format!("{pb}/"))
+}
+
+/// `TEAMCRAFT_ASSISTANT_INTERNAL_URLS`: comma or space separated base URLs of
+/// internal / self-hosted model servers.
+fn internal_urls<F: Fn(&str) -> Option<String>>(env: &Env<F>) -> Result<Vec<String>> {
+    let raw = env
+        .get("TEAMCRAFT_ASSISTANT_INTERNAL_URLS")?
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for entry in raw
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|e| !e.is_empty())
+    {
+        let url = reqwest::Url::parse(entry).map_err(|e| {
+            anyhow!("TEAMCRAFT_ASSISTANT_INTERNAL_URLS: '{entry}' is not a valid URL: {e}")
+        })?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            bail!(
+                "TEAMCRAFT_ASSISTANT_INTERNAL_URLS: '{entry}' must be an http:// or https:// URL \
+                 with a host and without credentials, query or fragment"
+            );
+        }
+        out.push(entry.trim_end_matches('/').to_string());
+    }
+    Ok(out)
 }
 
 #[derive(Clone)]
@@ -1839,6 +1904,68 @@ mod tests {
                 "{key}={value}"
             );
         }
+    }
+
+    #[test]
+    fn internal_urls_are_parsed_and_matched() {
+        let base = [
+            ("TEAMCRAFT_ASSISTANT_API_KEY", "k"),
+            ("TEAMCRAFT_ASSISTANT_PROVIDER", "openai-compatible"),
+            ("TEAMCRAFT_ASSISTANT_MODEL", "m"),
+            (
+                "TEAMCRAFT_ASSISTANT_BASE_URL",
+                "http://ollama.internal:11434/v1",
+            ),
+        ];
+        let a = assistant_from(&base).unwrap().unwrap();
+        assert!(a.internal_urls.is_empty() && !a.is_internal());
+        let mut with = base.to_vec();
+        with.push((
+            "TEAMCRAFT_ASSISTANT_INTERNAL_URLS",
+            "https://other.example, http://OLLAMA.internal:11434/",
+        ));
+        let a = assistant_from(&with).unwrap().unwrap();
+        assert_eq!(a.internal_urls.len(), 2);
+        assert!(a.is_internal());
+        let mut elsewhere = base.to_vec();
+        elsewhere.push((
+            "TEAMCRAFT_ASSISTANT_INTERNAL_URLS",
+            "http://ollama.internal:9999",
+        ));
+        assert!(!assistant_from(&elsewhere).unwrap().unwrap().is_internal());
+        for bad in [
+            "not a url",
+            "ftp://x.internal",
+            "https://u:p@x.internal",
+            "https://x.internal/?q=1",
+        ] {
+            let mut v = base.to_vec();
+            v.push(("TEAMCRAFT_ASSISTANT_INTERNAL_URLS", bad));
+            assert!(assistant_from(&v).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn url_prefix_matching_respects_segments_scheme_and_port() {
+        assert!(url_is_under("https://a.example/v1", "https://a.example"));
+        assert!(url_is_under(
+            "https://a.example/v1/x",
+            "https://a.example/v1/"
+        ));
+        assert!(url_is_under(
+            "https://A.example:443/v1",
+            "https://a.example/v1"
+        ));
+        assert!(!url_is_under(
+            "https://a.example/v10",
+            "https://a.example/v1"
+        ));
+        assert!(!url_is_under("http://a.example/v1", "https://a.example"));
+        assert!(!url_is_under(
+            "https://a.example.evil/v1",
+            "https://a.example"
+        ));
+        assert!(!url_is_under("https://a.example:8443", "https://a.example"));
     }
 
     #[test]

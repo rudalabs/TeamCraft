@@ -294,6 +294,12 @@ pub struct AccessForm {
     #[serde(default)]
     packages: Option<String>,
     #[serde(default)]
+    notification_content: Option<String>,
+    #[serde(default)]
+    external_llm: Option<String>,
+    #[serde(default)]
+    desktop_sync: Option<String>,
+    #[serde(default)]
     read_log: Option<String>,
     #[serde(default)]
     retention_days: String,
@@ -326,6 +332,12 @@ pub async fn update_access(
                     (Interface::Assistant, form.assistant.is_some()),
                     (Interface::Webhooks, form.webhooks.is_some()),
                     (Interface::Packages, form.packages.is_some()),
+                    (
+                        Interface::NotificationContent,
+                        form.notification_content.is_some(),
+                    ),
+                    (Interface::ExternalLlm, form.external_llm.is_some()),
+                    (Interface::DesktopSync, form.desktop_sync.is_some()),
                 ],
                 read_log: Some(form.read_log.is_some()),
                 log_retention_days: Some(days),
