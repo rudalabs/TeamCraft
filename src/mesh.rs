@@ -27,10 +27,12 @@ use std::io::{Cursor, Read};
 
 use anyhow::{anyhow, bail, Context, Result};
 
+mod earcut;
 mod jt;
 mod p21;
 mod pn;
 pub mod render;
+mod sketchup;
 mod step;
 mod tessellated;
 
@@ -427,6 +429,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "las" => las(data)?,
         "step" => step::read(data)?,
         "nx-part" => jt::read_nx(data)?,
+        "sketchup" => sketchup::read(data)?,
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
         "calculix-frd" => crate::simmesh::frd(data)?,

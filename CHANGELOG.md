@@ -17,6 +17,14 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- 3D preview of SketchUp models (`.skp`, SketchUp 2021 and later): the faces
+  are triangulated (earcut port, holes included), components and groups placed
+  with their transforms, nested and scaled ones too, in millimetres; hidden
+  faces, hidden components, hidden tags (layers) and images are left out. The
+  thumbnail is rendered from the 3D preview. Files of SketchUp 3 to 2020 say
+  which version they come from and keep their stored picture. 39 test files of
+  OpenSKP (MIT) in `tests/fixtures/cad/openskp`. Research:
+  `docs/src/research/sketchup-preview.md`.
 - Need-to-know project groups, step 5 (#151): access review of a restricted
   group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
   administrators: members with role, group role, source (manual or identity

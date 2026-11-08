@@ -163,6 +163,8 @@ pub enum PreviewFormat {
     Step,
     /// Siemens NX parts: the lightweight (JT) representation they store.
     NxPart,
+    /// SketchUp 2021+ models: their faces triangulated, components placed.
+    SketchUp,
     Pts,
     Xyz,
     Las,
@@ -174,7 +176,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 18] = [
+    pub const ALL: [PreviewFormat; 19] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -186,6 +188,7 @@ impl PreviewFormat {
         PreviewFormat::ThreeDs,
         PreviewFormat::Step,
         PreviewFormat::NxPart,
+        PreviewFormat::SketchUp,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
         PreviewFormat::Las,
@@ -219,6 +222,7 @@ impl PreviewFormat {
             PreviewFormat::ThreeDs => "3ds",
             PreviewFormat::Step => "step",
             PreviewFormat::NxPart => "nx-part",
+            PreviewFormat::SketchUp => "sketchup",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
             PreviewFormat::Las => "las",

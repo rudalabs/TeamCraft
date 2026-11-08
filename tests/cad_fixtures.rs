@@ -1,8 +1,9 @@
-//! Real CAD files from NIST (`tests/fixtures/cad`, see its README): the
-//! copies are unchanged, TeamCraft recognises their formats, finds the
-//! preview images in Inventor, NX and SOLIDWORKS files and the parts of
-//! the NX and SOLIDWORKS assemblies, and turns every STEP file (AP203 and
-//! AP242) into a complete 3D preview. No database needed.
+//! Real CAD files from NIST and OpenSKP (`tests/fixtures/cad`, see its
+//! README): the copies are unchanged, TeamCraft recognises their formats,
+//! finds the preview images in Inventor, NX and SOLIDWORKS files and the
+//! parts of the NX and SOLIDWORKS assemblies, and turns every STEP file
+//! (AP203 and AP242) and the SketchUp 2021+ models into a 3D preview. No
+//! database needed.
 //!
 //! Gaps found with these files are kept as ignored tests – run them with
 //! `cargo test --test cad_fixtures -- --ignored`; see *Fixes* in
@@ -49,7 +50,7 @@ fn manifest() -> Vec<Entry> {
 #[tokio::test]
 async fn files_are_unchanged_and_recognised() {
     let entries = manifest();
-    assert_eq!(entries.len(), 32, "every fixture is listed");
+    assert_eq!(entries.len(), 32 + 39, "every fixture is listed");
     for e in &entries {
         let shown = e.path.display();
         let data = std::fs::read(&e.path).unwrap_or_else(|err| panic!("{shown}: {err}"));
@@ -463,4 +464,115 @@ async fn jt_files_report_no_false_references() {
         cadrefs::find(&bytes, "NIST mtc crada assembly.jt"),
         ["NIST mtc crada box.jt"]
     );
+}
+
+fn openskp(name: &str) -> PathBuf {
+    root().join("openskp").join(name)
+}
+
+/// SketchUp 2021+ models of the OpenSKP test files (MIT, see the README):
+/// faces triangulated, nested and scaled components placed, inches turned
+/// into millimetres. The triangle counts and boxes are those of the Python
+/// prototype, whose world meshes matched OpenSKP's triangle for triangle.
+#[test]
+fn sketchup_models_get_a_3d_preview() {
+    for (name, triangles, lo, hi) in [
+        (
+            "SU_File.skp",
+            104,
+            [-607.232, -2951.215, 0.0],
+            [1000.0, 0.0, 1000.0],
+        ),
+        (
+            "Untitled.skp",
+            18_636,
+            [118.805, -2059.068, 0.0],
+            [13535.744, 5188.08, 2820.0],
+        ),
+        (
+            "annotation_layers_vff.skp",
+            2,
+            [0.0; 3],
+            [1016.0, 1016.0, 0.0],
+        ),
+        (
+            "arcs_2021.skp",
+            33,
+            [1143.0, -127.0, 0.0],
+            [2743.2, 203.2, 0.0],
+        ),
+        // a component scaled by SketchUp's homogeneous term
+        (
+            "instance_scale_term_2021.skp",
+            24,
+            [0.0; 3],
+            [533.4, 25.4, 25.4],
+        ),
+        // three levels of nested components
+        ("nesting_2021.skp", 6, [0.0; 3], [1270.0, 254.0, 0.0]),
+        (
+            "scene_without_camera_2021.skp",
+            2,
+            [0.0; 3],
+            [254.0, 254.0, 0.0],
+        ),
+        (
+            "style_watermark.skp",
+            104,
+            [-607.232, -2951.215, 0.0],
+            [1000.0, 0.0, 1000.0],
+        ),
+    ] {
+        assert_eq!(
+            preview::PreviewFormat::of(name),
+            Some(preview::PreviewFormat::SketchUp)
+        );
+        let mesh = preview::convert(preview::PreviewFormat::SketchUp, &openskp(name))
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        mesh.check().unwrap();
+        assert_eq!(mesh.triangle_count(), triangles, "{name}");
+        let b = mesh.bounds();
+        for i in 0..3 {
+            assert!((b[i] - lo[i] as f32).abs() < 0.01, "{name}: {b:?}");
+            assert!((b[i + 3] - hi[i] as f32).abs() < 0.01, "{name}: {b:?}");
+        }
+        let bytes = mesh.encode();
+        assert_eq!(mesh::Mesh::decode(&bytes).unwrap(), mesh);
+    }
+    // the cube and cylinder of SU_File are closed solids
+    let mesh = mesh::read("sketchup", &std::fs::read(openskp("SU_File.skp")).unwrap()).unwrap();
+    let s = teamcraft::shape::compute(&mesh).unwrap();
+    assert!(s.closed && s.volume > 0.0, "{s:?}");
+}
+
+/// SketchUp files of version 3 to 2020 are recognised; the 3D preview says
+/// which version it would need instead of failing on the old container.
+#[test]
+fn old_sketchup_files_explain_why_they_have_no_3d_preview() {
+    for (name, version) in [
+        ("legacy_v3_synthetic.skp", "SketchUp 3 "),
+        ("nesting_2013.skp", "SketchUp 2013 "),
+        ("chair_and_table.skp", "SketchUp 2017 "),
+        ("gondola_v20.skp", "SketchUp 2020 "),
+    ] {
+        let err = mesh::read("sketchup", &std::fs::read(openskp(name)).unwrap()).unwrap_err();
+        assert!(err.to_string().contains(version), "{name}: {err}");
+    }
+}
+
+/// Damaged SketchUp files are errors, never panics: bytes flipped all over
+/// the file and the file cut short.
+#[test]
+fn damaged_sketchup_files_never_panic() {
+    for name in ["Untitled.skp", "nesting_2021.skp", "gondola_v20.skp"] {
+        let data = std::fs::read(openskp(name)).unwrap();
+        for at in (0..data.len()).step_by(data.len() / 400 + 1) {
+            let mut copy = data.clone();
+            copy[at] ^= 0x5A;
+            let _ = mesh::read("sketchup", &copy);
+        }
+        for cut in (0..data.len()).step_by(data.len() / 100 + 1) {
+            let _ = mesh::read("sketchup", &data[..cut]);
+        }
+    }
 }

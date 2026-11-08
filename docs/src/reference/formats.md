@@ -24,6 +24,17 @@ list is on every server at `/formats` and `GET /api/v1/formats`
 | SolidCraft, FieldCraft       | `.sc` `.solidcraft`, `.fieldcraft` – see [FieldCraft and SolidCraft](interop.md)                                             |
 | Rhino, Alias                 | `.3dm`, `.wire`                                                                                                              |
 
+SketchUp models (`.skp`) of SketchUp 2021 and later are a ZIP archive behind
+a UTF-16 header; `src/mesh/sketchup.rs` reads its `model.dat`, a tree of
+tag–length–value records (vertices, edges, faces with their loops, component
+definitions, instances with a 13-value transform, layers), triangulates every
+face with an earcut port (`src/mesh/earcut.rs`, holes and loops touching
+themselves included), places nested components and groups (up to 32 levels,
+mirrored ones with reversed triangles) and converts inches to millimetres.
+Hidden faces and instances, hidden layers and image entities are left out.
+Files of SketchUp 3 to 2020 (an MFC object stream) get no 3D preview yet;
+the error names the version. The thumbnail is rendered from the 3D preview.
+
 NX parts (NX 1980 and later) are read through their stream container
 (`SPLMSSTR`, `src/nxpart.rs`): the referenced component files come only from
 its reference streams (not from the save history), the preview image from

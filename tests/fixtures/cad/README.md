@@ -41,6 +41,17 @@ archive.
 | `nist/ftc-11/` | Inventor 2021, SolidWorks MBD 2018, STEP AP203 (7.6 kB) | small files for fast tests |
 | `nist/mtc-assembly/solidworks/` | SolidWorks (and an ACIS `.SAT`) | the box assembly: `.SLDASM` with its eight parts |
 | `nist/mtc-assembly/nx/` | Siemens NX (and a JT) | the same box assembly: assembly `.prt` with its eight parts |
+| `openskp/` | SketchUp 3 to 2026 (`.skp`, 31 classic files of SketchUp 3–2020, 8 of 2021+) | test files of OpenSKP (see below): nested and scaled components, curves, layers, hidden geometry, the same models saved in several versions |
+
+### SketchUp files from OpenSKP
+
+`openskp/` holds unchanged copies of the test files of OpenSKP
+(<https://github.com/iamahsanmehmood/openskp>, commit `e7b4674`,
+`packages/cpp/tests/fixtures/` and `examples/web-viewer/samples/`), under
+the MIT licence, Copyright (c) 2024-2026 Ahsan Mehmood – see
+[`openskp/LICENSE`](openskp/LICENSE). Left out: the 5.5 MB
+`coedge_orientation_regression.skp`. `manifest.tsv` names the path of each
+file in that repository.
 
 Not covered yet: **Solid Edge** – no openly licensed files were found – and
 Fusion, FreeCAD or KiCad projects.
@@ -53,6 +64,7 @@ Fusion, FreeCAD or KiCad projects.
 * the Inventor files carry a preview image (PNG);
 * the NX assembly references all eight part files;
 * every STEP file (AP203 and AP242) gets a complete 3D preview; the PMI of the AP242 file is not shown as geometry.
+* the SketchUp 2021+ models get a 3D preview with the triangle counts and boxes of the prototype; older SketchUp files say which version they come from; damaged SketchUp files never panic.
 
 Gaps found with these files are ignored tests in the same file – run them
 with `cargo test --test cad_fixtures -- --ignored` – and are listed under
