@@ -51,9 +51,9 @@ is recorded as evaluated.
 
 ## Where it is held
 
-| What | Where |
-|------|-------|
-| The rule | `CLAUDE.md` (*Pure Rust*), `CONTRIBUTING.md`, `shared/README.md` |
-| Embedding and serving | `build.rs`, `src/assets.rs` |
+| What                                                           | Where                                                                                                                               |
+|----------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------|
+| The rule                                                       | `CLAUDE.md` (*Pure Rust*), `CONTRIBUTING.md`, `shared/README.md`                                                                    |
+| Embedding and serving                                          | `build.rs`, `src/assets.rs`                                                                                                         |
 | Every shared file served and mirrored, with its licence header | `assets::tests::shared_files_are_served`, `assets::tests::shared_files_carry_spdx_header`, `shared_ui_files_are_mirrored` (desktop) |
-| Scripts parse | job `ui` in `.github/workflows/desktop.yml` (`node --check`) |
+| Scripts parse                                                  | job `ui` in `.github/workflows/desktop.yml` (`node --check`)                                                                        |

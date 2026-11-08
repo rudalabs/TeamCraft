@@ -155,6 +155,10 @@ pub struct Question {
     pub history: Vec<(String, String)>,
     /// The question belongs to the user's conversation (thread).
     pub thread: bool,
+    /// `ResultValues`: limits the user states ("upper limit 250 MPa for stress").
+    pub limits: String,
+    /// `ResultValues`: names of the report files to read (a hint; empty = all).
+    pub files: Vec<String>,
 }
 
 fn clean(value: Option<&str>) -> Option<String> {
@@ -209,6 +213,8 @@ impl Question {
             page: PageContext::default(),
             history: Vec::new(),
             thread: false,
+            limits: String::new(),
+            files: Vec::new(),
         };
         match action.needs() {
             "revision" if q.item.is_none() => {
@@ -243,6 +249,52 @@ impl Question {
         }
         out.push_str("\n--- end of the earlier conversation ---\n\nMy new message:\n");
         out.push_str(&core);
+        out
+    }
+
+    /// The instruction of `ResultValues`. Without text it asks for every key
+    /// number of the report; with text only for the values the user lists.
+    /// The user's text is the user's own request (never from a file); the
+    /// rules about quotes and not inventing numbers stay in both forms.
+    fn result_values_instruction(&self, item: &str, revision: &str) -> String {
+        let wanted = self.text.trim();
+        let limits = self.limits.trim();
+        let take = if wanted.is_empty() {
+            "every key number the report states (maximum stress, displacement, pressure drop, safety factor, \
+             frequencies, …)"
+        } else {
+            "only the values listed in my request below (nothing else)"
+        };
+        let files = if self.files.is_empty() {
+            "pick the report files (PDF, HTML or text); say plainly if there are none".to_string()
+        } else {
+            format!(
+                "read only these report files of the revision (my choice, a hint: every tool still checks my \
+                 rights): {}; say plainly if one of them cannot be read",
+                self.files.join(", ")
+            )
+        };
+        let mut out = format!(
+            "Fill in the result values of simulation {item} revision {revision} from its report.\n\
+             1. Call get_revision with item={item} and revision={revision} and {files}.\n\
+             2. Read each report with read_file_text (follow next_offset, at most 5 pages per file).\n\
+             3. Call propose_result_values once with {take}: name, value, unit as written, the \
+             limits only if the report or my request states them, the load case, the solver, and for every value \
+             the file name and a quote copied exactly from the text. Never estimate, convert or invent numbers.\n\
+             4. Tell me what you proposed and what you left out and why. Values I asked for that the report \
+             does not contain go under the heading \"Not found\": list them and do not propose them. The proposals \
+             are drafts: I accept them on the Results card of the simulation (the revision must be checked out). \
+             If drafts are not allowed in this conversation, list the values you would propose instead and say \
+             that I have to allow drafts and ask again."
+        );
+        if !wanted.is_empty() {
+            out.push_str("\n\nExtract only these values: ");
+            out.push_str(wanted);
+        }
+        if !limits.is_empty() {
+            out.push_str("\n\nLimits I state (apply them only where they fit the value I name): ");
+            out.push_str(limits);
+        }
         out
     }
 
@@ -282,20 +334,7 @@ impl Question {
                 "simulation_status",
                 json!({ "item": item, "revision": revision }),
             ),
-            Action::ResultValues => format!(
-                "Fill in the result values of simulation {item} revision {revision} from its report.\n\
-                 1. Call get_revision with item={item} and revision={revision} and pick the report files (PDF or \
-                 text); say plainly if there are none.\n\
-                 2. Read each report with read_file_text (follow next_offset, at most 5 pages per file).\n\
-                 3. Call propose_result_values once with every key number the report states (maximum stress, \
-                 displacement, pressure drop, safety factor, frequencies, …): name, value, unit as written, the \
-                 limits only if the report states them, the load case, the solver, and for every value the file \
-                 name and a quote copied exactly from the text. Never estimate, convert or invent numbers.\n\
-                 4. Tell me what you proposed and what you left out and why. The proposals are drafts: I accept \
-                 them on the Results card of the simulation (the revision must be checked out). If drafts are \
-                 not allowed in this conversation, list the values you would propose instead and say that I have \
-                 to allow drafts and ask again."
-            ),
+            Action::ResultValues => return self.result_values_instruction(&item, &revision),
             Action::Impact => format!(
                 "What would changing {item} touch? Call impact_summary with item={item} and levels=3 first; \
                  use where_used, get_item or list_simulations only to explain something the summary shows. \
@@ -704,7 +743,7 @@ impl Tools for McpTools<'_> {
         let me = match crate::services::project_policy::narrow(
             &self.state.db,
             me,
-            &[crate::services::project_policy::Interface::Assistant],
+            &crate::services::assistant::switches(self.state.config.assistant.as_ref()),
         )
         .await
         {
@@ -2104,5 +2143,67 @@ mod tests {
             render_markdown("\" onmouseover=\"x"),
             "<p>&quot; onmouseover=&quot;x</p>\n"
         );
+    }
+
+    fn result_question(text: &str) -> Question {
+        Question::new(
+            Some("result_values"),
+            Some(text),
+            Some("SIM-000007"),
+            Some("B"),
+            None,
+            true,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn result_values_without_text_asks_for_every_key_number() {
+        let i = result_question("").instruction();
+        assert!(i.contains("SIM-000007 revision B"));
+        assert!(i.contains("every key number the report states"));
+        assert!(!i.contains("Extract only these values"));
+        assert!(!i.contains("Limits I state"));
+        assert!(i.contains("pick the report files"));
+    }
+
+    #[test]
+    fn result_values_with_text_lists_the_requested_values_and_keeps_the_rules() {
+        let mut q =
+            result_question("max von Mises stress per load case, first three eigenfrequencies");
+        q.limits = "upper limit 250 MPa for stress".into();
+        q.files = vec!["report.pdf".into(), "modal.html".into()];
+        let i = q.instruction();
+        assert!(i.contains(
+            "Extract only these values: max von Mises stress per load case, first three eigenfrequencies"
+        ));
+        assert!(i.contains("only the values listed in my request"));
+        assert!(!i.contains("every key number the report states"));
+        assert!(i.contains("Limits I state"));
+        assert!(i.contains("upper limit 250 MPa for stress"));
+        assert!(i.contains("report.pdf, modal.html"));
+        // the fixed rules stay
+        assert!(i.contains("a quote copied exactly from the text"));
+        assert!(i.contains("Never estimate, convert or invent numbers"));
+        assert!(i.contains("\"Not found\""));
+        assert!(i.contains("do not propose them"));
+        assert!(i.contains("If drafts are not allowed"));
+    }
+
+    #[test]
+    fn result_values_text_is_capped_like_every_question() {
+        let long = "x".repeat(MAX_QUESTION_CHARS + 1);
+        let err = Question::new(
+            Some("result_values"),
+            Some(&long),
+            Some("SIM-000007"),
+            None,
+            None,
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("too long"), "{err}");
+        // without an item the action is refused
+        assert!(Question::new(Some("result_values"), Some("x"), None, None, None, true).is_err());
     }
 }

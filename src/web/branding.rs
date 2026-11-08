@@ -100,6 +100,10 @@ pub async fn page(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response
             "slots": slots,
             "max_kib": branding::MAX_LOGO_BYTES / 1024,
             "max_pixels": branding::MAX_LOGO_PIXELS,
+            "max_name": branding::MAX_NAME_CHARS,
+            "max_subtitle": branding::MAX_SUBTITLE_CHARS,
+            "default_name": st.config.instance_name,
+            "default_subtitle": branding::DEFAULT_SUBTITLE,
         }),
     )
 }
@@ -151,6 +155,29 @@ pub async fn reset(
             } else {
                 format!("The {} logo was not customised.", k.as_str())
             },
+        )
+    })
+}
+
+#[derive(serde::Deserialize)]
+pub struct NameForm {
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    subtitle: String,
+}
+
+/// `POST /admin/branding/name`: the header name and subtitle.
+pub async fn set_name(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    axum::Form(form): axum::Form<NameForm>,
+) -> AppResult<Response> {
+    let result = branding::set_names(&st.db, &ctx.me, &form.display_name, &form.subtitle).await;
+    finish(&st, result, "/admin/branding", |()| {
+        (
+            "/admin/branding".to_string(),
+            "The header name was saved.".to_string(),
         )
     })
 }

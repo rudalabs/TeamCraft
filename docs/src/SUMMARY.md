@@ -57,8 +57,10 @@
 
 - [Research notes](research/index.md)
     - [3D preview of Fusion designs](research/fusion-ogs-preview.md)
+    - [3D preview of SOLIDWORKS files](research/solidworks-display-preview.md)
     - [Mutation testing with cargo-mutants](research/mutation-testing.md)
     - [3D preview of NX parts](research/nx-jt-preview.md)
+    - [3D preview of Rhino models](research/rhino-3dm-preview.md)
     - [Text from HTML reports](research/html-report-text.md)
     - [Text from PDF reports](research/pdf-text-extraction.md)
     - [One provider interface for the assistant](research/agent-interface.md)

@@ -1,38 +1,11 @@
 # CLAUDE.md – working on TeamCraft
 
-TeamCraft is an open-source PLM system (items, revisions, files, BOMs, change
-orders) written in pure Rust, published on GitHub (`rudalabs/TeamCraft`). It is
-a single binary (axum web server + REST API + CLI) on top of PostgreSQL, with a
-server-rendered HTML UI, a JSON REST API and a Tauri desktop client.
-License: MPL-2.0 (`LICENSE`). No organisation-specific branding or deployment.
-
-## Commands
-
-| Task                   | Command                                                                                                                            |
-|------------------------|------------------------------------------------------------------------------------------------------------------------------------|
-| Type-check             | `cargo check --all-targets`                                                                                                        |
-| Format (CI-enforced)   | `cargo fmt --all`                                                                                                                  |
-| Lint (CI-enforced)     | `cargo clippy --all-targets -- -D warnings`                                                                                        |
-| Unit tests, no DB      | `cargo test --lib`                                                                                                                 |
-| Mutation tests         | `cargo mutants -F '^src/<module>\.rs:'` (pure modules of `.cargo/mutants.toml`, `--lib` only; results in `target/mutants.out/`) |
-| Start the dev database | `docker compose up -d db` (trust auth on 127.0.0.1; status: `docker compose ps`)                                                   |
-| All tests              | `cargo test` (needs the dev database)                                                                                              |
-| Run the server         | `cargo run` → <http://localhost:8080> (reads the optional `secrets/.env`)                                                          |
-| CLI                    | `./target/debug/teamcraft user list`, `… user create --username x --role editor --project ROVER`, `… vault check`, `… healthcheck` |
-| Smoke test             | `curl -s http://localhost:8080/healthz`, `curl -s http://localhost:8080/readyz`                                                    |
-| Rust API docs          | `cargo doc --no-deps --lib`                                                                                                        |
-| Desktop app            | `cargo run/test/clippy --manifest-path desktop/Cargo.toml` (Linux: WebKitGTK dev packages)                                         |
-
-Start long-running processes (`cargo run`) in the background and stop them when
-done. After code changes run fmt, clippy and the tests before reporting success;
-say plainly which checks ran and which did not.
-
 ## Hard rules
 
 * **Never build container images locally** – no `docker build`, `docker buildx`,
   `docker compose build`, `docker compose up --build`. The `Dockerfile` and
-  `deploy/` may be edited; the image is built only by GitHub Actions
-  (`release.yml`: build-only on pull requests, published to ghcr.io only for
+  `deploy/` may be edited; the image is built only by GitHub Actions (`release.yml`: build-only on pull requests,
+  published to ghcr.io only for
   pushes to `main` (`:edge`) and `v*` tags).
 * **Python** only as script files in `./local/`, run with
   `.venv/bin/python ./local/<script>.py` – the user reviews every script. No `python -c`.
@@ -49,10 +22,14 @@ say plainly which checks ran and which did not.
 * Releases: `.github/workflows/release.yml` builds the server binaries and
   desktop installers as artifacts on every push to `main`, publishes the
   container image `ghcr.io/rudalabs/teamcraft` (`:edge` from `main`,
-  `:<version>`/`:latest` from tags) and a GitHub Release for a `v*` tag
-  (CONTRIBUTING.md, "Releases and versions"). Never push a tag, bump the
+  `:<version>`/`:latest` from tags) and a GitHub Release for a `v*` tag (CONTRIBUTING.md, "Releases and versions").
+  Never push a tag, bump the
   version or publish anything else (package registries) unless the user asks
   for that release.
+* **Worktrees** Only create worktrees when explicitly specified.
+* **Subagents** Only create subagents when explicitly specified.
+* **Branch** You do not have permissions to push to the `main` branch. Create feature branches instead, push there and
+  open merge requests to `main` with the `gh` tool instead.
 
 ## Git rules
 
@@ -108,7 +85,8 @@ src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm 
 src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows shown): parsing and caps only – ids are hints
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
-src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs + PN refinement mesh/pn.rs) → TCMESH01
+src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, both + PN refinement mesh/pn.rs,
+                   Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs) → TCMESH01
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
 src/textindex.rs   text extraction from uploads for the full-text search (plain text with its numbers, STEP/IGES strings;
                    PDF via pdftext, HTML via htmltext – both in the isolated `text-extract` child)
@@ -122,9 +100,10 @@ src/cadrefs.rs     file names referenced inside CAD files (assemblies, drawings,
 src/nxpart.rs      NX part stream container (SPLMSSTR): directory, reference streams, preview stream – read with seeks
 src/nxasm.rs       NX assemblies: components + placements from /Root/FastLoad/Structure (OM objects, hash map instance→record);
                    services/assemblies.rs composes the assembly preview from the parts' previews (found by file name)
-src/swpart.rs      SOLIDWORKS 2015+ section container: Deflate sections (bounded, CRC-checked), PreviewPNG, component tree (COMPINSTANCETREE)
+src/swpart.rs      SOLIDWORKS 2015+ section container: Deflate sections (bounded, CRC-checked), PreviewPNG, component tree (COMPINSTANCETREE):
+                   referenced files and placements (assembly previews, also via services/assemblies.rs)
 src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/;
-                   NX parts: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
+                   NX and SOLIDWORKS parts/assemblies: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
 src/bomtable.rs    BOM tables exported by CAD programs (CSV/TSV, Excel, ODS): header synonyms, levels, units – heuristic
 src/stepbom.rs     product structure of STEP assemblies (own Part 21 reader: PRODUCT … NEXT_ASSEMBLY_USAGE_OCCURRENCE) → BomTable
 src/assets.rs      embedded CSS/JS/logos/fonts, cache busting (?v=<asset hash>, ETag)
@@ -181,15 +160,3 @@ desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part 
 * **Project status:** no release yet (version `0.1.0`). Keep the
   work-in-progress / no-warranty notices in the README, `docs/src/index.md`,
   the web footer and the desktop *About* dialog until the user asks for a release.
-
-## Environment
-
-* CachyOS; Rust via `rustup` (stable, `cargo` in `/usr/bin`); Docker with Compose v2.
-* Dev database: `postgres:17-alpine` on `127.0.0.1:5432`, user and database
-  `teamcraft`. The user's existing volume still uses the password from
-  `secrets/db_password` (configured in `secrets/.env`); fresh volumes use trust auth.
-* The integration tests use `TEAMCRAFT_TEST_DATABASE_URL` or the regular
-  configuration and create/drop their own `teamcraft_test_*` databases; without a
-  reachable server they are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1` makes that fail).
-  `tests/backup_restore.rs` also needs `pg_dump`/`pg_restore` on `PATH`
-  (`TEAMCRAFT_REQUIRE_PG_TOOLS=1` makes their absence fail).

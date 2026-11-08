@@ -40,8 +40,9 @@ use std::{
 
 /// Bump to invalidate every cached thumbnail (2: SOLIDWORKS 2015+ previews,
 /// cached as "none" before; 3: NX parts rendered from their 3D preview
-/// instead of the embedded JPEG).
-pub const CACHE_VERSION: u32 = 3;
+/// instead of the embedded JPEG; 4: SOLIDWORKS parts and assemblies rendered
+/// from their 3D preview; 5: Rhino models).
+pub const CACHE_VERSION: u32 = 5;
 
 const OLE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -58,7 +59,7 @@ pub fn supports(format_id: &str) -> bool {
         || format_id.starts_with("solidedge-")
         || matches!(
             format_id,
-            "solidworks-part" | "solidworks-assembly" | "solidworks-drawing" | "nx-part"
+            "solidworks-part" | "solidworks-assembly" | "solidworks-drawing" | "nx-part" | "rhino"
         )
 }
 
@@ -112,9 +113,22 @@ pub fn extract_from<R: Read + Seek>(mut file: R) -> io::Result<Option<Thumbnail>
     if crate::swpart::is_container(head) {
         return from_sw_container(file);
     }
+    if head.starts_with(crate::mesh::rhino::MAGIC) {
+        return from_rhino(file);
+    }
     let mut data = Vec::new();
     file.take(MAX_SCAN).read_to_end(&mut data)?;
     Ok(find_in(&data, false).map(|f| f.thumbnail))
+}
+
+/// Rhino models: the bitmap stored in the properties table (shown when the
+/// model stores no meshes for a 3D preview).
+fn from_rhino<R: Read>(file: R) -> io::Result<Option<Thumbnail>> {
+    let mut data = Vec::new();
+    file.take(MAX_SCAN).read_to_end(&mut data)?;
+    Ok(crate::mesh::rhino::preview_dib(&data)
+        .and_then(|dib| dib_at(&dib))
+        .map(|f| f.thumbnail))
 }
 
 /// SOLIDWORKS 2015+ files: the PNG of the `PreviewPNG` section.
@@ -444,10 +458,16 @@ pub const RENDERED_SIZE: u32 = 512;
 
 /// Formats whose thumbnail is rendered from their 3D preview instead of the
 /// image stored in the file: NX parts (the embedded JPEG is small and poor,
-/// the tessellation in the file is good). Files without a 3D preview (NX
-/// assemblies and drawings) keep the stored image.
+/// the tessellation in the file is good) and SOLIDWORKS parts and
+/// assemblies and Rhino models (one look for every CAD system). Files without a 3D preview
+/// (drawings, assemblies none of whose parts are in TeamCraft, Rhino models
+/// saved without meshes) keep the
+/// stored image.
 pub fn rendered(format_id: &str) -> bool {
-    format_id == "nx-part"
+    matches!(
+        format_id,
+        "nx-part" | "solidworks-part" | "solidworks-assembly" | "rhino"
+    )
 }
 
 /// A PNG thumbnail drawn from a cached preview mesh (`TCMESH01`).
@@ -566,6 +586,16 @@ mod tests {
         let t = from_compound_file(Cursor::new(file)).unwrap();
         assert_eq!(t.content_type, "image/png");
         assert_eq!(t.bytes, png(512, 512));
+    }
+
+    #[test]
+    fn rhino_models_give_their_stored_bitmap() {
+        let t = extract_from(Cursor::new(crate::mesh::rhino::tests::model()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(t.content_type, "image/bmp");
+        assert!(t.bytes.starts_with(b"BM"));
+        assert!(supports("rhino") && rendered("rhino"));
     }
 
     #[test]

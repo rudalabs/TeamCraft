@@ -237,6 +237,34 @@
     });
   }
 
+  // Drop zone: files dropped onto the Files card (the card that holds a
+  // form[data-dropzone], i.e. a revision checked out by the user) are put into
+  // the form's file input and the form is submitted – the submit handler
+  // below sends them, large ones in resumable chunks.
+  document.querySelectorAll("form[data-dropzone]").forEach(function (form) {
+    var card = form.closest("section") || form;
+    var input = form.querySelector("input[type=file]");
+    if (!input || !window.DataTransfer) return;
+    function hasFiles(e) {
+      return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") >= 0;
+    }
+    card.addEventListener("dragover", function (e) {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      card.classList.add("drop-active");
+    });
+    card.addEventListener("dragleave", function (e) {
+      if (e.target === card) card.classList.remove("drop-active");
+    });
+    card.addEventListener("drop", function (e) {
+      card.classList.remove("drop-active");
+      if (!hasFiles(e) || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      input.files = e.dataTransfer.files;
+      if (form.requestSubmit) form.requestSubmit(); else form.submit();
+    });
+  });
+
   document.querySelectorAll("form[enctype='multipart/form-data']").forEach(function (form) {
     form.addEventListener("submit", function (event) {
       if (event.defaultPrevented || !window.FormData || !window.XMLHttpRequest) return;
@@ -671,12 +699,21 @@
     });
   });
 
-  // Copy buttons: <button data-copy="id">.
-  document.querySelectorAll("[data-copy]").forEach(function (btn) {
-    btn.addEventListener("click", function () {
+  // Print buttons: <button data-print> (item labels).
+  document.querySelectorAll("[data-print]").forEach(function (btn) {
+    btn.addEventListener("click", function () { window.print(); });
+  });
+
+  // Copy buttons: <button data-copy="id"> copies the element's text,
+  // <button data-copy-text="PRT-000042"> the given text (item lists).
+  document.querySelectorAll("[data-copy], [data-copy-text]").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation(); // a copy button inside a row link does not open the row
       var source = document.getElementById(btn.getAttribute("data-copy"));
-      if (source && navigator.clipboard) {
-        navigator.clipboard.writeText(source.textContent.trim()).then(function () {
+      var text = btn.getAttribute("data-copy-text") || (source && source.textContent.trim());
+      if (text && navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(function () {
           var old = btn.textContent;
           btn.textContent = "Copied";
           setTimeout(function () { btn.textContent = old; }, 1500);

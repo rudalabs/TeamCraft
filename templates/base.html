@@ -11,7 +11,7 @@
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#101216">
   {%- endif %}
-  <title>{% block title %}{% endblock %} · {{ instance_name }}</title>
+  <title>{% block title %}{% endblock %} · {{ (branding.display_name if branding and branding.display_name else instance_name) }}</title>
   {%- if branding and branding.square %}
   <link rel="icon" href="/branding/square?v={{ branding.square }}">
   {%- else %}
@@ -31,11 +31,12 @@
   <div class="topbar-inner">
     <a class="brand" href="/" title="Dashboard">
       {%- if branding and branding.wide %}
-      <img class="brand-wide" src="/branding/wide?v={{ branding.wide }}" alt="{{ instance_name }}">
+      <img class="brand-wide" src="/branding/wide?v={{ branding.wide }}" alt="{{ (branding.display_name if branding and branding.display_name else instance_name) }}">
       {%- else %}
       <img src="/static/media/logos/TeamCraft_Icon.svg?v={{ assets }}" alt="">
-      <span class="brand-name">{{ instance_name }}</span>
-      <span class="brand-sub">PLM</span>
+      <span class="brand-name">{{ (branding.display_name if branding and branding.display_name else instance_name) }}</span>
+      {%- set sub = branding.subtitle if branding and branding.subtitle is defined else "PLM" %}
+      {%- if sub %}<span class="brand-sub">{{ sub }}</span>{% endif %}
       {%- endif %}
     </a>
     <nav class="nav" aria-label="Main">

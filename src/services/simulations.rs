@@ -359,6 +359,22 @@ pub async fn add_basis(
     access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
     ensure_simulation(&rev)?;
     revisions::ensure_editable(&rev, actor)?;
+    let id = insert_basis_tx(&mut tx, actor, &rev, &basis, &input, &note).await?;
+    tx.commit().await?;
+    get_basis(pool, actor, id).await
+}
+
+/// The part of [`add_basis`] inside the caller's transaction: `rev` is the
+/// locked, editable simulation revision, `basis` a revision the actor may
+/// read. Also used by [`create_with_basis`].
+async fn insert_basis_tx(
+    tx: &mut PgConnection,
+    actor: &Actor,
+    rev: &Revision,
+    basis: &Revision,
+    input: &NewBasis,
+    note: &str,
+) -> AppResult<Uuid> {
     if basis.item_id == rev.item_id {
         return Err(AppError::BadRequest(
             "A simulation cannot be based on itself.".into(),
@@ -396,7 +412,7 @@ pub async fn add_basis(
             .ok_or_else(|| {
                 AppError::BadRequest(format!(
                     "The file version does not belong to {}.",
-                    revisions::label(&basis)
+                    revisions::label(basis)
                 ))
             })?,
         )
@@ -415,7 +431,7 @@ pub async fn add_basis(
             .ok_or_else(|| {
                 AppError::BadRequest(format!(
                     "{} has no file named '{name}'.",
-                    revisions::label(&basis)
+                    revisions::label(basis)
                 ))
             })?,
         )
@@ -435,7 +451,7 @@ pub async fn add_basis(
     .bind(pin.as_ref().map_or("", |p| p.filename.as_str()))
     .bind(pin.as_ref().map(|p| p.version))
     .bind(input.role.as_str())
-    .bind(&note)
+    .bind(note)
     .bind(actor.id)
     .execute(&mut *tx)
     .await
@@ -444,8 +460,8 @@ pub async fn add_basis(
             e,
             format!(
                 "{} is already based on {} ({}).",
-                revisions::label(&rev),
-                revisions::label(&basis),
+                revisions::label(rev),
+                revisions::label(basis),
                 input.role.label().to_lowercase()
             ),
         )
@@ -455,7 +471,7 @@ pub async fn add_basis(
         .map(|p| format!(", {} v{}", p.filename, p.version))
         .unwrap_or_default();
     audit::record_related(
-        &mut tx,
+        &mut *tx,
         Some(actor),
         "simulation.basis.add",
         "revision",
@@ -463,16 +479,172 @@ pub async fn add_basis(
         Some(basis.item_id),
         format!(
             "{} based on {}{file} ({})",
-            revisions::label(&rev),
-            revisions::label(&basis),
+            revisions::label(rev),
+            revisions::label(basis),
             input.role.label().to_lowercase()
         ),
         json!({ "item_id": rev.item_id, "basis_id": id, "basis_revision_id": basis.id,
                 "file_version_id": pin.as_ref().map(|p| p.id), "role": input.role.as_str() }),
     )
     .await?;
+    Ok(id)
+}
+
+/// The name a new simulation gets from its basis: `Simulation – <name>`
+/// (cut to the 200 characters of an item name).
+pub fn default_name(basis_name: &str) -> String {
+    let name = format!("Simulation – {}", basis_name.trim());
+    name.chars().take(200).collect()
+}
+
+/// The description a new simulation gets from its basis.
+pub fn default_description(label: &str, basis_name: &str, material: &str) -> String {
+    let mut text = format!("Analysis of {label} ({}).", basis_name.trim());
+    let material = material.trim();
+    if !material.is_empty() {
+        text.push_str(&format!(" Material of the basis: {material}."));
+    }
+    text
+}
+
+/// Picks the file of the basis revision whose current version a new
+/// simulation pins: the STEP export if there is one (the neutral geometry),
+/// else the first file of a known CAD/mesh format. `files` are
+/// `(filename, format id)`; none fits → `None` (the revision alone is linked).
+pub fn pick_basis_file(files: &[(String, String)]) -> Option<&str> {
+    let mut sorted: Vec<&(String, String)> = files.iter().collect();
+    sorted.sort_by_key(|f| f.0.to_lowercase());
+    sorted
+        .iter()
+        .find(|f| f.1 == "step")
+        .or_else(|| sorted.iter().find(|f| !f.1.is_empty()))
+        .map(|f| f.0.as_str())
+}
+
+/// What the new-simulation form takes over from a basis revision.
+#[derive(Clone, Debug, Serialize)]
+pub struct BasisPrefill {
+    pub revision_id: Uuid,
+    pub item_number: String,
+    pub code: String,
+    /// `PRT-000002/A`.
+    pub label: String,
+    pub name: String,
+    pub project_id: Option<Uuid>,
+    pub project_code: Option<String>,
+    pub default_name: String,
+    pub default_description: String,
+}
+
+/// The values the form *New simulation based on …* is prefilled with.
+/// A basis the actor may not read answers like a missing one (404), so the
+/// caller can fall back to the plain form without echoing anything.
+pub async fn prefill_from_basis(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_id: Uuid,
+) -> AppResult<BasisPrefill> {
+    let basis = revisions::get(pool, actor, revision_id).await?;
+    let label = revisions::label(&basis);
+    Ok(BasisPrefill {
+        revision_id: basis.id,
+        item_number: basis.item_number.clone(),
+        code: basis.code.clone(),
+        default_name: default_name(&basis.name),
+        default_description: default_description(&label, &basis.name, &basis.material),
+        label,
+        name: basis.name,
+        project_id: basis.project_id,
+        project_code: basis.project_code,
+    })
+}
+
+/// A basis revision the actor may read, by item number and revision code
+/// (empty or `latest` = the latest revision). Hidden = 404.
+pub async fn resolve_basis(
+    pool: &PgPool,
+    actor: &Actor,
+    item_number: &str,
+    revision_code: &str,
+) -> AppResult<Revision> {
+    let item = items::get_by_number(pool, actor, item_number).await?;
+    let code = revision_code.trim();
+    if code.is_empty() || code.eq_ignore_ascii_case("latest") {
+        items::latest_revision(pool, actor, item.id).await
+    } else {
+        revisions::get_by_code(pool, actor, item.id, code).await
+    }
+}
+
+/// Creates a simulation item together with its first files and its basis
+/// link – the one-step counterpart of [`items::create_with_files`] followed
+/// by [`add_basis`].
+///
+/// # Invariants
+///
+/// * **Permission:** as [`items::create`] (editor, member of the project
+///   group); `basis` must be a revision the caller already resolved with the
+///   actor's rights ([`resolve_basis`], `revisions::get`), so a hidden basis
+///   never gets here. The item type must be `simulation` (400).
+/// * **Defaults:** an empty name / description becomes
+///   [`default_name`] / [`default_description`] of the basis.
+/// * **Data:** the new revision is checked out by the creator; the current
+///   version of the basis revision's STEP (else first CAD) file is pinned
+///   ([`pick_basis_file`]); without a file the revision alone is linked.
+/// * **Locks:** as `items::create_tx`, the new revision (`FOR UPDATE`) and
+///   the basis item (`FOR SHARE`).
+/// * **Audit:** `item.create` and `simulation.basis.add`, same transaction.
+/// * **Atomic:** one transaction; a failing basis check (e.g. the basis item
+///   deleted meanwhile) or upload creates nothing, not even the item number.
+pub async fn create_with_basis(
+    pool: &PgPool,
+    actor: &Actor,
+    mut input: NewItemFor<'_>,
+) -> AppResult<Revision> {
+    if input.item.item_type != ItemType::Simulation {
+        return Err(AppError::BadRequest(
+            "A basis can only be given for an item of type simulation.".into(),
+        ));
+    }
+    let basis = input.basis;
+    let label = revisions::label(basis);
+    if input.item.name.trim().is_empty() {
+        input.item.name = default_name(&basis.name);
+    }
+    if input.item.description.trim().is_empty() {
+        input.item.description = default_description(&label, &basis.name, &basis.material);
+    }
+    let mut tx = pool.begin().await?;
+    let created = items::create_tx(&mut tx, actor, input.item).await?;
+    let rev = revisions::lock(&mut tx, created.revision_id).await?;
+    if !input.uploads.is_empty() {
+        crate::services::files::store_uploads(&mut tx, actor, &rev, input.uploads, "").await?;
+    }
+    let files = sqlx::query_as::<_, (String, String)>(
+        "SELECT filename, format FROM files WHERE revision_id = $1",
+    )
+    .bind(basis.id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let new_basis = NewBasis {
+        item_number: basis.item_number.clone(),
+        revision_code: basis.code.clone(),
+        file_name: pick_basis_file(&files).unwrap_or_default().to_string(),
+        file_version_id: None,
+        role: input.role,
+        note: String::new(),
+    };
+    insert_basis_tx(&mut tx, actor, &rev, basis, &new_basis, "").await?;
     tx.commit().await?;
-    get_basis(pool, actor, id).await
+    revisions::get(pool, actor, created.revision_id).await
+}
+
+/// The input of [`create_with_basis`].
+pub struct NewItemFor<'a> {
+    pub item: items::NewItem,
+    pub uploads: &'a [crate::services::files::Upload],
+    pub basis: &'a Revision,
+    pub role: BasisRole,
 }
 
 /// Removes a basis link from a simulation revision checked out by the actor.
@@ -1599,6 +1771,39 @@ pub fn is_gallery_image(filename: &str, size_bytes: i64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn defaults_from_the_basis() {
+        assert_eq!(
+            default_name("  Mounting bracket "),
+            "Simulation – Mounting bracket"
+        );
+        let long = "x".repeat(300);
+        assert_eq!(default_name(&long).chars().count(), 200);
+        assert_eq!(
+            default_description("PRT-000002/A", "Mounting bracket", ""),
+            "Analysis of PRT-000002/A (Mounting bracket)."
+        );
+        assert_eq!(
+            default_description("PRT-000002/A", "Mounting bracket", " S235 "),
+            "Analysis of PRT-000002/A (Mounting bracket). Material of the basis: S235."
+        );
+    }
+
+    #[test]
+    fn the_pinned_basis_file() {
+        let f = |n: &str, fmt: &str| (n.to_string(), fmt.to_string());
+        assert_eq!(pick_basis_file(&[]), None);
+        // no file of a known format: link the revision only
+        assert_eq!(pick_basis_file(&[f("notes.txt", "")]), None);
+        // STEP wins over native CAD files, whatever the order
+        let files = [f("a.ipt", "inventor"), f("z.step", "step"), f("n.txt", "")];
+        assert_eq!(pick_basis_file(&files), Some("z.step"));
+        // else the first CAD file by name
+        let files = [f("b.ipt", "inventor"), f("a.sldprt", "solidworks")];
+        assert_eq!(pick_basis_file(&files), Some("a.sldprt"));
+    }
+
     #[test]
     fn gallery_takes_small_pictures_only() {
         assert!(is_gallery_image("pressure.PNG", 1000));

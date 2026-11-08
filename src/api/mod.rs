@@ -37,16 +37,16 @@ use uuid::Uuid;
 use crate::{
     auth::{Actor, ApiUser},
     domain::{
-        self, AdminRead, ChangeStatus, Decision, ItemType, LifecycleState, Priority,
+        self, AdminRead, ChangeStatus, Decision, ItemType, LifecycleState, LineAction, Priority,
         ProjectVisibility, ReferenceKind, RevisionRule,
     },
     error::{AppError, AppResult},
     models::Revision,
     services::{
         access_log::{self, AccessCtx},
-        access_review, attributes, audit, bom, changes, checkouts, desktop, files, impacts,
-        imports, items, notifications, package, project_policy, projects, references, requests,
-        reviewers, revisions, similar, stats, uploads, users, workset, Page,
+        access_review, attributes, audit, bom, bom_references, changes, checkouts, desktop, files,
+        impacts, imports, items, notifications, package, project_policy, projects, references,
+        requests, reviewers, revisions, similar, stats, structure, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -86,6 +86,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/formats", get(formats))
         .route("/branding", get(branding_info))
+        .route("/branding/name", put(branding_name_set))
         .route("/branding/{kind}", get(branding_logo))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{code}/visibility", put(set_project_visibility))
@@ -119,6 +120,8 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(project_numbering).put(set_project_numbering),
         )
         .route("/items", get(list_items).post(create_item))
+        .route("/items/duplicates", get(item_duplicates))
+        .route("/items/bulk", post(items_bulk))
         .route("/items/{number}", get(get_item).patch(update_item))
         .route("/attributes", get(list_attributes).post(create_attribute))
         .route("/attributes/{key}", patch(update_attribute))
@@ -289,10 +292,19 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/items/{number}/revisions/{code}/revise", post(revise))
         .route("/items/{number}/revisions/{code}/package", get(get_package))
         .route("/items/{number}/revisions/{code}/workset", get(get_workset))
+        .route(
+            "/items/{number}/revisions/{code}/structure",
+            get(get_structure_level),
+        )
+        .route("/projects/{code}/structure", get(get_structure_roots))
         .route("/items/{number}/revisions/{code}/similar", get(get_similar))
         .route(
             "/bom-imports",
             post(import_bom).layer(DefaultBodyLimit::max(import_limit)),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/bom/from-references",
+            get(get_bom_from_references).post(post_bom_from_references),
         )
         .route(
             "/items/{number}/revisions/{code}/bom/import",
@@ -336,6 +348,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/file-versions/{id}/content", get(download_version))
         .route("/files/{id}/mesh", get(file_mesh))
         .route("/file-versions/{id}/mesh", get(version_mesh))
+        .route(
+            "/file-versions/{id}/annotations",
+            get(version_annotations).post(add_version_annotation),
+        )
+        .route(
+            "/annotations/{id}",
+            axum::routing::delete(delete_annotation),
+        )
         .route("/changes", get(list_changes).post(create_change))
         .route("/changes/{number}", get(get_change))
         .route("/changes/{number}/items", post(add_change_item))
@@ -478,10 +498,10 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
             "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
-            "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages: bool}, read_log?, log_retention_days?} need-to-know policy – managers and admins",
+            "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages|notification_content|external_llm|desktop_sync: bool}, read_log?, log_retention_days?} need-to-know policy – managers and admins",
             "GET    /api/v1/projects/{code}/access-log               ?user=&kind=view|download|package|export&since=&until=&limit= read and download log (groups with read_log) – managers and admins",
             "GET    /api/v1/projects/{code}/review-policy            review policy: min approvals, required reviewers, role group",
-            "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?} – managers and admins",
+            "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?, obsolete_requires_change?} – managers and admins",
             "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
             "GET    /api/v1/projects/{code}/access-review            access report of a restricted group (members, source, last sign-in, policy, elevations, reviews); ?format=csv – managers and admins",
             "POST   /api/v1/projects/{code}/access-review            {note} confirm the access review (dated, audited) – managers and admins",
@@ -496,11 +516,14 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention|impact|simulation_status|result_values, context: {kind?, item?, revision?, change?, request?, project?, view?, rule?, query?, filters?, selected?, shown?}, allow_drafts?, thread?}",
             "GET    /api/v1/assistant/thread                          the caller's conversation (thread: true questions), newest message last",
             "DELETE /api/v1/assistant/thread                          new conversation: deletes the caller's thread",
-            "GET    /api/v1/branding                                  which logos an administrator replaced: {wide, square} = version token or null, {wide_type, square_type} = content type",
+            "GET    /api/v1/branding                                  header {display_name, subtitle} and which logos an administrator replaced: {wide, square} = version token or null, {wide_type, square_type} = content type",
+            "PUT    /api/v1/branding/name                             (admin) rename the header: {display_name, subtitle}; empty display_name = configured default; never renames the software",
             "GET    /api/v1/branding/{wide|square}                   the replaced logo (image); 404 = the built-in logo",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
             "GET    /api/v1/items?q=&type=&project=&state=&system=&class=&attr=&value=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo; class = make|purchased|standard; attr + value = custom attribute (value: text contains, yes/no, 12, >=10, <=20, 10..20, empty = has a value)",
             "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?, classification?, attributes?}",
+            "GET    /api/v1/items/duplicates?name=&type=&limit=        readable items with a similar name (check before creating one)",
+            "POST   /api/v1/items/bulk                                {action: revise|obsolete, items: [number]} – the latest revision of each item, one by one (at most 200)",
             "GET    /api/v1/items/{number}",
             "PATCH  /api/v1/items/{number}                            {project?, unit?, classification?: make|purchased|standard} – master data",
             "GET    /api/v1/attributes?all=                           custom attribute definitions (all=true: also deactivated ones)",
@@ -536,7 +559,11 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/bom.xlsx?rule=  the expanded BOM as Excel workbook (the BOM import reads it back)",
             "GET    /api/v1/items/{number}/revisions/{code}/package?rule=  Pack and Go: ZIP with all files of the structure, bom.csv, manifest.json",
             "GET    /api/v1/items/{number}/revisions/{code}/workset?rule=&references=true  desktop Get: files of the structure and the CAD files it references, with folder, version, sha256, lock",
+            "GET    /api/v1/items/{number}/revisions/{code}/structure?rule=latest|released&limit=  one level of the structure view: BOM lines with resolved revision, state, lock owner, used_in",
+            "GET    /api/v1/projects/{code}/structure?limit=&offset=  top-level items of a group (not used in any BOM of the group) for the structure view",
             "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM or STEP assembly of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
+            "GET    /api/v1/items/{number}/revisions/{code}/bom/from-references  the BOM the CAD references lead to: children with instance counts, status (new/already_in_bom/differs/circular), unmatched names, hidden count",
+            "POST   /api/v1/items/{number}/revisions/{code}/bom/from-references  {children: [item numbers], update_quantities?: false} – adds the chosen lines in one transaction (revision checked out by me)",
             "POST   /api/v1/items/{number}/revisions/{code}/bom/import  same multipart fields – imports below the revision (checked out by me)",
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
             "DELETE /api/v1/bom-lines/{id}",
@@ -598,12 +625,15 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/files/{id}/versions",
             "POST   /api/v1/files/{id}/restore                        {version}",
             "GET    /api/v1/file-versions/{id}/content           resumable like /files/{id}/content",
+            "GET    /api/v1/file-versions/{id}/annotations       notes pinned to points of the 3D preview",
+            "POST   /api/v1/file-versions/{id}/annotations       {x, y, z, body} – a note at a model point (everyone who reads the file)",
+            "DELETE /api/v1/annotations/{id}                     remove a note (its author or an administrator)",
             "DELETE /api/v1/files/{id}",
             "GET    /api/v1/changes?status=",
             "POST   /api/v1/changes                                   {title, description?, priority?}",
             "GET    /api/v1/changes/{number}",
             "GET    /api/v1/changes/{number}/impact                   impact analysis: items that depend on its revisions",
-            "POST   /api/v1/changes/{number}/items                    {item, revision?}",
+            "POST   /api/v1/changes/{number}/items                    {item, revision?, action?: release|obsolete|supersede, successor?} (obsolete and supersede lines are applied on release)",
             "POST   /api/v1/changes/{number}/reviewers                {username}",
             "POST   /api/v1/changes/{number}/reviewers/{old}/replace  {username}: replace a pending reviewer while in review",
             "GET    /api/v1/changes/{number}/suggested-reviewers?limit=  ranked reviewer suggestions with reasons (never assigns)",
@@ -827,11 +857,33 @@ async fn branding_info(
 ) -> AppResult<Json<Value>> {
     let b = crate::services::branding::current(&st.db).await?;
     Ok(Json(json!({
+        "display_name": b.name(&st.config.instance_name),
+        "subtitle": b.subtitle,
         "wide": b.wide,
         "square": b.square,
         "wide_type": b.wide_type,
         "square_type": b.square_type,
     })))
+}
+
+#[derive(serde::Deserialize)]
+struct BrandingNameBody {
+    /// Empty = back to the configured instance name.
+    #[serde(default)]
+    display_name: String,
+    /// Empty = no subtitle; `PLM` = the default.
+    #[serde(default)]
+    subtitle: String,
+}
+
+/// `PUT /api/v1/branding/name` (administrators): the header name and subtitle.
+async fn branding_name_set(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    ApiJson(body): ApiJson<BrandingNameBody>,
+) -> AppResult<Json<Value>> {
+    crate::services::branding::set_names(&st.db, &me, &body.display_name, &body.subtitle).await?;
+    branding_info(State(st), ApiUser(me)).await
 }
 
 /// `GET /api/v1/branding/{kind}`: the replaced logo as an image.

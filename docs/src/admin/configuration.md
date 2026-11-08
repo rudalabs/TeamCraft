@@ -10,10 +10,10 @@ optional, git-ignored `secrets/.env` file in the working directory.
 Configuration files are read on start, in this order; a variable that is
 already set (in the environment or by an earlier file) is kept:
 
-| File                                   | When                                                                                     |
-|----------------------------------------|------------------------------------------------------------------------------------------|
-| the file named by `TEAMCRAFT_ENV_FILE` | when the variable is set (e.g. a `teamcraft.env` outside the working directory)          |
-| `secrets/.env`                         | when it exists in the working directory (development)                                    |
+| File                                   | When                                                                                                                                                            |
+|----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| the file named by `TEAMCRAFT_ENV_FILE` | when the variable is set (e.g. a `teamcraft.env` outside the working directory)                                                                                 |
+| `secrets/.env`                         | when it exists in the working directory (development)                                                                                                           |
 | the system file                        | only in package builds: its path is fixed at build time with `TEAMCRAFT_SYSTEM_CONFIG` (e.g. `/etc/teamcraft/teamcraft.env`); development builds never read one |
 
 In the [Docker installation](docker.md) the variables go into
@@ -31,38 +31,38 @@ read by `src/config.rs` in sync.
 
 ## Server
 
-| Variable                  | Default                          | Meaning                                                                         |
-|---------------------------|----------------------------------|---------------------------------------------------------------------------------|
-| `TEAMCRAFT_BIND_ADDR`     | `127.0.0.1:8080`                 | address to listen on (`0.0.0.0:8080` to serve the network)                      |
+| Variable                  | Default                          | Meaning                                                                                                              |
+|---------------------------|----------------------------------|----------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_BIND_ADDR`     | `127.0.0.1:8080`                 | address to listen on (`0.0.0.0:8080` to serve the network)                                                           |
 | `TEAMCRAFT_PUBLIC_URL`    | `http://localhost:<port>`        | external URL: SSO redirects, CSRF origin check; for `https://` also `Secure` cookies and `Strict-Transport-Security` |
-| `TEAMCRAFT_INSTANCE_NAME` | `TeamCraft`                      | name in the header and page titles                                              |
-| `TEAMCRAFT_LOG_FORMAT`    | `text`                           | `text` or `json`                                                                |
-| `RUST_LOG`                | `info,tower_http=info,sqlx=warn` | log filter                                                                      |
+| `TEAMCRAFT_INSTANCE_NAME` | `TeamCraft`                      | default header name, page titles, e-mails; administrators override it under *Admin → Branding*                       |
+| `TEAMCRAFT_LOG_FORMAT`    | `text`                           | `text` or `json`                                                                                                     |
+| `RUST_LOG`                | `info,tower_http=info,sqlx=warn` | log filter                                                                                                           |
 
-The server (`teamcraft serve`) logs to standard output; the other commands
-(`migrate`, `user`, `vault`, `backup`, …) log to standard error, so that their
+The server (`teamcraft serve`) logs to standard output; the other commands (`migrate`, `user`, `vault`, `backup`, …) log
+to standard error, so that their
 output can be read by scripts.
 
 ## Database (PostgreSQL 16+)
 
-| Variable                                          | Default                                          | Meaning                                                                |
-|---------------------------------------------------|--------------------------------------------------|------------------------------------------------------------------------|
-| `TEAMCRAFT_DATABASE_URL`                          | –                                                | `postgres://user:password@host:port/db`; alternatively the parts below |
-| `TEAMCRAFT_DB_HOST`, `TEAMCRAFT_DB_PORT`, `TEAMCRAFT_DB_NAME`, `TEAMCRAFT_DB_USER` | `localhost` / `5432` / `teamcraft` / `teamcraft` | connection parts                                      |
-| `DATABASE_URL`                                    | –                                                | fallback for `TEAMCRAFT_DATABASE_URL` (the usual name in hosting platforms) |
-| `TEAMCRAFT_DB_PASSWORD`                           | –                                                | password (not needed with trust authentication or `~/.pgpass`)         |
-| `TEAMCRAFT_DB_SSLMODE`                            | `prefer`                                         | `disable`, `prefer`, `require`, `verify-ca`, `verify-full`             |
-| `TEAMCRAFT_DB_MAX_CONNECTIONS`                    | `10`                                             | pool size                                                              |
+| Variable                                                                           | Default                                          | Meaning                                                                     |
+|------------------------------------------------------------------------------------|--------------------------------------------------|-----------------------------------------------------------------------------|
+| `TEAMCRAFT_DATABASE_URL`                                                           | –                                                | `postgres://user:password@host:port/db`; alternatively the parts below      |
+| `TEAMCRAFT_DB_HOST`, `TEAMCRAFT_DB_PORT`, `TEAMCRAFT_DB_NAME`, `TEAMCRAFT_DB_USER` | `localhost` / `5432` / `teamcraft` / `teamcraft` | connection parts                                                            |
+| `DATABASE_URL`                                                                     | –                                                | fallback for `TEAMCRAFT_DATABASE_URL` (the usual name in hosting platforms) |
+| `TEAMCRAFT_DB_PASSWORD`                                                            | –                                                | password (not needed with trust authentication or `~/.pgpass`)              |
+| `TEAMCRAFT_DB_SSLMODE`                                                             | `prefer`                                         | `disable`, `prefer`, `require`, `verify-ca`, `verify-full`                  |
+| `TEAMCRAFT_DB_MAX_CONNECTIONS`                                                     | `10`                                             | pool size                                                                   |
 
 Start-up waits up to 20 s for the database, then stops with the reason.
 Migrations run automatically (`teamcraft serve --no-migrate` skips them).
 
 ## Files
 
-| Variable                    | Default        | Meaning                                                                 |
-|-----------------------------|----------------|-------------------------------------------------------------------------|
-| `TEAMCRAFT_VAULT_DIR`       | `./data/vault` | file vault and cached 3D previews – back it up                          |
-| `TEAMCRAFT_MAX_UPLOAD_MB`   | `512`          | largest file per upload, also for chunked uploads                       |
+| Variable                    | Default        | Meaning                                                                                                            |
+|-----------------------------|----------------|--------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_VAULT_DIR`       | `./data/vault` | file vault and cached 3D previews – back it up                                                                     |
+| `TEAMCRAFT_MAX_UPLOAD_MB`   | `512`          | largest file per upload, also for chunked uploads                                                                  |
 | `TEAMCRAFT_UPLOAD_CHUNK_MB` | `16`           | largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/…`, `PATCH /uploads/…` of the web UI), 1–1024 |
 
 Chunked uploads ([Large files](../guide/vault.md#large-files-chunked-resumable-uploads))
@@ -71,18 +71,45 @@ so `TEAMCRAFT_MAX_UPLOAD_MB` can be raised for multi-gigabyte CAD or
 simulation files (e.g. `20480`) without more memory; a single multipart
 request (small files, the web UI's *New item* form) still has to fit this
 limit as a whole, and a
-reverse proxy in front must allow request bodies of one chunk
-(`client_max_body_size` ≥ `TEAMCRAFT_UPLOAD_CHUNK_MB`) – or of the largest
+reverse proxy in front must allow request bodies of one chunk (`client_max_body_size` ≥ `TEAMCRAFT_UPLOAD_CHUNK_MB`) –
+or of the largest
 multipart upload. Make sure the vault's disk has room for the unfinished
-uploads too: each user may hold 16 of them for 24 hours.
+uploads too: each user may hold 16 of them for 24 hours. Storage quotas per
+user and for the whole vault are set with the CLI, see
+[Storage quotas](operations.md#storage-quotas).
+
+### Malware scanning
+
+| Variable                 | Default | Meaning                                                                                                         |
+|--------------------------|---------|-----------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_CLAMD_ADDR`   | –       | ClamAV daemon that scans every upload: `host:port` (e.g. `clamav:3310`) or `unix:/run/clamav/clamd.ctl`; unset = no scan |
+| `TEAMCRAFT_CLAMD_MAX_MB` | `25`    | larger files are stored without a scan (logged); match clamd's `StreamMaxLength`, 1–4096                        |
+
+With a scanner, every file is sent to clamd (`INSTREAM`) before it is moved
+into the vault – uploads, check-ins, chunked uploads, imports. Infected
+content is refused (`400`, the signature name in the message) and never
+stored; a chunked upload starts over. When the daemon cannot be reached, the
+upload is refused with `503` instead of stored unscanned. ClamAV is a separate
+service (e.g. the `clamav/clamav` image next to TeamCraft); raise its
+`StreamMaxLength` together with `TEAMCRAFT_CLAMD_MAX_MB` to scan large CAD
+files too.
+
+### Encrypted backups
+
+| Variable                      | Default | Meaning                                                                                                          |
+|-------------------------------|---------|------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_BACKUP_PASSPHRASE` | –       | passphrase of `teamcraft backup --encrypt` and of restoring such a backup (at least 12 characters); without it the CLI prompts on a terminal. Prefer `TEAMCRAFT_BACKUP_PASSPHRASE_FILE` |
+
+See [Backups](operations.md#backups). Losing the passphrase means losing the
+backup – keep it apart from the backups themselves.
 
 ### Data retention
 
-| Variable                                | Default | Meaning                                                                                                                                  |
-|-----------------------------------------|---------|------------------------------------------------------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS` | `7`     | days after which the old versions of a file set to *keep only the latest version* are removed (1–3650; `0` = the housekeeping never removes them, only `teamcraft vault purge-versions` does) |
-| `TEAMCRAFT_AUDIT_RETENTION_DAYS`        | `0`     | days the audit log is kept; `0` = for ever, otherwise 30–36500; the removal is recorded as one `audit.purge` entry; entries that separation of duties still needs (edits of revisions in work or review, preparing actions of open changes) are kept until those are closed; administrator elevation entries are removed too (the elevation list keeps reason and times)                       |
-| `TEAMCRAFT_PREVIEW_CACHE_MAX_MB`        | `0`     | size the preview cache (`<vault>/previews`) is trimmed to, least recently used first; `0` = no limit; previews are made again when needed |
+| Variable                                | Default | Meaning                                                                                                                                                                                                                                                                                                                                                                  |
+|-----------------------------------------|---------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_RETENTION_LATEST_GRACE_DAYS` | `7`     | days after which the old versions of a file set to *keep only the latest version* are removed (1–3650; `0` = the housekeeping never removes them, only `teamcraft vault purge-versions` does)                                                                                                                                                                            |
+| `TEAMCRAFT_AUDIT_RETENTION_DAYS`        | `0`     | days the audit log is kept; `0` = for ever, otherwise 30–36500; the removal is recorded as one `audit.purge` entry; entries that separation of duties still needs (edits of revisions in work or review, preparing actions of open changes) are kept until those are closed; administrator elevation entries are removed too (the elevation list keeps reason and times) |
+| `TEAMCRAFT_PREVIEW_CACHE_MAX_MB`        | `0`     | size the preview cache (`<vault>/previews`) is trimmed to, least recently used first; `0` = no limit; previews are made again when needed                                                                                                                                                                                                                                |
 
 Files keep every version unless someone sets a file to *keep only the latest
 version*, so the defaults change nothing for existing installations. See
@@ -99,15 +126,15 @@ fails with a message instead of taking the host down. Large simulation
 results are stored as they are, never parsed fully – see
 [Simulations](../guide/simulation.md#results-in-3d).
 
-| Variable                          | Default | Meaning                                                                 |
-|-----------------------------------|---------|-------------------------------------------------------------------------|
-| `TEAMCRAFT_PREVIEW_MAX_RESULT_MB` | `64`    | largest simulation result file (VTK, VTU, VTP, FRD) that is previewed   |
-| `TEAMCRAFT_PREVIEW_MAX_MESH_MB`   | `256`   | largest mesh or point cloud (STL, OBJ, PLY, 3MF, glTF, LAS, …)          |
-| `TEAMCRAFT_PREVIEW_MAX_STEP_MB`   | `256`   | largest STEP file (tessellation needs a multiple of the file size)      |
-| `TEAMCRAFT_PREVIEW_MAX_MEMORY_MB` | `1024`  | address space of the preview process, `0` = unlimited                   |
+| Variable                          | Default | Meaning                                                               |
+|-----------------------------------|---------|-----------------------------------------------------------------------|
+| `TEAMCRAFT_PREVIEW_MAX_RESULT_MB` | `64`    | largest simulation result file (VTK, VTU, VTP, FRD) that is previewed |
+| `TEAMCRAFT_PREVIEW_MAX_MESH_MB`   | `256`   | largest mesh or point cloud (STL, OBJ, PLY, 3MF, glTF, LAS, …)        |
+| `TEAMCRAFT_PREVIEW_MAX_STEP_MB`   | `256`   | largest STEP file (tessellation needs a multiple of the file size)    |
+| `TEAMCRAFT_PREVIEW_MAX_MEMORY_MB` | `1024`  | address space of the preview process, `0` = unlimited                 |
 
-The same process limits protect the text extraction of PDF and HTML reports
-(`teamcraft text-extract`: at most 32 MB per PDF and 100 pages, the first 16 MB
+The same process limits protect the text extraction of PDF and HTML reports (`teamcraft text-extract`: at most 32 MB per
+PDF and 100 pages, the first 16 MB
 of an HTML file, 60 s, the memory limit below).
 
 The memory limit (`RLIMIT_AS`) is enforced on Linux; on macOS the system may
@@ -116,22 +143,22 @@ limit still are). Every variable also exists as `NAME_FILE`.
 
 ## Sign-in
 
-| Variable                                           | Default                           | Meaning                                                                        |
-|----------------------------------------------------|-----------------------------------|--------------------------------------------------------------------------------|
-| `TEAMCRAFT_SESSION_TTL_HOURS`                      | `72`                              | session lifetime                                                               |
-| `TEAMCRAFT_COOKIE_SECURE`                          | `true` for `https://` public URLs | force the `Secure` cookie flag                                                 |
-| `TEAMCRAFT_LOCAL_LOGIN`                            | `true` without SSO                | username/password accounts                                                     |
-| `TEAMCRAFT_SIGNIN_MAX_FAILURES`                    | `10`                              | failed password sign-ins per username in 15 minutes before 429 (5× per client address; `0` = off) |
-| `TEAMCRAFT_METRICS_TOKEN`                          | – (endpoint off)                  | enables `GET /metrics` (Prometheus text format); the scraper sends this value (at least 16 characters) as `Authorization: Bearer …`. Request counts and latency, database pool, pending webhook deliveries, e-mails and chat messages, 3D preview queue |
-| `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME`, `TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD` | `admin` / –                       | create this administrator on start when there are no accounts (public servers) |
-| `TEAMCRAFT_OIDC_*`                                 | –                                 | single sign-on, see [Users, roles and SSO](users.md)                           |
+| Variable                                                                   | Default                           | Meaning                                                                                                                                                                                                                                                 |
+|----------------------------------------------------------------------------|-----------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_SESSION_TTL_HOURS`                                              | `72`                              | session lifetime                                                                                                                                                                                                                                        |
+| `TEAMCRAFT_COOKIE_SECURE`                                                  | `true` for `https://` public URLs | force the `Secure` cookie flag                                                                                                                                                                                                                          |
+| `TEAMCRAFT_LOCAL_LOGIN`                                                    | `true` without SSO                | username/password accounts                                                                                                                                                                                                                              |
+| `TEAMCRAFT_SIGNIN_MAX_FAILURES`                                            | `10`                              | failed password sign-ins per username in 15 minutes before 429 (5× per client address; `0` = off)                                                                                                                                                       |
+| `TEAMCRAFT_METRICS_TOKEN`                                                  | – (endpoint off)                  | enables `GET /metrics` (Prometheus text format); the scraper sends this value (at least 16 characters) as `Authorization: Bearer …`. Request counts and latency, database pool, pending webhook deliveries, e-mails and chat messages, 3D preview queue |
+| `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME`, `TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD` | `admin` / –                       | create this administrator on start when there are no accounts (public servers)                                                                                                                                                                          |
+| `TEAMCRAFT_OIDC_*`                                                         | –                                 | single sign-on, see [Users, roles and SSO](users.md)                                                                                                                                                                                                    |
 
 Failed password sign-ins are counted per username and per client address
 for 15 minutes from the first failure; when a counter is full the sign-in
 page answers `429 Too Many Requests` with `Retry-After` – even for the right
 password – until the 15 minutes have passed. A successful sign-in clears the
-username's counter. The counters live in the memory of each server process
-(a restart clears them). Behind a reverse proxy on the same host or an
+username's counter. The counters live in the memory of each server process (a restart clears them). Behind a reverse
+proxy on the same host or an
 internal network, the client address is the last `X-Forwarded-For` entry,
 the one the proxy added; a client that talks to the server directly is
 counted by its own address. Sign-in, failed sign-in and sign-out are in
@@ -139,20 +166,20 @@ the audit log (`user.sign_in`, `user.sign_in_failed`, `user.sign_out`).
 
 ## Notifications (optional)
 
-| Variable                       | Meaning                                                                                                               |
-|--------------------------------|-----------------------------------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_SMTP_URL`           | SMTP server in lettre syntax: `smtps://user:password@host:465`, `smtp://host:587?tls=required`, `smtp://localhost:25` |
-| `TEAMCRAFT_MAIL_FROM`          | sender, `Name <address>` (required with SMTP)                                                                         |
-| `TEAMCRAFT_REQUEST_DIGEST_HOURS` | hours between two e-mail digests of the change requests waiting for triage, per CAD editor and project group (default `24`, `0` = off, at most `720`); only with SMTP |
-| `TEAMCRAFT_MATTERMOST_WEBHOOK` | incoming webhook for notifications                                                                                    |
-| `TEAMCRAFT_MATTERMOST_DIRECT`  | `true`: direct messages, `false` (default): mention in the webhook's channel – notifications about [restricted project groups](permissions.md) then show only a generic text and the link |
-| `MATTERMOST_ERROR_WEBHOOK`     | incoming webhook that receives internal server errors (rate limited)                                                  |
+| Variable                         | Meaning                                                                                                                                                                                   |
+|----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_SMTP_URL`             | SMTP server in lettre syntax: `smtps://user:password@host:465`, `smtp://host:587?tls=required`, `smtp://localhost:25`                                                                     |
+| `TEAMCRAFT_MAIL_FROM`            | sender, `Name <address>` (required with SMTP)                                                                                                                                             |
+| `TEAMCRAFT_REQUEST_DIGEST_HOURS` | hours between two e-mail digests of the change requests waiting for triage, per CAD editor and project group (default `24`, `0` = off, at most `720`); only with SMTP                     |
+| `TEAMCRAFT_MATTERMOST_WEBHOOK`   | incoming webhook for notifications                                                                                                                                                        |
+| `TEAMCRAFT_MATTERMOST_DIRECT`    | `true`: direct messages, `false` (default): mention in the webhook's channel – notifications about [restricted project groups](permissions.md) then show only a generic text and the link |
+| `MATTERMOST_ERROR_WEBHOOK`       | incoming webhook that receives internal server errors (rate limited)                                                                                                                      |
 
 The **change request digest** is an e-mail per project group to its CAD
 editors and admins with the requests raised since the previous digest that
 are still *New*, and how many older ones still wait for triage. Nothing is
-sent when no new request came in. Every user can mute it on the account page
-(*E-mail digest of new change requests …*). The server remembers per user
+sent when no new request came in. Every user can mute it on the account page (*E-mail digest of new change requests …*).
+The server remembers per user
 and group up to when the digests reached (table `request_digests`), so a
 restart or a second server never sends a period twice; the e-mail goes
 through the same outbox, retries and access checks as every notification.
@@ -163,11 +190,11 @@ Administrators register outgoing webhooks on the web page *Webhooks* or
 through the API ([Event webhooks](webhooks.md)). These variables limit where
 they may send to:
 
-| Variable                           | Default | Meaning                                                                                                                                  |
-|------------------------------------|---------|------------------------------------------------------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS`  | –       | comma separated host names, IP addresses or `*.domain`; when set, webhooks can only target these hosts, and these may be internal       |
-| `TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE`  | `false` | `true`: every host may resolve to private, loopback or link-local addresses (single-network installations, development)                 |
-| `TEAMCRAFT_WEBHOOK_RETENTION_DAYS` | `30`    | sent and failed deliveries are removed after this many days (1–3650)                                                                    |
+| Variable                           | Default | Meaning                                                                                                                           |
+|------------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS`  | –       | comma separated host names, IP addresses or `*.domain`; when set, webhooks can only target these hosts, and these may be internal |
+| `TEAMCRAFT_WEBHOOK_ALLOW_PRIVATE`  | `false` | `true`: every host may resolve to private, loopback or link-local addresses (single-network installations, development)           |
+| `TEAMCRAFT_WEBHOOK_RETENTION_DAYS` | `30`    | sent and failed deliveries are removed after this many days (1–3650)                                                              |
 
 By default webhooks reach public addresses only. An on-premises ERP or CI
 server is internal, so list it: `TEAMCRAFT_WEBHOOK_ALLOWED_HOSTS=erp.corp.example,ci.corp.example`.
@@ -180,19 +207,20 @@ provider `openai-compatible` and its base URL are set. While it is off the
 buttons are hidden and `/assistant` and `POST /api/v1/assistant` answer
 `404`. Every variable also works as `NAME_FILE` (the file's contents).
 
-| Variable                              | Default                                    | Meaning                                                                                                                                                  |
-|---------------------------------------|--------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_ASSISTANT_PROVIDER`        | `anthropic`                                | wire format: `anthropic` (Messages API), `openai` (OpenAI and Azure OpenAI v1, Chat Completions) or `openai-compatible` (Ollama, vLLM, LM Studio, Mistral, OpenRouter, Groq …) |
-| `TEAMCRAFT_ASSISTANT_BASE_URL`        | `https://api.anthropic.com/v1` / `https://api.openai.com/v1` | API base (`/messages` or `/chat/completions` is added). Required for `openai-compatible`, e.g. `http://ollama.internal:11434/v1`; Azure: `https://<resource>.openai.azure.com/openai/v1` |
-| `TEAMCRAFT_ASSISTANT_API_KEY`         | –                                          | the key. A secret: prefer `_FILE`, it is never logged. Optional for `openai-compatible` (local servers)                                                  |
-| `TEAMCRAFT_ANTHROPIC_API_KEY`         | –                                          | older name of `TEAMCRAFT_ASSISTANT_API_KEY`, still accepted. Setting both with different values is an error                                              |
-| `TEAMCRAFT_ASSISTANT_MODEL`           | `claude-opus-5-5` (`anthropic`)            | model id, or the Azure deployment name. Required for `openai` and `openai-compatible`                                                                    |
-| `TEAMCRAFT_ASSISTANT_MAX_STEPS`       | `12`                                       | most model calls (tool rounds) per question, 1–50                                                                                                        |
-| `TEAMCRAFT_ASSISTANT_MAX_TOKENS`      | `16000`                                    | output tokens per model call, 256–200000                                                                                                                 |
-| `TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT` | `180`                                      | seconds for one HTTP call, 5–3600 (a model on a CPU may need more)                                                                                       |
-| `TEAMCRAFT_ASSISTANT_RUN_TIMEOUT`     | `240` (at least the request timeout)       | seconds for a whole question, at least the request timeout                                                                                               |
-| `TEAMCRAFT_ASSISTANT_MAX_CONCURRENT`  | `4`                                        | questions running at the same time on the server, 1–64                                                                                                   |
-| `TEAMCRAFT_ASSISTANT_RETENTION_DAYS`  | `30`                                       | days an idle assistant conversation (one per user, text of questions and answers only) is kept before it is deleted, 1–365                                |
+| Variable                              | Default                                                      | Meaning                                                                                                                                                                                                                                                                                                                               |
+|---------------------------------------|--------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_ASSISTANT_PROVIDER`        | `anthropic`                                                  | wire format: `anthropic` (Messages API), `openai` (OpenAI and Azure OpenAI v1, Chat Completions) or `openai-compatible` (Ollama, vLLM, LM Studio, Mistral, OpenRouter, Groq …)                                                                                                                                                        |
+| `TEAMCRAFT_ASSISTANT_BASE_URL`        | `https://api.anthropic.com/v1` / `https://api.openai.com/v1` | API base (`/messages` or `/chat/completions` is added). Required for `openai-compatible`, e.g. `http://ollama.internal:11434/v1`; Azure: `https://<resource>.openai.azure.com/openai/v1`                                                                                                                                              |
+| `TEAMCRAFT_ASSISTANT_API_KEY`         | –                                                            | the key. A secret: prefer `_FILE`, it is never logged. Optional for `openai-compatible` (local servers)                                                                                                                                                                                                                               |
+| `TEAMCRAFT_ANTHROPIC_API_KEY`         | –                                                            | older name of `TEAMCRAFT_ASSISTANT_API_KEY`, still accepted. Setting both with different values is an error                                                                                                                                                                                                                           |
+| `TEAMCRAFT_ASSISTANT_MODEL`           | `claude-opus-5-5` (`anthropic`)                              | model id, or the Azure deployment name. Required for `openai` and `openai-compatible`                                                                                                                                                                                                                                                 |
+| `TEAMCRAFT_ASSISTANT_MAX_STEPS`       | `12`                                                         | most model calls (tool rounds) per question, 1–50                                                                                                                                                                                                                                                                                     |
+| `TEAMCRAFT_ASSISTANT_MAX_TOKENS`      | `16000`                                                      | output tokens per model call, 256–200000                                                                                                                                                                                                                                                                                              |
+| `TEAMCRAFT_ASSISTANT_REQUEST_TIMEOUT` | `180`                                                        | seconds for one HTTP call, 5–3600 (a model on a CPU may need more)                                                                                                                                                                                                                                                                    |
+| `TEAMCRAFT_ASSISTANT_RUN_TIMEOUT`     | `240` (at least the request timeout)                         | seconds for a whole question, at least the request timeout                                                                                                                                                                                                                                                                            |
+| `TEAMCRAFT_ASSISTANT_MAX_CONCURRENT`  | `4`                                                          | questions running at the same time on the server, 1–64                                                                                                                                                                                                                                                                                |
+| `TEAMCRAFT_ASSISTANT_INTERNAL_URLS`   | –                                                            | comma or space separated base URLs of internal / self-hosted model servers (`http(s)://host[:port][/path]`, no credentials). Project groups that switched `external_llm` off allow the assistant only when `TEAMCRAFT_ASSISTANT_BASE_URL` is one of them or below one (same scheme, host and port, path prefix at a segment boundary) |
+| `TEAMCRAFT_ASSISTANT_RETENTION_DAYS`  | `30`                                                         | days an idle assistant conversation (one per user, text of questions and answers only) is kept before it is deleted, 1–365                                                                                                                                                                                                            |
 
 With only `TEAMCRAFT_ANTHROPIC_API_KEY` (and optionally the model and the
 steps) everything works as it did before these variables existed. The
@@ -233,8 +261,8 @@ answer – never the question or the answer).
 
 ## Local agents
 
-The desktop app can run an AI agent on the user's own computer (its
-*Agent* view, see [ACP agents](../guide/assistant.md#acp-agents-in-the-desktop-app)),
+The desktop app can run an AI agent on the user's own computer (its *Agent* view,
+see [ACP agents](../guide/assistant.md#acp-agents-in-the-desktop-app)),
 and users can connect other MCP clients (an assistant set up by hand, the
 [`teamcraft mcp`](../reference/mcp.md) bridge) with a personal access
 token. Such agents send the user's questions and the TeamCraft data they
@@ -255,8 +283,8 @@ questions at the same time). **Admin → AI** (`/admin/ai`) shows the
 setting, the MCP endpoint's state and the configured provider, model,
 host and limits – never the key, only whether one is set.
 
-| Variable                 | Default   | Meaning                                                                                                                                                        |
-|--------------------------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Variable                 | Default   | Meaning                                                                                                                                                                                                                                      |
+|--------------------------|-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `TEAMCRAFT_LOCAL_AGENTS` | `allowed` | `allowed` or `off`. `off`: the MCP endpoint is closed for every token and the desktop app's *Agent* view runs on the company AI (the assistant), or says that AI is off when none is configured. Any other value stops the server at startup |
 
 Like every variable it also works as `TEAMCRAFT_LOCAL_AGENTS_FILE`. The
@@ -267,8 +295,8 @@ reload and checks it again before every agent start.
 What `off` does:
 
 * `POST /api/v1/mcp` answers every call with `403` and a JSON-RPC error
-  naming this setting, whoever sends it and with whichever token
-  (administrators included): the desktop app's agent, the `teamcraft mcp`
+  naming this setting, whoever sends it and with whichever token (administrators included): the desktop app's agent, the
+  `teamcraft mcp`
   bridge, an agent the user set up by hand, an older desktop app. Without
   a valid token the answer stays `401`. The built-in assistant is not
   affected: it calls the same tools inside the server, not over this
@@ -278,8 +306,8 @@ What `off` does:
   `capabilities.mcp: false`. The desktop app then ends an agent that is
   still running and refuses to start one (in the app's Rust code, not only
   in the user interface). Its **Agent** view – the app's one place for AI –
-  runs on the company AI instead: with an assistant configured
-  (`TEAMCRAFT_ASSISTANT_*`), questions go to the server's assistant
+  runs on the company AI instead: with an assistant configured (`TEAMCRAFT_ASSISTANT_*`), questions go to the server's
+  assistant
   automatically, with no local option shown (the key never reaches the
   app); without one the view says that AI is switched off by the
   administrator. *Settings → Agents* shows the same explanation. A
@@ -290,32 +318,32 @@ What `off` does:
   wording of the refusal; leaving it out does not get a call through.
 
 What `off` does **not** do – it is cooperative enforcement, not a
-barrier against a determined user: it does not close the REST API
-(`/api/v1/…`) to a user's own personal access token. A program the user
+barrier against a determined user: it does not close the REST API (`/api/v1/…`) to a user's own personal access token. A
+program the user
 writes, or another MCP client or agent that wraps the REST API with that
 token, still reads and writes with that user's rights and can hand what it
 reads to an AI provider of the user's choice. Nor can a server stop
 anyone from copying what they see into another tool. The complement is scoped personal access
 tokens: give an agent a `read_only` or `mcp_only` token (see
-[API reference](../reference/api.md#token-scopes)). A written usage policy, the token list of each user
-(*Account → API tokens*, revocable by administrators) and the audit log
-(writes are recorded under the user's name) are the controls for the rest.
+[API reference](../reference/api.md#token-scopes)). A written usage policy, the token list of each user (*Account → API
+tokens*, revocable by administrators) and the audit log (writes are recorded under the user's name) are the controls for
+the rest.
 
 ## Tests
 
-| Variable                      | Meaning                                                                                                                              |
-|-------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_TEST_DATABASE_URL` | server for the integration tests (default: the configuration above); each test creates and drops its own `teamcraft_test_*` database |
-| `TEAMCRAFT_REQUIRE_DB_TESTS`  | fail instead of skipping when no database is reachable (CI)                                                                          |
-| `TEAMCRAFT_REQUIRE_PG_TOOLS`  | fail instead of skipping the backup/restore test when `pg_dump`/`pg_restore` are missing or older than the server (CI)              |
-| `TEAMCRAFT_WRITE_SIM_FIXTURES`  | `1` lets the ignored test `write_sim_fixtures` regenerate `tests/fixtures/sim` (developers only)                                      |
+| Variable                       | Meaning                                                                                                                              |
+|--------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_TEST_DATABASE_URL`  | server for the integration tests (default: the configuration above); each test creates and drops its own `teamcraft_test_*` database |
+| `TEAMCRAFT_REQUIRE_DB_TESTS`   | fail instead of skipping when no database is reachable (CI)                                                                          |
+| `TEAMCRAFT_REQUIRE_PG_TOOLS`   | fail instead of skipping the backup/restore test when `pg_dump`/`pg_restore` are missing or older than the server (CI)               |
+| `TEAMCRAFT_WRITE_SIM_FIXTURES` | `1` lets the ignored test `write_sim_fixtures` regenerate `tests/fixtures/sim` (developers only)                                     |
 
 ## MCP stdio bridge (client side)
 
 Only `teamcraft mcp`, the bridge for AI assistants that run on a user's
 machine, reads these. The server does not (see [MCP server](../reference/mcp.md)).
 
-| Variable           | Meaning                                                                         |
-|--------------------|---------------------------------------------------------------------------------|
-| `TEAMCRAFT_SERVER` | base URL of the TeamCraft server (default `http://localhost:8080`)              |
+| Variable           | Meaning                                                                   |
+|--------------------|---------------------------------------------------------------------------|
+| `TEAMCRAFT_SERVER` | base URL of the TeamCraft server (default `http://localhost:8080`)        |
 | `TEAMCRAFT_TOKEN`  | the user's personal access token (or `--token-file`); it is never printed |

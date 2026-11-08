@@ -30,6 +30,9 @@ use crate::error::{AppError, AppResult};
 #[derive(Clone, Debug)]
 pub struct Vault {
     root: PathBuf,
+    /// Malware scan of new content before it enters `objects/`
+    /// (`TEAMCRAFT_CLAMD_ADDR`; none = no scan).
+    scanner: Option<std::sync::Arc<crate::malware::ScannerConfig>>,
 }
 
 /// Result of a completed upload.
@@ -85,7 +88,10 @@ async fn put_in_place(source: &Path, target: &Path) -> AppResult<()> {
 impl Vault {
     /// Creates the directory layout (if needed) and removes stale temporary files.
     pub async fn open(root: impl Into<PathBuf>) -> std::io::Result<Vault> {
-        let vault = Vault { root: root.into() };
+        let vault = Vault {
+            root: root.into(),
+            scanner: None,
+        };
         fs::create_dir_all(vault.objects_dir()).await?;
         fs::create_dir_all(vault.tmp_dir()).await?;
         fs::create_dir_all(vault.uploads_dir()).await?;
@@ -95,6 +101,22 @@ impl Vault {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The same vault, scanning every new file for malware before it is
+    /// stored (see [`crate::malware`]); `None` = no scan.
+    pub fn with_scanner(mut self, scanner: Option<crate::malware::ScannerConfig>) -> Vault {
+        self.scanner = scanner.map(std::sync::Arc::new);
+        self
+    }
+
+    /// Refuses infected content (400) and fails closed (503) when the
+    /// scanner cannot be asked; without a scanner nothing happens.
+    async fn ensure_clean(&self, path: &Path, size: u64) -> AppResult<()> {
+        match &self.scanner {
+            Some(scanner) => crate::malware::ensure_clean(scanner, path, size).await,
+            None => Ok(()),
+        }
     }
 
     fn objects_dir(&self) -> PathBuf {
@@ -262,6 +284,10 @@ impl Vault {
     pub async fn adopt_staged(&self, session: Uuid, sha256: &str) -> AppResult<()> {
         let source = self.staging_path(session);
         let target = self.object_path(sha256)?;
+        if self.scanner.is_some() {
+            let size = fs::metadata(&source).await?.len();
+            self.ensure_clean(&source, size).await?;
+        }
         put_in_place(&source, &target).await
     }
 
@@ -453,6 +479,9 @@ impl Upload {
         drop(file);
         let sha256 = hex::encode(std::mem::take(&mut self.hasher).finalize());
         let target = self.vault.object_path(&sha256)?;
+        // infected content never reaches objects/ (the temporary file is
+        // removed when the upload is dropped)
+        self.vault.ensure_clean(&self.tmp_path, self.size).await?;
         // identical content may be stored already
         put_in_place(&self.tmp_path, &target).await?;
         self.finished = true;
@@ -544,10 +573,44 @@ mod tests {
         fs::remove_dir_all(root).await.ok();
     }
 
+    #[tokio::test]
+    async fn infected_content_never_enters_the_vault() {
+        let root = temp_root();
+        let scanner = crate::malware::ScannerConfig {
+            addr: crate::malware::tests::fake_clamd().await,
+            max_bytes: 1024 * 1024,
+            timeout: Duration::from_secs(5),
+        };
+        let vault = Vault::open(&root)
+            .await
+            .unwrap()
+            .with_scanner(Some(scanner));
+        // streamed upload: refused, no blob and no temporary file left
+        let bad = b"X5O!P%@AP EICAR test file";
+        assert!(matches!(
+            vault.store_bytes(bad).await,
+            Err(AppError::BadRequest(_))
+        ));
+        let sha = hex::encode(Sha256::digest(bad));
+        assert!(!vault.exists(&sha).await);
+        assert_eq!(std::fs::read_dir(vault.tmp_dir()).unwrap().count(), 0);
+        let good = vault.store_bytes(b"clean content").await.unwrap();
+        assert!(vault.exists(&good.sha256).await);
+        // chunked upload: the staging file is scanned when it is adopted
+        let session = Uuid::new_v4();
+        vault.create_staging(session).await.unwrap();
+        vault.write_staged(session, 0, bad).await.unwrap();
+        let staged = vault.hash_staged(session).await.unwrap();
+        assert!(vault.adopt_staged(session, &staged.sha256).await.is_err());
+        assert!(!vault.exists(&staged.sha256).await);
+        fs::remove_dir_all(root).await.ok();
+    }
+
     #[test]
     fn rejects_bad_hashes() {
         let vault = Vault {
             root: PathBuf::from("/nonexistent"),
+            scanner: None,
         };
         assert!(vault.object_path("../../etc/passwd").is_err());
         assert!(vault.object_path(&"g".repeat(64)).is_err());

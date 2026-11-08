@@ -216,7 +216,7 @@ pub async fn revision_files(
 
 /// The folders of the workspace the files of a revision live in, with the
 /// server folder each stands for; without files the project group folder.
-fn revision_dirs(project: Option<&str>, files: &[ServerFile]) -> Vec<(String, String)> {
+pub(crate) fn revision_dirs(project: Option<&str>, files: &[ServerFile]) -> Vec<(String, String)> {
     let mut dirs: BTreeMap<String, String> = BTreeMap::new();
     for f in files {
         dirs.entry(layout::local_dir_rel(project, &f.folder))
@@ -281,6 +281,8 @@ pub struct Downloaded {
     /// member of: skipped (not downloaded, no identity).
     pub restricted_lines: u64,
     pub revisions: usize,
+    /// After a check-out with structure: the sentence for the user.
+    pub summary: String,
 }
 
 /// Copies the server files into the working folder: missing and outdated
@@ -473,6 +475,82 @@ pub async fn get_structure(
             None,
         )
         .await?;
+    let (files, root_files, root_project, revisions) = workset_files(&set);
+    let mut report = fetch(api, root, &files, cancel, progress).await?;
+    report.dir = main_dir(root, root_project.as_deref(), &root_files);
+    report.revisions = revisions;
+    let strings = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    report.unresolved = strings(&set["unresolved"]);
+    report.missing_references = strings(&set["missing_references"]);
+    report.restricted_lines = set["restricted_lines"].as_u64().unwrap_or(0);
+    Ok(report)
+}
+
+/// Check out with structure: the lock is already taken on the assembly (and
+/// only on it). Its files become writable; every part of the structure that
+/// is missing here is downloaded read-only, an unchanged older copy is
+/// updated, and a part changed here or a file whose place is taken is kept –
+/// the same decisions as *Get* ([`layout::plan_get`]). All in one progress
+/// stream and under one cancel switch.
+pub async fn checkout_with_structure(
+    api: &Api,
+    root: &Path,
+    item: &str,
+    code: &str,
+    rule: &str,
+    cancel: &AtomicBool,
+    progress: &mut (dyn FnMut(&Progress) + Send),
+) -> Result<Downloaded, ApiError> {
+    let mut report = get_structure(api, root, item, code, rule, cancel, progress).await?;
+    report.summary = checkout_summary(&report, item, code);
+    Ok(report)
+}
+
+/// The sentence shown after a check-out with structure: counts of the parts'
+/// files and the kept ones by name.
+pub fn checkout_summary(r: &Downloaded, item: &str, code: &str) -> String {
+    let mut parts = Vec::new();
+    if !r.downloaded.is_empty() {
+        parts.push(format!("{} file(s) downloaded", r.downloaded.len()));
+    }
+    if r.up_to_date > 0 {
+        parts.push(format!("{} up to date", r.up_to_date));
+    }
+    if !r.kept.is_empty() {
+        parts.push(format!(
+            "{} kept (your local changes): {}",
+            r.kept.len(),
+            r.kept.join(", ")
+        ));
+    }
+    if !r.clashes.is_empty() {
+        parts.push(format!(
+            "{} name clash(es), not overwritten",
+            r.clashes.len()
+        ));
+    }
+    if !r.failed.is_empty() {
+        parts.push(format!("{} failed", r.failed.len()));
+    }
+    let head = format!("Checked out {item}/{code}.");
+    if parts.is_empty() {
+        head
+    } else {
+        format!("{head} {}.", parts.join(", "))
+    }
+}
+
+/// The files of a `workset` answer: all, those of the root revision, the
+/// root's project group and the number of revisions.
+fn workset_files(set: &Value) -> (Vec<ServerFile>, Vec<ServerFile>, Option<String>, usize) {
     let mut files = Vec::new();
     let mut root_files = Vec::new();
     let mut root_project = None;
@@ -505,22 +583,7 @@ pub async fn get_structure(
             root_project = project;
         }
     }
-    let mut report = fetch(api, root, &files, cancel, progress).await?;
-    report.dir = main_dir(root, root_project.as_deref(), &root_files);
-    report.revisions = revisions.len();
-    let strings = |v: &Value| -> Vec<String> {
-        v.as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|s| s.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-    report.unresolved = strings(&set["unresolved"]);
-    report.missing_references = strings(&set["missing_references"]);
-    report.restricted_lines = set["restricted_lines"].as_u64().unwrap_or(0);
-    Ok(report)
+    (files, root_files, root_project, revisions.len())
 }
 
 // ---------------------------------------------------------------------------
@@ -577,6 +640,8 @@ struct Found {
 async fn new_local_files(
     root: &Path,
     project: Option<&str>,
+    item: &str,
+    code: &str,
     files: &[ServerFile],
     state: &State,
 ) -> Result<Vec<(String, PathBuf, String)>, ApiError> {
@@ -590,6 +655,13 @@ async fn new_local_files(
         .map(|f| safe_name(&f.filename).to_lowercase())
         .collect();
     let mut out = Vec::new();
+    // files added with "Add files…" are new whatever they are called
+    for p in crate::addfiles::pending(root, item, code) {
+        let path = layout::join_rel(root, &p.rel);
+        if !names.contains(&safe_name(&p.name).to_lowercase()) && path.is_file() {
+            out.push((p.name, path, p.folder));
+        }
+    }
     if files.is_empty() {
         return Ok(out);
     }
@@ -613,6 +685,7 @@ async fn new_local_files(
                 || state.get(&rel).is_some()
                 || !stems.contains(&layout::stem_of(&logical))
                 || !seen.insert(logical.to_lowercase())
+                || out.iter().any(|(n, _, _)| n.eq_ignore_ascii_case(&logical))
             {
                 continue;
             }
@@ -703,7 +776,7 @@ pub async fn status(
             clash_with,
         });
     }
-    for (name, path, _) in new_local_files(root, project, &rev.files, &state).await? {
+    for (name, path, _) in new_local_files(root, project, item, code, &rev.files, &state).await? {
         let rel = layout::rel_of(root, &path).unwrap_or_default();
         found.push(Found {
             name,
@@ -893,7 +966,7 @@ pub async fn check_in(
     let rev = revision_files(api, project, item, code).await?;
     let mut state = State::load(root);
     let before = state.clone();
-    let news = new_local_files(root, project, &rev.files, &state).await?;
+    let news = new_local_files(root, project, item, code, &rev.files, &state).await?;
     let mut files = Vec::new();
     let mut bases = serde_json::Map::new();
     let mut folders = serde_json::Map::new();
@@ -955,6 +1028,8 @@ pub async fn check_in(
             transfer,
         )
         .await?;
+    let uploaded: Vec<String> = files.iter().map(|(n, _)| n.clone()).collect();
+    crate::addfiles::forget(root, item, code, &uploaded);
     // The checked-in content is the new base of the local files, and the
     // lock is gone: everything unchanged becomes read-only (best effort –
     // the check-in itself has succeeded).
@@ -1531,6 +1606,320 @@ mod tests {
                 ("ROVER/chassis/brackets".to_string(), false),
             ],
             "ROVER/chassis holds a subfolder"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Check-out of an assembly: the parts come with it, local files stay
+    // ------------------------------------------------------------------
+
+    fn sha(content: &[u8]) -> String {
+        hex::encode(Sha256::digest(content))
+    }
+
+    type Requests = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+    /// A minimal server: `GET …/workset…` answers `workset`, every
+    /// `GET …/files/<id>/content` the body of that id; `requests` records the
+    /// paths asked for.
+    async fn fake_server(
+        workset: Value,
+        bodies: HashMap<String, Vec<u8>>,
+        requests: Requests,
+    ) -> Api {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                let (workset, bodies, requests) =
+                    (workset.clone(), bodies.clone(), requests.clone());
+                tokio::spawn(async move {
+                    let mut head = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                        let n = sock.read(&mut buf).await.unwrap_or(0);
+                        if n == 0 {
+                            return;
+                        }
+                        head.extend_from_slice(&buf[..n]);
+                    }
+                    let text = String::from_utf8_lossy(&head).to_string();
+                    let path = text.split_whitespace().nth(1).unwrap_or("").to_string();
+                    requests.lock().unwrap().push(path.clone());
+                    let (kind, body) = if path.contains("/workset") {
+                        ("application/json", workset.to_string().into_bytes())
+                    } else {
+                        let id = path
+                            .split("/files/")
+                            .nth(1)
+                            .and_then(|r| r.split('/').next())
+                            .unwrap_or("");
+                        (
+                            "application/octet-stream",
+                            bodies.get(id).cloned().unwrap_or_default(),
+                        )
+                    };
+                    let mut reply = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .into_bytes();
+                    reply.extend_from_slice(&body);
+                    let _ = sock.write_all(&reply).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        Api {
+            client: crate::api::client(),
+            base: format!("http://{addr}"),
+            token: Some("test".into()),
+        }
+    }
+
+    struct Part {
+        item: &'static str,
+        file: &'static str,
+        content: &'static [u8],
+        locked: bool,
+    }
+
+    fn revision_json(item: &str, locked: bool, part: &Part) -> Value {
+        json!({
+            "project_code": "ROVER", "item_number": item, "code": "A", "locked_by_me": locked,
+            "files": [{
+                "file_id": format!("id-{}", part.file), "filename": part.file, "folder": "",
+                "version": 2, "sha256": sha(part.content), "size_bytes": part.content.len(),
+            }],
+        })
+    }
+
+    const ASM: Part = Part {
+        item: "ASM-000001",
+        file: "rig.asm",
+        content: b"assembly v2",
+        locked: true,
+    };
+    const NEW: Part = Part {
+        item: "PRT-000005",
+        file: "box.prt",
+        content: b"box v2",
+        locked: false,
+    };
+    const SAME: Part = Part {
+        item: "PRT-000006",
+        file: "plate.prt",
+        content: b"plate v2",
+        locked: false,
+    };
+    const OLD: Part = Part {
+        item: "PRT-000007",
+        file: "window.prt",
+        content: b"window v2",
+        locked: false,
+    };
+    const EDITED: Part = Part {
+        item: "PRT-000004",
+        file: "cover.prt",
+        content: b"cover v2",
+        locked: false,
+    };
+    const TAKEN: Part = Part {
+        item: "PRT-000008",
+        file: "screw.prt",
+        content: b"screw v2",
+        locked: false,
+    };
+
+    fn server_file(p: &Part, version: i64) -> ServerFile {
+        ServerFile {
+            project: Some("ROVER".into()),
+            item: p.item.into(),
+            revision: "A".into(),
+            file_id: format!("id-{}", p.file),
+            filename: p.file.into(),
+            folder: String::new(),
+            version,
+            sha256: sha(p.content),
+            size: p.content.len() as u64,
+            locked_by_me: p.locked,
+        }
+    }
+
+    fn serving(parts: &[&Part]) -> HashMap<String, Vec<u8>> {
+        parts
+            .iter()
+            .map(|p| (format!("id-{}", p.file), p.content.to_vec()))
+            .collect()
+    }
+
+    /// Check-out of an assembly: the parts missing here come read-only, an
+    /// unchanged older copy is updated, an up-to-date one is skipped, a part
+    /// changed here and a file at a taken place are never written, and the
+    /// assembly itself is writable.
+    #[tokio::test]
+    async fn checkout_gets_the_parts_and_never_overwrites_local_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let local = |p: &Part| root.join("ROVER").join(p.file);
+        std::fs::create_dir_all(root.join("ROVER")).unwrap();
+        // SAME is current; OLD is an unchanged copy of version 1; EDITED was
+        // changed here; TAKEN's place holds a file that is not from TeamCraft
+        std::fs::write(local(&SAME), SAME.content).unwrap();
+        std::fs::write(local(&OLD), b"window v1").unwrap();
+        std::fs::write(local(&EDITED), b"my own cover edits").unwrap();
+        std::fs::write(local(&TAKEN), b"somebody's screw").unwrap();
+        State::store(
+            root,
+            [
+                server_file(&OLD, 1).entry(&sha(b"window v1"), 9, 0),
+                server_file(&EDITED, 1).entry(&sha(b"cover v1"), 8, 0),
+            ],
+        )
+        .unwrap();
+
+        let workset = json!({
+            "revisions": [
+                revision_json(ASM.item, true, &ASM),
+                revision_json(NEW.item, false, &NEW),
+                revision_json(SAME.item, false, &SAME),
+                revision_json(OLD.item, false, &OLD),
+                revision_json(EDITED.item, false, &EDITED),
+                revision_json(TAKEN.item, false, &TAKEN),
+            ],
+            "unresolved": [], "missing_references": [],
+        });
+        let requests = Requests::default();
+        let api = fake_server(
+            workset,
+            serving(&[&ASM, &NEW, &SAME, &OLD, &EDITED, &TAKEN]),
+            requests.clone(),
+        )
+        .await;
+
+        let cancel = AtomicBool::new(false);
+        let report = checkout_with_structure(
+            &api,
+            root,
+            "ASM-000001",
+            "A",
+            "latest",
+            &cancel,
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+
+        // downloaded: the assembly, the missing box, the updated window
+        let mut downloaded = report.downloaded.clone();
+        downloaded.sort();
+        assert_eq!(
+            downloaded,
+            ["ROVER/box.prt", "ROVER/rig.asm", "ROVER/window.prt"]
+        );
+        assert_eq!(report.up_to_date, 1);
+        assert_eq!(report.kept, ["ROVER/cover.prt"]);
+        assert_eq!(report.clashes.len(), 1);
+        assert_eq!(report.clashes[0].path, "ROVER/screw.prt");
+        assert!(report.failed.is_empty() && !report.cancelled);
+
+        // never written: the edited part and the file at the taken place
+        assert_eq!(
+            std::fs::read(local(&EDITED)).unwrap(),
+            b"my own cover edits"
+        );
+        assert_eq!(std::fs::read(local(&TAKEN)).unwrap(), b"somebody's screw");
+        let asked = requests.lock().unwrap().clone();
+        for never in ["id-cover.prt", "id-screw.prt", "id-plate.prt"] {
+            assert!(
+                !asked.iter().any(|p| p.contains(never)),
+                "{never} must not be requested: {asked:?}"
+            );
+        }
+        // content and permissions
+        assert_eq!(std::fs::read(local(&NEW)).unwrap(), NEW.content);
+        assert_eq!(std::fs::read(local(&OLD)).unwrap(), OLD.content);
+        assert!(is_read_only(&local(&NEW)), "parts are read-only");
+        assert!(is_read_only(&local(&OLD)));
+        assert!(!is_read_only(&local(&ASM)), "the assembly is writable");
+        assert_eq!(
+            report.summary,
+            "Checked out ASM-000001/A. 3 file(s) downloaded, 1 up to date, \
+             1 kept (your local changes): ROVER/cover.prt, 1 name clash(es), not overwritten."
+        );
+        // no partial files
+        let leftovers: Vec<_> = std::fs::read_dir(root.join("ROVER"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.contains(".part") || n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    /// Cancelled: nothing on disk. A second check-out changes nothing, and a
+    /// part the user edited in between is kept.
+    #[tokio::test]
+    async fn checkout_cancel_writes_nothing_and_repeat_keeps_edits() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let workset = json!({
+            "revisions": [
+                revision_json(ASM.item, true, &ASM),
+                revision_json(NEW.item, false, &NEW),
+            ],
+        });
+        let api = fake_server(workset, serving(&[&ASM, &NEW]), Requests::default()).await;
+
+        let cancelled = AtomicBool::new(true);
+        let r = checkout_with_structure(
+            &api,
+            root,
+            "ASM-000001",
+            "A",
+            "latest",
+            &cancelled,
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
+        assert!(r.cancelled && r.downloaded.is_empty());
+        assert!(!root.join("ROVER").join("rig.asm").exists());
+        assert!(!root.join("ROVER").join("box.prt").exists());
+
+        let go = AtomicBool::new(false);
+        let again = || async {
+            checkout_with_structure(&api, root, "ASM-000001", "A", "latest", &go, &mut |_| {}).await
+        };
+        assert_eq!(again().await.unwrap().downloaded.len(), 2);
+        // the user edits the part (lifting the read-only flag is theirs to do)
+        let part = root.join("ROVER").join("box.prt");
+        set_read_only(&part, false).unwrap();
+        std::fs::write(&part, b"edited box").unwrap();
+        let second = again().await.unwrap();
+        assert!(second.downloaded.is_empty());
+        assert_eq!(second.up_to_date, 1, "the assembly");
+        assert_eq!(second.kept, ["ROVER/box.prt"]);
+        assert_eq!(std::fs::read(&part).unwrap(), b"edited box");
+    }
+
+    #[test]
+    fn workset_files_and_summary() {
+        let set = json!({"revisions": [
+            revision_json(ASM.item, true, &ASM),
+            revision_json(NEW.item, false, &NEW),
+        ]});
+        let (files, root_files, project, revisions) = workset_files(&set);
+        assert_eq!(files.len(), 2);
+        assert_eq!(root_files.len(), 1);
+        assert!(root_files[0].locked_by_me && !files[1].locked_by_me);
+        assert_eq!(project.as_deref(), Some("ROVER"));
+        assert_eq!(revisions, 2);
+        // a part without structure: nothing to report beyond the check-out
+        assert_eq!(
+            checkout_summary(&Downloaded::default(), "PRT-000001", "A"),
+            "Checked out PRT-000001/A."
         );
     }
 }

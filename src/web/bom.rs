@@ -17,7 +17,7 @@ use crate::{
     error::AppResult,
     services::{
         access_log::{self, AccessCtx},
-        bom, interchange, package, project_policy, projects, revisions,
+        bom, bom_references, interchange, package, project_policy, projects, revisions,
     },
     util, AppState,
 };
@@ -354,4 +354,76 @@ pub async fn package(
     let rev = revisions::get(&st.db, &me, id).await?;
     let rule = package_rule(q.rule.as_deref(), &rev.state);
     package_response(package::build(&st.db, &st.vault, &me, id, rule, &log).await?)
+}
+
+/// GET /revisions/{id}/bom/from-references – the BOM the CAD references of
+/// the revision lead to, as a preview with a checkbox per child.
+pub async fn from_references(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let me = &ctx.me;
+    let rev = revisions::get(&st.db, me, id).await?;
+    let plan = bom_references::plan(&st, me, id).await?;
+    let editable = revisions::ensure_editable(&rev, me).is_ok();
+    let can_checkout =
+        rev.checked_out_by.is_none() && revisions::ensure_checkout_possible(&rev, me).is_ok();
+    let differs = plan
+        .children
+        .iter()
+        .any(|c| c.status == bom_references::ChildStatus::Differs);
+    render(
+        &st,
+        &ctx,
+        "revisions/bom_from_references.html",
+        json!({
+            "rev": rev,
+            "plan": plan,
+            "editable": editable,
+            "can_checkout": can_checkout,
+            "differs": differs,
+        }),
+    )
+}
+
+/// POST /revisions/{id}/bom/from-references – adds the ticked children
+/// (`child=PRT-…`, repeated); `checkout=1` checks the revision out first.
+pub async fn apply_from_references(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(fields): Form<Vec<(String, String)>>,
+) -> AppResult<Response> {
+    let back = format!("/revisions/{id}/bom/from-references");
+    let done = format!("/revisions/{id}#bom");
+    let flag = |name: &str| fields.iter().any(|(k, v)| k == name && !v.is_empty());
+    let request = bom_references::ApplyRequest {
+        children: fields
+            .iter()
+            .filter(|(k, _)| k == "child")
+            .map(|(_, v)| v.clone())
+            .collect(),
+        update_quantities: flag("update_quantities"),
+    };
+    let result = async {
+        if flag("checkout") {
+            revisions::checkout(&st.db, &ctx.me, id).await?;
+        }
+        bom_references::apply(&st, &ctx.me, id, &request).await
+    }
+    .await;
+    finish(&st, result, &back, |r| {
+        let mut message = format!(
+            "Added {} BOM line(s) from the CAD references",
+            r.added.len()
+        );
+        if !r.updated.is_empty() {
+            message.push_str(&format!(", changed {} quantity(ies)", r.updated.len()));
+        }
+        if !r.refused.is_empty() {
+            message.push_str(&format!(", refused {} (circular)", r.refused.len()));
+        }
+        (done.clone(), message)
+    })
 }

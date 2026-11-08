@@ -109,6 +109,8 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/items/new", get(items::new_form))
         .route("/items/{id}", get(items::show))
+        .route("/items/{id}/label", get(items::label))
+        .route("/items/{id}/qr.svg", get(items::qr_svg))
         .route("/items/{id}/master", post(items::update_master))
         .route("/items/{id}/owner", post(items::set_owner))
         .route("/items/{id}/delete", post(items::delete))
@@ -169,8 +171,20 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(revisions::preview_version),
         )
         .route("/file-versions/{id}/mesh", get(revisions::mesh_version))
+        .route(
+            "/file-versions/{id}/annotations",
+            get(revisions::annotations).post(revisions::add_annotation),
+        )
+        .route(
+            "/annotations/{id}/delete",
+            post(revisions::remove_annotation),
+        )
         // BOM
         .route("/revisions/{id}/bom", get(bom::show))
+        .route(
+            "/revisions/{id}/bom/from-references",
+            get(bom::from_references).post(bom::apply_from_references),
+        )
         .route("/revisions/{id}/bom/compare", get(personal::bom_compare))
         .route(
             "/revisions/{id}/bom/compare.xlsx",
@@ -255,6 +269,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(simulations::delete_result),
         )
         .route(
+            "/revisions/{id}/simulation/fill-with-ai",
+            post(simulations::fill_with_ai),
+        )
+        .route(
             "/simulation-proposals/{id}/accept",
             post(simulations::accept_proposal),
         )
@@ -280,6 +298,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/new", get(changes::new_form))
         .route("/changes/{id}", get(changes::show).post(changes::update))
         .route("/changes/{id}/items", post(changes::add_item))
+        .route("/changes/{id}/actions", post(changes::add_action))
         .route(
             "/changes/{id}/dependencies",
             post(changes::add_dependencies),
@@ -302,6 +321,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{id}/withdraw", post(changes::withdraw))
         .route("/changes/{id}/reopen", post(changes::reopen))
         .route("/changes/{id}/cancel", post(changes::cancel))
+        .route("/changes/{id}/take-over", post(changes::take_over))
         // change requests (ECR)
         .route("/requests", get(requests::list).post(requests::create))
         .route("/requests/new", get(requests::new_form))
@@ -375,6 +395,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/projects/{id}/members/{user_id}/remove",
             post(admin::remove_member),
         )
+        .route(
+            "/projects/{id}/members/{user_id}/demote",
+            post(admin::demote_member),
+        )
+        .route(
+            "/projects/{id}/members/{user_id}/release-checkouts",
+            post(admin::release_member_checkouts),
+        )
         .route("/admin/users", get(admin::users).post(admin::create_user))
         .route(
             "/admin/users/{id}",
@@ -382,9 +410,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/admin/users/{id}/handover", post(admin::handover))
+        .route(
+            "/admin/users/{id}/release-checkouts",
+            post(admin::release_user_checkouts),
+        )
         .route("/admin/audit", get(admin::audit))
         .route("/admin/ai", get(admin::ai))
         .route("/admin/branding", get(branding::page))
+        .route("/admin/branding/name", post(branding::set_name))
         .route(
             "/admin/branding/{kind}",
             post(branding::upload).layer(DefaultBodyLimit::max(

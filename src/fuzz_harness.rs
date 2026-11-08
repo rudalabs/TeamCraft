@@ -29,6 +29,7 @@ pub const MESH_FORMATS: &[&str] = &[
     "amf",
     "gltf",
     "3ds",
+    "rhino",
     "pts",
     "las",
     "vtk-legacy",
@@ -49,10 +50,13 @@ pub fn stepbom(data: &[u8]) {
 }
 
 /// SOLIDWORKS 2015+ container: reference sections, the component tree as
-/// XML, the preview section.
+/// XML (files and placements), the preview section, the display
+/// tessellation of the 3D preview.
 pub fn swpart(data: &[u8]) {
     let _ = crate::swpart::reference_data(Cursor::new(data), LIMIT);
     let _ = crate::swpart::components(data);
+    let _ = crate::swpart::placements(data);
+    let _ = crate::mesh::read("solidworks-part", data);
     if let Ok(Some(mut sw)) = crate::swpart::SwContainer::open(Cursor::new(data)) {
         let _ = sw.read(crate::swpart::PREVIEW_SECTION, LIMIT);
     }

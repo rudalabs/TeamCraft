@@ -152,7 +152,7 @@ pub(super) async fn project_policy_get(
 pub(super) struct SetPolicy {
     admin_read: Option<String>,
     /// Interface name (`api_tokens`, `mcp`, `assistant`, `webhooks`,
-    /// `packages`) to allowed.
+    /// `packages`, `notification_content`, `external_llm`, `desktop_sync`) to allowed.
     interfaces: Option<std::collections::BTreeMap<String, bool>>,
     read_log: Option<bool>,
     /// 1 to 36500 days; `0` removes the retention (the log is kept until
@@ -186,7 +186,7 @@ pub(super) async fn project_policy_set(
     for (name, allowed) in body.interfaces.iter().flatten() {
         let interface = project_policy::Interface::parse(name).ok_or_else(|| {
             AppError::BadRequest(format!(
-                "Unknown interface '{name}': use api_tokens, mcp, assistant, webhooks or packages."
+                "Unknown interface '{name}': use api_tokens, mcp, assistant, webhooks, packages, notification_content, external_llm or desktop_sync."
             ))
         })?;
         update.interfaces.push((interface, *allowed));
@@ -269,6 +269,9 @@ pub(super) struct SetReviewPolicy {
     /// Code of the role group (empty or null: none).
     #[serde(default)]
     role_group: Option<String>,
+    /// Obsolete and supersede only through a change order (omitted: unchanged).
+    #[serde(default)]
+    obsolete_requires_change: Option<bool>,
 }
 
 /// `PUT /api/v1/projects/{code}/review-policy` – managers and admins.
@@ -283,6 +286,7 @@ pub(super) async fn review_policy_set(
         min_approvals: body.min_approvals,
         required_usernames: body.required_reviewers,
         role_group_code: body.role_group,
+        obsolete_requires_change: body.obsolete_requires_change,
     };
     Ok(Json(json!(
         project_policy::set_review_policy(&st.db, &me, project.id, &input).await?
