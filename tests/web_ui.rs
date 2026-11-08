@@ -1837,3 +1837,43 @@ async fn simulations_in_the_web_ui() {
     assert_eq!(r.status, StatusCode::OK, "the basis item still exists");
     app.teardown().await;
 }
+
+/// Regression (#182): the sign-in and error pages carry both logo variants and
+/// skins.css must show exactly one. A `display` rule on the logo classes in
+/// style.css (higher specificity than the :where() skin rules) showed both.
+#[test]
+fn logo_variants_are_switched_by_skins_css_only() {
+    let root = env!("CARGO_MANIFEST_DIR");
+    let read = |p: &str| std::fs::read_to_string(format!("{root}/{p}")).unwrap();
+    let skins = read("shared/css/skins.css");
+    assert!(
+        skins.contains(".on-dark, .skin-logo-dark { display: none; }"),
+        "the dark variant is hidden by default"
+    );
+    assert!(skins.contains(":is(.on-light, .skin-logo-light) { display: none; }"));
+    for file in ["static/style.css", "desktop/ui/app.css"] {
+        for rule in read(file).split('}') {
+            let Some((selector, body)) = rule.split_once('{') else {
+                continue;
+            };
+            let touches_logo = [
+                ".on-light",
+                ".on-dark",
+                ".login-logo",
+                ".skin-logo",
+                ".connect-logo",
+            ]
+            .iter()
+            .any(|c| selector.contains(c));
+            assert!(
+                !(touches_logo && body.contains("display")),
+                "{file}: `{}` must not set display (it would show both logos)",
+                selector.trim()
+            );
+        }
+    }
+    for tpl in ["templates/login.html", "templates/error.html"] {
+        let html = read(tpl);
+        assert!(html.contains("login-logo on-dark") && html.contains("login-logo on-light"));
+    }
+}
