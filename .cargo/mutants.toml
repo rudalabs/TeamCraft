@@ -71,6 +71,10 @@ exclude_re = [
     # htmltext::to_text: reading on after the text is full only costs time –
     # `Out::text` refuses every further character.
     "src/htmltext.rs:979:28: replace && with \\|\\| in to_text",
+    # resultscan::compile_regex: the lazy-DFA cache limit only changes speed –
+    # when the cache is full the regex crate falls back to a slower engine
+    # with the same matches; the compile-time `size_limit` is tested.
+    "src/resultscan.rs:431:42: replace \\* with \\+ in compile_regex",
 ]
 
 # Unit tests only (see above); the integration tests in tests/ need PostgreSQL.
