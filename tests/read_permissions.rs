@@ -3382,6 +3382,8 @@ async fn fourth_review_round_leaks_are_closed() {
         page: Default::default(),
         history: Vec::new(),
         thread: false,
+        limits: String::new(),
+        files: Vec::new(),
     };
     let tools = McpTools::new(&app.state, &mona_actor);
     tools.note_context(&question(&hs)).await;

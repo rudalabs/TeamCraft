@@ -255,6 +255,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(simulations::delete_result),
         )
         .route(
+            "/revisions/{id}/simulation/fill-with-ai",
+            post(simulations::fill_with_ai),
+        )
+        .route(
             "/simulation-proposals/{id}/accept",
             post(simulations::accept_proposal),
         )
