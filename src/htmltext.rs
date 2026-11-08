@@ -1525,6 +1525,11 @@ mod tests {
             ("<div>a</div>b", "a\nb"),
             // </pre> ends the preformatted text
             ("<pre>a  b</pre>c   d", "a  b\n\nc d"),
+            // a nested table keeps its own cells and separators
+            (
+                "<table><tr><td>a<table><tr><td>b1</td><td>b2</td></tr></table></td></tr></table>",
+                "a\n\nb1 | b2\n\n",
+            ),
             // a <br> inside a hidden cell does not keep the next cell hidden
             ("<table><tr><td hidden>x<br><td>1.5</table>", "| 1.5\n\n"),
             // the alt text of an image keeps its spaces inside <pre> only
@@ -1546,6 +1551,22 @@ mod tests {
             t.contains("shown") && !t.contains("leak") && !t.contains("after"),
             "{t}"
         );
+    }
+
+    /// Found by cargo mutants: attribute details of `read_tag`.
+    #[test]
+    fn tag_attributes() {
+        // a self-closing element hides nothing after it
+        assert_eq!(text("<p>a <span hidden/> b</p>"), "a b");
+        // unquoted values
+        assert_eq!(text("<p><img alt=Nozzle></p>"), "Nozzle");
+        // aria-hidden only when true
+        assert_eq!(text("<div aria-hidden=\"false\">shown</div>"), "shown");
+        assert_eq!(text("<div aria-hidden=\" TRUE \">x</div><p>y</p>"), "y");
+        // an alt text is kept up to MAX_ATTR_CHARS characters
+        let alt = "x".repeat(MAX_ATTR_CHARS + 500);
+        let t = text(&format!("<p><img alt=\"{alt}\"></p>"));
+        assert_eq!(t.chars().count(), MAX_ATTR_CHARS, "{}", t.len());
     }
 
     /// Found by cargo mutants: the text stops at `MAX_CHARS` characters.
