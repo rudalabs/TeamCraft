@@ -879,17 +879,26 @@ pub enum Interface {
     Webhooks,
     /// Pack and Go and BOM downloads (CSV, Excel).
     Packages,
+    /// E-mail and chat notifications carry titles, numbers and text of the group.
+    NotificationContent,
+    /// The assistant may use an external (not internal-listed) LLM provider.
+    ExternalLlm,
+    /// The desktop app's Get (working set).
+    DesktopSync,
 }
 
 impl Interface {
     /// Every interface, in the order shown to the managers. The column of
     /// `project_policies` has the name of [`Interface::as_str`].
-    pub const ALL: [Interface; 5] = [
+    pub const ALL: [Interface; 8] = [
         Interface::ApiTokens,
         Interface::Mcp,
         Interface::Assistant,
         Interface::Webhooks,
         Interface::Packages,
+        Interface::NotificationContent,
+        Interface::ExternalLlm,
+        Interface::DesktopSync,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -899,6 +908,9 @@ impl Interface {
             Interface::Assistant => "assistant",
             Interface::Webhooks => "webhooks",
             Interface::Packages => "packages",
+            Interface::NotificationContent => "notification_content",
+            Interface::ExternalLlm => "external_llm",
+            Interface::DesktopSync => "desktop_sync",
         }
     }
 
@@ -914,6 +926,9 @@ impl Interface {
             Interface::Assistant => "Built-in assistant",
             Interface::Webhooks => "Outgoing webhooks",
             Interface::Packages => "Pack and Go and BOM downloads",
+            Interface::NotificationContent => "Titles and text in e-mail and chat notifications",
+            Interface::ExternalLlm => "Built-in assistant with an external LLM provider",
+            Interface::DesktopSync => "Desktop app Get (working set)",
         }
     }
 }
@@ -926,6 +941,9 @@ pub struct Interfaces {
     pub assistant: bool,
     pub webhooks: bool,
     pub packages: bool,
+    pub notification_content: bool,
+    pub external_llm: bool,
+    pub desktop_sync: bool,
 }
 
 impl Default for Interfaces {
@@ -936,6 +954,9 @@ impl Default for Interfaces {
             assistant: true,
             webhooks: true,
             packages: true,
+            notification_content: true,
+            external_llm: true,
+            desktop_sync: true,
         }
     }
 }
@@ -948,6 +969,9 @@ impl Interfaces {
             Interface::Assistant => self.assistant,
             Interface::Webhooks => self.webhooks,
             Interface::Packages => self.packages,
+            Interface::NotificationContent => self.notification_content,
+            Interface::ExternalLlm => self.external_llm,
+            Interface::DesktopSync => self.desktop_sync,
         }
     }
 
@@ -958,6 +982,9 @@ impl Interfaces {
             Interface::Assistant => self.assistant = allowed,
             Interface::Webhooks => self.webhooks = allowed,
             Interface::Packages => self.packages = allowed,
+            Interface::NotificationContent => self.notification_content = allowed,
+            Interface::ExternalLlm => self.external_llm = allowed,
+            Interface::DesktopSync => self.desktop_sync = allowed,
         }
     }
 }
@@ -980,8 +1007,8 @@ pub struct AccessUpdate {
     pub log_retention_days: Option<Option<i32>>,
 }
 
-const SETTINGS_SELECT: &str = "SELECT api_tokens, mcp, assistant, webhooks, packages, read_log,
-            log_retention_days FROM project_policies WHERE project_id = $1";
+const SETTINGS_SELECT: &str = "SELECT api_tokens, mcp, assistant, webhooks, packages, notification_content,
+            external_llm, desktop_sync, read_log, log_retention_days FROM project_policies WHERE project_id = $1";
 
 /// The switches and log settings of a group (defaults without a policy row).
 pub async fn settings(conn: &mut PgConnection, project_id: Uuid) -> AppResult<AccessSettings> {
@@ -1119,12 +1146,16 @@ pub async fn set_access(
     }
     sqlx::query(
         "INSERT INTO project_policies (project_id, api_tokens, mcp, assistant, webhooks, packages,
+                                       notification_content, external_llm, desktop_sync,
                                        read_log, log_retention_days, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
          ON CONFLICT (project_id) DO UPDATE
          SET api_tokens = EXCLUDED.api_tokens, mcp = EXCLUDED.mcp,
              assistant = EXCLUDED.assistant, webhooks = EXCLUDED.webhooks,
-             packages = EXCLUDED.packages, read_log = EXCLUDED.read_log,
+             packages = EXCLUDED.packages,
+             notification_content = EXCLUDED.notification_content,
+             external_llm = EXCLUDED.external_llm, desktop_sync = EXCLUDED.desktop_sync,
+             read_log = EXCLUDED.read_log,
              log_retention_days = EXCLUDED.log_retention_days,
              updated_by = EXCLUDED.updated_by, updated_at = now()",
     )
@@ -1134,6 +1165,9 @@ pub async fn set_access(
     .bind(new.interfaces.assistant)
     .bind(new.interfaces.webhooks)
     .bind(new.interfaces.packages)
+    .bind(new.interfaces.notification_content)
+    .bind(new.interfaces.external_llm)
+    .bind(new.interfaces.desktop_sync)
     .bind(new.read_log)
     .bind(new.log_retention_days)
     .bind(actor.id)

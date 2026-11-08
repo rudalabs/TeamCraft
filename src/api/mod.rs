@@ -478,7 +478,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
             "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
-            "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages: bool}, read_log?, log_retention_days?} need-to-know policy – managers and admins",
+            "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages|notification_content|external_llm|desktop_sync: bool}, read_log?, log_retention_days?} need-to-know policy – managers and admins",
             "GET    /api/v1/projects/{code}/access-log               ?user=&kind=view|download|package|export&since=&until=&limit= read and download log (groups with read_log) – managers and admins",
             "GET    /api/v1/projects/{code}/review-policy            review policy: min approvals, required reviewers, role group",
             "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?} – managers and admins",

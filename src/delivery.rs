@@ -205,22 +205,29 @@ impl Delivery {
             display_name: String,
             chat_user: String,
             confidential: bool,
+            generic: bool,
         }
         // `confidential` is evaluated now: a group restricted after the row
         // was queued keeps the text out of a shared channel.
         let rows = sqlx::query_as::<_, Row>(&format!(
             "SELECT n.id, n.title, n.body, n.link, n.email_state, n.chat_state, n.delivery_attempts,
                     u.email, u.display_name, COALESCE(u.mattermost_username, u.username) AS chat_user,
-                    {} AS confidential
+                    {} AS confidential, {} AS generic
              FROM notifications n JOIN users u ON u.id = n.user_id
              WHERE (n.email_state = 'pending' OR n.chat_state = 'pending') AND u.active
              ORDER BY n.created_at LIMIT 100",
-            crate::services::notifications::restricted_now_sql("n")
+            crate::services::notifications::restricted_now_sql("n"),
+            crate::services::notifications::generic_text_sql("n")
         ))
         .fetch_all(pool)
         .await?;
         let mut report = Report::default();
-        for row in rows {
+        for mut row in rows {
+            // a group that switched `notification_content` off: generic text
+            // and the link only, in e-mail and chat (direct messages too)
+            if row.generic {
+                (row.title, row.body) = generic_text(&self.instance_name);
+            }
             let url = format!("{}{}", self.public_url, row.link);
             let mut errors = Vec::new();
             let mut email_state = row.email_state.clone();
@@ -347,6 +354,16 @@ impl Delivery {
             ))
             .await
     }
+}
+
+/// Title and body of a notification whose group switched
+/// `notification_content` off: nothing about the object, only that there is
+/// something and (added by the sender) the link.
+pub fn generic_text(instance: &str) -> (String, String) {
+    (
+        format!("new {instance} notification"),
+        "Open the link to read it (sign-in required).".to_string(),
+    )
 }
 
 /// What a chat message may show. A notification about a restricted project

@@ -43,6 +43,17 @@ pub struct ContextNote {
     pub label: String,
 }
 
+/// The interface switches the assistant runs under: its own, and
+/// `external_llm` unless the provider's base URL is on the administrator's
+/// internal list (`TEAMCRAFT_ASSISTANT_INTERNAL_URLS`).
+pub fn switches(config: Option<&crate::config::AssistantConfig>) -> Vec<Interface> {
+    let mut switches = vec![Interface::Assistant];
+    if !config.is_some_and(|c| c.is_internal()) {
+        switches.push(Interface::ExternalLlm);
+    }
+    switches
+}
+
 /// Whether the assistant is configured on this server.
 pub fn enabled(st: &AppState) -> bool {
     st.assistant.is_some()
@@ -174,7 +185,8 @@ async fn run_once(
         return Err(AssistantError::Busy.into_app_error());
     };
     // groups that switched the assistant off are hidden from the page context too
-    let narrowed = project_policy::narrow(&st.db, me.clone(), &[Interface::Assistant]).await?;
+    let narrowed =
+        project_policy::narrow(&st.db, me.clone(), &switches(st.config.assistant.as_ref())).await?;
     let me = &narrowed;
     let allow_drafts = question.allow_drafts && me.can_edit();
     let system = assistant::system_prompt(me, allow_drafts);
@@ -545,6 +557,7 @@ mod tests {
             run_timeout: Duration::from_secs(180),
             max_concurrent: 4,
             retention_days: 30,
+            internal_urls: Vec::new(),
         }
     }
 

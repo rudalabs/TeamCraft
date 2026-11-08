@@ -330,10 +330,9 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 ### 4. Parked features
 
 **Need-to-know project groups (#151)** – step 1 (administrator access: policy, reason-based elevation, `none`) is
-done; steps 3 and 4 are done in part: switches `api_tokens`, `mcp`, `assistant`, `webhooks`, `packages`
-(`project_policy::narrow` per channel, `tests/interface_switches.rs`) and the read and download log with retention and
-`teamcraft access-log purge` (views, file downloads, Pack and Go, BOM exports). Left of 3 and 4: switches
-`notification_content`, `external_llm`, `desktop_sync`; log entries for MCP and assistant tool reads and desktop Get;
+done; steps 3 and 4 are done in part: switches `api_tokens`, `mcp`, `assistant`, `webhooks`, `packages`, `notification_content`, `external_llm`,
+`desktop_sync` (`project_policy::narrow` per channel, `tests/interface_switches.rs`) and the read and download log with retention and
+`teamcraft access-log purge` (views, file downloads, Pack and Go, BOM exports). Left of 3 and 4: log entries for MCP and assistant tool reads and desktop Get;
 optional PDF/image watermark; a log page with filters and paging. Left, in the order of the issue: 2 conditions on
 membership (OIDC claims, allowed networks, shorter sessions); 5 access review page and evidence report (done: page, confirmation, CSV/JSON evidence; open: periodic reminder, review-due flag); 6 token scopes (F2). Open question 1
 is answered for now: `none` is allowed, but needs a member who is a manager.

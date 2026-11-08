@@ -200,9 +200,28 @@ pub(crate) fn notification_visible(n: &str, actor: &str, hidden: &str) -> String
 /// restricted group at delivery time (the group may have been restricted
 /// after the row was queued).
 pub fn restricted_now_sql(n: &str) -> String {
-    let restricted = "cp.visibility = 'restricted'";
     format!(
-        "({n}.confidential
+        "({n}.confidential OR {})",
+        touches_group_sql(n, "cp.visibility = 'restricted'")
+    )
+}
+
+/// SQL expression: the notification aliased `n` is about a group that
+/// switched `notification_content` off (need-to-know, #151): its e-mails and
+/// chat posts carry only a generic text and the link, also in direct messages.
+pub fn generic_text_sql(n: &str) -> String {
+    touches_group_sql(
+        n,
+        "cp.visibility = 'restricted' AND EXISTS (SELECT 1 FROM project_policies cpp
+             WHERE cpp.project_id = cp.id AND NOT cpp.notification_content)",
+    )
+}
+
+/// SQL: the subject of notification `n`, or something its text names, is in a
+/// project group `cp` that satisfies `restricted`.
+fn touches_group_sql(n: &str, restricted: &str) -> String {
+    format!(
+        "(FALSE
           OR EXISTS (SELECT 1 FROM projects cp WHERE cp.id = ANY({n}.mentioned_projects) AND {restricted})
           OR EXISTS (SELECT 1 FROM items ci JOIN projects cp ON cp.id = ci.project_id
                      WHERE {restricted}

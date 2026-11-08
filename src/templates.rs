@@ -1575,6 +1575,7 @@ mod tests {
             run_timeout: std::time::Duration::from_secs(180),
             max_concurrent: 4,
             retention_days: 30,
+            internal_urls: Vec::new(),
         };
         use crate::config::LocalAgents;
         // the notice, and what the desktop app's Agent view runs on
