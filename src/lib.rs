@@ -30,6 +30,8 @@ pub mod error;
 pub mod fuzz_harness;
 pub mod htmltext;
 pub mod httprange;
+pub mod invasm;
+pub mod invpart;
 pub mod llm;
 pub mod mcp;
 pub mod mesh;

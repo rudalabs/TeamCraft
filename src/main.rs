@@ -121,7 +121,7 @@ enum Command {
     #[command(hide = true)]
     PreviewMesh {
         /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, nx-part, solidworks-part,
-        /// pts, xyz, las –
+        /// inventor-part, pts, xyz, las –
         /// or tcm for a cached preview mesh (only --signature)
         #[arg(long)]
         format: String,

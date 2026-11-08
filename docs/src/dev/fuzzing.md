@@ -16,7 +16,7 @@ allocate what a file only claims.
 | Corpus test | `tests/parser_corpus.rs` | every `cargo test` (stable): seeds and matching fixtures whole, cut and with a few bytes corrupted |
 | Damage test | `tests/parser_robustness.rs` | every `cargo test`: small hand-made samples, every prefix and hundreds of corruptions |
 
-The targets are `stepbom`, `swpart`, `nxpart`, `cadrefs`, `bomtable`,
+The targets are `stepbom`, `swpart`, `nxpart`, `invpart` (Inventor segments, part meshes and assembly placements), `cadrefs`, `bomtable`,
 `thumbnail`, `textindex`, `htmltext` (HTML reports and the charset detection of text files), `mesh` (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS,
 points, LAS, VTK legacy and XML, CalculiX FRD) and `mesh_step` (the STEP
 tessellation through `truck`, kept apart because it is slow), `cadformat` (the

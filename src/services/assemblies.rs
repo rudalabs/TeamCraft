@@ -1,12 +1,14 @@
-//! 3D previews of NX and SOLIDWORKS assemblies.
+//! 3D previews of NX, SOLIDWORKS and Inventor assemblies.
 //!
 //! An assembly's preview is put together from the previews of its
 //! component files, with the placements the assembly stores: NX in its
 //! structure stream (`nxasm`), SOLIDWORKS in its component tree
-//! (`swpart::placements`, sub-assemblies already resolved there).
+//! (`swpart::placements`, sub-assemblies already resolved there), Inventor
+//! in `UFRxDoc` and `AmRxSegment` (`invasm`, sub-assemblies are files of
+//! their own).
 //!
 //! 1. The components are found **by file name** (`NAME.prt` for NX, the
-//!    file name of the stored path for SOLIDWORKS), the way file
+//!    file name of the stored path for SOLIDWORKS and Inventor), the way file
 //!    references are matched (`references::files_of_revision`): a file of
 //!    the assembly's own revision first, otherwise the latest revision of
 //!    another item the viewer may see. Components that are not in
@@ -66,6 +68,7 @@ struct Found {
 enum Family {
     Nx,
     SolidWorks,
+    Inventor,
 }
 
 impl Family {
@@ -73,6 +76,7 @@ impl Family {
         match format {
             "nx-part" => Some(Family::Nx),
             "solidworks-assembly" => Some(Family::SolidWorks),
+            "inventor-assembly" => Some(Family::Inventor),
             _ => None,
         }
     }
@@ -81,7 +85,7 @@ impl Family {
     fn key(self, name: &str) -> String {
         match self {
             Family::Nx => format!("{}.prt", name.to_lowercase()),
-            Family::SolidWorks => name.to_lowercase(),
+            Family::SolidWorks | Family::Inventor => name.to_lowercase(),
         }
     }
 
@@ -89,6 +93,7 @@ impl Family {
         match self {
             Family::Nx => format == "nx-part",
             Family::SolidWorks => matches!(format, "solidworks-part" | "solidworks-assembly"),
+            Family::Inventor => matches!(format, "inventor-part" | "inventor-assembly"),
         }
     }
 
@@ -97,6 +102,7 @@ impl Family {
         match self {
             Family::Nx => PreviewFormat::NxPart,
             Family::SolidWorks => PreviewFormat::SwPart,
+            Family::Inventor => PreviewFormat::InvPart,
         }
     }
 }
@@ -157,14 +163,17 @@ async fn resolve(
 const MAX_TREE: u64 = 64 * 1024 * 1024;
 
 /// What the file of a blob is (read with seeks, off the async runtime). A
-/// SOLIDWORKS part has no components; a SOLIDWORKS assembly lists its
-/// parts, sub-assemblies resolved.
+/// SOLIDWORKS or Inventor part has no components; a SOLIDWORKS assembly
+/// lists its parts, sub-assemblies resolved; an Inventor assembly lists its
+/// visible parts and sub-assemblies.
 async fn kind(st: &AppState, sha256: &str, format: &str) -> AppResult<Kind> {
     let path = st.vault.object_path(sha256)?;
     let format = format.to_string();
     tokio::task::spawn_blocking(move || match format.as_str() {
         "solidworks-part" => Kind::Part(Vec::new()),
         "solidworks-assembly" => solidworks_assembly(&path).unwrap_or(Kind::Other),
+        "inventor-part" => Kind::Part(Vec::new()),
+        "inventor-assembly" => crate::invasm::kind_of(&path).unwrap_or(Kind::Other),
         _ => nxasm::kind_of(&path).unwrap_or(Kind::Other),
     })
     .await
