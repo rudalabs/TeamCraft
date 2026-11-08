@@ -119,4 +119,28 @@ mod tests {
         assert!(files_type_hint("part").unwrap().contains("STEP"));
         assert!(files_type_hint("document").is_none());
     }
+
+    /// The names `templates/revisions/show.html` switches on (`fh.kind`).
+    #[test]
+    fn kinds_are_the_names_the_template_uses() {
+        let kinds = [
+            (FilesHint::Upload, "upload"),
+            (FilesHint::CheckOut, "checkout"),
+            (FilesHint::LockedByOther, "locked"),
+            (FilesHint::InReview, "review"),
+            (FilesHint::Frozen { can_revise: true }, "frozen"),
+            (FilesHint::Frozen { can_revise: false }, "frozen"),
+            (FilesHint::Hidden, "hidden"),
+        ];
+        let template = include_str!("../../templates/revisions/show.html");
+        for (hint, name) in kinds {
+            assert_eq!(hint.as_str(), name);
+            if hint != FilesHint::Hidden {
+                assert!(
+                    template.contains(&format!("fh.kind == \"{name}\"")),
+                    "the template handles {name}"
+                );
+            }
+        }
+    }
 }
