@@ -888,4 +888,51 @@ mod tests {
         );
         assert!(read(&step(&file)).is_err());
     }
+
+    /// Found by cargo mutants: a comment between parameters is skipped; a
+    /// stray `/` (damaged file) costs one parameter, not the rest of the list.
+    #[test]
+    fn comments_and_stray_slashes_between_parameters() {
+        assert_eq!(
+            params("#1, /* the part */ #2,'x'"),
+            [Param::Ref(1), Param::Ref(2), Param::Str("x".into())]
+        );
+        assert_eq!(params("/x,#5"), [Param::Other, Param::Ref(5)]);
+        // a quoted `)` or `,` inside a skipped typed value ends nothing
+        assert_eq!(
+            params("NAME('x)y'),LABEL('a,b'),#7"),
+            [Param::Other, Param::Other, Param::Ref(7)]
+        );
+    }
+
+    /// Found by cargo mutants: the nesting depth goes down again after a
+    /// list, so many sibling lists are all read (nesting beyond
+    /// `MAX_NESTING`: `deeply_nested_parameters_do_not_overflow_the_stack`).
+    #[test]
+    fn sibling_lists_do_not_count_as_nesting() {
+        let siblings: Vec<String> = (1..=MAX_NESTING * 3).map(|i| format!("(#{i})")).collect();
+        let parsed = params(&siblings.join(","));
+        assert_eq!(parsed.len(), MAX_NESTING * 3);
+        assert!(parsed
+            .iter()
+            .all(|p| matches!(p, Param::List(l) if l.len() == 1)));
+    }
+
+    /// Found by cargo mutants: comments, unset parameters (`*`) and quoted
+    /// semicolons when splitting into instances.
+    #[test]
+    fn instances_with_unset_parameters_comments_and_quotes() {
+        let text = "#1=PRODUCT('a;b','',(#2),*);\n/* a comment; with #9=X(); */\
+                    #2=PRODUCT_CONTEXT('it''s',*,'mechanical');#3=X(1.5/2.);";
+        let mut seen = Vec::new();
+        for_each_instance(text, |id, keyword, _| seen.push((id, keyword.to_string())));
+        assert_eq!(
+            seen,
+            [
+                (1, "PRODUCT".to_string()),
+                (2, "PRODUCT_CONTEXT".to_string()),
+                (3, "X".to_string())
+            ]
+        );
+    }
 }

@@ -136,3 +136,62 @@ impl ProjectVisibility {
         }
     }
 }
+
+/// Found by cargo mutants: the stored values, labels and aliases of roles,
+/// admin read policies and visibilities were not pinned.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roles() {
+        let roles: Vec<(&str, &str)> = Role::ALL.iter().map(|r| (r.as_str(), r.label())).collect();
+        assert_eq!(
+            roles,
+            [
+                ("viewer", "Viewer"),
+                ("editor", "CAD editor"),
+                ("admin", "Admin")
+            ]
+        );
+        for r in Role::ALL {
+            assert_eq!(Role::parse(r.as_str()), Some(r));
+        }
+        for alias in ["CAD editor", "cad_editor", "Engineer", " EDITOR "] {
+            assert_eq!(Role::parse(alias), Some(Role::Editor), "{alias}");
+        }
+        assert_eq!(Role::parse("owner"), None);
+    }
+
+    #[test]
+    fn admin_read_policies() {
+        let all = [AdminRead::Implicit, AdminRead::WithReason, AdminRead::None];
+        let stored: Vec<&str> = all.iter().map(|a| a.as_str()).collect();
+        assert_eq!(stored, ["implicit", "with_reason", "none"]);
+        for a in all {
+            assert_eq!(AdminRead::parse(a.as_str()), Some(a));
+        }
+        assert_eq!(AdminRead::parse(" NONE "), Some(AdminRead::None));
+        assert_eq!(AdminRead::parse("never"), None);
+        assert_eq!(AdminRead::Implicit.label(), "Administrators read the group");
+        assert_eq!(
+            AdminRead::WithReason.label(),
+            "Administrators need a reason (time-limited, audited)"
+        );
+        assert_eq!(
+            AdminRead::None.label(),
+            "Administrators manage but cannot read"
+        );
+    }
+
+    #[test]
+    fn visibilities() {
+        let all = [ProjectVisibility::Internal, ProjectVisibility::Restricted];
+        let v: Vec<(&str, &str)> = all.iter().map(|v| (v.as_str(), v.label())).collect();
+        assert_eq!(v, [("internal", "Internal"), ("restricted", "Restricted")]);
+        for v in all {
+            assert_eq!(ProjectVisibility::parse(v.as_str()), Some(v));
+        }
+        assert_eq!(ProjectVisibility::parse("secret"), None);
+    }
+}

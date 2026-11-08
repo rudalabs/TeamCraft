@@ -815,4 +815,119 @@ mod tests {
         content.extend(b"Bracket.SLDPRT\x00\x004711.stp\x00");
         assert_eq!(find(&content, "x.sldasm"), ["Bracket.SLDPRT", "4711.stp"]);
     }
+
+    /// Found by cargo mutants: runs shorter than five bytes are dropped, also
+    /// late in the file and at its end.
+    #[test]
+    fn byte_runs_need_five_printable_bytes() {
+        let runs = |content: &[u8], skip: Option<&std::ops::Range<usize>>| {
+            let mut out = Vec::new();
+            byte_runs(content, skip, |r| out.push(r.to_string()));
+            out
+        };
+        let content = b"\0\0\0\0\0\0\0\0abcd\0ABCDE\0\0xyz";
+        assert_eq!(runs(content, None), ["ABCDE"]);
+        assert_eq!(
+            runs(b"\0\0\0\0\0\0\0\0UVWXY", None),
+            ["UVWXY"],
+            "a run at the end"
+        );
+        assert_eq!(runs(b"\0\0\0\0\0\0\0\0UVWX", None), Vec::<String>::new());
+        // a skipped range splits a run
+        assert_eq!(runs(b"ABCDEFGHIJ", Some(&(5..6))), ["ABCDE"]);
+    }
+
+    /// Found by cargo mutants: the end of the HEADER section is searched
+    /// after `HEADER;` – also when the header starts far into the file and
+    /// right after an `ENDSEC;`.
+    #[test]
+    fn the_file_name_entity_is_found_inside_the_header_only() {
+        let entity = b"FILE_NAME('it''s a) b.stp','',(''),(''),'','','')";
+        let file = |before_header: &str| {
+            let mut c = format!("ISO-10303-21;{before_header}HEADER;\n").into_bytes();
+            let at = c.len();
+            c.extend_from_slice(entity);
+            c.extend_from_slice(b";\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n");
+            (c, at)
+        };
+        let comment = format!("\n/* {} */\n", "x".repeat(400));
+        let (content, at) = file(&comment);
+        assert_eq!(step_file_name_entity(&content), Some(at..at + entity.len()));
+        let (content, at) = file("\nENDSEC;");
+        assert_eq!(step_file_name_entity(&content), Some(at..at + entity.len()));
+        // FILE_NAME after the end of the header is not the entity
+        let late = b"ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1=FILE_NAME('x');\nENDSEC;\n";
+        assert_eq!(step_file_name_entity(late), None);
+    }
+
+    /// Found by cargo mutants: the stored-file variant was only covered by
+    /// the integration tests.
+    #[tokio::test]
+    async fn the_export_name_of_a_stored_file() {
+        let dir = std::env::temp_dir().join(format!("teamcraft-step-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stored = dir.join("object");
+        std::fs::write(&stored, step("'Bracket.STEP'")).unwrap();
+        assert_eq!(
+            scan_export_name(&stored, "bracket_v2.stp").await.as_deref(),
+            Some("Bracket.STEP")
+        );
+        assert_eq!(
+            scan_export_name(&stored, "bracket.step").await,
+            None,
+            "own name"
+        );
+        assert_eq!(scan_export_name(&dir.join("missing"), "x.stp").await, None);
+        // only the first EXPORT_NAME_SCAN bytes are read
+        let mut late = format!("ISO-10303-21;\n/* {} */\n", "x".repeat(70 * 1024)).into_bytes();
+        late.extend(
+            step("'Bracket.STEP'")
+                .into_iter()
+                .skip("ISO-10303-21;\n".len()),
+        );
+        let far = dir.join("far");
+        std::fs::write(&far, &late).unwrap();
+        assert_eq!(
+            step_export_name(&late, "x.stp").as_deref(),
+            Some("Bracket.STEP")
+        );
+        assert_eq!(scan_export_name(&far, "x.stp").await, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Found by cargo mutants: a non-printable unit ends a UTF-16 run.
+    #[test]
+    fn utf16_runs_end_at_non_printable_units() {
+        let utf16 = |s: &str| {
+            s.encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<u8>>()
+        };
+        let runs = |content: &[u8], skip: Option<&std::ops::Range<usize>>| {
+            let mut out = Vec::new();
+            utf16_runs(content, skip, |r| out.push(r.to_string()));
+            out
+        };
+        let mut content = utf16("ABCDE");
+        content.extend_from_slice(&[0, 0]);
+        content.extend(utf16("Größe"));
+        let found = runs(&content, None);
+        assert!(found.contains(&"ABCDE".to_string()), "{found:?}");
+        assert!(found.contains(&"Größe".to_string()), "{found:?}");
+        assert!(found.iter().all(|r| !r.contains('\0')), "{found:?}");
+        // a skipped byte splits the run: both halves are too short
+        let found = runs(&utf16("ABCDEFGH"), Some(&(8..9)));
+        assert!(found.iter().all(|r| r.chars().count() < 8), "{found:?}");
+        // skipping only the high byte of 'E' (bytes 8–9) drops exactly that
+        // unit: "ABCD" is too short, "FGHIJKL" stays
+        assert_eq!(runs(&utf16("ABCDEFGHIJKL"), Some(&(9..10))), ["FGHIJKL"]);
+    }
+
+    /// The documented limits (found by cargo mutants: a behavioural test
+    /// would have to scan more than 32 MiB).
+    #[test]
+    fn scan_limits() {
+        assert_eq!(MAX_SCAN, 32 * 1024 * 1024);
+        assert_eq!(EXPORT_NAME_SCAN, 64 * 1024);
+    }
 }

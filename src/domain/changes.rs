@@ -566,3 +566,182 @@ mod line_action_tests {
             .can_transition_to(LifecycleState::Obsolete));
     }
 }
+
+/// The stored values and labels (found by cargo mutants: the round-trip
+/// tests above do not pin the strings that are in the database and the API).
+#[cfg(test)]
+mod text_tests {
+    use super::*;
+
+    #[test]
+    fn stored_values_and_labels() {
+        let stored: Vec<&str> = ChangeStatus::ALL.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            stored,
+            ["draft", "in_review", "rejected", "released", "cancelled"]
+        );
+        let labels: Vec<&str> = ChangeStatus::ALL.iter().map(|s| s.label()).collect();
+        assert_eq!(
+            labels,
+            ["Draft", "In Review", "Rejected", "Released", "Cancelled"]
+        );
+
+        let stored: Vec<&str> = Priority::ALL.iter().map(|p| p.as_str()).collect();
+        assert_eq!(stored, ["low", "normal", "high", "critical"]);
+
+        let decisions = [Decision::Pending, Decision::Approved, Decision::Rejected];
+        let stored: Vec<&str> = decisions.iter().map(|d| d.as_str()).collect();
+        assert_eq!(stored, ["pending", "approved", "rejected"]);
+
+        let stored: Vec<&str> = RequestStatus::ALL.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            stored,
+            [
+                "new",
+                "in_triage",
+                "accepted",
+                "rejected",
+                "deferred",
+                "implemented",
+                "withdrawn"
+            ]
+        );
+        let labels: Vec<&str> = RequestStatus::ALL.iter().map(|s| s.label()).collect();
+        assert_eq!(
+            labels,
+            [
+                "New",
+                "In Triage",
+                "Accepted",
+                "Rejected",
+                "Deferred",
+                "Implemented",
+                "Withdrawn"
+            ]
+        );
+
+        let stored: Vec<&str> = RequestReason::ALL.iter().map(|r| r.as_str()).collect();
+        assert_eq!(
+            stored,
+            [
+                "defect",
+                "improvement",
+                "cost",
+                "manufacturing",
+                "supplier",
+                "safety",
+                "customer",
+                "other"
+            ]
+        );
+        let labels: Vec<&str> = RequestReason::ALL.iter().map(|r| r.label()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Defect / error",
+                "Improvement",
+                "Cost reduction",
+                "Manufacturing / assembly",
+                "Supplier / purchasing",
+                "Safety / compliance",
+                "Customer request",
+                "Other"
+            ]
+        );
+
+        let stored: Vec<&str> = LineAction::ALL.iter().map(|a| a.as_str()).collect();
+        assert_eq!(stored, ["release", "obsolete", "supersede"]);
+
+        assert_eq!(
+            [
+                RequestDecision::Accept.status(),
+                RequestDecision::Reject.status(),
+                RequestDecision::Defer.status()
+            ],
+            [
+                RequestStatus::Accepted,
+                RequestStatus::Rejected,
+                RequestStatus::Deferred
+            ]
+        );
+        assert_eq!(ReviewConflict::Author.describe(), "created this change");
+        assert_eq!(
+            ReviewConflict::Submitter.describe(),
+            "prepared or submitted this change"
+        );
+        assert_eq!(
+            ReviewConflict::Editor.describe(),
+            "changed the revisions under review"
+        );
+    }
+
+    /// Which changes still hold their revisions, and which may be edited;
+    /// which change requests are still open (found by cargo mutants).
+    #[test]
+    fn open_and_modifiable() {
+        let open: Vec<bool> = ChangeStatus::ALL.iter().map(|s| s.is_open()).collect();
+        // draft, in_review, rejected, released, cancelled
+        assert_eq!(open, [true, true, true, false, false]);
+        let modifiable: Vec<bool> = ChangeStatus::ALL
+            .iter()
+            .map(|s| s.is_modifiable())
+            .collect();
+        assert_eq!(modifiable, [true, false, false, false, false]);
+        let open: Vec<bool> = RequestStatus::ALL.iter().map(|s| s.is_open()).collect();
+        // new, in_triage, accepted, rejected, deferred, implemented, withdrawn
+        assert_eq!(open, [true, true, true, false, true, false, false]);
+    }
+
+    /// Every stored value reads back, in any case and with white space;
+    /// unknown values are refused (found by cargo mutants).
+    #[test]
+    fn parse_round_trips_and_aliases() {
+        for s in ChangeStatus::ALL {
+            assert_eq!(ChangeStatus::parse(s.as_str()), Some(s));
+            assert_eq!(
+                ChangeStatus::parse(&format!(" {} ", s.as_str().to_uppercase())),
+                Some(s)
+            );
+        }
+        assert_eq!(ChangeStatus::parse("open"), None);
+        for p in Priority::ALL {
+            assert_eq!(Priority::parse(p.as_str()), Some(p));
+        }
+        assert_eq!(Priority::parse(""), Some(Priority::Normal));
+        assert_eq!(Priority::parse("urgent"), None);
+        for d in [Decision::Pending, Decision::Approved, Decision::Rejected] {
+            assert_eq!(Decision::parse(d.as_str()), Some(d));
+        }
+        assert_eq!(Decision::parse("Approve"), Some(Decision::Approved));
+        assert_eq!(Decision::parse("reject"), Some(Decision::Rejected));
+        assert_eq!(Decision::parse("maybe"), None);
+        for s in RequestStatus::ALL {
+            assert_eq!(RequestStatus::parse(s.as_str()), Some(s));
+        }
+        assert_eq!(
+            RequestStatus::parse(" In_Triage "),
+            Some(RequestStatus::InTriage)
+        );
+        assert_eq!(RequestStatus::parse("done"), None);
+        for r in RequestReason::ALL {
+            assert_eq!(RequestReason::parse(r.as_str()), Some(r));
+        }
+        assert_eq!(RequestReason::parse(""), Some(RequestReason::Other));
+        assert_eq!(RequestReason::parse("boredom"), None);
+        for (raw, decision) in [
+            ("accept", RequestDecision::Accept),
+            ("Accepted", RequestDecision::Accept),
+            ("reject", RequestDecision::Reject),
+            ("rejected", RequestDecision::Reject),
+            ("defer", RequestDecision::Defer),
+            (" Deferred ", RequestDecision::Defer),
+        ] {
+            assert_eq!(
+                RequestDecision::parse(raw).map(RequestDecision::status),
+                Some(decision.status()),
+                "{raw}"
+            );
+        }
+        assert!(RequestDecision::parse("later").is_none());
+    }
+}

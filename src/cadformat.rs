@@ -804,6 +804,15 @@ fn is_solidcraft_json(head: &[u8]) -> bool {
 /// Whether a PDF embeds a 3D model: the 3D stream dictionaries (`/Subtype
 /// /U3D` or `/PRC`) are never compressed, so a byte search finds them.
 async fn pdf_has_3d(path: &std::path::Path) -> bool {
+    pdf_has_3d_within(path, PDF_3D_SCAN_LIMIT).await
+}
+
+/// How much of a PDF [`pdf_has_3d`] reads: 3D PDFs are rarely larger, bigger
+/// documents are treated as 2D.
+const PDF_3D_SCAN_LIMIT: u64 = 512 * 1024 * 1024;
+
+/// [`pdf_has_3d`] reading at most `limit` bytes (rounded up to a whole read).
+async fn pdf_has_3d_within(path: &std::path::Path, limit: u64) -> bool {
     use tokio::io::AsyncReadExt;
     let Ok(mut file) = tokio::fs::File::open(path).await else {
         return false;
@@ -812,8 +821,7 @@ async fn pdf_has_3d(path: &std::path::Path) -> bool {
     let mut buf = vec![0u8; 256 * 1024];
     let mut carry: Vec<u8> = Vec::new();
     let mut scanned = 0u64;
-    // 3D PDFs are rarely larger; bigger documents are treated as 2D
-    while scanned < 512 * 1024 * 1024 {
+    while scanned < limit {
         let n = match file.read(&mut buf).await {
             Ok(0) | Err(_) => return false,
             Ok(n) => n,
@@ -1098,7 +1106,14 @@ mod tests {
         let mut ole = OLE_MAGIC.to_vec();
         ole.extend_from_slice(&[0; 16]);
         assert_eq!(id("rover.asm", &ole), Some("solidedge-assembly"));
+        // the OLE signature decides even when the rest of the head is printable
+        // (found by cargo mutants: without NULs it would look like a source)
+        let mut printable_ole = OLE_MAGIC.to_vec();
+        printable_ole.extend_from_slice(&[b'a'; 60]);
+        assert_eq!(id("rover.asm", &printable_ole), Some("solidedge-assembly"));
         assert_eq!(id("startup.asm", b"  .section .text\n  mov r0, #1\n"), None);
+        // binary, neither Creo nor OLE: still a CAD assembly by its extension
+        assert!(id("rover.asm", b"\x00\x01\x02binary").is_some());
         // .sch: KiCad 5 or Eagle.
         assert_eq!(
             id("power.sch", b"EESchema Schematic File Version 4"),
@@ -1147,6 +1162,39 @@ mod tests {
             detect_stored(&three_d, "model.pdf").await.map(|f| f.id),
             Some("pdf-3d")
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Found by cargo mutants: the scan limit was not pinned down. Tested
+    /// with a 1 MiB limit (four reads of 256 KiB) to stay fast.
+    #[tokio::test]
+    async fn three_d_markers_are_searched_up_to_the_limit_only() {
+        use std::io::{Seek, SeekFrom, Write};
+        let dir = std::env::temp_dir().join(format!("teamcraft-pdf-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let at = |offset: u64, name: &str| {
+            let path = dir.join(name);
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(b"%PDF-1.7\n").unwrap();
+            f.seek(SeekFrom::Start(offset)).unwrap();
+            f.write_all(b"/Subtype /U3D").unwrap();
+            path
+        };
+        const MIB: u64 = 1024 * 1024;
+        assert_eq!(PDF_3D_SCAN_LIMIT, 512 * MIB);
+        let inside = at(MIB - 64, "inside.pdf");
+        let past = at(MIB, "past-limit.pdf");
+        assert!(pdf_has_3d_within(&inside, MIB).await, "within the limit");
+        assert!(
+            !pdf_has_3d_within(&past, MIB).await,
+            "right after the limit: treated as a 2D document"
+        );
+        assert!(
+            pdf_has_3d_within(&past, 2 * MIB).await,
+            "found with a larger limit"
+        );
+        // the real limit: past the first megabytes is still searched
+        assert!(pdf_has_3d(&at(2 * MIB, "two-mib.pdf")).await);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1430,6 +1478,9 @@ mod tests {
         assert!(ids_named_by("step").contains(&"step".to_string()));
         assert!(ids_named_by("bracket").is_empty());
         assert!(ids_named_by("x").is_empty());
+        // by the full program name only: neither id, short name nor alias
+        // matches "Autodesk Inventor" (found by cargo mutants)
+        assert!(ids_named_by("Autodesk Inventor").contains(&"inventor-part".to_string()));
         assert_eq!(ids_of_system("inventor").len(), 5);
     }
 
@@ -1757,5 +1808,49 @@ mod tests {
         assert!(catalogue
             .iter()
             .all(|s| !s["formats"].as_array().unwrap().is_empty()));
+        // each system lists exactly its own formats (found by cargo mutants)
+        let listed: usize = catalogue
+            .iter()
+            .map(|s| s["formats"].as_array().unwrap().len())
+            .sum();
+        assert_eq!(listed, FORMATS.len(), "every format once");
+        for s in &catalogue {
+            for f in s["formats"].as_array().unwrap() {
+                let id = f["id"].as_str().unwrap();
+                assert_eq!(by_id(id).unwrap().system, s["id"], "{id}");
+            }
+        }
+    }
+
+    /// Found by cargo mutants: a line without tokens is not a token line.
+    #[test]
+    fn quoted_tokens_counts_quoted_strings_only() {
+        assert_eq!(quoted_tokens(br#""Iteration" "report-def-0""#), Some(2));
+        assert_eq!(quoted_tokens(br#"  ("Flow Time")  "#), Some(1));
+        assert_eq!(quoted_tokens(b"()"), None, "nothing inside the parentheses");
+        assert_eq!(quoted_tokens(b"   "), None);
+        assert_eq!(quoted_tokens(br#""open"#), None, "unterminated");
+        assert_eq!(quoted_tokens(br#""a" b"#), None, "unquoted token");
+        assert_eq!(quoted_tokens(br#"("a""#), None, "unclosed parenthesis");
+    }
+
+    /// Found by cargo mutants: the 95 % threshold was not pinned down.
+    #[test]
+    fn text_needs_95_percent_printable_bytes_and_no_nul() {
+        let with_controls = |n: usize| {
+            let mut head = vec![b'a'; 20 - n];
+            head.extend(std::iter::repeat_n(0x01, n));
+            head
+        };
+        assert!(looks_textual(b"GRID    1       0.0     1.0\n"));
+        assert!(
+            looks_textual("Ümlaut-Kommentar\n".as_bytes()),
+            "non-ASCII counts as text"
+        );
+        assert!(looks_textual(&with_controls(1)), "19 of 20 = 95 %");
+        assert!(!looks_textual(&with_controls(2)), "18 of 20 = 90 %");
+        assert!(!looks_textual(&[0x01; 20]));
+        assert!(!looks_textual(b"text\0with a NUL"));
+        assert!(!looks_textual(b""));
     }
 }

@@ -169,3 +169,91 @@ impl WebhookEvent {
             .find(|e| e.as_str() == s.trim())
     }
 }
+
+/// Found by cargo mutants: the stored names (database CHECK constraints, the
+/// webhook payload) and the labels were not tested.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KINDS: [NotificationKind; 9] = [
+        NotificationKind::ReviewRequested,
+        NotificationKind::ChangeUpdate,
+        NotificationKind::Impact,
+        NotificationKind::ItemUpdate,
+        NotificationKind::Unlock,
+        NotificationKind::ChangeRequest,
+        NotificationKind::RequestDigest,
+        NotificationKind::AccessAlert,
+        NotificationKind::Test,
+    ];
+
+    #[test]
+    fn notification_kinds() {
+        let stored: Vec<&str> = KINDS.iter().map(|k| k.as_str()).collect();
+        assert_eq!(
+            stored,
+            [
+                "review_requested",
+                "change_update",
+                "impact",
+                "item_update",
+                "unlock",
+                "change_request",
+                "request_digest",
+                "access_alert",
+                "test"
+            ]
+        );
+        for k in KINDS {
+            assert_eq!(NotificationKind::parse(k.as_str()), Some(k));
+            assert_eq!(
+                NotificationKind::parse(&format!(" {} ", k.as_str())),
+                Some(k)
+            );
+        }
+        assert_eq!(NotificationKind::parse("spam"), None);
+        // every kind has its own, non-empty label (settings page)
+        let mut labels: Vec<&str> = KINDS.iter().map(|k| k.label()).collect();
+        assert!(labels.iter().all(|l| l.len() > 3), "{labels:?}");
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(labels.len(), KINDS.len());
+        assert_eq!(NotificationKind::ReviewRequested.label(), "Review requests");
+        // the security alert cannot be muted, the test message neither
+        assert!(!NotificationKind::MUTABLE.contains(&NotificationKind::AccessAlert));
+        assert!(!NotificationKind::MUTABLE.contains(&NotificationKind::Test));
+    }
+
+    #[test]
+    fn webhook_events() {
+        let stored: Vec<&str> = WebhookEvent::ALL.iter().map(|e| e.as_str()).collect();
+        assert_eq!(
+            stored,
+            [
+                "revision.released",
+                "revision.obsoleted",
+                "change.submitted",
+                "change.approved",
+                "change.rejected",
+                "change.released",
+                "change_request.created",
+                "change_request.decided",
+                "simulation.result_added"
+            ]
+        );
+        for e in WebhookEvent::ALL {
+            assert_eq!(WebhookEvent::parse(e.as_str()), Some(e));
+        }
+        assert_eq!(WebhookEvent::parse("item.deleted"), None);
+        let mut labels: Vec<&str> = WebhookEvent::ALL.iter().map(|e| e.label()).collect();
+        assert!(labels.iter().all(|l| l.len() > 3), "{labels:?}");
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(labels.len(), WebhookEvent::ALL.len());
+        assert_eq!(
+            WebhookEvent::RevisionReleased.label(),
+            "A revision was released"
+        );
+    }
+}
