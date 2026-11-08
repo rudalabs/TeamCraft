@@ -860,6 +860,41 @@ mod tests {
         assert_eq!(step_file_name_entity(late), None);
     }
 
+    /// Found by cargo mutants: the stored-file variant was only covered by
+    /// the integration tests.
+    #[tokio::test]
+    async fn the_export_name_of_a_stored_file() {
+        let dir = std::env::temp_dir().join(format!("teamcraft-step-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stored = dir.join("object");
+        std::fs::write(&stored, step("'Bracket.STEP'")).unwrap();
+        assert_eq!(
+            scan_export_name(&stored, "bracket_v2.stp").await.as_deref(),
+            Some("Bracket.STEP")
+        );
+        assert_eq!(
+            scan_export_name(&stored, "bracket.step").await,
+            None,
+            "own name"
+        );
+        assert_eq!(scan_export_name(&dir.join("missing"), "x.stp").await, None);
+        // only the first EXPORT_NAME_SCAN bytes are read
+        let mut late = format!("ISO-10303-21;\n/* {} */\n", "x".repeat(70 * 1024)).into_bytes();
+        late.extend(
+            step("'Bracket.STEP'")
+                .into_iter()
+                .skip("ISO-10303-21;\n".len()),
+        );
+        let far = dir.join("far");
+        std::fs::write(&far, &late).unwrap();
+        assert_eq!(
+            step_export_name(&late, "x.stp").as_deref(),
+            Some("Bracket.STEP")
+        );
+        assert_eq!(scan_export_name(&far, "x.stp").await, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// Found by cargo mutants: a non-printable unit ends a UTF-16 run.
     #[test]
     fn utf16_runs_end_at_non_printable_units() {
