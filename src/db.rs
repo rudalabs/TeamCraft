@@ -171,6 +171,22 @@ async fn accept_edits_before_release(pool: &PgPool) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// sqlx records a migration by the number before the `_`: two files with
+    /// the same number make every migration run fail ("duplicate key …
+    /// _sqlx_migrations_pkey"). Parallel pull requests must renumber.
+    #[test]
+    fn migration_numbers_are_unique() {
+        let mut seen = std::collections::HashMap::new();
+        for m in MIGRATOR.iter() {
+            if let Some(other) = seen.insert(m.version, m.description.clone()) {
+                panic!(
+                    "migration number {:04} is used twice: '{}' and '{}' – renumber the newer one",
+                    m.version, other, m.description
+                );
+            }
+        }
+    }
+
     #[test]
     fn supported_postgres_versions() {
         for ok in ["160000", "160009", "170004", "180001\n", "190000"] {

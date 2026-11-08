@@ -5,7 +5,7 @@
 //! share. Without a limit (the default) nothing is checked.
 //!
 //! Every path that stores versions goes through `files::store_uploads`,
-//! which calls [`ensure_room`] in its transaction; chunked uploads check
+//! which calls `ensure_room` in its transaction; chunked uploads check
 //! their announced size up front, before any bytes are sent.
 
 use serde::Serialize;

@@ -4,7 +4,7 @@
 //! limited to the items the actor may read.
 //!
 //! The candidates come from SQL (a name containing one of the words of the
-//! new name, at most [`CANDIDATES`]); the similarity is computed here, so it
+//! new name, at most `CANDIDATES`); the similarity is computed here, so it
 //! works without the optional `pg_trgm` extension.
 
 use serde::Serialize;

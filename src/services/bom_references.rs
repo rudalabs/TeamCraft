@@ -30,7 +30,7 @@
 //!   `update_quantities` is set; a child that would make the BOM circular is
 //!   refused per line.
 //! * **Locks:** the parent revision row.
-//! * **Audit:** `bom.add` per line (as [`bom::add_tx`]), `bom.update` per
+//! * **Audit:** `bom.add` per line (as `bom::add_tx`), `bom.update` per
 //!   changed quantity and one `bom.from_references` with the counts.
 //! * **Atomic:** one transaction.
 
