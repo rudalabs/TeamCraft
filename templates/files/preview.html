@@ -34,6 +34,10 @@
     <div class="viewer-tools actions" role="toolbar" aria-label="View">
       <button id="viewer-up" class="small" type="button" title="Switch between Z-up (most CAD programs, 3D printing) and Y-up models (glTF, games)">Z up</button>
       <button id="viewer-reset" class="small" type="button" title="Back to the initial view (double-click)">Reset view</button>
+      {% if compare %}<select id="viewer-compare" class="small" aria-label="Compare with another revision or version (shown in red)">
+        <option value="">Compare with …</option>
+        {% for c in compare %}<option value="/file-versions/{{ c.version_id }}/mesh">{{ rev.item_number }}/{{ c.code }} v{{ c.version }}</option>{% endfor %}
+      </select>{% endif %}
       {% if format != "stl" and not is_points %}<button id="viewer-stl" class="small" type="button" disabled title="Save the shown triangles as STL, e.g. for 3D printing (units as in the file, usually mm)">Export STL</button>{% endif %}
     </div>
   </div>

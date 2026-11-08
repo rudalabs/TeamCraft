@@ -231,13 +231,13 @@
       "out vec3 vView; out vec3 vCol; out vec3 vModel;\n" +
       "void main() { vCol = aCol; vModel = aPos; vView = (uMv * vec4(aPos, 1.0)).xyz; gl_Position = uMvp * vec4(aPos, 1.0); gl_PointSize = uSize; }";
     var FRAG = "#version 300 es\nprecision highp float; in vec3 vView; in vec3 vCol; in vec3 vModel;\n" +
-      "uniform bool uPoints; uniform bool uClipOn; uniform vec4 uClip; out vec4 frag;\n" +
+      "uniform bool uPoints; uniform bool uClipOn; uniform vec4 uClip; uniform float uAlpha; out vec4 frag;\n" +
       "void main() { if (uClipOn && dot(vModel, uClip.xyz) > uClip.w) discard;\n" +
       "  if (uPoints) { frag = vec4(vCol, 1.0); return; }\n" +
       "  vec3 n = normalize(cross(dFdx(vView), dFdy(vView)));\n" +
       "  float d = max(dot(n, normalize(vec3(0.35, 0.55, 1.0))), 0.0);\n" +
       "  float rim = pow(1.0 - max(n.z, 0.0), 3.0) * 0.18;\n" +
-      "  frag = vec4(vCol * (0.25 + 0.75 * d) + rim, 1.0); }";
+      "  frag = vec4(vCol * (0.25 + 0.75 * d) + rim, uAlpha); }";
 
     function shader(type, source) {
       var s = gl.createShader(type);
@@ -259,8 +259,12 @@
       size: gl.getUniformLocation(program, "uSize"),
       points: gl.getUniformLocation(program, "uPoints"),
       clipOn: gl.getUniformLocation(program, "uClipOn"),
-      clip: gl.getUniformLocation(program, "uClip")
+      clip: gl.getUniformLocation(program, "uClip"),
+      alpha: gl.getUniformLocation(program, "uAlpha")
     };
+    // Graphical comparison: another version drawn as a translucent red ghost
+    // over the model, in the same model coordinates.
+    var ghost = null;
     // axis: -1 = off, 0/1/2 = X/Y/Z; at: 0..1 of the model's extent on it
     var section = { axis: -1, at: 0.5, flip: false };
     // Point-to-point measurement: picked model points (0–2) and the decimals
@@ -539,9 +543,24 @@
       gl.uniform1i(loc.clipOn, plane ? 1 : 0);
       if (plane) gl.uniform4f(loc.clip, plane[0], plane[1], plane[2], plane[3]);
       gl.bindVertexArray(drawable.vao);
+      gl.uniform1f(loc.alpha, 1);
       if (!drawable.colored) gl.vertexAttrib3f(loc.col, baseColor[0], baseColor[1], baseColor[2]);
       if (drawable.points) gl.drawArrays(gl.POINTS, 0, drawable.count);
       else gl.drawElements(gl.TRIANGLES, drawable.count, gl.UNSIGNED_INT, 0);
+      // the compared model on top: where it sticks out of the model, it is
+      // red; where it lies inside, the model hides it
+      if (ghost) {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false);
+        gl.uniform1f(loc.alpha, 0.45);
+        gl.bindVertexArray(ghost.vao);
+        gl.vertexAttrib3f(loc.col, 0.9, 0.25, 0.2);
+        gl.drawElements(gl.TRIANGLES, ghost.count, gl.UNSIGNED_INT, 0);
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+        gl.uniform1f(loc.alpha, 1);
+      }
       // measured points and the line between them, always on top
       if (measure.points.length) {
         var flat = [];
@@ -713,8 +732,21 @@
       return buffer;
     }
 
+    // Shows another model (a TCMESH01 buffer) as a red ghost over this one,
+    // or removes it (null). Point clouds are not compared.
+    function compare(buffer) {
+      ghost = null;
+      if (buffer) {
+        var other = parseMesh(buffer);
+        if (!other.indices) throw new Error("Only triangle models can be compared.");
+        ghost = upload({ positions: other.positions, indices: other.indices, fields: [], colors: null });
+      }
+      redraw();
+    }
+
     return {
       exportStl: exportStl,
+      compare: compare,
       dispose: function () {
         disposed = true;
         if (scheme && scheme.removeEventListener) scheme.removeEventListener("change", onScheme);
@@ -749,6 +781,27 @@
         });
       }
     });
+    // Graphical comparison with another revision/version (shown in red).
+    var compareSel = document.getElementById("viewer-compare");
+    if (compareSel) {
+      compareSel.addEventListener("change", function () {
+        var status = document.getElementById("viewer-status");
+        if (!compareSel.value) { viewer.compare(null); return; }
+        var label = compareSel.options[compareSel.selectedIndex].textContent;
+        fetch(compareSel.value, { credentials: "same-origin" })
+          .then(function (r) {
+            if (!r.ok) throw new Error("The preview of " + label + " failed (" + r.status + ").");
+            return r.arrayBuffer();
+          })
+          .then(function (buffer) {
+            viewer.compare(buffer);
+            if (status) status.textContent = "Red: " + label + " – where it sticks out of the shown model.";
+          })
+          .catch(function (err) {
+            if (status) { status.textContent = err.message || String(err); status.className = "flash flash-error"; }
+          });
+      });
+    }
     // STL export of a STEP/3MF/… model, e.g. for 3D printing.
     if (stlBtn) {
       stlBtn.addEventListener("click", function () {

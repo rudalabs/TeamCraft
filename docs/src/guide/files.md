@@ -37,6 +37,11 @@ two points on the model (click, don't drag) and shows their distance and its
 X, Y and Z parts in model units; the decimal places (0–6) are remembered in
 the browser and apply to the section position too. Measured points are on the
 visible surface, so a section shows inner distances such as wall thickness.
+*Compare with …* (on the preview page, when there is something to compare)
+lays another version of the file – or the file of the same name in another
+revision of the item – over the model as a translucent red ghost: red shows
+where the other model sticks out, so added and removed material is visible at
+a glance; sections and measuring work on both.
 
 | Previewed           | Formats                                                                                                                       |
 |---------------------|-------------------------------------------------------------------------------------------------------------------------------|

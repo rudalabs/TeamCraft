@@ -1242,6 +1242,13 @@ async fn preview_page(
         .find(|v| v.version == version)
         .cloned()
         .ok_or_else(|| AppError::not_found("File version not found."))?;
+    // earlier/later models of the same file for the graphical comparison
+    // (meshes only: point clouds and result fields are not overlaid)
+    let compare = if format.is_point_cloud() || format.is_result() {
+        Vec::new()
+    } else {
+        files::compare_candidates(&st.db, &ctx.me, file.id, &shown.sha256).await?
+    };
     // start the conversion while the browser loads the page (with the
     // shape signature, unless it is a point cloud)
     if format.is_point_cloud() {
@@ -1258,6 +1265,7 @@ async fn preview_page(
             "shown": shown,
             "is_current": shown.version == file.version,
             "versions": versions,
+            "compare": compare,
             "rev": rev,
             "format": format.as_str(),
             "is_brep": format.is_brep(),
