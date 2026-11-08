@@ -20,6 +20,7 @@
     "deny": [
       "Bash(cargo install *)",
       "Bash(* 2>&1 *)",
+      "Bash(* 2>/dev/null *)",
       "Bash(git restore *)",
       "Bash(git reset *)"
     ]
