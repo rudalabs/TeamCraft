@@ -804,6 +804,15 @@ fn is_solidcraft_json(head: &[u8]) -> bool {
 /// Whether a PDF embeds a 3D model: the 3D stream dictionaries (`/Subtype
 /// /U3D` or `/PRC`) are never compressed, so a byte search finds them.
 async fn pdf_has_3d(path: &std::path::Path) -> bool {
+    pdf_has_3d_within(path, PDF_3D_SCAN_LIMIT).await
+}
+
+/// How much of a PDF [`pdf_has_3d`] reads: 3D PDFs are rarely larger, bigger
+/// documents are treated as 2D.
+const PDF_3D_SCAN_LIMIT: u64 = 512 * 1024 * 1024;
+
+/// [`pdf_has_3d`] reading at most `limit` bytes (rounded up to a whole read).
+async fn pdf_has_3d_within(path: &std::path::Path, limit: u64) -> bool {
     use tokio::io::AsyncReadExt;
     let Ok(mut file) = tokio::fs::File::open(path).await else {
         return false;
@@ -812,8 +821,7 @@ async fn pdf_has_3d(path: &std::path::Path) -> bool {
     let mut buf = vec![0u8; 256 * 1024];
     let mut carry: Vec<u8> = Vec::new();
     let mut scanned = 0u64;
-    // 3D PDFs are rarely larger; bigger documents are treated as 2D
-    while scanned < 512 * 1024 * 1024 {
+    while scanned < limit {
         let n = match file.read(&mut buf).await {
             Ok(0) | Err(_) => return false,
             Ok(n) => n,
@@ -1154,6 +1162,39 @@ mod tests {
             detect_stored(&three_d, "model.pdf").await.map(|f| f.id),
             Some("pdf-3d")
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Found by cargo mutants: the scan limit was not pinned down. Tested
+    /// with a 1 MiB limit (four reads of 256 KiB) to stay fast.
+    #[tokio::test]
+    async fn three_d_markers_are_searched_up_to_the_limit_only() {
+        use std::io::{Seek, SeekFrom, Write};
+        let dir = std::env::temp_dir().join(format!("teamcraft-pdf-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let at = |offset: u64, name: &str| {
+            let path = dir.join(name);
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(b"%PDF-1.7\n").unwrap();
+            f.seek(SeekFrom::Start(offset)).unwrap();
+            f.write_all(b"/Subtype /U3D").unwrap();
+            path
+        };
+        const MIB: u64 = 1024 * 1024;
+        assert_eq!(PDF_3D_SCAN_LIMIT, 512 * MIB);
+        let inside = at(MIB - 64, "inside.pdf");
+        let past = at(MIB, "past-limit.pdf");
+        assert!(pdf_has_3d_within(&inside, MIB).await, "within the limit");
+        assert!(
+            !pdf_has_3d_within(&past, MIB).await,
+            "right after the limit: treated as a 2D document"
+        );
+        assert!(
+            pdf_has_3d_within(&past, 2 * MIB).await,
+            "found with a larger limit"
+        );
+        // the real limit: past the first megabytes is still searched
+        assert!(pdf_has_3d(&at(2 * MIB, "two-mib.pdf")).await);
         std::fs::remove_dir_all(&dir).ok();
     }
 
