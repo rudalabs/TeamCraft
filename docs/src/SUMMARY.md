@@ -56,6 +56,7 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [3D preview of Fusion designs](research/fusion-ogs-preview.md)
     - [Mutation testing with cargo-mutants](research/mutation-testing.md)
     - [3D preview of NX parts](research/nx-jt-preview.md)
     - [Text from HTML reports](research/html-report-text.md)
