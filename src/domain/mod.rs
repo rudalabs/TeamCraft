@@ -571,6 +571,35 @@ mod tests {
         for s in LifecycleState::ALL {
             assert_eq!(LifecycleState::parse(s.as_str()), Some(s));
         }
+        // stored values, labels and the two flags of every state; file
+        // retention values (found by cargo mutants)
+        let states: Vec<(&str, &str, bool, bool)> = LifecycleState::ALL
+            .iter()
+            .map(|s| (s.as_str(), s.label(), s.is_editable(), s.is_open()))
+            .collect();
+        assert_eq!(
+            states,
+            [
+                ("in_work", "WIP", true, true),
+                ("in_review", "In Review", false, true),
+                ("released", "Released", false, false),
+                ("obsolete", "Obsolete", false, false),
+            ]
+        );
+        assert_eq!(LifecycleState::parse(" Released "), Some(Released));
+        assert_eq!(LifecycleState::parse("wip"), None);
+        for r in [FileRetention::All, FileRetention::Latest] {
+            assert_eq!(FileRetention::parse(r.as_str()), Some(r));
+        }
+        assert_eq!(
+            (FileRetention::All.as_str(), FileRetention::Latest.as_str()),
+            ("all", "latest")
+        );
+        assert_eq!(
+            FileRetention::parse(" LATEST "),
+            Some(FileRetention::Latest)
+        );
+        assert_eq!(FileRetention::parse("newest"), None);
     }
 
     #[test]
