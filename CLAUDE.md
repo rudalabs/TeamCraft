@@ -1,38 +1,11 @@
 # CLAUDE.md – working on TeamCraft
 
-TeamCraft is an open-source PLM system (items, revisions, files, BOMs, change
-orders) written in pure Rust, published on GitHub (`rudalabs/TeamCraft`). It is
-a single binary (axum web server + REST API + CLI) on top of PostgreSQL, with a
-server-rendered HTML UI, a JSON REST API and a Tauri desktop client.
-License: MPL-2.0 (`LICENSE`). No organisation-specific branding or deployment.
-
-## Commands
-
-| Task                   | Command                                                                                                                            |
-|------------------------|------------------------------------------------------------------------------------------------------------------------------------|
-| Type-check             | `cargo check --all-targets`                                                                                                        |
-| Format (CI-enforced)   | `cargo fmt --all`                                                                                                                  |
-| Lint (CI-enforced)     | `cargo clippy --all-targets -- -D warnings`                                                                                        |
-| Unit tests, no DB      | `cargo test --lib`                                                                                                                 |
-| Mutation tests         | `cargo mutants -F '^src/<module>\.rs:'` (pure modules of `.cargo/mutants.toml`, `--lib` only; results in `target/mutants.out/`) |
-| Start the dev database | `docker compose up -d db` (trust auth on 127.0.0.1; status: `docker compose ps`)                                                   |
-| All tests              | `cargo test` (needs the dev database)                                                                                              |
-| Run the server         | `cargo run` → <http://localhost:8080> (reads the optional `secrets/.env`)                                                          |
-| CLI                    | `./target/debug/teamcraft user list`, `… user create --username x --role editor --project ROVER`, `… vault check`, `… healthcheck` |
-| Smoke test             | `curl -s http://localhost:8080/healthz`, `curl -s http://localhost:8080/readyz`                                                    |
-| Rust API docs          | `cargo doc --no-deps --lib`                                                                                                        |
-| Desktop app            | `cargo run/test/clippy --manifest-path desktop/Cargo.toml` (Linux: WebKitGTK dev packages)                                         |
-
-Start long-running processes (`cargo run`) in the background and stop them when
-done. After code changes run fmt, clippy and the tests before reporting success;
-say plainly which checks ran and which did not.
-
 ## Hard rules
 
 * **Never build container images locally** – no `docker build`, `docker buildx`,
   `docker compose build`, `docker compose up --build`. The `Dockerfile` and
-  `deploy/` may be edited; the image is built only by GitHub Actions
-  (`release.yml`: build-only on pull requests, published to ghcr.io only for
+  `deploy/` may be edited; the image is built only by GitHub Actions (`release.yml`: build-only on pull requests,
+  published to ghcr.io only for
   pushes to `main` (`:edge`) and `v*` tags).
 * **Python** only as script files in `./local/`, run with
   `.venv/bin/python ./local/<script>.py` – the user reviews every script. No `python -c`.
@@ -49,10 +22,14 @@ say plainly which checks ran and which did not.
 * Releases: `.github/workflows/release.yml` builds the server binaries and
   desktop installers as artifacts on every push to `main`, publishes the
   container image `ghcr.io/rudalabs/teamcraft` (`:edge` from `main`,
-  `:<version>`/`:latest` from tags) and a GitHub Release for a `v*` tag
-  (CONTRIBUTING.md, "Releases and versions"). Never push a tag, bump the
+  `:<version>`/`:latest` from tags) and a GitHub Release for a `v*` tag (CONTRIBUTING.md, "Releases and versions").
+  Never push a tag, bump the
   version or publish anything else (package registries) unless the user asks
   for that release.
+* **Worktrees** Only create worktrees when explicitly specified.
+* **Subagents** Only create subagents when explicitly specified.
+* **Branch** You do not have permissions to push to the `main` branch. Create feature branches instead, push there and
+  open merge requests to `main` with the `gh` tool instead.
 
 ## Git rules
 
@@ -182,15 +159,3 @@ desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part 
 * **Project status:** no release yet (version `0.1.0`). Keep the
   work-in-progress / no-warranty notices in the README, `docs/src/index.md`,
   the web footer and the desktop *About* dialog until the user asks for a release.
-
-## Environment
-
-* CachyOS; Rust via `rustup` (stable, `cargo` in `/usr/bin`); Docker with Compose v2.
-* Dev database: `postgres:17-alpine` on `127.0.0.1:5432`, user and database
-  `teamcraft`. The user's existing volume still uses the password from
-  `secrets/db_password` (configured in `secrets/.env`); fresh volumes use trust auth.
-* The integration tests use `TEAMCRAFT_TEST_DATABASE_URL` or the regular
-  configuration and create/drop their own `teamcraft_test_*` databases; without a
-  reachable server they are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1` makes that fail).
-  `tests/backup_restore.rs` also needs `pg_dump`/`pg_restore` on `PATH`
-  (`TEAMCRAFT_REQUIRE_PG_TOOLS=1` makes their absence fail).

@@ -31,13 +31,13 @@ Meshes, point clouds and STEP models open in a WebGL viewer in the browser
 and in the desktop app. Drag to rotate, wheel or pinch to zoom, arrow keys to
 turn, double-click to reset; *Z up / Y up* switches the convention.
 
-| Previewed           | Formats                                                          |
-|---------------------|------------------------------------------------------------------|
-| B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                   |
+| Previewed           | Formats                                                                                                                       |
+|---------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                                                                                |
 | Native CAD          | NX parts (`.prt`), SOLIDWORKS parts (`.sldprt`, 2015+) – the tessellation stored in the file; their assemblies from the parts |
-| Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS |
-| Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces          |
-| Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields |
+| Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS                                                              |
+| Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces                                                                       |
+| Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields                                                              |
 
 The server converts a file **once**, in a separate process with a time limit,
 and caches the result next to the vault; uploads start the conversion in the
@@ -52,8 +52,8 @@ When a STEP preview shows only part of the model, the line below the viewer
 says **partial preview: N of M faces** – the missing faces use geometry the
 kernel cannot tessellate. Details: [STEP in the 3D preview](../reference/formats.md#step-in-the-3d-preview).
 
-Simulation results show the outer surface of the mesh with a colour scale
-(viridis), the range of the field above the canvas and, when the file has
+Simulation results show the outer surface of the mesh with a colour scale (viridis), the range of the field above the
+canvas and, when the file has
 several fields, a selector – see [Simulations](simulation.md#results-in-3d).
 
 ## Previews of native CAD files
@@ -62,8 +62,8 @@ Native CAD files (Inventor, Solid Edge, SolidWorks, NX, Creo, CATIA, …) are
 proprietary; TeamCraft does not read their exact geometry (see
 [Research: previews of native CAD files](../research/cad-previews.md)).
 The exceptions are **NX** and **SOLIDWORKS**. Both save a tessellation of
-every part into the file: NX in a documented format (JT 9), SOLIDWORKS
-(2015 and later) as the display lists it draws the part with.
+every part into the file: NX in a documented format (JT 9), SOLIDWORKS (2015 and later) as the display lists it draws
+the part with.
 
 TeamCraft shows that tessellation in the 3D viewer, refined along the
 exact surface normals stored with it, so round faces stay round.
@@ -76,6 +76,7 @@ in its place, sub-assemblies included (see
 [3D preview of SOLIDWORKS files](../research/solidworks-display-preview.md)).
 
 These components are left out:
+
 * components that are not in TeamCraft;
 * NX components on layers the assembly hides;
 * SOLIDWORKS components that are suppressed or hidden.

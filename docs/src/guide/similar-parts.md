@@ -8,14 +8,14 @@ reason you can check.
 ## Where you see it
 
 * **Revision page → Similar parts** (below *Files*): up to six parts with a
-  score, the matching file and a one-line explanation, e.g.
-  *extents 118 × 40 × 8 vs 120 × 40 × 8, shape distribution 94 % similar*.
-  On a brand-new part (only revision A, in work) the section is called
-  *Similar existing parts*: if one fits, reuse it instead of creating a new
+  score, the matching file and a one-line explanation, e.g. *extents 118 × 40 × 8 vs 120 × 40 × 8, shape distribution
+  94 % similar*.
+  On a brand-new part (only revision A, in work) the section is called *Similar existing parts*: if one fits, reuse it
+  instead of creating a new
   item. It is a card on the page, not a pop-up: it appears whenever the
   revision has a file it can compare, and stays hidden otherwise. Right
-  after *Items → New item* with a STEP or mesh file the card first says
-  *Comparing the shape … reload the page in a moment* – the page does not
+  after *Items → New item* with a STEP or mesh file the card first says *Comparing the shape … reload the page in a
+  moment* – the page does not
   refresh itself, reload it once the comparison is done.
 * **Desktop app**: the revision overview has a *Compare the shape in the
   browser* button that opens this card in the web UI; the app itself shows
@@ -30,8 +30,8 @@ The comparison needs a 3D model with a preview: STEP, a mesh (STL, OBJ,
 PLY, OFF, 3MF, AMF, glTF/GLB, 3DS) or an NX part (`.prt` with its JT
 lightweight representation). Other native CAD files are compared through
 their STEP export – attach one. NX assemblies are not compared (they hold no
-shape of their own), and neither are point clouds. Simulation result files
-(VTK, VTU, VTP, CalculiX FRD) have a 3D preview too and are currently
+shape of their own), and neither are point clouds. Simulation result files (VTK, VTU, VTP, CalculiX FRD) have a 3D
+preview too and are currently
 compared like parts.
 
 ## How it works
@@ -39,18 +39,18 @@ compared like parts.
 When a 3D file is attached or checked in (or first shown), the preview process computes a
 small **shape signature** of its mesh, once per file content:
 
-| Part of the signature  | What it is                                                                                     |
-|------------------------|------------------------------------------------------------------------------------------------|
-| Principal extents      | edge lengths of the tightest box around the part, largest first – independent of how the part lies in the file |
-| Surface area, volume   | the volume only counts when the mesh is watertight; B-rep exports often are not, then it is left out |
+| Part of the signature   | What it is                                                                                                                                                                     |
+|-------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Principal extents       | edge lengths of the tightest box around the part, largest first – independent of how the part lies in the file                                                                 |
+| Surface area, volume    | the volume only counts when the mesh is watertight; B-rep exports often are not, then it is left out                                                                           |
 | Shape distribution (D2) | histogram of the distances between 32 768 random point pairs on the surface, relative to the box diagonal – a fingerprint of the form that ignores position, rotation and size |
-| Triangles              | the size of the mesh                                                                            |
+| Triangles               | the size of the mesh                                                                                                                                                           |
 
 Two parts are compared with
 
 * **shape** = 1 − ½ · Σ |difference of the D2 histograms| (100 % = same form),
-* **size** = exp(−2 · mean |ln(extent ratio)|) over the three extents
-  (100 % = same size; 5 % larger in every direction gives about 90 %, twice
+* **size** = exp(−2 · mean |ln(extent ratio)|) over the three extents (100 % = same size; 5 % larger in every direction
+  gives about 90 %, twice
   the size about 25 %),
 * **score** = shape × size.
 
@@ -82,12 +82,12 @@ cannot tessellate, see [Files](files.md)) gets no signature: area, volume
 and shape distribution of a model with holes would compare it wrongly. It is
 neither searched from nor found as a hit; the similar-parts panel says why.
 
-The search is fast for large vaults: an indexed prefilter on the extents
-(within a factor of three) or proportions keeps at most 2000 files, which are
+The search is fast for large vaults: an indexed prefilter on the extents (within a factor of three) or proportions keeps
+at most 2000 files, which are
 scored in memory.
 
 Files stored before this feature get their signature in the background when
-their revision page or 3D view is first opened (the page then says
-*reload in a moment*), or all at once with `teamcraft vault signatures` (see
+their revision page or 3D view is first opened (the page then says *reload in a moment*), or all at once with
+`teamcraft vault signatures` (see
 [Operations](../admin/operations.md); `--convert` also converts files that
 were never previewed).

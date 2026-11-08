@@ -94,31 +94,40 @@ end-to-end tests against a real PostgreSQL.
 
 **Files and versions**
 
-- **Check-out / check-in** – exclusive locks per revision; a check-in based on an outdated version is refused instead of overwriting it.
-- **Versions and rollback** – every upload is a new version; download or restore any of them, history is never rewritten.
+- **Check-out / check-in** – exclusive locks per revision; a check-in based on an outdated version is refused instead of
+  overwriting it.
+- **Versions and rollback** – every upload is a new version; download or restore any of them, history is never
+  rewritten.
 - **Vault explorer** – project groups as folders with lock owners, files and one-click check-out / check-in.
 - **Large uploads** – chunked, resumable uploads in the web UI; identical files are stored once (SHA-256).
-- **160+ file formats** – native CAD, BIM and DCC files plus STEP, IGES, JT, IFC, glTF, USD, E57, LAS and more are recognised.
+- **160+ file formats** – native CAD, BIM and DCC files plus STEP, IGES, JT, IFC, glTF, USD, E57, LAS and more are
+  recognised.
 
 **Previews and search**
 
-- **3D preview** – STEP, NX and SOLIDWORKS parts and assemblies (assemblies put together from their part files, hidden components left out), STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no plug-ins.
-- **CAD thumbnails** – the preview images stored in Inventor and Solid Edge files; NX and SOLIDWORKS parts and assemblies get a sharper thumbnail rendered from their 3D preview.
+- **3D preview** – STEP, NX and SOLIDWORKS parts and assemblies (assemblies put together from their part files, hidden
+  components left out), STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no
+  plug-ins.
+- **CAD thumbnails** – the preview images stored in Inventor and Solid Edge files; NX and SOLIDWORKS parts and
+  assemblies get a sharper thumbnail rendered from their 3D preview.
 - **FEA/CFD results** – VTK, VTU/VTP and CalculiX results coloured by a result field, with legend.
 - **Search** – ranked full-text search over numbers, names, materials, file names and file contents.
-- **Similar parts** – on every revision with a STEP or mesh file, existing parts of similar 3D shape and size, with the reason for each hit.
+- **Similar parts** – on every revision with a STEP or mesh file, existing parts of similar 3D shape and size, with the
+  reason for each hit.
 
 **Structure**
 
 - **Multi-level BOM** – mass and cost roll-up, revision rules, comparison of two revisions, CSV/Excel export.
 - **Where-used** – every assembly a part is used in, over all levels.
 - **Alternates and supersession** – alternate parts, superseded parts and *Replace in assemblies* with a preview.
-- **BOM import** – items and BOMs from CAD BOM tables (CSV, Excel, ODS) or a STEP assembly; preview first, one transaction.
+- **BOM import** – items and BOMs from CAD BOM tables (CSV, Excel, ODS) or a STEP assembly; preview first, one
+  transaction.
 - **Pack and Go** – a ZIP of a whole assembly with all its files.
 
 **Change and release**
 
-- **Lifecycle** – WIP → In Review → Released → Obsolete with revision letters after ASME Y14.35; released data never changes.
+- **Lifecycle** – WIP → In Review → Released → Obsolete with revision letters after ASME Y14.35; released data never
+  changes.
 - **Change requests (ECR)** – anybody reports a problem with screenshots; editors accept, defer or reject.
 - **Change orders** – reviewers, four-eyes approval, impact analysis and an atomic release of all revisions.
 - **Change propagation** – references inside CAD files are tracked; a release flags every dependent for a check.
@@ -126,30 +135,42 @@ end-to-end tests against a real PostgreSQL.
 
 **Simulation**
 
-- **Simulation management** – FEA/CFD items linked to the exact revisions they analysed, flagged *out of date* when the design changes.
+- **Simulation management** – FEA/CFD items linked to the exact revisions they analysed, flagged *out of date* when the
+  design changes.
 - **Result values** – key values with limits and pass/fail, CSV/Excel import and comparison between revisions.
-- **As-built records** – one item per physical unit: the design revision it was built to, serial number, as-built BOM and deviations with a disposition (use as is, rework, repair, scrap).
+- **As-built records** – one item per physical unit: the design revision it was built to, serial number, as-built BOM
+  and deviations with a disposition (use as is, rework, repair, scrap).
 
 **Teams and administration**
 
-- **Roles and read permissions** – viewer, editor and admin roles; restricted project groups visible only to their members.
+- **Roles and read permissions** – viewer, editor and admin roles; restricted project groups visible only to their
+  members.
 - **Single sign-on** – any OpenID Connect provider, with group synchronisation.
 - **Numbering schemes** – generated item numbers per project group from `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`.
-- **Custom attributes** – vendor, supplier part number, RoHS … as text, number, yes/no or choice list per item type, versioned with each revision; in-house, purchased and standard parts; search by attribute value.
+- **Custom attributes** – vendor, supplier part number, RoHS … as text, number, yes/no or choice list per item type,
+  versioned with each revision; in-house, purchased and standard parts; search by attribute value.
 - **Notifications** – in-app, e-mail and Mattermost; watch items, changes and change requests.
 - **Event webhooks** – signed JSON for releases, changes and simulation results, retried with backoff.
-- **Audit log** – every modification and every sign-in (password, SSO, failed attempts) with user, time and details; repeated failed sign-ins are slowed down.
-- **Branding** – replace the wide and the square logo and rename the header ("TeamCraft PLM" → your name and subtitle) under *Admin → Branding*; the desktop app shows them too. The footer, About and licence notices stay TeamCraft.
-- **Monitoring** – `/healthz`, `/readyz` and Prometheus metrics at `/metrics` (requests, database pool, outbox backlogs, preview queue), enabled with a token.
+- **Audit log** – every modification and every sign-in (password, SSO, failed attempts) with user, time and details;
+  repeated failed sign-ins are slowed down.
+- **Branding** – replace the wide and the square logo and rename the header ("TeamCraft PLM" → your name and subtitle)
+  under *Admin → Branding*; the desktop app shows them too. The footer, About and licence notices stay TeamCraft.
+- **Monitoring** – `/healthz`, `/readyz` and Prometheus metrics at `/metrics` (requests, database pool, outbox backlogs,
+  preview queue), enabled with a token.
 - **Backup and restore** – one command for database and vault (see below).
 
 **Clients and integrations**
 
 - **Web UI** – light and dark design that follows the operating system, plus distribution skins.
-- **Desktop app** – Linux, macOS and Windows client with a local working folder, *Get* of whole assemblies, an import wizard, an Agent view, and an update notice (never installs anything itself).
+- **Desktop app** – Linux, macOS and Windows client with a local working folder, *Get* of whole assemblies, an import
+  wizard, an Agent view, and an update notice (never installs anything itself).
 - **REST API** – everything the UI does, with personal access tokens.
-- **MCP server** – AI assistants such as Claude Code search, explain BOMs and draft changes with your rights, never approving anything.
-- **Ask TeamCraft (optional)** – a sidebar on every page (in the desktop app: the company AI of the Agent view) that knows which page you are on, keeps your conversation and, with your own key for Anthropic, OpenAI, Azure OpenAI or any OpenAI-compatible service, or a local model (Ollama, vLLM), drafts release notes and answers questions with your rights, read-only by default.
+- **MCP server** – AI assistants such as Claude Code search, explain BOMs and draft changes with your rights, never
+  approving anything.
+- **Ask TeamCraft (optional)** – a sidebar on every page (in the desktop app: the company AI of the Agent view) that
+  knows which page you are on, keeps your conversation and, with your own key for Anthropic, OpenAI, Azure OpenAI or any
+  OpenAI-compatible service, or a local model (Ollama, vLLM), drafts release notes and answers questions with your
+  rights, read-only by default.
 
 ## Enterprise management
 
@@ -157,21 +178,28 @@ The features an IT department or a team lead asks about before rolling a
 system out to an organisation. All of them are part of the free release –
 there is no separate enterprise edition.
 
-| Area | What TeamCraft offers |
-|------|-----------------------|
-| **Identity and access** | Single sign-on with any OpenID Connect provider (Keycloak, Entra ID, Google, Authentik …), IdP groups mapped to roles and project groups; viewer / editor / admin roles; [restricted project groups](https://rudalabs.github.io/TeamCraft/admin/permissions.html) that stay invisible to outsiders, even inside BOMs, search, notifications and the AI assistant; per group, administrators can be limited to audited, time-limited access with a written reason, or to managing without reading; personal access tokens can be scoped (full, write without approving, read-only, MCP-only). |
-| **Traceability** | An [audit log](https://rudalabs.github.io/TeamCraft/admin/operations.html) of every change and every sign-in, failed attempts included; four-eyes change orders where nobody who wrote, prepared or changed the data can approve it; released data that never changes; as-built records per serial number. |
+| Area                                | What TeamCraft offers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+|-------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Identity and access**             | Single sign-on with any OpenID Connect provider (Keycloak, Entra ID, Google, Authentik …), IdP groups mapped to roles and project groups; viewer / editor / admin roles; [restricted project groups](https://rudalabs.github.io/TeamCraft/admin/permissions.html) that stay invisible to outsiders, even inside BOMs, search, notifications and the AI assistant; per group, administrators can be limited to audited, time-limited access with a written reason, or to managing without reading; personal access tokens can be scoped (full, write without approving, read-only, MCP-only).                                     |
+| **Traceability**                    | An [audit log](https://rudalabs.github.io/TeamCraft/admin/operations.html) of every change and every sign-in, failed attempts included; four-eyes change orders where nobody who wrote, prepared or changed the data can approve it; released data that never changes; as-built records per serial number.                                                                                                                                                                                                                                                                                                                       |
 | **Company AI instead of shadow AI** | *Ask TeamCraft* runs on the AI service the organisation chooses – Anthropic, OpenAI, Azure OpenAI, any OpenAI-compatible endpoint or a local model (Ollama, vLLM). The key stays on the server and never reaches a browser or the desktop app; the assistant works with each user's rights, read-only by default, and every question is audited (without its content). In the desktop app it is the *Agent* view's company AI. Administrators can switch off local AI agents (`TEAMCRAFT_LOCAL_AGENTS=off`): the desktop app's Agent then runs on the company AI only – data-loss prevention, with Admin → AI showing the setup. |
-| **Operations** | [Docker install](https://rudalabs.github.io/TeamCraft/admin/docker.html) with one script, [backup and restore](https://rudalabs.github.io/TeamCraft/admin/operations.html#backups) of database and vault in one command, `/healthz` and `/readyz` probes, [Prometheus metrics](https://rudalabs.github.io/TeamCraft/admin/operations.html#metrics-for-prometheus), documented [upgrades](https://rudalabs.github.io/TeamCraft/admin/upgrade.html) and a [support policy](https://rudalabs.github.io/TeamCraft/admin/support-policy.html). |
-| **Integration** | REST API, an MCP server for AI tools, signed [event webhooks](https://rudalabs.github.io/TeamCraft/admin/webhooks.html), e-mail and Mattermost notifications. |
-| **Your look** | Your own logos under *Admin → Branding*, shown in the web UI and the desktop app. |
-| **Configuration** | Everything through environment variables, each also as `*_FILE` for Docker or Kubernetes secrets – see the [configuration reference](https://rudalabs.github.io/TeamCraft/admin/configuration.html). |
+| **Operations**                      | [Docker install](https://rudalabs.github.io/TeamCraft/admin/docker.html) with one script, [backup and restore](https://rudalabs.github.io/TeamCraft/admin/operations.html#backups) of database and vault in one command, `/healthz` and `/readyz` probes, [Prometheus metrics](https://rudalabs.github.io/TeamCraft/admin/operations.html#metrics-for-prometheus), documented [upgrades](https://rudalabs.github.io/TeamCraft/admin/upgrade.html) and a [support policy](https://rudalabs.github.io/TeamCraft/admin/support-policy.html).                                                                                        |
+| **Integration**                     | REST API, an MCP server for AI tools, signed [event webhooks](https://rudalabs.github.io/TeamCraft/admin/webhooks.html), e-mail and Mattermost notifications.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Your look**                       | Your own logos under *Admin → Branding*, shown in the web UI and the desktop app.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Configuration**                   | Everything through environment variables, each also as `*_FILE` for Docker or Kubernetes secrets – see the [configuration reference](https://rudalabs.github.io/TeamCraft/admin/configuration.html).                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 **Planned** – open issues, not done yet:
 
-- **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – membership conditions (IdP claims, networks, session age) (administrator access with a reason, interface switches per group, a read and download log and access reviews with an evidence report are built).
-- **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – obsolete through change orders, sign-off with re-authentication, substitutes, approvals in exports (review policies per group, review rounds, item owners and admin handover are built).
-- **Offboarding for high-turnover teams** ([#173](https://github.com/rudalabs/TeamCraft/issues/173)) – a holdings report per user, deactivation as one offboarding step, groups without an active manager, season handover (managers already release a leaver's check-outs in bulk, demote managers and take over a deactivated author's change order; see [When someone leaves](https://rudalabs.github.io/TeamCraft/admin/users.html#when-someone-leaves)).
+- **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – membership conditions (IdP
+  claims, networks, session age) (administrator access with a reason, interface switches per group, a read and download
+  log and access reviews with an evidence report are built).
+- **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – obsolete through change
+  orders, sign-off with re-authentication, substitutes, approvals in exports (review policies per group, review rounds,
+  item owners and admin handover are built).
+- **Offboarding for high-turnover teams** ([#173](https://github.com/rudalabs/TeamCraft/issues/173)) – a holdings report
+  per user, deactivation as one offboarding step, groups without an active manager, season handover (managers already
+  release a leaver's check-outs in bulk, demote managers and take over a deactivated author's change order;
+  see [When someone leaves](https://rudalabs.github.io/TeamCraft/admin/users.html#when-someone-leaves)).
 - **Scoped access tokens** – personal access tokens limited to read-only or MCP-only use.
 
 TeamCraft is a community project without commercial support or a service
@@ -179,14 +207,13 @@ level agreement; see the warning above.
 
 ## Download
 
-Builds of every tagged version are on the
-**[Releases page](https://github.com/rudalabs/TeamCraft/releases)** – 0.x
+Builds of every tagged version are on the **[Releases page](https://github.com/rudalabs/TeamCraft/releases)** – 0.x
 versions are pre-releases (see the warning above):
 
-| | Linux x86_64 | Linux ARM64 | macOS (Apple silicon) | Windows x64 | Windows ARM64 |
-|---|---|---|---|---|---|
-| **Server** (`teamcraft`) | `.tar.gz` | `.tar.gz` | – | `.zip` | – |
-| **Desktop app** | `.AppImage`, `.deb`, `.rpm`, `.flatpak` | `.deb`, `.rpm`, `.flatpak` | `.dmg`, `.app.zip` | `.msi`, `_x64-setup.exe`, `_x64_portable.zip` | `.msi`, `_arm64-setup.exe`, `_arm64_portable.zip` |
+|                          | Linux x86_64                            | Linux ARM64                | macOS (Apple silicon) | Windows x64                                   | Windows ARM64                                     |
+|--------------------------|-----------------------------------------|----------------------------|-----------------------|-----------------------------------------------|---------------------------------------------------|
+| **Server** (`teamcraft`) | `.tar.gz`                               | `.tar.gz`                  | –                     | `.zip`                                        | –                                                 |
+| **Desktop app**          | `.AppImage`, `.deb`, `.rpm`, `.flatpak` | `.deb`, `.rpm`, `.flatpak` | `.dmg`, `.app.zip`    | `.msi`, `_x64-setup.exe`, `_x64_portable.zip` | `.msi`, `_arm64-setup.exe`, `_arm64_portable.zip` |
 
 The server runs on Linux in production (or as the
 [Docker image](docs/src/admin/docker.md) on any platform); on macOS build it
@@ -197,8 +224,8 @@ an installer; it needs the WebView2 runtime, which Windows 10 and 11 include.
 
 Check a download against `SHA256SUMS.txt` (`sha256sum -c --ignore-missing
 SHA256SUMS.txt`). The installers are **not code-signed** yet: macOS asks to
-confirm the first start (*right-click → Open*), Windows SmartScreen shows
-*More info → Run anyway*. The newest build of `main` is attached as artifacts
+confirm the first start (*right-click → Open*), Windows SmartScreen shows *More info → Run anyway*. The newest build of
+`main` is attached as artifacts
 to the latest run of the
 [Release workflow](https://github.com/rudalabs/TeamCraft/actions/workflows/release.yml)
 (14 days, signed-in GitHub users). Linux packages for Arch (AUR), snap and
@@ -244,7 +271,6 @@ the web UI with headless Chrome, TeamCraft Desktop on a virtual X display.
     <td width="50%" align="center"><a href="media/screenshots/mobile-dashboard.png"><img src="media/screenshots/mobile-dashboard.png" width="200" alt="The dashboard on a 390 pixel wide phone screen" /></a><br /><sub><b>On the phone</b> – the same pages, responsive</sub></td>
   </tr>
 </table>
-
 
 ## Quick start
 
@@ -335,8 +361,8 @@ running server lists its API at
 ## Contributing
 
 Contributions are welcome: bug reports, tests with real files from your CAD
-programs, documentation and code. Please read
-**[CONTRIBUTING.md](CONTRIBUTING.md)** first. It covers the development setup,
+programs, documentation and code. Please read **[CONTRIBUTING.md](CONTRIBUTING.md)** first. It covers the development
+setup,
 the checks CI runs, the code conventions and the licence of contributions.
 Report security problems privately, as described in [SECURITY.md](SECURITY.md).
 Open work and known gaps are listed in [docs/OPEN_WORK.md](docs/OPEN_WORK.md).
@@ -358,21 +384,21 @@ the [licence](LICENSE).
 Third-party components (complete list with versions in `Cargo.lock` and
 `desktop/Cargo.lock`):
 
-| Component                            | Used for                                 | Licence                                  |
-|--------------------------------------|------------------------------------------|------------------------------------------|
-| axum, tower, hyper, tokio            | web server, async runtime                | MIT                                      |
-| sqlx                                 | PostgreSQL access, migrations            | MIT / Apache-2.0                         |
-| MiniJinja                            | HTML templates                           | Apache-2.0                               |
-| truck (truck-stepio, truck-meshalgo) | STEP reading and tessellation            | Apache-2.0                               |
-| gltf, quick-xml, zip                 | glTF, 3MF/AMF, Pack and Go               | MIT / Apache-2.0                         |
-| csv, calamine, encoding_rs           | BOM import: CSV, Excel/ODS, Windows-1252 | MIT-Unlicense / MIT / MIT-Apache + BSD-3 |
-| cfb, crc32fast                       | previews stored in CAD files             | MIT / MIT-Apache                         |
-| rust_xlsxwriter                      | Excel export of BOMs and comparisons     | MIT / Apache-2.0                         |
-| reqwest, rustls, lettre              | HTTP client, TLS, e-mail                 | MIT / Apache-2.0                         |
-| argon2, sha2                         | password hashing, content hashes         | MIT / Apache-2.0                         |
-| Tauri 2                              | desktop app                              | MIT / Apache-2.0                         |
-| futures-core                         | desktop app: cancellable streamed uploads | MIT / Apache-2.0                        |
-| Montserrat, Oswald                   | fonts                                    | SIL OFL 1.1                              |
+| Component                            | Used for                                    | Licence                                                      |
+|--------------------------------------|---------------------------------------------|--------------------------------------------------------------|
+| axum, tower, hyper, tokio            | web server, async runtime                   | MIT                                                          |
+| sqlx                                 | PostgreSQL access, migrations               | MIT / Apache-2.0                                             |
+| MiniJinja                            | HTML templates                              | Apache-2.0                                                   |
+| truck (truck-stepio, truck-meshalgo) | STEP reading and tessellation               | Apache-2.0                                                   |
+| gltf, quick-xml, zip                 | glTF, 3MF/AMF, Pack and Go                  | MIT / Apache-2.0                                             |
+| csv, calamine, encoding_rs           | BOM import: CSV, Excel/ODS, Windows-1252    | MIT-Unlicense / MIT / MIT-Apache + BSD-3                     |
+| cfb, crc32fast                       | previews stored in CAD files                | MIT / MIT-Apache                                             |
+| rust_xlsxwriter                      | Excel export of BOMs and comparisons        | MIT / Apache-2.0                                             |
+| reqwest, rustls, lettre              | HTTP client, TLS, e-mail                    | MIT / Apache-2.0                                             |
+| argon2, sha2                         | password hashing, content hashes            | MIT / Apache-2.0                                             |
+| Tauri 2                              | desktop app                                 | MIT / Apache-2.0                                             |
+| futures-core                         | desktop app: cancellable streamed uploads   | MIT / Apache-2.0                                             |
+| Montserrat, Oswald                   | fonts                                       | SIL OFL 1.1                                                  |
 | libfuzzer-sys (libFuzzer)            | fuzz targets in `fuzz/` only, never shipped | MIT / Apache-2.0 (libFuzzer: Apache-2.0 with LLVM exception) |
 
 SolidWorks, NX, Creo, CATIA, Inventor, Fusion,

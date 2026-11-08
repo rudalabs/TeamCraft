@@ -10,16 +10,16 @@ has to be installed on your computer.
 It is meant for the reading and summarising work around a release, not for
 CAD generation:
 
-| Where                 | Quick action                 | What you get                                                                                     |
-|-----------------------|------------------------------|--------------------------------------------------------------------------------------------------|
-| Revision page         | **Draft release notes**      | what changed compared with the previous revision: attributes, files, BOM, open points            |
-| Revision page         | **Check before release**     | a checklist: blocking items (unreleased BOM children and references, check-outs) and warnings     |
-| Revision page         | **What breaks if I change this?** | the assemblies that use the item (released ones first), open change orders and requests that already touch it, simulations that would go out of date, what to check first |
-| Revision page         | **Are the simulations still valid?** | the simulations based on the item: which are out of date and why, failed results, what to re-run |
-| Simulation page       | **Fill result values from the report** | reads the report (PDF or text) of the revision and proposes result values – drafts with the file and the quoted text; you accept or reject them on the *Results* card (drafts must be allowed); the **Fill with AI…** button on the *Results* card does the same for the values you list |
-| Change order page     | **Brief me for this review** | what changes, the impact on dependents outside the change, risks, questions for the author       |
-| Dashboard             | **What needs my attention**  | an ordered to-do list from your worklist: reviews, impacts, old check-outs, your drafts           |
-| Everywhere            | **Ask**                      | any question, e.g. "Which assemblies use PRT-000012, and are they released?"                     |
+| Where             | Quick action                           | What you get                                                                                                                                                                                                                                                                             |
+|-------------------|----------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Revision page     | **Draft release notes**                | what changed compared with the previous revision: attributes, files, BOM, open points                                                                                                                                                                                                    |
+| Revision page     | **Check before release**               | a checklist: blocking items (unreleased BOM children and references, check-outs) and warnings                                                                                                                                                                                            |
+| Revision page     | **What breaks if I change this?**      | the assemblies that use the item (released ones first), open change orders and requests that already touch it, simulations that would go out of date, what to check first                                                                                                                |
+| Revision page     | **Are the simulations still valid?**   | the simulations based on the item: which are out of date and why, failed results, what to re-run                                                                                                                                                                                         |
+| Simulation page   | **Fill result values from the report** | reads the report (PDF or text) of the revision and proposes result values – drafts with the file and the quoted text; you accept or reject them on the *Results* card (drafts must be allowed); the **Fill with AI…** button on the *Results* card does the same for the values you list |
+| Change order page | **Brief me for this review**           | what changes, the impact on dependents outside the change, risks, questions for the author                                                                                                                                                                                               |
+| Dashboard         | **What needs my attention**            | an ordered to-do list from your worklist: reviews, impacts, old check-outs, your drafts                                                                                                                                                                                                  |
+| Everywhere        | **Ask**                                | any question, e.g. "Which assemblies use PRT-000012, and are they released?"                                                                                                                                                                                                             |
 
 **Ask** also covers change requests and simulations, for example:
 
@@ -34,7 +34,8 @@ CAD generation:
 - "What does the spec of PRT-000012 say about the coating?" – the assistant
   reads the text that TeamCraft extracted from the attached files for the
   search (STEP and IGES strings, text, CSV, JSON, XML, KiCad and similar
-  formats, the text layer of PDF reports and the readable text of HTML reports with table rows as lines; not images, scanned PDFs or binary CAD files). It can read only files
+  formats, the text layer of PDF reports and the readable text of HTML reports with table rows as lines; not images,
+  scanned PDFs or binary CAD files). It can read only files
   that you may open.
 - "Draft a change request from my notes: …" – with drafts allowed (see
   below), the assistant raises the request; otherwise it shows what the
@@ -48,8 +49,8 @@ the answer link to the item. The assistant remembers the conversation: see
 
 ## The sidebar
 
-*Ask TeamCraft* lives in a **sidebar** on every page of the web UI. The
-**sparkle icon** in the top bar unfolds a drawer on the right. It stays
+*Ask TeamCraft* lives in a **sidebar** on every page of the web UI. The **sparkle icon** in the top bar unfolds a drawer
+on the right. It stays
 open while you move around, **Esc** closes it, and your browser remembers
 whether it was open (a small `localStorage` entry, nothing is sent to the
 server for that). Drag the left edge or use the arrow keys on it to change
@@ -70,17 +71,17 @@ or change request tab you opened.
 Every page tells the drawer where you are. Above the question box a **context
 chip** shows it, for example `PRT-000009/A · bom (latest released)`:
 
-| You are on                       | The assistant knows                                                              |
-|----------------------------------|----------------------------------------------------------------------------------|
-| Dashboard                        | that you are on your start page                                                  |
-| Items list, search               | the search text and filters, and the items shown (at most 25)                    |
-| Revision page                    | item, revision and project group                                                 |
-| BOM page                         | item, revision, the revision rule, the items listed                              |
-| Where-used                       | the item and the assemblies listed                                               |
-| BOM or result comparison         | the item and the revision compared                                               |
-| Change order, change request     | its number                                                                       |
-| Project group                    | the group code                                                                   |
-| Vault explorer                   | the group or list, the search text, the selected row and the rows shown          |
+| You are on                   | The assistant knows                                                     |
+|------------------------------|-------------------------------------------------------------------------|
+| Dashboard                    | that you are on your start page                                         |
+| Items list, search           | the search text and filters, and the items shown (at most 25)           |
+| Revision page                | item, revision and project group                                        |
+| BOM page                     | item, revision, the revision rule, the items listed                     |
+| Where-used                   | the item and the assemblies listed                                      |
+| BOM or result comparison     | the item and the revision compared                                      |
+| Change order, change request | its number                                                              |
+| Project group                | the group code                                                          |
+| Vault explorer               | the group or list, the search text, the selected row and the rows shown |
 
 Click **×** on the chip to ask without sharing the page (**add it back**
 undoes that; moving to another page resets it). **Quick actions** under the
@@ -125,8 +126,8 @@ as "and which of those are released?" works. **New conversation** deletes it.
   revisions to one of your drafts, raise a change request or comment on
   one – only when your question asks for it. It never submits, approves,
   releases or makes anything obsolete, and it never triages, accepts,
-  defers or rejects a change request. Those decisions stay with people.
-  (Viewers raise and discuss change requests themselves in TeamCraft, or
+  defers or rejects a change request. Those decisions stay with people. (Viewers raise and discuss change requests
+  themselves in TeamCraft, or
   through their own [MCP client](../reference/mcp.md).)
 - **Check the answer.** It is generated by an AI model from the data that
   the tools return. Numbers, states and quantities come from TeamCraft, but
@@ -148,11 +149,11 @@ tools it calls are sent to **the AI provider that your administrator
 configured**. The dialogs name it (provider and host). Which
 one receives the data depends on the setup:
 
-| Provider setting                          | Receives the data                                                    |
-|-------------------------------------------|----------------------------------------------------------------------|
-| `anthropic`                               | the Anthropic API                                                    |
-| `openai`                                  | OpenAI, or the Azure OpenAI resource of your organisation            |
-| `openai-compatible` with a hosted service | that service (Mistral, OpenRouter, Groq, …)                          |
+| Provider setting                          | Receives the data                                                                                                                                        |
+|-------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `anthropic`                               | the Anthropic API                                                                                                                                        |
+| `openai`                                  | OpenAI, or the Azure OpenAI resource of your organisation                                                                                                |
+| `openai-compatible` with a hosted service | that service (Mistral, OpenRouter, Groq, …)                                                                                                              |
 | `openai-compatible` with a local server   | only the model server that your administrator runs (Ollama, vLLM, LM Studio). With a server inside the organisation's network the data does not leave it |
 
 The data includes item names, descriptions, BOM lines, change order and
@@ -228,8 +229,8 @@ When the AI service is overloaded or busy it answers `503`.
 ## ACP agents in the desktop app
 
 *Ask TeamCraft* runs on the server with the administrator's provider and key.
-In the desktop app it is one of two backends of the **Agent** view
-(*Company AI*); the other is an **agent on your own computer** (*Local
+In the desktop app it is one of two backends of the **Agent** view (*Company AI*); the other is an **agent on your own
+computer** (*Local
 agent*). When the server offers both, *Company AI* / *Local agent* in the
 Agent toolbar switches between them. Each keeps its own conversation: the
 company AI's is stored and audited on the server, the local agent's lives
@@ -244,8 +245,7 @@ its ACP adapter) or Gemini CLI. The desktop app is the ACP client. The
 server needs no API key for this. The agent uses its own sign-in or key
 with its own provider.
 
-Your administrator can turn local agents off for the whole server
-(`TEAMCRAFT_LOCAL_AGENTS=off`, see
+Your administrator can turn local agents off for the whole server (`TEAMCRAFT_LOCAL_AGENTS=off`, see
 [Local agents](../admin/configuration.md#local-agents)), so that AI use
 goes through the company AI, *Ask TeamCraft*, instead of AI tools of your
 own (data-loss prevention: the organisation's provider and contract, the
@@ -256,20 +256,19 @@ and refuses to start one – it asks the server again when the Agent view
 opens, every minute and before every message, so this needs no restart. The **Agent** view (`Ctrl/Cmd+4`) then runs on
 the company AI, automatically and without a local option, with a short
 note that your organisation provides its AI centrally – or, if no
-assistant is configured, says that AI is switched off by the administrator
-(local agents off, no company AI).
+assistant is configured, says that AI is switched off by the administrator (local agents off, no company AI).
 
 ### Set it up
 
-1. **Settings → Agents…** (or **Agent** in the navigation rail →
-   **Set up an agent…**). No agent is set up by default, and TeamCraft
+1. **Settings → Agents…** (or **Agent** in the navigation rail → **Set up an agent…**). No agent is set up by default,
+   and TeamCraft
    never installs or starts one on its own.
 2. Add an agent. The presets only fill in the fields:
 
-   | Agent       | Program                       | Arguments                            | Needs                                                                                 |
-   |-------------|-------------------------------|--------------------------------------|---------------------------------------------------------------------------------------|
-   | Claude Code | `npx` (Windows: `npx.cmd`)    | `-y @zed-industries/claude-code-acp` | Node.js; npx downloads the adapter from npm the first time; sign in with `claude` once or set `ANTHROPIC_API_KEY` |
-   | Gemini CLI  | `gemini`                      | `--experimental-acp`                 | `npm install -g @google/gemini-cli`, then sign in once with `gemini`                   |
+   | Agent       | Program                    | Arguments                            | Needs                                                                                                             |
+   |-------------|----------------------------|--------------------------------------|-------------------------------------------------------------------------------------------------------------------|
+   | Claude Code | `npx` (Windows: `npx.cmd`) | `-y @zed-industries/claude-code-acp` | Node.js; npx downloads the adapter from npm the first time; sign in with `claude` once or set `ANTHROPIC_API_KEY` |
+   | Gemini CLI  | `gemini`                   | `--experimental-acp`                 | `npm install -g @google/gemini-cli`, then sign in once with `gemini`                                              |
 
    Any other program that speaks ACP over stdio works too. Desktop apps
    often do not see the `PATH` of your shell (macOS in particular). If the
@@ -277,8 +276,7 @@ assistant is configured, says that AI is switched off by the administrator
    `/opt/homebrew/bin/gemini`. Package names change: check the adapter's
    own documentation if `npx` reports an unknown package.
 3. Open **Agent** (rail, **View → Agent**, `Ctrl+4`; if it shows the company
-   AI, click **Local agent** in its toolbar), pick the agent and press
-   **Start**.
+   AI, click **Local agent** in its toolbar), pick the agent and press **Start**.
 
 ### Working with it
 
@@ -292,11 +290,11 @@ assistant is configured, says that AI is switched off by the administrator
 - **Quick prompts** use the server's [MCP prompts](../reference/mcp.md):
   *Release notes* and *Release check* for the open revision, *Review this
   change* for the open change order, *Triage my worklist* anywhere.
-- **Permission requests** of the agent show up in the conversation with
-  **Allow once** and **Reject**. The desktop app never grants an "always"
+- **Permission requests** of the agent show up in the conversation with **Allow once** and **Reject**. The desktop app
+  never grants an "always"
   permission.
-- **Model:** if the agent offers a choice of models, the navigator shows a
-  **Model** picker under the agent. The list is the agent's own. It depends
+- **Model:** if the agent offers a choice of models, the navigator shows a **Model** picker under the agent. The list is
+  the agent's own. It depends
   on the agent's provider, sign-in and plan, and TeamCraft adds or checks
   nothing. The model switches between answers, not during one. The desktop
   app remembers the pick per agent and selects it again at the next start
@@ -349,8 +347,9 @@ that only send that, the older unstable `models` field (set with
 `tool_call_update`, `plan`, `config_option_update`), `session/request_permission` and
 `fs/read_text_file`. It answers every other agent request with "method not
 found". At most 8 file reads run at once and at most 16 permission requests
-wait for an answer; further ones are refused or answered with `cancelled`.
-**Stop** closes the agent's input and ends the process, so an agent that
-`npx` or `cmd` started as a child process of its own ends too. If the agent asks for a sign-in first (`auth_required`), sign in
+wait for an answer; further ones are refused or answered with `cancelled`. **Stop** closes the agent's input and ends
+the process, so an agent that
+`npx` or `cmd` started as a child process of its own ends too. If the agent asks for a sign-in first (`auth_required`),
+sign in
 once in a terminal with the agent's own command and start it again. The
 code is `desktop/src/acp.rs`.

@@ -25,19 +25,19 @@ versions](https://github.com/rudalabs/TeamCraft/blob/main/CONTRIBUTING.md)).
 
    The Docker installation backs up through the database container
    instead ([Install with Docker → Backup and
-   restore](docker.md#backup-and-restore)). Details, requirements
-   (`pg_dump` in the server's major version or newer) and what the backup
+   restore](docker.md#backup-and-restore)). Details, requirements (`pg_dump` in the server's major version or newer) and
+   what the backup
    verifies: [Operations → Backups](operations.md#backups).
 5. Optional: `teamcraft vault check --verify-hashes` – a backup stops at a
    corrupt or missing blob anyway, this finds it earlier.
 
 ## Upgrade
 
-| Installation        | How                                                                                         |
-|---------------------|---------------------------------------------------------------------------------------------|
+| Installation        | How                                                                                                             |
+|---------------------|-----------------------------------------------------------------------------------------------------------------|
 | Docker installation | run the installer again (`… \| bash`, or `-s -- --version X.Y.Z`); see [Install with Docker](docker.md#upgrade) |
-| Binary              | replace the `teamcraft` binary and start it                                                 |
-| From source         | `git pull`, `cargo run --release`                                                           |
+| Binary              | replace the `teamcraft` binary and start it                                                                     |
+| From source         | `git pull`, `cargo run --release`                                                                               |
 
 On start the server
 
@@ -46,9 +46,9 @@ On start the server
   rolled back completely, nothing of it stays (no half-added column, no
   half-converted rows), the server does not start, and the log names the
   migration. A database that is several versions behind applies all missing
-  migrations one after the other, in one start; a migration that is missing
-  *below* the newest applied one (as 0021 on a database that already has
-  0022) is applied too.
+  migrations one after the other, in one start; a migration that is missing *below* the newest applied one (as 0021 on a
+  database that already has
+    0022) is applied too.
 * does **not** touch rows of tables that are only extended: new columns get a
   default, new tables start empty.
 * afterwards runs the background scans of the current version (for example
@@ -65,8 +65,8 @@ succeeded are not repeated. If you cannot fix it, [roll back](#rolling-back).
 * **A changed migration is refused.** The checksum of every applied
   migration is stored. If the text of an applied migration differs from the
   stored checksum, start-up stops with "was previously applied but has been
-  modified". Only five migrations that were edited before the first release
-  (0002, 0003, 0005, 0011, 0012; comments and seed data only) are accepted
+  modified". Only five migrations that were edited before the first release (0002, 0003, 0005, 0011, 0012; comments and
+  seed data only) are accepted
   with the new text. Never edit a migration of a database you keep.
 * **A half-applied migration is refused** (`success = false` in
   `_sqlx_migrations`, which normal operation never leaves behind).
@@ -131,10 +131,10 @@ There is no separate change log file: the GitHub Release of a version
 carries its notes. What the database upgrade itself does, per released
 version (a migration is additive unless it says otherwise):
 
-| Upgrade                  | Migrations      | What changes                                                                                                                                                                                       |
-|--------------------------|-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| v0.1.0 → v0.2.0          | 0032 – 0035     | New tables for the assistant conversation (0032), result templates and a `source` column (0033), result proposals (0034) and request digests (0035). 0035 replaces the CHECK constraint of notification kinds with a longer list (adds `request_digest`). No data is converted or removed. |
-| v0.2.0 → v0.2.5          | 0036 – 0039     | `file_versions.export_name` and `export_name_scanned` (default FALSE; the start-up scan reads the STEP header of the stored files once) (0036); new tables for idempotency keys of item creation (0037), custom logos (0038) and as-built records with their deviations (0039). 0039 replaces the CHECK constraint of item types with a longer list (adds `as_built`). No data is converted or removed. |
+| Upgrade         | Migrations  | What changes                                                                                                                                                                                                                                                                                                                                                                                            |
+|-----------------|-------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| v0.1.0 → v0.2.0 | 0032 – 0035 | New tables for the assistant conversation (0032), result templates and a `source` column (0033), result proposals (0034) and request digests (0035). 0035 replaces the CHECK constraint of notification kinds with a longer list (adds `request_digest`). No data is converted or removed.                                                                                                              |
+| v0.2.0 → v0.2.5 | 0036 – 0039 | `file_versions.export_name` and `export_name_scanned` (default FALSE; the start-up scan reads the STEP header of the stored files once) (0036); new tables for idempotency keys of item creation (0037), custom logos (0038) and as-built records with their deviations (0039). 0039 replaces the CHECK constraint of item types with a longer list (adds `as_built`). No data is converted or removed. |
 
 An older published release first needs the steps of the releases between: a
 database of the **first v0.1.0 tag** (0001 – 0014, 0016 – 0020, 0022) gets

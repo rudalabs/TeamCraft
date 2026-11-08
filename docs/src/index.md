@@ -26,14 +26,14 @@ vault.
 
 ## The main pieces
 
-| Module                 | Role                                                                                           |
-|------------------------|------------------------------------------------------------------------------------------------|
-| `domain`               | pure rules: roles, lifecycle states and transitions, revision letters, validation              |
-| `services`             | business logic – the only code that writes to the database (permissions, row locks, audit log) |
-| `web`                  | server-rendered HTML interface (cookie sessions, CSRF protection, strict CSP)                  |
-| `api`                  | JSON REST API under `/api/v1` (bearer tokens)                                                  |
-| `vault`                | content-addressed file storage (`objects/ab/cd/<sha256>`)                                      |
-| `cadformat`, `cadrefs` | file formats of the CAD programs, references inside CAD files                                  |
+| Module                 | Role                                                                                                          |
+|------------------------|---------------------------------------------------------------------------------------------------------------|
+| `domain`               | pure rules: roles, lifecycle states and transitions, revision letters, validation                             |
+| `services`             | business logic – the only code that writes to the database (permissions, row locks, audit log)                |
+| `web`                  | server-rendered HTML interface (cookie sessions, CSRF protection, strict CSP)                                 |
+| `api`                  | JSON REST API under `/api/v1` (bearer tokens)                                                                 |
+| `vault`                | content-addressed file storage (`objects/ab/cd/<sha256>`)                                                     |
+| `cadformat`, `cadrefs` | file formats of the CAD programs, references inside CAD files                                                 |
 | `mesh`, `preview`      | pure-Rust readers for the 3D preview (meshes, point clouds, STEP via truck; `simmesh`: VTK, VTU, FRD results) |
 
 ## Platforms

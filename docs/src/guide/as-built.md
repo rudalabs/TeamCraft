@@ -10,8 +10,8 @@ records](../research/as-built.md).
 ## A unit is an item
 
 An item of type **As-built** (numbers `AB-000001`, …) is one physical unit
-or one lot. It has the usual lifecycle, revisions, check-out/check-in, files
-(photos, measurement reports, a 3D scan, the traveller) and change orders. A
+or one lot. It has the usual lifecycle, revisions, check-out/check-in, files (photos, measurement reports, a 3D scan,
+the traveller) and change orders. A
 new revision of the as-built item is a new state of the *same* unit – after
 a rework, a repair or a retrofit; the older revision stays for traceability.
 
@@ -29,8 +29,8 @@ are frozen at release.
 
 ## Recording a built unit
 
-On a part, assembly or software revision, the **Built units** card has
-*Record a built unit*: serial or lot number, build date, optionally the
+On a part, assembly or software revision, the **Built units** card has *Record a built unit*: serial or lot number,
+build date, optionally the
 item number, name, note and project group of the new as-built item. TeamCraft
 creates the as-built item (revision A, checked out by you) with its build
 record and, for an assembly, a copy of the design's BOM – in one step. Edit
@@ -61,16 +61,15 @@ Rules:
 
 Each deviation has a **kind** (dimension, material, component, process,
 other), the **feature** (e.g. *Bore Ø12 H7*), what was **designed** and what
-was **built** (text, e.g. `12.000 +0.018/0` → `12.035`), a note and the
-**disposition**:
+was **built** (text, e.g. `12.000 +0.018/0` → `12.035`), a note and the **disposition**:
 
-| Disposition | Meaning                                                  |
-|-------------|----------------------------------------------------------|
-| Open        | not decided yet – blocks the release                     |
-| Use as is   | accepted as built (usually an engineering/MRB decision)  |
-| Rework      | brought back to the design                               |
-| Repair      | made usable, but not to the design                       |
-| Scrap       | the unit (or the affected part) is not used              |
+| Disposition | Meaning                                                 |
+|-------------|---------------------------------------------------------|
+| Open        | not decided yet – blocks the release                    |
+| Use as is   | accepted as built (usually an engineering/MRB decision) |
+| Rework      | brought back to the design                              |
+| Repair      | made usable, but not to the design                      |
+| Scrap       | the unit (or the affected part) is not used             |
 
 An as-built revision holds at most 1000 deviations.
 

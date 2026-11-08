@@ -9,11 +9,11 @@ SHA-256 hashes only.
 
 ## Roles
 
-| Role       | Stored as | May                                                                                    |
-|------------|-----------|----------------------------------------------------------------------------------------|
-| Viewer     | `viewer`  | read internal project groups and the restricted groups they are a member of           |
+| Role       | Stored as | May                                                                                     |
+|------------|-----------|-----------------------------------------------------------------------------------------|
+| Viewer     | `viewer`  | read internal project groups and the restricted groups they are a member of             |
 | CAD editor | `editor`  | read like a viewer; change items of their project groups, create project groups, review |
-| Admin      | `admin`   | everything, including restricted groups, plus users, all groups, lock overrides        |
+| Admin      | `admin`   | everything, including restricted groups, plus users, all groups, lock overrides         |
 
 A project group can be **restricted** to its members: everybody else –
 viewers and CAD editors who are not members – gets "not found" for the
@@ -62,12 +62,12 @@ read the item. Every change is audited (`item.owner`).
 When somebody leaves, an administrator opens the user and uses **Hand over
 work**. In one transaction TeamCraft moves to the chosen person:
 
-| What | Moved when |
-|---|---|
-| item ownerships | always |
-| change orders the user authored | draft or rejected |
+| What                                 | Moved when                                      |
+|--------------------------------------|-------------------------------------------------|
+| item ownerships                      | always                                          |
+| change orders the user authored      | draft or rejected                               |
 | change requests assigned to the user | not closed (new, in triage, accepted, deferred) |
-| pending reviews of the user | the change order is a draft or in review |
+| pending reviews of the user          | the change order is a draft or in review        |
 
 A message after the run gives the counts and the first objects that stayed with
 the old user and why (numbers of groups the administrator may not read are
@@ -101,8 +101,7 @@ memberships stay. Work through these steps, in this order:
    Check-outs → Release all*. The managers of a project group use *Release N
    check-outs* in the group's member list – for members who are deactivated
    and, under *Former members still holding check-outs*, for people who are
-   no longer members. Each release is audited
-   (`revision.checkout_forced_release`); one refused release does not stop
+   no longer members. Each release is audited (`revision.checkout_forced_release`); one refused release does not stop
    the others. Revisions of a need-to-know group that hides itself from
    administrators (`admin_read = none`) are left out for administrators: a
    manager of that group releases them.

@@ -8,17 +8,17 @@ images, the reference scan and the STEP preview end to end? Investigated on
 
 ## Sources checked
 
-| Source | What it offers | Licence | Usable |
-|---|---|---|---|
-| **NIST MBE PMI validation and conformance testing** | test parts CTC 01–05, FTC 06–11, STC, HTC in native CATIA V5, Siemens NX, Autodesk Inventor, PTC Creo and SolidWorks plus STEP AP203/AP242 and PDF; the **MTC box assembly** in NX (with JT) and SolidWorks (with ACIS `.SAT`) | "The test cases, CAD models, and STEP files can be used without any restrictions." NIST asks for an acknowledgement and does not allow its logo in promotional material | **yes** |
-| GrabCAD and similar community libraries | many native files | no licence per file, terms of the site only | no |
-| `inventor-kit` (PyPI) | reads `.ipt`/`.iam`, files not distributed | PolyForm Noncommercial since 0.3.0 | no |
-| SolidWorks repositories of open hardware projects | `.SLDPRT`/`.SLDASM` | mostly no licence, CC BY-SA or unverified "MIT" claims | no (not verifiable / share-alike) |
-| Solid Edge community samples | automation code samples | no model files with a stated licence found | no |
+| Source                                              | What it offers                                                                                                                                                                                                                 | Licence                                                                                                                                                                 | Usable                            |
+|-----------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------|
+| **NIST MBE PMI validation and conformance testing** | test parts CTC 01–05, FTC 06–11, STC, HTC in native CATIA V5, Siemens NX, Autodesk Inventor, PTC Creo and SolidWorks plus STEP AP203/AP242 and PDF; the **MTC box assembly** in NX (with JT) and SolidWorks (with ACIS `.SAT`) | "The test cases, CAD models, and STEP files can be used without any restrictions." NIST asks for an acknowledgement and does not allow its logo in promotional material | **yes**                           |
+| GrabCAD and similar community libraries             | many native files                                                                                                                                                                                                              | no licence per file, terms of the site only                                                                                                                             | no                                |
+| `inventor-kit` (PyPI)                               | reads `.ipt`/`.iam`, files not distributed                                                                                                                                                                                     | PolyForm Noncommercial since 0.3.0                                                                                                                                      | no                                |
+| SolidWorks repositories of open hardware projects   | `.SLDPRT`/`.SLDASM`                                                                                                                                                                                                            | mostly no licence, CC BY-SA or unverified "MIT" claims                                                                                                                  | no (not verifiable / share-alike) |
+| Solid Edge community samples                        | automation code samples                                                                                                                                                                                                        | no model files with a stated licence found                                                                                                                              | no                                |
 
 **Solid Edge** is the gap: no openly licensed native Solid Edge files were
-found. Options: create small test parts and an assembly with Solid Edge
-(Community Edition) and publish them under CC0, or ask the Solid Edge
+found. Options: create small test parts and an assembly with Solid Edge (Community Edition) and publish them under CC0,
+or ask the Solid Edge
 community for donated files.
 
 ## Decision
@@ -38,8 +38,8 @@ file and its SHA-256 in `tests/fixtures/cad/README.md`:
 
 A test (`tests/cad_fixtures.rs`) checks every file against its SHA-256 and
 the expected TeamCraft format, and records what the heuristics really find
-in these files: preview images (Inventor, SolidWorks), referenced part files
-(SolidWorks and NX assemblies) and the STEP 3D preview.
+in these files: preview images (Inventor, SolidWorks), referenced part files (SolidWorks and NX assemblies) and the STEP
+3D preview.
 
 ## Sources
 

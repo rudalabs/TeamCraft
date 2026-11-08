@@ -12,8 +12,8 @@ without NX, a Parasolid licence or a translation service?
 * An NX part is a stream container (`SPLMSSTR`, see `src/nxpart.rs`). Next to
   the NX data (`/Root/UG_PART/UG_PART`, which embeds the exact geometry as a
   zlib-compressed **Parasolid** transmit block) every saved **part** carries
-  `/Root/FastLoad/JT`: a short index followed by a complete **JT 9.4** file
-  (`Version 9.4 JT DM 10.8.0.1`) with the tessellation NX uses for fast
+  `/Root/FastLoad/JT`: a short index followed by a complete **JT 9.4** file (`Version 9.4 JT DM 10.8.0.1`) with the
+  tessellation NX uses for fast
   loading.
 * Assemblies and drawings have no such stream (checked with the NIST
   assembly and with a real project folder: 23 of 27 `.prt` files had one, the
@@ -30,25 +30,23 @@ without NX, a Parasolid licence or a translation service?
   Open implementations to compare against: `oce-jt` (C++, LGPL-2.1, an Open
   CASCADE fork), `jt-java`, `JTSharp`. TeamCraft (MPL-2.0) implements the
   algorithms from the format reference and copies no code.
-* The Parasolid block cannot be tessellated without a Parasolid kernel
-  (commercial); no open reader exists.
+* The Parasolid block cannot be tessellated without a Parasolid kernel (commercial); no open reader exists.
 * LOD 0 is coarse: 16–30 facets around a cylinder, up to 0.45 mm away from
   the true surface on a 60 mm part. But every corner carries the exact
-  surface normal of the B-rep. With curved point-normal triangles
-  (Vlachos et al. 2001) and creases handled through the cross product of
+  surface normal of the B-rep. With curved point-normal triangles (Vlachos et al. 2001) and creases handled through the
+  cross product of
   the two face normals, a 3 × 3 refinement brings the deviation on the
   cylinders of a real part from 448 µm to 10 µm (mean 35 µm → 0.6 µm), and
   the mesh stays closed.
 * A prototype decoded all NX parts of the NIST fixtures and of a real
-  project folder (23 parts, 128 to 9 760 triangles): every mesh is closed
-  (each edge shared by two triangles), consistently oriented, with a positive
+  project folder (23 parts, 128 to 9 760 triangles): every mesh is closed (each edge shared by two triangles),
+  consistently oriented, with a positive
   volume; the normals all agree with the triangle orientation.
 
 ## Decision
 
-Implement: `src/mesh/jt.rs` reads LOD 0 of the JT stream of NX parts
-(JT 9.x only), `src/mesh/pn.rs` refines it along the normals up to 3 × 3
-(about 500 000 triangles at most). NX parts get the format id `nx-part` in
+Implement: `src/mesh/jt.rs` reads LOD 0 of the JT stream of NX parts (JT 9.x only), `src/mesh/pn.rs` refines it along
+the normals up to 3 × 3 (about 500 000 triangles at most). NX parts get the format id `nx-part` in
 the 3D preview; assemblies and drawings keep their preview image.
 
 Not now: stand-alone `.jt` files (the NIST assembly's is JT 10.5 with a
@@ -79,8 +77,8 @@ preview, and assemblies a 3D preview put together from their parts:
 * The component files are found by file name like file references; their
   saved folders are in `/Root/FastLoad/ExternalReferences`, but inside
   TeamCraft the name match is what counts.
-* Two of three exploration agents worked out the mapping independently
-  (one from the JT ground truth, one from the `.prt` alone); a third ruled
+* Two of three exploration agents worked out the mapping independently (one from the JT ground truth, one from the
+  `.prt` alone); a third ruled
   out the other streams (`RMFastLoad`: attributes and mass properties,
   `UG_PART`: the same transforms keyed by internal object maps).
 
@@ -102,7 +100,7 @@ assembly hides:
   structure stream: one `UGS::LAYER_parameter` object with four masks of 17
   32-bit words (selectable, visible, two copies with an extra bit), the work
   layer and the constants 1, 1. Integers there are signed (one byte = value
-  + 1; 13, 21, 29 or 32 bits). The same layout decoded in all 5 760 files.
+    + 1; 13, 21, 29 or 32 bits). The same layout decoded in all 5 760 files.
 * Checked against NX's pictures: an assembly that hides layers 2–255 leaves
   out exactly its components on layers 9 and 19 (TeamCraft does the same);
   an assembly with every layer visible shows its components on layers 17
@@ -116,8 +114,8 @@ handled (all files seen are in mm).
 
 ## Sources
 
-* Siemens, *JT File Format Reference*, version 9.5 (2010), and ISO 14306:2012
-  *Industrial automation systems and integration – JT file format
+* Siemens, *JT File Format Reference*, version 9.5 (2010), and ISO 14306:2012 *Industrial automation systems and
+  integration – JT file format
   specification for 3D visualization*.
 * A. Vlachos, J. Peters, C. Boyd, J. L. Mitchell, *Curved PN Triangles*,
   ACM Symposium on Interactive 3D Graphics, 2001.

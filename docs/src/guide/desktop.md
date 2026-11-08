@@ -20,7 +20,8 @@ check-outs and reviews, and a **local working folder**:
 * *Get…* on a revision copies the item **with everything it consists of** –
   its BOM resolved with a revision rule and the parts its CAD files
   reference – so the assembly opens in the CAD program (see below);
-* the download icon next to *Projects* in the navigator (*Tools → Get Project Groups…*) copies the files of every item of
+* the download icon next to *Projects* in the navigator (*Tools → Get Project Groups…*) copies the files of every item
+  of
   chosen project groups into the working folder – for new team members;
 * the folder icon next to it (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
   scan first (nothing is uploaded), then one item per part or assembly with
@@ -29,8 +30,8 @@ check-outs and reviews, and a **local working folder**:
   where it stopped – an item whose files did not arrive is completed, none is
   created twice; the app remembers per project group what it imported, so
   the same folder can also be imported into another group. BOM lines come
-  from the references in the assembly files – for NX also from `.prt` files
-  (such an assembly is imported as a part item, NX does not tell parts and
+  from the references in the assembly files – for NX also from `.prt` files (such an assembly is imported as a part
+  item, NX does not tell parts and
   assemblies apart by the file type). *Help → How to
   Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file
   names, check and release);
@@ -80,24 +81,24 @@ check-outs and reviews, and a **local working folder**:
 * *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`, or *Agent* in a revision or
   change tab) is the app's one place for AI. It runs on one of two
   backends, decided by the server's policy and your choice:
-  * **Company AI** – the server's assistant, configured by the
-    administrator (the key stays on the server). It is the
-    [Ask TeamCraft](assistant.md) conversation of the web UI, inline in the
-    Agent tab: it knows the last revision (and its section, BOM with
-    revision rule), change order or change request tab you opened, offers
-    quick actions that fit it (*Draft release notes*, *Check before
-    release*, *Brief me for this review* …), has the *Allow drafting*
-    checkbox, *Cancel* and *New conversation*, and keeps one conversation on
-    the server that survives restarts.
-  * **Local agent** – an AI agent on your computer that you set up under
-    *Settings → Agents…*, for example Claude Code through its ACP adapter
-    or Gemini CLI. None is set up by default. The app starts the agent in
-    the workspace folder and gives it TeamCraft's tools with your rights.
-    The conversation streams in the tab, with tool calls, the agent's plan,
-    permission prompts (*Allow once* / *Reject*), *Cancel* and quick
-    prompts (release notes, release check, change review, worklist triage).
-    Through the app the agent may only read text files in the workspace
-    folder; it gets no write access and no terminal.
+    * **Company AI** – the server's assistant, configured by the
+      administrator (the key stays on the server). It is the
+      [Ask TeamCraft](assistant.md) conversation of the web UI, inline in the
+      Agent tab: it knows the last revision (and its section, BOM with
+      revision rule), change order or change request tab you opened, offers
+      quick actions that fit it (*Draft release notes*, *Check before
+      release*, *Brief me for this review* …), has the *Allow drafting*
+      checkbox, *Cancel* and *New conversation*, and keeps one conversation on
+      the server that survives restarts.
+    * **Local agent** – an AI agent on your computer that you set up under *Settings → Agents…*, for example Claude Code
+      through its ACP adapter
+      or Gemini CLI. None is set up by default. The app starts the agent in
+      the workspace folder and gives it TeamCraft's tools with your rights.
+      The conversation streams in the tab, with tool calls, the agent's plan,
+      permission prompts (*Allow once* / *Reject*), *Cancel* and quick
+      prompts (release notes, release check, change review, worklist triage).
+      Through the app the agent may only read text files in the workspace
+      folder; it gets no write access and no terminal.
 
   When the server offers both, *Company AI* / *Local agent* in the Agent
   toolbar switches between them (each keeps its own conversation); the app
@@ -120,11 +121,11 @@ account can read and says so at the start and in *Settings*. An address with
 plain `http://` to another computer gets a warning when you connect: the token
 and all data would cross the network unencrypted – use the `https://` address
 of the server. The app uses the same skins
-and 3D viewer as the web interface; the models are converted by the server.
-*Settings → Appearance*: *TeamCraft* (the default) follows the light or dark
+and 3D viewer as the web interface; the models are converted by the server. *Settings → Appearance*: *TeamCraft* (the
+default) follows the light or dark
 appearance of the operating system and switches with it, *TeamCraft Light*
-and *TeamCraft Dark* stay fixed, the distribution skins are dark.
-*Settings → Change password…* changes the password of a local account (it
+and *TeamCraft Dark* stay fixed, the distribution skins are dark. *Settings → Change password…* changes the password of
+a local account (it
 asks for the current one; wrong ones count like failed sign-ins, and your web
 sessions end); single-sign-on accounts do not see it.
 
@@ -142,13 +143,13 @@ in; a button that does not apply right now is greyed out, and its tooltip
 says why (for example *Check out first* or *Already in change order
 CHG-000002*). The **one highlighted button is the most likely next step**:
 
-| Revision | Highlighted |
-|---|---|
-| in work, not checked out | *Check out* |
-| checked out by you, with local changes (or the workspace could not be read) | *Check in…* |
-| checked out by you, no local changes | *Release…* (when it can be released, otherwise *Check in…*) |
-| in review, obsolete, or checked out by somebody else | nothing |
-| released | *Revise* |
+| Revision                                                                    | Highlighted                                                 |
+|-----------------------------------------------------------------------------|-------------------------------------------------------------|
+| in work, not checked out                                                    | *Check out*                                                 |
+| checked out by you, with local changes (or the workspace could not be read) | *Check in…*                                                 |
+| checked out by you, no local changes                                        | *Release…* (when it can be released, otherwise *Check in…*) |
+| in review, obsolete, or checked out by somebody else                        | nothing                                                     |
+| released                                                                    | *Revise*                                                    |
 
 The working folder of your check-out is looked at again whenever the tab is
 shown or the app window gets the focus back – save in the CAD program, switch
@@ -160,21 +161,19 @@ back, and *Check in…* is highlighted.
   (*Request change…*, *Watch*, *Agent*);
 * change tab: **Review** (*Approve change* highlighted, *Reject* – the comment field
   of *Your review* goes with it, required for a rejection) while your review
-  is pending · **Lifecycle** (*Submit for review*, highlighted on your draft,
-  *Withdraw*) · **Collaborate**;
+  is pending · **Lifecycle** (*Submit for review*, highlighted on your draft, *Withdraw*) · **Collaborate**;
 * change request tab: **Triage** (*Start triage* or *Create change order*
-  highlighted, *Take up again*) · **Requester** (*Attach…*, *Withdraw*) ·
-  **Collaborate**.
+  highlighted, *Take up again*) · **Requester** (*Attach…*, *Withdraw*) · **Collaborate**.
 
-Rare actions are in **More ▾** at the end: *Pack and Go…*, *Open in browser*,
-*Refresh* (`F5`) and *Mark obsolete…*. The menu works with the keyboard:
+Rare actions are in **More ▾** at the end: *Pack and Go…*, *Open in browser*, *Refresh* (`F5`) and *Mark obsolete…*. The
+menu works with the keyboard:
 `Enter`, `Space` or `↓` opens it, `↑`/`↓`, `Home`/`End` move, `Enter` runs
 the action, `Esc` closes it and returns to the button; a click outside closes
 it too.
 
 The **Overview** of a revision shows *At a glance* next to the properties:
-the preview image stored in an Inventor, Solid Edge, SolidWorks or NX file
-(with the way into the 3D viewer) and the number of files, BOM lines, where
+the preview image stored in an Inventor, Solid Edge, SolidWorks or NX file (with the way into the 3D viewer) and the
+number of files, BOM lines, where
 used, references, change orders and open change requests – a click opens the
 matching sub-tab.
 
@@ -218,8 +217,8 @@ group, and a file keeps its folder when new versions arrive. While a
 revision is checked out, the revision page can move a file to another
 folder.
 
-**Read-only rule.** Files you have **not** checked out are read-only on disk
-(the read-only attribute on Windows, no write permission on Linux and macOS).
+**Read-only rule.** Files you have **not** checked out are read-only on disk (the read-only attribute on Windows, no
+write permission on Linux and macOS).
 CAD programs then open them read-only, and nobody edits a file that cannot be
 checked in. *Check out* makes the files of the revision writable; *Check in*
 uploads the changed ones and makes them read-only again; *Cancel check-out*
@@ -239,10 +238,10 @@ or changed. New files go into the revision's main folder or a sub-folder of
 it. A file with the name of an existing file becomes its next version and
 asks first (unticked files are not added). The copies appear as *new*
 files in *Check in…* – also files with an unrelated name, which TeamCraft
-remembers in `.teamcraft/added.json` until they are checked in – or tick
-*Check in now*. The Files section explains why the button is disabled:
-checked out by someone else (add after check-in), in review, or released
-(frozen: *Revise* and add the files to the new revision). Dropping files
+remembers in `.teamcraft/added.json` until they are checked in – or tick *Check in now*. The Files section explains why
+the button is disabled:
+checked out by someone else (add after check-in), in review, or released (frozen: *Revise* and add the files to the new
+revision). Dropping files
 onto the window is not supported yet.
 
 **Get.** *Get…* on a revision resolves its structure on the server – the
@@ -253,8 +252,8 @@ names its parts, a drawing its model) – and downloads **only what is
 missing or outdated**, compared by SHA-256. Every file is checked against
 its SHA-256 after the download and recorded at once, so a Get that was
 cancelled or interrupted continues where it stopped – also inside a large file:
-the bytes already received stay next to the file
-(`<name>.<sha>.teamcraft-download`, ignored by the working folder), the next
+the bytes already received stay next to the file (`<name>.<sha>.teamcraft-download`, ignored by the working folder), the
+next
 Get asks the server only for the rest and checks the SHA-256 of the whole
 file before it puts it in place. A file that changed on the server
 meanwhile is downloaded completely again. The status bar shows
@@ -308,6 +307,6 @@ Once a day at most, the app asks GitHub for the latest TeamCraft release. If
 it is newer than your version, the status bar shows *TeamCraft x.y.z is
 available* – a link to the release page in your browser. The app never
 downloads or installs anything itself; install the new version as you
-installed this one. *×* hides the notice until the next version;
-*Settings → Updates* switches the check off (for example on computers without
+installed this one. *×* hides the notice until the next version; *Settings → Updates* switches the check off (for
+example on computers without
 internet access).
