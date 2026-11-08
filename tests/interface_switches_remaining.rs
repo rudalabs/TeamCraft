@@ -154,7 +154,10 @@ async fn the_desktop_switch_leaves_a_group_out_of_a_structure() {
     let f = group(&app).await;
     let (_, admin) = app.user("root", Role::Admin).await;
     let parent = app
-        .create_item(&admin, json!({ "item_type": "assembly", "name": "Outer" }))
+        .create_item(
+            &admin,
+            json!({ "item_type": "assembly", "name": "Outer", "project": "ROCKET" }),
+        )
         .await;
     let r = app
         .api(
@@ -305,6 +308,8 @@ async fn deliver(app: &common::TestApp, number: &str, direct: bool, title: &str)
     .unwrap();
     let report = delivery.run_once(&app.pool).await.unwrap();
     assert_eq!((report.emails, report.chats), (1, 1));
+    // the delivery holds the other references to the outbox
+    drop(delivery);
     std::sync::Arc::try_unwrap(outbox).ok().unwrap()
 }
 
