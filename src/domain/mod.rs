@@ -844,6 +844,20 @@ mod tests {
                 "{bad:?} must be rejected"
             );
         }
+        // the scheme text itself has at most 100 characters; `{YY}` makes a
+        // long text with short numbers (found by cargo mutants)
+        let scheme = |extra: usize| format!("{}{{SEQ:1}}A{}", "{YY}".repeat(23), "B".repeat(extra));
+        assert_eq!(scheme(0).len(), 100);
+        assert!(
+            NumberScheme::parse(&scheme(0)).is_ok(),
+            "exactly 100 characters"
+        );
+        for extra in [1, 2] {
+            let err = NumberScheme::parse(&scheme(extra))
+                .unwrap_err()
+                .public_message();
+            assert!(err.contains("at most 100"), "{err}");
+        }
     }
 
     #[test]
