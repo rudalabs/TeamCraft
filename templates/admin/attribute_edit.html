@@ -16,7 +16,7 @@
     <div class="form-row">
       <label>Label <input type="text" name="label" value="{{ def.label }}" maxlength="100" required></label>
       <label>Unit <input type="text" name="unit" value="{{ def.unit }}" maxlength="16"></label>
-      <label>Order <span class="hint">smaller first</span>
+      <label>Position in forms <span class="hint">lower numbers appear first</span>
         <input type="number" name="position" value="{{ def.position }}" step="1"></label>
     </div>
     {% if def.data_type == "choice" %}
