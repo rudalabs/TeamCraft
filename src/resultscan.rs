@@ -1274,6 +1274,22 @@ mod tests {
         assert!(!scannable("pipe.cas.h5") && !scannable("run.op2"));
     }
 
+    /// Found by cargo mutants: a template sent without `enabled` (REST API)
+    /// is enabled.
+    #[test]
+    fn templates_are_enabled_unless_said_otherwise() {
+        let t: TemplateInput = serde_json::from_str(
+            r#"{"name":"Max stress","file_pattern":"*.frd","method":"regex"}"#,
+        )
+        .unwrap();
+        assert!(t.enabled);
+        let t: TemplateInput = serde_json::from_str(
+            r#"{"name":"Max stress","file_pattern":"*.frd","method":"regex","enabled":false}"#,
+        )
+        .unwrap();
+        assert!(!t.enabled);
+    }
+
     /// Found by cargo mutants: both limits of an exchange file are inclusive
     /// and hold beyond the first value past them.
     #[test]
