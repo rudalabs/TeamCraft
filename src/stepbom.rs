@@ -898,6 +898,11 @@ mod tests {
             [Param::Ref(1), Param::Ref(2), Param::Str("x".into())]
         );
         assert_eq!(params("/x,#5"), [Param::Other, Param::Ref(5)]);
+        // a quoted `)` or `,` inside a skipped typed value ends nothing
+        assert_eq!(
+            params("NAME('x)y'),LABEL('a,b'),#7"),
+            [Param::Other, Param::Other, Param::Ref(7)]
+        );
     }
 
     /// Found by cargo mutants: the nesting depth goes down again after a
