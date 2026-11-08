@@ -816,6 +816,27 @@ mod tests {
         assert_eq!(find(&content, "x.sldasm"), ["Bracket.SLDPRT", "4711.stp"]);
     }
 
+    /// Found by cargo mutants: runs shorter than five bytes are dropped, also
+    /// late in the file and at its end.
+    #[test]
+    fn byte_runs_need_five_printable_bytes() {
+        let runs = |content: &[u8], skip: Option<&std::ops::Range<usize>>| {
+            let mut out = Vec::new();
+            byte_runs(content, skip, |r| out.push(r.to_string()));
+            out
+        };
+        let content = b"\0\0\0\0\0\0\0\0abcd\0ABCDE\0\0xyz";
+        assert_eq!(runs(content, None), ["ABCDE"]);
+        assert_eq!(
+            runs(b"\0\0\0\0\0\0\0\0UVWXY", None),
+            ["UVWXY"],
+            "a run at the end"
+        );
+        assert_eq!(runs(b"\0\0\0\0\0\0\0\0UVWX", None), Vec::<String>::new());
+        // a skipped range splits a run
+        assert_eq!(runs(b"ABCDEFGHIJ", Some(&(5..6))), ["ABCDE"]);
+    }
+
     /// The documented limits (found by cargo mutants: a behavioural test
     /// would have to scan more than 32 MiB).
     #[test]
