@@ -19,6 +19,7 @@ pub mod branding;
 pub mod changes;
 pub mod checkouts;
 pub mod desktop;
+pub mod duplicates;
 pub mod explorer;
 pub mod files;
 pub mod impacts;

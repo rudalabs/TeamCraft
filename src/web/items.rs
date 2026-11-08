@@ -467,11 +467,35 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
                     )),
                 ));
             }
+            // Likely duplicates by name: named in the message, so an existing
+            // part can still be reused (the new one can be deleted while in work).
+            let duplicates = crate::services::duplicates::likely_duplicates(
+                &st.db,
+                &ctx.me,
+                &rev.name,
+                ItemType::parse(&form.item_type),
+                Some(rev.item_id),
+                3,
+            )
+            .await
+            .unwrap_or_default();
+            let hint = if duplicates.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " Similar existing items: {} – check whether one of them can be reused.",
+                    duplicates
+                        .iter()
+                        .map(|d| format!("{} ({})", d.number, d.name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
             Ok(super::redirect_flash(
                 &st,
                 &format!("/revisions/{}", rev.id),
                 super::Flash::success(format!(
-                    "Created {} – {}{files}; it is checked out to you.",
+                    "Created {} – {}{files}; it is checked out to you.{hint}",
                     rev.item_number, rev.name
                 )),
             ))
