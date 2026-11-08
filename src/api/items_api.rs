@@ -342,6 +342,60 @@ pub(super) async fn update_attribute(
     Ok(Json(json!(def)))
 }
 
+#[derive(Deserialize)]
+pub(super) struct BulkBody {
+    /// `revise` or `obsolete`.
+    action: String,
+    /// Item numbers; the latest revision of each is acted on.
+    items: Vec<String>,
+}
+
+/// `POST /items/bulk`: revise or obsolete the latest revision of many items,
+/// each in its own transaction; the outcome lists every item.
+pub(super) async fn items_bulk(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Json(body): Json<BulkBody>,
+) -> AppResult<Json<Value>> {
+    let action = crate::services::bulk::Action::parse(&body.action)
+        .ok_or_else(|| AppError::BadRequest("The action must be 'revise' or 'obsolete'.".into()))?;
+    let results = crate::services::bulk::apply(&st.db, &me, action, &body.items).await?;
+    let ok = results.iter().filter(|r| r.ok).count();
+    Ok(Json(
+        json!({ "results": results, "ok": ok, "failed": results.len() - ok }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub(super) struct DuplicatesQuery {
+    name: String,
+    #[serde(rename = "type")]
+    item_type: Option<String>,
+    limit: Option<usize>,
+}
+
+/// `GET /items/duplicates?name=…&type=…`: readable items whose latest
+/// revision has a similar name – checked before an item is created.
+pub(super) async fn item_duplicates(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Query(q): Query<DuplicatesQuery>,
+) -> AppResult<Json<Value>> {
+    let item_type = match q.item_type.as_deref().filter(|t| !t.is_empty()) {
+        Some(t) => Some(
+            ItemType::parse(t)
+                .ok_or_else(|| AppError::BadRequest(format!("Unknown item type '{t}'.")))?,
+        ),
+        None => None,
+    };
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    let found = crate::services::duplicates::likely_duplicates(
+        &st.db, &me, &q.name, item_type, None, limit,
+    )
+    .await?;
+    Ok(Json(json!(found)))
+}
+
 pub(super) async fn get_item(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,

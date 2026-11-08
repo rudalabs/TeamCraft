@@ -249,7 +249,8 @@ async fn load(
 ///   `items::create_with_files`, which checks the project group (including
 ///   restricted groups). The session belongs to the actor alone.
 /// * **Locks:** the actor's user row (`FOR NO KEY UPDATE`), which serialises the
-///   quota check: at most 16 unexpired sessions per user (409).
+///   quota check: at most 16 unexpired sessions per user (409); the announced
+///   size must fit the storage quotas (413, `services::quotas`).
 /// * **Steps:** the staging file is created before the commit and removed again
 ///   when the commit fails.
 /// * **Audit, notifications, webhooks:** none.
@@ -319,6 +320,8 @@ pub async fn create(
             "You have {open} unfinished uploads – finish or cancel some first."
         )));
     }
+    // Storage quotas, before any bytes are sent (storing checks them again).
+    crate::services::quotas::ensure_room(&mut tx, actor.id, total).await?;
     let id = Uuid::new_v4();
     let session = sqlx::query_as::<_, UploadSession>(
         "INSERT INTO upload_sessions (id, user_id, revision_id, filename, content_type,
@@ -508,8 +511,15 @@ pub async fn complete_in(
                     session.filename, session.received_bytes, session.total_bytes
                 )));
             }
-            let (blob, staged) = match staged_blob(vault, &session).await {
-                Ok(found) => found,
+            // Moving the staging file into the vault scans it for malware:
+            // infected content is refused (400) like a content mismatch.
+            let found = match staged_blob(vault, &session).await {
+                Ok((blob, true)) => vault.adopt_staged(id, &blob.sha256).await.map(|()| blob),
+                Ok((blob, false)) => Ok(blob),
+                Err(e) => Err(e),
+            };
+            let blob = match found {
+                Ok(blob) => blob,
                 Err(e @ (AppError::BadRequest(_) | AppError::Conflict(_))) => {
                     // Start over at offset 0 (also clears a recorded hash
                     // whose blob is missing, so new chunks are accepted).
@@ -527,9 +537,6 @@ pub async fn complete_in(
                 }
                 Err(e) => return Err(e),
             };
-            if staged {
-                vault.adopt_staged(id, &blob.sha256).await?;
-            }
             sqlx::query("UPDATE upload_sessions SET stored_sha256 = $2 WHERE id = $1")
                 .bind(id)
                 .bind(&blob.sha256)

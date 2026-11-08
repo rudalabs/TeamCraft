@@ -77,6 +77,25 @@ present. Start the server afterwards; it applies newer migrations.
 * Configuration and secrets (`.env`, the system `teamcraft.env`, TLS keys)
   are not part of the backup; back them up separately.
 
+### Encrypted backups
+
+`teamcraft backup <dir> --encrypt` encrypts the dump and every vault object
+with a key derived from a passphrase (`TEAMCRAFT_BACKUP_PASSPHRASE` or
+`_FILE`, otherwise prompted for twice; at least 12 characters): Argon2id
+(64 MiB, 3 passes) for the key, XChaCha20-Poly1305 in 64 KiB authenticated
+chunks for the files. Object names and the manifest stay plain (the names are
+the SHA-256 of the plain content); the manifest records the salt, the cost
+and a key check. The plain dump exists only between `pg_dump` and its
+encryption, inside `<dir>`.
+
+`teamcraft restore <dir>` notices an encrypted backup and asks for the
+passphrase (or takes it from the configuration). A wrong passphrase is
+reported before anything is changed; every file is authenticated and
+checked against its SHA-256 while it is decrypted, so a changed or truncated
+file stops the restore. The dump is decrypted to a temporary file in the
+vault's `tmp/` for `pg_restore` and removed afterwards. **Without the
+passphrase the backup cannot be restored** – store it apart from the backups.
+
 The container image has no PostgreSQL client tools; the Docker installation
 backs up through the database container instead – see
 [Install with Docker → Backup and restore](docker.md#backup-and-restore).
@@ -229,6 +248,27 @@ within the grace period (`--grace-hours`, default 24, at least 1); `--apply`
 removes them. Run it after deleting files, or after `purge-versions` left
 content behind that was younger than an hour. Back up before the first
 `--apply`.
+
+### Storage quotas
+
+Optional limits keep one user – or all of them together – from filling the
+disk. Both count the sizes of the stored file versions (identical content
+stored twice counts twice; versions removed by the retention free their
+share). Without a quota (the default) nothing is limited.
+
+```sh
+teamcraft user quota --username max             # usage and quota of one account
+teamcraft user quota --username max --mb 20480  # 20 GiB for max
+teamcraft user quota --username max --mb none   # no limit
+teamcraft vault quota                           # usage and quota of the vault
+teamcraft vault quota --mb 2097152              # 2 TiB in total
+```
+
+An upload, check-in, import or new item that would go beyond a quota is
+refused with `413` and stores nothing; a chunked upload is refused when it
+starts, before any bytes are sent. Lowering a quota never removes anything –
+the user just cannot store more. Changes are recorded as `user.quota` and
+`vault.quota` in the audit log.
 
 ## Metrics for Prometheus
 

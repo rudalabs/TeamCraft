@@ -97,7 +97,8 @@ feature milestone – the features in *What works* are enough; what is missing i
     - [ ] F7: end TeamCraft sessions of users removed at the IdP (shorter SSO sessions, back-channel logout or a
       periodic check)
     - [ ] F8: re-check the hash of a blob while it is downloaded (or periodically), not only in `vault check`
-    - [ ] F9: disk quota per user and in total for uploads
+    - [x] F9: disk quota per user and in total for uploads (`services::quotas`, `teamcraft user quota` /
+      `teamcraft vault quota`, `tests/quotas.rs`)
     - [ ] F10: serve downloads with a Content-Type derived from the format (the download headers are pinned in
       `tests/web_security.rs`)
     - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
@@ -110,7 +111,8 @@ feature milestone – the features in *What works* are enough; what is missing i
     - [ ] F17: `teamcraft mcp`: no redirects, a warning (or refusal) for `http://` servers other than `localhost`
     - [x] F18: desktop token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service); warn on
       `http://` server URLs – file fallback with a warning where there is no keychain
-    - [ ] F19: backups written with mode 0600/0700, optional encryption, a signed manifest
+    - [ ] F19: backups written with mode 0600/0700, a signed manifest (optional encryption done:
+      `teamcraft backup --encrypt`, `src/backupcrypt.rs`)
 - [ ] External review or pentest of authentication, read permissions and file parsing; fuzzing of all parsers
   running continuously (section 1)
 - [ ] `cargo deny`/`cargo audit` green in CI, SBOM (CycloneDX) attached to each release, release artifacts with
