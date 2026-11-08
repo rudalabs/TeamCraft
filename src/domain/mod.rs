@@ -128,6 +128,13 @@ mod tests {
         );
         assert_eq!(c(AttributeType::Number, "..20"), Range(None, Some(20.0)));
         assert!(parse_attribute_condition("X", AttributeType::Number, "10-20").is_err());
+        // a number that overflows to infinity is no bound (found by cargo mutants)
+        for raw in ["1e999", "1e999..", "..-1e999"] {
+            assert!(
+                parse_attribute_condition("X", AttributeType::Number, raw).is_err(),
+                "{raw}"
+            );
+        }
 
         for k in Classification::ALL {
             assert_eq!(Classification::parse(k.as_str()), Some(k));
