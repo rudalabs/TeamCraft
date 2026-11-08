@@ -48,6 +48,7 @@
     <details class="menu">
       <summary class="button">More <span class="chev" aria-hidden="true"></span></summary>
       <div class="menu-pop menu-right">
+        {% if me.role != "viewer" and rev.item_type in ["part", "assembly"] %}<a href="/items/new?type=simulation&amp;basis={{ rev.id }}" title="A new simulation prefilled from this revision, with it as its basis">New simulation…</a>{% endif %}
         {% if me.role != "viewer" %}<a href="/revisions/{{ rev.id }}/save-as" title="A new item with the attributes, files and BOM of this revision">Save as…</a>{% endif %}
         {% if can.add_to_change %}<a href="/changes/new?revision={{ rev.id }}">Release via new change…</a>{% endif %}
         <a href="/requests/new?revision={{ rev.id }}" title="Report a problem or propose a change to {{ rev.item_number }}/{{ rev.code }} (change request)">Request change…{% if open_requests %}<span class="badge badge-count" title="{{ open_requests|length }} open change request(s)">{{ open_requests|length }}</span>{% endif %}</a>
@@ -951,7 +952,7 @@
   </div>
   {% elif not hidden.simulations %}<p class="empty">No simulation is based on {{ rev.item_number }} yet.</p>{% endif %}
   {{ m.hidden_count(hidden.simulations, "simulations") }}
-  {% if me.role != "viewer" %}<p class="hint">Create an item of type <a href="/items/new?type=simulation">Simulation</a> and add {{ rev.item_number }}/{{ rev.code }} as its basis.</p>{% endif %}
+  {% if me.role != "viewer" %}<p class="actions"><a class="button" href="/items/new?type=simulation&amp;basis={{ rev.id }}" title="Creates a simulation prefilled from this revision, with it as its basis">New simulation based on {{ rev.item_number }}/{{ rev.code }}</a></p>{% endif %}
 </section>
 {% endif %}
 
