@@ -1808,6 +1808,18 @@ mod tests {
         assert!(catalogue
             .iter()
             .all(|s| !s["formats"].as_array().unwrap().is_empty()));
+        // each system lists exactly its own formats (found by cargo mutants)
+        let listed: usize = catalogue
+            .iter()
+            .map(|s| s["formats"].as_array().unwrap().len())
+            .sum();
+        assert_eq!(listed, FORMATS.len(), "every format once");
+        for s in &catalogue {
+            for f in s["formats"].as_array().unwrap() {
+                let id = f["id"].as_str().unwrap();
+                assert_eq!(by_id(id).unwrap().system, s["id"], "{id}");
+            }
+        }
     }
 
     /// Found by cargo mutants: a line without tokens is not a token line.

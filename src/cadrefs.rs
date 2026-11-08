@@ -815,4 +815,12 @@ mod tests {
         content.extend(b"Bracket.SLDPRT\x00\x004711.stp\x00");
         assert_eq!(find(&content, "x.sldasm"), ["Bracket.SLDPRT", "4711.stp"]);
     }
+
+    /// The documented limits (found by cargo mutants: a behavioural test
+    /// would have to scan more than 32 MiB).
+    #[test]
+    fn scan_limits() {
+        assert_eq!(MAX_SCAN, 32 * 1024 * 1024);
+        assert_eq!(EXPORT_NAME_SCAN, 64 * 1024);
+    }
 }
