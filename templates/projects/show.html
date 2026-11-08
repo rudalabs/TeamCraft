@@ -30,18 +30,29 @@
       <tbody>
       {% for u in members %}
         <tr>
-          <td>{{ u.display_name }} <span class="muted small mono">{{ u.username }}</span>{% if u.manager %} <span class="badge badge-member">manager</span>{% endif %}{% if not u.active %} <span class="badge badge-obsolete">deactivated</span>{% endif %}</td>
+          <td>{{ u.display_name }} <span class="muted small mono">{{ u.username }}</span>{% if u.manager %} <span class="badge badge-member">manager</span>{% endif %}{% if not u.active %} <span class="badge badge-obsolete">deactivated</span>{% endif %}{% if can_manage and u.checkouts > 0 %} <span class="muted small">{{ u.checkouts }} checked out</span>{% endif %}</td>
           <td><span class="badge badge-{{ u.role }}">{{ u.role|label }}</span></td>
           <td class="small nowrap">{% if u.source == "oidc" %}via IdP group{% else %}manually{% endif %} · {{ m.time(u.added_at) }}</td>
           <td class="right nowrap">
-            {% if can_manage and not u.manager %}
+            {% if can_manage and u.checkouts > 0 and (not u.active or me.is_admin) %}
+            <form class="inline" method="post" action="/projects/{{ project.id }}/members/{{ u.user_id }}/release-checkouts"
+                  data-confirm="Release the {{ u.checkouts }} check-outs of {{ u.display_name }} in {{ project.code }}? Changes they have not checked in stay in their working folder.">
+              <button class="small" type="submit">Release {{ u.checkouts }} check-outs</button>
+            </form>
+            {% endif %}
+            {% if can_manage and not u.manager and u.active %}
             <form class="inline" method="post" action="/projects/{{ project.id }}/members">
               <input type="hidden" name="username" value="{{ u.username }}">
               <input type="hidden" name="manager" value="1">
               <button class="small" type="submit" title="Managers edit the group and its members">Make manager</button>
             </form>
+            {% elif can_manage and u.manager %}
+            <form class="inline" method="post" action="/projects/{{ project.id }}/members/{{ u.user_id }}/demote"
+                  data-confirm="{{ u.display_name }} will no longer manage {{ project.code }}. Continue?">
+              <button class="small" type="submit" title="Keeps the membership; at least one active manager must remain">Demote</button>
+            </form>
             {% endif %}
-            {% if u.source == "oidc" and project.oidc_group %}
+            {% if u.source == "oidc" and project.oidc_group and (u.active or not can_manage) %}
             <span class="muted small" title="Removed when the identity provider drops the user from {{ project.oidc_group }}">via IdP</span>
             {% elif can_manage or u.user_id == me.id %}
             <form class="inline" method="post" action="/projects/{{ project.id }}/members/{{ u.user_id }}/remove"
@@ -55,6 +66,26 @@
       </tbody>
     </table>
     {% else %}<p class="empty">No members yet.</p>{% endif %}
+    {% if former_holders %}
+    <h3>Former members still holding check-outs</h3>
+    <table>
+      <thead><tr><th scope="col">Name</th><th scope="col">Check-outs</th><th scope="col"></th></tr></thead>
+      <tbody>
+      {% for h in former_holders %}
+        <tr>
+          <td>{{ h.display_name }} <span class="muted small mono">{{ h.username }}</span>{% if not h.active %} <span class="badge badge-obsolete">deactivated</span>{% endif %}</td>
+          <td>{{ h.checkouts }}</td>
+          <td class="right nowrap">
+            <form class="inline" method="post" action="/projects/{{ project.id }}/members/{{ h.user_id }}/release-checkouts"
+                  data-confirm="Release the {{ h.checkouts }} check-outs of {{ h.display_name }} in {{ project.code }}? Changes they have not checked in stay in their working folder.">
+              <button class="small" type="submit">Release {{ h.checkouts }} check-outs</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
     {% if can_manage %}
       {% if candidates %}
       <h3>Add member</h3>
@@ -67,7 +98,7 @@
       </form>
       {% endif %}
       {% if project.oidc_group %}
-      <p class="hint">Members of the IdP group <span class="mono">{{ project.oidc_group }}</span> are added and removed automatically at their SSO login{% if not oidc_enabled %} (SSO is not configured on this instance){% endif %}; to revoke such a membership, remove the user from the IdP group. Making them a manager keeps the membership synchronised. Manually added members stay. A manually added member who is also in the IdP group comes back at their next SSO login when removed here.</p>
+      <p class="hint">Members of the IdP group <span class="mono">{{ project.oidc_group }}</span> are added and removed automatically at their SSO login{% if not oidc_enabled %} (SSO is not configured on this instance){% endif %}; to revoke such a membership, remove the user from the IdP group. A deactivated user's synchronised membership can be removed here (SSO refuses them, so it cannot come back). Making them a manager keeps the membership synchronised; Demote lowers it again. Manually added members stay. A manually added member who is also in the IdP group comes back at their next SSO login when removed here.</p>
       {% endif %}
     {% endif %}
   </section>

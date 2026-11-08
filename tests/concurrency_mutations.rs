@@ -615,7 +615,7 @@ async fn two_managers_leaving_at_once_keep_one_manager() {
             "exactly one may leave: {x:?} / {y:?}"
         );
         let refused = x.err().or(y.err()).unwrap().to_string();
-        assert!(refused.contains("at least one manager"), "{refused}");
+        assert!(refused.contains("at least one active manager"), "{refused}");
         assert_eq!(managers(&app.pool, project).await, 1);
         // restore the second manager for the next round
         make_manager(&app.pool, project, m1.id).await;

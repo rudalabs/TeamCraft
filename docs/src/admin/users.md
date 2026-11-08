@@ -45,9 +45,11 @@ Accounts are created at the first sign-in; the role follows the groups at
 every sign-in. A project group bound to an IdP group (*Projects → group →
 Edit*, administrators) gets its members synchronised at every sign-in;
 manually added members stay. A synchronised membership stays one when its
-holder is made a manager, and it cannot be removed in TeamCraft (it would
-return at the next sign-in): remove the user from the IdP group, unlink the
-group or deactivate the user instead.
+holder is made a manager (*Demote* lowers it again), and it cannot be
+removed in TeamCraft while the user is active (it would return at the next
+sign-in): remove the user from the IdP group, unlink the group or deactivate
+the user instead. A deactivated user's synchronised membership can be
+removed (see [When someone leaves](#when-someone-leaves)).
 
 ## Item owners and handing over a leaving user's work
 
@@ -77,3 +79,51 @@ revisions). Every moved object gets its own audit entry (`item.owner`,
 one `user.handover` entry with the counts. Decisions already made, released
 changes and closed requests keep the original names. One run moves at most
 1000 objects of each kind; the message says when to run it again.
+
+## When someone leaves
+
+Teams with a high turnover (student teams, early-stage startups) lose
+members every season. Deactivating a user ends their sessions and disables
+their API and desktop tokens; their check-outs, change orders, reviews and
+memberships stay. Work through these steps, in this order:
+
+1. **Keep at least two active administrators.** TeamCraft refuses to
+   deactivate or demote the last one. If nobody with the admin role is left,
+   whoever has a shell on the server creates one:
+   `teamcraft user create --username rescue --role admin` (break glass).
+2. **Before they go**, the leaver uses *Check in all* on the dashboard and
+   checks in the local changes of their desktop working folder. Work that
+   was never checked in exists only on their computer.
+3. **Hand over their work** (administrators): *Users → user → Hand over
+   work* moves item ownerships, draft and rejected change orders, open
+   change requests and pending reviews (see above).
+4. **Release the remaining check-outs.** Administrators use *Users → user →
+   Check-outs → Release all*. The managers of a project group use *Release N
+   check-outs* in the group's member list – for members who are deactivated
+   and, under *Former members still holding check-outs*, for people who are
+   no longer members. Each release is audited
+   (`revision.checkout_forced_release`); one refused release does not stop
+   the others. Revisions of a need-to-know group that hides itself from
+   administrators (`admin_read = none`) are left out for administrators: a
+   manager of that group releases them.
+5. **Pending reviews:** a change order cannot be submitted while one of its
+   reviewers is deactivated – remove them and add someone else. For a change
+   already in review the author (or an administrator) replaces the pending
+   reviewer (*Substitute for*), which keeps the other decisions.
+6. **Change orders of a deactivated author:** besides administrators, a
+   manager of *every* project group the change touches may withdraw, reopen
+   or cancel it, or **take it over** (*Take over* on the change page; audited
+   as `change.handover`). Whoever takes it over is its author and can no
+   longer review it (four-eyes principle).
+7. **Group managers:** *Demote* in the member list lowers a manager to a
+   plain member, also for memberships synchronised from the identity
+   provider. At least one *active* manager must remain (only
+   administrators may demote or remove the last one); deactivated managers
+   do not count.
+8. **Revoke their tokens** on the user page.
+9. **Deactivate the user.** For SSO users both are needed: remove them at
+   the identity provider **and** deactivate them in TeamCraft. A synchronised
+   membership of a deactivated user can then be removed by the group's
+   managers (SSO refuses deactivated users, so it cannot come back); an
+   active user's synchronised membership still can only end at the identity
+   provider.

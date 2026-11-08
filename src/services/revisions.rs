@@ -291,16 +291,17 @@ pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
 
 /// Releases the edit lock without uploading anything ("cancel check-out").
 /// Administrators may release locks of other users, managers of the item's
-/// group those of users who are no longer members (who cannot release them
-/// themselves once a restricted group hides the revision). A check-in with new file
-/// versions is `files::check_in`.
+/// group those of users who are gone: no longer members (who cannot release
+/// them themselves once a restricted group hides the revision) or
+/// deactivated. A check-in with new file versions is `files::check_in`;
+/// the bulk release for one holder is `checkouts::release_held`.
 ///
 /// # Invariants
 ///
 /// * **Permission:** CAD editor; the revision is visible ("not found" otherwise). Nothing happens
 ///   when it is not checked out. Another user's check-out may be released only by an
-///   administrator or by a manager of the group when that user is no longer a member (403
-///   otherwise).
+///   administrator or by a manager of the group when that user is no longer a member or is
+///   deactivated (403 otherwise).
 /// * **Locks:** the revision row (`revisions::lock`).
 /// * **Audit:** `revision.checkout_cancel`; `revision.checkout_forced_release` when the check-out
 ///   was held by someone else.
@@ -385,9 +386,11 @@ pub async fn may_cancel_checkout(pool: &PgPool, actor: &Actor, rev: &Revision) -
 }
 
 /// A lock that a manager of the revision's group may release: its owner is
-/// no longer a member of the group (removed, or never one before the group
-/// was restricted) and so can neither see nor check in the revision of a
-/// restricted group, nor edit it in an internal one.
+/// gone – no longer a member of the group (removed, or never one before the
+/// group was restricted), so they can neither see nor check in the revision
+/// of a restricted group nor edit it in an internal one, or deactivated, so
+/// they cannot sign in to release it at all (issue #173: a deactivated member
+/// keeps their memberships, IdP-synchronised ones included).
 async fn orphaned_lock(
     conn: &mut PgConnection,
     actor: &Actor,
@@ -400,14 +403,15 @@ async fn orphaned_lock(
     if !crate::services::projects::can_manage(conn, actor, project_id).await? {
         return Ok(false);
     }
-    let owner_is_member = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM project_members WHERE project_id = $1 AND user_id = $2)",
+    let owner_is_active_member = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM project_members pm JOIN users u ON u.id = pm.user_id
+                       WHERE pm.project_id = $1 AND pm.user_id = $2 AND u.active)",
     )
     .bind(project_id)
     .bind(owner)
     .fetch_one(&mut *conn)
     .await?;
-    Ok(!owner_is_member)
+    Ok(!owner_is_active_member)
 }
 
 /// Tells the watchers of an item about something that happened to a revision.

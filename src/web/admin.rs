@@ -16,8 +16,8 @@ use crate::{
     error::{AppError, AppResult},
     resultscan::TemplateInput,
     services::{
-        access_log, access_review, audit, ownership, project_policy, projects, result_templates,
-        users, Page,
+        access_log, access_review, audit, checkouts, ownership, project_policy, projects,
+        result_templates, users, Page,
     },
     util, AppState,
 };
@@ -120,6 +120,11 @@ pub async fn project_show(
     } else {
         Vec::new()
     };
+    let former_holders = if can_manage {
+        projects::former_holders(&st.db, &ctx.me, id).await?
+    } else {
+        Vec::new()
+    };
     render(
         &st,
         &ctx,
@@ -127,6 +132,7 @@ pub async fn project_show(
         json!({
             "project": project,
             "members": members,
+            "former_holders": former_holders,
             "candidates": all_users,
             "is_member": ctx.me.projects.contains(&id),
             "can_edit": ctx.me.can_edit_project(Some(id)),
@@ -492,6 +498,54 @@ pub async fn remove_member(
     })
 }
 
+/// `POST /projects/{id}/members/{user_id}/demote` – managers of the group, admins.
+pub async fn demote_member(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = projects::demote_manager(&st.db, &ctx.me, id, user_id).await;
+    finish(&st, result, &back, |()| {
+        (
+            back.clone(),
+            "The member is no longer a manager".to_string(),
+        )
+    })
+}
+
+/// `POST /projects/{id}/members/{user_id}/release-checkouts` – managers of
+/// the group (for deactivated and former members), admins.
+pub async fn release_member_checkouts(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = checkouts::release_held(&st.db, &ctx.me, user_id, Some(id)).await;
+    finish(&st, result, &back, |outcomes| {
+        (back.clone(), checkouts::release_summary(&outcomes))
+    })
+}
+
+/// `POST /admin/users/{id}/release-checkouts` – administrators: every
+/// check-out the user holds in groups the administrator can read.
+pub async fn release_user_checkouts(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let back = format!("/admin/users/{id}");
+    let result = async {
+        ctx.me.require(Role::Admin)?;
+        checkouts::release_held(&st.db, &ctx.me, id, None).await
+    }
+    .await;
+    finish(&st, result, &back, |outcomes| {
+        (back.clone(), checkouts::release_summary(&outcomes))
+    })
+}
+
 #[derive(Deserialize)]
 pub struct VisibilityForm {
     #[serde(default)]
@@ -621,11 +675,13 @@ pub async fn user_edit(
         .filter(|u| u.id != id)
         .collect();
     let memberships = projects::memberships_of(&st.db, id).await?;
+    let held_checkouts = checkouts::held_count(&st.db, &ctx.me, id).await?;
     render(
         &st,
         &ctx,
         "admin/user_edit.html",
         json!({
+            "held_checkouts": held_checkouts,
             "handover_targets": handover_targets,
             "user": user,
             "tokens": tokens,

@@ -1238,7 +1238,7 @@ mod tests {
                                  "revision_state": "released", "relation": "bom", "via_number": "PRT-000001",
                                  "in_change": false }],
                     "can": { "modify": true, "edit_text": true, "submit": true, "withdraw": true, "reopen": true,
-                             "cancel": true, "review": true, "replace_reviewer": true },
+                             "cancel": true, "review": true, "replace_reviewer": true, "take_over": true },
                 })),
             );
             assert!(
@@ -1247,6 +1247,10 @@ mod tests {
                     && html.contains("&lt;too thin&gt;")
                     && html.contains("/reviewers/"),
                 "{status}: rounds and absent reviewers"
+            );
+            assert!(
+                html.contains("/take-over\""),
+                "{status}: a manager takes over a deactivated author's change"
             );
             if status == "in_review" {
                 let mut ctx = json!({
@@ -1403,7 +1407,11 @@ mod tests {
             with_common(json!({
                 "project": project(),
                 "members": [{ "user_id": OTHER, "username": "erika", "display_name": "Erika", "role": "editor",
-                              "active": true, "source": "oidc", "added_at": TS, "manager": true }],
+                              "active": true, "source": "oidc", "added_at": TS, "manager": true, "checkouts": 0 },
+                            { "user_id": "33333333-3333-4333-8333-333333333333", "username": "lena", "display_name": "Lena <gone>", "role": "editor",
+                              "active": false, "source": "oidc", "added_at": TS, "manager": false, "checkouts": 40 }],
+                "former_holders": [{ "user_id": OTHER, "username": "tom", "display_name": "Tom <left>",
+                                     "active": true, "checkouts": 3 }],
                 "candidates": [user()], "is_member": true, "can_edit": true, "oidc_enabled": true,
                 "can_manage": true,
                 "result_templates": [{ "id": OTHER, "project_id": OTHER, "name": "Pressure <drop>", "file_pattern": "*.log",
@@ -1422,6 +1430,23 @@ mod tests {
         assert!(html.contains("Add template"), "managers add templates");
         assert!(html.contains("manager"), "project managers are marked");
         assert!(html.contains("Add member"), "managers add members");
+        assert!(html.contains("/demote\""), "managers demote managers");
+        assert!(
+            html.contains("Release 40 check-outs") && html.contains("Lena &lt;gone&gt;"),
+            "a deactivated member's check-outs can be released"
+        );
+        assert!(
+            html.contains("/members/33333333-3333-4333-8333-333333333333/remove\""),
+            "a deactivated member's IdP membership can be removed"
+        );
+        assert!(
+            !html.contains(&format!("/members/{OTHER}/remove\"")),
+            "an active member's IdP membership cannot"
+        );
+        assert!(
+            html.contains("Former members still holding") && html.contains("Release 3 check-outs"),
+            "former holders are listed"
+        );
         assert!(
             html.contains("ROCKET-PRT-2026-0001"),
             "next numbers are shown"
@@ -1469,7 +1494,7 @@ mod tests {
             "admin/user_edit.html",
             with_common(json!({
                 "user": user(), "roles": roles(), "oidc_enabled": false, "memberships": [project()],
-                "handover_targets": [user()],
+                "handover_targets": [user()], "held_checkouts": 40,
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
                              "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": null },
                            { "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,

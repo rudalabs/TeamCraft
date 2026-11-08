@@ -101,7 +101,7 @@ pub const LIFECYCLE_RULES: [TransitionRule; 4] = [
         from: LifecycleState::InReview,
         to: LifecycleState::InWork,
         how: "A reviewer rejects the change (with a reason) or its author withdraws it.",
-        who: "Any assigned reviewer; the author of the change or an admin.",
+        who: "Any assigned reviewer; the author of the change or an admin (for a deactivated author also a manager of every affected project group).",
     },
     TransitionRule {
         from: LifecycleState::Released,

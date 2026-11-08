@@ -269,6 +269,14 @@ withdraw or cancel, but not approve blind. Adding a reviewer, assigning a
 request and the reviewer suggestions need it as well: whether somebody can
 see a hidden item would tell who belongs to its group, so an author who
 cannot see every item gets no suggestions and cannot add reviewers.
+A change cannot be submitted while one of its reviewers is deactivated.
+
+Only the author of a change order and administrators edit, submit,
+withdraw, reopen or cancel it. When the author is **deactivated**, a manager
+of *every* project group the change touches may also withdraw, reopen or
+cancel it, or take it over (it becomes theirs; audited as
+`change.handover`). A change without items, or with an item outside any
+group, has no such manager.
 
 ## Notifications, e-mail, chat, webhooks, assistant
 
@@ -325,15 +333,23 @@ back with the access, check-outs stay (the removal message says how many).
 A manager of the group (or an admin) cancels them on the revision page or
 with `POST /api/v1/items/{number}/revisions/{code}/cancel-checkout`:
 managers may release the check-outs of users who are no longer members of
-the group.
+the group or who are deactivated. *Release N check-outs* in the member list
+releases all of one person's check-outs in the group at once (each audited
+on its own); administrators release everything a user holds from the user
+page. See [When someone leaves](users.md#when-someone-leaves).
 
 Memberships synchronised from the identity provider change only at the
 user's next SSO login; a user removed from the IdP group keeps access until
 then, and indefinitely with an API token. Revoke the user's tokens or
 deactivate the user as well. Such a membership stays synchronised when its
-holder is made a manager, and TeamCraft refuses to remove it (it would
-come back at the next SSO login): remove the user from the IdP group, or
-have an administrator unlink the group or deactivate the user. A manually
+holder is made a manager (*Demote* lowers it again), and TeamCraft refuses
+to remove it while the user is active (it would come back at the next SSO
+login): remove the user from the IdP group, or have an administrator unlink
+the group or deactivate the user. Once the user is deactivated, a manager
+or administrator can remove it: SSO refuses deactivated users, so it cannot
+come back. A group needs at least one *active* manager; deactivated managers
+do not count when a manager leaves, is removed or is demoted (administrators
+may still do so). A manually
 added member who is also in the linked IdP group comes back (synchronised)
 at their next SSO login after being removed.
 

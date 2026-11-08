@@ -171,6 +171,7 @@ there is no separate enterprise edition.
 
 - **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – membership conditions (IdP claims, networks, session age) (administrator access with a reason, interface switches per group, a read and download log and access reviews with an evidence report are built).
 - **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – obsolete through change orders, sign-off with re-authentication, substitutes, approvals in exports (review policies per group, review rounds, item owners and admin handover are built).
+- **Offboarding for high-turnover teams** ([#173](https://github.com/rudalabs/TeamCraft/issues/173)) – a holdings report per user, deactivation as one offboarding step, groups without an active manager, season handover (managers already release a leaver's check-outs in bulk, demote managers and take over a deactivated author's change order; see [When someone leaves](https://rudalabs.github.io/TeamCraft/admin/users.html#when-someone-leaves)).
 - **Scoped access tokens** – personal access tokens limited to read-only or MCP-only use.
 
 TeamCraft is a community project without commercial support or a service
