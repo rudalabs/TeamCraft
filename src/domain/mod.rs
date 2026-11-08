@@ -848,6 +848,11 @@ mod tests {
         let msg = |raw: &str| NumberScheme::parse(raw).unwrap_err().public_message();
         assert!(msg("PRT-{YYYY}").contains("needs a sequence"));
         assert!(msg("{SEQ}-{SEQ:3}").contains("only once"));
+        // generated numbers of exactly 64 characters are fine, 65 are not
+        // (project code 32 + text + sequence 12)
+        let numbers = |text: usize| format!("{{PROJECT}}{}{{SEQ:12}}", "A".repeat(text));
+        assert!(NumberScheme::parse(&numbers(20)).is_ok(), "64 characters");
+        assert!(msg(&numbers(21)).contains("at most 64"));
         // the scheme text itself has at most 100 characters; `{YY}` makes a
         // long text with short numbers (found by cargo mutants)
         let scheme = |extra: usize| format!("{}{{SEQ:1}}A{}", "{YY}".repeat(23), "B".repeat(extra));
