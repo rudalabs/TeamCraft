@@ -1043,6 +1043,24 @@ mod tests {
         // reads as a hard-coded credential (CodeQL) and says less about the rule
         assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN - 1)).is_err());
         assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN)).is_ok());
+        // text limits count characters and are inclusive; numbers (found by
+        // cargo mutants)
+        assert_eq!(limit_text("Name", " äöü ", 3).unwrap(), "äöü");
+        assert!(limit_text("Name", "äöüß", 3).is_err());
+        assert_eq!(limit_text("Name", "", 3).unwrap(), "");
+        assert!(require_text("Name", "  ", 3).is_err());
+        assert_eq!(require_text("Name", "abc", 3).unwrap(), "abc");
+        assert!(require_text("Name", "abcd", 3).is_err());
+        assert_eq!(validate_non_negative("Mass", Some(0.0)).unwrap(), Some(0.0));
+        assert_eq!(validate_non_negative("Mass", None).unwrap(), None);
+        for bad in [-0.001, f64::NAN, f64::INFINITY] {
+            assert!(validate_non_negative("Mass", Some(bad)).is_err(), "{bad}");
+        }
+        assert_eq!(validate_quantity(0.5).unwrap(), 0.5);
+        assert_eq!(validate_quantity(999_999_999.0).unwrap(), 999_999_999.0);
+        for bad in [0.0, -1.0, 1e9, f64::NAN, f64::INFINITY] {
+            assert!(validate_quantity(bad).is_err(), "{bad}");
+        }
         // at most 1024 bytes (found by cargo mutants)
         assert!(validate_password(&"x".repeat(1024)).is_ok());
         for n in [1025, 1026] {
