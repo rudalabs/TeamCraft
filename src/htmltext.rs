@@ -1223,6 +1223,22 @@ mod tests {
         );
         // a declared UTF-16 without a BOM means UTF-8
         assert_eq!(text_of("<meta charset=utf-16><p>µ</p>".as_bytes()), "µ");
+        // the declaration wins over guessing (found by cargo mutants: every
+        // case above also comes out right without reading the <meta>)
+        assert_eq!(
+            text_of(b"<meta charset=windows-1252><p>\xC3\xBC</p>"),
+            "Ã¼",
+            "UTF-8 bytes in a page declared Windows-1252"
+        );
+        assert_eq!(
+            text_of(b"<meta charset='x-user-defined'><p>\xC3\xBC</p>"),
+            "Ã¼"
+        );
+        assert_eq!(
+            text_of(b"<meta charset=\"utf-16\"><p>\xB0</p>"),
+            "\u{FFFD}",
+            "UTF-16 declared means UTF-8, not a guess"
+        );
         // a cut multi-byte sequence at the end is still UTF-8
         let mut cut = "<p>Düse µ".as_bytes().to_vec();
         cut.pop();
