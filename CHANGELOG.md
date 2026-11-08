@@ -13,7 +13,9 @@ see the notices in the README.
 
 ## [Unreleased]
 
-Changes on `main` since the `v0.2.5` tag.
+## [0.2.6] - 2026-11-08
+
+Changes since the `v0.2.5` tag.
 
 ### Added
 
@@ -197,6 +199,55 @@ Changes on `main` since the `v0.2.5` tag.
   their component tree; suppressed and hidden components are left out. The
   thumbnails of SOLIDWORKS parts and assemblies are rendered from the 3D
   preview.
+- 3D preview of standalone JT files (JT 9 with topologically compressed
+  triangle LODs; other versions report their version), graphical revision
+  comparison (*Compare with …* lays another version or revision over the
+  model) and 3D notes pinned to a picked point of a file version (#200).
+- Storage quotas per user and for the whole vault (a refused
+  upload gets 413 and stores nothing), optional malware scanning with ClamAV
+  (`TEAMCRAFT_CLAMD_ADDR`; infected files are refused and never stored),
+  likely duplicates by name (`GET /api/v1/items/duplicates`, a hint after
+  creating an item), bulk revise and obsolete (`POST /api/v1/items/bulk`, up to
+  200 items, one transaction each), and a section plane and point-to-point
+  measuring in the 3D viewer (web and desktop) (#199).
+- One-click copy of item numbers, printable QR labels of a revision (the QR
+  code of the short link `/i/<number>`), and a warning before removing a
+  file that CAD files of other items still reference (#202).
+- New item form: chunked, resumable uploads of large files, as on the
+  revision page (#164).
+- Create a BOM from the CAD references the server found (#180): a preview with
+  instance counts as quantities (NX placed instances, SOLIDWORKS component
+  tree; otherwise 1, flagged as assumed), unmatched names and hidden items
+  counted, then the chosen lines in one audited transaction. Web UI and
+  `GET`/`POST /api/v1/items/{n}/revisions/{code}/bom/from-references`.
+- Desktop: a structure view of assemblies in the navigator, and checking out
+  an assembly gets its parts – missing parts are downloaded read-only, parts
+  changed locally are never overwritten and are listed (#183).
+- Adding files to an existing item (#181): the Files card says how (check out
+  and add, locked by someone else, in review, frozen – revise), offers *Check
+  out and add files* and takes dropped files; the desktop app has *Add files…*
+  (copies into the working folder, checks out first if needed).
+- New simulation from an item (#178): the form is prefilled from the item and
+  the item is linked as the basis in the same transaction; `POST /items`
+  takes `basis`.
+- Simulation results: *Fill with AI…* on the Results card with a box to say
+  which numbers to extract and which limits apply; the assistant proposes
+  values that a person accepts (#177).
+- Offboarding (#173, minimum fix): managers release the check-outs of
+  deactivated members (also in bulk), demote managers (at least one active
+  manager stays), take over the change orders of a deactivated author; a
+  change with a deactivated reviewer cannot be submitted; runbook *When
+  someone leaves* in the admin guide.
+- Obsolete and supersede through a change order (#152 step 3): a group
+  setting `obsolete_requires_change`, change order lines with the action
+  `obsolete` or `supersede` applied on release, and watchers are notified of
+  a supersede.
+- Need-to-know groups (#151): the switches `notification_content`,
+  `external_llm` (with `TEAMCRAFT_ASSISTANT_INTERNAL_URLS`) and
+  `desktop_sync`.
+- Mutation testing with cargo-mutants (#170): configuration, a report-only
+  check on pull requests and a weekly run; the gaps of the first
+  whole-repository run are closed with unit tests (#207).
 
 ### Changed
 
@@ -213,6 +264,21 @@ Changes on `main` since the `v0.2.5` tag.
   so `read_file_text` shows the real text (only ASCII STL, OBJ and KiCad files
   still drop decimal numbers for the search). Files uploaded before keep their
   old text until a new version is uploaded.
+- Admin → Attributes: the field "Order" is called "Position in forms" (#179).
+- CI runs the tests with `cargo nextest`, and a unit test fails after 1 s
+  unless it is slow on purpose (#209).
+
+### Fixed
+
+- The sign-in and error pages showed the logo twice in dark mode (#182).
+- After a refused migration (changed checksum, dirty version) the next start
+  no longer waits forever for the migration lock (#209).
+- `POST /api/v1/change-requests` checks the 100-item limit before looking up
+  the items (#163).
+- Tests and CI on `main` after merges: audit guard exemptions, the
+  `file_versions_solver_summary_object` check is validated,
+  unique migration numbers with a guard test, rustdoc links and test
+  fixtures (#196, #204, #208).
 
 ## [0.2.5] - 2026-11-07
 
@@ -294,5 +360,6 @@ Changes since the `v0.2.0` tag.
   app keeps the private file and shows a warning. Server addresses with plain
   `http://` to another computer get a warning.
 
-[Unreleased]: https://github.com/rudalabs/TeamCraft/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/rudalabs/TeamCraft/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/rudalabs/TeamCraft/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/rudalabs/TeamCraft/compare/v0.2.0...v0.2.5
