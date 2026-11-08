@@ -889,6 +889,17 @@ mod tests {
         assert!(read(&step(&file)).is_err());
     }
 
+    /// Found by cargo mutants: a comment between parameters is skipped; a
+    /// stray `/` (damaged file) costs one parameter, not the rest of the list.
+    #[test]
+    fn comments_and_stray_slashes_between_parameters() {
+        assert_eq!(
+            params("#1, /* the part */ #2,'x'"),
+            [Param::Ref(1), Param::Ref(2), Param::Str("x".into())]
+        );
+        assert_eq!(params("/x,#5"), [Param::Other, Param::Ref(5)]);
+    }
+
     /// Found by cargo mutants: comments, unset parameters (`*`) and quoted
     /// semicolons when splitting into instances.
     #[test]
