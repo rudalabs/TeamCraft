@@ -807,6 +807,15 @@ mod tests {
         assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2025-0012"), None);
         assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-12A"), None);
         assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-"), None);
+        // digits only and at most 18 of them (found by cargo mutants: `+12`
+        // and 19 digits would parse as i64)
+        assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-+12"), None);
+        assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-1000000000000000000"), None);
+        assert_eq!(
+            s.seq_of(&ctx, "ROVER-ASM-2026-100000000000000000"),
+            Some(100_000_000_000_000_000),
+            "18 digits"
+        );
 
         let s = NumberScheme::parse("x{YY}{MM}.{SEQ}").unwrap();
         assert_eq!(s.format(&ctx, 12), "X2603.12");
