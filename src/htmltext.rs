@@ -1422,4 +1422,12 @@ mod tests {
         );
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    /// The documented limits (found by cargo mutants: a behavioural test
+    /// would have to read more than 16 MiB).
+    #[test]
+    fn limits() {
+        assert_eq!(MAX_HTML_BYTES, 16 * 1024 * 1024);
+        assert_eq!(MAX_DEPTH, 256);
+    }
 }
