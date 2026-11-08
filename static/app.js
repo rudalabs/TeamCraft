@@ -699,6 +699,11 @@
     });
   });
 
+  // Print buttons: <button data-print> (item labels).
+  document.querySelectorAll("[data-print]").forEach(function (btn) {
+    btn.addEventListener("click", function () { window.print(); });
+  });
+
   // Copy buttons: <button data-copy="id"> copies the element's text,
   // <button data-copy-text="PRT-000042"> the given text (item lists).
   document.querySelectorAll("[data-copy], [data-copy-text]").forEach(function (btn) {

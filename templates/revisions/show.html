@@ -12,6 +12,7 @@
     <div class="title-row">
       <h1><span class="id"><span id="item-number">{{ rev.item_number }}</span>/{{ rev.code }}</span> · {{ rev.name }}</h1>
       <button type="button" class="small" data-copy="item-number" title="Copy the item number to the clipboard" aria-label="Copy the item number {{ rev.item_number }}">Copy number</button>
+      <a class="button small" href="/items/{{ item.id }}/label" title="Printable label with a QR code that opens this item">Label</a>
       <form method="post" action="/items/{{ item.id }}/favorite">
         <input type="hidden" name="favorite" value="{% if favorite %}0{% else %}1{% endif %}">
         <input type="hidden" name="back" value="{{ back }}">

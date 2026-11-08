@@ -592,10 +592,10 @@ candidates, not commitments: a feature needs an issue with a reason first (see *
 - [ ] Hierarchical numbering (from parent or project), document numbering apart from parts, custom document types,
   generated cover sheets
 - [ ] Administrator-configurable forms (hide unused fields), role-specific views, low-code validation rules
-- [ ] Same search, commands and navigation in web UI and desktop app; one-click actions (copy item number, revise,
-  approve, open related objects)
+- [ ] Same search, commands and navigation in web UI and desktop app; one-click actions (revise, approve, open
+  related objects)
 - [ ] Keyboard-first operation, screen-reader checks, skip links and complete table headers; translated UI (i18n)
-- [ ] Native mobile app; QR/barcode label generation (the `/i/<number>` short link exists)
+- [ ] Native mobile app
 - [ ] Finer notification rules per event and channel, digests for all notifications, Microsoft Teams and Slack
   delivery
 

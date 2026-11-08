@@ -394,6 +394,8 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | csv, calamine, encoding_rs           | BOM import: CSV, Excel/ODS, Windows-1252    | MIT-Unlicense / MIT / MIT-Apache + BSD-3                     |
 | cfb, crc32fast                       | previews stored in CAD files                | MIT / MIT-Apache                                             |
 | rust_xlsxwriter                      | Excel export of BOMs and comparisons        | MIT / Apache-2.0                                             |
+| qrcode                               | QR codes on item labels (SVG)               | MIT / Apache-2.0                                             |
+| chacha20poly1305 (RustCrypto)        | encrypted backups                           | MIT / Apache-2.0                                             |
 | reqwest, rustls, lettre              | HTTP client, TLS, e-mail                    | MIT / Apache-2.0                                             |
 | argon2, sha2                         | password hashing, content hashes            | MIT / Apache-2.0                                             |
 | Tauri 2                              | desktop app                                 | MIT / Apache-2.0                                             |

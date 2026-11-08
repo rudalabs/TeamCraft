@@ -20,6 +20,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "explorer.html",
     "items/list.html",
     "items/new.html",
+    "items/label.html",
     "items/where_used.html",
     "revisions/show.html",
     "revisions/edit.html",
@@ -659,6 +660,16 @@ mod tests {
                     "parent_name": "Frame <2>", "parent_state": "in_work", "checked_out_by_name": "Max",
                     "action": action, "action_label": label })
         };
+        let html = render(
+            &env,
+            "items/label.html",
+            with_common(json!({
+                "rev": revision("released", false),
+                "url": "https://plm.example.org/i/PRT-000001",
+            })),
+        );
+        // (MiniJinja escapes `/` in text as `&#x2f;`)
+        assert!(html.contains("qr.svg") && html.contains("plm.example.org"), "{html}");
         for (with_plan, restricted) in [(true, false), (false, true)] {
             let html = render(
                 &env,
