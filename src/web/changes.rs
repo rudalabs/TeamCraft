@@ -14,7 +14,7 @@ use super::{
     PER_PAGE,
 };
 use crate::{
-    domain::{ChangeStatus, Decision, LifecycleState, Priority, Role},
+    domain::{ChangeStatus, Decision, LifecycleState, LineAction, Priority, Role},
     error::{AppError, AppResult},
     services::{audit, changes, items, notifications, requests, reviewers, revisions, users, Page},
     AppState,
@@ -318,6 +318,43 @@ pub async fn add_item(
     .await;
     finish(&st, result, &back, |label| {
         (back.clone(), format!("Added {label}"))
+    })
+}
+
+#[derive(Deserialize)]
+pub struct AddActionForm {
+    #[serde(default)]
+    item_number: String,
+    #[serde(default)]
+    action: String,
+    #[serde(default)]
+    successor: String,
+}
+
+/// `POST /changes/{id}/actions` – an obsolete or supersede line for the item's latest revision.
+pub async fn add_action(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<AddActionForm>,
+) -> AppResult<Response> {
+    let back = format!("/changes/{id}");
+    let result = async {
+        changes::get(&st.db, &ctx.me, id).await?;
+        let action = LineAction::parse(&form.action)
+            .filter(|a| *a != LineAction::Release)
+            .ok_or_else(|| AppError::BadRequest("Choose obsolete or supersede.".into()))?;
+        let item = items::get_by_number(&st.db, &ctx.me, &form.item_number).await?;
+        let rev = items::latest_revision(&st.db, &ctx.me, item.id).await?;
+        changes::add_action(&st.db, &ctx.me, id, rev.id, action, Some(&form.successor)).await?;
+        Ok((revisions::label(&rev), action))
+    }
+    .await;
+    finish(&st, result, &back, |(label, action)| {
+        (
+            back.clone(),
+            format!("Added {label} to the change ({})", action.as_str()),
+        )
     })
 }
 

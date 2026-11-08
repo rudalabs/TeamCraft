@@ -167,7 +167,7 @@ into another group, needs a manager of the source group or an administrator
 By default every reviewer of a change order must approve. A manager of a
 project group (or an administrator) can set a policy on the group page
 (*Review policy*) or with `PUT /api/v1/projects/{code}/review-policy`
-(`{"min_approvals": 2, "required_reviewers": ["carl"], "role_group": "QA"}`;
+(`{"min_approvals": 2, "required_reviewers": ["carl"], "role_group": "QA", "obsolete_requires_change": false}`;
 `GET` shows it to anybody who sees the group):
 
 * **Minimum approvals** – this many approvals release the change; empty means
@@ -194,6 +194,42 @@ reader cannot see is never named: the policy shows it as hidden and the submit
 message says "a required role group". Changes are audited
 (`project.review_policy`, with the previous values). Step 2 of
 [#152](https://github.com/rudalabs/TeamCraft/issues/152).
+
+### Obsolete and supersede only through a change order
+
+Obsoleting a released revision is final and flags its dependents, and a
+supersession tells designers not to use an item any more. By default one CAD
+editor of the group can do both at once. The same form (*Review policy* on the
+group page) has a checkbox, `obsolete_requires_change` in the API
+(`PUT /api/v1/projects/{code}/review-policy`; omitted: unchanged, default off),
+that moves both through review:
+
+* With the setting **on**, *Mark obsolete* and *Supersede* on items of the group
+  answer **409** for everybody, administrators included. Other groups are not
+  affected.
+* A change order can carry an **obsolete** or **supersede** line next to its
+  release lines (change page, *On release*; `POST /api/v1/changes/{number}/items`
+  with `{"item": …, "action": "obsolete"}` or `{"item": …, "action":
+  "supersede", "successor": "PRT-000012"}`; the revision defaults to the item's
+  latest). It needs a *released* revision that is in no other open change; a
+  supersede line needs a visible successor item, not the item itself and no
+  circle (400/409). The lines are allowed in every group, the setting only
+  forbids the direct way.
+* The policy of the group (minimum approvals, required reviewers, role group)
+  applies to the change; nothing happens before the last approval. Then, in the
+  same transaction as the release, each revision becomes obsolete (impacts on
+  dependents, `revision.obsoleted` webhook and notification as for a direct
+  obsolete) and a supersede line also records *superseded by*. If a line cannot
+  be applied any more (the revision was obsoleted in the meantime, the
+  supersession would close a circle) the approval fails with 409 and the whole
+  release stays undone. Rejecting or withdrawing the change changes nothing on
+  the released revisions.
+* Supersede **notifies the watchers** of the superseded item, whether declared
+  directly (with the setting off) or through a change order. Watchers who may
+  not see the successor get the text without its number; the change page shows
+  such a successor as *restricted*.
+
+Step 3 of [#152](https://github.com/rudalabs/TeamCraft/issues/152).
 
 ## What outsiders see of links
 

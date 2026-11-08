@@ -359,6 +359,8 @@ pub struct ReviewPolicyForm {
     required_reviewers: String,
     #[serde(default)]
     role_group: String,
+    #[serde(default)]
+    obsolete_requires_change: Option<String>,
 }
 
 /// `POST /projects/{id}/review-policy` – managers of the group, admins.
@@ -387,6 +389,7 @@ pub async fn update_review_policy(
                     .map(str::to_string)
                     .collect(),
                 role_group_code: Some(form.role_group),
+                obsolete_requires_change: Some(form.obsolete_requires_change.is_some()),
             };
             project_policy::set_review_policy(&st.db, &ctx.me, id, &input).await
         }

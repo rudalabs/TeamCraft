@@ -128,6 +128,7 @@
       <input type="text" name="role_group" maxlength="40" value="{% if review_policy.role_group %}{{ review_policy.role_group.code }}{% endif %}">
       {% if review_policy.role_group_hidden %}<span class="hint">A role group is set that you cannot see; saving this form with the field empty removes it.</span>{% endif %}
     </label>
+    <label class="check"><input type="checkbox" name="obsolete_requires_change" value="1"{% if review_policy.obsolete_requires_change %} checked{% endif %}> Obsolete and supersede only through a change order <span class="hint">the direct buttons are refused; add an obsolete or supersede line to a change order instead, which the reviewers approve</span></label>
     <p class="hint">Applies to every change that touches items of this group. A change that cannot meet the policy of all its groups is refused when it is submitted. A single rejection always rejects the change.</p>
     <div class="actions"><button class="primary" type="submit">Save</button></div>
   </form>

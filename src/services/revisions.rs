@@ -12,7 +12,7 @@ use crate::{
     services::{
         access, as_built, attributes, audit, impacts,
         notifications::{self, Notice},
-        references, simulations, webhooks,
+        project_policy, references, simulations, webhooks,
     },
 };
 
@@ -581,7 +581,8 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
 /// # Invariants
 ///
 /// * **Permission:** CAD editor; the revision is visible ("not found" otherwise) and in a group
-///   the actor may edit (403); it is released (409 otherwise).
+///   the actor may edit (403); it is released (409 otherwise), and its group does not require a
+///   change order for it (`obsolete_requires_change`, 409).
 /// * **Locks:** the revision row (`revisions::lock`).
 /// * **Audit:** `revision.obsolete`; when it is the latest revision of its item, also
 ///   `impact.flag` for its dependents (`impacts::on_obsolete`).
@@ -596,11 +597,33 @@ pub async fn obsolete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
     let mut tx = pool.begin().await?;
     let rev = lock(&mut tx, id).await?;
     ensure_project_access(&rev, actor)?;
-    transition(&mut tx, &rev, LifecycleState::Obsolete).await?;
+    if project_policy::obsolete_requires_change(&mut tx, rev.project_id).await? {
+        return Err(AppError::Conflict(format!(
+            "{} is in project group {}, which requires a change order to obsolete a revision: add an obsolete line to a change order.",
+            label(&rev),
+            rev.project_code.as_deref().unwrap_or("?")
+        )));
+    }
+    obsolete_in(&mut tx, actor, &rev).await?;
+    tx.commit().await?;
+    get(pool, actor, id).await
+}
+
+/// The obsoleting itself, in the caller's transaction: used by [`obsolete`] and when a
+/// change order with an obsolete line is released. The revision row must be locked and the
+/// permission checked by the caller.
+pub(crate) async fn obsolete_in(
+    tx: &mut PgConnection,
+    actor: &Actor,
+    rev: &Revision,
+) -> AppResult<()> {
+    let id = rev.id;
+    let rev = rev.clone();
+    transition(&mut *tx, &rev, LifecycleState::Obsolete).await?;
     // Dependents of an item without a current revision have to replace it.
-    impacts::on_obsolete(&mut tx, actor, &rev).await?;
+    impacts::on_obsolete(tx, actor, &rev).await?;
     audit::record(
-        &mut tx,
+        tx,
         Some(actor),
         "revision.obsolete",
         "revision",
@@ -610,7 +633,7 @@ pub async fn obsolete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
     )
     .await?;
     tell_watchers(
-        &mut tx,
+        tx,
         actor,
         &rev,
         format!("{} is obsolete", label(&rev)),
@@ -618,15 +641,14 @@ pub async fn obsolete(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
     )
     .await?;
     webhooks::emit(
-        &mut tx,
+        tx,
         Some(actor),
         WebhookEvent::RevisionObsoleted,
         &[rev.project_id],
         json!({ "revision": webhooks::revision_object(&rev, LifecycleState::Obsolete.as_str()) }),
     )
     .await?;
-    tx.commit().await?;
-    get(pool, actor, id).await
+    Ok(())
 }
 
 /// Moves a (locked) revision to another lifecycle state after validating

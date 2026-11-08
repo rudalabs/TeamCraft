@@ -73,6 +73,14 @@ priority and reviewers.
    the accepted change requests the change implements become *implemented*.
    A rejection sends them back to *WIP*; fix, *reopen* and resubmit – or *cancel* the change (takes effect at once).
 
+A change can also **retire** released data: add an *obsolete* or *supersede*
+line for an item under *Affected revisions* (*On release*). When the change is
+released the revision becomes obsolete in the same step – a supersede line also
+declares the item superseded by its successor, and its watchers are told. A
+project group can require this way for obsoleting (*Review policy*, see
+[Permissions](../admin/permissions.md)); then the direct *Mark obsolete* and
+*Supersede* buttons answer 409.
+
 ### Release readiness
 
 A change releases a whole product at once. Before it can be submitted,
