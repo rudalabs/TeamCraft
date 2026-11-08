@@ -302,6 +302,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{id}/withdraw", post(changes::withdraw))
         .route("/changes/{id}/reopen", post(changes::reopen))
         .route("/changes/{id}/cancel", post(changes::cancel))
+        .route("/changes/{id}/take-over", post(changes::take_over))
         // change requests (ECR)
         .route("/requests", get(requests::list).post(requests::create))
         .route("/requests/new", get(requests::new_form))
@@ -375,6 +376,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/projects/{id}/members/{user_id}/remove",
             post(admin::remove_member),
         )
+        .route(
+            "/projects/{id}/members/{user_id}/demote",
+            post(admin::demote_member),
+        )
+        .route(
+            "/projects/{id}/members/{user_id}/release-checkouts",
+            post(admin::release_member_checkouts),
+        )
         .route("/admin/users", get(admin::users).post(admin::create_user))
         .route(
             "/admin/users/{id}",
@@ -382,6 +391,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/admin/users/{id}/handover", post(admin::handover))
+        .route(
+            "/admin/users/{id}/release-checkouts",
+            post(admin::release_user_checkouts),
+        )
         .route("/admin/audit", get(admin::audit))
         .route("/admin/ai", get(admin::ai))
         .route("/admin/branding", get(branding::page))

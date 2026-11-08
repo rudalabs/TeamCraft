@@ -29,7 +29,7 @@ use crate::{
     services::{
         access, as_built, audit, impacts, next_counter,
         notifications::{self, Notice},
-        project_policy, readiness, requests, revisions, users, webhooks, Page,
+        project_policy, projects, readiness, requests, revisions, users, webhooks, Page,
     },
 };
 
@@ -450,6 +450,155 @@ fn ensure_owner(change: &Change, actor: &Actor) -> AppResult<()> {
             change.number
         )))
     }
+}
+
+/// Whether the actor may act for the author of an abandoned change (issue
+/// #173): the author is deactivated and the actor – a CAD editor – manages
+/// **every** project group of the change's items. A change without items, or
+/// with an item outside any group, has no such manager (administrators only).
+async fn stands_in_for_author(
+    conn: &mut PgConnection,
+    change: &Change,
+    actor: &Actor,
+) -> AppResult<bool> {
+    if !actor.can_edit() || change.created_by == actor.id {
+        return Ok(false);
+    }
+    let author_active = sqlx::query_scalar::<_, bool>("SELECT active FROM users WHERE id = $1")
+        .bind(change.created_by)
+        .fetch_optional(&mut *conn)
+        .await?
+        .unwrap_or(false);
+    if author_active {
+        return Ok(false);
+    }
+    let groups = sqlx::query_scalar::<_, Option<Uuid>>(
+        "SELECT DISTINCT i.project_id FROM change_items ci
+         JOIN revisions r ON r.id = ci.revision_id JOIN items i ON i.id = r.item_id
+         WHERE ci.change_id = $1",
+    )
+    .bind(change.id)
+    .fetch_all(&mut *conn)
+    .await?;
+    if groups.is_empty() {
+        return Ok(false);
+    }
+    for group in groups {
+        let Some(group) = group else {
+            return Ok(false);
+        };
+        if !projects::can_manage(conn, actor, group).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// [`ensure_owner`], or a manager standing in for a deactivated author
+/// ([`stands_in_for_author`]): for withdrawing, reopening and cancelling.
+async fn ensure_owner_or_stand_in(
+    conn: &mut PgConnection,
+    change: &Change,
+    actor: &Actor,
+) -> AppResult<()> {
+    match ensure_owner(change, actor) {
+        Ok(()) => Ok(()),
+        Err(AppError::Forbidden(_)) if stands_in_for_author(conn, change, actor).await? => Ok(()),
+        Err(AppError::Forbidden(_)) => Err(AppError::Forbidden(format!(
+            "Only the author of {} or an administrator can do this (or, when the author is \
+             deactivated, a manager of every affected project group).",
+            change.number
+        ))),
+        Err(e) => Err(e),
+    }
+}
+
+/// For pages: whether the actor may withdraw, reopen, cancel or take over the
+/// change in place of its deactivated author.
+pub async fn may_stand_in(pool: &PgPool, actor: &Actor, change: &Change) -> AppResult<bool> {
+    let mut conn = pool.acquire().await?;
+    stands_in_for_author(&mut conn, change, actor).await
+}
+
+/// Takes over a draft or rejected change of a deactivated author: the actor
+/// becomes its author and can edit, submit or cancel it (issue #173). It
+/// frees the revisions an abandoned change holds without an administrator.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor; the author is deactivated and the actor is
+///   an administrator or manages every affected project group (403); the
+///   change is a draft or rejected (409); the actor sees every item (403) and
+///   is not one of its reviewers – author and reviewer must differ (409).
+/// * **Locks:** the change row (`FOR UPDATE`).
+/// * **Audit:** `change.handover` (as the administrator's hand-over), with
+///   `taken_over: true`.
+/// * **Notifications / webhooks:** none.
+/// * **Data:** `created_by` becomes the actor; reviews and items stay. As
+///   author the actor can no longer review it (four-eyes principle).
+/// * **Atomic:** one transaction.
+pub async fn take_over(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
+    actor.require(Role::Editor)?;
+    let mut tx = pool.begin().await?;
+    let change = lock(&mut tx, actor, change_id).await?;
+    if change.created_by == actor.id {
+        return Err(AppError::Conflict(format!(
+            "You are already the author of {}.",
+            change.number
+        )));
+    }
+    let author_active = sqlx::query_scalar::<_, bool>("SELECT active FROM users WHERE id = $1")
+        .bind(change.created_by)
+        .fetch_optional(&mut *tx)
+        .await?
+        .unwrap_or(false);
+    let allowed = if actor.is_admin() {
+        !author_active
+    } else {
+        stands_in_for_author(&mut tx, &change, actor).await?
+    };
+    if !allowed {
+        return Err(AppError::Forbidden(format!(
+            "{} can be taken over only while its author is deactivated, by a manager of every \
+             affected project group or an administrator.",
+            change.number
+        )));
+    }
+    ensure_status(&change, &[ChangeStatus::Draft, ChangeStatus::Rejected])?;
+    ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
+    let reviewing = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM change_reviews WHERE change_id = $1 AND reviewer_id = $2)",
+    )
+    .bind(change_id)
+    .bind(actor.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if reviewing {
+        return Err(AppError::Conflict(format!(
+            "You review {}; author and reviewer must differ. Remove yourself as reviewer first.",
+            change.number
+        )));
+    }
+    sqlx::query("UPDATE changes SET created_by = $2, updated_at = now() WHERE id = $1")
+        .bind(change_id)
+        .bind(actor.id)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "change.handover",
+        "change",
+        Some(change_id),
+        format!(
+            "{} taken over from {} by {}",
+            change.number, change.created_by_name, actor.display_name
+        ),
+        json!({ "from": change.created_by, "to": actor.id, "taken_over": true }),
+    )
+    .await?;
+    tx.commit().await?;
+    get(pool, actor, change_id).await
 }
 
 fn ensure_status(change: &Change, allowed: &[ChangeStatus]) -> AppResult<ChangeStatus> {
@@ -1261,7 +1410,7 @@ pub async fn remove_reviewer(
 /// # Invariants
 ///
 /// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
-///   (409) and the actor sees every item (403); it has an item and a reviewer (409); every
+///   (409) and the actor sees every item (403); it has an item and a reviewer, and no reviewer is deactivated (409); every
 ///   revision is in a group the actor may edit (403) and not checked out by someone else (409);
 ///   no dependency is unreleased unless it is in the change (409).
 /// * **Locks:** the change row (`FOR UPDATE`), then every revision (`revisions::lock`) before
@@ -1303,14 +1452,23 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
         ));
     }
     // Separation of duties again: people may have edited since they were added.
-    let reviewers = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT cr.reviewer_id, u.display_name FROM change_reviews cr
+    let reviewers = sqlx::query_as::<_, (Uuid, String, bool)>(
+        "SELECT cr.reviewer_id, u.display_name, u.active FROM change_reviews cr
          JOIN users u ON u.id = cr.reviewer_id WHERE cr.change_id = $1 ORDER BY u.username",
     )
     .bind(change_id)
     .fetch_all(&mut *tx)
     .await?;
-    for (reviewer, name) in &reviewers {
+    for (reviewer, name, active) in &reviewers {
+        // A reviewer deactivated after being added could never decide, and
+        // the change would stay in review for good (issue #173).
+        if !active {
+            return Err(AppError::Conflict(format!(
+                "{name} is deactivated and cannot review {}. Replace them first: remove them as \
+                 reviewer and add someone else.",
+                change.number
+            )));
+        }
         if let Some(conflict) =
             review_conflict(&mut tx, &change, *reviewer, Some(actor.id), false).await?
         {
@@ -1323,7 +1481,7 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     }
     // The review policy of every affected project group.
     let requirement = project_policy::review_requirement(&mut tx, Some(actor), change_id).await?;
-    let reviewer_uuids: Vec<Uuid> = reviewers.iter().map(|(id, _)| *id).collect();
+    let reviewer_uuids: Vec<Uuid> = reviewers.iter().map(|(id, _, _)| *id).collect();
     // A required person who may not review this change (its author, an editor
     // of its data) can never be added: say so instead of "must be a reviewer".
     for (user, name) in &requirement.required_users {
@@ -1768,7 +1926,7 @@ async fn emit_review_events(
 ///
 /// # Invariants
 ///
-/// * **Permission:** CAD editor who is the author (or an administrator); the change is in review
+/// * **Permission:** CAD editor who is the author (or an administrator, or a manager of every affected group while the author is deactivated); the change is in review
 ///   (409).
 /// * **Locks:** the change row (`FOR UPDATE`), then every revision (`revisions::lock`) before
 ///   its state changes.
@@ -1780,7 +1938,7 @@ async fn emit_review_events(
 pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
-    ensure_owner(&change, actor)?;
+    ensure_owner_or_stand_in(&mut tx, &change, actor).await?;
     ensure_status(&change, &[ChangeStatus::InReview])?;
     let labels = transition_items(&mut tx, change_id, LifecycleState::InWork).await?;
     reset_reviews(&mut tx, change_id).await?;
@@ -1824,7 +1982,7 @@ pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResul
 ///
 /// # Invariants
 ///
-/// * **Permission:** CAD editor who is the author (or an administrator); the change is rejected
+/// * **Permission:** CAD editor who is the author (or an administrator, or a manager of every affected group while the author is deactivated); the change is rejected
 ///   (409) and the actor sees every item (403).
 /// * **Locks:** the change row (`FOR UPDATE`).
 /// * **Audit:** `change.reopen`.
@@ -1834,7 +1992,7 @@ pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResul
 pub async fn reopen(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
-    ensure_owner(&change, actor)?;
+    ensure_owner_or_stand_in(&mut tx, &change, actor).await?;
     ensure_status(&change, &[ChangeStatus::Rejected])?;
     ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
     reset_reviews(&mut tx, change_id).await?;
@@ -1862,7 +2020,7 @@ pub async fn reopen(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
 ///
 /// # Invariants
 ///
-/// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
+/// * **Permission:** CAD editor who is the author (or an administrator, or a manager of every affected group while the author is deactivated); the change is a draft
 ///   or rejected (409).
 /// * **Locks:** the change row (`FOR UPDATE`).
 /// * **Audit:** `change.cancel`.
@@ -1872,7 +2030,7 @@ pub async fn reopen(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
 pub async fn cancel(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
-    ensure_owner(&change, actor)?;
+    ensure_owner_or_stand_in(&mut tx, &change, actor).await?;
     ensure_status(&change, &[ChangeStatus::Draft, ChangeStatus::Rejected])?;
     sqlx::query(
         "UPDATE changes SET status = 'cancelled', closed_at = now(), updated_at = now() WHERE id = $1",

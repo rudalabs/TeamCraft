@@ -193,6 +193,9 @@ pub async fn show(
     };
     let ready = readiness.as_ref().is_none_or(|r| r.is_ready());
     let is_owner = me.can_edit() && (change.created_by == me.id || me.is_admin());
+    // A manager of every affected group acting for a deactivated author.
+    let stand_in = !is_owner && changes::may_stand_in(&st.db, me, &change).await?;
+    let can_close = is_owner || stand_in;
     let modifiable = is_owner && status.is_modifiable();
     let candidates: Vec<_> = if modifiable {
         users::reviewer_candidates(&st.db)
@@ -232,9 +235,10 @@ pub async fn show(
         "add_dependencies": modifiable
             && status == ChangeStatus::Draft
             && readiness.as_ref().is_some_and(|r| !r.addable_blockers().is_empty()),
-        "withdraw": is_owner && status == ChangeStatus::InReview,
-        "reopen": is_owner && status == ChangeStatus::Rejected,
-        "cancel": is_owner && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
+        "withdraw": can_close && status == ChangeStatus::InReview,
+        "reopen": can_close && status == ChangeStatus::Rejected,
+        "cancel": can_close && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
+        "take_over": stand_in && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
         "review": my_pending_review,
         "replace_reviewer": can_replace,
     });
@@ -500,6 +504,23 @@ pub async fn reopen(
     let result = changes::reopen(&st.db, &ctx.me, id).await;
     finish(&st, result, &back, |c| {
         (back.clone(), format!("{} was reopened as draft", c.number))
+    })
+}
+
+/// `POST /changes/{id}/take-over` – a manager of every affected group (or an
+/// administrator) takes over the change of a deactivated author.
+pub async fn take_over(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let back = format!("/changes/{id}");
+    let result = changes::take_over(&st.db, &ctx.me, id).await;
+    finish(&st, result, &back, |c| {
+        (
+            back.clone(),
+            format!("You are now the author of {}", c.number),
+        )
     })
 }
 

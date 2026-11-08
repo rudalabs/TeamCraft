@@ -357,6 +357,16 @@ real files and belong to section 3 once such files are at hand.
 - [ ] Step 9: requester cannot triage own request; separate approval of *use as is* deviations.
 - [x] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
 
+**Offboarding for high-turnover teams ([#173](https://github.com/rudalabs/TeamCraft/issues/173))**
+
+- [x] Step 0: runbook "When someone leaves" in `docs/src/admin/users.md`.
+- [ ] Step 1: holdings report per user (admin user page, group managers, REST, CLI), filtered by the viewer's rights.
+- [x] Step 2: inactive lock holders count as gone, only active managers count, a deactivated user's IdP membership can be removed, submit refuses a deactivated reviewer, *Demote* manager.
+- [x] Step 3: bulk release of another user's check-outs (`checkouts::release_held`; admin user page, group member list).
+- [ ] Step 4: deactivation as an offboarding step (release / hand over / revoke tokens), CLI `user deactivate`.
+- [x] Step 5: managers of every affected group withdraw, reopen, cancel or take over a deactivated author's change.
+- [ ] Steps 6–10: manager release with a reason, groups without an active manager, season handover, IdP-driven offboarding, desktop working folder.
+
 **Desktop app**
 
 - [ ] Check #58 in the real app (Tauri build, Windows): project groups load again on *Home*, *Refresh* and in the

@@ -79,6 +79,8 @@ pub struct ProjectMember {
     pub added_at: DateTime<Utc>,
     /// Managers maintain the group: details and members.
     pub manager: bool,
+    /// Revisions of the group the member has checked out.
+    pub checkouts: i64,
 }
 
 /// One row of the item search result, combined with its latest revision.

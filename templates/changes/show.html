@@ -32,6 +32,12 @@
     {% if can.reopen %}
     <form method="post" action="/changes/{{ change.id }}/reopen"><button type="submit">Reopen as draft</button></form>
     {% endif %}
+    {% if can.take_over %}
+    <form method="post" action="/changes/{{ change.id }}/take-over"
+          data-confirm="Become the author of {{ change.number }}? Its author is deactivated; as author you can no longer review it.">
+      <button type="submit" title="The author is deactivated; you manage every affected project group">Take over</button>
+    </form>
+    {% endif %}
     {% if can.cancel %}
     <form method="post" action="/changes/{{ change.id }}/cancel">
       <button class="danger" type="submit" title="Cancel {{ change.number }} at once (cannot be undone)">Cancel change</button>

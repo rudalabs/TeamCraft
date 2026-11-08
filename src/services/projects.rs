@@ -625,12 +625,67 @@ pub async fn numbering_preview(
 pub async fn members(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<ProjectMember>> {
     Ok(sqlx::query_as::<_, ProjectMember>(
         "SELECT u.id AS user_id, u.username, u.display_name, u.role, u.active, pm.source,
-                pm.added_at, pm.manager
+                pm.added_at, pm.manager,
+                (SELECT COUNT(*) FROM revisions r JOIN items i ON i.id = r.item_id
+                 WHERE i.project_id = pm.project_id AND r.checked_out_by = u.id) AS checkouts
          FROM project_members pm JOIN users u ON u.id = pm.user_id
          WHERE pm.project_id = $1 ORDER BY pm.manager DESC, u.display_name",
     )
     .bind(project_id)
     .fetch_all(pool)
+    .await?)
+}
+
+/// Somebody who still holds check-outs in a group without being a member of
+/// it any more (removed, or never one before the group was restricted).
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct FormerHolder {
+    pub user_id: Uuid,
+    pub username: String,
+    pub display_name: String,
+    pub active: bool,
+    pub checkouts: i64,
+}
+
+/// The non-members holding check-outs in a group, for the managers' member
+/// list: their locks are orphaned and a manager may release them
+/// (`checkouts::release_held`). Bounded to 200 people.
+pub async fn former_holders(
+    pool: &PgPool,
+    actor: &Actor,
+    project_id: Uuid,
+) -> AppResult<Vec<FormerHolder>> {
+    let mut conn = pool.acquire().await?;
+    require_manager(&mut conn, actor, project_id).await?;
+    Ok(sqlx::query_as::<_, FormerHolder>(
+        "SELECT u.id AS user_id, u.username, u.display_name, u.active, COUNT(*) AS checkouts
+         FROM revisions r JOIN items i ON i.id = r.item_id JOIN users u ON u.id = r.checked_out_by
+         WHERE i.project_id = $1
+           AND NOT EXISTS (SELECT 1 FROM project_members pm
+                           WHERE pm.project_id = $1 AND pm.user_id = u.id)
+         GROUP BY u.id, u.username, u.display_name, u.active
+         ORDER BY u.display_name LIMIT 200",
+    )
+    .bind(project_id)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
+/// Active managers of the group other than `besides`: the "at least one
+/// manager" rule counts only these, since a deactivated manager cannot
+/// maintain the group any more (issue #173).
+async fn other_active_managers(
+    conn: &mut PgConnection,
+    project_id: Uuid,
+    besides: Uuid,
+) -> AppResult<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM project_members pm JOIN users u ON u.id = pm.user_id
+         WHERE pm.project_id = $1 AND pm.manager AND u.active AND pm.user_id <> $2",
+    )
+    .bind(project_id)
+    .bind(besides)
+    .fetch_one(&mut *conn)
     .await?)
 }
 
@@ -647,7 +702,8 @@ pub async fn members(pool: &PgPool, project_id: Uuid) -> AppResult<Vec<ProjectMe
 /// * **Policy:** an administrator who is no member cannot add themselves (or make themselves
 ///   manager) to a group whose need-to-know policy is in force (403).
 /// * **Data:** an existing membership keeps its source (an IdP-synchronised
-///   one stays one) and is only ever raised to manager, never lowered.
+///   one stays one) and is only ever raised to manager here; lowering is
+///   [`demote_manager`].
 /// * **Audit:** `project.add_member`.
 /// * **Notifications / webhooks:** none.
 /// * **Atomic:** one transaction.
@@ -715,7 +771,7 @@ pub async fn add_member(
 }
 
 /// Removes a member (managers and admins; everybody may leave a group).
-/// The last manager of a group cannot leave it – an admin can still remove them.
+/// A manager cannot leave while no other active manager remains – an admin can still remove them.
 /// Returns how many check-outs the user still holds in the group.
 ///
 /// # Invariants
@@ -725,9 +781,11 @@ pub async fn add_member(
 ///   403), leaving needs nothing more.
 /// * **Locks:** the group row (`FOR UPDATE`), so membership changes of one
 ///   group are serialised.
-/// * **Data:** the last manager cannot be removed except by an
-///   administrator (409); a membership synchronised from the identity
-///   provider cannot be removed here (409); a non-member is "not found".
+/// * **Data:** a manager cannot be removed (nor leave) when no other
+///   *active* manager remains, except by an administrator (409); a
+///   membership synchronised from the identity provider cannot be removed
+///   here while its user is active (409) – a deactivated user's can, since
+///   SSO refuses them and it cannot come back; a non-member is "not found".
 ///   Check-outs of the removed user are kept and only counted.
 /// * **Audit:** `project.remove_member`.
 /// * **Notifications / webhooks:** none.
@@ -748,30 +806,30 @@ pub async fn remove_member(
     if user_id != actor.id {
         require_manager(&mut tx, actor, project_id).await?;
     }
-    let managers: Vec<Uuid> =
-        sqlx::query_scalar("SELECT user_id FROM project_members WHERE project_id = $1 AND manager")
-            .bind(project_id)
-            .fetch_all(&mut *tx)
-            .await?;
-    if !actor.is_admin() && managers == [user_id] {
-        return Err(AppError::Conflict(format!(
-            "{} needs at least one manager – make someone else a manager first.",
-            project.code
-        )));
-    }
-    // A membership from the identity provider would come back at the user's
-    // next SSO login: removing it here would only look like revoking access.
-    let from_idp = sqlx::query_scalar::<_, bool>(
-        "SELECT pm.source = 'oidc' AND p.oidc_group IS NOT NULL
+    let (is_manager, from_idp, active) = sqlx::query_as::<_, (bool, bool, bool)>(
+        "SELECT pm.manager, pm.source = 'oidc' AND p.oidc_group IS NOT NULL, u.active
          FROM project_members pm JOIN projects p ON p.id = pm.project_id
+         JOIN users u ON u.id = pm.user_id
          WHERE pm.project_id = $1 AND pm.user_id = $2",
     )
     .bind(project_id)
     .bind(user_id)
     .fetch_optional(&mut *tx)
     .await?
-    .unwrap_or(false);
-    if from_idp {
+    .ok_or_else(|| AppError::not_found("This user is not a member of the project group."))?;
+    if !actor.is_admin()
+        && is_manager
+        && other_active_managers(&mut tx, project_id, user_id).await? == 0
+    {
+        return Err(AppError::Conflict(format!(
+            "{} needs at least one active manager – make someone else a manager first.",
+            project.code
+        )));
+    }
+    // A membership from the identity provider would come back at the user's
+    // next SSO login: removing it here would only look like revoking access.
+    // A deactivated user is refused at SSO login, so theirs cannot return.
+    if from_idp && active {
         return Err(AppError::Conflict(format!(
             "This membership comes from the identity-provider group {} and would return at the next SSO login. \
              Remove the user from that group in the identity provider, or ask an administrator to unlink \
@@ -812,6 +870,78 @@ pub async fn remove_member(
     .await?;
     tx.commit().await?;
     Ok(held)
+}
+
+/// Lowers a manager to a plain member (managers and admins): the member keeps
+/// the membership and its source, so this works for IdP-synchronised
+/// memberships too, which cannot be removed while their user is active.
+///
+/// # Invariants
+///
+/// * **Permission:** the group is visible to the actor ("not found"
+///   otherwise) and the actor manages it (or is an administrator; 403).
+///   Managers may demote themselves.
+/// * **Locks:** the group row (`FOR UPDATE`), so membership changes of one
+///   group are serialised (as `add_member` / `remove_member`).
+/// * **Data:** the user is a manager of the group ("not found" for a
+///   non-member, 409 for a plain member); at least one other *active*
+///   manager remains, except when an administrator demotes (409).
+/// * **Audit:** `project.demote_manager`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
+pub async fn demote_manager(
+    pool: &PgPool,
+    actor: &Actor,
+    project_id: Uuid,
+    user_id: Uuid,
+) -> AppResult<()> {
+    let project = get_for_management(pool, actor, project_id).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT id FROM projects WHERE id = $1 FOR UPDATE")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await?;
+    require_manager(&mut tx, actor, project_id).await?;
+    let (manager, username) = sqlx::query_as::<_, (bool, String)>(
+        "SELECT pm.manager, u.username FROM project_members pm JOIN users u ON u.id = pm.user_id
+         WHERE pm.project_id = $1 AND pm.user_id = $2",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::not_found("This user is not a member of the project group."))?;
+    if !manager {
+        return Err(AppError::Conflict(format!(
+            "{username} is not a manager of {}.",
+            project.code
+        )));
+    }
+    if !actor.is_admin() && other_active_managers(&mut tx, project_id, user_id).await? == 0 {
+        return Err(AppError::Conflict(format!(
+            "{} needs at least one active manager – make someone else a manager first.",
+            project.code
+        )));
+    }
+    sqlx::query(
+        "UPDATE project_members SET manager = false WHERE project_id = $1 AND user_id = $2",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "project.demote_manager",
+        "project",
+        Some(project_id),
+        format!("{username} is no longer a manager of {}", project.code),
+        json!({ "user_id": user_id }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Revisions of the group checked out by a user.
