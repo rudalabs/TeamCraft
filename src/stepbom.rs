@@ -888,4 +888,22 @@ mod tests {
         );
         assert!(read(&step(&file)).is_err());
     }
+
+    /// Found by cargo mutants: comments, unset parameters (`*`) and quoted
+    /// semicolons when splitting into instances.
+    #[test]
+    fn instances_with_unset_parameters_comments_and_quotes() {
+        let text = "#1=PRODUCT('a;b','',(#2),*);\n/* a comment; with #9=X(); */\
+                    #2=PRODUCT_CONTEXT('it''s',*,'mechanical');#3=X(1.5/2.);";
+        let mut seen = Vec::new();
+        for_each_instance(text, |id, keyword, _| seen.push((id, keyword.to_string())));
+        assert_eq!(
+            seen,
+            [
+                (1, "PRODUCT".to_string()),
+                (2, "PRODUCT_CONTEXT".to_string()),
+                (3, "X".to_string())
+            ]
+        );
+    }
 }
