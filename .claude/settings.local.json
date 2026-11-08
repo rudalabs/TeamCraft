@@ -19,7 +19,9 @@
     ],
     "deny": [
       "Bash(cargo install *)",
-      "Bash(* 2>&1)"
+      "Bash(* 2>&1 *)",
+      "Bash(git restore *)",
+      "Bash(git reset *)"
     ]
   },
   "hooks": {
