@@ -440,5 +440,9 @@ mod tests {
             assert_eq!(kind_label(kind), label, "{kind}");
         }
         assert_eq!(kind_label("settings"), "Page");
+        // a new kind needs its own label (only `other` is a plain page)
+        for kind in KINDS {
+            assert_eq!(kind_label(kind) == "Page", kind == "other", "{kind}");
+        }
     }
 }
