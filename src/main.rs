@@ -42,6 +42,10 @@ enum Command {
     Backup {
         /// Target directory; it must not exist or be empty.
         dir: std::path::PathBuf,
+        /// Encrypt every file with a passphrase (TEAMCRAFT_BACKUP_PASSPHRASE
+        /// or _FILE, otherwise prompted for); the restore needs it.
+        #[arg(long)]
+        encrypt: bool,
     },
     /// Restore the database and the file vault from a backup directory.
     Restore {
@@ -166,6 +170,15 @@ enum UserCommand {
     },
     /// List all accounts.
     List,
+    /// Show the storage usage and quota of an account; with --mb set the
+    /// quota (counted over the sizes of the versions the user stored).
+    Quota {
+        #[arg(long)]
+        username: String,
+        /// New quota in MiB, or `none` for no limit.
+        #[arg(long)]
+        mb: Option<String>,
+    },
     /// Create a personal access token for an account (e.g. for a CI job or
     /// an MCP client) and print it once on standard output.
     CreateToken {
@@ -254,6 +267,13 @@ enum VaultCommand {
         #[arg(long, default_value_t = teamcraft::preview::MAX_PARALLEL)]
         jobs: usize,
     },
+    /// Show the storage usage and quota of the whole vault; with --mb set
+    /// the quota (counted over the sizes of all stored versions).
+    Quota {
+        /// New quota in MiB, or `none` for no limit.
+        #[arg(long)]
+        mb: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -334,7 +354,7 @@ async fn run(cli: Cli) -> ExitCode {
         Command::Mcp { server, token_file } => mcp_bridge(&server, token_file.as_deref()).await,
         Command::Serve { no_migrate } => serve(no_migrate).await,
         Command::Migrate => migrate().await,
-        Command::Backup { dir } => backup_command(dir).await,
+        Command::Backup { dir, encrypt } => backup_command(dir, encrypt).await,
         Command::Restore { dir, force } => restore_command(dir, force).await,
         Command::User { command } => user_command(command).await,
         Command::Vault { command } => vault_command(command).await,
@@ -610,9 +630,30 @@ async fn migrate() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-async fn backup_command(dir: std::path::PathBuf) -> Result<ExitCode> {
+/// The backup passphrase: from the configuration, otherwise prompted for on
+/// a terminal (twice when `confirm`).
+fn backup_passphrase(config: &teamcraft::config::Config, confirm: bool) -> Result<String> {
+    if let Some(p) = &config.backup_passphrase {
+        return Ok(p.clone());
+    }
+    if !std::io::stdin().is_terminal() {
+        bail!("set TEAMCRAFT_BACKUP_PASSPHRASE (or TEAMCRAFT_BACKUP_PASSPHRASE_FILE)");
+    }
+    let first = rpassword::prompt_password("Backup passphrase: ")?;
+    if confirm && rpassword::prompt_password("Repeat the passphrase: ")? != first {
+        bail!("the passphrases do not match");
+    }
+    Ok(first)
+}
+
+async fn backup_command(dir: std::path::PathBuf, encrypt: bool) -> Result<ExitCode> {
     let config = load_config()?;
-    let summary = teamcraft::backup::backup(&config, &dir).await?;
+    let summary = if encrypt {
+        let passphrase = backup_passphrase(&config, true)?;
+        teamcraft::backup::backup_encrypted(&config, &dir, &passphrase).await?
+    } else {
+        teamcraft::backup::backup(&config, &dir).await?
+    };
     println!(
         "backup written to '{}': {} vault object(s), {} byte database dump (sha256 {})",
         dir.display(),
@@ -625,7 +666,13 @@ async fn backup_command(dir: std::path::PathBuf) -> Result<ExitCode> {
 
 async fn restore_command(dir: std::path::PathBuf, force: bool) -> Result<ExitCode> {
     let config = load_config()?;
-    let summary = teamcraft::backup::restore(&config, &dir, force).await?;
+    let passphrase = if teamcraft::backup::is_encrypted(&dir)? {
+        Some(backup_passphrase(&config, false)?)
+    } else {
+        None
+    };
+    let summary =
+        teamcraft::backup::restore_with(&config, &dir, force, passphrase.as_deref()).await?;
     println!(
         "restore from '{}' finished: {} vault object(s), {} copied, {} already present",
         dir.display(),
@@ -746,6 +793,28 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
             )?;
             println!("{token}");
         }
+        UserCommand::Quota { username, mb } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            if let Some(mb) = mb {
+                let limit = services::quotas::parse_limit_mb(&mb).map_err(anyhow::Error::msg)?;
+                services::quotas::set_user_quota(
+                    &pool,
+                    &teamcraft::auth::Actor::system(),
+                    user.id,
+                    limit,
+                )
+                .await?;
+            }
+            let usage = services::quotas::user_usage(&pool, user.id).await?;
+            writeln!(
+                std::io::stdout(),
+                "{}: {}",
+                user.username,
+                describe_usage(&usage)
+            )?;
+        }
         UserCommand::List => {
             let users = services::users::list(&pool).await?;
             let mut out = std::io::stdout().lock();
@@ -764,6 +833,18 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `12.0 MB of 1.0 GB used` / `12.0 MB used, no quota`.
+fn describe_usage(usage: &services::quotas::Usage) -> String {
+    let used = teamcraft::util::format_bytes(usage.used);
+    match usage.limit {
+        Some(limit) => format!(
+            "{used} of {} used (storage quota)",
+            teamcraft::util::format_bytes(limit)
+        ),
+        None => format!("{used} used, no storage quota"),
+    }
 }
 
 /// Prompts twice on a terminal, otherwise reads one line from stdin
@@ -863,6 +944,20 @@ async fn assistant_command(command: AssistantCommand) -> Result<ExitCode> {
     })
 }
 
+/// `teamcraft vault quota [--mb N|none]`.
+async fn vault_quota(mb: Option<String>) -> Result<ExitCode> {
+    let config = load_config()?;
+    let pool = db::connect(&config).await?;
+    db::migrate(&pool).await?;
+    if let Some(mb) = mb {
+        let limit = services::quotas::parse_limit_mb(&mb).map_err(anyhow::Error::msg)?;
+        services::quotas::set_vault_quota(&pool, &teamcraft::auth::Actor::system(), limit).await?;
+    }
+    let usage = services::quotas::vault_usage(&pool).await?;
+    println!("vault: {}", describe_usage(&usage));
+    Ok(ExitCode::SUCCESS)
+}
+
 async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
     let verify_hashes = match command {
         VaultCommand::Check { verify_hashes } => verify_hashes,
@@ -871,6 +966,7 @@ async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
         VaultCommand::PurgeVersions { apply, grace_days } => {
             return vault_purge_versions(apply, grace_days).await
         }
+        VaultCommand::Quota { mb } => return vault_quota(mb).await,
     };
     let config = load_config()?;
     let pool = db::connect(&config).await?;

@@ -266,7 +266,14 @@ mod tests {
         let src = tempfile::tempdir().unwrap();
         let report = write(src.path(), "report.pdf", "pdf");
         let files = [server_file("hub.prt", "hub")];
-        let p = plan(ws.path(), Some("ROVER"), &files, &[report.clone()], "").unwrap();
+        let p = plan(
+            ws.path(),
+            Some("ROVER"),
+            &files,
+            std::slice::from_ref(&report),
+            "",
+        )
+        .unwrap();
         assert_eq!(p[0].rel, "ROVER/hub/report.pdf");
         assert_eq!(p[0].folder, "hub");
         assert!(!p[0].new_version && !p[0].exists_locally && !p[0].needs_confirmation());
@@ -297,7 +304,14 @@ mod tests {
         let src = tempfile::tempdir().unwrap();
         let f = write(src.path(), "deck.inp", "x");
         let files = [server_file("hub.prt", "hub")];
-        let p = plan(ws.path(), Some("ROVER"), &files, &[f.clone()], "sim/run 1").unwrap();
+        let p = plan(
+            ws.path(),
+            Some("ROVER"),
+            &files,
+            std::slice::from_ref(&f),
+            "sim/run 1",
+        )
+        .unwrap();
         assert_eq!(p[0].folder, "hub/sim/run 1");
         assert_eq!(p[0].rel, "ROVER/hub/sim/run 1/deck.inp");
         copy_in(ws.path(), &p, &[]).unwrap();
@@ -365,7 +379,14 @@ mod tests {
         let in_ws = layout::join_rel(ws.path(), "ROVER/notes.txt");
         std::fs::create_dir_all(in_ws.parent().unwrap()).unwrap();
         std::fs::write(&in_ws, "mine").unwrap();
-        let p = plan(ws.path(), Some("ROVER"), &[], &[in_ws.clone()], "").unwrap();
+        let p = plan(
+            ws.path(),
+            Some("ROVER"),
+            &[],
+            std::slice::from_ref(&in_ws),
+            "",
+        )
+        .unwrap();
         assert!(p[0].in_place && !p[0].needs_confirmation());
         copy_in(ws.path(), &p, &[]).unwrap();
         assert_eq!(std::fs::read_to_string(in_ws).unwrap(), "mine");

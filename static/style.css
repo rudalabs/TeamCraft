@@ -353,6 +353,20 @@ details.menu[open] > .menu-pop { animation: menu-in 140ms var(--ease-out); }
 .title-row h1 { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .title-row h1 .id { font-family: var(--display); }
 .title-row form { margin: 0; }
+/* item label with QR code (/items/{id}/label); printing shows only the label */
+.item-label { display: flex; gap: 16px; align-items: center; max-width: 30rem; padding: 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: #fff; color: #000; }
+.item-label-qr { flex: none; }
+.item-label-text p { margin: 0 0 4px; }
+.item-label-number { font-size: 1.4rem; font-weight: 700; }
+.item-label-name { font-size: 1.05rem; }
+@media print {
+  header, nav, footer, .no-print, .flash { display: none !important; }
+  .item-label { border: 1px solid #000; }
+}
+/* copy the item number from a list row: small, shown on hover and focus */
+button.copy-number { padding: 0 4px; margin-left: 4px; opacity: 0.35; }
+tr:hover button.copy-number, button.copy-number:focus-visible { opacity: 1; }
 
 .titleblock {
   display: grid;
@@ -998,6 +1012,12 @@ details.payload pre {
 .viewer-legend select { width: auto; max-width: 100%; }
 .viewer-legend-value { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .viewer-legend-bar { width: min(16rem, 40vw); height: 0.6rem; border: 1px solid var(--border-strong); border-radius: 999px; }
+/* section plane and measuring (inserted by viewer.js below the canvas) */
+.viewer-section { margin: var(--space-2) 0 0; }
+.viewer-section input[type="range"] { width: min(14rem, 40vw); }
+canvas.viewer-measuring { cursor: crosshair; }
+.viewer-notes { flex-basis: 100%; margin: 0; padding-left: 1.4rem; }
+.viewer-notes li { margin: 0.15rem 0; }
 
 /* Vault explorer: folder tree | items | detail */
 .explorer { display: grid; grid-template-columns: 240px minmax(0, 1fr) 320px; gap: var(--space-4); align-items: start; }

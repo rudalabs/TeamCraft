@@ -109,6 +109,8 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/items/new", get(items::new_form))
         .route("/items/{id}", get(items::show))
+        .route("/items/{id}/label", get(items::label))
+        .route("/items/{id}/qr.svg", get(items::qr_svg))
         .route("/items/{id}/master", post(items::update_master))
         .route("/items/{id}/owner", post(items::set_owner))
         .route("/items/{id}/delete", post(items::delete))
@@ -169,8 +171,20 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(revisions::preview_version),
         )
         .route("/file-versions/{id}/mesh", get(revisions::mesh_version))
+        .route(
+            "/file-versions/{id}/annotations",
+            get(revisions::annotations).post(revisions::add_annotation),
+        )
+        .route(
+            "/annotations/{id}/delete",
+            post(revisions::remove_annotation),
+        )
         // BOM
         .route("/revisions/{id}/bom", get(bom::show))
+        .route(
+            "/revisions/{id}/bom/from-references",
+            get(bom::from_references).post(bom::apply_from_references),
+        )
         .route("/revisions/{id}/bom/compare", get(personal::bom_compare))
         .route(
             "/revisions/{id}/bom/compare.xlsx",

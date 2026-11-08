@@ -3,7 +3,7 @@
 use axum::{
     extract::{FromRequest, Multipart, Path, Query, Request, State},
     http::header,
-    response::Response,
+    response::{IntoResponse, Response},
     Form,
 };
 use serde::Deserialize;
@@ -467,11 +467,35 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
                     )),
                 ));
             }
+            // Likely duplicates by name: named in the message, so an existing
+            // part can still be reused (the new one can be deleted while in work).
+            let duplicates = crate::services::duplicates::likely_duplicates(
+                &st.db,
+                &ctx.me,
+                &rev.name,
+                ItemType::parse(&form.item_type),
+                Some(rev.item_id),
+                3,
+            )
+            .await
+            .unwrap_or_default();
+            let hint = if duplicates.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " Similar existing items: {} – check whether one of them can be reused.",
+                    duplicates
+                        .iter()
+                        .map(|d| format!("{} ({})", d.number, d.name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
             Ok(super::redirect_flash(
                 &st,
                 &format!("/revisions/{}", rev.id),
                 super::Flash::success(format!(
-                    "Created {} – {}{files}; it is checked out to you.",
+                    "Created {} – {}{files}; it is checked out to you.{hint}",
                     rev.item_number, rev.name
                 )),
             ))
@@ -519,6 +543,60 @@ pub async fn by_number(
     let item = items::get_by_number(&st.db, &ctx.me, &number).await?;
     let latest = items::latest_revision(&st.db, &ctx.me, item.id).await?;
     Ok(redirect(&format!("/revisions/{}", latest.id)))
+}
+
+/// The address a label's QR code opens: the short link of the item.
+fn label_url(st: &AppState, number: &str) -> String {
+    format!(
+        "{}/i/{}",
+        st.config.public_url.trim_end_matches('/'),
+        util::pct_encode(number)
+    )
+}
+
+/// The QR code (SVG) of an item number, pointing at [`label_url`].
+pub fn qr_svg_of(url: &str) -> AppResult<String> {
+    let code = qrcode::QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::M)
+        .map_err(|e| AppError::BadRequest(format!("No QR code for this address: {e}")))?;
+    Ok(code
+        .render::<qrcode::render::svg::Color>()
+        .min_dimensions(160, 160)
+        .quiet_zone(true)
+        .build())
+}
+
+/// `/items/{id}/label`: a printable label with the QR code of the item.
+pub async fn label(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let rev = items::latest_revision(&st.db, &ctx.me, id).await?;
+    let url = label_url(&st, &rev.item_number);
+    render(
+        &st,
+        &ctx,
+        "items/label.html",
+        json!({ "rev": rev, "url": url }),
+    )
+}
+
+/// `/items/{id}/qr.svg`: the QR code of the item's short link.
+pub async fn qr_svg(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let rev = items::latest_revision(&st.db, &ctx.me, id).await?;
+    let svg = qr_svg_of(&label_url(&st, &rev.item_number))?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "private, max-age=3600"),
+        ],
+        svg,
+    )
+        .into_response())
 }
 
 #[derive(Deserialize)]
@@ -598,4 +676,18 @@ pub async fn set_owner(
             format!("{} is now owned by {}", item.number, item.owner_name),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn labels_get_an_svg_qr_code() {
+        let svg = super::qr_svg_of("https://plm.example.org/i/PRT-000042").unwrap();
+        assert!(svg.contains("<svg") && svg.contains("</svg>"));
+        assert!(!svg.contains("style="), "no inline style (CSP)");
+        assert!(
+            super::qr_svg_of(&"x".repeat(5000)).is_err(),
+            "too long for a QR code"
+        );
+    }
 }

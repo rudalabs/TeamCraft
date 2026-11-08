@@ -20,11 +20,13 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "explorer.html",
     "items/list.html",
     "items/new.html",
+    "items/label.html",
     "items/where_used.html",
     "revisions/show.html",
     "revisions/edit.html",
     "revisions/bom.html",
     "revisions/bom_compare.html",
+    "revisions/bom_from_references.html",
     "revisions/save_as.html",
     "revisions/simulation_compare.html",
     "changes/list.html",
@@ -659,6 +661,19 @@ mod tests {
                     "parent_name": "Frame <2>", "parent_state": "in_work", "checked_out_by_name": "Max",
                     "action": action, "action_label": label })
         };
+        let html = render(
+            &env,
+            "items/label.html",
+            with_common(json!({
+                "rev": revision("released", false),
+                "url": "https://plm.example.org/i/PRT-000001",
+            })),
+        );
+        // (MiniJinja escapes `/` in text as `&#x2f;`)
+        assert!(
+            html.contains("qr.svg") && html.contains("plm.example.org"),
+            "{html}"
+        );
         for (with_plan, restricted) in [(true, false), (false, true)] {
             let html = render(
                 &env,
@@ -1194,6 +1209,34 @@ mod tests {
         let mut unresolved = node.clone();
         unresolved["revision"] = Value::Null;
         unresolved["level"] = json!(9);
+        let child = |status: &str, label: &str| {
+            json!({ "item_id": OTHER, "item_number": "PRT-000004", "item_name": "Bolt <M6>",
+                    "quantity": 4.0, "quantity_text": "4", "bom_quantity_text": "2", "quantity_source": "cad_instances", "quantity_label": "CAD instances",
+                    "via": "A.SLDASM → bolt.SLDPRT", "status": status, "status_label": label,
+                    "bom_quantity": 2.0, "selected": status == "new" })
+        };
+        let from_refs = render(
+            &env,
+            "revisions/bom_from_references.html",
+            with_common(json!({
+                "rev": revision("in_work", false), "editable": true, "can_checkout": false, "differs": true,
+                "plan": { "children": [child("new", "new line"), child("differs", "differs")],
+                          "not_in_teamcraft": [{ "name": "ghost.SLDPRT", "via": "A.SLDASM" }],
+                          "hidden": 2, "excluded": ["glue.SLDPRT"] },
+            })),
+        );
+        assert!(from_refs.contains("Bolt &lt;M6&gt;") && from_refs.contains("BOM 2, CAD 4"));
+        assert!(from_refs.contains("Not in TeamCraft") && from_refs.contains("2 hidden item(s)"));
+        assert!(from_refs.contains("Add the ticked lines"));
+        let not_out = render(
+            &env,
+            "revisions/bom_from_references.html",
+            with_common(json!({
+                "rev": revision("in_work", false), "editable": false, "can_checkout": true, "differs": false,
+                "plan": { "children": [child("new", "new line")], "not_in_teamcraft": [], "hidden": 0, "excluded": [] },
+            })),
+        );
+        assert!(not_out.contains("Check out and create"));
         let bom_html = render(
             &env,
             "revisions/bom.html",

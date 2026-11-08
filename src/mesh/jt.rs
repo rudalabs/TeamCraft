@@ -87,6 +87,16 @@ pub(crate) fn read_nx(data: &[u8]) -> Result<Mesh> {
     read_jt(jt.get(start..).ok_or_else(damaged)?)
 }
 
+/// The preview mesh of a standalone JT file (Teamcenter, NX, CATIA, Creo
+/// exports): the same reader as for the JT inside NX parts – JT 9 with
+/// topologically compressed triangle LODs; other versions are reported.
+pub(crate) fn read_file(data: &[u8]) -> Result<Mesh> {
+    if !data.starts_with(b"Version ") {
+        bail!("This is not a JT file (no 'Version' header).");
+    }
+    read_jt(data)
+}
+
 /// Where the JT file starts in the `/Root/FastLoad/JT` stream: after an
 /// index of `u32 9, u32 count, u32 0` and `count` 16-byte entries (19 in a
 /// small part, 259 in a large one). A stream laid out differently is
@@ -1527,5 +1537,30 @@ mod tests {
         fake.resize(200, 0);
         assert!(read_jt(&fake).is_err());
         assert!(read_nx(b"SPLMSSTR").is_err());
+        assert!(read_file(b"SPLMSSTR").is_err());
+        let newer = read_file(&[b"Version 10.0 JT".as_slice(), &[b' '; 80]].concat());
+        assert!(newer.unwrap_err().to_string().contains("10.0"));
+    }
+
+    /// The JT file inside an NX part, read as a standalone `.jt`.
+    #[test]
+    fn standalone_jt_files_are_read() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/cad/nist/mtc-assembly/nx/90591A141 HEX NUT.prt"
+        );
+        let nx = std::fs::read(path).unwrap();
+        let streams = crate::nxpart::streams(&nx);
+        let stream = streams
+            .iter()
+            .find(|s| s.name == crate::nxpart::JT_STREAM)
+            .and_then(|s| crate::nxpart::data(&nx, s))
+            .unwrap();
+        let jt = &stream[jt_start(stream).unwrap()..];
+        let mesh = super::super::read("jt", jt).unwrap();
+        assert_eq!(
+            mesh.triangle_count(),
+            read_nx(&nx).unwrap().triangle_count()
+        );
     }
 }

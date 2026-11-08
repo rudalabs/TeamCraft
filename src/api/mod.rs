@@ -44,9 +44,9 @@ use crate::{
     models::Revision,
     services::{
         access_log::{self, AccessCtx},
-        access_review, attributes, audit, bom, changes, checkouts, desktop, files, impacts,
-        imports, items, notifications, package, project_policy, projects, references, requests,
-        reviewers, revisions, similar, stats, structure, uploads, users, workset, Page,
+        access_review, attributes, audit, bom, bom_references, changes, checkouts, desktop, files,
+        impacts, imports, items, notifications, package, project_policy, projects, references,
+        requests, reviewers, revisions, similar, stats, structure, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -120,6 +120,8 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(project_numbering).put(set_project_numbering),
         )
         .route("/items", get(list_items).post(create_item))
+        .route("/items/duplicates", get(item_duplicates))
+        .route("/items/bulk", post(items_bulk))
         .route("/items/{number}", get(get_item).patch(update_item))
         .route("/attributes", get(list_attributes).post(create_attribute))
         .route("/attributes/{key}", patch(update_attribute))
@@ -301,6 +303,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(import_bom).layer(DefaultBodyLimit::max(import_limit)),
         )
         .route(
+            "/items/{number}/revisions/{code}/bom/from-references",
+            get(get_bom_from_references).post(post_bom_from_references),
+        )
+        .route(
             "/items/{number}/revisions/{code}/bom/import",
             post(import_bom_into).layer(DefaultBodyLimit::max(import_limit)),
         )
@@ -342,6 +348,14 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/file-versions/{id}/content", get(download_version))
         .route("/files/{id}/mesh", get(file_mesh))
         .route("/file-versions/{id}/mesh", get(version_mesh))
+        .route(
+            "/file-versions/{id}/annotations",
+            get(version_annotations).post(add_version_annotation),
+        )
+        .route(
+            "/annotations/{id}",
+            axum::routing::delete(delete_annotation),
+        )
         .route("/changes", get(list_changes).post(create_change))
         .route("/changes/{number}", get(get_change))
         .route("/changes/{number}/items", post(add_change_item))
@@ -508,6 +522,8 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
             "GET    /api/v1/items?q=&type=&project=&state=&system=&class=&attr=&value=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo; class = make|purchased|standard; attr + value = custom attribute (value: text contains, yes/no, 12, >=10, <=20, 10..20, empty = has a value)",
             "POST   /api/v1/items                                     {item_type, name, number?, unit?, project?, description?, material?, mass_kg?, unit_cost?, classification?, attributes?}",
+            "GET    /api/v1/items/duplicates?name=&type=&limit=        readable items with a similar name (check before creating one)",
+            "POST   /api/v1/items/bulk                                {action: revise|obsolete, items: [number]} – the latest revision of each item, one by one (at most 200)",
             "GET    /api/v1/items/{number}",
             "PATCH  /api/v1/items/{number}                            {project?, unit?, classification?: make|purchased|standard} – master data",
             "GET    /api/v1/attributes?all=                           custom attribute definitions (all=true: also deactivated ones)",
@@ -546,6 +562,8 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/structure?rule=latest|released&limit=  one level of the structure view: BOM lines with resolved revision, state, lock owner, used_in",
             "GET    /api/v1/projects/{code}/structure?limit=&offset=  top-level items of a group (not used in any BOM of the group) for the structure view",
             "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM or STEP assembly of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
+            "GET    /api/v1/items/{number}/revisions/{code}/bom/from-references  the BOM the CAD references lead to: children with instance counts, status (new/already_in_bom/differs/circular), unmatched names, hidden count",
+            "POST   /api/v1/items/{number}/revisions/{code}/bom/from-references  {children: [item numbers], update_quantities?: false} – adds the chosen lines in one transaction (revision checked out by me)",
             "POST   /api/v1/items/{number}/revisions/{code}/bom/import  same multipart fields – imports below the revision (checked out by me)",
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
             "DELETE /api/v1/bom-lines/{id}",
@@ -607,6 +625,9 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/files/{id}/versions",
             "POST   /api/v1/files/{id}/restore                        {version}",
             "GET    /api/v1/file-versions/{id}/content           resumable like /files/{id}/content",
+            "GET    /api/v1/file-versions/{id}/annotations       notes pinned to points of the 3D preview",
+            "POST   /api/v1/file-versions/{id}/annotations       {x, y, z, body} – a note at a model point (everyone who reads the file)",
+            "DELETE /api/v1/annotations/{id}                     remove a note (its author or an administrator)",
             "DELETE /api/v1/files/{id}",
             "GET    /api/v1/changes?status=",
             "POST   /api/v1/changes                                   {title, description?, priority?}",

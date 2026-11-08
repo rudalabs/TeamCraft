@@ -368,7 +368,7 @@ pub async fn remove(pool: &PgPool, actor: &Actor, line_id: Uuid) -> AppResult<Bo
     Ok(masked_for(actor, existing))
 }
 
-async fn touch(conn: &mut PgConnection, revision_id: Uuid) -> AppResult<()> {
+pub(crate) async fn touch(conn: &mut PgConnection, revision_id: Uuid) -> AppResult<()> {
     sqlx::query("UPDATE revisions SET updated_at = now() WHERE id = $1")
         .bind(revision_id)
         .execute(&mut *conn)

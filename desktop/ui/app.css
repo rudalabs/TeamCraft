@@ -740,6 +740,12 @@ table.grid td.actions button { height: var(--ctl-h-sm); padding: 0 8px; font-siz
 .viewer-legend select { width: auto; max-width: 100%; }
 .viewer-legend-value { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .viewer-legend-bar { width: min(16rem, 30vw); height: 0.6rem; border: 1px solid var(--border-strong); border-radius: 999px; }
+/* section plane and measuring (inserted by viewer.js below the canvas) */
+.viewer-section { margin: 8px 0 0; }
+.viewer-section input[type="range"] { width: min(14rem, 30vw); }
+canvas.viewer-measuring { cursor: crosshair; }
+.viewer-notes { flex-basis: 100%; margin: 0; padding-left: 20px; }
+.viewer-notes li { margin: 2px 0; }
 .flash { padding: 4px 8px; border-radius: var(--radius-sm); }
 .flash-error { color: var(--text); background: var(--surface); box-shadow: inset 3px 0 0 var(--st-danger-fg); }
 
