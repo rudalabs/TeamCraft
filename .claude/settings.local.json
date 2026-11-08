@@ -18,7 +18,8 @@
       "Bash(rm -rf ./**)"
     ],
     "deny": [
-      "Bash(cargo install *)"
+      "Bash(cargo install *)",
+      "Bash(* 2>&1)"
     ]
   },
   "hooks": {

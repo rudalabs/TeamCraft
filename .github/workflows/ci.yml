@@ -102,8 +102,17 @@ jobs:
           key: pg${{ matrix.postgres }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - uses: taiki-e/install-action@v2
+        if: ${{ !matrix.coverage }}
+        with:
+          tool: cargo-nextest
+      # nextest kills a test that runs over its limit (.config/nextest.toml:
+      # 1 s for unit tests), so a hang fails at once instead of stalling the job
       - if: ${{ !matrix.coverage }}
-        run: cargo test --locked --no-fail-fast
+        run: cargo nextest run --locked --no-fail-fast
+      - name: doc tests (nextest does not run them)
+        if: ${{ !matrix.coverage }}
+        run: cargo test --locked --doc
       - name: CLI smoke test
         if: ${{ !matrix.coverage }}
         env:
