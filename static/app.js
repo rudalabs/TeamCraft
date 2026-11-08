@@ -237,6 +237,34 @@
     });
   }
 
+  // Drop zone: files dropped onto the Files card (the card that holds a
+  // form[data-dropzone], i.e. a revision checked out by the user) are put into
+  // the form's file input and the form is submitted – the submit handler
+  // below sends them, large ones in resumable chunks.
+  document.querySelectorAll("form[data-dropzone]").forEach(function (form) {
+    var card = form.closest("section") || form;
+    var input = form.querySelector("input[type=file]");
+    if (!input || !window.DataTransfer) return;
+    function hasFiles(e) {
+      return e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") >= 0;
+    }
+    card.addEventListener("dragover", function (e) {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      card.classList.add("drop-active");
+    });
+    card.addEventListener("dragleave", function (e) {
+      if (e.target === card) card.classList.remove("drop-active");
+    });
+    card.addEventListener("drop", function (e) {
+      card.classList.remove("drop-active");
+      if (!hasFiles(e) || !e.dataTransfer.files.length) return;
+      e.preventDefault();
+      input.files = e.dataTransfer.files;
+      if (form.requestSubmit) form.requestSubmit(); else form.submit();
+    });
+  });
+
   document.querySelectorAll("form[enctype='multipart/form-data']").forEach(function (form) {
     form.addEventListener("submit", function (event) {
       if (event.defaultPrevented || !window.FormData || !window.XMLHttpRequest) return;

@@ -1444,3 +1444,7 @@ td.row-actions details.menu { display: inline-block; text-align: left; }
 /* extraction templates of a project group */
 .template-fields { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
 .template-fields > label { gap: 2px; }
+
+/* Files card: files dropped onto it are uploaded */
+.drop-active { outline: 2px dashed var(--accent, currentColor); outline-offset: -4px; }
+.files-hint form { margin-top: .5rem; }
