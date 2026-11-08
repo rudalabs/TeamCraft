@@ -26,7 +26,14 @@ examine_globs = [
 # The pattern matches the mutant's name as `cargo mutants --list` prints it.
 # Add a rule only when such a mutant shows up in a report, e.g.
 #   "<impl (fmt::)?(Debug|Display) for " for log-only output.
-exclude_re = []
+exclude_re = [
+    # cell_text: at exactly 1e15 the whole-number branch and the float branch
+    # print the same digits, so `<` and `<=` cannot be told apart.
+    "src/bomtable.rs:.*replace < with <= in cell_text",
+    # split_number: the last ',' and the last '.' are never at the same index,
+    # so `c > d` and `c >= d` cannot be told apart.
+    "src/bomtable.rs:.*replace > with >= in split_number",
+]
 
 # Unit tests only (see above); the integration tests in tests/ need PostgreSQL.
 # A cargo argument, not a test argument: the build step (`cargo test --no-run`)
