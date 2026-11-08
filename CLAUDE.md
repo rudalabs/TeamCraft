@@ -26,6 +26,10 @@
   Never push a tag, bump the
   version or publish anything else (package registries) unless the user asks
   for that release.
+* **Worktrees** Only create worktrees when explicitly specified.
+* **Subagents** Only create subagents when explicitly specified.
+* **Branch** You do not have permissions to push to the `main` branch. Create feature branches instead, push there and
+  open merge requests to `main` with the `gh` tool instead.
 
 ## Git rules
 
