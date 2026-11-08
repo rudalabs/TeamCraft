@@ -361,15 +361,37 @@
   <p class="hint">Downloads in the browser are for single files and for viewing. For CAD work use the
     TeamCraft desktop app: it keeps one working folder per project group with the folder structure shown here
     (<span class="mono">TeamCraft/{% if rev.project_code %}{{ rev.project_code }}{% else %}&lt;group&gt;{% endif %}/&lt;folder&gt;/&lt;file&gt;</span>), gets whole assemblies and keeps files you have not checked out read-only.</p>
-  {% if can.edit %}
-  <form class="inline" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data" data-chunked="{{ rev.id }}">
+  {% set fh = files_hint %}
+  {% if fh.kind == "upload" %}
+  <form class="inline files-upload" id="add-files" method="post" action="/revisions/{{ rev.id }}/files" enctype="multipart/form-data" data-chunked="{{ rev.id }}" data-dropzone>
     <input type="hidden" name="bases" value="{{ file_bases }}">
     <input type="file" name="file" multiple required aria-label="Files to upload">
     <input type="text" name="comment" maxlength="2000" placeholder="Comment (optional)" aria-label="Comment">
     <button type="submit">Upload</button>
-    <span class="hint">same file name = new version · max. {{ max_upload_mb }} MiB per file · <a href="/formats">CAD formats</a></span>
+    <span class="hint">same file name = new version · max. {{ max_upload_mb }} MiB per file · drop files onto this card · <a href="/formats">CAD formats</a></span>
   </form>
+  {% elif fh.kind == "checkout" %}
+  <div class="notice files-hint" id="add-files">
+    <p>To add or replace files, check out this revision.</p>
+    <form method="post" action="/revisions/{{ rev.id }}/checkout?back=%2Frevisions%2F{{ rev.id }}%23files">
+      <button class="primary" type="submit" title="Take the exclusive edit lock and open the upload form here">Check out and add files</button>
+    </form>
+  </div>
+  {% elif fh.kind == "locked" %}
+  <p class="notice files-hint" id="add-files">Checked out by {{ rev.checked_out_by_name }} since {{ m.time(rev.checked_out_at) }} – files can be added after check-in.{% if me.is_admin %} Administrators can force-unlock it from the <em>More</em> menu.{% endif %}</p>
+  {% elif fh.kind == "review" %}
+  <p class="notice files-hint" id="add-files">This revision is in review and frozen – files can be added once the change is decided, or to a new revision.</p>
+  {% elif fh.kind == "frozen" %}
+  <div class="notice files-hint" id="add-files">
+    <p>{{ rev.state|label }} revisions are frozen – revise to add files to a new revision.</p>
+    {% if fh.can_revise %}
+    <form method="post" action="/revisions/{{ rev.id }}/revise" data-confirm="Create a new revision of {{ rev.item_number }} based on {{ rev.code }}?">
+      <button type="submit">Revise</button>
+    </form>
+    {% endif %}
+  </div>
   {% endif %}
+  {% if fh.type_hint and fh.kind != "hidden" %}<p class="hint files-type-hint">Typical files: {{ fh.type_hint }}</p>{% endif %}
   {% if native_without_preview %}
   <p class="hint">No 3D preview for native CAD files – the preview image stored in Inventor, Solid Edge and SolidWorks files is shown next to them. For the model in 3D, attach a STEP export (<em>Save as → STEP AP242</em>); the desktop app can create it with your own Inventor or Solid Edge.</p>
   {% endif %}

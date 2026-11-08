@@ -349,6 +349,14 @@ pub async fn show(
         "add_to_change": can_work && open_change.is_none(),
         "acknowledge": me.can_edit() && me.can_edit_project(item.project_id),
     });
+    let files_hint = domain::files_hint(
+        state,
+        rev.checked_out_by,
+        me.id,
+        editable,
+        can_work,
+        in_project && !item_has_open_revision,
+    );
     let suggestions = if editable {
         let children: Vec<String> = lines.iter().map(|l| l.child_number.clone()).collect();
         references::suggestions(&file_refs, &children, &outgoing)
@@ -459,6 +467,11 @@ pub async fn show(
                 "kinds": reference_kinds,
             },
             "impact_groups": impacts::group_by_dependent(open_impacts),
+            "files_hint": {
+                "kind": files_hint.as_str(),
+                "can_revise": matches!(files_hint, domain::FilesHint::Frozen { can_revise: true }),
+                "type_hint": domain::files_type_hint(&rev.item_type),
+            },
             "simulation": simulation,
             "based_simulations": based_simulations,
             "as_built": as_built,

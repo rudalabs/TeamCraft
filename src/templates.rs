@@ -171,6 +171,12 @@ mod tests {
         json!({ "id": ME, "username": "max", "display_name": "Max Muster", "initials": "MM", "avatar": 3, "role": "admin", "skin": "arch", "is_admin": true, "can_edit": true })
     }
 
+    /// The Files card hint of `revisions/show.html` (`kind` as
+    /// `domain::FilesHint::as_str`), shaped like `web::revisions::show` sends it.
+    fn files_hint(kind: &str) -> Value {
+        json!({ "kind": kind, "can_revise": kind == "frozen", "type_hint": "STEP, drawings, <reports>" })
+    }
+
     fn revision(state: &str, checked_out: bool) -> Value {
         json!({
             "id": "33333333-3333-4333-8333-333333333333", "item_id": "44444444-4444-4444-8444-444444444444",
@@ -682,6 +688,7 @@ mod tests {
                 &env,
                 "revisions/show.html",
                 with_common(json!({
+                    "files_hint": files_hint(if state == "released" { "frozen" } else if checked_out { "upload" } else { "checkout" }),
                     "rev": revision(state, checked_out), "item": item(), "revisions": [revision(state, checked_out)],
                     "hidden": { "parents": 2, "incoming": 1, "changes": 1, "simulations": 0 },
                     "is_latest": false, "latest_id": OTHER, "files": [file.clone(), native.clone(), unknown.clone()], "native_without_preview": state == "released", "lines": [bom_line.clone()],
@@ -850,6 +857,7 @@ mod tests {
                 &env,
                 "revisions/show.html",
                 with_common(json!({
+                    "files_hint": files_hint(if editable { "upload" } else { "frozen" }),
                     "rev": rev.clone(), "item": sim_item, "revisions": [rev.clone(), revision("released", false)],
                     "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0 },
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -917,6 +925,7 @@ mod tests {
             &env,
             "revisions/show.html",
             with_common(json!({
+                "files_hint": files_hint("hidden"),
                 "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
                 "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 1 },
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -979,6 +988,7 @@ mod tests {
                 &env,
                 "revisions/show.html",
                 with_common(json!({
+                    "files_hint": files_hint(if editable { "upload" } else { "frozen" }),
                     "rev": rev.clone(), "item": unit_item, "revisions": [rev.clone()],
                     "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0, "units": 0 },
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -1034,6 +1044,7 @@ mod tests {
             &env,
             "revisions/show.html",
             with_common(json!({
+                "files_hint": files_hint("frozen"),
                 "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
                 "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0, "units": 2 },
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
