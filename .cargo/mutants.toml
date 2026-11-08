@@ -75,6 +75,10 @@ exclude_re = [
     # when the cache is full the regex crate falls back to a slower engine
     # with the same matches; the compile-time `size_limit` is tested.
     "src/resultscan.rs:431:42: replace \\* with (\\+|/) in compile_regex",
+    # resultscan::glob_matches: backtracking to the `*` itself (`s * 1`)
+    # instead of past it (`s + 1`) costs one loop step – the next step sees
+    # the `*` and sets the same state (`pi = s + 1`, `mark` unchanged).
+    "src/resultscan.rs:463:20: replace \\+ with \\* in glob_matches",
 ]
 
 # Unit tests only (see above); the integration tests in tests/ need PostgreSQL.
