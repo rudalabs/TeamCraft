@@ -1166,6 +1166,27 @@ mod tests {
         let long = vec!["x".repeat(100); 5].join("/");
         assert!(normalize_folder(&long).is_err(), "longer than 400");
         assert!(normalize_folder(&"y".repeat(MAX_FOLDER_SEGMENT + 1)).is_err());
+        // both length limits are inclusive (found by cargo mutants)
+        assert!(normalize_folder(&"y".repeat(MAX_FOLDER_SEGMENT)).is_ok());
+        let path = |len: usize| {
+            // folders of 99 characters plus '/', the last one non-empty
+            let mut parts = vec!["x".repeat(99); (len - 1) / 100];
+            parts.push("z".repeat(len - parts.len() * 100));
+            parts.join("/")
+        };
+        assert_eq!(path(MAX_FOLDER_LEN).chars().count(), MAX_FOLDER_LEN);
+        assert_eq!(
+            normalize_folder(&path(MAX_FOLDER_LEN))
+                .unwrap()
+                .chars()
+                .count(),
+            MAX_FOLDER_LEN
+        );
+        assert!(normalize_folder(&path(MAX_FOLDER_LEN + 1)).is_err());
+        // reserved names need a digit after COM/LPT, and only these four
+        for ok in ["COMX", "LPTA", "CONSOLE", "nullable"] {
+            assert!(normalize_folder(ok).is_ok(), "{ok}");
+        }
     }
 }
 
