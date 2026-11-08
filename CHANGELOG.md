@@ -17,6 +17,14 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- Branding (#184): administrators rename the header name and subtitle
+  ("TeamCraft PLM") under *Admin → Branding*; effective at once in the web
+  header, page titles, sign-in page, notification e-mails and the desktop
+  title bar. `GET /api/v1/branding` returns `display_name` and `subtitle`,
+  `PUT /api/v1/branding/name` sets them (admins). The footer, About, version
+  and licence notices stay TeamCraft. `TEAMCRAFT_INSTANCE_NAME` is now only
+  the default.
+
 - Need-to-know project groups, step 5 (#151): access review of a restricted
   group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
   administrators: members with role, group role, source (manual or identity

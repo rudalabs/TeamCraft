@@ -86,6 +86,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/formats", get(formats))
         .route("/branding", get(branding_info))
+        .route("/branding/name", put(branding_name_set))
         .route("/branding/{kind}", get(branding_logo))
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{code}/visibility", put(set_project_visibility))
@@ -496,7 +497,8 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/assistant                                 {question?, action?: ask|release_notes|release_check|review_brief|attention|impact|simulation_status|result_values, context: {kind?, item?, revision?, change?, request?, project?, view?, rule?, query?, filters?, selected?, shown?}, allow_drafts?, thread?}",
             "GET    /api/v1/assistant/thread                          the caller's conversation (thread: true questions), newest message last",
             "DELETE /api/v1/assistant/thread                          new conversation: deletes the caller's thread",
-            "GET    /api/v1/branding                                  which logos an administrator replaced: {wide, square} = version token or null, {wide_type, square_type} = content type",
+            "GET    /api/v1/branding                                  header {display_name, subtitle} and which logos an administrator replaced: {wide, square} = version token or null, {wide_type, square_type} = content type",
+            "PUT    /api/v1/branding/name                             (admin) rename the header: {display_name, subtitle}; empty display_name = configured default; never renames the software",
             "GET    /api/v1/branding/{wide|square}                   the replaced logo (image); 404 = the built-in logo",
             "GET    /api/v1/formats                                   the CAD programs and file formats TeamCraft recognises",
             "GET    /api/v1/items?q=&type=&project=&state=&system=&class=&attr=&value=&limit=&offset=   system = CAD program, e.g. solidworks, nx, creo; class = make|purchased|standard; attr + value = custom attribute (value: text contains, yes/no, 12, >=10, <=20, 10..20, empty = has a value)",
@@ -827,11 +829,33 @@ async fn branding_info(
 ) -> AppResult<Json<Value>> {
     let b = crate::services::branding::current(&st.db).await?;
     Ok(Json(json!({
+        "display_name": b.name(&st.config.instance_name),
+        "subtitle": b.subtitle,
         "wide": b.wide,
         "square": b.square,
         "wide_type": b.wide_type,
         "square_type": b.square_type,
     })))
+}
+
+#[derive(serde::Deserialize)]
+struct BrandingNameBody {
+    /// Empty = back to the configured instance name.
+    #[serde(default)]
+    display_name: String,
+    /// Empty = no subtitle; `PLM` = the default.
+    #[serde(default)]
+    subtitle: String,
+}
+
+/// `PUT /api/v1/branding/name` (administrators): the header name and subtitle.
+async fn branding_name_set(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    ApiJson(body): ApiJson<BrandingNameBody>,
+) -> AppResult<Json<Value>> {
+    crate::services::branding::set_names(&st.db, &me, &body.display_name, &body.subtitle).await?;
+    branding_info(State(st), ApiUser(me)).await
 }
 
 /// `GET /api/v1/branding/{kind}`: the replaced logo as an image.

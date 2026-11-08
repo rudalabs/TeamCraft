@@ -219,6 +219,10 @@ impl Delivery {
         ))
         .fetch_all(pool)
         .await?;
+        let name = crate::services::branding::current(pool)
+            .await?
+            .name(&self.instance_name)
+            .to_string();
         let mut report = Report::default();
         for row in rows {
             let url = format!("{}{}", self.public_url, row.link);
@@ -227,6 +231,7 @@ impl Delivery {
             if email_state == "pending" {
                 match self
                     .send_mail(
+                        &name,
                         &row.title,
                         &row.body,
                         &url,
@@ -246,6 +251,7 @@ impl Delivery {
             if chat_state == "pending" {
                 match self
                     .post_chat(
+                        &name,
                         &row.title,
                         &row.body,
                         &url,
@@ -292,6 +298,7 @@ impl Delivery {
 
     async fn send_mail(
         &self,
+        instance_name: &str,
         title: &str,
         body: &str,
         url: &str,
@@ -311,10 +318,10 @@ impl Delivery {
         let message = Message::builder()
             .from(from.clone())
             .to(to)
-            .subject(format!("[{}] {title}", self.instance_name))
+            .subject(format!("[{}] {title}", instance_name))
             .header(ContentType::TEXT_PLAIN)
             .body(email_text(
-                &self.instance_name,
+                instance_name,
                 &self.public_url,
                 title,
                 body,
@@ -325,6 +332,7 @@ impl Delivery {
 
     async fn post_chat(
         &self,
+        instance_name: &str,
         title: &str,
         body: &str,
         url: &str,
@@ -335,10 +343,10 @@ impl Delivery {
             .chat
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Mattermost is not configured"))?;
-        let (title, body) = chat_text(&self.instance_name, title, body, confidential, *direct);
+        let (title, body) = chat_text(instance_name, title, body, confidential, *direct);
         sender
             .post(chat_payload(
-                &self.instance_name,
+                instance_name,
                 &title,
                 &body,
                 url,
