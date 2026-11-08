@@ -991,6 +991,17 @@ mod tests {
             extract("summary.csv", de.as_bytes(), &[t.clone()])[0].value,
             12.5
         );
+        // a numeric column name is a header, not the first value (found by
+        // cargo mutants)
+        let mut first = template("csv", "summary.csv", "");
+        first.csv_column = "100".into();
+        first.pick = "first".into();
+        let temps = "case,100,200\nA,1.5,2.5\nB,3.5,4.5\n";
+        let found = extract("summary.csv", temps.as_bytes(), &[first]);
+        assert_eq!(
+            (found[0].value, found[0].source.as_str()),
+            (1.5, "summary.csv:2")
+        );
         // no such column
         t.csv_column = "nope".into();
         assert!(extract("summary.csv", csv.as_bytes(), &[t]).is_empty());
