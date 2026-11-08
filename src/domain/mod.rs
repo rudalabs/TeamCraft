@@ -550,6 +550,10 @@ mod tests {
         assert_eq!(revision_seq("b"), Some(2));
         assert_eq!(revision_seq(""), None);
         assert_eq!(revision_seq("I"), None);
+        // at most six letters, although seven would still fit an i32 (found
+        // by cargo mutants)
+        assert!(revision_seq("AAAAAA").is_some());
+        assert_eq!(revision_seq("AAAAAAA"), None);
         assert_eq!(revision_seq("A1"), None);
     }
 
