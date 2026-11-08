@@ -1766,6 +1766,18 @@ mod tests {
             .all(|s| !s["formats"].as_array().unwrap().is_empty()));
     }
 
+    /// Found by cargo mutants: a line without tokens is not a token line.
+    #[test]
+    fn quoted_tokens_counts_quoted_strings_only() {
+        assert_eq!(quoted_tokens(br#""Iteration" "report-def-0""#), Some(2));
+        assert_eq!(quoted_tokens(br#"  ("Flow Time")  "#), Some(1));
+        assert_eq!(quoted_tokens(b"()"), None, "nothing inside the parentheses");
+        assert_eq!(quoted_tokens(b"   "), None);
+        assert_eq!(quoted_tokens(br#""open"#), None, "unterminated");
+        assert_eq!(quoted_tokens(br#""a" b"#), None, "unquoted token");
+        assert_eq!(quoted_tokens(br#"("a""#), None, "unclosed parenthesis");
+    }
+
     /// Found by cargo mutants: the 95 % threshold was not pinned down.
     #[test]
     fn text_needs_95_percent_printable_bytes_and_no_nul() {
