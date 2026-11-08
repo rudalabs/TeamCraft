@@ -131,10 +131,20 @@ pub async fn migrate(pool: &PgPool) -> Result<()> {
     accept_edits_before_release(pool)
         .await
         .context("updating the checksums of edited migrations failed")?;
-    MIGRATOR
-        .run(pool)
+    // sqlx takes a session advisory lock and returns early on a refused
+    // migration (changed checksum, dirty version) without releasing it: on a
+    // pooled connection the lock would outlive the error and the next
+    // migrate() would wait for it for ever. One dedicated connection, closed
+    // on error, ends the session and its lock.
+    let mut conn = pool
+        .acquire()
         .await
-        .context("running database migrations failed")
+        .context("connecting for the migrations failed")?;
+    let result = MIGRATOR.run(&mut *conn).await;
+    if result.is_err() {
+        let _ = conn.detach().close().await;
+    }
+    result.context("running database migrations failed")
 }
 
 async fn accept_edits_before_release(pool: &PgPool) -> Result<()> {
