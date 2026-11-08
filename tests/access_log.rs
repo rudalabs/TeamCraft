@@ -36,7 +36,8 @@ struct Fixture {
 
 /// A restricted group `NTK` owned by `erika` with one item and one file.
 async fn group(app: &common::TestApp) -> Fixture {
-    let (_, owner) = app.user("erika", Role::Editor).await;
+    // also a member of ROCKET: the tests create items in an unaffected group
+    let (_, owner) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
     let r = app
         .api(
             Method::POST,

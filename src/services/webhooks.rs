@@ -849,11 +849,12 @@ pub(crate) async fn change_revisions(
         code: String,
         name: String,
         state: String,
+        action: String,
         project_id: Option<Uuid>,
         project_code: Option<String>,
     }
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT r.id, r.item_id, i.number AS item_number, i.item_type, r.code, r.name, r.state,
+        "SELECT r.id, r.item_id, i.number AS item_number, i.item_type, r.code, r.name, r.state, ci.action,
                 i.project_id, p.code AS project_code
          FROM change_items ci
          JOIN revisions r ON r.id = ci.revision_id
@@ -878,6 +879,7 @@ pub(crate) async fn change_revisions(
                 "label": format!("{}/{}", r.item_number, r.code),
                 "name": r.name,
                 "state": r.state,
+                "action": r.action,
                 "project": r.project_code,
                 "web_url": format!("/revisions/{}", r.id),
                 "api_url": format!("/api/v1/items/{}/revisions/{}",

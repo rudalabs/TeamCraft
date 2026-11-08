@@ -14,7 +14,7 @@ use super::{
     PER_PAGE,
 };
 use crate::{
-    domain::{ChangeStatus, Decision, LifecycleState, Priority, Role},
+    domain::{ChangeStatus, Decision, LifecycleState, LineAction, Priority, Role},
     error::{AppError, AppResult},
     services::{audit, changes, items, notifications, requests, reviewers, revisions, users, Page},
     AppState,
@@ -193,6 +193,9 @@ pub async fn show(
     };
     let ready = readiness.as_ref().is_none_or(|r| r.is_ready());
     let is_owner = me.can_edit() && (change.created_by == me.id || me.is_admin());
+    // A manager of every affected group acting for a deactivated author.
+    let stand_in = !is_owner && changes::may_stand_in(&st.db, me, &change).await?;
+    let can_close = is_owner || stand_in;
     let modifiable = is_owner && status.is_modifiable();
     let candidates: Vec<_> = if modifiable {
         users::reviewer_candidates(&st.db)
@@ -232,9 +235,10 @@ pub async fn show(
         "add_dependencies": modifiable
             && status == ChangeStatus::Draft
             && readiness.as_ref().is_some_and(|r| !r.addable_blockers().is_empty()),
-        "withdraw": is_owner && status == ChangeStatus::InReview,
-        "reopen": is_owner && status == ChangeStatus::Rejected,
-        "cancel": is_owner && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
+        "withdraw": can_close && status == ChangeStatus::InReview,
+        "reopen": can_close && status == ChangeStatus::Rejected,
+        "cancel": can_close && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
+        "take_over": stand_in && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
         "review": my_pending_review,
         "replace_reviewer": can_replace,
     });
@@ -318,6 +322,43 @@ pub async fn add_item(
     .await;
     finish(&st, result, &back, |label| {
         (back.clone(), format!("Added {label}"))
+    })
+}
+
+#[derive(Deserialize)]
+pub struct AddActionForm {
+    #[serde(default)]
+    item_number: String,
+    #[serde(default)]
+    action: String,
+    #[serde(default)]
+    successor: String,
+}
+
+/// `POST /changes/{id}/actions` – an obsolete or supersede line for the item's latest revision.
+pub async fn add_action(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<AddActionForm>,
+) -> AppResult<Response> {
+    let back = format!("/changes/{id}");
+    let result = async {
+        changes::get(&st.db, &ctx.me, id).await?;
+        let action = LineAction::parse(&form.action)
+            .filter(|a| *a != LineAction::Release)
+            .ok_or_else(|| AppError::BadRequest("Choose obsolete or supersede.".into()))?;
+        let item = items::get_by_number(&st.db, &ctx.me, &form.item_number).await?;
+        let rev = items::latest_revision(&st.db, &ctx.me, item.id).await?;
+        changes::add_action(&st.db, &ctx.me, id, rev.id, action, Some(&form.successor)).await?;
+        Ok((revisions::label(&rev), action))
+    }
+    .await;
+    finish(&st, result, &back, |(label, action)| {
+        (
+            back.clone(),
+            format!("Added {label} to the change ({})", action.as_str()),
+        )
     })
 }
 
@@ -500,6 +541,23 @@ pub async fn reopen(
     let result = changes::reopen(&st.db, &ctx.me, id).await;
     finish(&st, result, &back, |c| {
         (back.clone(), format!("{} was reopened as draft", c.number))
+    })
+}
+
+/// `POST /changes/{id}/take-over` – a manager of every affected group (or an
+/// administrator) takes over the change of a deactivated author.
+pub async fn take_over(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let back = format!("/changes/{id}");
+    let result = changes::take_over(&st.db, &ctx.me, id).await;
+    finish(&st, result, &back, |c| {
+        (
+            back.clone(),
+            format!("You are now the author of {}", c.number),
+        )
     })
 }
 

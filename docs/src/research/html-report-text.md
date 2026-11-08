@@ -17,13 +17,13 @@ crude tag stripper over the raw bytes in the server process.
 
 ## Candidates
 
-| Option | Licence | Notes |
-|---|---|---|
+| Option                                                                                                                   | Licence                                   | Notes                                                                                                                                                                                                          |
+|--------------------------------------------------------------------------------------------------------------------------|-------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | [`html5ever`](https://crates.io/crates/html5ever) + `markup5ever_rcdom` or [`scraper`](https://crates.io/crates/scraper) | MIT/Apache-2.0 (html5ever), ISC (scraper) | the full HTML5 tokenizer and tree builder of Servo: exact, but builds a whole DOM in memory and pulls in a larger dependency tree; tables, hidden elements and the line layout still have to be written on top |
-| [`tl`](https://crates.io/crates/tl) | MIT | fast zero-copy parser, not spec-complete; a DOM again |
-| [`lol_html`](https://crates.io/crates/lol_html) | BSD-3-Clause | streaming rewriter (Cloudflare); built to rewrite, not to lay out text |
-| [`html2text`](https://crates.io/crates/html2text) | MIT | renders HTML to text with table drawing on top of html5ever; table output is box art, wider than needed and hard to quote |
-| own bounded tokenizer | MPL-2.0 (ours) | a few hundred lines; only text, block breaks, table rows and the skip rules matter |
+| [`tl`](https://crates.io/crates/tl)                                                                                      | MIT                                       | fast zero-copy parser, not spec-complete; a DOM again                                                                                                                                                          |
+| [`lol_html`](https://crates.io/crates/lol_html)                                                                          | BSD-3-Clause                              | streaming rewriter (Cloudflare); built to rewrite, not to lay out text                                                                                                                                         |
+| [`html2text`](https://crates.io/crates/html2text)                                                                        | MIT                                       | renders HTML to text with table drawing on top of html5ever; table output is box art, wider than needed and hard to quote                                                                                      |
+| own bounded tokenizer                                                                                                    | MPL-2.0 (ours)                            | a few hundred lines; only text, block breaks, table rows and the skip rules matter                                                                                                                             |
 
 ## Decision
 
@@ -68,8 +68,8 @@ on the text the child extracted (at most 200 000 characters), not on the raw
 bytes –
 `Maximum stress \| ([0-9.]+)` works, and a `csv` template reads the ` | `
 separated rows (`|` is always the delimiter of an HTML file, quotes are plain
-characters, an empty cell keeps its column). The line of a value's source
-(`report.html:12`) is the line in the extracted text, not in the HTML file.
+characters, an empty cell keeps its column). The line of a value's source (`report.html:12`) is the line in the
+extracted text, not in the HTML file.
 
 **Plain text**, fixed at the same time: text and CSV reports keep their lines
 and decimal numbers in the stored text (`read_file_text` used to show the

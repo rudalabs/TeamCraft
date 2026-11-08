@@ -27,10 +27,14 @@ use uuid::Uuid;
 
 use crate::{
     auth::Actor,
-    domain::{self, LifecycleState, Role},
+    domain::{self, LifecycleState, NotificationKind, Role},
     error::{AppError, AppResult},
     models::Item,
-    services::{access, audit, bom, items},
+    services::{
+        access, audit, bom, items,
+        notifications::{self, Notice},
+        project_policy,
+    },
 };
 
 /// An item linked to another one as alternate, successor or predecessor,
@@ -401,12 +405,15 @@ pub async fn superseded_among(
 ///
 /// * **Permission:** both items visible to the actor ("not found" otherwise);
 ///   CAD editor and member of the group of `item_id` (403). An item cannot
-///   supersede itself (400).
+///   supersede itself (400). A group with `obsolete_requires_change` refuses
+///   the direct supersession (409): it goes through a change order.
 /// * **Locks:** the table `item_supersessions` (`SHARE ROW EXCLUSIVE`), so
 ///   two concurrent supersessions cannot close a circle unseen; a circle is
 ///   a 409.
 /// * **Audit:** `item.supersede`.
-/// * **Notifications / webhooks:** none.
+/// * **Notifications:** the watchers of `item_id` (also when the group does
+///   not require a change order); people who may not see the successor get a
+///   text without its number. **Webhooks:** none.
 /// * **Data:** an earlier successor of the item is replaced.
 /// * **Atomic:** one transaction.
 pub async fn supersede(
@@ -426,6 +433,69 @@ pub async fn supersede(
         ));
     }
     let mut tx = pool.begin().await?;
+    if project_policy::obsolete_requires_change(&mut tx, item.project_id).await? {
+        return Err(AppError::Conflict(format!(
+            "{} is in project group {}, which requires a change order to supersede an item: add a supersede line to a change order.",
+            item.number,
+            item.project_code.as_deref().unwrap_or("?")
+        )));
+    }
+    supersede_in(&mut tx, actor, &item, &successor, &note).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The supersession itself in the caller's transaction (permissions and the
+/// group setting are the caller's business): used by [`supersede`] and when a
+/// change order with a supersede line is released.
+pub(crate) async fn supersede_in(
+    tx: &mut PgConnection,
+    actor: &Actor,
+    item: &Item,
+    successor: &Item,
+    note: &str,
+) -> AppResult<()> {
+    ensure_no_circle(&mut *tx, item, successor).await?;
+    sqlx::query(
+        "INSERT INTO item_supersessions (item_id, successor_item_id, note, created_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (item_id) DO UPDATE
+         SET successor_item_id = EXCLUDED.successor_item_id, note = EXCLUDED.note,
+             created_by = EXCLUDED.created_by, created_at = now()",
+    )
+    .bind(item.id)
+    .bind(successor.id)
+    .bind(note)
+    .bind(actor.id)
+    .execute(&mut *tx)
+    .await?;
+    audit::record_related(
+        &mut *tx,
+        Some(actor),
+        "item.supersede",
+        "item",
+        Some(item.id),
+        Some(successor.id),
+        format!("{} is superseded by {}", item.number, successor.number),
+        json!({ "item_id": item.id, "successor_item_id": successor.id }),
+    )
+    .await?;
+    tell_supersession_watchers(tx, actor, item, successor).await
+}
+
+/// Refuses an item as its own successor (400) and a supersession that would
+/// go in a circle (409). Takes the table lock that serialises supersessions
+/// until the transaction ends.
+pub(crate) async fn ensure_no_circle(
+    tx: &mut PgConnection,
+    item: &Item,
+    successor: &Item,
+) -> AppResult<()> {
+    if successor.id == item.id {
+        return Err(AppError::BadRequest(
+            "An item cannot supersede itself.".into(),
+        ));
+    }
     // serialise concurrent supersessions so the chain check below sees them
     sqlx::query("LOCK TABLE item_supersessions IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *tx)
@@ -448,31 +518,47 @@ pub async fn supersede(
             successor.number, item.number
         )));
     }
-    sqlx::query(
-        "INSERT INTO item_supersessions (item_id, successor_item_id, note, created_by)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (item_id) DO UPDATE
-         SET successor_item_id = EXCLUDED.successor_item_id, note = EXCLUDED.note,
-             created_by = EXCLUDED.created_by, created_at = now()",
+    Ok(())
+}
+
+/// Tells the watchers of the superseded item.
+async fn tell_supersession_watchers(
+    tx: &mut PgConnection,
+    actor: &Actor,
+    item: &Item,
+    successor: &Item,
+) -> AppResult<()> {
+    let latest = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT id, code FROM revisions WHERE item_id = $1 ORDER BY seq DESC LIMIT 1",
     )
     .bind(item.id)
-    .bind(successor.id)
-    .bind(&note)
-    .bind(actor.id)
-    .execute(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?;
-    audit::record_related(
-        &mut tx,
-        Some(actor),
-        "item.supersede",
-        "item",
-        Some(item.id),
-        Some(successor.id),
-        format!("{} is superseded by {}", item.number, successor.number),
-        json!({ "item_id": item.id, "successor_item_id": successor.id }),
+    let Some((revision_id, code)) = latest else {
+        return Ok(());
+    };
+    let watchers = notifications::watchers(tx, "item", &[item.id]).await?;
+    let notice = Notice::revision_ref(
+        NotificationKind::ItemUpdate,
+        revision_id,
+        item.id,
+        &item.number,
+        &code,
+        format!("{} is superseded", item.number),
+        format!(
+            "{} declared {} superseded by {}: do not use it for new designs.",
+            actor.display_name, item.number, successor.number
+        ),
     )
-    .await?;
-    tx.commit().await?;
+    .naming(
+        audit::Mentions::items([successor.id]),
+        format!("{} is superseded", item.number),
+        format!(
+            "{} declared {} superseded: do not use it for new designs.",
+            actor.display_name, item.number
+        ),
+    );
+    notifications::notify(tx, Some(actor), &watchers, &notice).await?;
     Ok(())
 }
 

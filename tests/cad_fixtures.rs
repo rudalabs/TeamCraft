@@ -188,6 +188,137 @@ fn nx_parts_get_a_closed_3d_preview() {
     );
 }
 
+/// Every edge once in each direction: closed and consistently oriented.
+fn is_closed(mesh: &mesh::Mesh) -> bool {
+    let mut edges = std::collections::HashMap::<(u32, u32), u32>::new();
+    for t in mesh.indices.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *edges.entry((a, b)).or_default() += 1;
+        }
+    }
+    edges
+        .iter()
+        .all(|(&(a, b), &n)| n == 1 && edges.get(&(b, a)) == Some(&1))
+}
+
+/// SOLIDWORKS parts show the display tessellation they store, refined
+/// along its normals; the NIST parts match their STEP exports.
+#[test]
+fn solidworks_parts_get_a_3d_preview() {
+    // (file, closed, (min, max) in mm)
+    let box_of = |min: [f32; 3], max: [f32; 3]| Some((min, max));
+    for (rel, closed, bounds) in [
+        (
+            "ctc-01/solidworks-2018/nist_ctc_01_asme1_rd_sw1802.SLDPRT",
+            true,
+            box_of([-400.0, -225.0, -100.0], [400.0, 225.0, 50.0]),
+        ),
+        (
+            "ftc-11/solidworks-2018/nist_ftc_11_asme1_rb_sw1802.SLDPRT",
+            true,
+            box_of([-31.5, -31.5, -1.5], [31.5, 31.5, 1.5]),
+        ),
+        (
+            "mtc-assembly/solidworks/nist_mtc_crada_box_rev-D.SLDPRT",
+            true,
+            box_of([0.0, 0.0, -3.0], [152.4, 101.6, 70.0]),
+        ),
+        (
+            "mtc-assembly/solidworks/90591A141_ZINC PLATED STEEL HEX NUT.SLDPRT",
+            true,
+            None,
+        ),
+        (
+            "mtc-assembly/solidworks/91274A118_COATED ALLOY STEEL SOCKET HEAD CAP SCREW.SLDPRT",
+            true,
+            None,
+        ),
+        (
+            "mtc-assembly/solidworks/91274A141_COATED ALLOY STEEL SOCKET HEAD CAP SCREW.SLDPRT",
+            true,
+            None,
+        ),
+        (
+            "mtc-assembly/solidworks/91304A112_BLUE FLAT-HEAD SOCKET CAP SCREW.SLDPRT",
+            true,
+            None,
+        ),
+        (
+            "mtc-assembly/solidworks/nist_mtc_crada_polycarb-window.SLDPRT",
+            true,
+            None,
+        ),
+        // two faces sample a common edge with different vertices (cracks of
+        // zero width): shown, but not closed
+        (
+            "mtc-assembly/solidworks/nist_mtc_crada_cover_rev-B.SLDPRT",
+            false,
+            None,
+        ),
+        (
+            "mtc-assembly/solidworks/nist_mtc_crada_plate_rev-A.SLDPRT",
+            false,
+            None,
+        ),
+    ] {
+        assert_eq!(
+            preview::PreviewFormat::of(rel),
+            Some(preview::PreviewFormat::SwPart)
+        );
+        let mesh = preview::convert(preview::PreviewFormat::SwPart, &fixture(rel))
+            .unwrap_or_else(|e| panic!("{rel}: {e}"));
+        mesh.check().unwrap();
+        assert!(
+            mesh.triangle_count() > 9_000,
+            "{rel}: {}",
+            mesh.triangle_count()
+        );
+        assert_eq!(is_closed(&mesh), closed, "{rel}");
+        if closed {
+            let s = teamcraft::shape::compute(&mesh).unwrap_or_else(|e| panic!("{rel}: {e}"));
+            assert!(s.is_valid() && s.closed && s.volume > 0.0, "{rel}: {s:?}");
+        }
+        if let Some((min, max)) = bounds {
+            let b = mesh.bounds();
+            for i in 0..3 {
+                assert!((b[i] - min[i]).abs() < 0.05, "{rel}: {b:?}");
+                assert!((b[i + 3] - max[i]).abs() < 0.05, "{rel}: {b:?}");
+            }
+        }
+    }
+    let err = preview::convert(
+        preview::PreviewFormat::SwAssembly,
+        &fixture("mtc-assembly/solidworks/nist_mtc_crada_assembly_rev-D.SLDASM"),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("previews of its parts"), "{err}");
+}
+
+/// A damaged display list is an error, never a panic: bytes all over a
+/// real part are overwritten, and the file is cut short.
+#[test]
+fn damaged_solidworks_parts_never_panic() {
+    let rel = "ftc-11/solidworks-2018/nist_ftc_11_asme1_rb_sw1802.SLDPRT";
+    let bytes = std::fs::read(fixture(rel)).unwrap();
+    for cut in (0..bytes.len()).step_by(bytes.len() / 40) {
+        let _ = mesh::read("solidworks-part", &bytes[..cut]);
+    }
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    for _ in 0..40 {
+        let mut damaged = bytes.clone();
+        for _ in 0..16 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let at = (state % damaged.len() as u64) as usize;
+            damaged[at] = (state >> 32) as u8;
+        }
+        if let Ok(mesh) = mesh::read("solidworks-part", &damaged) {
+            mesh.check().unwrap();
+        }
+    }
+}
+
 /// A damaged JT stream is an error, never a panic: every byte of the
 /// shape segment of a real part is flipped in turn (in steps).
 #[test]

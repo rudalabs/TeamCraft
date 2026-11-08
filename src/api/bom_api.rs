@@ -165,6 +165,8 @@ pub(super) async fn get_workset(
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<WorksetQuery>,
 ) -> AppResult<Json<Value>> {
+    // groups that switched the desktop Get off look non-existent to it
+    let me = project_policy::narrow(&st.db, me, &[project_policy::Interface::DesktopSync]).await?;
     let rev = revision_at(&st, &me, &number, &code).await?;
     let rule = bom_rule(q.rule.as_deref().filter(|r| !r.trim().is_empty()))?;
     Ok(Json(json!(
@@ -269,4 +271,43 @@ pub(super) async fn delete_bom_line(
 ) -> AppResult<StatusCode> {
     bom::remove(&st.db, &me, id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub(super) struct StructureQuery {
+    /// `latest` (default) or `released`.
+    rule: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+/// One level of the structure view: the BOM lines of a revision with the
+/// revision each resolves to (state, lock owner, usage count), for the
+/// desktop navigator (`services::structure`).
+pub(super) async fn get_structure_level(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<StructureQuery>,
+) -> AppResult<Json<Value>> {
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    let rule = structure::Rule::parse(q.rule.as_deref())?;
+    let limit = q.limit.unwrap_or(structure::MAX_CHILDREN);
+    Ok(Json(json!(
+        structure::children(&st.db, &me, rev.id, rule, limit).await?
+    )))
+}
+
+/// The top-level items of a project group (not used in any BOM of the group).
+pub(super) async fn get_structure_roots(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    Query(q): Query<StructureQuery>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code(&st.db, &me, &code).await?;
+    let page = Page::new(q.limit, q.offset);
+    Ok(Json(json!(
+        structure::roots(&st.db, &me, project.id, page).await?
+    )))
 }

@@ -29,6 +29,25 @@ program, drop the changed files into *Check in*, done.
 > assemblies, read-only files until you check out – see
 > [How files appear on your computer](desktop.md#how-files-appear-on-your-computer).
 
+## Adding files to an existing item
+
+The *Files* card of a revision always says how to add files:
+
+* **Free revision in work:** *To add or replace files, check out this
+  revision* with a **Check out and add files** button – it checks out and
+  returns to the card with the upload form.
+* **Checked out by you:** the upload form; files can also be **dropped onto
+  the card** (large files use the resumable chunked upload).
+* **Checked out by someone else:** who and since when; files can be added
+  after check-in (administrators can force-unlock).
+* **In review, released or obsolete:** frozen. *Revise* (for editors) creates
+  the next revision, which takes the files.
+* Viewers and users outside the project group see no way in.
+
+Simulations and parts show what typically belongs there (solver input,
+results, reports; CAD model, drawing, STEP). The desktop app has *Add files…*
+(see [How files appear on your computer](desktop.md#how-files-appear-on-your-computer)).
+
 ## Rules
 
 * Only revisions **in work** can be checked out, and only by CAD editors of
@@ -81,14 +100,15 @@ clients do):
 Per file, a workspace is in one of these states (desktop Workspace tab,
 `…/file-status` in the API):
 
-| State        | Meaning                                                                          |
-|--------------|----------------------------------------------------------------------------------|
-| *up to date* | the local file is the current version                                            |
+| State        | Meaning                                                                         |
+|--------------|---------------------------------------------------------------------------------|
+| *up to date* | the local file is the current version                                           |
 | *modified*   | changed locally, the server still has the version it was based on – check it in |
 | *outdated*   | unchanged locally, the server has a newer version – get the current files       |
-| *conflict*   | changed locally **and** on the server since – a check-in would be refused        |
-| *new*        | only local                                                                       |
-| *missing*    | only on the server                                                               |
+| *conflict*   | changed locally **and** on the server since – a check-in would be refused       |
+| *new*        | only local                                                                      |
+| *missing*    | only on the server                                                              |
+
 * Uploads show a progress bar; **Cancel upload** stops the transfer
   immediately and nothing changes on the server.
 
@@ -126,8 +146,8 @@ one chunk per request is held in memory, which is why
 Uploads are private to the user who started them. An unfinished upload
 expires 24 hours after its last chunk; the server removes expired uploads and
 their data at start-up and every hour. Each user may have at most 16
-unfinished uploads at a time, so the space they reserve stays bounded
-(16 × `TEAMCRAFT_MAX_UPLOAD_MB` per user). `DELETE /api/v1/uploads/{id}`
+unfinished uploads at a time, so the space they reserve stays bounded (16 × `TEAMCRAFT_MAX_UPLOAD_MB` per user).
+`DELETE /api/v1/uploads/{id}`
 cancels one at once.
 
 **In the browser** the upload and check-in forms of the revision page and
@@ -165,6 +185,9 @@ metadata, not a folder level.
 * *Get* copies an item with its BOM (revision rule *latest* or *released*)
   and the parts its CAD files reference; only missing and outdated files
   are downloaded, checked by SHA-256, with progress and cancel.
+* *Add files…* (Files section, *More ▾*) copies picked files into the working
+  folder of a revision (checking it out first) and lists them as new files
+  in *Check in…*.
 * Files you have not checked out are **read-only**; *Check out* makes them
   writable, *Check in* uploads the changed ones and makes them read-only
   again.

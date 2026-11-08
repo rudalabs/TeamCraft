@@ -21,15 +21,15 @@ use uuid::Uuid;
 use crate::{
     auth::Actor,
     domain::{
-        self, ChangeStatus, Decision, LifecycleState, NotificationKind, Priority, ReviewOutcome,
-        Role, WebhookEvent,
+        self, ChangeStatus, Decision, LifecycleState, LineAction, NotificationKind, Priority,
+        ReviewOutcome, Role, WebhookEvent,
     },
     error::{AppError, AppResult},
     models::{Change, ChangeItem, ChangeReview, ChangeReviewRound},
     services::{
-        access, as_built, audit, impacts, next_counter,
+        access, as_built, audit, impacts, interchange, items, next_counter,
         notifications::{self, Notice},
-        project_policy, readiness, requests, revisions, users, webhooks, Page,
+        project_policy, projects, readiness, requests, revisions, users, webhooks, Page,
     },
 };
 
@@ -181,6 +181,9 @@ pub async fn items(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<V
     for row in &mut rows {
         if !actor.can_see_project(row.project_id) {
             row.mask();
+        } else if row.successor_number.is_some() && !actor.can_see_project(row.successor_project_id)
+        {
+            row.successor_number = Some(access::RESTRICTED_LABEL.into());
         }
     }
     // placeholders last: their position would bound the hidden number
@@ -191,11 +194,13 @@ pub async fn items(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<V
 pub(crate) async fn items_unchecked(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeItem>> {
     Ok(sqlx::query_as::<_, ChangeItem>(
         "SELECT r.id AS revision_id, i.id AS item_id, i.number AS item_number, r.code, r.name, r.state,
+                ci.action, ssi.number AS successor_number, ssi.project_id AS successor_project_id,
                 co.display_name AS checked_out_by_name, i.project_id
          FROM change_items ci
          JOIN revisions r ON r.id = ci.revision_id
          JOIN items i ON i.id = r.item_id
          LEFT JOIN users co ON co.id = r.checked_out_by
+         LEFT JOIN items ssi ON ssi.id = ci.successor_item_id
          WHERE ci.change_id = $1
          ORDER BY i.number",
     )
@@ -452,6 +457,155 @@ fn ensure_owner(change: &Change, actor: &Actor) -> AppResult<()> {
     }
 }
 
+/// Whether the actor may act for the author of an abandoned change (issue
+/// #173): the author is deactivated and the actor – a CAD editor – manages
+/// **every** project group of the change's items. A change without items, or
+/// with an item outside any group, has no such manager (administrators only).
+async fn stands_in_for_author(
+    conn: &mut PgConnection,
+    change: &Change,
+    actor: &Actor,
+) -> AppResult<bool> {
+    if !actor.can_edit() || change.created_by == actor.id {
+        return Ok(false);
+    }
+    let author_active = sqlx::query_scalar::<_, bool>("SELECT active FROM users WHERE id = $1")
+        .bind(change.created_by)
+        .fetch_optional(&mut *conn)
+        .await?
+        .unwrap_or(false);
+    if author_active {
+        return Ok(false);
+    }
+    let groups = sqlx::query_scalar::<_, Option<Uuid>>(
+        "SELECT DISTINCT i.project_id FROM change_items ci
+         JOIN revisions r ON r.id = ci.revision_id JOIN items i ON i.id = r.item_id
+         WHERE ci.change_id = $1",
+    )
+    .bind(change.id)
+    .fetch_all(&mut *conn)
+    .await?;
+    if groups.is_empty() {
+        return Ok(false);
+    }
+    for group in groups {
+        let Some(group) = group else {
+            return Ok(false);
+        };
+        if !projects::can_manage(conn, actor, group).await? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// [`ensure_owner`], or a manager standing in for a deactivated author
+/// ([`stands_in_for_author`]): for withdrawing, reopening and cancelling.
+async fn ensure_owner_or_stand_in(
+    conn: &mut PgConnection,
+    change: &Change,
+    actor: &Actor,
+) -> AppResult<()> {
+    match ensure_owner(change, actor) {
+        Ok(()) => Ok(()),
+        Err(AppError::Forbidden(_)) if stands_in_for_author(conn, change, actor).await? => Ok(()),
+        Err(AppError::Forbidden(_)) => Err(AppError::Forbidden(format!(
+            "Only the author of {} or an administrator can do this (or, when the author is \
+             deactivated, a manager of every affected project group).",
+            change.number
+        ))),
+        Err(e) => Err(e),
+    }
+}
+
+/// For pages: whether the actor may withdraw, reopen, cancel or take over the
+/// change in place of its deactivated author.
+pub async fn may_stand_in(pool: &PgPool, actor: &Actor, change: &Change) -> AppResult<bool> {
+    let mut conn = pool.acquire().await?;
+    stands_in_for_author(&mut conn, change, actor).await
+}
+
+/// Takes over a draft or rejected change of a deactivated author: the actor
+/// becomes its author and can edit, submit or cancel it (issue #173). It
+/// frees the revisions an abandoned change holds without an administrator.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor; the author is deactivated and the actor is
+///   an administrator or manages every affected project group (403); the
+///   change is a draft or rejected (409); the actor sees every item (403) and
+///   is not one of its reviewers – author and reviewer must differ (409).
+/// * **Locks:** the change row (`FOR UPDATE`).
+/// * **Audit:** `change.handover` (as the administrator's hand-over), with
+///   `taken_over: true`.
+/// * **Notifications / webhooks:** none.
+/// * **Data:** `created_by` becomes the actor; reviews and items stay. As
+///   author the actor can no longer review it (four-eyes principle).
+/// * **Atomic:** one transaction.
+pub async fn take_over(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
+    actor.require(Role::Editor)?;
+    let mut tx = pool.begin().await?;
+    let change = lock(&mut tx, actor, change_id).await?;
+    if change.created_by == actor.id {
+        return Err(AppError::Conflict(format!(
+            "You are already the author of {}.",
+            change.number
+        )));
+    }
+    let author_active = sqlx::query_scalar::<_, bool>("SELECT active FROM users WHERE id = $1")
+        .bind(change.created_by)
+        .fetch_optional(&mut *tx)
+        .await?
+        .unwrap_or(false);
+    let allowed = if actor.is_admin() {
+        !author_active
+    } else {
+        stands_in_for_author(&mut tx, &change, actor).await?
+    };
+    if !allowed {
+        return Err(AppError::Forbidden(format!(
+            "{} can be taken over only while its author is deactivated, by a manager of every \
+             affected project group or an administrator.",
+            change.number
+        )));
+    }
+    ensure_status(&change, &[ChangeStatus::Draft, ChangeStatus::Rejected])?;
+    ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
+    let reviewing = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM change_reviews WHERE change_id = $1 AND reviewer_id = $2)",
+    )
+    .bind(change_id)
+    .bind(actor.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if reviewing {
+        return Err(AppError::Conflict(format!(
+            "You review {}; author and reviewer must differ. Remove yourself as reviewer first.",
+            change.number
+        )));
+    }
+    sqlx::query("UPDATE changes SET created_by = $2, updated_at = now() WHERE id = $1")
+        .bind(change_id)
+        .bind(actor.id)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "change.handover",
+        "change",
+        Some(change_id),
+        format!(
+            "{} taken over from {} by {}",
+            change.number, change.created_by_name, actor.display_name
+        ),
+        json!({ "from": change.created_by, "to": actor.id, "taken_over": true }),
+    )
+    .await?;
+    tx.commit().await?;
+    get(pool, actor, change_id).await
+}
+
 fn ensure_status(change: &Change, allowed: &[ChangeStatus]) -> AppResult<ChangeStatus> {
     let status = status_of(change);
     if allowed.contains(&status) {
@@ -507,14 +661,15 @@ async fn reset_reviews(conn: &mut PgConnection, change_id: Uuid) -> AppResult<()
     Ok(())
 }
 
-/// Moves all affected revisions of a change from one state to another.
+/// Moves all revisions the change releases (not the action lines) from one state to another.
 async fn transition_items(
     conn: &mut PgConnection,
     change_id: Uuid,
     to: LifecycleState,
 ) -> AppResult<Vec<String>> {
     let ids = sqlx::query_scalar::<_, Uuid>(
-        "SELECT revision_id FROM change_items WHERE change_id = $1 ORDER BY revision_id",
+        "SELECT revision_id FROM change_items
+         WHERE change_id = $1 AND action = 'release' ORDER BY revision_id",
     )
     .bind(change_id)
     .fetch_all(&mut *conn)
@@ -526,6 +681,89 @@ async fn transition_items(
         labels.push(revisions::label(&rev));
     }
     Ok(labels)
+}
+
+/// The action lines of a change (obsolete and supersede): revision, action and the successor
+/// item of a supersede line.
+async fn action_lines(
+    conn: &mut PgConnection,
+    change_id: Uuid,
+) -> AppResult<Vec<(Uuid, LineAction, Option<Uuid>)>> {
+    let rows = sqlx::query_as::<_, (Uuid, String, Option<Uuid>)>(
+        "SELECT revision_id, action, successor_item_id FROM change_items
+         WHERE change_id = $1 AND action <> 'release' ORDER BY revision_id",
+    )
+    .bind(change_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(rev, action, successor)| {
+            LineAction::parse(&action).map(|a| (rev, a, successor))
+        })
+        .collect())
+}
+
+/// Whether an action line can still be applied: the revision is released and a successor
+/// is still possible (no circle). Called when the line is added, on submit and on release.
+async fn check_action_line(
+    conn: &mut PgConnection,
+    rev: &crate::models::Revision,
+    action: LineAction,
+    successor: Option<Uuid>,
+) -> AppResult<()> {
+    if revisions::state_of(rev) != action.required_state() {
+        return Err(AppError::Conflict(format!(
+            "{} is {}; only released revisions can be obsoleted or superseded through a change.",
+            revisions::label(rev),
+            revisions::state_of(rev).label()
+        )));
+    }
+    if let Some(successor) = successor {
+        let item = items::get_unchecked(&mut *conn, rev.item_id).await?;
+        let successor = items::get_unchecked(&mut *conn, successor).await?;
+        interchange::ensure_no_circle(conn, &item, &successor).await?;
+    }
+    Ok(())
+}
+
+/// Applies the action lines of a released change in its transaction: each revision becomes
+/// obsolete; a supersede line also declares the item superseded (its watchers are told).
+/// Returns the labels of the obsoleted revisions. A line that cannot be applied any more
+/// (the revision is no longer released, the supersession would go in a circle) fails the
+/// whole release with a 409, so nothing is half done.
+async fn apply_action_lines(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    change: &Change,
+) -> AppResult<Vec<String>> {
+    let lines = action_lines(conn, change.id).await?;
+    let mut labels = Vec::with_capacity(lines.len());
+    for (id, action, successor) in lines {
+        let rev = revisions::lock(conn, id).await?;
+        check_action_line(conn, &rev, action, successor).await?;
+        revisions::obsolete_in(conn, actor, &rev).await?;
+        if let Some(successor) = successor {
+            let item = items::get_unchecked(&mut *conn, rev.item_id).await?;
+            let successor = items::get_unchecked(&mut *conn, successor).await?;
+            let note = format!("Through {}", change.number);
+            interchange::supersede_in(conn, actor, &item, &successor, &note).await?;
+        }
+        labels.push(revisions::label(&rev));
+    }
+    Ok(labels)
+}
+
+/// "released A, B; obsoleted C" for the audit entry and the notification of a released change.
+fn release_summary(released: &[String], obsoleted: &[String]) -> String {
+    let mut parts = Vec::new();
+    if !released.is_empty() {
+        parts.push(format!("released {}", released.join(", ")));
+    }
+    if !obsoleted.is_empty() {
+        parts.push(format!("obsoleted {}", obsoleted.join(", ")));
+    }
+    parts.join("; ")
 }
 
 /// Reviewers of a change.
@@ -754,7 +992,15 @@ pub(crate) async fn add_item_in(
     let change = lock(&mut *tx, actor, change_id).await?;
     ensure_owner(&change, actor)?;
     ensure_status(&change, &[ChangeStatus::Draft])?;
-    add_item_tx(&mut *tx, actor, &change, revision_id).await?;
+    add_item_tx(
+        &mut *tx,
+        actor,
+        &change,
+        revision_id,
+        LineAction::Release,
+        None,
+    )
+    .await?;
     let rev = revisions::lock(&mut *tx, revision_id).await?;
     Ok(revisions::label(&rev))
 }
@@ -765,17 +1011,23 @@ async fn add_item_tx(
     actor: &Actor,
     change: &Change,
     revision_id: Uuid,
+    action: LineAction,
+    successor: Option<Uuid>,
 ) -> AppResult<bool> {
     let change_id = change.id;
     let rev = revisions::lock(conn, revision_id).await?;
     // Only members of the item's project group may put it up for release.
     revisions::ensure_project_access(&rev, actor)?;
-    if revisions::state_of(&rev) != LifecycleState::InWork {
-        return Err(AppError::Conflict(format!(
-            "Only in-work revisions can be added to a change; {} is {}.",
-            revisions::label(&rev),
-            revisions::state_of(&rev).label()
-        )));
+    if action == LineAction::Release {
+        if revisions::state_of(&rev) != LifecycleState::InWork {
+            return Err(AppError::Conflict(format!(
+                "Only in-work revisions can be added to a change; {} is {}.",
+                revisions::label(&rev),
+                revisions::state_of(&rev).label()
+            )));
+        }
+    } else {
+        check_action_line(conn, &rev, action, successor).await?;
     }
     // The other change is named only if the actor may see it (it can hold
     // restricted items of other groups).
@@ -821,15 +1073,28 @@ async fn add_item_tx(
         )));
     }
     let inserted = sqlx::query(
-        "INSERT INTO change_items (change_id, revision_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        "INSERT INTO change_items (change_id, revision_id, action, successor_item_id)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (change_id, revision_id) DO UPDATE
+         SET action = EXCLUDED.action, successor_item_id = EXCLUDED.successor_item_id
+         WHERE change_items.action <> 'release'
+           AND (change_items.action, change_items.successor_item_id)
+               IS DISTINCT FROM (EXCLUDED.action, EXCLUDED.successor_item_id)",
     )
     .bind(change_id)
     .bind(revision_id)
+    .bind(action.as_str())
+    .bind(successor)
     .execute(&mut *conn)
     .await?
     .rows_affected();
     if inserted > 0 {
         touch(conn, change_id).await?;
+        let verb = match action {
+            LineAction::Release => "Added",
+            LineAction::Obsolete => "Added an obsolete line for",
+            LineAction::Supersede => "Added a supersede line for",
+        };
         audit::record_related(
             conn,
             Some(actor),
@@ -837,12 +1102,85 @@ async fn add_item_tx(
             "change",
             Some(change_id),
             Some(rev.item_id),
-            format!("Added {} to {}", revisions::label(&rev), change.number),
-            json!({ "revision_id": revision_id, "item_id": rev.item_id }),
+            format!("{verb} {} to {}", revisions::label(&rev), change.number),
+            json!({ "revision_id": revision_id, "item_id": rev.item_id,
+                    "action": action.as_str(), "successor_item_id": successor }),
         )
         .await?;
     }
     Ok(inserted > 0)
+}
+
+/// Adds an action line to a draft change: the released revision is obsoleted
+/// (`obsolete`) or obsoleted and its item declared superseded by `successor_number`
+/// (`supersede`) when the change is released. Allowed in every group; groups with
+/// `obsolete_requires_change` demand it.
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
+///   (409); the revision is visible ("not found" otherwise) and in a group the actor may edit
+///   (403), released (409) and in no other open change (409); every reviewer of the change can
+///   see it (409 each). A supersede line needs a visible successor item that is not the item
+///   itself (400) and does not close a circle (409); an obsolete line takes no successor (400).
+/// * **Locks:** the change row (`FOR UPDATE`), the revision row, the table
+///   `item_supersessions` for a supersede line.
+/// * **Audit:** `change.add_item` with the action, only when the line is new or changed.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
+pub async fn add_action(
+    pool: &PgPool,
+    actor: &Actor,
+    change_id: Uuid,
+    revision_id: Uuid,
+    action: LineAction,
+    successor_number: Option<&str>,
+) -> AppResult<()> {
+    let number = successor_number.map(str::trim).filter(|s| !s.is_empty());
+    let successor =
+        match (action, number) {
+            (LineAction::Release, _) => return Err(AppError::BadRequest(
+                "Use add_item to release an in-work revision; actions are obsolete and supersede."
+                    .into(),
+            )),
+            (LineAction::Obsolete, Some(_)) => {
+                return Err(AppError::BadRequest(
+                    "An obsolete line takes no successor; use supersede.".into(),
+                ))
+            }
+            (LineAction::Obsolete, None) => None,
+            (LineAction::Supersede, None) => {
+                return Err(AppError::BadRequest(
+                    "Name the successor item for a supersede line.".into(),
+                ))
+            }
+            (LineAction::Supersede, Some(number)) => {
+                Some(items::get_by_number(pool, actor, number).await?)
+            }
+        };
+    let mut tx = pool.begin().await?;
+    let change = lock(&mut tx, actor, change_id).await?;
+    ensure_owner(&change, actor)?;
+    ensure_status(&change, &[ChangeStatus::Draft])?;
+    if let Some(successor) = &successor {
+        let rev = revisions::lock(&mut tx, revision_id).await?;
+        if rev.item_id == successor.id {
+            return Err(AppError::BadRequest(
+                "An item cannot supersede itself.".into(),
+            ));
+        }
+    }
+    add_item_tx(
+        &mut tx,
+        actor,
+        &change,
+        revision_id,
+        action,
+        successor.map(|s| s.id),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// The release readiness of a change (see `services::readiness`).
@@ -914,7 +1252,7 @@ pub async fn add_dependencies(
             if revisions::ensure_project_access(&rev, actor).is_err() {
                 continue;
             }
-            if add_item_tx(&mut tx, actor, &change, id).await? {
+            if add_item_tx(&mut tx, actor, &change, id, LineAction::Release, None).await? {
                 progress = true;
                 added.push(revisions::label(&rev));
             }
@@ -1261,7 +1599,7 @@ pub async fn remove_reviewer(
 /// # Invariants
 ///
 /// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
-///   (409) and the actor sees every item (403); it has an item and a reviewer (409); every
+///   (409) and the actor sees every item (403); it has an item and a reviewer, and no reviewer is deactivated (409); every
 ///   revision is in a group the actor may edit (403) and not checked out by someone else (409);
 ///   no dependency is unreleased unless it is in the change (409).
 /// * **Locks:** the change row (`FOR UPDATE`), then every revision (`revisions::lock`) before
@@ -1303,14 +1641,23 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
         ));
     }
     // Separation of duties again: people may have edited since they were added.
-    let reviewers = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT cr.reviewer_id, u.display_name FROM change_reviews cr
+    let reviewers = sqlx::query_as::<_, (Uuid, String, bool)>(
+        "SELECT cr.reviewer_id, u.display_name, u.active FROM change_reviews cr
          JOIN users u ON u.id = cr.reviewer_id WHERE cr.change_id = $1 ORDER BY u.username",
     )
     .bind(change_id)
     .fetch_all(&mut *tx)
     .await?;
-    for (reviewer, name) in &reviewers {
+    for (reviewer, name, active) in &reviewers {
+        // A reviewer deactivated after being added could never decide, and
+        // the change would stay in review for good (issue #173).
+        if !active {
+            return Err(AppError::Conflict(format!(
+                "{name} is deactivated and cannot review {}. Replace them first: remove them as \
+                 reviewer and add someone else.",
+                change.number
+            )));
+        }
         if let Some(conflict) =
             review_conflict(&mut tx, &change, *reviewer, Some(actor.id), false).await?
         {
@@ -1323,7 +1670,7 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     }
     // The review policy of every affected project group.
     let requirement = project_policy::review_requirement(&mut tx, Some(actor), change_id).await?;
-    let reviewer_uuids: Vec<Uuid> = reviewers.iter().map(|(id, _)| *id).collect();
+    let reviewer_uuids: Vec<Uuid> = reviewers.iter().map(|(id, _, _)| *id).collect();
     // A required person who may not review this change (its author, an editor
     // of its data) can never be added: say so instead of "must be a reviewer".
     for (user, name) in &requirement.required_users {
@@ -1348,7 +1695,16 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
             shortfalls.join("; ")
         )));
     }
+    let action_lines = action_lines(&mut tx, change_id).await?;
+    for (id, action, successor) in &action_lines {
+        let rev = revisions::lock(&mut tx, *id).await?;
+        revisions::ensure_project_access(&rev, actor)?;
+        check_action_line(&mut tx, &rev, *action, *successor).await?;
+    }
     for id in &item_ids {
+        if action_lines.iter().any(|(a, _, _)| a == id) {
+            continue;
+        }
         let rev = revisions::lock(&mut tx, *id).await?;
         // Membership may have changed since the revision was added.
         revisions::ensure_project_access(&rev, actor)?;
@@ -1635,7 +1991,7 @@ pub async fn review(
             let labels = transition_items(&mut tx, change_id, LifecycleState::Released).await?;
             // Freeze the released configuration and flag the dependents.
             let released = sqlx::query_scalar::<_, Uuid>(
-                "SELECT revision_id FROM change_items WHERE change_id = $1",
+                "SELECT revision_id FROM change_items WHERE change_id = $1 AND action = 'release'",
             )
             .bind(change_id)
             .fetch_all(&mut *tx)
@@ -1647,6 +2003,8 @@ pub async fn review(
             .bind(change_id)
             .execute(&mut *tx)
             .await?;
+            let obsoleted = apply_action_lines(&mut tx, actor, &change).await?;
+            let summary = release_summary(&labels, &obsoleted);
             let named = audit::Mentions::items(audit::change_item_ids(&mut tx, change_id).await?);
             audit::record_mentioning(
                 &mut tx,
@@ -1655,12 +2013,8 @@ pub async fn review(
                 "change",
                 Some(change_id),
                 &named,
-                format!(
-                    "{} was approved; released {}",
-                    change.number,
-                    labels.join(", ")
-                ),
-                json!({ "revisions": labels }),
+                format!("{} was approved; {summary}", change.number),
+                json!({ "revisions": labels, "obsoleted": obsoleted }),
             )
             .await?;
             tell_naming(
@@ -1671,10 +2025,8 @@ pub async fn review(
                 &people,
                 format!("{} was released", change.number),
                 format!(
-                    "{} – released {} (last approval by {}).",
-                    change.title,
-                    labels.join(", "),
-                    actor.display_name
+                    "{} – {} (last approval by {}).",
+                    change.title, summary, actor.display_name
                 ),
                 &named,
                 format!(
@@ -1742,6 +2094,8 @@ async fn emit_review_events(
         let each = revs
             .iter()
             .zip(&projects)
+            // obsolete and supersede lines have their own `revision.obsoleted` event
+            .filter(|(rev, _)| rev["action"] == LineAction::Release.as_str())
             .map(|(rev, project)| (*project, json!({ "revision": rev, "change": change_json })))
             .collect();
         webhooks::emit_each(
@@ -1768,7 +2122,7 @@ async fn emit_review_events(
 ///
 /// # Invariants
 ///
-/// * **Permission:** CAD editor who is the author (or an administrator); the change is in review
+/// * **Permission:** CAD editor who is the author (or an administrator, or a manager of every affected group while the author is deactivated); the change is in review
 ///   (409).
 /// * **Locks:** the change row (`FOR UPDATE`), then every revision (`revisions::lock`) before
 ///   its state changes.
@@ -1780,7 +2134,7 @@ async fn emit_review_events(
 pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
-    ensure_owner(&change, actor)?;
+    ensure_owner_or_stand_in(&mut tx, &change, actor).await?;
     ensure_status(&change, &[ChangeStatus::InReview])?;
     let labels = transition_items(&mut tx, change_id, LifecycleState::InWork).await?;
     reset_reviews(&mut tx, change_id).await?;
@@ -1824,7 +2178,7 @@ pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResul
 ///
 /// # Invariants
 ///
-/// * **Permission:** CAD editor who is the author (or an administrator); the change is rejected
+/// * **Permission:** CAD editor who is the author (or an administrator, or a manager of every affected group while the author is deactivated); the change is rejected
 ///   (409) and the actor sees every item (403).
 /// * **Locks:** the change row (`FOR UPDATE`).
 /// * **Audit:** `change.reopen`.
@@ -1834,7 +2188,7 @@ pub async fn withdraw(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResul
 pub async fn reopen(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
-    ensure_owner(&change, actor)?;
+    ensure_owner_or_stand_in(&mut tx, &change, actor).await?;
     ensure_status(&change, &[ChangeStatus::Rejected])?;
     ensure_sees_all(sees_all_items(&mut tx, actor, change_id).await?)?;
     reset_reviews(&mut tx, change_id).await?;
@@ -1862,7 +2216,7 @@ pub async fn reopen(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
 ///
 /// # Invariants
 ///
-/// * **Permission:** CAD editor who is the author (or an administrator); the change is a draft
+/// * **Permission:** CAD editor who is the author (or an administrator, or a manager of every affected group while the author is deactivated); the change is a draft
 ///   or rejected (409).
 /// * **Locks:** the change row (`FOR UPDATE`).
 /// * **Audit:** `change.cancel`.
@@ -1872,7 +2226,7 @@ pub async fn reopen(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
 pub async fn cancel(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<Change> {
     let mut tx = pool.begin().await?;
     let change = lock(&mut tx, actor, change_id).await?;
-    ensure_owner(&change, actor)?;
+    ensure_owner_or_stand_in(&mut tx, &change, actor).await?;
     ensure_status(&change, &[ChangeStatus::Draft, ChangeStatus::Rejected])?;
     sqlx::query(
         "UPDATE changes SET status = 'cancelled', closed_at = now(), updated_at = now() WHERE id = $1",
@@ -1903,4 +2257,24 @@ pub async fn cancel(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
     .await?;
     tx.commit().await?;
     get(pool, actor, change_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::release_summary;
+
+    #[test]
+    fn the_release_summary_names_what_was_released_and_obsoleted() {
+        let s = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            release_summary(&s(&["A/A", "B/A"]), &[]),
+            "released A/A, B/A"
+        );
+        assert_eq!(release_summary(&[], &s(&["C/B"])), "obsoleted C/B");
+        assert_eq!(
+            release_summary(&s(&["A/A"]), &s(&["C/B", "D/A"])),
+            "released A/A; obsoleted C/B, D/A"
+        );
+        assert_eq!(release_summary(&[], &[]), "");
+    }
 }

@@ -40,8 +40,9 @@ use std::{
 
 /// Bump to invalidate every cached thumbnail (2: SOLIDWORKS 2015+ previews,
 /// cached as "none" before; 3: NX parts rendered from their 3D preview
-/// instead of the embedded JPEG).
-pub const CACHE_VERSION: u32 = 3;
+/// instead of the embedded JPEG; 4: SOLIDWORKS parts and assemblies rendered
+/// from their 3D preview).
+pub const CACHE_VERSION: u32 = 4;
 
 const OLE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -448,11 +449,15 @@ pub const RENDERED_SIZE: u32 = 512;
 
 /// Formats whose thumbnail is rendered from their 3D preview instead of the
 /// image stored in the file: NX parts (the embedded JPEG is small and poor,
-/// the tessellation in the file is good) and CATIA V5 parts (their CGR
-/// visualisation data). Files without a 3D preview (NX assemblies and
-/// drawings) keep the stored image.
+/// the tessellation in the file is good), SOLIDWORKS parts and assemblies
+/// and CATIA V5 parts (one look for every CAD system). Files without a 3D
+/// preview (drawings, assemblies none of whose parts are in TeamCraft) keep
+/// the stored image.
 pub fn rendered(format_id: &str) -> bool {
-    matches!(format_id, "nx-part" | "catia-part")
+    matches!(
+        format_id,
+        "nx-part" | "solidworks-part" | "solidworks-assembly" | "catia-part"
+    )
 }
 
 /// A PNG thumbnail drawn from a cached preview mesh (`TCMESH01`).

@@ -27,7 +27,7 @@ The script asks for `sudo` where it needs it and then:
    | File                  | Contents                                                       |
    |-----------------------|----------------------------------------------------------------|
    | `docker-compose.yml`  | the two services, replaced on every upgrade                    |
-   | `.env`                | `TEAMCRAFT_VERSION` and `TEAMCRAFT_BIND` for Compose            |
+   | `.env`                | `TEAMCRAFT_VERSION` and `TEAMCRAFT_BIND` for Compose           |
    | `teamcraft.env`       | the server configuration – created once, then yours (mode 600) |
    | `secrets/db_password` | the generated database password – never printed                |
 
@@ -46,18 +46,18 @@ bash install.sh
 
 From a checkout, `./deploy/install.sh` uses the compose file of the checkout.
 
-| Option                   | Effect                                                                         |
-|--------------------------|--------------------------------------------------------------------------------|
-| `--version 0.2.0`/`edge` | image version (default: the newest release; `edge` installations stay `edge`) |
-| `--user`                 | install into `~/teamcraft` without `sudo` (you must be in the `docker` group)  |
-| `--dir DIR`              | install into `DIR`                                                             |
-| `--bind ADDR`            | published address, default `127.0.0.1:8080`; `0.0.0.0:8080` serves the network |
-| `--public-url URL`       | the address users open, written to `teamcraft.env`                             |
-| `--upgrade`              | upgrade (the default when an installation is found)                            |
-| `--uninstall [--purge]`  | remove the containers; `--purge` also deletes all data – asks first            |
+| Option                   | Effect                                                                          |
+|--------------------------|---------------------------------------------------------------------------------|
+| `--version 0.2.0`/`edge` | image version (default: the newest release; `edge` installations stay `edge`)   |
+| `--user`                 | install into `~/teamcraft` without `sudo` (you must be in the `docker` group)   |
+| `--dir DIR`              | install into `DIR`                                                              |
+| `--bind ADDR`            | published address, default `127.0.0.1:8080`; `0.0.0.0:8080` serves the network  |
+| `--public-url URL`       | the address users open, written to `teamcraft.env`                              |
+| `--upgrade`              | upgrade (the default when an installation is found)                             |
+| `--uninstall [--purge]`  | remove the containers; `--purge` also deletes all data – asks first             |
 | `--install-docker`       | install Docker and Compose with `apt`, `dnf`, `pacman` or `zypper` – asks first |
-| `--yes`                  | unattended: answer yes to every question                                       |
-| `--dry-run`              | show what would be done                                                        |
+| `--yes`                  | unattended: answer yes to every question                                        |
+| `--dry-run`              | show what would be done                                                         |
 
 ## The first administrator
 
@@ -69,8 +69,8 @@ cd /opt/teamcraft
 sudo docker compose exec teamcraft teamcraft user create --username admin --role admin
 ```
 
-The *Create administrator* form on the login page of a local installation
-(`cargo run`) is not offered here: inside the container the server listens on
+The *Create administrator* form on the login page of a local installation (`cargo run`) is not offered here: inside the
+container the server listens on
 all interfaces, so it cannot tell whether the page is opened from the same
 computer. Alternatively set `TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD` in
 `teamcraft.env` for the first start (used only while there are no accounts),
@@ -164,14 +164,14 @@ well too.
 
 ## Image tags
 
-| Tag              | Built from                                                         |
-|------------------|--------------------------------------------------------------------|
-| `edge`           | every push to `main`                                               |
-| `0.2.0`, `0.2`   | the release tag `v0.2.0`                                           |
-| `latest`         | the newest release without a suffix such as `-rc.1` – also 0.x     |
+| Tag            | Built from                                                     |
+|----------------|----------------------------------------------------------------|
+| `edge`         | every push to `main`                                           |
+| `0.2.0`, `0.2` | the release tag `v0.2.0`                                       |
+| `latest`       | the newest release without a suffix such as `-rc.1` – also 0.x |
 
-The image is built from the repository's `Dockerfile` by GitHub Actions only
-(`.github/workflows/release.yml`): a small distroless runtime (glibc, CA
+The image is built from the repository's `Dockerfile` by GitHub Actions only (`.github/workflows/release.yml`): a small
+distroless runtime (glibc, CA
 certificates, time zones, no shell) that runs as an unprivileged user,
 with a `HEALTHCHECK` through `teamcraft healthcheck`. The compose file also
 makes its root file system read-only and drops all capabilities.
@@ -188,11 +188,11 @@ deletes the volumes and the directory as well, after a confirmation.
 
 ## Troubleshooting
 
-| Symptom                                  | Check                                                                          |
-|------------------------------------------|--------------------------------------------------------------------------------|
-| the installer waits and then stops       | its output shows `docker compose ps` and the last log lines                    |
-| `Forbidden` / origin error on every form | `TEAMCRAFT_PUBLIC_URL` must be exactly the address in the browser               |
-| `password authentication failed`         | `secrets/db_password` was changed after the first start – the database keeps the first one |
-| `the database volume … already exists`   | the installation directory was deleted without `--purge` (or another directory is used): restore its `secrets/db_password`; the Compose project name `teamcraft-server` allows one installation per host |
-| port 8080 is taken                       | `--bind 127.0.0.1:8081`                                                         |
+| Symptom                                         | Check                                                                                                                                                                                                                                                                                                                                                                                           |
+|-------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| the installer waits and then stops              | its output shows `docker compose ps` and the last log lines                                                                                                                                                                                                                                                                                                                                     |
+| `Forbidden` / origin error on every form        | `TEAMCRAFT_PUBLIC_URL` must be exactly the address in the browser                                                                                                                                                                                                                                                                                                                               |
+| `password authentication failed`                | `secrets/db_password` was changed after the first start – the database keeps the first one                                                                                                                                                                                                                                                                                                      |
+| `the database volume … already exists`          | the installation directory was deleted without `--purge` (or another directory is used): restore its `secrets/db_password`; the Compose project name `teamcraft-server` allows one installation per host                                                                                                                                                                                        |
+| port 8080 is taken                              | `--bind 127.0.0.1:8081`                                                                                                                                                                                                                                                                                                                                                                         |
 | a STEP file has no or only a partial 3D preview | run the converter by hand: `docker compose exec teamcraft teamcraft preview-mesh --format step --input <file> --output /tmp/x.tcm` prints the triangle count, `partial preview: N of M faces` or the reason; see [STEP in the 3D preview](../reference/formats.md#step-in-the-3d-preview). Failures are cached per file – after an update that bumps the preview cache version they are retried |

@@ -32,6 +32,12 @@
     {% if can.reopen %}
     <form method="post" action="/changes/{{ change.id }}/reopen"><button type="submit">Reopen as draft</button></form>
     {% endif %}
+    {% if can.take_over %}
+    <form method="post" action="/changes/{{ change.id }}/take-over"
+          data-confirm="Become the author of {{ change.number }}? Its author is deactivated; as author you can no longer review it.">
+      <button type="submit" title="The author is deactivated; you manage every affected project group">Take over</button>
+    </form>
+    {% endif %}
     {% if can.cancel %}
     <form method="post" action="/changes/{{ change.id }}/cancel">
       <button class="danger" type="submit" title="Cancel {{ change.number }} at once (cannot be undone)">Cancel change</button>
@@ -192,13 +198,14 @@
   {% if items %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Revision</th><th scope="col">Name</th><th scope="col">State</th>{% if can.modify %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Revision</th><th scope="col">Name</th><th scope="col">State</th><th scope="col">On release</th>{% if can.modify %}<th scope="col"></th>{% endif %}</tr></thead>
     <tbody>
     {% for i in items %}
       <tr>
         <td class="mono nowrap">{% if i.restricted %}{{ m.restricted() }}{% else %}<a href="/revisions/{{ i.revision_id }}">{{ i.item_number }}/{{ i.code }}</a>{% endif %}</td>
         <td>{{ i.name }}</td>
         <td>{% if not i.restricted %}{{ m.badge(i.state) }}{% endif %}{% if i.checked_out_by_name %} {{ m.lock(i.checked_out_by_name) }}{% endif %}</td>
+        <td>{% if i.restricted %}{% elif i.action == "obsolete" %}Mark obsolete{% elif i.action == "supersede" %}Mark obsolete, superseded by {{ i.successor_number }}{% else %}Release{% endif %}</td>
         {% if can.modify %}
         <td class="right">
           {% if not i.restricted %}<form class="inline" method="post" action="/changes/{{ change.id }}/items/{{ i.revision_id }}/remove">
@@ -217,6 +224,18 @@
     <label>Item <input class="item-no" type="text" name="item_number" placeholder="e.g. PRT-000012" required></label>
     <button type="submit">Add its in-work revision</button>
   </form>
+  <form class="inline fields" method="post" action="/changes/{{ change.id }}/actions">
+    <label>Item <input class="item-no" type="text" name="item_number" placeholder="e.g. PRT-000012" required></label>
+    <label>On release
+      <select name="action">
+        <option value="obsolete">mark its latest revision obsolete</option>
+        <option value="supersede">mark obsolete and supersede by …</option>
+      </select>
+    </label>
+    <label>Successor <input class="item-no" type="text" name="successor" placeholder="supersede only"></label>
+    <button type="submit">Add obsolete line</button>
+  </form>
+  <p class="hint">An obsolete or supersede line is applied when the change is released, together with the other revisions. Groups can require this for obsoleting (project group page, review policy).</p>
   {% endif %}
 </section>
 

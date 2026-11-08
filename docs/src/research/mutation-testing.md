@@ -8,12 +8,11 @@ single developer machine can carry? Investigated on 2026-11-07.
 
 ## What mutation testing does
 
-A mutation tester makes small, deliberate changes to the source (a
-*mutant*), builds it and runs the tests. If a test fails, the mutant is
-**caught**: some test depends on that piece of behaviour. If every test still
+A mutation tester makes small, deliberate changes to the source (a *mutant*), builds it and runs the tests. If a test
+fails, the mutant is **caught**: some test depends on that piece of behaviour. If every test still
 passes, the mutant is **missed**: the code could be wrong in exactly that way
-and nobody would notice. A missed mutant is either a gap in the tests or an
-*equivalent* mutant (a change that does not alter observable behaviour, e.g.
+and nobody would notice. A missed mutant is either a gap in the tests or an *equivalent* mutant (a change that does not
+alter observable behaviour, e.g.
 `>=` → `>` where the equal case cannot occur).
 
 [cargo-mutants](https://mutants.rs) (Martin Pool, source at
@@ -50,12 +49,12 @@ exclusions go into `.cargo/mutants.toml` (`exclude_re` on the mutant name,
 
 ## Other tools
 
-| Tool | Notes |
-|---|---|
-| [`mutagen`](https://github.com/llogiq/mutagen) | compiles all mutations into the binary behind a switch (fast), needs nightly and an attribute on every function; unmaintained since 2021 |
-| [`cargo-mutants`](https://mutants.rs) | source rewriting, stable toolchain, no code changes, `--in-diff` and sharding for CI; actively maintained (27.0.0 on crates.io at the time of writing) |
-| line coverage (`cargo llvm-cov`, already in CI) | complementary: cheap and broad, but blind to missing assertions |
-| fuzzing (`cargo fuzz`, already weekly) | complementary: finds panics and hangs on hostile input, not missing assertions on correct input |
+| Tool                                            | Notes                                                                                                                                                  |
+|-------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [`mutagen`](https://github.com/llogiq/mutagen)  | compiles all mutations into the binary behind a switch (fast), needs nightly and an attribute on every function; unmaintained since 2021               |
+| [`cargo-mutants`](https://mutants.rs)           | source rewriting, stable toolchain, no code changes, `--in-diff` and sharding for CI; actively maintained (27.0.0 on crates.io at the time of writing) |
+| line coverage (`cargo llvm-cov`, already in CI) | complementary: cheap and broad, but blind to missing assertions                                                                                        |
+| fuzzing (`cargo fuzz`, already weekly)          | complementary: finds panics and hangs on hostile input, not missing assertions on correct input                                                        |
 
 ## How it fits TeamCraft
 
@@ -69,15 +68,15 @@ kinds of tests:
 
 Every mutant costs one incremental rebuild of the test target plus the test
 run. With the full suite (minutes, PostgreSQL) per mutant a run over the whole
-crate would take days. The pure modules – `domain`, the parsers and readers
-(`httprange`, `pagecontext`, `htmltext`, `resultscan`, `bomtable`,
+crate would take days. The pure modules – `domain`, the parsers and readers (`httprange`, `pagecontext`, `htmltext`,
+`resultscan`, `bomtable`,
 `cadformat`, …) – are exactly where the rules live that unit tests are meant
 to pin down, and their unit tests run in seconds. TeamCraft therefore starts
 with:
 
 * **`--lib` only** (`additional_cargo_args = ["--lib"]`): no PostgreSQL, no
-  integration tests, no service container in the workflow. It has to be a
-  *cargo* argument, not a test argument (`additional_cargo_test_args`): the
+  integration tests, no service container in the workflow. It has to be a *cargo* argument, not a test argument
+  (`additional_cargo_test_args`): the
   build step is `cargo test --no-run`, which otherwise compiles all ~70 test
   binaries for every mutant – the first trial took 2.5 minutes per mutant
   that way, against 30 s with `--lib` on both steps;
@@ -145,8 +144,8 @@ and in the step summary, not as a red check.
 
 ## How other projects run it
 
-* **cargo-mutants itself** – sharded full runs on every push
-  (`.github/workflows/tests.yml`), `--in-diff` on pull requests, artifacts
+* **cargo-mutants itself** – sharded full runs on every push (`.github/workflows/tests.yml`), `--in-diff` on pull
+  requests, artifacts
   `mutants.out`.
 * **[vodozemac](https://github.com/matrix-org/vodozemac)** (Matrix
   cryptography) – `--in-diff` on pull requests to `main`, path filter on Rust
@@ -175,11 +174,11 @@ and in the step summary, not as a red check.
 
 cargo-mutants 27.1.0, local, `-j 1`, `--lib`, 2026-11-07:
 
-| Module | Mutants | Caught | Missed | Unviable | Time | Gap found |
-|---|---|---|---|---|---|---|
-| `httprange` | 13 | 12 | 0 | 1 | 10 min (with the field mutants below) | none – its tests already pin every boundary |
-| `util` | 40 | 37 → 40 | 3 → 0 | 0 | 22 min | `format_bytes` was never tested beyond MiB: making the unit loop run one step further (`<=`, `len() + 1`, `len() / 1`) went unnoticed and would index past the unit table (a panic for ≥ 1 PiB); test `byte_sizes_stop_at_tib` |
-| `resultscan` (the 11 field mutants of `TemplateInput::validated`) | 11 | 0 → 7 | 7 → 0 | 4 | with the above | no test checked what `validated` *returns*: dropping the trimmed name, file pattern, method, pick, unit, load case or solver from the result (so `..self` stored the raw form input) passed; test `template_input_is_stored_normalised` |
+| Module                                                            | Mutants | Caught  | Missed | Unviable | Time                                  | Gap found                                                                                                                                                                                                                               |
+|-------------------------------------------------------------------|---------|---------|--------|----------|---------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `httprange`                                                       | 13      | 12      | 0      | 1        | 10 min (with the field mutants below) | none – its tests already pin every boundary                                                                                                                                                                                             |
+| `util`                                                            | 40      | 37 → 40 | 3 → 0  | 0        | 22 min                                | `format_bytes` was never tested beyond MiB: making the unit loop run one step further (`<=`, `len() + 1`, `len() / 1`) went unnoticed and would index past the unit table (a panic for ≥ 1 PiB); test `byte_sizes_stop_at_tib`          |
+| `resultscan` (the 11 field mutants of `TemplateInput::validated`) | 11      | 0 → 7   | 7 → 0  | 4        | with the above                        | no test checked what `validated` *returns*: dropping the trimmed name, file pattern, method, pick, unit, load case or solver from the result (so `..self` stored the raw form input) passed; test `template_input_is_stored_normalised` |
 
 The tool did what it promises on the first try: two modules with good line
 coverage, ten missed mutants, two real gaps – a latent panic and an unnormalised

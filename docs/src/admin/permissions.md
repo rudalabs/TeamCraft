@@ -4,8 +4,8 @@ Every item belongs to a project group (or to none). A group is either
 
 * **internal** – the default: every signed-in user reads it, its members
   edit it; or
-* **restricted** – only its **members** (of any role, viewers included) and
-  **administrators** see the group and anything in it: items, revisions,
+* **restricted** – only its **members** (of any role, viewers included) and **administrators** see the group and
+  anything in it: items, revisions,
   files and their versions, previews, BOMs, references, simulations,
   change orders and change requests about them. For everybody else it does
   not exist: they get exactly the "not found" a missing object gives.
@@ -16,12 +16,12 @@ research note [Read permissions for project groups](../research/read-permissions
 ## Effective rights
 
 | Global role | Member of the group | Internal group | Restricted group |
-|---|---|---|---|
-| Admin | any or none | read + edit | read + edit |
-| CAD editor | yes | read + edit | read + edit |
-| CAD editor | no | read | – (not found) |
-| Viewer | yes | read | read |
-| Viewer | no | read | – (not found) |
+|-------------|---------------------|----------------|------------------|
+| Admin       | any or none         | read + edit    | read + edit      |
+| CAD editor  | yes                 | read + edit    | read + edit      |
+| CAD editor  | no                  | read           | – (not found)    |
+| Viewer      | yes                 | read           | read             |
+| Viewer      | no                  | read           | – (not found)    |
 
 Items without a group are readable by everyone and editable by every CAD
 editor (unchanged). A read-only member of a restricted group is a member
@@ -50,8 +50,8 @@ administrators; `PUT /api/v1/projects/{code}/policy`
 * **with a reason** – an administrator who is not a member sees the group as
   "not found" until they open an **elevation** with a written reason (10 to
   1000 characters; `POST /api/v1/projects/{code}/elevations`, or the form on
-  the group page). It lasts 60 minutes, can be ended early
-  (`DELETE …/elevations`) and is audited (`project.elevate`, with the reason).
+  the group page). It lasts 60 minutes, can be ended early (`DELETE …/elevations`) and is audited (`project.elevate`,
+  with the reason).
   The group's managers get a notification, and the group page lists every
   elevation with administrator, reason and time;
 * **none** – administrators still manage the group (members, policy, the
@@ -69,8 +69,8 @@ but cannot loosen the policy, open the group to all users, link another
 identity-provider group, add themselves or become a manager (403): those
 would undo the policy in one call. What an administrator can still do is
 limited by design: add *another* user (a manager sees it in the audit log),
-see that the group exists (code and name), and change operator-level things
-(database, backups, the command line) outside the application. A group
+see that the group exists (code and name), and change operator-level things (database, backups, the command line)
+outside the application. A group
 linked to an identity-provider group before the policy was set keeps that
 link, so an administrator in that IdP group is a member. Webhooks cannot be
 scoped to, or redirected for, a hidden group; their deliveries are not shown.
@@ -92,24 +92,26 @@ Need to know: interfaces and read log*, managers and administrators;
 logged by default; the switches build on a restricted group and are inert
 when the group is opened.
 
-| Switch | Denied: the group looks non-existent to … |
-|---|---|
-| `api_tokens` | REST requests, MCP and the desktop app that sign in with a personal access token (the browser session still works) |
-| `mcp` | MCP tools (also through `teamcraft mcp`, which uses a token) |
-| `assistant` | the built-in assistant, including the page context of a question |
-| `webhooks` | outgoing webhooks: no webhook receives events of the group, scoped or not; an event that mentions the group in a change order is sent without the change |
-| `packages` | Pack and Go and BOM downloads (CSV, Excel): the root item's group answers 403, items of such groups inside a structure are left out like restricted items of non-members |
+| Switch                 | Denied: the group looks non-existent to …                                                                                                                                                                                                                                                                       |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `api_tokens`           | REST requests, MCP and the desktop app that sign in with a personal access token (the browser session still works)                                                                                                                                                                                              |
+| `mcp`                  | MCP tools (also through `teamcraft mcp`, which uses a token)                                                                                                                                                                                                                                                    |
+| `assistant`            | the built-in assistant, including the page context of a question                                                                                                                                                                                                                                                |
+| `webhooks`             | outgoing webhooks: no webhook receives events of the group, scoped or not; an event that mentions the group in a change order is sent without the change                                                                                                                                                        |
+| `packages`             | Pack and Go and BOM downloads (CSV, Excel): the root item's group answers 403, items of such groups inside a structure are left out like restricted items of non-members                                                                                                                                        |
+| `notification_content` | e-mail and chat notifications (not the in-app list): a notification about the group, or naming an item or change order of it, is sent with only a generic text ("new <instance> notification") and the link, also as a direct chat message; the recipient reads the text after signing in                       |
+| `external_llm`         | the built-in assistant, unless the configured provider's base URL is on the administrator's list of internal / self-hosted URLs (`TEAMCRAFT_ASSISTANT_INTERNAL_URLS`, see [Configuration](configuration.md)); with `assistant` on and `external_llm` off the group is usable only with an internal model server |
+| `desktop_sync`         | the desktop app's Get (working set `GET /api/v1/items/{number}/revisions/{code}/workset`): the root item's group answers "not found", items of such groups inside a structure are left out. The rest of the desktop app follows `api_tokens`                                                                    |
 
 `{"interfaces": {"mcp": false, "webhooks": false}, "read_log": true,
 "log_retention_days": 365}` – every field is optional. Switching an
 interface off or the log on is open to managers and administrators; allowing
 an interface again, switching the log off or changing the retention is, while
 administrators are limited by the administrator policy above, for the
-managers (like loosening that policy). Every change is audited
-(`project.interfaces`, old and new values) and notifies the other managers.
-Not covered yet: e-mail and chat notification content, an external LLM
-provider list (`external_llm`) and the desktop working folder as separate
-switches (the desktop app follows `api_tokens`).
+managers (like loosening that policy). Every change is audited (`project.interfaces`, old and new values) and notifies
+the other managers.
+The in-app notification list and the notification e-mails of other groups
+are not affected by `notification_content`.
 
 **Read and download log.** With `read_log` on, the group writes `access_log`
 entries (separate from the audit log): who (user name kept as text), when,
@@ -142,8 +144,8 @@ backup contains the log.
 Managers of a restricted group and administrators open *Access review* on the
 group page (`/projects/{id}/access-review`). It lists every member with the
 account role, the role in the group, the source (added by hand or synchronised
-from the identity provider), whether the account is active, the last sign-in
-(flagged when there was none for 90 days) and the date the membership began,
+from the identity provider), whether the account is active, the last sign-in (flagged when there was none for 90 days)
+and the date the membership began,
 then the administrator policy (with the number of active administrators who are
 not members) and the administrator elevations with their reasons. *I reviewed
 the access* confirms the review with an optional note: the confirmation is
@@ -163,9 +165,9 @@ into another group, needs a manager of the source group or an administrator
 ## Review policy per project group
 
 By default every reviewer of a change order must approve. A manager of a
-project group (or an administrator) can set a policy on the group page
-(*Review policy*) or with `PUT /api/v1/projects/{code}/review-policy`
-(`{"min_approvals": 2, "required_reviewers": ["carl"], "role_group": "QA"}`;
+project group (or an administrator) can set a policy on the group page (*Review policy*) or with
+`PUT /api/v1/projects/{code}/review-policy`
+(`{"min_approvals": 2, "required_reviewers": ["carl"], "role_group": "QA", "obsolete_requires_change": false}`;
 `GET` shows it to anybody who sees the group):
 
 * **Minimum approvals** – this many approvals release the change; empty means
@@ -189,35 +191,70 @@ edit after submit cannot strand a change in review. Deactivated people and
 people below the editor role do not count. Items without a project group count
 like a group without a policy: all reviewers must approve. A role group the
 reader cannot see is never named: the policy shows it as hidden and the submit
-message says "a required role group". Changes are audited
-(`project.review_policy`, with the previous values). Step 2 of
+message says "a required role group". Changes are audited (`project.review_policy`, with the previous values). Step 2 of
 [#152](https://github.com/rudalabs/TeamCraft/issues/152).
+
+### Obsolete and supersede only through a change order
+
+Obsoleting a released revision is final and flags its dependents, and a
+supersession tells designers not to use an item any more. By default one CAD
+editor of the group can do both at once. The same form (*Review policy* on the
+group page) has a checkbox, `obsolete_requires_change` in the API (`PUT /api/v1/projects/{code}/review-policy`; omitted:
+unchanged, default off),
+that moves both through review:
+
+* With the setting **on**, *Mark obsolete* and *Supersede* on items of the group
+  answer **409** for everybody, administrators included. Other groups are not
+  affected.
+* A change order can carry an **obsolete** or **supersede** line next to its
+  release lines (change page, *On release*; `POST /api/v1/changes/{number}/items`
+  with `{"item": …, "action": "obsolete"}` or `{"item": …, "action":
+  "supersede", "successor": "PRT-000012"}`; the revision defaults to the item's
+  latest). It needs a *released* revision that is in no other open change; a
+  supersede line needs a visible successor item, not the item itself and no
+  circle (400/409). The lines are allowed in every group, the setting only
+  forbids the direct way.
+* The policy of the group (minimum approvals, required reviewers, role group)
+  applies to the change; nothing happens before the last approval. Then, in the
+  same transaction as the release, each revision becomes obsolete (impacts on
+  dependents, `revision.obsoleted` webhook and notification as for a direct
+  obsolete) and a supersede line also records *superseded by*. If a line cannot
+  be applied any more (the revision was obsoleted in the meantime, the
+  supersession would close a circle) the approval fails with 409 and the whole
+  release stays undone. Rejecting or withdrawing the change changes nothing on
+  the released revisions.
+* Supersede **notifies the watchers** of the superseded item, whether declared
+  directly (with the setting off) or through a change order. Watchers who may
+  not see the successor get the text without its number; the change page shows
+  such a successor as *restricted*.
+
+Step 3 of [#152](https://github.com/rudalabs/TeamCraft/issues/152).
 
 ## What outsiders see of links
 
 A visible item can point to a restricted one, and the other way round:
 
-| Link | What a non-member sees |
-|---|---|
-| BOM line, item reference, simulation basis to a restricted item | a **placeholder row** "Restricted item": find number, quantity, reference kind and basis role stay; number, name, revision, link and the notes (they describe the hidden item) are removed, and the line is never expanded. A hidden simulation basis never says whether it is out of date (that would tell when the hidden item is released or its file checked in). Placeholders are listed after the visible rows of their kind, so their position tells nothing about the hidden number. Editing such a line keeps its stored notes. When a non-member removes or edits it, the history names the real item for members (and is redacted for everybody else) |
-| Mass and cost roll-ups | leave restricted lines out; the BOM says "mass and cost exclude N restricted lines" (`restricted_lines`, `rollup_incomplete` in the API) |
-| Where-used, referenced-by, simulations based on an item, impact analysis | restricted entries are left out and counted: "+N … in groups you cannot see" |
-| CAD file-name matches (file references, suggestions, working sets) | matches in restricted groups are left out without a count; the name shows as not in TeamCraft |
-| Similar parts (shape search) | restricted items are left out without a count, also when their file content is identical |
-| Release readiness of a change | a restricted unreleased dependency still **blocks** the release and shows as "restricted dependency not released – ask a member of its group or an admin" |
-| Pack and Go, desktop Get | restricted items contribute no files; the manifest and the report only count them |
-| Change propagation (impacts) | a check on a visible item caused by a restricted release says "a restricted item this depends on was released"; the releasing change order is named only to readers who may see it (a change that also holds restricted items is left out). The same applies to the answer of "Acknowledge all" |
-| Audit history | an entry about a link to a restricted item reads "… changed a link to a restricted item"; an entry whose text names restricted items or a change order the reader cannot see (the revisions of a submitted, rejected or released change, flagged dependents, a request's items, a linked change) reads "… (the details name restricted items)" without details. Flagged dependents are listed per group, so the entries about visible dependents stay readable |
-| Readiness of a change | the depending revision of a hidden item shows as "restricted item"; another open change the reader cannot see shows as "another open change order" (also in the error when an item is already part of one). Restricted dependencies follow the visible ones of their revision, and rows of hidden depending revisions come last – also in the error of a refused submit – so their place tells nothing about a hidden number |
-| Change request items, change order items | a restricted affected item is a placeholder row without its note, listed last |
-| *Save As* out of a restricted group | the copy's history entry ("Saved … as a new item") is redacted for readers who may not see the source; the copied file versions say "Copied from a restricted item" |
-| Vault explorer folder of a restricted group | "Folder not found", exactly like an unknown folder id |
+| Link                                                                     | What a non-member sees                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+|--------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| BOM line, item reference, simulation basis to a restricted item          | a **placeholder row** "Restricted item": find number, quantity, reference kind and basis role stay; number, name, revision, link and the notes (they describe the hidden item) are removed, and the line is never expanded. A hidden simulation basis never says whether it is out of date (that would tell when the hidden item is released or its file checked in). Placeholders are listed after the visible rows of their kind, so their position tells nothing about the hidden number. Editing such a line keeps its stored notes. When a non-member removes or edits it, the history names the real item for members (and is redacted for everybody else) |
+| Mass and cost roll-ups                                                   | leave restricted lines out; the BOM says "mass and cost exclude N restricted lines" (`restricted_lines`, `rollup_incomplete` in the API)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Where-used, referenced-by, simulations based on an item, impact analysis | restricted entries are left out and counted: "+N … in groups you cannot see"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| CAD file-name matches (file references, suggestions, working sets)       | matches in restricted groups are left out without a count; the name shows as not in TeamCraft                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Similar parts (shape search)                                             | restricted items are left out without a count, also when their file content is identical                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Release readiness of a change                                            | a restricted unreleased dependency still **blocks** the release and shows as "restricted dependency not released – ask a member of its group or an admin"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Pack and Go, desktop Get                                                 | restricted items contribute no files; the manifest and the report only count them                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Change propagation (impacts)                                             | a check on a visible item caused by a restricted release says "a restricted item this depends on was released"; the releasing change order is named only to readers who may see it (a change that also holds restricted items is left out). The same applies to the answer of "Acknowledge all"                                                                                                                                                                                                                                                                                                                                                                  |
+| Audit history                                                            | an entry about a link to a restricted item reads "… changed a link to a restricted item"; an entry whose text names restricted items or a change order the reader cannot see (the revisions of a submitted, rejected or released change, flagged dependents, a request's items, a linked change) reads "… (the details name restricted items)" without details. Flagged dependents are listed per group, so the entries about visible dependents stay readable                                                                                                                                                                                                   |
+| Readiness of a change                                                    | the depending revision of a hidden item shows as "restricted item"; another open change the reader cannot see shows as "another open change order" (also in the error when an item is already part of one). Restricted dependencies follow the visible ones of their revision, and rows of hidden depending revisions come last – also in the error of a refused submit – so their place tells nothing about a hidden number                                                                                                                                                                                                                                     |
+| Change request items, change order items                                 | a restricted affected item is a placeholder row without its note, listed last                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| *Save As* out of a restricted group                                      | the copy's history entry ("Saved … as a new item") is redacted for readers who may not see the source; the copied file versions say "Copied from a restricted item"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Vault explorer folder of a restricted group                              | "Folder not found", exactly like an unknown folder id                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ## Change orders and change requests
 
 They have no group of their own. A **change order** is visible to
-administrators, its author, its reviewers and to everybody who can see
-*every* affected item (a draft without items: author, reviewers, admins).
+administrators, its author, its reviewers and to everybody who can see *every* affected item (a draft without items:
+author, reviewers, admins).
 A **change request** is visible to administrators, the requester, the
 assignee and to everybody who can see every affected item (a request
 without items: everybody). Inside a visible change or request, rows of
@@ -231,6 +268,14 @@ withdraw or cancel, but not approve blind. Adding a reviewer, assigning a
 request and the reviewer suggestions need it as well: whether somebody can
 see a hidden item would tell who belongs to its group, so an author who
 cannot see every item gets no suggestions and cannot add reviewers.
+A change cannot be submitted while one of its reviewers is deactivated.
+
+Only the author of a change order and administrators edit, submit,
+withdraw, reopen or cancel it. When the author is **deactivated**, a manager
+of *every* project group the change touches may also withdraw, reopen or
+cancel it, or take it over (it becomes theirs; audited as
+`change.handover`). A change without items, or with an item outside any
+group, has no such manager.
 
 ## Notifications, e-mail, chat, webhooks, assistant
 
@@ -257,8 +302,8 @@ cannot see every item gets no suggestions and cannot add reviewers.
   the group to get them (see [Event webhooks](webhooks.md)). The
   `revision.released` event of a visible revision released by a change
   that also holds restricted items comes without the `change` object. A
-  queued delivery whose group is restricted before it is sent is not sent
-  (status `failed`, "Not sent: a project group of the event was restricted
+  queued delivery whose group is restricted before it is sent is not sent (status `failed`, "Not sent: a project group
+  of the event was restricted
   after it was queued").
 * The MCP server and the built-in assistant use the user's rights, so they
   see the same as the user. The assistant sends what a member reads to the
@@ -287,15 +332,23 @@ back with the access, check-outs stay (the removal message says how many).
 A manager of the group (or an admin) cancels them on the revision page or
 with `POST /api/v1/items/{number}/revisions/{code}/cancel-checkout`:
 managers may release the check-outs of users who are no longer members of
-the group.
+the group or who are deactivated. *Release N check-outs* in the member list
+releases all of one person's check-outs in the group at once (each audited
+on its own); administrators release everything a user holds from the user
+page. See [When someone leaves](users.md#when-someone-leaves).
 
 Memberships synchronised from the identity provider change only at the
 user's next SSO login; a user removed from the IdP group keeps access until
 then, and indefinitely with an API token. Revoke the user's tokens or
 deactivate the user as well. Such a membership stays synchronised when its
-holder is made a manager, and TeamCraft refuses to remove it (it would
-come back at the next SSO login): remove the user from the IdP group, or
-have an administrator unlink the group or deactivate the user. A manually
+holder is made a manager (*Demote* lowers it again), and TeamCraft refuses
+to remove it while the user is active (it would come back at the next SSO
+login): remove the user from the IdP group, or have an administrator unlink
+the group or deactivate the user. Once the user is deactivated, a manager
+or administrator can remove it: SSO refuses deactivated users, so it cannot
+come back. A group needs at least one *active* manager; deactivated managers
+do not count when a manager leaves, is removed or is demoted (administrators
+may still do so). A manually
 added member who is also in the linked IdP group comes back (synchronised)
 at their next SSO login after being removed.
 

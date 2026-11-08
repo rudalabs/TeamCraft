@@ -32,13 +32,13 @@ feature milestone – the features in *What works* are enough; what is missing i
 
 **Milestones** – each is a pre-release with release notes; nothing moves to the next one with an open blocker.
 
-| Version | Theme | Exit criteria |
-|---|---|---|
-| **0.2** | Proofing | Sections 1 and 2 of the to-do list mostly done: migration, backup, import and atomicity tests, fuzzing of every parser, `cargo deny`, coverage report, branch protection; the large modules split |
-| **0.3** | Real data | The CAD-program checks of section 3 with real files (Inventor, Solid Edge, SOLIDWORKS, NX, STEP exports); scale check (#47) with targets met; e-mail/Mattermost against real servers |
-| **0.5** | Beta – frozen interfaces | Assistant with OpenAI-compatible providers shipped (its config is part of the freeze); API, MCP tools, config variables and CLI reviewed and frozen (deprecations marked); upgrade path tested from 0.2 on; first outside test teams |
-| **0.9** | Release candidate | No known data-loss or security bug; docs complete; one RC per fix round, two weeks without a blocker |
-| **1.0.0** | General availability | Work-in-progress notices removed (README, docs, web footer, desktop *About*); support policy published |
+| Version   | Theme                    | Exit criteria                                                                                                                                                                                                                        |
+|-----------|--------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **0.2**   | Proofing                 | Sections 1 and 2 of the to-do list mostly done: migration, backup, import and atomicity tests, fuzzing of every parser, `cargo deny`, coverage report, branch protection; the large modules split                                    |
+| **0.3**   | Real data                | The CAD-program checks of section 3 with real files (Inventor, Solid Edge, SOLIDWORKS, NX, STEP exports); scale check (#47) with targets met; e-mail/Mattermost against real servers                                                 |
+| **0.5**   | Beta – frozen interfaces | Assistant with OpenAI-compatible providers shipped (its config is part of the freeze); API, MCP tools, config variables and CLI reviewed and frozen (deprecations marked); upgrade path tested from 0.2 on; first outside test teams |
+| **0.9**   | Release candidate        | No known data-loss or security bug; docs complete; one RC per fix round, two weeks without a blocker                                                                                                                                 |
+| **1.0.0** | General availability     | Work-in-progress notices removed (README, docs, web footer, desktop *About*); support policy published                                                                                                                               |
 
 **GA criteria** (all must be ticked before 1.0.0)
 
@@ -77,39 +77,40 @@ feature milestone – the features in *What works* are enough; what is missing i
 *Security*
 
 - Open findings of the [threat model](src/dev/threat-model.md) (F1–F19 there):
-  - [x] F1: failed password sign-ins throttled per username and client address (`TEAMCRAFT_SIGNIN_MAX_FAILURES`,
-    429 with `Retry-After`)
-  - [x] F1 (rest): wrong current passwords of the own password change (web form and `POST /api/v1/me/password`)
-    count like failed sign-ins (429 with `Retry-After`, audited as `user.password_failed`)
-  - [x] F2: scoped PATs (`full` = read+write+approve, `write` = no approving, `read_only`, `mcp_only`;
-    existing and desktop tokens stay `full`; a token cannot mint a wider one). Left: a narrower desktop token by default,
-    per-group scopes, sign-off re-authentication (#152 step 4)
-    (also the complement of `TEAMCRAFT_LOCAL_AGENTS=off`, which closes the MCP endpoint for every token but
-    not the REST API: a read-only token would narrow what an agent holding a user's own token can do there)
-  - [x] F3: sign-in, failed sign-in and sign-out in the audit log (`user.sign_in`, `user.sign_in_failed`,
-    `user.sign_out`; no password, token or unknown typed name)
-  - [x] F4: web posts without `Origin` and `Referer` are refused; install guide says the proxy must overwrite
-    `X-Forwarded-Host`
-  - [x] F5: `Strict-Transport-Security` when the public URL is https
-  - [ ] F6: OIDC with a plain `http://` issuer: refuse it outside `localhost`, or verify ID token signatures (JWKS)
-    for it – a decision, since it can break installations with an internal IdP
-  - [ ] F7: end TeamCraft sessions of users removed at the IdP (shorter SSO sessions, back-channel logout or a
-    periodic check)
-  - [ ] F8: re-check the hash of a blob while it is downloaded (or periodically), not only in `vault check`
-  - [ ] F9: disk quota per user and in total for uploads
-  - [ ] F10: serve downloads with a Content-Type derived from the format (the download headers are pinned in
-    `tests/web_security.rs`)
-  - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
-  - [x] F12: start the parser children with a cleared environment (no database URL, no keys)
-  - [ ] F13: a cap on the unpacked size of XLSX/ODS tables, or read them in the isolated child
-  - [ ] F14: fuzz targets for `simmesh` and `pdftext` (`resultscan` and `cadformat` have theirs since #156; the
-    no-panic lints and the 3DS and Kelvin fixes are in `main` since #106/#108)
-  - [ ] F15: prompt injection: confirmation of assistant drafts per write, or taint for MCP sessions as well
-  - [ ] F16: per-user quota for the assistant and MCP (with the daily budget in section 2, *Assistant*)
-  - [ ] F17: `teamcraft mcp`: no redirects, a warning (or refusal) for `http://` servers other than `localhost`
-  - [x] F18: desktop token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service); warn on
-    `http://` server URLs – file fallback with a warning where there is no keychain
-  - [ ] F19: backups written with mode 0600/0700, optional encryption, a signed manifest
+    - [x] F1: failed password sign-ins throttled per username and client address (`TEAMCRAFT_SIGNIN_MAX_FAILURES`,
+      429 with `Retry-After`)
+    - [x] F1 (rest): wrong current passwords of the own password change (web form and `POST /api/v1/me/password`)
+      count like failed sign-ins (429 with `Retry-After`, audited as `user.password_failed`)
+    - [x] F2: scoped PATs (`full` = read+write+approve, `write` = no approving, `read_only`, `mcp_only`;
+      existing and desktop tokens stay `full`; a token cannot mint a wider one). Left: a narrower desktop token by
+      default,
+      per-group scopes, sign-off re-authentication (#152 step 4)
+      (also the complement of `TEAMCRAFT_LOCAL_AGENTS=off`, which closes the MCP endpoint for every token but
+      not the REST API: a read-only token would narrow what an agent holding a user's own token can do there)
+    - [x] F3: sign-in, failed sign-in and sign-out in the audit log (`user.sign_in`, `user.sign_in_failed`,
+      `user.sign_out`; no password, token or unknown typed name)
+    - [x] F4: web posts without `Origin` and `Referer` are refused; install guide says the proxy must overwrite
+      `X-Forwarded-Host`
+    - [x] F5: `Strict-Transport-Security` when the public URL is https
+    - [ ] F6: OIDC with a plain `http://` issuer: refuse it outside `localhost`, or verify ID token signatures (JWKS)
+      for it – a decision, since it can break installations with an internal IdP
+    - [ ] F7: end TeamCraft sessions of users removed at the IdP (shorter SSO sessions, back-channel logout or a
+      periodic check)
+    - [ ] F8: re-check the hash of a blob while it is downloaded (or periodically), not only in `vault check`
+    - [ ] F9: disk quota per user and in total for uploads
+    - [ ] F10: serve downloads with a Content-Type derived from the format (the download headers are pinned in
+      `tests/web_security.rs`)
+    - [ ] F11: a memory limit for the preview and text children on Windows (job object); a smaller cap for 3MF entries
+    - [x] F12: start the parser children with a cleared environment (no database URL, no keys)
+    - [ ] F13: a cap on the unpacked size of XLSX/ODS tables, or read them in the isolated child
+    - [ ] F14: fuzz targets for `simmesh` and `pdftext` (`resultscan` and `cadformat` have theirs since #156; the
+      no-panic lints and the 3DS and Kelvin fixes are in `main` since #106/#108)
+    - [ ] F15: prompt injection: confirmation of assistant drafts per write, or taint for MCP sessions as well
+    - [ ] F16: per-user quota for the assistant and MCP (with the daily budget in section 2, *Assistant*)
+    - [ ] F17: `teamcraft mcp`: no redirects, a warning (or refusal) for `http://` servers other than `localhost`
+    - [x] F18: desktop token in the OS keychain (Windows Credential Manager, macOS Keychain, Secret Service); warn on
+      `http://` server URLs – file fallback with a warning where there is no keychain
+    - [ ] F19: backups written with mode 0600/0700, optional encryption, a signed manifest
 - [ ] External review or pentest of authentication, read permissions and file parsing; fuzzing of all parsers
   running continuously (section 1)
 - [ ] `cargo deny`/`cargo audit` green in CI, SBOM (CycloneDX) attached to each release, release artifacts with
@@ -125,12 +126,14 @@ feature milestone – the features in *What works* are enough; what is missing i
 - [ ] Production install paths tested end to end per release: Docker Compose (`deploy/`), Linux packages (systemd
   unit), behind a reverse proxy with TLS; documented sizing and PostgreSQL versions (16–18)
 - [x] Data retention and cleanup: old previews, staged uploads, expired sessions, audit log retention setting
-- [x] Preview safety: size caps per kind and a memory limit for the preview process (`TEAMCRAFT_PREVIEW_MAX_*`); big result files are stored, never parsed
+- [x] Preview safety: size caps per kind and a memory limit for the preview process (`TEAMCRAFT_PREVIEW_MAX_*`); big
+  result files are stored, never parsed
 
 *Clients and packaging*
 
 - [ ] Flatpak on Flathub with offline cargo sources; AUR packages published. Done: the desktop app's update notice
-  (daily GitHub release check, opt-out, a link only – no silent auto-update). Binaries and installers stay **unsigned** (no code signing or notarisation): the checksums
+  (daily GitHub release check, opt-out, a link only – no silent auto-update). Binaries and installers stay **unsigned**
+  (no code signing or notarisation): the checksums
   in `SHA256SUMS.txt` and the build provenance are the verification, and the docs explain the first start past
   SmartScreen and Gatekeeper
 - [ ] Desktop app run and tested on Windows x64/ARM64, macOS and Linux for each RC (a short manual test script in
@@ -138,8 +141,7 @@ feature milestone – the features in *What works* are enough; what is missing i
 - [x] Accessibility: keyboard use and screen-reader labels on the main web flows checked (WCAG 2.2 AA for contrast
   is already tested) – `every_rendered_page_is_accessible` checks labels, accessible names, `alt`, `tabindex`,
   `lang`, heading levels and `<th scope>` on every rendered page; sign-in, new item, check-in, BOM and new change
-  request done with the keyboard in Chromium; toggled panels now close with Escape
-  ([docs](src/dev/accessibility.md))
+  request done with the keyboard in Chromium; toggled panels now close with Escape ([docs](src/dev/accessibility.md))
 - [ ] Accessibility: a skip link to the main content (eight stops come before it on every page)
 - [ ] Accessibility: the HTML built by JavaScript (assistant sidebar, BOM tree controls, 3D viewer, upload progress)
   and the desktop app's UI under the same checks as the templates
@@ -158,7 +160,8 @@ feature milestone – the features in *What works* are enough; what is missing i
 - [ ] Governance basics: maintainers, review rule (one approving review, green checks), code of conduct
 
 **Not required for 1.0** – CAD add-ins, more 3D readers, the Jira connector, code-signed binaries, the assistant
-features after the budget (threads, streaming, quick actions), the shared UI folder beyond what is already merged, i18n of the UI (English only in 1.0; the
+features after the budget (threads, streaming, quick actions), the shared UI folder beyond what is already merged, i18n
+of the UI (English only in 1.0; the
 structure should not prevent translations later). They may land in 1.x minor releases.
 
 ## To-do
@@ -176,7 +179,8 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   interruption (`tests/folder_import.rs`, the requests of `desktop/ui/app.js` against the server): an item whose
   files did not arrive is completed by the next run instead of being skipped for good (fixed), none is created
   twice. Open: an item whose *creation* answer was lost (network gone between the server's commit and the app's
-  log) is created again on the next run – fixed in code with an idempotency key for `POST /items` (`tests/item_idempotency.rs`) – **database tests written, not yet run against a real database**
+  log) is created again on the next run – fixed in code with an idempotency key for `POST /items`
+  (`tests/item_idempotency.rs`) – **database tests written, not yet run against a real database**
 - [x] **Atomic processes** – the folder import per item is covered too (see *Import*); the rest is done, see *Done*
 - [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
   make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
@@ -199,9 +203,14 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   `three_ds_list_chunks_without_their_count`); the reference scan cut a name inside a character when the extension
   held a letter whose lower case is ASCII (the Kelvin sign `K` → `k`, test
   `a_non_ascii_letter_in_the_extension_does_not_panic`)
-- [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters, lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
-- [x] Coverage measured per PR (`cargo llvm-cov`, PostgreSQL 18 leg of the CI job *tests*, before 2026-11-07 its own job *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage map is refreshed from the CI numbers of `b4cf014`
-- [ ] Mutation testing (`cargo mutants`, [research](src/research/mutation-testing.md), [how to](src/dev/mutation-testing.md)):
+- [x] Property tests (`proptest`) for the pure rules in `domain.rs` (`domain::property_tests`): revision letters,
+  lifecycle transitions, numbering scheme parsing, formatting and reading back – open: skin contrast
+- [x] Coverage measured per PR (`cargo llvm-cov`, PostgreSQL 18 leg of the CI job *tests*, before 2026-11-07 its own job
+  *coverage*: summary and HTML artifact, see [coverage map](src/dev/coverage.md)) with a floor that may not drop: the
+  job fails below `.github/coverage-floor` (91.1 % of lines; `main` was at 91.48–91.65 % over four runs); the coverage
+  map is refreshed from the CI numbers of `b4cf014`
+- [ ] Mutation testing
+  (`cargo mutants`, [research](src/research/mutation-testing.md), [how to](src/dev/mutation-testing.md)):
   `.cargo/mutants.toml` examines the pure modules with `cargo test --lib` (no PostgreSQL); workflow `mutants.yml`
   runs `--in-diff` on pull requests (report-only) and a weekly sharded full run. Done: `httprange` (0 missed) and
   `util` (3 missed → 0, `byte_sizes_stop_at_tib`), plus the field mutants of `resultscan::TemplateInput::validated`
@@ -211,9 +220,11 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   (189), `bomtable` (166), `stepbom` (155) – read the first weekly report, fix or document every missed mutant per
   module. Then: make the PR job blocking once the examined modules are clean; add `llm/anthropic.rs`,
   `llm/openai.rs`, `mesh/*` readers and `simmesh`; decide whether services with database tests are worth a second,
-  PostgreSQL-backed run (`--test-package`/integration tests – hours per run); speed up the slowest lib tests
-  (18 s of each mutant's ~30 s is the lib test run)
-- [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
+  PostgreSQL-backed run (`--test-package`/integration tests – hours per run); speed up the slowest lib tests (18 s of
+  each mutant's ~30 s is the lib test run)
+- [x] `cargo deny` in CI (`deny.toml`, job *dependencies*): permissive licences only, security advisories, unknown
+  registries and git sources; duplicate versions only warn. Three transitive "unmaintained" notices are ignored with
+  reasons in `deny.toml` (cgmath, proc-macro-error, ttf-parser) – open: replace them when the parent crates move
 - [ ] Branch protection on `main` (**maintainer action**, needs admin rights): a ruleset with required checks – fmt and
   clippy, tests on PostgreSQL 16 and 18, build (windows-latest), cargo deny (Cargo.toml), local links and images.
   None exists today (the API answers 404 for the protection and `[]` for rulesets); that is how #65 and #137 were
@@ -246,24 +257,24 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   scheduled run open an issue instead of only an e-mail
 - [x] Triage the open CodeQL alerts (2026-11-07, 32 alerts, each checked twice; `fix/codeql-triage`). One real
   finding, the rest false positives, all answered in code or configuration, none by a model row:
-  - `rust/uncontrolled-allocation-size` #38 (`POST /api/v1/change-requests`) **real, low risk**: the handler
-    resolved every listed item before the 100-item limit was checked, and that limit counted distinct rows, so a
-    2 MB body of one repeated item ran ~150 000 lookups and inserts in one transaction and succeeded. Fixed:
-    `requests::check_item_count` in the handler before any lookup and again in `requests::create`; test
-    `too_many_items_are_rejected_before_any_is_resolved`; threat model row. #39 (`simulations::import_results`)
-    was already bounded by `MAX_RESULTS` one line earlier – the pre-sized `Vec` is gone so the bound is plain.
-  - `rust/hard-coded-cryptographic-value` #1–#5 (`src/auth.rs`): the timing-equaliser `DUMMY_HASH` and the round
-    trip test now hash random values instead of literals; #49/#50 (`src/domain/mod.rs`): the password policy unit
-    test is generated at the `MIN_PASSWORD_LEN` boundary; #8–#14 (`src/oidc.rs`, nonce literals in unit tests)
-    and #15/#53/#54 (`tests/`): test fixtures – the OIDC unit tests moved to `src/oidc/tests.rs` and
-    `.github/codeql/codeql-config.yml` leaves `tests/**` and `src/**/tests.rs` out of the analysis (Rust runs with
-    build-mode none, where analysis `paths-ignore` applies).
-  - `rust/cleartext-storage-database` #16 (`src/delivery.rs`) and #17 (`tests/`): the source was only the name of
-    the SQL builder `notifications::confidential_now` (sensitive-name heuristic; it returns constant SQL text) –
-    renamed `restricted_now_sql`; #52 (`tests/common`): test-only, excluded.
-  - `rust/cleartext-logging` #21–#23 (`teamcraft user create|set-password|list`): the operator's own stdout shows
-    account names, never a password. The report is now written with `writeln!` (a closed pipe such as
-    `user list | head` is an error, not a panic); #18–#20, #41, #51: assertion messages in `tests/`, excluded.
+    - `rust/uncontrolled-allocation-size` #38 (`POST /api/v1/change-requests`) **real, low risk**: the handler
+      resolved every listed item before the 100-item limit was checked, and that limit counted distinct rows, so a
+      2 MB body of one repeated item ran ~150 000 lookups and inserts in one transaction and succeeded. Fixed:
+      `requests::check_item_count` in the handler before any lookup and again in `requests::create`; test
+      `too_many_items_are_rejected_before_any_is_resolved`; threat model row. #39 (`simulations::import_results`)
+      was already bounded by `MAX_RESULTS` one line earlier – the pre-sized `Vec` is gone so the bound is plain.
+    - `rust/hard-coded-cryptographic-value` #1–#5 (`src/auth.rs`): the timing-equaliser `DUMMY_HASH` and the round
+      trip test now hash random values instead of literals; #49/#50 (`src/domain/mod.rs`): the password policy unit
+      test is generated at the `MIN_PASSWORD_LEN` boundary; #8–#14 (`src/oidc.rs`, nonce literals in unit tests)
+      and #15/#53/#54 (`tests/`): test fixtures – the OIDC unit tests moved to `src/oidc/tests.rs` and
+      `.github/codeql/codeql-config.yml` leaves `tests/**` and `src/**/tests.rs` out of the analysis (Rust runs with
+      build-mode none, where analysis `paths-ignore` applies).
+    - `rust/cleartext-storage-database` #16 (`src/delivery.rs`) and #17 (`tests/`): the source was only the name of
+      the SQL builder `notifications::confidential_now` (sensitive-name heuristic; it returns constant SQL text) –
+      renamed `restricted_now_sql`; #52 (`tests/common`): test-only, excluded.
+    - `rust/cleartext-logging` #21–#23 (`teamcraft user create|set-password|list`): the operator's own stdout shows
+      account names, never a password. The report is now written with `writeln!` (a closed pipe such as
+      `user list | head` is an error, not a panic); #18–#20, #41, #51: assertion messages in `tests/`, excluded.
 - [ ] After the first CodeQL run of `fix/codeql-triage` on `main`, check that all 32 alerts closed. Not verifiable
   locally (no CodeQL CLI): whether the `writeln!` output still counts as a logging sink (#21–#23 – if it does,
   dismiss them in the GitHub UI as false positive, "admin CLI echoes the account names the operator asked for") and
@@ -275,9 +286,12 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 - [x] Split the largest modules by area, without behaviour changes, one PR each: `src/mcp/tools.rs` (~3000 lines →
   one file per area like `services/`) – mcp done (`src/mcp/tools/*.rs`; tool table, results and dispatch stay in
   `tools.rs`; `tests/mcp_contract.rs` snapshots tool list, schemas and prompts), `src/domain.rs` (~2600 → `domain/{roles,lifecycle,revision,numbering,
-  skins,validation}.rs`) – domain done (`src/domain/*.rs`, re-exported), `src/api/mod.rs` (~2000 → route table + handlers per area, like `src/web/`) – api done (`src/api/*_api.rs`, route table stays in `mod.rs`),
+  skins,validation}.rs`) – domain done (`src/domain/*.rs`, re-exported), `src/api/mod.rs` (~2000 → route table +
+  handlers per area, like `src/web/`) – api done (`src/api/*_api.rs`, route table stays in `mod.rs`),
   `src/services/requests.rs` (~1900) – requests done (`src/services/requests/*.rs`, re-exported;
-  `tests/change_request_paths.rs` pins the REST paths), `desktop/ui/app.js` (~5000 → ES modules per view, no bundler) – desktop done (`desktop/ui/js/*.js`, `js/main.js` starts the app; `scripts/check-desktop-modules.mjs` in the CI job `ui` checks that every import resolves and every name of another module is imported)
+  `tests/change_request_paths.rs` pins the REST paths), `desktop/ui/app.js` (~5000 → ES modules per view, no bundler) –
+  desktop done (`desktop/ui/js/*.js`, `js/main.js` starts the app; `scripts/check-desktop-modules.mjs` in the CI job
+  `ui` checks that every import resolves and every name of another module is imported)
 - [ ] One request/response contract for web, REST and MCP where they do the same thing (e.g. BOM, where-used,
   change requests): shared view structs in `services::*` instead of three hand-built JSON/HTML shapes
 - [ ] Typed ids (`ItemId`, `RevisionId`, `ChangeId`, … as newtypes over `Uuid`) at the service boundary, so that ids
@@ -330,12 +344,15 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 ### 4. Parked features
 
 **Need-to-know project groups (#151)** – step 1 (administrator access: policy, reason-based elevation, `none`) is
-done; steps 3 and 4 are done in part: switches `api_tokens`, `mcp`, `assistant`, `webhooks`, `packages`
-(`project_policy::narrow` per channel, `tests/interface_switches.rs`) and the read and download log with retention and
-`teamcraft access-log purge` (views, file downloads, Pack and Go, BOM exports). Left of 3 and 4: switches
-`notification_content`, `external_llm`, `desktop_sync`; log entries for MCP and assistant tool reads and desktop Get;
+done; steps 3 and 4 are done in part: switches `api_tokens`, `mcp`, `assistant`, `webhooks`, `packages`,
+`notification_content`, `external_llm`,
+`desktop_sync` (`project_policy::narrow` per channel, `tests/interface_switches.rs`) and the read and download log with
+retention and
+`teamcraft access-log purge` (views, file downloads, Pack and Go, BOM exports). Left of 3 and 4: log entries for MCP and
+assistant tool reads and desktop Get;
 optional PDF/image watermark; a log page with filters and paging. Left, in the order of the issue: 2 conditions on
-membership (OIDC claims, allowed networks, shorter sessions); 5 access review page and evidence report (done: page, confirmation, CSV/JSON evidence; open: periodic reminder, review-due flag); 6 token scopes (F2). Open question 1
+membership (OIDC claims, allowed networks, shorter sessions); 5 access review page and evidence report (done: page,
+confirmation, CSV/JSON evidence; open: periodic reminder, review-due flag); 6 token scopes (F2). Open question 1
 is answered for now: `none` is allowed, but needs a member who is a manager.
 
 Only finish what is in progress and fix bugs here; see *Direction*. The CAD-program entries are mostly checks with
@@ -344,21 +361,40 @@ real files and belong to section 3 once such files are at hand.
 **Ownership and approval rules ([#152](https://github.com/rudalabs/TeamCraft/issues/152))**
 
 - [x] Step 1: wider separation of duties (editors and the acting admin cannot review; suggester excludes them).
-- [x] Step 2: review policy per project group (min approvals, required reviewers, role group). Left: show the policy on the change page, notify when a role group has no eligible reviewer. (After submit only the parts the assigned reviewers can meet count, instead of a frozen snapshot.)
-- [ ] Step 3: obsolete and supersede through a change order (per-group setting), supersede notifies watchers.
-- [ ] Step 4: token scopes (`approve`) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`).
-- [x] Step 5: keep review rounds (`change_review_rounds`, `changes.review_round`; change page and API show earlier rounds).
+- [x] Step 2: review policy per project group (min approvals, required reviewers, role group). Left: show the policy on
+  the change page, notify when a role group has no eligible reviewer. (After submit only the parts the assigned
+  reviewers can meet count, instead of a frozen snapshot.)
+- [x] Step 3: obsolete and supersede through a change order (group setting `obsolete_requires_change`, obsolete and
+  supersede lines on a change order applied on release, supersede notifies watchers). Left: an
+  `obsolete_requires_change` toggle in the desktop app; lines from MCP and the desktop app.
+- [ ] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication
+  (`TEAMCRAFT_APPROVAL_REAUTH`, open).
+- [x] Step 5: keep review rounds (`change_review_rounds`, `changes.review_round`; change page and API show earlier
+  rounds).
 - [x] Step 6: flag and replace absent reviewers (substitutes per user: still open).
-- [ ] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication (`TEAMCRAFT_APPROVAL_REAUTH`, open).
-- [ ] Step 5: keep review rounds in `change_reviews`.
-- [ ] Step 6: flag and replace absent reviewers, substitutes.
-- [x] Step 7: item owner and admin handover of a leaving user's work (owner on the item page; notifying the new owner and a CLI command are not done).
+- [x] Step 7: item owner and admin handover of a leaving user's work (owner on the item page; notifying the new owner
+  and a CLI command are not done).
 - [ ] Step 8: approvals in the package manifest, audit log export, hash chain.
 - [ ] Step 9: requester cannot triage own request; separate approval of *use as is* deviations.
 - [x] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
 
+**Offboarding for high-turnover teams ([#173](https://github.com/rudalabs/TeamCraft/issues/173))**
+
+- [x] Step 0: runbook "When someone leaves" in `docs/src/admin/users.md`.
+- [ ] Step 1: holdings report per user (admin user page, group managers, REST, CLI), filtered by the viewer's rights.
+- [x] Step 2: inactive lock holders count as gone, only active managers count, a deactivated user's IdP membership can
+  be removed, submit refuses a deactivated reviewer, *Demote* manager.
+- [x] Step 3: bulk release of another user's check-outs (`checkouts::release_held`; admin user page, group member list).
+- [ ] Step 4: deactivation as an offboarding step (release / hand over / revoke tokens), CLI `user deactivate`.
+- [x] Step 5: managers of every affected group withdraw, reopen, cancel or take over a deactivated author's change.
+- [ ] Steps 6–10: manager release with a reason, groups without an active manager, season handover, IdP-driven
+  offboarding, desktop working folder.
+
 **Desktop app**
 
+- [x] #183: assemblies in the desktop – *Structure* view in the navigator (`GET …/structure`), check-out of an
+  assembly gets its parts read-only and never overwrites local files. Open: size prompt for very large assemblies,
+  the *No BOM – N parts referenced* hint node, the web vault explorer toggle, check in the real app
 - [ ] Check #58 in the real app (Tauri build, Windows): project groups load again on *Home*, *Refresh* and in the
   dialogs; the same folder imported into a second project group (so far checked in Chromium with a stubbed Tauri)
 - [ ] Decide and document what happens when the same CAD files are imported into two project groups: two independent
@@ -408,49 +444,63 @@ real files and belong to section 3 once such files are at hand.
   rule is a hypothesis until it is checked with real files – the heads (1–4 KB) of STAR-CCM+ `.sim` files of two or
   three versions, NX 1980+ and older `.sim`/`.fem`/`.afm`, a Fluent `report-file-0.out` and `.trn`, a Simcenter 3D
   Nastran `.dat` and `.f06`, openly licensed or self-made, as fixtures
-  - [x] Step 1 – detection (`src/cadformat.rs`, #156): `SPLMSSTR` as positive NX test for `.sim`/`.fem`/`.afm`,
-    text `.fem` = OptiStruct deck, `.dat` with Nastran markers = Nastran deck, `.f04`/`.pch`, text `.op2` refused,
-    Fluent `.msh`/`.msh.h5`/`.cas.gz`/`.dat.gz`/`.msh.gz` (HDF5 signature at 0 or 512, gzip magic), `.flprj`,
-    `.cdat`, `.jou`, `.trn`, report files (`.out` with quoted title and header), STAR-CCM+ `.simh` and macros (`.java`
-    naming STAR-CCM+), Gmsh `.msh`; fuzz target `cadformat`
-  - [ ] Step 1, open question: label a `.sim` with neither marker as "uncertain" in the UI instead of the NX fallback
-  - [ ] Files stored before #156 keep their old format and search text: a one-time re-detection of the
-    changed extensions (`.sim` `.fem` `.afm` `.dat` `.msh` `.out` `.java` `.jou` `.trn` `.f04` `.pch`, the Fluent
-    `.h5`/`.gz` names) and re-indexing at startup – not in a migration, `files.format` of v0.1.0 data must stay as it is
-  - [x] Step 2 – text (#156): `trn`, `f06`, `f04`, `pch`, `jou`, `java` scannable and plain text (search,
-    `read_file_text` – with the last 64 KiB of a larger file after a marker); templates with `pick = last` read the
-    last 2 MB of a larger file first; new template method `table` (Fluent report files, migration 0040); fuzz target
-    `resultscan`
-  - [x] Step 3 (this PR, rules unverified against real files) – solver summary per file version: pure `src/solversummary.rs` over head and tail (64 KiB each):
-    Fluent banner/convergence/last iteration, report file columns and last row, `.f06` version, `END OF JOB` and
-    FATAL/WARNING window counts, Nastran `SOL`, STAR-CCM+ macro version and stopping criterion; a nullable JSONB
-    column on file versions, one line on the file row and the simulation page, data (untrusted) for the MCP tools
-  - [ ] Step 4 – references and basis proposals: `nxpart`'s `ExternalReferences` reader on `nx-simulation` files
-    (first verify the streams exist in CAE parts); `cadrefs` for Fluent journals (`/file/read-case "x"`, …) and
-    STAR-CCM+ macros (`resolvePath("x.sim")`); propose (never set) a *Geometry* basis along `.sim` → `.fem` →
-    `_i.prt` → master `.prt`
-  - [ ] Step 5 – desktop folder import: ignore `cleanup-fluent-*` and Nastran scratch files (`.MASTER`, `.DBALL`,
-    `.SCRATCH`, …, verify the list), group the `.sim`/`.fem` chain, the Fluent case stem and the STAR-CCM+ `.sim`
-    stem into one proposed simulation item, untick results above 64 MB and autosaves except the last step, hint
-    for STAR-CCM+ *Clear Solution*; needs the retention rule (`files.retention = 'latest'`)
-  - [ ] Step 6 – docs: tested snippets that write `teamcraft-results.csv` from a STAR-CCM+ Java macro, a Fluent
-    journal/PyFluent script and a pyNastran post-script (in the simulation guide)
-  - Not planned: parsing `.op2`, `.h5`, `.dat.h5`, `.cdat`, `.sim`, `.simh`; an HDF5 reader (revisit only in the
-    isolated child); vendor tools on the server (later, desktop only: `starccm+ -info` with the user's licence)
-- [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded, audited, with source); never from big result files
-- [x] Result values proposed by the assistant from PDF/text reports (`propose_result_values`, drafts with a quote, accepted or rejected by a CAD editor); PDF text layer in `read_file_text`
-- [x] `read_file_text` of plain-text files shows the real text with its lines and decimal numbers (bounded; only geometry as text – ASCII STL, OBJ, KiCad – drops decimals for the search), so text and CSV reports work like PDFs (#141)
+    - [x] Step 1 – detection (`src/cadformat.rs`, #156): `SPLMSSTR` as positive NX test for `.sim`/`.fem`/`.afm`,
+      text `.fem` = OptiStruct deck, `.dat` with Nastran markers = Nastran deck, `.f04`/`.pch`, text `.op2` refused,
+      Fluent `.msh`/`.msh.h5`/`.cas.gz`/`.dat.gz`/`.msh.gz` (HDF5 signature at 0 or 512, gzip magic), `.flprj`,
+      `.cdat`, `.jou`, `.trn`, report files (`.out` with quoted title and header), STAR-CCM+ `.simh` and macros (`.java`
+      naming STAR-CCM+), Gmsh `.msh`; fuzz target `cadformat`
+    - [ ] Step 1, open question: label a `.sim` with neither marker as "uncertain" in the UI instead of the NX fallback
+    - [ ] Files stored before #156 keep their old format and search text: a one-time re-detection of the
+      changed extensions (`.sim` `.fem` `.afm` `.dat` `.msh` `.out` `.java` `.jou` `.trn` `.f04` `.pch`, the Fluent
+      `.h5`/`.gz` names) and re-indexing at startup – not in a migration, `files.format` of v0.1.0 data must stay as it
+      is
+    - [x] Step 2 – text (#156): `trn`, `f06`, `f04`, `pch`, `jou`, `java` scannable and plain text (search,
+      `read_file_text` – with the last 64 KiB of a larger file after a marker); templates with `pick = last` read the
+      last 2 MB of a larger file first; new template method `table` (Fluent report files, migration 0040); fuzz target
+      `resultscan`
+    - [x] Step 3 (this PR, rules unverified against real files) – solver summary per file version: pure
+      `src/solversummary.rs` over head and tail (64 KiB each):
+      Fluent banner/convergence/last iteration, report file columns and last row, `.f06` version, `END OF JOB` and
+      FATAL/WARNING window counts, Nastran `SOL`, STAR-CCM+ macro version and stopping criterion; a nullable JSONB
+      column on file versions, one line on the file row and the simulation page, data (untrusted) for the MCP tools
+    - [ ] Step 4 – references and basis proposals: `nxpart`'s `ExternalReferences` reader on `nx-simulation` files
+      (first verify the streams exist in CAE parts); `cadrefs` for Fluent journals (`/file/read-case "x"`, …) and
+      STAR-CCM+ macros (`resolvePath("x.sim")`); propose (never set) a *Geometry* basis along `.sim` → `.fem` →
+      `_i.prt` → master `.prt`
+    - [ ] Step 5 – desktop folder import: ignore `cleanup-fluent-*` and Nastran scratch files (`.MASTER`, `.DBALL`,
+      `.SCRATCH`, …, verify the list), group the `.sim`/`.fem` chain, the Fluent case stem and the STAR-CCM+ `.sim`
+      stem into one proposed simulation item, untick results above 64 MB and autosaves except the last step, hint
+      for STAR-CCM+ *Clear Solution*; needs the retention rule (`files.retention = 'latest'`)
+    - [ ] Step 6 – docs: tested snippets that write `teamcraft-results.csv` from a STAR-CCM+ Java macro, a Fluent
+      journal/PyFluent script and a pyNastran post-script (in the simulation guide)
+    - Not planned: parsing `.op2`, `.h5`, `.dat.h5`, `.cdat`, `.sim`, `.simh`; an HDF5 reader (revisit only in the
+      isolated child); vendor tools on the server (later, desktop only: `starccm+ -info` with the user's licence)
+- [x] Result values at check-in: `teamcraft-results.json|csv` exchange file and per-group extraction templates (bounded,
+  audited, with source); never from big result files
+- [x] Result values proposed by the assistant from PDF/text reports (`propose_result_values`, drafts with a quote,
+  accepted or rejected by a CAD editor); PDF text layer in `read_file_text`
+- [x] "Fill with AI…" on the Results card: a box with what to extract, limits and report files; drafts only, rights and
+  the `assistant` switch respected (#177; open: desktop button, reusable requests per group, *Accept all*)
+- [x] `read_file_text` of plain-text files shows the real text with its lines and decimal numbers (bounded; only
+  geometry as text – ASCII STL, OBJ, KiCad – drops decimals for the search), so text and CSV reports work like PDFs
+  (#141)
 - [ ] Scanned PDF reports (OCR) – not planned; attach a PDF with a text layer or the numbers by hand
 - [x] HTML reports of commercial FEA/CFD tools: own bounded HTML-to-text reader (`src/htmltext.rs`) in the isolated
   `text-extract` child, table rows as lines with ` | ` separators, scripts/styles/comments/hidden elements/embedded
   images skipped, nothing fetched; search, `read_file_text`, `propose_result_values` and the extraction templates use
   the extracted text ([#141](https://github.com/rudalabs/TeamCraft/issues/141))
-- [ ] HTML reports: MHTML (`.mht`) and ZIP-packed multi-file reports (unpacking needs its own caps, see F13); text hidden
+- [ ] HTML reports: MHTML (`.mht`) and ZIP-packed multi-file reports (unpacking needs its own caps, see F13); text
+  hidden
   by a style sheet (not inline) is not detected
-- [x] Result values in the item search (failed, passed, above/below limit, by name) and a dashboard card for failing or out-of-date simulations; left: an *out of date* search filter, the `result` filter in the MCP `search_items` tool and in saved searches
+- [x] Result values in the item search (failed, passed, above/below limit, by name) and a dashboard card for failing or
+  out-of-date simulations; left: an *out of date* search filter, the `result` filter in the MCP `search_items` tool and
+  in saved searches
+- [x] New simulation from a part/assembly revision in the web UI and `POST /items` with `basis`: prefilled form, basis
+  linked in the same transaction ([#178](https://github.com/rudalabs/TeamCraft/issues/178)); left: several bases at once
 - [ ] Desktop: *New simulation from this revision…* on a part/assembly (creates the item with its basis), basis files
   checked out read-only into `basis/`, check-in of selected result time steps only
-- [x] Retention for large result files (`files.retention = 'latest'`): per file, old versions removed after a grace period, never for released revisions (`teamcraft vault purge-versions`); left: a size-based default for new files
+- [x] Retention for large result files (`files.retention = 'latest'`): per file, old versions removed after a grace
+  period, never for released revisions (`teamcraft vault purge-versions`); left: a size-based default for new files
 - [ ] Save As of a simulation: copy basis links and result values
 
 **All CAD programs**
@@ -525,7 +575,8 @@ real files and belong to section 3 once such files are at hand.
   splits do not break them): no `sqlx` in `src/web`, `src/api`, `src/mcp`; every public service function that
   writes (itself or through the services it calls) records an audit entry, exceptions listed with a reason
   (`NOT_AUDITED`: personal data, caches, sessions, staging, housekeeping); every template in `TEMPLATES` and rendered by
-  `every_template_renders`; every `TEAMCRAFT_*` variable in `docs/src/admin/configuration.md` (found: `TEAMCRAFT_ENV_FILE`
+  `every_template_renders`; every `TEAMCRAFT_*` variable in `docs/src/admin/configuration.md` (found:
+  `TEAMCRAFT_ENV_FILE`
   and the build-time `TEAMCRAFT_SYSTEM_CONFIG` were undocumented). A mutation check per rule made each guard fail once.
 - [x] **Backup / restore** proofed (`tests/backup_proofing.rs`, `tests/backup_errors.rs`): a corrupt or missing vault
   object refuses the backup and nothing is left (two fixes: the backup now checks every object against its name and
@@ -595,7 +646,8 @@ real files and belong to section 3 once such files are at hand.
 - [x] BOM import fills the classification (*BOM structure* / procurement column: Purchased, Kaufteil, Content Center …)
   and custom attributes (columns named like an attribute) of new items; values that do not fit are skipped with a
   warning (feature 5, second part)
-- [x] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts and multi-level where-used in API, MCP
+- [x] Item copy ("Save as" with files and BOM), supersede/replace, alternate parts and multi-level where-used in API,
+  MCP
   and web UI (feature 6) – alternates (two-way or one-way) and supersession per item, *Replace in assemblies* from the
   where-used page with a preview (in-work parents changed, released ones listed for a new revision), migration 0030
 - [x] BOM comparison between revisions with Excel export, single level and over all levels (feature 7)
@@ -651,7 +703,7 @@ The history up to the open-source release is squashed into the first commit
 | –  | Desktop: cancel the check-in upload and Pack and Go half-way                                                                                                          | `9ba6e52`            |
 | 9  | Web UI: chunked, resumable uploads of large files                                                                                                                     | `671f277`            |
 | 3b | Desktop: *Import BOM…* from CSV/Excel or a STEP assembly                                                                                                              | `c7a2592`            |
-| –  | README feature list; release: Flatpak, Windows ARM64, portable Windows, no macOS server                                                                              | `bb649bf`, `a873920` |
+| –  | README feature list; release: Flatpak, Windows ARM64, portable Windows, no macOS server                                                                               | `bb649bf`, `a873920` |
 | –  | Tests: functional and semantic coverage across the feature list                                                                                                       | `f8f5322`            |
 
 ## Details on the open features
@@ -680,8 +732,8 @@ Documented in the UI, keep in mind:
 - Research result: `ruststep` 0.4 (Apache-2.0) rejected as a direct dependency – outdated dependencies (derive_more
   0.99, itertools 0.10, thiserror 1, unmaintained Inflector) and a heavy proc-macro schema layer. `truck-stepio`
   (3D preview) gives the shells but no product structure.
-- **Known limitations:** tested with hand-written AP214 structures only, not with real exports of the CAD programs
-  (the NIST STEP files in `tests/fixtures/cad` are single parts); complex instances and the quantities of
+- **Known limitations:** tested with hand-written AP214 structures only, not with real exports of the CAD programs (the
+  NIST STEP files in `tests/fixtures/cad` are single parts); complex instances and the quantities of
   `QUANTIFIED_ASSEMBLY_COMPONENT_USAGE` are not read; the geometry of the parts is not split into the new items; a
   STEP file imported *into* a checked-out revision is not attached to it.
 
@@ -712,9 +764,11 @@ Documented in the UI, keep in mind:
 8. **Bulk import of a folder tree:** done in the desktop app (*Import CAD Folder…*).
 9. **Chunked resumable uploads:** a tus-like protocol of our own without new dependencies (`POST /api/v1/uploads`,
    `PATCH` with `Upload-Offset`, 409 on a wrong offset, `HEAD` to resume, `finish` or the `uploads` field of a
-   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; used by the desktop app and the attach
+   check-in), chunks staged in `<vault>/uploads/`, expired sessions removed hourly; used by the desktop app and the
+   attach
    and check-in forms of the web UI (`/uploads` with the session cookie) for files above 32 MiB; only the *New
-   item* form still sends one multipart request. **Backup/restore** with `pg_dump`/`pg_restore`: `tests/backup_restore.rs` (backup, restore into a
+   item* form still sends one multipart request. **Backup/restore** with `pg_dump`/`pg_restore`:
+   `tests/backup_restore.rs` (backup, restore into a
    fresh database and vault, identical row counts, file download and API token on the restored instance, `--force`,
    atomic failure) runs in CI, and the CLI smoke test runs `teamcraft backup`/`restore`. Found and fixed on the way: a
    percent-encoded password in `TEAMCRAFT_DATABASE_URL` reached `pg_dump` undecoded; a failed `restore --force` left a

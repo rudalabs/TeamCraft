@@ -328,3 +328,58 @@ pub async fn reject_proposal(
         )
     })
 }
+
+#[derive(Deserialize)]
+pub struct FillWithAiForm {
+    #[serde(default)]
+    wanted: String,
+    #[serde(default)]
+    limits: String,
+    /// The ticked report files arrive as `file_0`, `file_1`, … (the value is
+    /// the file name); a form cannot send a list otherwise.
+    #[serde(flatten)]
+    rest: std::collections::HashMap<String, String>,
+}
+
+/// The answer of the assistant, flattened for the flash message.
+fn flash_text(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// `POST /revisions/{id}/simulation/fill-with-ai` – the *Fill with AI…* box
+/// of the Results card: the assistant proposes the listed values as drafts.
+pub async fn fill_with_ai(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<FillWithAiForm>,
+) -> AppResult<Response> {
+    let back = back_to(id, "simulation-results");
+    let mut files: Vec<String> = form
+        .rest
+        .iter()
+        .filter(|(k, v)| k.starts_with("file_") && !v.trim().is_empty())
+        .map(|(_, v)| v.trim().to_string())
+        .collect();
+    files.sort();
+    let result = crate::services::assistant::fill_result_values(
+        &st,
+        &ctx.me,
+        id,
+        &form.wanted,
+        &form.limits,
+        &files,
+    )
+    .await;
+    finish(&st, result, &back, |(run, created)| {
+        let head = match created {
+            0 => "The assistant proposed no new values.".to_string(),
+            1 => "The assistant proposed 1 value (a draft below).".to_string(),
+            n => format!("The assistant proposed {n} values (drafts below)."),
+        };
+        (
+            format!("/revisions/{id}#result-proposals"),
+            format!("{head} {}", flash_text(&run.answer.text)),
+        )
+    })
+}

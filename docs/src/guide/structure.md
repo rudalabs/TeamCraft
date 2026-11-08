@@ -17,8 +17,8 @@ roll-up and three **revision rules**:
 For a big product (hundreds or thousands of lines across several project
 groups) the BOM page offers:
 
-* **Fold and unfold** – every line that has lines below it has a ▾ / ▸ button
-  (keyboard operable, `aria-expanded`); *Collapse all* and *Expand all* sit
+* **Fold and unfold** – every line that has lines below it has a ▾ / ▸ button (keyboard operable, `aria-expanded`);
+  *Collapse all* and *Expand all* sit
   above the table. This needs JavaScript; without it every line stays
   visible.
 * **Levels** – *Levels: 1, 2, 3, 4, 5, All* (`?depth=n`) lists only the first
@@ -43,8 +43,8 @@ these controls yet.
 Where-used shows the parents of an item; *All levels* on the revision page
 opens the where-used page, which walks up through the sub-assemblies (1, 2,
 3, 5 or all levels). Cycles are rejected. The BOM
-exports as CSV and as Excel workbook (which the BOM import reads back), and
-**Pack and Go** downloads a revision with the files of its whole structure
+exports as CSV and as Excel workbook (which the BOM import reads back), and **Pack and Go** downloads a revision with
+the files of its whole structure
 as ZIP (`<item>_<revision>/`, `bom.csv`, `manifest.json` with SHA-256 per
 file).
 
@@ -59,8 +59,8 @@ chosen, and the API also compares by code (`GET …/revisions/B/bom/compare?with
 with the chosen revision rule, the children of two matched lines are
 compared the same way, and an added or removed sub-assembly brings its
 whole sub-tree. A child that now resolves to another revision counts as
-changed. When one of the two revisions is released, the default rule is
-*As released*: a released parent uses the child revisions it was released
+changed. When one of the two revisions is released, the default rule is *As released*: a released parent uses the child
+revisions it was released
 with, an in-work one the newest released children, so comparing two
 revisions shows exactly which parts went into the new one; otherwise the
 default is *Latest*. *Latest* and *Latest released* resolve a child by its
@@ -93,19 +93,19 @@ default the successor, otherwise an alternate) in place of this one. The
 preview lists every assembly whose *latest* revision uses the item directly
 and what will happen to it:
 
-| Latest revision of the assembly                      | Result                                                       |
-|------------------------------------------------------|--------------------------------------------------------------|
-| in work, not checked out or checked out by you       | the line is replaced (quantity, find number and notes stay)  |
-| in work, checked out by somebody else                | left alone – ask them, or replace it there yourself later     |
-| in work, in a group you cannot edit                  | left alone                                                   |
-| in review                                            | left alone until the review is finished or rejected          |
-| released                                             | needs a new revision – revise it (usually in a change order)  |
-| would contain itself through the replacement         | left alone (circular BOM)                                    |
+| Latest revision of the assembly                | Result                                                       |
+|------------------------------------------------|--------------------------------------------------------------|
+| in work, not checked out or checked out by you | the line is replaced (quantity, find number and notes stay)  |
+| in work, checked out by somebody else          | left alone – ask them, or replace it there yourself later    |
+| in work, in a group you cannot edit            | left alone                                                   |
+| in review                                      | left alone until the review is finished or rejected          |
+| released                                       | needs a new revision – revise it (usually in a change order) |
+| would contain itself through the replacement   | left alone (circular BOM)                                    |
 
 A revision that was not checked out is changed directly, like check out,
 edit, check in; one checked out by you stays checked out. Older revisions keep
-their BOM. Every replaced line is recorded in the history of the assembly
-(`bom.replace`). Assemblies in groups you cannot see are only counted.
+their BOM. Every replaced line is recorded in the history of the assembly (`bom.replace`). Assemblies in groups you
+cannot see are only counted.
 
 ## References
 
@@ -129,8 +129,8 @@ the check and propagates one level further. Every change shows this **impact ana
 
 *Dependents to check* on the dashboard (and in the desktop app) groups the
 open checks by the dependent revision: one header per assembly, drawing or
-simulation (*ASM-000002/A Electronics enclosure – 4 changes to check*) with
-**Open**, **Revise** and **Acknowledge all…**, and one compact row per source
+simulation (*ASM-000002/A Electronics enclosure – 4 changes to check*) with **Open**, **Revise** and **Acknowledge
+all…**, and one compact row per source
 below it – the item that changed, *released* or *obsolete* via which change,
 and the link (BOM line, CAD file reference, drawing, specification, reference,
 simulation basis) – each with its own **Acknowledge…**. **Acknowledge all…**
