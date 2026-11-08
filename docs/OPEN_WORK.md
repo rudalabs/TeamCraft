@@ -1,7 +1,7 @@
 # Open work
 
 The to-do list of TeamCraft, in order of priority, then what is done, then details on the open features.
-Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-11-07.
+Tick an entry (`[x]`) when it is done and move it to *Done*. Last update: 2026-11-08.
 
 ## Direction
 
@@ -15,6 +15,8 @@ goes into **proofing and structure, not new features**:
 3. **Fixes and verification** – known bugs, checks with real CAD data and real servers.
 4. **Parked features** – only finish what is already in progress (custom attributes #60, scale check #47) and fix
    bugs in existing features. A new feature needs an issue with a reason first.
+5. **Feature demand** – the backlog of what users ask of PLM/PDM systems and TeamCraft lacks; candidates for such
+   issues, not commitments.
 
 Rules for every change, features included:
 
@@ -559,8 +561,106 @@ real files and belong to section 3 once such files are at hand.
 - [ ] STEP export through the local NX (NX Open / journal), on Windows and Linux
 - [ ] NX load options for the workspace only on request, in the workspace wizard; NX part of the tutorial
 
+### 5. Feature demand (backlog)
+
+What users ask of PLM/PDM systems (reviews of Teamcenter, Vistapoint, Dokuly, OdooPLM and others, Siemens community
+enhancement requests), reduced to what TeamCraft does not have yet. Already present, done or out of reach without
+licensed CAD programs (native CAD add-ins, automatic drawing PDF/DXF) is left out. Like section 4, these are
+candidates, not commitments: a feature needs an issue with a reason first (see *Direction*).
+
+#### Core data, CAD and vault
+
+- [ ] Modern, quieter UI: fewer clicks, modal dialogs and legacy patterns on the common paths
+- [ ] Responsive pages on large data (1M files, 100k items, 10k-line BOMs – see the scale targets)
+- [ ] Faster opening of large CAD files and assemblies
+- [ ] Configurable lifecycle states and site-specific allowed transitions instead of one built-in state machine
+- [ ] Electrical routing and harness data in the product definition
+- [ ] Repair CAD references after a file is renamed or moved
+- [ ] Central conversion queue for previews and derivatives with retries and a failure view
+- [ ] 3D preview of more native formats; IFC geometry in the viewer
+- [ ] PMI in the 3D preview, also PMI authored on assemblies
+
+#### Search, metadata and usability
+
+- [ ] Search: proven fast at scale, Google-like for a known part, facets (type, state, group, owner, class), column
+  filters in result grids, folder filters over all subfolders
+- [ ] Personal search presets (filters, columns, defaults); configurable result columns with per-user layouts,
+  classification attributes as columns
+- [ ] Search across classification attributes; important metadata on the summary page; full long descriptions
+- [ ] Richer custom attribute types (date, unit, reference, formula) with validation; full regex naming rules
+  (negative lookahead)
+- [ ] Hierarchical numbering (from parent or project), document numbering apart from parts, custom document types,
+  generated cover sheets
+- [ ] Administrator-configurable forms (hide unused fields), role-specific views, low-code validation rules
+- [ ] Same search, commands and navigation in web UI and desktop app; one-click actions (copy item number, revise,
+  approve, open related objects)
+- [ ] Keyboard-first operation, screen-reader checks, skip links and complete table headers; translated UI (i18n)
+- [ ] Native mobile app; QR/barcode label generation (the `/i/<number>` short link exists)
+- [ ] Finer notification rules per event and channel, digests for all notifications, Microsoft Teams and Slack
+  delivery
+
+#### BOM, configuration, change and release
+
+- [ ] BOM: round-trip Excel edit and re-import that keeps identities, CAD BOM synchronisation, graphical BOM compare
+- [ ] Multi-BOM: eBOM → mBOM with traceability, service BOM, several views on the same data without copies
+- [ ] Effectivity by date, serial number and lot; variants with option rules and a 150 % BOM; user-defined revision
+  rules
+- [ ] Assembly flags: "newer revision exists", missing drawings, where-used warning before deleting
+- [ ] Occurrence properties: per-line metadata, recursive reports and their export, "do not show at higher level",
+  BOMs that include hidden or reference-only content, workflow expansion filters
+- [ ] Dissolve/promote a subassembly, pack identical lines, substitutes per occurrence, supersession propagated to all
+  assemblies, reference designators in electrical searches; proofing of quantity/unit edge cases
+- [ ] Sourcing: supplier price breaks, currency conversion, inventory, distributor search and metadata import
+  (DigiKey, Nexar)
+- [ ] Workflows: NPI process, parallel and conditional routing, dynamic participants, notify earlier reviewers,
+  target vs. reference attachments at submission, editable task names, templates, a no-code designer, versioned
+  definitions, delegation, due dates and escalation
+- [ ] Changes linked to quality documents (control plans, PFMEA, work instructions, inspection plans) and to the
+  requirements that drove them
+
+#### Requirements, manufacturing, quality, projects
+
+- [ ] Requirements: hierarchy, derived and superseded requirements, links to parts and documents, references in
+  Markdown; verification records and physical test management beyond simulation
+- [ ] Manufacturing: process planning, bill of process, work instructions, line balancing, scheduling links, work
+  packages traceable to the BOM
+- [ ] As-maintained/service history, serial-number and lot traceability
+- [ ] Quality: QMS links, CAPA, nonconformance, deviations/waivers with expiry, control-plan/PFMEA/inspection-plan
+  links
+- [ ] Materials: material records and levels, coatings, RoHS/REACH declarations, sustainability and carbon footprint
+- [ ] Projects: task assignment with due dates, milestones, portfolio and KPI dashboards, change cycle-time and reuse
+  metrics, self-service and ad-hoc reports, audit-ready report packages
+- [ ] Electronic signatures with meaning; re-authentication at sign-off
+- [ ] Suppliers: portal, collaboration with restricted external access, RFQs, approved manufacturer list, end-of-life
+  alerts for purchased parts
+- [ ] Connectors: ERP/SAP, MES, Jira and other issue trackers
+
+#### Administration, security, platform
+
+- [ ] Managed/SaaS and hybrid deployment (on-premises vault, cloud collaboration)
+- [ ] Permissions per object, per attribute and per lifecycle state; external (supplier) users
+- [ ] SAML, SCIM provisioning, ending sessions of users removed at the IdP (F7), built-in MFA
+- [ ] Token scopes per project group (F2), project API keys
+- [ ] OpenAPI description, a stable versioned API, an event bus connector (Kafka/AMQP)
+- [ ] AI: per-user budgets (F16), prompt-injection protection for writes, AI-assisted impact analysis, semantic search
+- [ ] Code-signed installers, Flathub and AUR packages
+- [ ] Operations: complete metrics, outbox/queue observability, documented alerts, dependency updates, SBOM and build
+  provenance, fuzzing of the remaining parsers, preview limits (F11), hash re-check on download (F8)
+- [ ] Upgrades: proven upgrade chain per release, restore-based rollback guide, a plugin/extension layer
+- [ ] CAD clone workflows: clone an assembly with selective reuse, Save As / revise per component over a whole
+  structure, shown as an indented tree
+- [ ] Interactive onboarding and contextual help
+- [ ] Migration tooling from Teamcenter, Windchill, Aras and SOLIDWORKS PDM
+- [ ] GA proofs: production readiness, migration and concurrency safety, scale validation, external security review,
+  support and versioning policy
+
 ## Done
 
+- [x] **From the feature demand list (#199):** storage quotas per user and for the vault (F9, `teamcraft user quota` /
+  `vault quota`), malware scanning of uploads with ClamAV (`TEAMCRAFT_CLAMD_ADDR`), likely duplicates by name
+  (`GET /items/duplicates`, hint after creating an item), bulk revise/obsolete (`POST /items/bulk`), section plane and
+  point-to-point measuring with selectable decimals in the 3D viewer, encrypted backups (`teamcraft backup --encrypt`).
+  In review (#200): standalone JT preview, graphical comparison of revisions/versions, 3D notes.
 - [x] **Threat model** (`docs/src/dev/threat-model.md`): assets, attackers, trust boundaries and per threat the
   mitigation with code and test or *open*; vault, sessions, PATs, OIDC, uploads, file parsers, webhooks,
   MCP/assistant, desktop ↔ server, backup/restore. 19 open findings listed in section 2, *Security*; one fixed on
@@ -790,7 +890,8 @@ README licence table, follow the definition of done in `CLAUDE.md`. The docs are
   modules – the squashed #132, #134, #135, #136, #143): its new database tests (`tests/as_built.rs`,
   `tests/api_password.rs`, `tests/notification_settings_api.rs`, the metrics tests) run for the first time in its CI.
 - GA items started but not yet in a pull request (work kept in local worktrees): assistant budget (phase 4, F16),
-  scoped tokens (F2), download hardening (F8, F10), upload quotas (F9), retention and cleanup, parser hardening (F11,
-  F13, F14), MCP hardening (F15, F17), backup hardening (F19), OIDC hardening (F6, F7), OpenAPI description; not
+  scoped tokens (F2), download hardening (F8, F10), retention and cleanup, parser hardening (F11,
+  F13, F14), MCP hardening (F15, F17), backup hardening (F19: file modes, signed manifest), OIDC hardening (F6, F7),
+  OpenAPI description; not
   started: MCP versioning, CLI and configuration freeze, accessibility leftovers, SBOM and attestations, upgrade
   proofs per release, scale targets, JSON logs.
