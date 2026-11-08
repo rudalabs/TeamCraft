@@ -158,4 +158,19 @@ mod tests {
         assert_eq!(Disposition::parse(""), Some(Disposition::Open));
         assert_eq!(Disposition::parse("ship it"), None);
     }
+
+    /// The labels shown on the as-built pages (found by cargo mutants).
+    #[test]
+    fn labels() {
+        let kinds: Vec<&str> = DeviationKind::ALL.iter().map(|k| k.label()).collect();
+        assert_eq!(
+            kinds,
+            ["Dimension", "Material", "Component", "Process", "Other"]
+        );
+        let dispositions: Vec<&str> = Disposition::ALL.iter().map(|d| d.label()).collect();
+        assert_eq!(
+            dispositions,
+            ["Open", "Use as is", "Rework", "Repair", "Scrap"]
+        );
+    }
 }
