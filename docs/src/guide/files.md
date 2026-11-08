@@ -35,6 +35,7 @@ turn, double-click to reset; *Z up / Y up* switches the convention.
 |---------------------|------------------------------------------------------------------|
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                   |
 | Native CAD          | NX parts (`.prt`) – the tessellation NX stores in the file      |
+| Native CAD          | Rhino models (`.3dm`) – meshes stored in the file, SubD refined  |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS |
 | Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces          |
 | Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields |
@@ -70,10 +71,18 @@ under their NX file names) and the assembly shows every component in its
 place, sub-assemblies included (see
 [Research: 3D preview of NX parts](../research/nx-jt-preview.md)).
 Components that are not in TeamCraft are left out, and so are components
-on layers the assembly hides in NX. For the rest TeamCraft shows what other
-PLM systems show:
+on layers the assembly hides in NX. **Rhino** models (`.3dm`, Rhino 1 to 8)
+are shown from the meshes Rhino saves with them: mesh objects, the render
+meshes of polysurfaces and extrusions, block instances in their places;
+SubD objects are refined from their control net. Hidden objects and
+hidden layers are left out. A model saved without render meshes (*Save
+Small*, or very old files) has no 3D preview and shows the picture Rhino
+stored instead (see
+[Research: 3D preview of Rhino models](../research/rhino-3dm-preview.md)).
+For the rest TeamCraft shows what other PLM systems show:
 
-* **A picture of the 3D preview** for NX parts and assemblies: the small
+* **A picture of the 3D preview** for NX parts and assemblies and Rhino
+  models: the small
   JPEG NX stores is replaced by an image rendered from the 3D preview
   (512 × 512 PNG, transparent background), drawn once and cached; an
   assembly's picture is drawn again when one of its parts changes. NX

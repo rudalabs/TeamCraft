@@ -43,6 +43,22 @@ the assembly's layer settings hide (read from `/Root/UG_PART/UG_PART`), as
 in NX. Drawings have no 3D preview;
 stand-alone `.jt` files (JT 10) are not previewed yet.
 
+Rhino models (`.3dm`, versions 1 to 8) are read as openNURBS archives
+(`src/mesh/rhino.rs`): nested chunks, the object, layer, block-definition
+and settings tables. The 3D preview shows what Rhino stored for display –
+mesh objects, the render meshes of polysurfaces (one per face, welded at
+1 µm), the mesh cache of extrusions (Rhino 6 and later) and the quantised
+meshes of Rhino 1 files – and refines SubD objects, which store only their
+control net, by Catmull-Clark subdivision (crease edges and corners kept,
+up to about 200 000 quads per SubD) onto the limit surface. Block
+instances place the objects of their definition with the stored 4 × 4
+transform (nested up to 8 levels). Hidden objects, objects on hidden layers
+and block-definition objects themselves are left out; coordinates are
+converted from the model unit to millimetres. Polysurfaces, extrusions and
+NURBS surfaces saved without render meshes, curves, points, annotations,
+linked blocks and colours are not shown; such a model keeps the preview
+bitmap Rhino stored as its thumbnail.
+
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
 files). TeamCraft inflates only the sections it needs, with a hard size

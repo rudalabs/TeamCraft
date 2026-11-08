@@ -31,6 +31,7 @@ mod jt;
 mod p21;
 mod pn;
 pub mod render;
+pub mod rhino;
 mod step;
 mod tessellated;
 
@@ -427,6 +428,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "las" => las(data)?,
         "step" => step::read(data)?,
         "nx-part" => jt::read_nx(data)?,
+        "rhino" => rhino::read(data)?,
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
         "calculix-frd" => crate::simmesh::frd(data)?,
