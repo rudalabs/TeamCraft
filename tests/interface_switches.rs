@@ -134,7 +134,7 @@ fn mcp_and_the_assistant_apply_their_switches() {
     assert!(read("src/services/assistant.rs").contains("Interface::Assistant"));
     // the tool loop reloads the user for every call: it narrows there too
     let assistant = read("src/assistant.rs");
-    assert!(assistant.contains("Interface::Assistant"));
+    assert!(assistant.contains("assistant::switches("));
 }
 
 #[test]
@@ -194,4 +194,84 @@ fn file_downloads_write_the_read_log() {
             "{name} does not log the download"
         );
     }
+}
+
+#[test]
+fn the_assistant_runs_under_the_external_llm_switch_too() {
+    // the run and the per-tool-call reload use the same switch list
+    let service = read("src/services/assistant.rs");
+    assert!(service.contains("Interface::ExternalLlm"));
+    assert!(service.contains("switches(st.config.assistant.as_ref())"));
+    assert!(read("src/assistant.rs").contains("assistant::switches("));
+}
+
+#[test]
+fn the_desktop_get_applies_the_desktop_switch() {
+    let text = read("src/api/bom_api.rs");
+    let body = text
+        .split("async fn get_workset")
+        .nth(1)
+        .and_then(|t| t.split("\n}\n").next())
+        .expect("get_workset");
+    assert!(body.contains("Interface::DesktopSync"), "{body}");
+    // every other caller of the working set must narrow as well
+    for (rel, text) in sources() {
+        if rel == "src/services/workset.rs" || !text.contains("workset::resolve(") {
+            continue;
+        }
+        assert!(
+            text.contains("Interface::DesktopSync"),
+            "{rel} resolves a working set without the desktop switch"
+        );
+    }
+}
+
+#[test]
+fn notification_delivery_applies_the_content_switch() {
+    let delivery = read("src/delivery.rs");
+    assert!(delivery.contains("generic_text_sql("));
+    assert!(delivery.contains("row.generic"));
+    // e-mail and chat are sent from delivery.rs only: nobody else may send
+    // notification text around the switch
+    for (rel, text) in sources() {
+        if rel == "src/delivery.rs" {
+            continue;
+        }
+        assert!(
+            !text.contains("MailSender") && !text.contains("ChatSender"),
+            "{rel} sends mail or chat outside src/delivery.rs"
+        );
+    }
+}
+
+/// A new interface must be listed here with the place that enforces it; one
+/// nobody listed, or whose place lost its check, fails.
+#[test]
+fn every_interface_has_a_named_enforcement_point() {
+    let points: &[(&str, &str)] = &[
+        ("api_tokens", "src/services/users.rs"),
+        ("mcp", "src/mcp/mod.rs"),
+        ("assistant", "src/services/assistant.rs"),
+        ("webhooks", "src/services/webhooks.rs"),
+        ("packages", "src/services/package.rs"),
+        ("notification_content", "src/delivery.rs"),
+        ("external_llm", "src/services/assistant.rs"),
+        ("desktop_sync", "src/api/bom_api.rs"),
+    ];
+    for (variant, name) in interfaces() {
+        let (_, file) = points
+            .iter()
+            .find(|(n, _)| *n == name)
+            .unwrap_or_else(|| panic!("interface '{name}' has no entry in the enforcement table"));
+        let text = read(file);
+        assert!(
+            text.contains(&format!("Interface::{variant}"))
+                || text.contains(&format!("NOT wp.{name}"))
+                || (name == "packages" && text.contains("package_actor("))
+                || text.contains(&format!("{name}_sql("))
+                || (name == "notification_content" && text.contains("generic_text_sql(")),
+            "{file} does not apply the '{name}' switch"
+        );
+    }
+    assert_eq!(points.len(), interfaces().len(), "stale enforcement table");
 }

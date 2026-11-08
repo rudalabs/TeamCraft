@@ -45,8 +45,8 @@ A good bug report contains:
 * what you did, what you expected and what happened instead;
 * the relevant lines of the server log, or a screenshot.
 
-**Remove secrets before you post.** That means passwords, API tokens
-(`tc_pat_…`), session cookies (`tc_sess_…`), OIDC client secrets, webhook URLs
+**Remove secrets before you post.** That means passwords, API tokens (`tc_pat_…`), session cookies (`tc_sess_…`), OIDC
+client secrets, webhook URLs
 and private keys.
 
 ## Development setup
@@ -79,8 +79,7 @@ CI runs these checks on every pull request: the tests against PostgreSQL 16
 and 18 on Linux (with coverage on one leg), the server build on Windows, the
 desktop app on Linux, macOS and Windows; `main` adds the macOS server build and
 more desktop runners (`.github/workflows/`). A pull request that changes a
-pure module also gets a mutation-testing report for the changed lines
-(report-only for now, see
+pure module also gets a mutation-testing report for the changed lines (report-only for now, see
 [mutation testing](docs/src/dev/mutation-testing.md)).
 Run them locally first:
 
@@ -109,11 +108,11 @@ in a non-UTF-8 encoding that sqlx cannot read – `lc_messages = 'C'` in
 `postgresql.conf` gives readable errors. A failing test prints the server's
 warnings and errors (`RUST_LOG` selects more), so a `500` shows its cause.
 
-| If you changed …  | also run                                                            |
-|-------------------|---------------------------------------------------------------------|
-| the desktop app   | `cargo fmt/clippy/test --manifest-path desktop/Cargo.toml`          |
-| the documentation | `mdbook build docs` (mdBook 0.5) and `scripts/check-doc-links.sh`   |
-| the web UI        | check the changed pages in a browser (no CSP errors in the console) |
+| If you changed …                       | also run                                                                                                                                          |
+|----------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------|
+| the desktop app                        | `cargo fmt/clippy/test --manifest-path desktop/Cargo.toml`                                                                                        |
+| the documentation                      | `mdbook build docs` (mdBook 0.5) and `scripts/check-doc-links.sh`                                                                                 |
+| the web UI                             | check the changed pages in a browser (no CSP errors in the console)                                                                               |
 | a pure module in `.cargo/mutants.toml` | `cargo mutants -F '^src/<module>\.rs:'` – every missed mutant gets a unit test or a reason ([mutation testing](docs/src/dev/mutation-testing.md)) |
 
 ### Scale check
@@ -137,16 +136,16 @@ measures; `DROP DATABASE teamcraft_scale` starts over. The report lands in
 `TEAMCRAFT_SCALE_BASELINE=<an earlier results.json>` for a before/after
 column and `TEAMCRAFT_SCALE_RUNS` for more timed calls per step. The plans
 need a superuser (as in the dev container), because they come from
-`auto_explain`. On GitHub, run the **Scale check** workflow by hand
-(`gh workflow run scale.yml --ref <branch>`) and download the `scale-report`
+`auto_explain`. On GitHub, run the **Scale check** workflow by hand (`gh workflow run scale.yml --ref <branch>`) and
+download the `scale-report`
 artifact; it is not part of the pull request checks.
 
 ## Updating the README screenshots
 
 The screenshots in `media/screenshots/` are made by
 [`scripts/screenshots.sh`](scripts/screenshots.sh), never by hand, so that they
-always show the same demo data. The script needs a running TeamCraft with an
-**empty** database that listens on localhost. It creates the administrator
+always show the same demo data. The script needs a running TeamCraft with an **empty** database that listens on
+localhost. It creates the administrator
 through the first-start page and two editors, the project group ROVER, parts
 and assemblies with the NIST files from `tests/fixtures/cad`, a multi-level
 BOM, a released and a pending change order, check-outs and notifications,
@@ -220,13 +219,13 @@ code base. These are the most important rules:
 
 * **All writes go through `src/services/`.** A service function does four
   things, all in one transaction:
-  * checks permissions (`Actor::require`, `revisions::ensure_editable`);
-  * locks the rows it changes (`SELECT … FOR UPDATE`);
-  * validates lifecycle transitions (`LifecycleState::can_transition_to`);
-  * writes the audit entry (`audit::record`).
+    * checks permissions (`Actor::require`, `revisions::ensure_editable`);
+    * locks the rows it changes (`SELECT … FOR UPDATE`);
+    * validates lifecycle transitions (`LifecycleState::can_transition_to`);
+    * writes the audit entry (`audit::record`).
 
-  The web handlers (`src/web/`), API handlers (`src/api/`) and MCP tools
-  (`src/mcp/`) stay thin and call the same service functions.
+  The web handlers (`src/web/`), API handlers (`src/api/`) and MCP tools (`src/mcp/`) stay thin and call the same
+  service functions.
 * **Reads take the actor.** [Restricted project groups](docs/src/admin/permissions.md)
   hide their data from non-members, so every read service takes `&Actor`
   and answers "not found" for hidden objects. Only `services::access` writes
@@ -234,15 +233,15 @@ code base. These are the most important rules:
   into the query that the `COUNT(*)` shares. The `*_unchecked` getters are
   for background and system code – `tests/no_unchecked_in_handlers.rs` fails
   if one is called from `src/web`, `src/api` or `src/mcp`.
-* **New routes and MCP tools** are exercised by the leak test
-  (`tests/read_permissions.rs`), which reads the router sources: a route with
+* **New routes and MCP tools** are exercised by the leak test (`tests/read_permissions.rs`), which reads the router
+  sources: a route with
   a new kind of path parameter needs a placeholder rule in its `fill()`.
 * **SQL** uses runtime queries (`sqlx::query_as::<_, T>` with `FromRow`), not
   the `query!` macros, so building needs no database.
 * **Architecture guards** (`tests/architecture_guards.rs`, no database) read
   the sources and fail when a rule is broken: `sqlx` in `src/web`, `src/api`
-  or `src/mcp`; a public service function that writes without an audit entry
-  (itself or through the services it calls – personal data, caches and
+  or `src/mcp`; a public service function that writes without an audit entry (itself or through the services it calls –
+  personal data, caches and
   housekeeping go on its `NOT_AUDITED` list with a reason); a template that
   is not in `TEMPLATES` or not rendered by `every_template_renders`; a
   `TEAMCRAFT_*` variable missing from `docs/src/admin/configuration.md`.
@@ -252,8 +251,8 @@ code base. These are the most important rules:
   after must be equal; add a case there for a new multi-step mutation.
 * **Schema changes** go into a new numbered file in `migrations/`. Never edit
   a migration that is already on `main`, because existing databases have
-  applied it. `tests/migrations.rs` upgrades a v0.1.0 database with data
-  (`tests/fixtures/migrations/v0.1.0-seed.sql`) and fails when a migration
+  applied it. `tests/migrations.rs` upgrades a v0.1.0 database with data (`tests/fixtures/migrations/v0.1.0-seed.sql`)
+  and fails when a migration
   loses rows, changes old values or narrows a `CHECK` list that old rows
   still use – a new enum value is fine, removing one needs a data migration.
 * **Enums** are `TEXT` columns with `CHECK` constraints. The Rust enums in
@@ -261,35 +260,34 @@ code base. These are the most important rules:
 * **Errors** use `AppError` (`src/error.rs`). User errors are shown to the
   user; internal errors are logged.
 * **Web UI:**
-  * Forms follow POST → redirect → GET, with a flash message.
-  * Register every new template in `TEMPLATES` (`src/templates.rs`) and in
-    the `every_template_renders` test.
-  * No inline JavaScript or styles: the Content Security Policy blocks them.
-  * Cancel buttons take effect immediately, without a confirmation.
-  * **Design tokens:** no literal colours outside `shared/css/skins.css`; every
-    component reads the tokens (`--surface`, `--text-muted`, `--primary`,
-    `--st-<state>-fg/-bg/-bd`, …). Tokens are opaque `#rrggbb`; the unit tests
-    `skins_meet_contrast` and `dark_token_blocks_identical` (`src/domain.rs`)
-    check the WCAG contrast and that the two dark blocks match.
-  * **Shared UI files** (`shared/`): what both the web UI and the desktop
-    app use – skins, fonts, the 3D viewer. The server embeds the folder
-    without a hand-written list (`build.rs`), the desktop build copies it;
-    every `.css`/`.js`/`.svg` starts with
-    `/* SPDX-License-Identifier: MPL-2.0 */`. Rules in `shared/README.md`.
-  * **Density by tokens:** sizes of controls, rows and body text come from
-    `--ctl-h`, `--ctl-h-sm`, `--row-h`, `--fs-body`, `--lh-body`; the web UI
-    uses the defaults, the desktop app `data-density="compact"`. No
-    app-specific copies of these tokens.
-  * No gradients, glow, texture, glass or uppercase labels in components
-    (`grep -n gradient static/style.css` stays empty;
-    only the distro skins' `--glow` / `--pattern` behind the page use them).
-  * One filled (primary) button per view; the rest is secondary, ghost or in
-    a *More* menu.
-  * State is colour **and** a glyph (✓ released, ○ in review, ◐ in work,
-    × rejected, – obsolete, △ check needed), never colour alone.
-  * Check both schemes: the screenshot workflow captures every web page in
-    light (`NAME.png`) and dark (`NAME-dark.png`), the desktop app as well
-    (`desktop-*.png`, `desktop-*-dark.png`).
+    * Forms follow POST → redirect → GET, with a flash message.
+    * Register every new template in `TEMPLATES` (`src/templates.rs`) and in
+      the `every_template_renders` test.
+    * No inline JavaScript or styles: the Content Security Policy blocks them.
+    * Cancel buttons take effect immediately, without a confirmation.
+    * **Design tokens:** no literal colours outside `shared/css/skins.css`; every
+      component reads the tokens (`--surface`, `--text-muted`, `--primary`,
+      `--st-<state>-fg/-bg/-bd`, …). Tokens are opaque `#rrggbb`; the unit tests
+      `skins_meet_contrast` and `dark_token_blocks_identical` (`src/domain.rs`)
+      check the WCAG contrast and that the two dark blocks match.
+    * **Shared UI files** (`shared/`): what both the web UI and the desktop
+      app use – skins, fonts, the 3D viewer. The server embeds the folder
+      without a hand-written list (`build.rs`), the desktop build copies it;
+      every `.css`/`.js`/`.svg` starts with
+      `/* SPDX-License-Identifier: MPL-2.0 */`. Rules in `shared/README.md`.
+    * **Density by tokens:** sizes of controls, rows and body text come from
+      `--ctl-h`, `--ctl-h-sm`, `--row-h`, `--fs-body`, `--lh-body`; the web UI
+      uses the defaults, the desktop app `data-density="compact"`. No
+      app-specific copies of these tokens.
+    * No gradients, glow, texture, glass or uppercase labels in components (`grep -n gradient static/style.css` stays
+      empty;
+      only the distro skins' `--glow` / `--pattern` behind the page use them).
+    * One filled (primary) button per view; the rest is secondary, ghost or in
+      a *More* menu.
+    * State is colour **and** a glyph (✓ released, ○ in review, ◐ in work,
+      × rejected, – obsolete, △ check needed), never colour alone.
+    * Check both schemes: the screenshot workflow captures every web page in
+      light (`NAME.png`) and dark (`NAME-dark.png`), the desktop app as well (`desktop-*.png`, `desktop-*-dark.png`).
 * **Pure Rust:** everything builds with `cargo` alone. No Node.js, no
   downloaded engines and no C/C++ CAD kernels; 3D conversion stays in
   `src/mesh.rs`.

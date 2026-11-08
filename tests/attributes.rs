@@ -326,6 +326,24 @@ async fn custom_attributes_and_classification() {
         html.contains(">Length</a>") && html.contains("inactive"),
         "{html}"
     );
+    assert!(
+        html.contains(">Position</th>")
+            && html.contains("Position in forms")
+            && !html.contains("<label>Order"),
+        "position label: {html}"
+    );
+    // The edit page uses the same wording.
+    let end = html.find(">Length</a>").unwrap();
+    let start = html[..end].rfind("/admin/attributes/").unwrap();
+    let edit_url = &html[start..end];
+    let edit_url = &edit_url[..edit_url.find('"').unwrap()];
+    let edit = app.get_page(edit_url, Some(&cookie)).await.text();
+    assert!(
+        edit.contains("Position in forms")
+            && edit.contains("lower numbers appear first")
+            && !edit.contains("<label>Order"),
+        "edit page: {edit}"
+    );
     let rev_id = app.api(Method::GET, &rev, &eng, None).await.json()["revision"]["id"]
         .as_str()
         .unwrap()

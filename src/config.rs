@@ -72,6 +72,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_ANTHROPIC_API_KEY",
     "TEAMCRAFT_ASSISTANT_API_KEY",
     "TEAMCRAFT_ASSISTANT_BASE_URL",
+    "TEAMCRAFT_ASSISTANT_INTERNAL_URLS",
     "TEAMCRAFT_ASSISTANT_MAX_CONCURRENT",
     "TEAMCRAFT_ASSISTANT_MAX_STEPS",
     "TEAMCRAFT_ASSISTANT_MAX_TOKENS",
@@ -81,9 +82,12 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_ASSISTANT_RETENTION_DAYS",
     "TEAMCRAFT_ASSISTANT_RUN_TIMEOUT",
     "TEAMCRAFT_AUDIT_RETENTION_DAYS",
+    "TEAMCRAFT_BACKUP_PASSPHRASE",
     "TEAMCRAFT_BIND_ADDR",
     "TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD",
     "TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME",
+    "TEAMCRAFT_CLAMD_ADDR",
+    "TEAMCRAFT_CLAMD_MAX_MB",
     "TEAMCRAFT_COOKIE_SECURE",
     "TEAMCRAFT_DATABASE_URL",
     "TEAMCRAFT_DB_HOST",
@@ -260,6 +264,12 @@ pub struct Config {
     pub preview_cache_max_bytes: u64,
     /// Largest chunk of a chunked, resumable upload (`PATCH /api/v1/uploads/{id}`).
     pub upload_chunk_bytes: u64,
+    /// Malware scan of uploads with a ClamAV daemon (`TEAMCRAFT_CLAMD_ADDR`,
+    /// `TEAMCRAFT_CLAMD_MAX_MB`); `None` = no scan.
+    pub clamd: Option<crate::malware::ScannerConfig>,
+    /// Passphrase of encrypted backups (`TEAMCRAFT_BACKUP_PASSPHRASE`, used by
+    /// `teamcraft backup --encrypt` and the restore). Secret – never log it.
+    pub backup_passphrase: Option<String>,
     pub session_ttl: Duration,
     /// Days the audit log is kept (`TEAMCRAFT_AUDIT_RETENTION_DAYS`; 0 = for
     /// ever). Older entries are removed by the hourly housekeeping, which
@@ -500,6 +510,10 @@ pub struct AssistantConfig {
     pub max_concurrent: usize,
     /// Days an idle conversation (thread) is kept before it is deleted.
     pub retention_days: u32,
+    /// Base URLs the administrator marked as internal / self-hosted (without a
+    /// trailing slash). Groups that switched `external_llm` off allow the
+    /// assistant only when [`AssistantConfig::is_internal`].
+    pub internal_urls: Vec<String>,
 }
 
 impl std::fmt::Debug for AssistantConfig {
@@ -515,6 +529,7 @@ impl std::fmt::Debug for AssistantConfig {
             .field("run_timeout", &self.run_timeout)
             .field("max_concurrent", &self.max_concurrent)
             .field("retention_days", &self.retention_days)
+            .field("internal_urls", &self.internal_urls)
             .finish()
     }
 }
@@ -531,6 +546,13 @@ impl AssistantConfig {
     /// `provider:model@host` for logs and the startup summary.
     pub fn label(&self) -> String {
         format!("{}:{}@{}", self.provider.as_str(), self.model, self.host())
+    }
+
+    /// Whether the provider base URL is on the administrator's internal list.
+    pub fn is_internal(&self) -> bool {
+        self.internal_urls
+            .iter()
+            .any(|u| url_is_under(&self.base_url, u))
     }
 
     /// A warning when the key would travel over plain `http` to a host that
@@ -680,6 +702,7 @@ fn assistant_config<F: Fn(&str) -> Option<String>>(
     if !(1..=365).contains(&retention_days) {
         bail!("TEAMCRAFT_ASSISTANT_RETENTION_DAYS must be between 1 and 365");
     }
+    let internal_urls = internal_urls(env)?;
     Ok(Some(AssistantConfig {
         provider,
         base_url,
@@ -691,7 +714,58 @@ fn assistant_config<F: Fn(&str) -> Option<String>>(
         run_timeout: Duration::from_secs(run_timeout),
         max_concurrent,
         retention_days,
+        internal_urls,
     }))
+}
+
+/// Whether `base_url` is `listed` or below it: same scheme, host and port, and
+/// the path of `listed` is a prefix at a segment boundary.
+pub fn url_is_under(base_url: &str, listed: &str) -> bool {
+    let (Ok(a), Ok(b)) = (reqwest::Url::parse(base_url), reqwest::Url::parse(listed)) else {
+        return false;
+    };
+    if a.scheme() != b.scheme()
+        || a.host_str().map(str::to_ascii_lowercase) != b.host_str().map(str::to_ascii_lowercase)
+        || a.port_or_known_default() != b.port_or_known_default()
+    {
+        return false;
+    }
+    let (pa, pb) = (
+        a.path().trim_end_matches('/'),
+        b.path().trim_end_matches('/'),
+    );
+    pa == pb || pa.starts_with(&format!("{pb}/"))
+}
+
+/// `TEAMCRAFT_ASSISTANT_INTERNAL_URLS`: comma or space separated base URLs of
+/// internal / self-hosted model servers.
+fn internal_urls<F: Fn(&str) -> Option<String>>(env: &Env<F>) -> Result<Vec<String>> {
+    let raw = env
+        .get("TEAMCRAFT_ASSISTANT_INTERNAL_URLS")?
+        .unwrap_or_default();
+    let mut out = Vec::new();
+    for entry in raw
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|e| !e.is_empty())
+    {
+        let url = reqwest::Url::parse(entry).map_err(|e| {
+            anyhow!("TEAMCRAFT_ASSISTANT_INTERNAL_URLS: '{entry}' is not a valid URL: {e}")
+        })?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            bail!(
+                "TEAMCRAFT_ASSISTANT_INTERNAL_URLS: '{entry}' must be an http:// or https:// URL \
+                 with a host and without credentials, query or fragment"
+            );
+        }
+        out.push(entry.trim_end_matches('/').to_string());
+    }
+    Ok(out)
 }
 
 #[derive(Clone)]
@@ -829,6 +903,40 @@ impl Config {
         let upload_chunk_mb = env.parse_or("TEAMCRAFT_UPLOAD_CHUNK_MB", 16u64)?;
         if !(1..=1024).contains(&upload_chunk_mb) {
             bail!("TEAMCRAFT_UPLOAD_CHUNK_MB must be between 1 and 1024");
+        }
+        let clamd_max_mb = env.parse_or("TEAMCRAFT_CLAMD_MAX_MB", 25u64)?;
+        if !(1..=4096).contains(&clamd_max_mb) {
+            bail!("TEAMCRAFT_CLAMD_MAX_MB must be between 1 and 4096");
+        }
+        let clamd = match env
+            .get("TEAMCRAFT_CLAMD_ADDR")?
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+        {
+            Some(addr) => {
+                let unix = addr.strip_prefix("unix:");
+                if unix.is_some_and(|p| !p.starts_with('/'))
+                    || (unix.is_none() && !addr.contains(':'))
+                {
+                    bail!("TEAMCRAFT_CLAMD_ADDR must be host:port or unix:/path/to/clamd.socket");
+                }
+                Some(crate::malware::ScannerConfig {
+                    addr,
+                    max_bytes: clamd_max_mb * 1024 * 1024,
+                    timeout: Duration::from_secs(120),
+                })
+            }
+            None => None,
+        };
+        let backup_passphrase = env
+            .get("TEAMCRAFT_BACKUP_PASSPHRASE")?
+            .map(|p| p.trim_end_matches(['\r', '\n']).to_string())
+            .filter(|p| !p.is_empty());
+        if backup_passphrase
+            .as_ref()
+            .is_some_and(|p| p.chars().count() < 12)
+        {
+            bail!("TEAMCRAFT_BACKUP_PASSPHRASE must have at least 12 characters");
         }
 
         let session_ttl_hours = env.parse_or("TEAMCRAFT_SESSION_TTL_HOURS", 72u64)?;
@@ -979,6 +1087,8 @@ impl Config {
             preview,
             preview_cache_max_bytes: preview_cache_max_mb * 1024 * 1024,
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
+            clamd,
+            backup_passphrase,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
             audit_retention_days,
             retention_latest_grace_days,
@@ -1002,13 +1112,14 @@ impl Config {
     /// Password-free summary for the startup log.
     pub fn summary(&self) -> String {
         format!(
-            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} request_digest={}h mattermost_notifications={} assistant={} local_agents={} webhook_targets={}",
+            "bind={} public_url={} database={} vault={} max_upload={}MiB upload_chunk={}MiB malware_scan={} session_ttl={}h cookie_secure={} oidc={} local_login={} mattermost_errors={} smtp={} request_digest={}h mattermost_notifications={} assistant={} local_agents={} webhook_targets={}",
             self.bind_addr,
             self.public_url,
             self.database_display,
             self.vault_dir.display(),
             self.max_upload_bytes / (1024 * 1024),
             self.upload_chunk_bytes / (1024 * 1024),
+            self.clamd.as_ref().map_or("off", |c| c.addr.as_str()),
             self.session_ttl.as_secs() / 3600,
             self.cookie_secure,
             self.oidc.as_ref().map(|o| o.issuer_url.as_str()).unwrap_or("disabled"),
@@ -1226,6 +1337,7 @@ mod tests {
         assert_eq!(cfg.public_url, "http://localhost:8080");
         assert_eq!(cfg.max_upload_bytes, 512 * 1024 * 1024);
         assert_eq!(cfg.upload_chunk_bytes, 16 * 1024 * 1024);
+        assert!(cfg.clamd.is_none(), "no malware scan by default");
         assert_eq!(cfg.request_digest_hours, 24, "daily digests");
         assert!(!cfg.cookie_secure);
         assert_eq!(cfg.log_format, LogFormat::Text);
@@ -1233,6 +1345,41 @@ mod tests {
         assert_eq!(cfg.database_display, "teamcraft@localhost:5432/teamcraft");
         assert_eq!(cfg.database_password.as_deref(), Some("secret"));
         assert!(!cfg.summary().contains("secret"));
+    }
+
+    #[test]
+    fn malware_scanner_settings() {
+        let cfg = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "secret"),
+            ("TEAMCRAFT_CLAMD_ADDR", "clamav:3310"),
+            ("TEAMCRAFT_CLAMD_MAX_MB", "100"),
+        ])
+        .unwrap();
+        let clamd = cfg.clamd.as_ref().unwrap();
+        assert_eq!(clamd.addr, "clamav:3310");
+        assert_eq!(clamd.max_bytes, 100 * 1024 * 1024);
+        assert!(cfg.summary().contains("malware_scan=clamav:3310"));
+        let unix = config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "secret"),
+            ("TEAMCRAFT_CLAMD_ADDR", "unix:/run/clamav/clamd.ctl"),
+        ])
+        .unwrap();
+        assert_eq!(unix.clamd.unwrap().max_bytes, 25 * 1024 * 1024);
+        for bad in ["clamav", "unix:relative.sock"] {
+            assert!(
+                config_from(&[
+                    ("TEAMCRAFT_DB_PASSWORD", "secret"),
+                    ("TEAMCRAFT_CLAMD_ADDR", bad)
+                ])
+                .is_err(),
+                "{bad}"
+            );
+        }
+        assert!(config_from(&[
+            ("TEAMCRAFT_DB_PASSWORD", "secret"),
+            ("TEAMCRAFT_CLAMD_MAX_MB", "0")
+        ])
+        .is_err());
     }
 
     #[test]
@@ -1839,6 +1986,68 @@ mod tests {
                 "{key}={value}"
             );
         }
+    }
+
+    #[test]
+    fn internal_urls_are_parsed_and_matched() {
+        let base = [
+            ("TEAMCRAFT_ASSISTANT_API_KEY", "k"),
+            ("TEAMCRAFT_ASSISTANT_PROVIDER", "openai-compatible"),
+            ("TEAMCRAFT_ASSISTANT_MODEL", "m"),
+            (
+                "TEAMCRAFT_ASSISTANT_BASE_URL",
+                "http://ollama.internal:11434/v1",
+            ),
+        ];
+        let a = assistant_from(&base).unwrap().unwrap();
+        assert!(a.internal_urls.is_empty() && !a.is_internal());
+        let mut with = base.to_vec();
+        with.push((
+            "TEAMCRAFT_ASSISTANT_INTERNAL_URLS",
+            "https://other.example, http://OLLAMA.internal:11434/",
+        ));
+        let a = assistant_from(&with).unwrap().unwrap();
+        assert_eq!(a.internal_urls.len(), 2);
+        assert!(a.is_internal());
+        let mut elsewhere = base.to_vec();
+        elsewhere.push((
+            "TEAMCRAFT_ASSISTANT_INTERNAL_URLS",
+            "http://ollama.internal:9999",
+        ));
+        assert!(!assistant_from(&elsewhere).unwrap().unwrap().is_internal());
+        for bad in [
+            "not a url",
+            "ftp://x.internal",
+            "https://u:p@x.internal",
+            "https://x.internal/?q=1",
+        ] {
+            let mut v = base.to_vec();
+            v.push(("TEAMCRAFT_ASSISTANT_INTERNAL_URLS", bad));
+            assert!(assistant_from(&v).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn url_prefix_matching_respects_segments_scheme_and_port() {
+        assert!(url_is_under("https://a.example/v1", "https://a.example"));
+        assert!(url_is_under(
+            "https://a.example/v1/x",
+            "https://a.example/v1/"
+        ));
+        assert!(url_is_under(
+            "https://A.example:443/v1",
+            "https://a.example/v1"
+        ));
+        assert!(!url_is_under(
+            "https://a.example/v10",
+            "https://a.example/v1"
+        ));
+        assert!(!url_is_under("http://a.example/v1", "https://a.example"));
+        assert!(!url_is_under(
+            "https://a.example.evil/v1",
+            "https://a.example"
+        ));
+        assert!(!url_is_under("https://a.example:8443", "https://a.example"));
     }
 
     #[test]

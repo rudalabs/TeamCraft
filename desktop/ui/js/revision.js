@@ -8,7 +8,7 @@ import { typeIcon } from "./navigator.js";
 import { openTab, reloadActive, renderActive, renderTabs, table } from "./tabs.js";
 import { agentButton } from "./agent.js";
 import { groupImpacts, impactGroup, revChanges, revHistory, revReferences } from "./references.js";
-import { checkinDialog, doCancelCheckout, doCheckout, doObsolete, doRevise, editDialog, getStructureDialog, openFile, openWorkspaceFolder, releaseDialog, revViewer, revWorkspace } from "./workspace.js";
+import { addFilesDialog, checkinDialog, doCancelCheckout, doCheckout, doObsolete, doRevise, editDialog, filesHint, getStructureDialog, openFile, openWorkspaceFolder, releaseDialog, revViewer, revWorkspace } from "./workspace.js";
 import { openChange } from "./change.js";
 import { openRequest, requestChangeDialog } from "./requests.js";
 import { importBomDialog } from "./bom-import.js";
@@ -183,6 +183,7 @@ export function renderRevision(tab, body, toolbar) {
     ]),
     moreMenu([
       { label: "Pack and Go…", icon: "package", run: function () { savePackage(rev, null); }, title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json) – for sending, not for working" },
+      { label: "Add files…", icon: "plus", run: function () { addFilesDialog(tab); }, disabled: !filesHint(d).ok, title: filesHint(d).text },
       { label: "Import BOM…", icon: "download", run: function () { importBomDialog(rev); }, disabled: !can.edit, title: can.edit ? "Add the lines of a BOM exported by the CAD program (CSV, Excel, STEP assembly)" : why.edit },
       { label: "Open in browser", icon: "web", run: function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, title: "Open this revision in the web UI" },
       { label: "Refresh", icon: "refresh", run: reloadActive, shortcut: "F5", title: "Load this revision again" },
@@ -428,7 +429,9 @@ export function revFiles(tab, el) {
   });
   el.appendChild(h("section.panel", null, [
     h("div.panel-head", null, [h("h2", { text: "Files (datasets)" }),
-      h("span.hint", { text: can.checkin ? "Edit the files in your workspace, then check in." : "Check out to change files." })]),
+      h("div.row", null, [
+        h("span.hint", { text: filesHint(d).text }),
+        h("button.small", { type: "button", disabled: !filesHint(d).ok, title: filesHint(d).text, on: { click: function () { addFilesDialog(tab); } } }, "Add files…")])]),
     table(["File", "Version", "Size", "Uploaded", "SHA-256", ""], rows, { numeric: [2] })
   ]));
 }

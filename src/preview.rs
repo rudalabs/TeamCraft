@@ -163,6 +163,12 @@ pub enum PreviewFormat {
     Step,
     /// Siemens NX parts: the lightweight (JT) representation they store.
     NxPart,
+    /// Standalone JT visualisation files (JT 9).
+    Jt,
+    /// SOLIDWORKS parts: the display tessellation they store.
+    SwPart,
+    /// SOLIDWORKS assemblies: put together from the previews of their parts.
+    SwAssembly,
     /// Rhino models: the meshes they store, SubD control nets refined.
     Rhino,
     Pts,
@@ -176,7 +182,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 19] = [
+    pub const ALL: [PreviewFormat; 22] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -188,6 +194,9 @@ impl PreviewFormat {
         PreviewFormat::ThreeDs,
         PreviewFormat::Step,
         PreviewFormat::NxPart,
+        PreviewFormat::Jt,
+        PreviewFormat::SwPart,
+        PreviewFormat::SwAssembly,
         PreviewFormat::Rhino,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
@@ -222,6 +231,9 @@ impl PreviewFormat {
             PreviewFormat::ThreeDs => "3ds",
             PreviewFormat::Step => "step",
             PreviewFormat::NxPart => "nx-part",
+            PreviewFormat::Jt => "jt",
+            PreviewFormat::SwPart => "solidworks-part",
+            PreviewFormat::SwAssembly => "solidworks-assembly",
             PreviewFormat::Rhino => "rhino",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
@@ -244,6 +256,13 @@ impl PreviewFormat {
     /// B-rep formats are tessellated (slower) – the rest is read as is.
     pub fn is_brep(self) -> bool {
         matches!(self, PreviewFormat::Step)
+    }
+
+    /// Assemblies whose preview is put together from their parts' previews
+    /// (`services::assemblies`): NX files without a lightweight
+    /// representation of their own, SOLIDWORKS assemblies.
+    pub fn may_be_assembly(self) -> bool {
+        matches!(self, PreviewFormat::NxPart | PreviewFormat::SwAssembly)
     }
 
     pub fn is_point_cloud(self) -> bool {
@@ -949,7 +968,15 @@ mod tests {
         assert_eq!(PreviewFormat::of("print.3mf"), Some(PreviewFormat::ThreeMf));
         assert_eq!(PreviewFormat::of("scene.GLB"), Some(PreviewFormat::Glb));
         assert_eq!(PreviewFormat::of("scan.las"), Some(PreviewFormat::Las));
-        assert_eq!(PreviewFormat::of("Bracket.SLDPRT"), None, "native CAD");
+        assert_eq!(
+            PreviewFormat::of("Bracket.SLDPRT"),
+            Some(PreviewFormat::SwPart)
+        );
+        assert_eq!(
+            PreviewFormat::of("Rover.sldasm"),
+            Some(PreviewFormat::SwAssembly)
+        );
+        assert_eq!(PreviewFormat::of("Bracket.ipt"), None, "native CAD");
         assert_eq!(
             PreviewFormat::of("plate.iges"),
             None,

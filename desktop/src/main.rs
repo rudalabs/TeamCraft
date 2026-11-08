@@ -8,6 +8,7 @@
 
 mod abortable;
 mod acp;
+mod addfiles;
 mod api;
 mod bomimport;
 mod cadexport;
@@ -208,12 +209,16 @@ fn main() {
             commands::workspace_migrate,
             commands::workspace_status,
             commands::workspace_checkin,
+            commands::pick_files,
+            commands::workspace_add_plan,
+            commands::workspace_add_files,
             commands::workspace_open,
             commands::open_web,
             commands::set_zoom,
             commands::check_update,
             commands::dismiss_update,
             commands::set_update_check,
+            commands::set_checkout_parts,
             commands::open_release_page,
             commands::save_package,
             commands::cancel_package,

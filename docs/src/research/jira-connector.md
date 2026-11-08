@@ -26,18 +26,18 @@ orders (ECO) as Jira issues. Date: 2026-11-05.
 
 ## Jira REST APIs
 
-| Topic | Jira Cloud (v3) | Jira Data Center (v2) |
-|---|---|---|
-| Base URL | `https://<site>.atlassian.net/rest/api/3/…`; scoped API tokens go through `https://api.atlassian.com/ex/jira/<cloudId>/…` | `https://jira.example.internal/rest/api/2/…` |
-| Auth for a server-side integration | Basic `e-mail:API token` (passwords are deprecated); OAuth 2.0 (3LO) or Forge/Connect apps are meant for distributed apps | personal access token as `Authorization: Bearer` (Jira 8.14+), optional expiry, can be disabled by the admin |
-| Create / edit issue | `POST /issue`, `PUT /issue/{key}` | same paths under `/rest/api/2` |
-| Status change | `GET /issue/{key}/transitions` (IDs depend on the workflow), then `POST …/transitions {"transition":{"id":…}}`; 204 on success; screen fields go in `fields` | same |
-| Link back | `POST /issue/{key}/remotelink` with `globalId`. A second POST with the same `globalId` **updates** the link (upsert), `status.resolved` shows it as done | same (available since Jira 5.0) |
-| Rich text | description, comments and textarea custom fields in **ADF** (JSON document). API v2 on Cloud still takes wiki markup | wiki markup strings |
-| Search | `GET/POST /search/jql` with `nextPageToken`. The old `/search` (offset paging, `total`) has been removed | `/search` with `startAt`/`maxResults` |
-| Custom fields | `customfield_NNNNN`; IDs and required fields differ per project and issue type (`GET /issue/createmeta/{project}/issuetypes/{id}`) | same |
-| Own metadata on an issue | issue entity properties (`PUT /issue/{key}/properties/{k}`, up to 32 KB of JSON; searchable by JQL only when indexed by a Connect/Forge app) | same |
-| Idempotency | no idempotency key on `POST /issue`; a retry after a timeout can create a duplicate | same |
+| Topic                              | Jira Cloud (v3)                                                                                                                                              | Jira Data Center (v2)                                                                                        |
+|------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| Base URL                           | `https://<site>.atlassian.net/rest/api/3/…`; scoped API tokens go through `https://api.atlassian.com/ex/jira/<cloudId>/…`                                    | `https://jira.example.internal/rest/api/2/…`                                                                 |
+| Auth for a server-side integration | Basic `e-mail:API token` (passwords are deprecated); OAuth 2.0 (3LO) or Forge/Connect apps are meant for distributed apps                                    | personal access token as `Authorization: Bearer` (Jira 8.14+), optional expiry, can be disabled by the admin |
+| Create / edit issue                | `POST /issue`, `PUT /issue/{key}`                                                                                                                            | same paths under `/rest/api/2`                                                                               |
+| Status change                      | `GET /issue/{key}/transitions` (IDs depend on the workflow), then `POST …/transitions {"transition":{"id":…}}`; 204 on success; screen fields go in `fields` | same                                                                                                         |
+| Link back                          | `POST /issue/{key}/remotelink` with `globalId`. A second POST with the same `globalId` **updates** the link (upsert), `status.resolved` shows it as done     | same (available since Jira 5.0)                                                                              |
+| Rich text                          | description, comments and textarea custom fields in **ADF** (JSON document). API v2 on Cloud still takes wiki markup                                         | wiki markup strings                                                                                          |
+| Search                             | `GET/POST /search/jql` with `nextPageToken`. The old `/search` (offset paging, `total`) has been removed                                                     | `/search` with `startAt`/`maxResults`                                                                        |
+| Custom fields                      | `customfield_NNNNN`; IDs and required fields differ per project and issue type (`GET /issue/createmeta/{project}/issuetypes/{id}`)                           | same                                                                                                         |
+| Own metadata on an issue           | issue entity properties (`PUT /issue/{key}/properties/{k}`, up to 32 KB of JSON; searchable by JQL only when indexed by a Connect/Forge app)                 | same                                                                                                         |
+| Idempotency                        | no idempotency key on `POST /issue`; a retry after a timeout can create a duplicate                                                                          | same                                                                                                         |
 
 **Rate limits (Cloud).** Jira Cloud enforces three independent limits: an
 hourly points quota (1 point per request plus points per returned object),
@@ -70,22 +70,22 @@ The outbox just has to honour `Retry-After`.
 Either way, a Jira administrator has to set up the incoming direction by hand.
 An API token alone cannot do it.
 
-**Lifecycle of Data Center.** Atlassian ends Jira Data Center on 2029-03-28
-(end of sale 2028). Self-hosted users will nevertheless run it for years, and
-the API is almost the same. Supporting both costs one `flavor` switch
-(v2/v3 path, wiki markup vs ADF, Basic vs Bearer, search paging).
+**Lifecycle of Data Center.** Atlassian ends Jira Data Center on 2029-03-28 (end of sale 2028). Self-hosted users will
+nevertheless run it for years, and
+the API is almost the same. Supporting both costs one `flavor` switch (v2/v3 path, wiki markup vs ADF, Basic vs Bearer,
+search paging).
 
 ## How other PDM/PLM systems integrate
 
-| System | What is synced | Direction | How |
-|---|---|---|---|
-| Duro | creates a Jira ticket for every new change order | one-way (Duro → Jira) | built-in, via the integration platform Prismatic |
-| Arena (PTC) | ECOs and quality processes; Jira issues are created and updated as the workflow progresses | Arena → Jira (templates in "Arena Connect", 2026.2) | built-in connector; also the commercial PROSTEP OpenPDM connector (two-way) |
-| PTC Windchill | change requests, problem reports, change notices ↔ issues | two-way | commercial third-party tools: OpsHub (copies fields, comments, attachments) or Sodius OSLC Connect (live links, no copies) |
-| PTC Codebeamer (ALM) | work items ↔ issues, polling as often as every 2 minutes | two-way | PTC integration plus third-party connectors (OpsHub, Nanga) |
-| Aras Innovator | items ↔ issues with field mapping, comments, attachments | two-way | commercial OpsHub app; community posts describe custom code |
-| Onshape | no documented native Jira integration; release candidates can wait for open tasks, webhooks notify external apps of release state changes | – | public webhooks and REST API for custom integrations |
-| OpenBOM | no documented Jira integration found; change requests and change orders are built in | – | – |
+| System               | What is synced                                                                                                                            | Direction                                           | How                                                                                                                        |
+|----------------------|-------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------|
+| Duro                 | creates a Jira ticket for every new change order                                                                                          | one-way (Duro → Jira)                               | built-in, via the integration platform Prismatic                                                                           |
+| Arena (PTC)          | ECOs and quality processes; Jira issues are created and updated as the workflow progresses                                                | Arena → Jira (templates in "Arena Connect", 2026.2) | built-in connector; also the commercial PROSTEP OpenPDM connector (two-way)                                                |
+| PTC Windchill        | change requests, problem reports, change notices ↔ issues                                                                                 | two-way                                             | commercial third-party tools: OpsHub (copies fields, comments, attachments) or Sodius OSLC Connect (live links, no copies) |
+| PTC Codebeamer (ALM) | work items ↔ issues, polling as often as every 2 minutes                                                                                  | two-way                                             | PTC integration plus third-party connectors (OpsHub, Nanga)                                                                |
+| Aras Innovator       | items ↔ issues with field mapping, comments, attachments                                                                                  | two-way                                             | commercial OpsHub app; community posts describe custom code                                                                |
+| Onshape              | no documented native Jira integration; release candidates can wait for open tasks, webhooks notify external apps of release state changes | –                                                   | public webhooks and REST API for custom integrations                                                                       |
+| OpenBOM              | no documented Jira integration found; change requests and change orders are built in                                                      | –                                                   | –                                                                                                                          |
 
 Observations:
 
@@ -124,28 +124,28 @@ Observations:
 
 ### What maps to what
 
-| TeamCraft | Jira |
-|---|---|
-| change request `ECR-000123` (`services/requests.rs`) | issue of a configurable type (e.g. *Task* or a custom *ECR* type) |
-| change order `ECO-000045` (`services/changes.rs`) | issue of a configurable type; optionally linked to the request's issue (issue link "relates to"), or a sub-task |
-| title, description, reason, priority, requester | summary `ECR-000123: <title>`, description (ADF / wiki markup), priority (mapping), label `teamcraft` + `teamcraft-ecr-000123` |
-| affected items / revisions | bullet list in the description (number, revision, name), each linking to TeamCraft. Only the items of the allowed groups are listed |
-| TeamCraft page | remote link with `globalId = teamcraft:<instance>:change/<uuid>`, title = number + status, `status.resolved` when released, implemented, rejected or cancelled |
-| status change | Jira transition by **target status name**, mapped per connection |
-| reviews, decisions | a comment ("Approved by …", "Rejected: <reason>") |
+| TeamCraft                                            | Jira                                                                                                                                                           |
+|------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| change request `ECR-000123` (`services/requests.rs`) | issue of a configurable type (e.g. *Task* or a custom *ECR* type)                                                                                              |
+| change order `ECO-000045` (`services/changes.rs`)    | issue of a configurable type; optionally linked to the request's issue (issue link "relates to"), or a sub-task                                                |
+| title, description, reason, priority, requester      | summary `ECR-000123: <title>`, description (ADF / wiki markup), priority (mapping), label `teamcraft` + `teamcraft-ecr-000123`                                 |
+| affected items / revisions                           | bullet list in the description (number, revision, name), each linking to TeamCraft. Only the items of the allowed groups are listed                            |
+| TeamCraft page                                       | remote link with `globalId = teamcraft:<instance>:change/<uuid>`, title = number + status, `status.resolved` when released, implemented, rejected or cancelled |
+| status change                                        | Jira transition by **target status name**, mapped per connection                                                                                               |
+| reviews, decisions                                   | a comment ("Approved by …", "Rejected: <reason>")                                                                                                              |
 
 Default status mapping, editable per connection:
 
-| TeamCraft state | Jira status (default) |
-|---|---|
-| ECR `new`, `in_triage`, `deferred` | To Do |
-| ECR `accepted` | In Progress |
-| ECR `implemented` | Done |
-| ECR `rejected`, `withdrawn` | Done (+ resolution "Won't Do" if the transition screen allows it) |
-| ECO `draft`, `rejected` | To Do / In Progress |
-| ECO `in_review` | In Review (falls back to In Progress) |
-| ECO `released` | Done |
-| ECO `cancelled` | Done ("Won't Do") |
+| TeamCraft state                    | Jira status (default)                                             |
+|------------------------------------|-------------------------------------------------------------------|
+| ECR `new`, `in_triage`, `deferred` | To Do                                                             |
+| ECR `accepted`                     | In Progress                                                       |
+| ECR `implemented`                  | Done                                                              |
+| ECR `rejected`, `withdrawn`        | Done (+ resolution "Won't Do" if the transition screen allows it) |
+| ECO `draft`, `rejected`            | To Do / In Progress                                               |
+| ECO `in_review`                    | In Review (falls back to In Progress)                             |
+| ECO `released`                     | Done                                                              |
+| ECO `cancelled`                    | Done ("Won't Do")                                                 |
 
 The connector looks up the available transitions of the issue and picks the
 one whose target status has the mapped name. This keeps it independent of
@@ -176,18 +176,17 @@ reused:
   (connection, TeamCraft object id, Jira issue id + key, last synced status).
 * `jira_deliveries`, written in the event's transaction like
   `webhook_deliveries` (same claim with `FOR UPDATE SKIP LOCKED`, lease,
-  exponential backoff with jitter, `MAX_ATTEMPTS`, retention). Deliveries of
-  **one object are processed in order**: claim only the oldest open delivery
+  exponential backoff with jitter, `MAX_ATTEMPTS`, retention). Deliveries of **one object are processed in order**:
+  claim only the oldest open delivery
   per (connection, object), so a transition never overtakes the create. The
   per-issue write limit makes this sensible anyway.
 * The sender does not post the stored payload. It **reads the current state**
   when it sends, so retries and late deliveries converge on the latest state,
   and an item moved to a group outside the scope is no longer sent.
 * Idempotent create:
-  1. Before `POST /issue`, look up `jira_links`.
-  2. After a timeout or 5xx, search by the unique label
-     (`labels = "teamcraft-eco-000045"`) before creating again.
-  3. Remote links are upserts by `globalId`.
+    1. Before `POST /issue`, look up `jira_links`.
+    2. After a timeout or 5xx, search by the unique label (`labels = "teamcraft-eco-000045"`) before creating again.
+    3. Remote links are upserts by `globalId`.
 * A 429 response reschedules the delivery after `Retry-After`. A 401/403
   response pauses the connection and notifies the admins (the existing error
   notification). A 400 response (missing required field) is a permanent error
@@ -221,8 +220,7 @@ The page `/admin/jira` lists the connections. An admin can:
 * edit a connection, with the project-group scope as checkboxes;
 * use **Test connection**, which calls `GET /myself` and the project's
   createmeta and shows missing required fields and unknown status names;
-* see each connection's deliveries with status and error, and retry them
-  (same layout as the webhook deliveries);
+* see each connection's deliveries with status and error, and retry them (same layout as the webhook deliveries);
 * use **Sync now** for one ECR or ECO;
 * read the Jira issue key, which is shown as a link on the ECR and ECO pages.
 
@@ -295,7 +293,8 @@ The page `/admin/jira` lists the connections. An admin can:
 * [Jira Cloud: webhooks](https://developer.atlassian.com/cloud/jira/platform/webhooks/)
 * [Jira Cloud: entity properties](https://developer.atlassian.com/cloud/jira/platform/jira-entity-properties/)
 * [Atlassian Document Format](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/)
-* [Run JQL search query using Jira Cloud REST API (KB, `/search` removed, `/search/jql`)](https://confluence.atlassian.com/display/JIRAKB/Run+JQL+search+query+using+Jira+Cloud+REST+API)
+* [Run JQL search query using Jira Cloud REST API (KB, `/search` removed,
+  `/search/jql`)](https://confluence.atlassian.com/display/JIRAKB/Run+JQL+search+query+using+Jira+Cloud+REST+API)
 * [Atlassian Community: scoped API tokens via api.atlassian.com/ex/jira](https://community.atlassian.com/forums/Jira-questions/Jira-Token-With-Scopes/qaa-p/3081310)
 * [Jira Data Center: personal access tokens](https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html)
 * [Jira Data Center: managing webhooks](https://confluence.atlassian.com/adminjiraserver112/managing-webhooks-1688896467.html)

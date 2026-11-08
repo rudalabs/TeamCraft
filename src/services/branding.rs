@@ -29,6 +29,15 @@ pub const MAX_LOGO_BYTES: usize = 512 * 1024;
 /// Largest side of a bitmap logo in pixels.
 pub const MAX_LOGO_PIXELS: u32 = 4096;
 
+/// Longest header name (characters).
+pub const MAX_NAME_CHARS: usize = 40;
+
+/// Longest subtitle (characters).
+pub const MAX_SUBTITLE_CHARS: usize = 20;
+
+/// The subtitle next to the name unless an administrator changes it.
+pub const DEFAULT_SUBTITLE: &str = "PLM";
+
 /// A logo slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -68,8 +77,14 @@ pub struct Logo {
 
 /// Which slots hold a custom logo, as the version token (first 12 hex digits
 /// of the SHA-256) used to bust caches. `None` = the built-in logo.
-#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
+/// Also the header texts an administrator may change.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct Branding {
+    /// Header name set by an administrator; `None` = the configured instance
+    /// name (`TEAMCRAFT_INSTANCE_NAME`, default "TeamCraft").
+    pub display_name: Option<String>,
+    /// Text after the name in the header: "PLM" unless changed, may be empty.
+    pub subtitle: String,
     pub wide: Option<String>,
     pub square: Option<String>,
     /// Content type of the wide logo (clients that build the image from
@@ -79,12 +94,30 @@ pub struct Branding {
     pub square_type: Option<String>,
 }
 
+impl Default for Branding {
+    fn default() -> Self {
+        Branding {
+            display_name: None,
+            subtitle: DEFAULT_SUBTITLE.to_string(),
+            wide: None,
+            square: None,
+            wide_type: None,
+            square_type: None,
+        }
+    }
+}
+
 impl Branding {
     pub fn get(&self, kind: Kind) -> Option<&str> {
         match kind {
             Kind::Wide => self.wide.as_deref(),
             Kind::Square => self.square.as_deref(),
         }
+    }
+
+    /// The name to show: the custom one, else `fallback` (the instance name).
+    pub fn name<'a>(&'a self, fallback: &'a str) -> &'a str {
+        self.display_name.as_deref().unwrap_or(fallback)
     }
 }
 
@@ -108,7 +141,106 @@ pub async fn current(pool: &PgPool) -> AppResult<Branding> {
             None => {}
         }
     }
+    let texts: Vec<(String, String)> = sqlx::query_as("SELECT key, value FROM branding_text")
+        .fetch_all(pool)
+        .await?;
+    for (key, value) in texts {
+        match key.as_str() {
+            "display_name" if !value.is_empty() => branding.display_name = Some(value),
+            "subtitle" => branding.subtitle = value,
+            _ => {}
+        }
+    }
     Ok(branding)
+}
+
+/// Checks one header text: trimmed, plain text without control characters
+/// (so no line breaks) and without `<` / `>`, at most `max` characters.
+/// Returns the trimmed text (possibly empty).
+fn clean_text(label: &str, raw: &str, max: usize) -> AppResult<String> {
+    let value = raw.trim();
+    if value.chars().count() > max {
+        return Err(AppError::BadRequest(format!(
+            "The {label} may have at most {max} characters."
+        )));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(AppError::BadRequest(format!(
+            "The {label} must be a single line of plain text."
+        )));
+    }
+    if value.contains(['<', '>']) {
+        return Err(AppError::BadRequest(format!(
+            "The {label} must not contain markup (< or >)."
+        )));
+    }
+    Ok(value.to_string())
+}
+
+/// Validates the display name (empty after trimming = back to the default)
+/// and the subtitle (empty = none). Pure.
+pub fn validate_names(display_name: &str, subtitle: &str) -> AppResult<(String, String)> {
+    Ok((
+        clean_text("display name", display_name, MAX_NAME_CHARS)?,
+        clean_text("subtitle", subtitle, MAX_SUBTITLE_CHARS)?,
+    ))
+}
+
+/// Sets the header name and subtitle (administrators). An empty display name
+/// restores the default name; a subtitle equal to [`DEFAULT_SUBTITLE`]
+/// restores the default subtitle; an empty subtitle shows none.
+///
+/// Invariants: admin only; the rows and the audit entry (`branding.update`)
+/// are written in one transaction.
+pub async fn set_names(
+    pool: &PgPool,
+    actor: &Actor,
+    display_name: &str,
+    subtitle: &str,
+) -> AppResult<()> {
+    actor.require(Role::Admin)?;
+    let (display_name, subtitle) = validate_names(display_name, subtitle)?;
+    let mut tx = pool.begin().await?;
+    for (key, value, is_default) in [
+        (
+            "display_name",
+            display_name.as_str(),
+            display_name.is_empty(),
+        ),
+        ("subtitle", subtitle.as_str(), subtitle == DEFAULT_SUBTITLE),
+    ] {
+        if is_default {
+            sqlx::query("DELETE FROM branding_text WHERE key = $1")
+                .bind(key)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            sqlx::query(
+                "INSERT INTO branding_text (key, value, updated_by, updated_at)
+                 VALUES ($1, $2, $3, now())
+                 ON CONFLICT (key) DO UPDATE
+                    SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by,
+                        updated_at = now()",
+            )
+            .bind(key)
+            .bind(value)
+            .bind(actor.id)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "branding.update",
+        "branding",
+        None::<Uuid>,
+        "Changed the header name".to_string(),
+        serde_json::json!({ "display_name": display_name, "subtitle": subtitle }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// The stored logo of a slot, if any.
@@ -621,6 +753,45 @@ mod tests {
   </g>
 </svg>
 "##;
+
+    #[test]
+    fn names_are_trimmed_and_checked() {
+        assert_eq!(
+            validate_names("  Rocket Team  ", " PDM ").unwrap(),
+            ("Rocket Team".to_string(), "PDM".to_string())
+        );
+        // empty is allowed: the default name / no subtitle
+        assert_eq!(
+            validate_names("   ", "").unwrap(),
+            (String::new(), String::new())
+        );
+        // limits count characters, not bytes
+        assert!(
+            validate_names(&"ä".repeat(MAX_NAME_CHARS), &"ö".repeat(MAX_SUBTITLE_CHARS)).is_ok()
+        );
+        assert!(validate_names(&"x".repeat(MAX_NAME_CHARS + 1), "").is_err());
+        assert!(validate_names("", &"x".repeat(MAX_SUBTITLE_CHARS + 1)).is_err());
+        for bad in ["a\nb", "a\tb", "a\u{0}b", "<b>x</b>", "a>b", "a\r"] {
+            // a trailing line break is trimmed, so only inner ones are refused
+            let r = validate_names(bad, "");
+            if bad == "a\r" {
+                assert!(r.is_ok());
+            } else {
+                assert!(r.is_err(), "{bad:?}");
+            }
+            assert!(validate_names("", bad).is_err() || bad == "a\r");
+        }
+        assert!(validate_names("Tom & Jerry's \"Shop\"", "").is_ok());
+    }
+
+    #[test]
+    fn the_name_falls_back_to_the_instance_name() {
+        let mut b = Branding::default();
+        assert_eq!(b.name("Env"), "Env");
+        assert_eq!(b.subtitle, "PLM");
+        b.display_name = Some("Custom".into());
+        assert_eq!(b.name("Env"), "Custom");
+    }
 
     #[test]
     fn kinds_round_trip() {

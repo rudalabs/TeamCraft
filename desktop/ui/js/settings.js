@@ -12,6 +12,11 @@ import { agent, agentSettingsDialog, endAgentPermissions, localAgentsAllowed, lo
 export function openSettings() {
   var current = document.documentElement.getAttribute("data-skin");
   var ws = h("input", { type: "text", value: state.session.workspace_dir, spellcheck: "false" });
+  var withParts = h("input", { type: "checkbox", checked: state.session.checkout_parts !== false, on: { change: function () {
+    var on = withParts.checked;
+    call("set_checkout_parts", { enabled: on }).then(function () { state.session.checkout_parts = on; },
+      function (e) { withParts.checked = !on; toast(errorText(e), "error"); });
+  } } });
   var notifyBox = h("div.stack");
   var notify = notificationSettings(notifyBox);
   var updateCheck = h("input", { type: "checkbox", checked: !!state.session.update_check, on: { change: function () {
@@ -45,6 +50,8 @@ export function openSettings() {
       TAURI.dialog ? h("button", { type: "button", on: { click: function () {
         TAURI.dialog.open({ directory: true, defaultPath: ws.value }).then(function (dir) { if (dir) ws.value = dir; });
       } } }, "Choose…") : null])),
+    h("label.check", null, [withParts, "When checking out an assembly, also get its parts"]),
+    h("p.hint", { text: "Only the assembly is locked. Its parts are copied read-only into your working folder, so it opens in the CAD program; parts you changed locally are never overwritten and are listed in the report. Switch off to copy only the assembly." }),
     // the administrator may have turned local agents off (TEAMCRAFT_LOCAL_AGENTS):
     // then only why, and where the company AI is
     h("h3", { text: "Agents" }),

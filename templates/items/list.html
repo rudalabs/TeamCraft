@@ -109,7 +109,8 @@
     <tbody>
     {% for i in items %}
       <tr data-tc-row="{{ i.number }}">
-        <td class="nowrap mono"><a href="/revisions/{{ i.latest_revision_id }}">{{ i.number }}</a></td>
+        <td class="nowrap mono"><a href="/revisions/{{ i.latest_revision_id }}">{{ i.number }}</a>
+          <button type="button" class="small copy-number" data-copy-text="{{ i.number }}" title="Copy {{ i.number }}" aria-label="Copy the item number {{ i.number }}">⧉</button></td>
         <td>{{ i.name }}{% if i.matched_file %} <span class="small muted" title="The search term was found in this file">· found in {{ i.matched_file }}</span>{% endif %}</td>
         <td>{{ i.item_type|label }}{% if i.classification != "make" %} <span class="badge badge-member" title="Classification">{% for c in classifications %}{% if c.value == i.classification %}{{ c.label|lower }}{% endif %}{% endfor %}</span>{% endif %}</td>
         <td class="mono">{{ i.latest_code }}</td>
