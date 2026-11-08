@@ -33,6 +33,11 @@ exclude_re = [
     # split_number: the last ',' and the last '.' are never at the same index,
     # so `c > d` and `c >= d` cannot be told apart.
     "src/bomtable.rs:.*replace > with >= in split_number",
+    # cadrefs::names_in: `ext + 1` vs `ext * 1` only moves the stem end onto
+    # the dot before the extension; the stem is only tested for letters and
+    # digits, which the dot is not, and a name always has at least one
+    # character before the dot.
+    "src/cadrefs.rs:162:76: replace \\+ with \\* in names_in",
 ]
 
 # Unit tests only (see above); the integration tests in tests/ need PostgreSQL.
