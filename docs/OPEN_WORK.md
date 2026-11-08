@@ -605,7 +605,7 @@ candidates, not commitments: a feature needs an issue with a reason first (see *
 - [ ] Multi-BOM: eBOM → mBOM with traceability, service BOM, several views on the same data without copies
 - [ ] Effectivity by date, serial number and lot; variants with option rules and a 150 % BOM; user-defined revision
   rules
-- [ ] Assembly flags: "newer revision exists", missing drawings, where-used warning before deleting
+- [ ] Assembly flags: "newer revision exists", missing drawings
 - [ ] Occurrence properties: per-line metadata, recursive reports and their export, "do not show at higher level",
   BOMs that include hidden or reference-only content, workflow expansion filters
 - [ ] Dissolve/promote a subassembly, pack identical lines, substitutes per occurrence, supersession propagated to all

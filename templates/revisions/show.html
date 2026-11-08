@@ -317,7 +317,7 @@
               {% endif %}
               <a href="/requests/new?revision={{ rev.id }}&amp;file={{ f.filename|urlencode }}" title="Request a change to {{ f.filename }}">Request change…</a>
               {% if can.edit %}
-              <form method="post" action="/files/{{ f.id }}/delete" data-confirm="Remove {{ f.filename }} and all its versions from this revision?">
+              <form method="post" action="/files/{{ f.id }}/delete" data-confirm="Remove {{ f.filename }} and all its versions from this revision?{{ f.used_by }}">
                 <input type="hidden" name="back" value="{{ back }}#files">
                 <button class="danger" type="submit">Remove</button>
               </form>

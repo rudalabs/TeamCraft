@@ -669,7 +669,10 @@ mod tests {
             })),
         );
         // (MiniJinja escapes `/` in text as `&#x2f;`)
-        assert!(html.contains("qr.svg") && html.contains("plm.example.org"), "{html}");
+        assert!(
+            html.contains("qr.svg") && html.contains("plm.example.org"),
+            "{html}"
+        );
         for (with_plan, restricted) in [(true, false), (false, true)] {
             let html = render(
                 &env,
