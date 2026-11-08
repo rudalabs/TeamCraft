@@ -82,6 +82,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_ASSISTANT_RETENTION_DAYS",
     "TEAMCRAFT_ASSISTANT_RUN_TIMEOUT",
     "TEAMCRAFT_AUDIT_RETENTION_DAYS",
+    "TEAMCRAFT_BACKUP_PASSPHRASE",
     "TEAMCRAFT_BIND_ADDR",
     "TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD",
     "TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME",
@@ -266,6 +267,9 @@ pub struct Config {
     /// Malware scan of uploads with a ClamAV daemon (`TEAMCRAFT_CLAMD_ADDR`,
     /// `TEAMCRAFT_CLAMD_MAX_MB`); `None` = no scan.
     pub clamd: Option<crate::malware::ScannerConfig>,
+    /// Passphrase of encrypted backups (`TEAMCRAFT_BACKUP_PASSPHRASE`, used by
+    /// `teamcraft backup --encrypt` and the restore). Secret – never log it.
+    pub backup_passphrase: Option<String>,
     pub session_ttl: Duration,
     /// Days the audit log is kept (`TEAMCRAFT_AUDIT_RETENTION_DAYS`; 0 = for
     /// ever). Older entries are removed by the hourly housekeeping, which
@@ -924,6 +928,16 @@ impl Config {
             }
             None => None,
         };
+        let backup_passphrase = env
+            .get("TEAMCRAFT_BACKUP_PASSPHRASE")?
+            .map(|p| p.trim_end_matches(['\r', '\n']).to_string())
+            .filter(|p| !p.is_empty());
+        if backup_passphrase
+            .as_ref()
+            .is_some_and(|p| p.chars().count() < 12)
+        {
+            bail!("TEAMCRAFT_BACKUP_PASSPHRASE must have at least 12 characters");
+        }
 
         let session_ttl_hours = env.parse_or("TEAMCRAFT_SESSION_TTL_HOURS", 72u64)?;
         if session_ttl_hours == 0 {
@@ -1074,6 +1088,7 @@ impl Config {
             preview_cache_max_bytes: preview_cache_max_mb * 1024 * 1024,
             upload_chunk_bytes: upload_chunk_mb * 1024 * 1024,
             clamd,
+            backup_passphrase,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
             audit_retention_days,
             retention_latest_grace_days,

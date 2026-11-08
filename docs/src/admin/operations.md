@@ -77,6 +77,25 @@ present. Start the server afterwards; it applies newer migrations.
 * Configuration and secrets (`.env`, the system `teamcraft.env`, TLS keys)
   are not part of the backup; back them up separately.
 
+### Encrypted backups
+
+`teamcraft backup <dir> --encrypt` encrypts the dump and every vault object
+with a key derived from a passphrase (`TEAMCRAFT_BACKUP_PASSPHRASE` or
+`_FILE`, otherwise prompted for twice; at least 12 characters): Argon2id
+(64 MiB, 3 passes) for the key, XChaCha20-Poly1305 in 64 KiB authenticated
+chunks for the files. Object names and the manifest stay plain (the names are
+the SHA-256 of the plain content); the manifest records the salt, the cost
+and a key check. The plain dump exists only between `pg_dump` and its
+encryption, inside `<dir>`.
+
+`teamcraft restore <dir>` notices an encrypted backup and asks for the
+passphrase (or takes it from the configuration). A wrong passphrase is
+reported before anything is changed; every file is authenticated and
+checked against its SHA-256 while it is decrypted, so a changed or truncated
+file stops the restore. The dump is decrypted to a temporary file in the
+vault's `tmp/` for `pg_restore` and removed afterwards. **Without the
+passphrase the backup cannot be restored** – store it apart from the backups.
+
 The container image has no PostgreSQL client tools; the Docker installation
 backs up through the database container instead – see
 [Install with Docker → Backup and restore](docker.md#backup-and-restore).

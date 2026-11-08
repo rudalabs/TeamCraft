@@ -94,6 +94,15 @@ service (e.g. the `clamav/clamav` image next to TeamCraft); raise its
 `StreamMaxLength` together with `TEAMCRAFT_CLAMD_MAX_MB` to scan large CAD
 files too.
 
+### Encrypted backups
+
+| Variable                      | Default | Meaning                                                                                                          |
+|-------------------------------|---------|------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_BACKUP_PASSPHRASE` | –       | passphrase of `teamcraft backup --encrypt` and of restoring such a backup (at least 12 characters); without it the CLI prompts on a terminal. Prefer `TEAMCRAFT_BACKUP_PASSPHRASE_FILE` |
+
+See [Backups](operations.md#backups). Losing the passphrase means losing the
+backup – keep it apart from the backups themselves.
+
 ### Data retention
 
 | Variable                                | Default | Meaning                                                                                                                                                                                                                                                                                                                                                                  |

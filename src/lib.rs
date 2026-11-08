@@ -18,6 +18,7 @@ pub mod assets;
 pub mod assistant;
 pub mod auth;
 pub mod backup;
+pub mod backupcrypt;
 pub mod bomtable;
 pub mod cadformat;
 pub mod cadrefs;

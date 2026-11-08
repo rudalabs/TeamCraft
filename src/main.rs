@@ -42,6 +42,10 @@ enum Command {
     Backup {
         /// Target directory; it must not exist or be empty.
         dir: std::path::PathBuf,
+        /// Encrypt every file with a passphrase (TEAMCRAFT_BACKUP_PASSPHRASE
+        /// or _FILE, otherwise prompted for); the restore needs it.
+        #[arg(long)]
+        encrypt: bool,
     },
     /// Restore the database and the file vault from a backup directory.
     Restore {
@@ -350,7 +354,7 @@ async fn run(cli: Cli) -> ExitCode {
         Command::Mcp { server, token_file } => mcp_bridge(&server, token_file.as_deref()).await,
         Command::Serve { no_migrate } => serve(no_migrate).await,
         Command::Migrate => migrate().await,
-        Command::Backup { dir } => backup_command(dir).await,
+        Command::Backup { dir, encrypt } => backup_command(dir, encrypt).await,
         Command::Restore { dir, force } => restore_command(dir, force).await,
         Command::User { command } => user_command(command).await,
         Command::Vault { command } => vault_command(command).await,
@@ -626,9 +630,30 @@ async fn migrate() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-async fn backup_command(dir: std::path::PathBuf) -> Result<ExitCode> {
+/// The backup passphrase: from the configuration, otherwise prompted for on
+/// a terminal (twice when `confirm`).
+fn backup_passphrase(config: &teamcraft::config::Config, confirm: bool) -> Result<String> {
+    if let Some(p) = &config.backup_passphrase {
+        return Ok(p.clone());
+    }
+    if !std::io::stdin().is_terminal() {
+        bail!("set TEAMCRAFT_BACKUP_PASSPHRASE (or TEAMCRAFT_BACKUP_PASSPHRASE_FILE)");
+    }
+    let first = rpassword::prompt_password("Backup passphrase: ")?;
+    if confirm && rpassword::prompt_password("Repeat the passphrase: ")? != first {
+        bail!("the passphrases do not match");
+    }
+    Ok(first)
+}
+
+async fn backup_command(dir: std::path::PathBuf, encrypt: bool) -> Result<ExitCode> {
     let config = load_config()?;
-    let summary = teamcraft::backup::backup(&config, &dir).await?;
+    let summary = if encrypt {
+        let passphrase = backup_passphrase(&config, true)?;
+        teamcraft::backup::backup_encrypted(&config, &dir, &passphrase).await?
+    } else {
+        teamcraft::backup::backup(&config, &dir).await?
+    };
     println!(
         "backup written to '{}': {} vault object(s), {} byte database dump (sha256 {})",
         dir.display(),
@@ -641,7 +666,13 @@ async fn backup_command(dir: std::path::PathBuf) -> Result<ExitCode> {
 
 async fn restore_command(dir: std::path::PathBuf, force: bool) -> Result<ExitCode> {
     let config = load_config()?;
-    let summary = teamcraft::backup::restore(&config, &dir, force).await?;
+    let passphrase = if teamcraft::backup::is_encrypted(&dir)? {
+        Some(backup_passphrase(&config, false)?)
+    } else {
+        None
+    };
+    let summary =
+        teamcraft::backup::restore_with(&config, &dir, force, passphrase.as_deref()).await?;
     println!(
         "restore from '{}' finished: {} vault object(s), {} copied, {} already present",
         dir.display(),
