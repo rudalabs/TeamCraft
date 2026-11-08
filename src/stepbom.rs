@@ -900,6 +900,19 @@ mod tests {
         assert_eq!(params("/x,#5"), [Param::Other, Param::Ref(5)]);
     }
 
+    /// Found by cargo mutants: the nesting depth goes down again after a
+    /// list, so many sibling lists are all read (nesting beyond
+    /// `MAX_NESTING`: `deeply_nested_parameters_do_not_overflow_the_stack`).
+    #[test]
+    fn sibling_lists_do_not_count_as_nesting() {
+        let siblings: Vec<String> = (1..=MAX_NESTING * 3).map(|i| format!("(#{i})")).collect();
+        let parsed = params(&siblings.join(","));
+        assert_eq!(parsed.len(), MAX_NESTING * 3);
+        assert!(parsed
+            .iter()
+            .all(|p| matches!(p, Param::List(l) if l.len() == 1)));
+    }
+
     /// Found by cargo mutants: comments, unset parameters (`*`) and quoted
     /// semicolons when splitting into instances.
     #[test]
