@@ -1,9 +1,8 @@
 #!/bin/bash
 # Only a bare "git push"/"git pull" and "git add --all" are allowed, and never a push from main.
+# Also blocks all "git worktree" commands (Claude must not create worktrees).
 set -uo pipefail
-
 command="$(cat | jq -r '.tool_input.command // ""')"
-
 deny() {
     jq -nc --arg reason "$1" '{hookSpecificOutput: {
         hookEventName: "PreToolUse",
@@ -11,6 +10,13 @@ deny() {
         permissionDecisionReason: $reason}}'
     exit 0
 }
+
+# Block any worktree-related command immediately
+case "$command" in
+    *"git worktree"* | *"git-worktree"*)
+        deny "Refused: git worktree commands are not allowed (Claude must not create or manage worktrees)."
+        ;;
+esac
 
 case "$command" in
     *"git push"* | *"git pull"* | *"git add"*) ;;

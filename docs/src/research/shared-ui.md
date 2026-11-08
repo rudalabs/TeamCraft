@@ -1,7 +1,7 @@
 # Sharing UI code between the web UI and the desktop app
 
-TeamCraft has two user interfaces. The web UI renders on the server
-(MiniJinja `templates/`, `static/style.css`, `static/app.js` as progressive
+TeamCraft has two user interfaces. The web UI renders on the server (MiniJinja `templates/`, `static/style.css`,
+`static/app.js` as progressive
 enhancement). The desktop app (Tauri 2) renders in the client from REST API
 JSON (`desktop/ui/index.html`, `app.css`, `app.js`, about 4,700 lines).
 They share only what `desktop/build.rs` copies at build time. This page
@@ -11,23 +11,23 @@ behaviour-preserving pull requests. Date: 2026-11-05.
 
 ## What exists today
 
-| Concern | Web UI | Desktop app | Shared today? |
-|---|---|---|---|
-| Design tokens, skins | `static/skins.css` | same file, copied by `desktop/build.rs` | **yes** (copy) |
-| Fonts (Montserrat, Oswald, OFL texts) | `static/fonts/` | copied | **yes** (copy) |
-| Logos, state icons | `media/logos`, `media/icons` | copied | **yes** (copy) |
-| 3D viewer (WebGL2, TCMESH01) | `static/viewer.js`, auto-mounts on `#viewer-canvas[data-src]` | same file, `TeamCraftViewer.mount(canvas, {load})` | **yes** (copy), but one classic script with web-only glue at the end |
-| Component CSS (badge, menu, table, card/panel, stat, empty, notice, thread, impact group, lifecycle track, assistant text) | `static/style.css` (1,400 lines) | `desktop/ui/app.css` (1,000 lines), re-implemented | no – two copies that drift |
-| Density | 14/20 px text; `--ctl-h`, `--row-h` from `skins.css` (32 px, `data-density="compact"` 28 px) | 13/18 px text; own `--d-ctl`, `--d-ctl-sm`, `--d-row` in `app.css` | tokens shared, but the desktop uses its own set and both set text sizes literally |
-| State badges | macros `badge`, `glyph_char`, `state_glyph`: text glyph (✓ ○ × – ◐ ▲) plus label | `badge()` in `app.js`: SVG images (`Green_tick.svg` …) for some states, no glyph for `in_work` | no – **diverging** |
-| Labels (`in_work` → WIP) | `filter_label` (Rust) | `label()` (JS) | no – two implementations of one table |
-| Dates, sizes, numbers | `filter_dt` (UTC, then `app.js` rewrites `<time>` into local time), `filter_age`, `filter_num`, `filter_fixed`, `filter_filesize` | `fmtDate` (local), `fmtSize`, `fmtNum` | no – same rules, two languages |
-| Lifecycle stepper | `ol.lifecycle-track` with `done` / `current` / `future` and screen-reader text | `ol.lifecycle-track`, only `current` marked, every state a coloured badge | no – **diverging** |
-| BOM tree | server-rendered table, `.lvl`, `.indent-N`, `.tree-guide` | client tree with twisties, expand-all | no |
-| Markdown-lite (assistant answers) | `assistant::render_markdown` (Rust, escapes everything) | `markdownLite()` (JS, DOM nodes, never `innerHTML`) | no – two parsers of one dialect |
-| Menus and keyboard | `<details class="menu">` + `app.js` (one open, Esc, ↑/↓), `/` and Ctrl+K focus search, ←/→ on tabs | `moreMenu()` with its own keyboard handling, Ctrl+F search | no – same behaviour written twice |
-| Line icons | inline SVG in templates and macros (`eye`, `star`, lock) | `ICONS` path table in `app.js` | no |
-| Skin list | `domain::SKINS` (Rust) | `SKINS` in `app.js` | checked by a unit test (`src/domain.rs`) |
+| Concern                                                                                                                    | Web UI                                                                                                                            | Desktop app                                                                                    | Shared today?                                                                     |
+|----------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------|
+| Design tokens, skins                                                                                                       | `static/skins.css`                                                                                                                | same file, copied by `desktop/build.rs`                                                        | **yes** (copy)                                                                    |
+| Fonts (Montserrat, Oswald, OFL texts)                                                                                      | `static/fonts/`                                                                                                                   | copied                                                                                         | **yes** (copy)                                                                    |
+| Logos, state icons                                                                                                         | `media/logos`, `media/icons`                                                                                                      | copied                                                                                         | **yes** (copy)                                                                    |
+| 3D viewer (WebGL2, TCMESH01)                                                                                               | `static/viewer.js`, auto-mounts on `#viewer-canvas[data-src]`                                                                     | same file, `TeamCraftViewer.mount(canvas, {load})`                                             | **yes** (copy), but one classic script with web-only glue at the end              |
+| Component CSS (badge, menu, table, card/panel, stat, empty, notice, thread, impact group, lifecycle track, assistant text) | `static/style.css` (1,400 lines)                                                                                                  | `desktop/ui/app.css` (1,000 lines), re-implemented                                             | no – two copies that drift                                                        |
+| Density                                                                                                                    | 14/20 px text; `--ctl-h`, `--row-h` from `skins.css` (32 px, `data-density="compact"` 28 px)                                      | 13/18 px text; own `--d-ctl`, `--d-ctl-sm`, `--d-row` in `app.css`                             | tokens shared, but the desktop uses its own set and both set text sizes literally |
+| State badges                                                                                                               | macros `badge`, `glyph_char`, `state_glyph`: text glyph (✓ ○ × – ◐ ▲) plus label                                                 | `badge()` in `app.js`: SVG images (`Green_tick.svg` …) for some states, no glyph for `in_work` | no – **diverging**                                                                |
+| Labels (`in_work` → WIP)                                                                                                   | `filter_label` (Rust)                                                                                                             | `label()` (JS)                                                                                 | no – two implementations of one table                                             |
+| Dates, sizes, numbers                                                                                                      | `filter_dt` (UTC, then `app.js` rewrites `<time>` into local time), `filter_age`, `filter_num`, `filter_fixed`, `filter_filesize` | `fmtDate` (local), `fmtSize`, `fmtNum`                                                         | no – same rules, two languages                                                    |
+| Lifecycle stepper                                                                                                          | `ol.lifecycle-track` with `done` / `current` / `future` and screen-reader text                                                    | `ol.lifecycle-track`, only `current` marked, every state a coloured badge                      | no – **diverging**                                                                |
+| BOM tree                                                                                                                   | server-rendered table, `.lvl`, `.indent-N`, `.tree-guide`                                                                         | client tree with twisties, expand-all                                                          | no                                                                                |
+| Markdown-lite (assistant answers)                                                                                          | `assistant::render_markdown` (Rust, escapes everything)                                                                           | `markdownLite()` (JS, DOM nodes, never `innerHTML`)                                            | no – two parsers of one dialect                                                   |
+| Menus and keyboard                                                                                                         | `<details class="menu">` + `app.js` (one open, Esc, ↑/↓), `/` and Ctrl+K focus search, ←/→ on tabs                                | `moreMenu()` with its own keyboard handling, Ctrl+F search                                     | no – same behaviour written twice                                                 |
+| Line icons                                                                                                                 | inline SVG in templates and macros (`eye`, `star`, lock)                                                                          | `ICONS` path table in `app.js`                                                                 | no                                                                                |
+| Skin list                                                                                                                  | `domain::SKINS` (Rust)                                                                                                            | `SKINS` in `app.js`                                                                            | checked by a unit test (`src/domain.rs`)                                          |
 
 Guards that already exist and keep working:
 
@@ -61,8 +61,8 @@ Guards that already exist and keep working:
   check-out workspace.
 
 TeamCraft follows the first model: **one CSS, one markup contract, two
-renderers**, and shared JS only where the code is the same in both apps
-(formatters, widgets that enhance existing markup, the viewer).
+renderers**, and shared JS only where the code is the same in both apps (formatters, widgets that enhance existing
+markup, the viewer).
 
 ## Decision: the boundary
 
@@ -95,8 +95,8 @@ shared/
 Rules for everything in `shared/`:
 
 1. **Plain ES modules**, no bundler, no transpiler, no Node.js packages.
-   `<script type="module">` is allowed by `script-src 'self'` in both CSPs
-   (server `src/lib.rs`, desktop `tauri.conf.json`). No inline scripts or
+   `<script type="module">` is allowed by `script-src 'self'` in both CSPs (server `src/lib.rs`, desktop
+   `tauri.conf.json`). No inline scripts or
    styles, no `innerHTML` with data, no `eval`.
 2. **No knowledge of where data comes from.** Shared JS never calls `fetch`
    or Tauri `invoke`; it takes data and callbacks (`viewer.mount(canvas,
@@ -127,8 +127,8 @@ assistant panel; print styles; page layout (top bar, page head, grids).
 The shell (rail, navigator, object tabs, toolbar, status bar, splitter);
 workspace, check-out / check-in, local files and the migration dialog;
 native file dialogs and progress for packages; the ACP agent panel; offline
-and connection state, server switching and token sign-in; Tauri commands
-(`invoke`); dialogs with their own focus management.
+and connection state, server switching and token sign-in; Tauri commands (`invoke`); dialogs with their own focus
+management.
 
 ### Rendering model
 
@@ -136,12 +136,13 @@ The web UI keeps server templates; the desktop app keeps rendering from
 JSON. Neither is forced onto the other. What makes them look identical is
 the markup contract: `shared/README.md` lists, per component, the DOM the
 CSS expects (for example `span.badge.badge-<state> > span.glyph[aria-hidden]`
+
 + label). A MiniJinja macro produces it on the web, a small builder in the
-desktop (`dom.js` + `states.js`) produces it on the desktop.
+  desktop (`dom.js` + `states.js`) produces it on the desktop.
 
 Rejected alternatives: desktop views rendered by the server (loses offline
-work and the desktop CSP), web pages rendered client-side from the API
-(breaks the no-JavaScript web UI and doubles the API surface the web
+work and the desktop CSP), web pages rendered client-side from the API (breaks the no-JavaScript web UI and doubles the
+API surface the web
 depends on), web components with shadow DOM (needs the second rendering
 model on the web and isolates the shared stylesheet).
 
@@ -218,8 +219,8 @@ files are bundled. `index.html` links `/static/shared/css/…` and loads
 The repository has no per-file headers today; `LICENSE` covers it. Files in
 `shared/` start with a one-line `/* SPDX-License-Identifier: MPL-2.0 */`
 because they are copied into another program's bundle, where the origin is
-otherwise lost. The fonts keep their OFL texts next to them
-(`shared/fonts/OFL-*.txt`), which the desktop *About* dialog already cites.
+otherwise lost. The fonts keep their OFL texts next to them (`shared/fonts/OFL-*.txt`), which the desktop *About* dialog
+already cites.
 A unit test checks the SPDX line on every `.css`, `.js` and `.svg` in
 `shared/`.
 

@@ -14,7 +14,7 @@ License: MPL-2.0 (`LICENSE`). No organisation-specific branding or deployment.
 | Format (CI-enforced)   | `cargo fmt --all`                                                                                                                  |
 | Lint (CI-enforced)     | `cargo clippy --all-targets -- -D warnings`                                                                                        |
 | Unit tests, no DB      | `cargo test --lib`                                                                                                                 |
-| Mutation tests         | `cargo mutants -F '^src/<module>\.rs:'` (pure modules of `.cargo/mutants.toml`, `--lib` only; results in `target/mutants.out/`) |
+| Mutation tests         | `cargo mutants -F '^src/<module>\.rs:'` (pure modules of `.cargo/mutants.toml`, `--lib` only; results in `target/mutants.out/`)    |
 | Start the dev database | `docker compose up -d db` (trust auth on 127.0.0.1; status: `docker compose ps`)                                                   |
 | All tests              | `cargo test` (needs the dev database)                                                                                              |
 | Run the server         | `cargo run` → <http://localhost:8080> (reads the optional `secrets/.env`)                                                          |
@@ -31,8 +31,8 @@ say plainly which checks ran and which did not.
 
 * **Never build container images locally** – no `docker build`, `docker buildx`,
   `docker compose build`, `docker compose up --build`. The `Dockerfile` and
-  `deploy/` may be edited; the image is built only by GitHub Actions
-  (`release.yml`: build-only on pull requests, published to ghcr.io only for
+  `deploy/` may be edited; the image is built only by GitHub Actions (`release.yml`: build-only on pull requests,
+  published to ghcr.io only for
   pushes to `main` (`:edge`) and `v*` tags).
 * **Python** only as script files in `./local/`, run with
   `.venv/bin/python ./local/<script>.py` – the user reviews every script. No `python -c`.
@@ -49,8 +49,8 @@ say plainly which checks ran and which did not.
 * Releases: `.github/workflows/release.yml` builds the server binaries and
   desktop installers as artifacts on every push to `main`, publishes the
   container image `ghcr.io/rudalabs/teamcraft` (`:edge` from `main`,
-  `:<version>`/`:latest` from tags) and a GitHub Release for a `v*` tag
-  (CONTRIBUTING.md, "Releases and versions"). Never push a tag, bump the
+  `:<version>`/`:latest` from tags) and a GitHub Release for a `v*` tag (CONTRIBUTING.md, "Releases and versions").
+  Never push a tag, bump the
   version or publish anything else (package registries) unless the user asks
   for that release.
 

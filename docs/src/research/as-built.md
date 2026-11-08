@@ -9,13 +9,13 @@ model the *as-built* side and what TeamCraft adopts. Date: 2026-11-06.
 
 ## How other systems do it
 
-| System / practice | Physical unit | Link to the design | Departures from the design |
-|---|---|---|---|
-| PTC Windchill (MPMLink, Service) | serialised *part instance* / *as-built* and *as-maintained* structures | instance of a part version; the as-built structure starts from the designed BOM | deviations and waivers as change objects; actual installed parts recorded in the instance structure |
-| Siemens Teamcenter (Manufacturing / MRO) | *physical part* with serial or lot number | *as-designed* revision the unit was built to | as-built structure records the actually installed physical parts; *deviation* and *nonconformance* objects with disposition |
-| Aras Innovator | *Product Instance* / serialised part (as-built, as-maintained) | refers to the part revision and its BOM | quality items (nonconformance, CAPA) linked to the instance |
-| ERP (SAP, Odoo, ERPNext) | serial numbers and lots on stock, installed base | material number, sometimes revision level | quality notifications; not a structure comparison |
-| AS9100 / ISO 9001 practice | serial-numbered article with a build record (traveller) | drawing and revision built to | nonconformance report (NCR) with a **disposition**: *use as is*, *rework*, *repair*, *scrap* (often also *return to supplier*); *repair* and *use as is* need engineering (MRB) approval |
+| System / practice                        | Physical unit                                                          | Link to the design                                                              | Departures from the design                                                                                                                                                               |
+|------------------------------------------|------------------------------------------------------------------------|---------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| PTC Windchill (MPMLink, Service)         | serialised *part instance* / *as-built* and *as-maintained* structures | instance of a part version; the as-built structure starts from the designed BOM | deviations and waivers as change objects; actual installed parts recorded in the instance structure                                                                                      |
+| Siemens Teamcenter (Manufacturing / MRO) | *physical part* with serial or lot number                              | *as-designed* revision the unit was built to                                    | as-built structure records the actually installed physical parts; *deviation* and *nonconformance* objects with disposition                                                              |
+| Aras Innovator                           | *Product Instance* / serialised part (as-built, as-maintained)         | refers to the part revision and its BOM                                         | quality items (nonconformance, CAPA) linked to the instance                                                                                                                              |
+| ERP (SAP, Odoo, ERPNext)                 | serial numbers and lots on stock, installed base                       | material number, sometimes revision level                                       | quality notifications; not a structure comparison                                                                                                                                        |
+| AS9100 / ISO 9001 practice               | serial-numbered article with a build record (traveller)                | drawing and revision built to                                                   | nonconformance report (NCR) with a **disposition**: *use as is*, *rework*, *repair*, *scrap* (often also *return to supplier*); *repair* and *use as is* need engineering (MRB) approval |
 
 Common ground:
 

@@ -21,10 +21,10 @@ release.
                                                                                 Implemented
 ```
 
-1. **Raise** – *Request change…* on a revision page, on a file row, in the
-   *Requests* list, or in the desktop app on a revision tab or a workspace
-   file. Give a title, the problem and the proposed solution, a reason
-   (defect, improvement, cost, manufacturing, supplier, safety, customer,
+1. **Raise** – *Request change…* on a revision page, on a file row, in the *Requests* list, or in the desktop app on a
+   revision tab or a workspace
+   file. Give a title, the problem and the proposed solution, a reason (defect, improvement, cost, manufacturing,
+   supplier, safety, customer,
    other), a priority and optionally a date it is needed by. The revision and
    the file name are filled in. Screenshots, mark-ups and PDF reports can be
    attached (PNG, JPEG, GIF, WebP or PDF, up to 10 MiB each – the type is
@@ -37,15 +37,15 @@ release.
 3. **Triage** – a CAD editor of an affected project group (or an admin)
    *starts the triage* (and is assigned if nobody is), assigns it to the
    engineer who will do the work and decides:
-   * **Accept** – the change will be made;
-   * **Defer** – not now (reason required); *take up again* later;
-   * **Reject** – no change (reason required).
-   While no item is named, any CAD editor may triage; once the request is
-   decided, an item is added only by a member of its project group (or an
-   admin).
+    * **Accept** – the change will be made;
+    * **Defer** – not now (reason required); *take up again* later;
+    * **Reject** – no change (reason required).
+      While no item is named, any CAD editor may triage; once the request is
+      decided, an item is added only by a member of its project group (or an
+      admin).
 4. **Implement** – an accepted request gets its change order: *Create change
-   order* creates a draft with the in-work revisions of the affected items
-   (items without a revision in work are listed – revise them and add the
+   order* creates a draft with the in-work revisions of the affected items (items without a revision in work are
+   listed – revise them and add the
    revision to the draft), or *Link* an existing open change order. The
    change order runs through review as usual.
 5. **Implemented** – when a linked change order is released, the request
@@ -78,19 +78,18 @@ line for an item under *Affected revisions* (*On release*). When the change is
 released the revision becomes obsolete in the same step – a supersede line also
 declares the item superseded by its successor, and its watchers are told. A
 project group can require this way for obsoleting (*Review policy*, see
-[Permissions](../admin/permissions.md)); then the direct *Mark obsolete* and
-*Supersede* buttons answer 409.
+[Permissions](../admin/permissions.md)); then the direct *Mark obsolete* and *Supersede* buttons answer 409.
 
 ### Release readiness
 
 A change releases a whole product at once. Before it can be submitted,
 every revision in it is checked against what it depends on:
 
-| Dependency | Not released and not in this change | Obsolete |
-|---|---|---|
-| BOM lines | blocks the submit | warning |
-| item references (drawing, specification, reference) | blocks the submit | warning |
-| CAD file references (found by the file scan) | warning | warning |
+| Dependency                                          | Not released and not in this change | Obsolete |
+|-----------------------------------------------------|-------------------------------------|----------|
+| BOM lines                                           | blocks the submit                   | warning  |
+| item references (drawing, specification, reference) | blocks the submit                   | warning  |
+| CAD file references (found by the file scan)        | warning                             | warning  |
 
 The *Release readiness* card of a draft change lists them. *Add* puts a
 single in-work revision into the change. *Add all to this change* adds
@@ -125,8 +124,8 @@ are withdrawn and submitted again.
 
 When a change is withdrawn or reopened after somebody decided, the decisions
 of that round are kept (table `change_review_rounds`) and the next submit
-starts a new round. The change page shows the current round in the
-*Reviewers* card and the earlier ones under *Earlier rounds*.
+starts a new round. The change page shows the current round in the *Reviewers* card and the earlier ones under *Earlier
+rounds*.
 
 A reviewer who has not decided yet but no longer can (account deactivated,
 role below editor, or not a member of a restricted group of an affected item)
@@ -143,13 +142,13 @@ five people who know the affected items, each with a one-click *Add* and
 the reasons in plain text. The suggestions come from the history TeamCraft
 already keeps – no AI, the same data always gives the same order:
 
-| Source | Example reason | Points |
-|---|---|---|
-| edits of an earlier revision of an affected item in the last 90 days (check-ins, uploads, BOM and attribute edits) | edited PRT-000005 3 times in the last 90 days | 3 + one per edit (at most 10 per item) |
-| a decision on an earlier change with the same items | reviewed ECO-000012 (same items) | 4 (still pending: 2) |
-| owner of a dependent: creator or author of the latest revision of an item that uses, documents or references an affected item | owns ASM-000003, which uses PRT-000005 | 2 |
-| manager of the project group of an affected item | manager of ROVER | 3 |
-| requester of a change request this change implements | raised ECR-000007, implemented by this change | 1 |
+| Source                                                                                                                        | Example reason                                | Points                                 |
+|-------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------|----------------------------------------|
+| edits of an earlier revision of an affected item in the last 90 days (check-ins, uploads, BOM and attribute edits)            | edited PRT-000005 3 times in the last 90 days | 3 + one per edit (at most 10 per item) |
+| a decision on an earlier change with the same items                                                                           | reviewed ECO-000012 (same items)              | 4 (still pending: 2)                   |
+| owner of a dependent: creator or author of the latest revision of an item that uses, documents or references an affected item | owns ASM-000003, which uses PRT-000005        | 2                                      |
+| manager of the project group of an affected item                                                                              | manager of ROVER                              | 3                                      |
+| requester of a change request this change implements                                                                          | raised ECR-000007, implemented by this change | 1                                      |
 
 Each source counts at most a few times per person, so one busy source
 cannot outweigh the others. Only active CAD editors and admins – the users
@@ -165,8 +164,7 @@ assign anybody.
 ## Notifications
 
 The bell lists review requests, decisions, releases, checks needed, change
-requests and news about **watched** items, changes and change requests
-(*Watch* on any of their pages).
+requests and news about **watched** items, changes and change requests (*Watch* on any of their pages).
 Optionally TeamCraft sends them by e-mail (SMTP) and to Mattermost (mention
 or direct message). Every user chooses channels and mutes kinds on the
 account page; delivery runs from an outbox, so a slow mail server never

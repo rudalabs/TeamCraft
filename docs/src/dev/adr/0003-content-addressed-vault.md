@@ -19,8 +19,7 @@ database needs to name a file version; the bytes need somewhere to live.
   renamed into place when complete (atomic); a blob is never modified after
   it was written. Identical files are stored once, however many revisions
   reference them.
-* **Chunked uploads** are staged in `uploads/<session>` until they are finished
-  (`services::uploads`).
+* **Chunked uploads** are staged in `uploads/<session>` until they are finished (`services::uploads`).
 * **Derived data is separate:** the preview cache (`previews/`) is not part of
   the vault's content and is rebuilt when missing.
 * **Backups check the vault.** Since #93, `teamcraft backup` hashes every object
@@ -50,11 +49,11 @@ objects / `bytea`) or in an object store (S3-compatible) was considered.
 
 ## Where it is held
 
-| What | Where |
-|------|-------|
-| Layout, atomic write, verify | `src/vault.rs` |
-| Consistency check | `teamcraft vault check` in `src/main.rs` |
-| Backup and restore with object checks | `src/backup.rs` |
-| Corrupt or missing objects refuse the backup; a failing restore leaves the vault untouched | `tests/backup_proofing.rs`, `tests/backup_errors.rs` |
-| Backup and restore end to end | `tests/backup_restore.rs` |
-| Vault and audit trail | `tests/audit_and_vault.rs`, `tests/domain_and_vault.rs` |
+| What                                                                                       | Where                                                   |
+|--------------------------------------------------------------------------------------------|---------------------------------------------------------|
+| Layout, atomic write, verify                                                               | `src/vault.rs`                                          |
+| Consistency check                                                                          | `teamcraft vault check` in `src/main.rs`                |
+| Backup and restore with object checks                                                      | `src/backup.rs`                                         |
+| Corrupt or missing objects refuse the backup; a failing restore leaves the vault untouched | `tests/backup_proofing.rs`, `tests/backup_errors.rs`    |
+| Backup and restore end to end                                                              | `tests/backup_restore.rs`                               |
+| Vault and audit trail                                                                      | `tests/audit_and_vault.rs`, `tests/domain_and_vault.rs` |

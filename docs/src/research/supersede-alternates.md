@@ -7,12 +7,12 @@ adopts. Date: 2026-11-05.
 
 ## How other systems do it
 
-| System | Interchangeable parts | Replacement of an outdated part | Notes |
-|---|---|---|---|
-| PTC Windchill | *alternate* (global: B may be used instead of A in every assembly) and *substitute* (local: only on one BOM usage) | *replacement* links and mass change "replace in where-used" | alternates can be one-way or two-way |
-| Aras Innovator | *Part Alternate* relationship on the part, *BOM Substitute* on the BOM line | supersession through a new part plus change process | alternates are not revisioned with the BOM |
-| ERPNext | *Item Alternative* document with a *two-way* flag; a BOM line opts in with *Allow Alternative Item* | none built in | the alternative is offered when material is short |
-| SAP S/4HANA (MM/PP) | alternative items in the BOM (groups with priorities and usage probability) | *discontinuation* with a *follow-up material*: MRP switches to the successor when the stock is used up | discontinuation is a property of the outdated material |
+| System              | Interchangeable parts                                                                                              | Replacement of an outdated part                                                                        | Notes                                                  |
+|---------------------|--------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|--------------------------------------------------------|
+| PTC Windchill       | *alternate* (global: B may be used instead of A in every assembly) and *substitute* (local: only on one BOM usage) | *replacement* links and mass change "replace in where-used"                                            | alternates can be one-way or two-way                   |
+| Aras Innovator      | *Part Alternate* relationship on the part, *BOM Substitute* on the BOM line                                        | supersession through a new part plus change process                                                    | alternates are not revisioned with the BOM             |
+| ERPNext             | *Item Alternative* document with a *two-way* flag; a BOM line opts in with *Allow Alternative Item*                | none built in                                                                                          | the alternative is offered when material is short      |
+| SAP S/4HANA (MM/PP) | alternative items in the BOM (groups with priorities and usage probability)                                        | *discontinuation* with a *follow-up material*: MRP switches to the successor when the stock is used up | discontinuation is a property of the outdated material |
 
 Common ground:
 

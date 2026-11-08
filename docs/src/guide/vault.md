@@ -100,14 +100,15 @@ clients do):
 Per file, a workspace is in one of these states (desktop Workspace tab,
 `…/file-status` in the API):
 
-| State        | Meaning                                                                          |
-|--------------|----------------------------------------------------------------------------------|
-| *up to date* | the local file is the current version                                            |
+| State        | Meaning                                                                         |
+|--------------|---------------------------------------------------------------------------------|
+| *up to date* | the local file is the current version                                           |
 | *modified*   | changed locally, the server still has the version it was based on – check it in |
 | *outdated*   | unchanged locally, the server has a newer version – get the current files       |
-| *conflict*   | changed locally **and** on the server since – a check-in would be refused        |
-| *new*        | only local                                                                       |
-| *missing*    | only on the server                                                               |
+| *conflict*   | changed locally **and** on the server since – a check-in would be refused       |
+| *new*        | only local                                                                      |
+| *missing*    | only on the server                                                              |
+
 * Uploads show a progress bar; **Cancel upload** stops the transfer
   immediately and nothing changes on the server.
 
@@ -145,8 +146,8 @@ one chunk per request is held in memory, which is why
 Uploads are private to the user who started them. An unfinished upload
 expires 24 hours after its last chunk; the server removes expired uploads and
 their data at start-up and every hour. Each user may have at most 16
-unfinished uploads at a time, so the space they reserve stays bounded
-(16 × `TEAMCRAFT_MAX_UPLOAD_MB` per user). `DELETE /api/v1/uploads/{id}`
+unfinished uploads at a time, so the space they reserve stays bounded (16 × `TEAMCRAFT_MAX_UPLOAD_MB` per user).
+`DELETE /api/v1/uploads/{id}`
 cancels one at once.
 
 **In the browser** the upload and check-in forms of the revision page and
