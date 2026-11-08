@@ -1274,6 +1274,37 @@ mod tests {
         assert!(!scannable("pipe.cas.h5") && !scannable("run.op2"));
     }
 
+    /// Found by cargo mutants: both limits of an exchange file are inclusive
+    /// and hold beyond the first value past them.
+    #[test]
+    fn exchange_file_limits() {
+        use crate::services::simulations::MAX_RESULTS;
+        let values = |n: usize| {
+            let rows: Vec<String> = (0..n)
+                .map(|i| format!(r#"{{"name":"v{i}","value":{i}}}"#))
+                .collect();
+            format!("[{}]", rows.join(","))
+        };
+        assert_eq!(
+            parse_exchange(EXCHANGE_JSON, values(MAX_RESULTS).as_bytes())
+                .unwrap()
+                .len(),
+            MAX_RESULTS
+        );
+        for n in [MAX_RESULTS + 1, MAX_RESULTS + 2] {
+            let err = parse_exchange(EXCHANGE_JSON, values(n).as_bytes()).unwrap_err();
+            assert!(err.contains("more than"), "{n}: {err}");
+        }
+        // exactly EXCHANGE_MAX_BYTES (padded with white space) is read
+        let size = usize::try_from(EXCHANGE_MAX_BYTES).unwrap();
+        let mut padded = br#"[{"name":"a","value":1}]"#.to_vec();
+        padded.resize(size, b' ');
+        assert_eq!(parse_exchange(EXCHANGE_JSON, &padded).unwrap().len(), 1);
+        padded.push(b' ');
+        let err = parse_exchange(EXCHANGE_JSON, &padded).unwrap_err();
+        assert!(err.contains("larger than"), "{err}");
+    }
+
     /// The documented limits (found by cargo mutants: behavioural tests
     /// would have to read megabytes).
     #[test]
