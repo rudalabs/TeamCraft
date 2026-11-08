@@ -310,6 +310,7 @@ pub async fn show(
             let mut value = json!(f);
             value["versions"] = json!(versions);
             value["preview"] = json!(preview);
+            value["used_by"] = json!(used_by_warning(&f.filename, &file_referrers));
             value
         })
         .collect();
@@ -1206,6 +1207,35 @@ pub async fn preview(
     preview_page(&st, &ctx, file, current).await
 }
 
+/// The where-used warning of a file before it is removed: the readable CAD
+/// files of other items that reference it ("ASM-000001/B frame.iam", at most
+/// three named, then "and n more"); empty when nothing references it.
+fn used_by_warning(
+    filename: &str,
+    referrers: &[crate::services::references::FileReferrer],
+) -> String {
+    let users: Vec<String> = referrers
+        .iter()
+        .filter(|r| r.referenced.eq_ignore_ascii_case(filename))
+        .map(|r| format!("{}/{} {}", r.item_number, r.revision_code, r.filename))
+        .collect();
+    match users.len() {
+        0 => String::new(),
+        n => {
+            let named = users[..n.min(3)].join(", ");
+            let more = if n > 3 {
+                format!(" and {} more", n - 3)
+            } else {
+                String::new()
+            };
+            format!(
+                " It is still referenced by {n} file{} of other items: {named}{more} – their references break.",
+                if n == 1 { "" } else { "s" }
+            )
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct NoteBody {
     x: f64,
@@ -1493,4 +1523,45 @@ pub async fn delete_file(
             format!("Removed {}", file.filename),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::services::references::FileReferrer;
+    use uuid::Uuid;
+
+    fn referrer(number: &str, filename: &str, referenced: &str) -> FileReferrer {
+        FileReferrer {
+            item_id: Uuid::nil(),
+            item_number: number.into(),
+            revision_id: Uuid::nil(),
+            revision_code: "A".into(),
+            revision_state: "in_work".into(),
+            item_name: "Frame".into(),
+            file_id: Uuid::nil(),
+            filename: filename.into(),
+            referenced: referenced.into(),
+            export_name: false,
+        }
+    }
+
+    #[test]
+    fn removing_a_referenced_file_warns_with_its_users() {
+        assert_eq!(super::used_by_warning("bracket.prt", &[]), "");
+        let one = [referrer("ASM-000001", "frame.asm", "Bracket.PRT")];
+        let text = super::used_by_warning("bracket.prt", &one);
+        assert!(
+            text.contains("1 file of other items: ASM-000001/A frame.asm"),
+            "{text}"
+        );
+        let many: Vec<_> = (1..=5)
+            .map(|i| referrer(&format!("ASM-00000{i}"), "frame.asm", "bracket.prt"))
+            .collect();
+        let text = super::used_by_warning("bracket.prt", &many);
+        assert!(
+            text.contains("5 files") && text.contains("and 2 more"),
+            "{text}"
+        );
+        assert_eq!(super::used_by_warning("other.prt", &many), "");
+    }
 }

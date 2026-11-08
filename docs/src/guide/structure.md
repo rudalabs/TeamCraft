@@ -116,7 +116,11 @@ written by SolidWorks, Inventor, Solid Edge, CATIA, …; NX parts and
 SOLIDWORKS 2015+ files through their containers, see
 [Formats](../reference/formats.md)) and matched against
 the vault: referenced files that are *not in TeamCraft* are flagged and the
-missing BOM lines are suggested.
+missing BOM lines are suggested. The other direction warns before damage:
+removing a file that CAD files of other items still reference names them
+(up to three, then a count) in the confirmation, so a part still used in an
+assembly or drawing is not deleted by accident. Deleting an item is refused
+while it is used in a BOM.
 
 ## Change propagation
 

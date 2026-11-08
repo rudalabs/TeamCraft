@@ -592,10 +592,10 @@ candidates, not commitments: a feature needs an issue with a reason first (see *
 - [ ] Hierarchical numbering (from parent or project), document numbering apart from parts, custom document types,
   generated cover sheets
 - [ ] Administrator-configurable forms (hide unused fields), role-specific views, low-code validation rules
-- [ ] Same search, commands and navigation in web UI and desktop app; one-click actions (copy item number, revise,
-  approve, open related objects)
+- [ ] Same search, commands and navigation in web UI and desktop app; one-click actions (revise, approve, open
+  related objects)
 - [ ] Keyboard-first operation, screen-reader checks, skip links and complete table headers; translated UI (i18n)
-- [ ] Native mobile app; QR/barcode label generation (the `/i/<number>` short link exists)
+- [ ] Native mobile app
 - [ ] Finer notification rules per event and channel, digests for all notifications, Microsoft Teams and Slack
   delivery
 
@@ -605,7 +605,7 @@ candidates, not commitments: a feature needs an issue with a reason first (see *
 - [ ] Multi-BOM: eBOM → mBOM with traceability, service BOM, several views on the same data without copies
 - [ ] Effectivity by date, serial number and lot; variants with option rules and a 150 % BOM; user-defined revision
   rules
-- [ ] Assembly flags: "newer revision exists", missing drawings, where-used warning before deleting
+- [ ] Assembly flags: "newer revision exists", missing drawings
 - [ ] Occurrence properties: per-line metadata, recursive reports and their export, "do not show at higher level",
   BOMs that include hidden or reference-only content, workflow expansion filters
 - [ ] Dissolve/promote a subassembly, pack identical lines, substitutes per occurrence, supersession propagated to all

@@ -109,6 +109,8 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/items/new", get(items::new_form))
         .route("/items/{id}", get(items::show))
+        .route("/items/{id}/label", get(items::label))
+        .route("/items/{id}/qr.svg", get(items::qr_svg))
         .route("/items/{id}/master", post(items::update_master))
         .route("/items/{id}/owner", post(items::set_owner))
         .route("/items/{id}/delete", post(items::delete))
