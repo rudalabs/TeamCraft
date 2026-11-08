@@ -392,6 +392,9 @@ real files and belong to section 3 once such files are at hand.
 
 **Desktop app**
 
+- [x] #183: assemblies in the desktop – *Structure* view in the navigator (`GET …/structure`), check-out of an
+  assembly gets its parts read-only and never overwrites local files. Open: size prompt for very large assemblies,
+  the *No BOM – N parts referenced* hint node, the web vault explorer toggle, check in the real app
 - [ ] Check #58 in the real app (Tauri build, Windows): project groups load again on *Home*, *Refresh* and in the
   dialogs; the same folder imported into a second project group (so far checked in Chromium with a stubbed Tauri)
 - [ ] Decide and document what happens when the same CAD files are imported into two project groups: two independent

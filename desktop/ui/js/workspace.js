@@ -8,6 +8,7 @@ import { reloadActive, renderActive, table } from "./tabs.js";
 import { PROGRAM_LABEL, cadPrograms, dd, exportProgram, exportStep, openRevision, previewFormat, revisionAbilities } from "./revision.js";
 import { openChange } from "./change.js";
 import { requestChangeDialog } from "./requests.js";
+import { refreshStructure } from "./navigator.js";
 
 // ---------------------------------------------------------------- 3D viewer
 
@@ -344,8 +345,10 @@ export function doCheckout(tab) {
   run("Checking out " + rev.item_number + "/" + rev.code, function () {
     return getting(call("workspace_checkout", { project: rev.project_code, item: rev.item_number, code: rev.code }));
   }).then(function (r) {
-    toast("Checked out " + rev.item_number + "/" + rev.code + " – the files in " + r.dir + " are writable now");
-    if (r.kept.length || r.clashes.length || r.failed.length) reportDownload(r);
+    // with structure: the parts came read-only, local files were never overwritten
+    toast(r.summary || ("Checked out " + rev.item_number + "/" + rev.code + " – the files in " + r.dir + " are writable now"));
+    if (r.kept.length || r.clashes.length || r.failed.length || r.unresolved.length) reportDownload(r);
+    refreshStructure();
     tab.sub = "workspace";
     reloadActive();
     refreshWorklistCount();
