@@ -1098,7 +1098,14 @@ mod tests {
         let mut ole = OLE_MAGIC.to_vec();
         ole.extend_from_slice(&[0; 16]);
         assert_eq!(id("rover.asm", &ole), Some("solidedge-assembly"));
+        // the OLE signature decides even when the rest of the head is printable
+        // (found by cargo mutants: without NULs it would look like a source)
+        let mut printable_ole = OLE_MAGIC.to_vec();
+        printable_ole.extend_from_slice(&[b'a'; 60]);
+        assert_eq!(id("rover.asm", &printable_ole), Some("solidedge-assembly"));
         assert_eq!(id("startup.asm", b"  .section .text\n  mov r0, #1\n"), None);
+        // binary, neither Creo nor OLE: still a CAD assembly by its extension
+        assert!(id("rover.asm", b"\x00\x01\x02binary").is_some());
         // .sch: KiCad 5 or Eagle.
         assert_eq!(
             id("power.sch", b"EESchema Schematic File Version 4"),
