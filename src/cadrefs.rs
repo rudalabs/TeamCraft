@@ -860,6 +860,9 @@ mod tests {
         // a skipped byte splits the run: both halves are too short
         let found = runs(&utf16("ABCDEFGH"), Some(&(8..9)));
         assert!(found.iter().all(|r| r.chars().count() < 8), "{found:?}");
+        // skipping only the high byte of 'E' (bytes 8–9) drops exactly that
+        // unit: "ABCD" is too short, "FGHIJKL" stays
+        assert_eq!(runs(&utf16("ABCDEFGHIJKL"), Some(&(9..10))), ["FGHIJKL"]);
     }
 
     /// The documented limits (found by cargo mutants: a behavioural test
