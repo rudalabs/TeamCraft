@@ -8,7 +8,15 @@ check-outs and reviews, and a **local working folder**:
 * *New* (`Ctrl/Cmd+N`) creates an item together with its files: choose the
   CAD files first, name and type follow from the first one;
 * *Check out* takes the lock, copies the files into the working folder and
-  makes them writable;
+  makes them writable. For an assembly it also downloads every part of its
+  structure that is missing (latest version, read-only) – only the assembly is
+  locked; parts you changed locally, or whose place is taken by another file,
+  are never overwritten and are listed in the report (*Settings → Workspace*
+  switches this off);
+* *All items / Structure* in the navigator head: *Structure* shows, per project
+  group, the assemblies and the parts no BOM uses; an assembly expands into its
+  parts one level at a time with quantity, state, lock owner and ⧉ N for a part
+  used in several assemblies;
 * *Get…* on a revision copies the item **with everything it consists of** –
   its BOM resolved with a revision rule and the parts its CAD files
   reference – so the assembly opens in the CAD program (see below);
@@ -218,6 +226,12 @@ uploads the changed ones and makes them read-only again; *Cancel check-out*
 does the same without uploading. Files you changed are never made read-only
 or overwritten by TeamCraft.
 
+**Check-out of an assembly.** The lock is taken on the assembly only; its
+structure is then fetched like *Get* does under the *latest* rule, in the same
+progress dialog. Per file: missing – downloaded read-only; up to date –
+skipped; an unchanged older copy – updated; changed here, checked out by you,
+or a different file at the same place – kept untouched and listed (*kept – your
+local changes*, *name clash*). Cancelling leaves no partial file.
 **Add files.** *Add files…* (Files section and *More ▾* of a revision) takes
 files from a file picker, checks the revision out first if you have not,
 and **copies** them into its working folder – the originals are never moved

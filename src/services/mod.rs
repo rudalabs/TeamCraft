@@ -45,6 +45,7 @@ pub mod save_as;
 pub mod similar;
 pub mod simulations;
 pub mod stats;
+pub mod structure;
 pub mod uploads;
 pub mod users;
 pub mod webhooks;

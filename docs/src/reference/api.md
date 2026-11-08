@@ -261,6 +261,18 @@ rule and the items holding the CAD files those files reference
 rule), `missing_references` (names not in the vault), `file_count` and
 `total_bytes`.
 
+The desktop *Structure* view of the navigator reads one level at a time:
+`GET /projects/{code}/structure?limit=&offset=` lists the top-level items of a
+group (no BOM line of the group uses them) and
+`GET …/revisions/{code}/structure?rule=latest|released&limit=` the BOM lines of
+one revision. Both answer `{nodes, total}`; a node has `item_number`,
+`item_type`, `name`, the revision the rule resolves to (`code`, `state`, both
+`null` when there is none, e.g. not released yet), `checked_out_by_name`,
+`used_in` (assemblies that use it), `bom_lines` (more than 0 = expandable) and,
+for BOM lines, `find_number` and `quantity`. A child in a restricted group the
+caller cannot read is a placeholder (`restricted: true`, no identity); hidden
+assemblies are not counted in `used_in`.
+
 `POST /worklist/checkin-all` (body optional: `{"revisions": [id, …]}`) checks
 in all of my check-outs – or the listed ones – **without new files**, one
 transaction and one audit record per revision. The answer lists every

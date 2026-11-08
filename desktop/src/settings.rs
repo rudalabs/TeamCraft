@@ -122,6 +122,8 @@ pub struct Settings {
     pub agent_backends: std::collections::BTreeMap<String, String>,
     /// Look for a newer release on GitHub (at most once a day); `None` = on.
     pub update_check: Option<bool>,
+    /// When checking out an assembly: also get its parts (read-only); `None` = on.
+    pub checkout_parts: Option<bool>,
     /// When the release check last ran (seconds since the Unix epoch).
     pub update_checked_at: Option<u64>,
     /// The latest release version the last check found (without the `v`).

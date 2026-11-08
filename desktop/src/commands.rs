@@ -90,6 +90,8 @@ pub struct Session {
     pub token_storage: Option<TokenStorage>,
     /// The daily check for a newer release is switched on.
     pub update_check: bool,
+    /// Check-out of an assembly also gets its parts.
+    pub checkout_parts: bool,
 }
 
 #[tauri::command]
@@ -98,6 +100,7 @@ pub fn session(app: AppHandle, state: State<'_, AppState>) -> Session {
     Session {
         token_storage: s.token.as_ref().and(s.token_storage),
         update_check: s.update_check != Some(false),
+        checkout_parts: s.checkout_parts != Some(false),
         server_url: s.server_url.clone(),
         signed_in: s.token.is_some(),
         skin: s.skin.clone().unwrap_or_else(|| "teamcraft".into()),
@@ -479,7 +482,7 @@ fn progress_events(
     })
 }
 
-/// Check out: takes the lock on the server and copies the files into the
+/// Check out: takes the lock on the server (on this revision only) and copies the files into the
 /// working folder; the files of the revision become writable.
 #[tauri::command]
 pub async fn workspace_checkout(
@@ -501,9 +504,23 @@ pub async fn workspace_checkout(
     )
     .await?;
     let (cancel, mut progress) = progress_events(&app, &state);
+    let root = workspace_root(&app, &state);
+    // only the assembly is locked; its parts come read-only, as in Get
+    if snapshot(&state).checkout_parts != Some(false) {
+        return workspace::checkout_with_structure(
+            &api,
+            &root,
+            &item,
+            &code,
+            "latest",
+            &cancel,
+            &mut progress,
+        )
+        .await;
+    }
     workspace::download_revision(
         &api,
-        &workspace_root(&app, &state),
+        &root,
         project.as_deref(),
         &item,
         &code,
@@ -762,6 +779,13 @@ pub fn dismiss_update(state: State<'_, AppState>, version: String) -> CmdResult<
     let version = update::tag_version(&version)
         .ok_or_else(|| ApiError::local(format!("'{version}' is not a version.")))?;
     update_settings(&state, |s| s.update_dismissed = Some(version))?;
+    Ok(())
+}
+
+/// *Settings → Workspace*: a check-out of an assembly gets its parts too.
+#[tauri::command]
+pub fn set_checkout_parts(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    update_settings(&state, |s| s.checkout_parts = Some(enabled))?;
     Ok(())
 }
 
