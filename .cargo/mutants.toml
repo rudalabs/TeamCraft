@@ -53,6 +53,10 @@ exclude_re = [
     # cadrefs::step_file_name_entity: without the escaped-quote arm, `''`
     # toggles the string state twice, which ends in the same state.
     "src/cadrefs.rs:268:22: replace match guard in_string && .* with false in step_file_name_entity",
+    # htmltext::mostly_utf8: only called after an invalid byte was found, so
+    # `invalid >= 1`; with no multi-byte character `invalid <= multibyte` is
+    # false either way, so `multibyte > 0` vs `>= 0` cannot be told apart.
+    "src/htmltext.rs:101:15: replace > with >= in mostly_utf8",
 ]
 
 # Unit tests only (see above); the integration tests in tests/ need PostgreSQL.
