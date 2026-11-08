@@ -699,12 +699,16 @@
     });
   });
 
-  // Copy buttons: <button data-copy="id">.
-  document.querySelectorAll("[data-copy]").forEach(function (btn) {
-    btn.addEventListener("click", function () {
+  // Copy buttons: <button data-copy="id"> copies the element's text,
+  // <button data-copy-text="PRT-000042"> the given text (item lists).
+  document.querySelectorAll("[data-copy], [data-copy-text]").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation(); // a copy button inside a row link does not open the row
       var source = document.getElementById(btn.getAttribute("data-copy"));
-      if (source && navigator.clipboard) {
-        navigator.clipboard.writeText(source.textContent.trim()).then(function () {
+      var text = btn.getAttribute("data-copy-text") || (source && source.textContent.trim());
+      if (text && navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(function () {
           var old = btn.textContent;
           btn.textContent = "Copied";
           setTimeout(function () { btn.textContent = old; }, 1500);

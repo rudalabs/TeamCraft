@@ -353,6 +353,9 @@ details.menu[open] > .menu-pop { animation: menu-in 140ms var(--ease-out); }
 .title-row h1 { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .title-row h1 .id { font-family: var(--display); }
 .title-row form { margin: 0; }
+/* copy the item number from a list row: small, shown on hover and focus */
+button.copy-number { padding: 0 4px; margin-left: 4px; opacity: 0.35; }
+tr:hover button.copy-number, button.copy-number:focus-visible { opacity: 1; }
 
 .titleblock {
   display: grid;

@@ -10,7 +10,8 @@
   <div>
     <p class="crumbs"><a href="/items">Items</a>{% if item.project_id %}<a href="/projects/{{ item.project_id }}">{{ item.project_code }}</a>{% endif %}<span>{{ rev.item_number }}</span></p>
     <div class="title-row">
-      <h1><span class="id">{{ rev.item_number }}/{{ rev.code }}</span> · {{ rev.name }}</h1>
+      <h1><span class="id"><span id="item-number">{{ rev.item_number }}</span>/{{ rev.code }}</span> · {{ rev.name }}</h1>
+      <button type="button" class="small" data-copy="item-number" title="Copy the item number to the clipboard" aria-label="Copy the item number {{ rev.item_number }}">Copy number</button>
       <form method="post" action="/items/{{ item.id }}/favorite">
         <input type="hidden" name="favorite" value="{% if favorite %}0{% else %}1{% endif %}">
         <input type="hidden" name="back" value="{{ back }}">
