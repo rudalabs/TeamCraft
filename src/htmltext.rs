@@ -1234,6 +1234,11 @@ mod tests {
             text_of(b"<meta charset='x-user-defined'><p>\xC3\xBC</p>"),
             "Ã¼"
         );
+        // not at the start, and after a <meta> without a charset
+        assert_eq!(
+            text_of(b"<!DOCTYPE html><meta name=x><META CHARSET=windows-1252><p>\xC3\xBC</p>"),
+            "Ã¼"
+        );
         assert_eq!(
             text_of(b"<meta charset=\"utf-16\"><p>\xB0</p>"),
             "\u{FFFD}",
