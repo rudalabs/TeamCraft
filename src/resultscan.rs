@@ -1309,6 +1309,73 @@ mod tests {
         assert!(with("middle").validated().is_err());
     }
 
+    /// Found by cargo mutants: the checks of `TemplateInput::validated`.
+    #[test]
+    fn template_validation() {
+        let regex = TemplateInput {
+            name: "Max stress".into(),
+            file_pattern: "*.dat".into(),
+            method: "regex".into(),
+            pattern: r"max = (\S+)".into(),
+            enabled: true,
+            ..Default::default()
+        };
+        // limits: finite, and the lower one not above the upper one
+        let limits = |lo: Option<f64>, hi: Option<f64>| {
+            TemplateInput {
+                lower_limit: lo,
+                upper_limit: hi,
+                ..regex.clone()
+            }
+            .validated()
+        };
+        assert!(limits(Some(1.0), Some(2.0)).is_ok());
+        assert!(limits(Some(2.0), Some(2.0)).is_ok(), "equal limits");
+        assert!(limits(Some(-5.0), None).is_ok());
+        assert!(limits(Some(3.0), Some(2.0)).unwrap_err().contains("above"));
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(limits(Some(bad), None).unwrap_err().contains("finite"));
+            assert!(limits(None, Some(bad)).unwrap_err().contains("finite"));
+        }
+        // a regular expression with exactly one capture group
+        for bad in ["max = \\S+", "(max) = (\\S+)", "("] {
+            let t = TemplateInput {
+                pattern: bad.into(),
+                ..regex.clone()
+            };
+            assert!(t.validated().is_err(), "{bad}");
+        }
+        // file names, not paths
+        for bad in ["out/*.dat", "out\\*.dat"] {
+            let t = TemplateInput {
+                file_pattern: bad.into(),
+                ..regex.clone()
+            };
+            assert!(t.validated().unwrap_err().contains("not paths"), "{bad}");
+        }
+        // CSV: a column; key column and key value together or not at all
+        let csv = |column: &str, key_column: &str, key_value: &str| {
+            TemplateInput {
+                method: "csv".into(),
+                pattern: String::new(),
+                csv_column: column.into(),
+                csv_key_column: key_column.into(),
+                csv_key_value: key_value.into(),
+                ..regex.clone()
+            }
+            .validated()
+        };
+        let ok = csv("Stress", "", "").unwrap();
+        assert_eq!(
+            (ok.csv_column.as_str(), ok.pattern.as_str()),
+            ("Stress", "")
+        );
+        assert!(csv("Stress", "Load case", "LC1").is_ok());
+        assert!(csv("", "", "").is_err(), "a column is needed");
+        assert!(csv("Stress", "Load case", "").unwrap_err().contains("both"));
+        assert!(csv("Stress", "", "LC1").unwrap_err().contains("both"));
+    }
+
     /// Found by cargo mutants: both limits of an exchange file are inclusive
     /// and hold beyond the first value past them.
     #[test]
