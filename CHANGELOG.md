@@ -17,6 +17,12 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- 3D preview of Rhino models (`.3dm`, Rhino 1 to 8) from the meshes Rhino
+  stores (mesh objects, render meshes of polysurfaces and extrusions, block
+  instances placed); SubD objects are refined from their control net
+  (Catmull-Clark with creases). Hidden objects and layers are left out. The
+  thumbnail is rendered from the 3D preview; models saved without meshes
+  show the picture Rhino stored.
 - Branding (#184): administrators rename the header name and subtitle ("TeamCraft PLM") under *Admin → Branding*;
   effective at once in the web
   header, page titles, sign-in page, notification e-mails and the desktop

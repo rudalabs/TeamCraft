@@ -169,6 +169,8 @@ pub enum PreviewFormat {
     SwPart,
     /// SOLIDWORKS assemblies: put together from the previews of their parts.
     SwAssembly,
+    /// Rhino models: the meshes they store, SubD control nets refined.
+    Rhino,
     Pts,
     Xyz,
     Las,
@@ -180,7 +182,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 21] = [
+    pub const ALL: [PreviewFormat; 22] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -195,6 +197,7 @@ impl PreviewFormat {
         PreviewFormat::Jt,
         PreviewFormat::SwPart,
         PreviewFormat::SwAssembly,
+        PreviewFormat::Rhino,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
         PreviewFormat::Las,
@@ -231,6 +234,7 @@ impl PreviewFormat {
             PreviewFormat::Jt => "jt",
             PreviewFormat::SwPart => "solidworks-part",
             PreviewFormat::SwAssembly => "solidworks-assembly",
+            PreviewFormat::Rhino => "rhino",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
             PreviewFormat::Las => "las",
@@ -983,6 +987,7 @@ mod tests {
         assert_eq!(PreviewFormat::of(".stl"), None);
         assert!(PreviewFormat::Step.is_brep() && !PreviewFormat::Stl.is_brep());
         assert!(PreviewFormat::Las.is_point_cloud());
+        assert_eq!(PreviewFormat::of("chair.3dm"), Some(PreviewFormat::Rhino));
         assert_eq!(PreviewFormat::of("beam.vtu"), Some(PreviewFormat::Vtu));
         assert_eq!(
             PreviewFormat::of("beam.VTK"),

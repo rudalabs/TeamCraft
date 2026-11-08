@@ -55,6 +55,7 @@ has the same notes under `/api/v1/file-versions/{id}/annotations`.
 |---------------------|-------------------------------------------------------------------------------------------------------------------------------|
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                                                                                |
 | Native CAD          | NX parts (`.prt`), SOLIDWORKS parts (`.sldprt`, 2015+) – the tessellation stored in the file; their assemblies from the parts |
+| Native CAD          | Rhino models (`.3dm`) – the meshes stored in the file, SubD objects refined from their control net                            |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS                                                              |
 | Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces                                                                       |
 | Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields                                                              |
@@ -101,10 +102,18 @@ These components are left out:
 * NX components on layers the assembly hides;
 * SOLIDWORKS components that are suppressed or hidden.
 
+**Rhino** models (`.3dm`, Rhino 1 to 8) are shown from the meshes Rhino
+saves with them: mesh objects, the render meshes of polysurfaces and
+extrusions, block instances in their places; SubD objects are refined
+from their control net. Hidden objects and hidden layers are left out. A
+model saved without render meshes (*Save Small*, or very old files) has
+no 3D preview and shows the picture Rhino stored instead (see
+[Research: 3D preview of Rhino models](../research/rhino-3dm-preview.md)).
+
 For the rest TeamCraft shows what other PLM systems show:
 
 * **A picture of the 3D preview** for NX and SOLIDWORKS parts and
-  assemblies. It replaces the image stored in the file and is a 512 × 512
+  assemblies and for Rhino models. It replaces the image stored in the file and is a 512 × 512
   PNG with a transparent background, drawn once and cached. An assembly's
   picture is drawn again when one of its parts changes. Drawings, and
   assemblies none of whose parts are in TeamCraft, keep the stored image.
