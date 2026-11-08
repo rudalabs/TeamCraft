@@ -520,6 +520,177 @@ pub fn components(xml: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// Nesting levels of sub-assemblies followed inside one component tree.
+const MAX_TREE_DEPTH: usize = 8;
+/// Placed components read from one component tree at most.
+const MAX_PLACED: usize = 100_000;
+
+/// An instance in the component tree.
+#[derive(Debug)]
+struct Instance {
+    model: String,
+    transform: [f64; 16],
+    left_out: bool,
+}
+
+/// The parts of an assembly with their placements, from its component tree
+/// (`swXmlContents/COMPINSTANCETREE`), sub-assemblies resolved:
+///
+/// ```text
+/// <swFile id="6" swDocType="PART" swPath="…\Topf.SLDPRT"/>
+/// <swModel id="5" swFileRef="6"/>                                  a file in one configuration
+/// <swModel id="2" swFileRef="3">                                   an assembly in one configuration
+///   <swReference swModelRef="5" swSuppressed="NO" swHidden="NO"
+///                swTransform="r00 r01 r02 0 r10 r11 r12 0 r20 r21 r22 0 tx ty tz 1"/>
+/// </swModel>
+/// <swConfiguration swModelRef="2" swMostRecentConfiguration="YES"/>
+/// ```
+///
+/// A point of a component lands at `p · R + t` (t in metres; the
+/// components carry millimetres). The top model is the configuration
+/// that was active when the file was saved; a sub-assembly's model lists
+/// its own instances, placed relative to it. Suppressed, hidden and
+/// virtual instances (the latter have no file of their own) are left out,
+/// with everything below them. Each component is named by the file name
+/// of its `swPath` (the author's path, so it is found by name). `None`
+/// when the XML has no assembly model.
+pub fn placements(xml: &[u8]) -> Option<Vec<crate::nxasm::Component>> {
+    use quick_xml::events::Event;
+    let text = xml_text(xml);
+    let mut reader = quick_xml::Reader::from_str(&text);
+    // id → (path, is an assembly)
+    let mut files: HashMap<String, (String, bool)> = HashMap::new();
+    let mut model_file: HashMap<String, String> = HashMap::new();
+    let mut instances: HashMap<String, Vec<Instance>> = HashMap::new();
+    let mut configurations: Vec<(String, bool)> = Vec::new();
+    let mut current_model: Option<String> = None;
+    let mut count = 0usize;
+    loop {
+        let event = match reader.read_event() {
+            Ok(Event::Eof) | Err(_) => break,
+            Ok(event) => event,
+        };
+        match &event {
+            Event::Start(e) | Event::Empty(e) => match e.local_name().as_ref() {
+                "swFile" => {
+                    if let (Some(id), Some(path)) = (attr(e, "id"), attr(e, "swPath")) {
+                        let assembly = attr(e, "swDocType")
+                            .is_some_and(|t| t.eq_ignore_ascii_case("ASSEMBLY"));
+                        files.insert(id, (path, assembly));
+                    }
+                }
+                "swModel" => {
+                    let id = attr(e, "id").unwrap_or_default();
+                    if let Some(file) = attr(e, "swFileRef") {
+                        model_file.insert(id.clone(), file);
+                    }
+                    if matches!(event, Event::Start(_)) {
+                        current_model = Some(id);
+                    }
+                }
+                "swReference" => {
+                    let yes =
+                        |name: &str| attr(e, name).is_some_and(|v| v.eq_ignore_ascii_case("YES"));
+                    let transform = attr(e, "swTransform").and_then(|t| matrix(&t));
+                    if let (Some(parent), Some(model), Some(transform)) =
+                        (current_model.clone(), attr(e, "swModelRef"), transform)
+                    {
+                        count += 1;
+                        instances.entry(parent).or_default().push(Instance {
+                            model,
+                            transform,
+                            left_out: yes("swSuppressed")
+                                || yes("swHidden")
+                                || yes("swIsVirtualComponent"),
+                        });
+                    }
+                }
+                "swConfiguration" => {
+                    if let Some(model) = attr(e, "swModelRef") {
+                        let recent = attr(e, "swMostRecentConfiguration")
+                            .is_some_and(|v| v.eq_ignore_ascii_case("YES"));
+                        configurations.push((model, recent));
+                    }
+                }
+                _ => {}
+            },
+            Event::End(e) if e.local_name().as_ref() == "swModel" => current_model = None,
+            _ => {}
+        }
+        if count > 1_000_000 {
+            break;
+        }
+    }
+    let top = configurations
+        .iter()
+        .find(|(_, recent)| *recent)
+        .or_else(|| configurations.first())
+        .map(|(model, _)| model.clone())
+        .filter(|m| instances.contains_key(m))
+        .or_else(|| {
+            // no configuration list: the model with instances nobody refers to
+            let used: HashSet<&str> = instances
+                .values()
+                .flatten()
+                .map(|i| i.model.as_str())
+                .collect();
+            instances
+                .keys()
+                .find(|m| !used.contains(m.as_str()))
+                .cloned()
+        })?;
+    let mut out = Vec::new();
+    let mut stack = vec![(top, crate::nxasm::identity(), 0usize)];
+    while let Some((model, parent, depth)) = stack.pop() {
+        for instance in instances.get(&model).into_iter().flatten().rev() {
+            if instance.left_out || out.len() >= MAX_PLACED {
+                continue;
+            }
+            let Some((path, assembly)) = model_file.get(&instance.model).and_then(|f| files.get(f))
+            else {
+                continue;
+            };
+            let t = &instance.transform;
+            let placed = crate::nxasm::Component {
+                name: file_name(path).to_string(),
+                rotation: [[t[0], t[1], t[2]], [t[4], t[5], t[6]], [t[8], t[9], t[10]]],
+                translation: [t[12] * 1000.0, t[13] * 1000.0, t[14] * 1000.0],
+                layer: None,
+            }
+            .within(&parent);
+            let children = instances
+                .get(&instance.model)
+                .is_some_and(|c| !c.is_empty());
+            if *assembly && children && depth < MAX_TREE_DEPTH {
+                stack.push((instance.model.clone(), placed, depth + 1));
+            } else if !*assembly || !children {
+                // a part, or an assembly whose tree is not in this file
+                out.push(placed);
+            }
+        }
+    }
+    Some(out)
+}
+
+/// The 16 numbers of a `swTransform`, if they are all finite.
+fn matrix(text: &str) -> Option<[f64; 16]> {
+    let mut m = [0.0; 16];
+    let mut values = text.split_ascii_whitespace();
+    for v in m.iter_mut() {
+        *v = values
+            .next()?
+            .parse::<f64>()
+            .ok()
+            .filter(|x| x.is_finite())?;
+    }
+    values.next().is_none().then_some(m)
+}
+
+/// The last component of a Windows or Unix path.
+fn file_name(path: &str) -> &str {
+    path.rsplit(['\\', '/']).next().unwrap_or(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -978,6 +1149,84 @@ mod tests {
                     damaged[at] = (state >> 32) as u8;
                 }
                 check(&damaged);
+            }
+        }
+    }
+
+    /// A component tree: the top assembly (model 2) holds a part twice (one
+    /// hidden), a suppressed and a virtual part and a sub-assembly (model 8)
+    /// turned by 90° about z; the sub-assembly holds the part 10 mm along x.
+    const TREE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<swSolidWorks xmlns="http://www.solidworks.com/sw2003/schema"><swHeader>
+<swFile id="3" swDocType="ASSEMBLY" swPath="C:\work\Top.SLDASM"/>
+<swFile id="6" swDocType="PART" swPath="C:\work\parts\Shaft.SLDPRT"/>
+<swFile id="9" swDocType="ASSEMBLY" swPath="C:\work\Sub.SLDASM"/>
+<swFile id="12" swDocType="PART" swPath="C:\Temp\Virtual.SLDPRT"/>
+</swHeader><swModelList>
+<swModel id="5" swFileRef="6"/>
+<swModel id="11" swFileRef="12"/>
+<swModel id="8" swFileRef="9">
+<swReference swName="Shaft" swModelRef="5" swSuppressed="NO" swHidden="NO" swTransform="1 0 0 0 0 1 0 0 0 0 1 0 0.01 0 0 1"/>
+</swModel>
+<swModel id="2" swFileRef="3">
+<swReference swName="Shaft" swModelRef="5" swSuppressed="NO" swHidden="NO" swTransform="1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.005 1"/>
+<swReference swName="Shaft" swModelRef="5" swSuppressed="NO" swHidden="YES" swTransform="1 0 0 0 0 1 0 0 0 0 1 0 0 0 1 1"/>
+<swReference swName="Shaft" swModelRef="5" swSuppressed="YES" swHidden="YES" swTransform="1 0 0 0 0 1 0 0 0 0 1 0 0 0 2 1"/>
+<swReference swName="Virtual" swModelRef="11" swIsVirtualComponent="YES" swTransform="1 0 0 0 0 1 0 0 0 0 1 0 0 0 3 1"/>
+<swReference swName="Sub" swModelRef="8" swSuppressed="NO" swHidden="NO" swTransform="0 1 0 0 -1 0 0 0 0 0 1 0 0 0 0.1 1"/>
+</swModel>
+</swModelList><swConfigurationList>
+<swConfiguration swName="Default" swMostRecentConfiguration="YES" swModelRef="2"/>
+</swConfigurationList></swSolidWorks>"#;
+
+    #[test]
+    fn placements_resolve_sub_assemblies_and_leave_out_hidden_components() {
+        let parts = placements(TREE.as_bytes()).unwrap();
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        assert!(parts.iter().all(|p| p.name == "Shaft.SLDPRT"));
+        let close = |a: [f64; 3], b: [f64; 3]| a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-9);
+        let direct = parts.iter().find(|p| p.translation[2] < 50.0).unwrap();
+        assert!(close(direct.place([0.0; 3]), [0.0, 0.0, 5.0]));
+        // 10 mm along x in the sub-assembly, turned by 90° about z, 100 mm up
+        let nested = parts.iter().find(|p| p.translation[2] > 50.0).unwrap();
+        assert!(
+            close(nested.place([0.0; 3]), [0.0, 10.0, 100.0]),
+            "{nested:?}"
+        );
+        assert!(close(nested.place([1.0, 0.0, 0.0]), [0.0, 11.0, 100.0]));
+    }
+
+    #[test]
+    fn broken_component_trees_never_panic() {
+        assert!(placements(b"").is_none());
+        assert!(placements(b"<swSolidWorks><swModel id=\"1\"></swModel>").is_none());
+        let bad = TREE.replace("0 0 0.1 1", "0 0 NaN 1");
+        assert_eq!(placements(bad.as_bytes()).unwrap().len(), 1);
+        for cut in (0..TREE.len()).step_by(37) {
+            if TREE.is_char_boundary(cut) {
+                let _ = placements(&TREE.as_bytes()[..cut]);
+            }
+        }
+    }
+
+    #[test]
+    fn the_nist_assembly_places_its_36_components() {
+        let bytes = fixture("nist_mtc_crada_assembly_rev-D.SLDASM");
+        let mut sw = SwContainer::open(Cursor::new(&bytes)).unwrap().unwrap();
+        let xml = sw.read(COMPONENT_TREE_SECTION, 1 << 24).unwrap().unwrap();
+        let parts = placements(&xml).unwrap();
+        assert_eq!(parts.len(), 36);
+        assert!(parts.iter().any(|p| p
+            .name
+            .eq_ignore_ascii_case("nist_mtc_crada_box_rev-D.SLDPRT")));
+        for p in &parts {
+            assert!(p.name.to_lowercase().ends_with(".sldprt"), "{}", p.name);
+            for (i, row) in p.rotation.iter().enumerate() {
+                for (j, other) in p.rotation.iter().enumerate() {
+                    let dot: f64 = row.iter().zip(other).map(|(a, b)| a * b).sum();
+                    let want = if i == j { 1.0 } else { 0.0 };
+                    assert!((dot - want).abs() < 1e-6, "{p:?}");
+                }
             }
         }
     }

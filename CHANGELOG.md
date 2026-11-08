@@ -183,6 +183,13 @@ Changes on `main` since the `v0.2.5` tag.
   with quoted column names (Fluent report files; migration 0040), and
   `pick = last` reads the last 2 MB of a file larger than 2 MB first. New
   fuzz targets `cadformat` and `resultscan`.
+- 3D preview of SOLIDWORKS parts (`.sldprt`, 2015 and later) from the
+  display tessellation SOLIDWORKS stores in the file, refined along its
+  exact surface normals like NX parts. SOLIDWORKS assemblies are put
+  together from the previews of their part files, with the placements of
+  their component tree; suppressed and hidden components are left out. The
+  thumbnails of SOLIDWORKS parts and assemblies are rendered from the 3D
+  preview.
 
 ### Changed
 
