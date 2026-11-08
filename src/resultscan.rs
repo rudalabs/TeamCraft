@@ -1273,4 +1273,17 @@ mod tests {
         assert!(scannable("run.trn") && scannable("x.F06") && scannable("m.java"));
         assert!(!scannable("pipe.cas.h5") && !scannable("run.op2"));
     }
+
+    /// The documented limits (found by cargo mutants: behavioural tests
+    /// would have to read megabytes).
+    #[test]
+    fn limits() {
+        assert_eq!(EXCHANGE_MAX_BYTES, 1024 * 1024);
+        assert_eq!(SCAN_MAX_BYTES, 2 * 1024 * 1024);
+        assert_eq!(SCAN_MAX_LINES, 200_000);
+        assert_eq!(MAX_LINE_CHARS, 8 * 1024);
+        assert_eq!(MAX_TEMPLATES, 100);
+        assert_eq!(MAX_PATTERN_LEN, 500);
+        assert_eq!(REGEX_SIZE_LIMIT, 256 * 1024);
+    }
 }
