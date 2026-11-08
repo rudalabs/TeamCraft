@@ -1758,4 +1758,24 @@ mod tests {
             .iter()
             .all(|s| !s["formats"].as_array().unwrap().is_empty()));
     }
+
+    /// Found by cargo mutants: the 95 % threshold was not pinned down.
+    #[test]
+    fn text_needs_95_percent_printable_bytes_and_no_nul() {
+        let with_controls = |n: usize| {
+            let mut head = vec![b'a'; 20 - n];
+            head.extend(std::iter::repeat_n(0x01, n));
+            head
+        };
+        assert!(looks_textual(b"GRID    1       0.0     1.0\n"));
+        assert!(
+            looks_textual("Ümlaut-Kommentar\n".as_bytes()),
+            "non-ASCII counts as text"
+        );
+        assert!(looks_textual(&with_controls(1)), "19 of 20 = 95 %");
+        assert!(!looks_textual(&with_controls(2)), "18 of 20 = 90 %");
+        assert!(!looks_textual(&[0x01; 20]));
+        assert!(!looks_textual(b"text\0with a NUL"));
+        assert!(!looks_textual(b""));
+    }
 }
