@@ -738,8 +738,12 @@
       <a class="button small" href="/revisions/{{ rev.id }}/bom">Multi-level view &amp; roll-up</a>
       <a class="button small" href="/revisions/{{ rev.id }}/bom.csv">CSV</a>
       {% if can.edit %}<a class="button small" href="/import?into={{ rev.id }}" title="Add the structure of a BOM table exported from a CAD program (CSV, Excel)">Import BOM…</a>{% endif %}
+      {% if cad_structure %}<a class="button small" href="/revisions/{{ rev.id }}/bom/from-references" title="{% if can.edit %}Preview the parts the CAD files use and add them as BOM lines{% else %}Check out to create the BOM from the CAD references{% endif %}">Create BOM from CAD references…</a>{% endif %}
     </div>
   </div>
+  {% if cad_structure and not lines and references.suggestions.bom %}
+  <p class="notice">The CAD file uses {{ references.suggestions.bom|length }} part(s) that are in TeamCraft – <a href="/revisions/{{ rev.id }}/bom/from-references">create the BOM from it?</a></p>
+  {% endif %}
   {% if lines %}
   <div class="table-wrap">
   <table>

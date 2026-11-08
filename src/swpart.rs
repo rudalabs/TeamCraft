@@ -410,6 +410,20 @@ pub fn reference_data<R: Read + Seek>(reader: R, max: u64) -> io::Result<Option<
     }))
 }
 
+/// The instance counts ([`component_counts`]) of a SOLIDWORKS 2015+ file,
+/// or `None` when it is no such file or has no component tree.
+pub fn file_component_counts<R: Read + Seek>(
+    reader: R,
+    max: u64,
+) -> io::Result<Option<Vec<(String, u32)>>> {
+    let Some(mut file) = SwContainer::open(reader)? else {
+        return Ok(None);
+    };
+    Ok(file
+        .read(COMPONENT_TREE_SECTION, max)?
+        .map(|xml| component_counts(&xml)))
+}
+
 /// XML as text: UTF-8, or UTF-16 with a byte order mark.
 fn xml_text(xml: &[u8]) -> String {
     let utf16 = |bytes: &[u8], be: bool| {
@@ -462,13 +476,42 @@ fn attr(e: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<String> {
 /// Virtual components live inside the assembly and have no file. Broken XML
 /// yields the components read up to the error.
 pub fn components(xml: &[u8]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    tree_instances(xml)
+        .into_iter()
+        .map(|(path, _)| path)
+        .filter(|path| seen.insert(path.to_lowercase()))
+        .collect()
+}
+
+/// The instance counts of the direct components of an assembly: every file
+/// of [`components`] with the number of its instances that count for a
+/// BOM (those without `swExcludeFromBOM="YES"`; a file with only excluded
+/// instances has the count 0).
+pub fn component_counts(xml: &[u8]) -> Vec<(String, u32)> {
+    let mut out: Vec<(String, u32)> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for (path, excluded) in tree_instances(xml) {
+        let at = *index.entry(path.to_lowercase()).or_insert_with(|| {
+            out.push((path, 0));
+            out.len() - 1
+        });
+        if let Some(entry) = out.get_mut(at) {
+            entry.1 += u32::from(!excluded);
+        }
+    }
+    out
+}
+
+/// Instances of the assembly's own models: (file path, excluded from BOM).
+fn tree_instances(xml: &[u8]) -> Vec<(String, bool)> {
     use quick_xml::events::Event;
     let text = xml_text(xml);
     let mut reader = quick_xml::Reader::from_str(&text);
     let mut files: HashMap<String, String> = HashMap::new();
     let mut model_file: HashMap<String, String> = HashMap::new();
-    // (model containing the instance, model the instance refers to)
-    let mut instances: Vec<(String, String)> = Vec::new();
+    // (model containing the instance, model the instance refers to, excluded from the BOM)
+    let mut instances: Vec<(String, String, bool)> = Vec::new();
     let mut current_model: Option<String> = None;
     loop {
         let event = match reader.read_event() {
@@ -494,10 +537,12 @@ pub fn components(xml: &[u8]) -> Vec<String> {
                 "swReference" => {
                     let is_virtual = attr(e, "swIsVirtualComponent")
                         .is_some_and(|v| v.eq_ignore_ascii_case("YES"));
+                    let excluded = attr(e, "swExcludeFromBOM")
+                        .is_some_and(|v| v.eq_ignore_ascii_case("YES") || v == "1");
                     if let (Some(parent), Some(target), false) =
                         (current_model.clone(), attr(e, "swModelRef"), is_virtual)
                     {
-                        instances.push((parent, target));
+                        instances.push((parent, target, excluded));
                     }
                 }
                 _ => {}
@@ -509,14 +554,13 @@ pub fn components(xml: &[u8]) -> Vec<String> {
             break;
         }
     }
-    let used: HashSet<&str> = instances.iter().map(|(_, t)| t.as_str()).collect();
-    let mut seen = HashSet::new();
+    let used: HashSet<&str> = instances.iter().map(|(_, t, _)| t.as_str()).collect();
     instances
         .iter()
-        .filter(|(parent, _)| !used.contains(parent.as_str()))
-        .filter_map(|(_, target)| files.get(model_file.get(target)?))
-        .filter(|path| seen.insert(path.to_lowercase()))
-        .cloned()
+        .filter(|(parent, _, _)| !used.contains(parent.as_str()))
+        .filter_map(|(_, target, excluded)| {
+            Some((files.get(model_file.get(target)?)?.clone(), *excluded))
+        })
         .collect()
 }
 
@@ -927,6 +971,24 @@ mod tests {
         for bytes in [bom8, be, le] {
             assert_eq!(components(&bytes), components(xml.as_bytes()));
         }
+    }
+
+    #[test]
+    fn component_counts_count_instances_without_bom_exclusion() {
+        let xml = br#"<swSolidWorks><swFile id="1" swPath="D:\a\Bolt.SLDPRT"/><swFile id="2" swPath="D:\a\Plate.SLDPRT"/><swFile id="3" swPath="D:\a\Glue.SLDPRT"/>
+<swModel id="4" swFileRef="1"/><swModel id="5" swFileRef="2"/><swModel id="6" swFileRef="3"/>
+<swModel id="7"><swReference swModelRef="4"/><swReference swModelRef="4"/><swReference swModelRef="5"/><swReference swModelRef="4" swExcludeFromBOM="YES"/><swReference swModelRef="6" swExcludeFromBOM="YES"/></swModel></swSolidWorks>"#;
+        assert_eq!(
+            component_counts(xml),
+            [
+                ("D:\\a\\Bolt.SLDPRT".to_string(), 2),
+                ("D:\\a\\Plate.SLDPRT".to_string(), 1),
+                ("D:\\a\\Glue.SLDPRT".to_string(), 0),
+            ]
+        );
+        // the plain component list is unchanged: each file once
+        assert_eq!(components(xml).len(), 3);
+        assert!(component_counts(b"garbage").is_empty());
     }
 
     #[test]

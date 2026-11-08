@@ -48,6 +48,33 @@ the files of its whole structure
 as ZIP (`<item>_<revision>/`, `bom.csv`, `manifest.json` with SHA-256 per
 file).
 
+## Creating a BOM from the CAD references
+
+An assembly uploaded as a file has no BOM, although the server already knows
+which part files it uses (the *References* tab). **Create BOM from CAD
+references…** on the BOM card of the revision (also offered as a hint while
+the BOM is empty) shows what the BOM would be, one row per child:
+
+* item, name, **quantity** and where it comes from – *CAD instances* (NX:
+  the placed instances of the component, hidden layers left out; SOLIDWORKS:
+  the instances in the component tree without *exclude from BOM*) or
+  *assumed 1* (the file does not tell; the line gets the note *quantity not
+  known from the CAD file – check it*);
+* the CAD file that references it;
+* a status: *new line* (ticked), *already in the BOM*, *differs* (BOM 2, CAD
+  4 – changed only when you tick it and *Also change the quantity*), or
+  *circular* (refused, as when adding a line by hand).
+
+Only assembly files count (NX files only when they have component
+instances); a drawing's link to its model stays a *drawing of* reference.
+Referenced files TeamCraft does not have are listed as *not in TeamCraft* and
+never created; parts in project groups you cannot see are only counted.
+*Add the ticked lines* needs the revision checked out by you (the page
+offers *Check out and create*) and adds all lines in one transaction. The
+REST API has the same two steps: `GET …/bom/from-references` returns the
+plan, `POST …/bom/from-references` with
+`{"children": ["PRT-000004"], "update_quantities": false}` applies it.
+
 ## Comparing BOMs
 
 *Compare…* on the BOM page lists the lines that were **added**, **removed**

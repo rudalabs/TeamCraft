@@ -548,7 +548,7 @@ real files and belong to section 3 once such files are at hand.
 - [ ] Test preview images of SOLIDWORKS 2014 and older (OLE files) with real files – 2015 and newer: done
 - [ ] Test the SOLIDWORKS 2015+ reader with drawings (`.slddrw`, also a real drawing for the document-manager
   fallback), nested sub-assemblies and other versions than 2018
-- [ ] Use the instance counts of the component tree (`swReference`, without `swExcludeFromBOM`) for BOM quantities
+- [x] Use the instance counts of the component tree (`swReference`, without `swExcludeFromBOM`) for BOM quantities (#180: Create BOM from CAD references)
 - [ ] Take configurations and Toolbox parts into account in the import and the reference scan
 - [ ] Test the BOM import with real BOM exports
 

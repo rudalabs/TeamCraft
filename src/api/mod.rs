@@ -44,9 +44,9 @@ use crate::{
     models::Revision,
     services::{
         access_log::{self, AccessCtx},
-        access_review, attributes, audit, bom, changes, checkouts, desktop, files, impacts,
-        imports, items, notifications, package, project_policy, projects, references, requests,
-        reviewers, revisions, similar, stats, structure, uploads, users, workset, Page,
+        access_review, attributes, audit, bom, bom_references, changes, checkouts, desktop, files,
+        impacts, imports, items, notifications, package, project_policy, projects, references,
+        requests, reviewers, revisions, similar, stats, structure, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -301,6 +301,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route(
             "/bom-imports",
             post(import_bom).layer(DefaultBodyLimit::max(import_limit)),
+        )
+        .route(
+            "/items/{number}/revisions/{code}/bom/from-references",
+            get(get_bom_from_references).post(post_bom_from_references),
         )
         .route(
             "/items/{number}/revisions/{code}/bom/import",
@@ -558,6 +562,8 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/structure?rule=latest|released&limit=  one level of the structure view: BOM lines with resolved revision, state, lock owner, used_in",
             "GET    /api/v1/projects/{code}/structure?limit=&offset=  top-level items of a group (not used in any BOM of the group) for the structure view",
             "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM or STEP assembly of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
+            "GET    /api/v1/items/{number}/revisions/{code}/bom/from-references  the BOM the CAD references lead to: children with instance counts, status (new/already_in_bom/differs/circular), unmatched names, hidden count",
+            "POST   /api/v1/items/{number}/revisions/{code}/bom/from-references  {children: [item numbers], update_quantities?: false} – adds the chosen lines in one transaction (revision checked out by me)",
             "POST   /api/v1/items/{number}/revisions/{code}/bom/import  same multipart fields – imports below the revision (checked out by me)",
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
             "DELETE /api/v1/bom-lines/{id}",

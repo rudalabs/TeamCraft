@@ -370,6 +370,17 @@ pub async fn show(
         "add_to_change": can_work && open_change.is_none(),
         "acknowledge": me.can_edit() && me.can_edit_project(item.project_id),
     });
+    // CAD files of this revision that lead to other items (assemblies and
+    // NX models): offers "Create BOM from CAD references"
+    let cad_structure = file_refs.iter().any(|f| {
+        matches!(
+            f.format_kind,
+            Some(crate::cadformat::FormatKind::Assembly | crate::cadformat::FormatKind::Model)
+        ) && f
+            .references
+            .iter()
+            .any(|r| r.matches.iter().any(|m| !m.same_revision))
+    });
     let files_hint = domain::files_hint(
         state,
         rev.checked_out_by,
@@ -472,6 +483,7 @@ pub async fn show(
             "native_without_preview": native_without_preview,
             "similar": similar_parts,
             "lines": lines,
+            "cad_structure": cad_structure,
             "where_used": where_used,
             "interchange": interchange,
             "hidden": {
