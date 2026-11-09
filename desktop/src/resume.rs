@@ -481,9 +481,9 @@ mod tests {
         let cancel = AtomicBool::new(false);
         // a part with wrong bytes (e.g. written by something else): the
         // resumed file does not match, so it is fetched once more completely
-        let mut f = tokio::fs::File::create(&part).await.unwrap();
-        f.write_all(&vec![0u8; 10_000]).await.unwrap();
-        drop(f);
+        // written synchronously: a tokio File dropped without flush may not
+        // have handed its buffer to the OS yet (flaky on macOS)
+        std::fs::write(&part, vec![0u8; 10_000]).unwrap();
         download(&api, "/f", &dest, &sha, &cancel, &mut |_| {})
             .await
             .unwrap();
