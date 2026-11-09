@@ -313,6 +313,18 @@ assistant is configured, says that AI is switched off by the administrator (loca
 - **Permission requests** of the agent show up in the conversation with **Allow once** and **Reject**. The desktop app
   never grants an "always"
   permission.
+- **Read-only TeamCraft tools need no prompt.** When the agent asks to run
+  one of TeamCraft's own read-only MCP tools (search, get an item or a BOM,
+  where-used …), the desktop app answers *allow once* by itself. The tool
+  list marks such a call **Allowed automatically (read-only)**. Nothing is
+  widened by it: the agent calls the tool with your token, and the server
+  answers with your rights only – a restricted group you are not in stays
+  "not found", as in the web UI. Everything else still asks: TeamCraft's
+  write tools (draft change orders, comments, result proposals), tools of
+  any other MCP server, the agent's own tools (files, commands), and every
+  request the app cannot identify for certain (see below). To be asked
+  every time, tick **Ask before read-only TeamCraft tools** under
+  *Settings → Agents…*; it applies to a running agent at once.
 - **Model:** if the agent offers a choice of models, the navigator shows a **Model** picker under the agent. The list is
   the agent's own. It depends
   on the agent's provider, sign-in and plan, and TeamCraft adds or checks
@@ -373,3 +385,32 @@ the process, so an agent that
 sign in
 once in a terminal with the agent's own command and start it again. The
 code is `desktop/src/acp.rs`.
+
+**Which permission requests are answered without a prompt**
+(`desktop/src/autoallow.rs`). At the start of a session the app asks the
+server for `tools/list` with your token and keeps the names marked
+`annotations.readOnlyHint: true` (a name listed twice is left out) for that
+session – nothing is hard-coded. A `session/request_permission` is
+answered with its `allow_once` option only if all of these hold:
+
+- the session got TeamCraft's MCP server from the app (registered as
+  `teamcraft`; an agent without MCP over HTTP may have a `teamcraft` server
+  of its own, so then everything asks), and the list loaded;
+- the request names a tool of exactly that server, in one of the forms
+  agents use: `mcp__teamcraft__<tool>` (Claude Code and its ACP adapter, in
+  `toolCall.title` or `toolCall._meta.claudeCode.toolName`; also
+  `toolCall._meta.toolName`), `<tool> (teamcraft MCP Server)` or
+  `teamcraft__<tool>` (Gemini CLI). A bare `get_item` names no server and
+  asks; Gemini CLI usually titles a call with its arguments, so its
+  requests mostly still ask;
+- every name in the request agrees – one that names another server or
+  another tool makes it ask;
+- the tool's `kind` is `other` (or missing) both in the request and in the
+  tool call the agent announced before, so `mcp__teamcraft__get_item` as
+  the title of a terminal command or file edit asks;
+- the tool is in the read-only list, and the request offers `allow_once`
+  (`allow_always` is never chosen).
+
+The app asks the agent's question and trusts its answer about which tool
+runs, as with every permission prompt: the agent could call tools without
+asking at all. What a read-only tool returns is decided by the server.

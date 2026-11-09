@@ -34,6 +34,16 @@ see the notices in the README.
   PDF, …) always stay visible; display only. `GET /api/v1/me` returns
   `preferred_cad`, file formats carry `format_info.family`.
 
+### Changed
+
+- Desktop app, local agents: calls of TeamCraft's own read-only MCP tools
+  (by the server's `tools/list` annotations) are allowed once without a
+  permission prompt and marked *Allowed automatically (read-only)* in the
+  tool list; the server still answers with the user's rights only. Write
+  tools, other servers' tools, the agent's own tools and every request the
+  app cannot identify for certain still ask. *Settings → Agents… → Ask
+  before read-only TeamCraft tools* restores a prompt for every call.
+
 ## [0.2.6] - 2026-11-08
 
 Changes since the `v0.2.5` tag.

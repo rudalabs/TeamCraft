@@ -120,6 +120,12 @@ pub struct Settings {
     /// preference: the server's policy decides what is available.
     #[serde(default)]
     pub agent_backends: std::collections::BTreeMap<String, String>,
+    /// Settings → Agents → “Ask before read-only TeamCraft tools”. Off (the
+    /// default): a local agent's calls of TeamCraft's read-only MCP tools are
+    /// allowed once without a prompt – the server checks the user's rights on
+    /// every call; everything else always asks.
+    #[serde(default)]
+    pub agent_ask_read_only: bool,
     /// Look for a newer release on GitHub (at most once a day); `None` = on.
     pub update_check: Option<bool>,
     /// When checking out an assembly: also get its parts (read-only); `None` = on.
@@ -494,6 +500,19 @@ mod tests {
         assert!(keychain.stored.borrow().is_none());
         let loaded = Settings::load_with(dir.path(), &keychain);
         assert!(loaded.token.is_none() && loaded.token_storage.is_none());
+    }
+
+    #[test]
+    fn read_only_teamcraft_tools_ask_only_when_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let keychain = FakeKeychain::new(true);
+        // older settings files have no such field: off, i.e. allowed
+        std::fs::write(dir.path().join("settings.json"), "{}").unwrap();
+        let mut s = Settings::load_with(dir.path(), &keychain);
+        assert!(!s.agent_ask_read_only);
+        s.agent_ask_read_only = true;
+        s.save(dir.path()).unwrap();
+        assert!(Settings::load_with(dir.path(), &keychain).agent_ask_read_only);
     }
 
     #[test]
