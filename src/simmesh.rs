@@ -12,15 +12,15 @@
 //!   nodal result blocks (`-4 DISP`, `-4 STRESS`, …).
 //!
 //! Every reader fills one `Grid` (points, cells, point and cell data);
-//! `Grid::into_mesh` turns it into the preview [`Mesh`]: volume cells
+//! `Grid::into_mesh` turns it into the preview [`Mesh`](crate::mesh::Mesh): volume cells
 //! (tetrahedra, hexahedra, wedges, pyramids – quadratic ones by their corner
 //! nodes) contribute only their outer faces (faces used by exactly one cell),
 //! surface cells are drawn as they are, and interior points are dropped.
 //!
-//! Result values become scalar [`Field`]s on the vertices: one-component
+//! Result values become scalar [`Field`](crate::mesh::Field)s on the vertices: one-component
 //! data as is, six- or nine-component tensors as von Mises equivalent,
 //! other vectors as magnitude. Cell data is averaged to the points. At most
-//! [`MAX_FIELDS`] fields are kept – the viewer offers them in a selector.
+//! [`MAX_FIELDS`](crate::mesh::MAX_FIELDS) fields are kept – the viewer offers them in a selector.
 //!
 //! Like the mesh readers, everything is defensive: counts are limited and
 //! checked against the data before anything is allocated, decompression is
