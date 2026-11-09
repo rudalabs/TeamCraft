@@ -1366,6 +1366,7 @@ mod tests {
             display_name: "Erika Muster".into(),
             role,
             skin: "teamcraft".into(),
+            preferred_cad: String::new(),
             projects: vec![],
             hidden_projects: vec![],
         }

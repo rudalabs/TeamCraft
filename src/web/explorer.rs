@@ -80,6 +80,7 @@ pub async fn show(
                 .collect();
             Some(json!({
                 "rev": rev,
+                "file_groups": super::file_groups(&me.preferred_cad, &file_list),
                 "files": file_list,
                 "can": {
                     "checkout": can_work && rev.checked_out_by.is_none(),

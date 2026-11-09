@@ -43,6 +43,10 @@ async fn render_account(
             "new_token": new_token,
             "api_base": format!("{}/api/v1", st.config.public_url),
             "skins": domain::SKINS,
+            "cad_families": crate::cadformat::families()
+                .iter()
+                .map(|s| json!({ "id": s.id, "short": s.short, "name": s.name }))
+                .collect::<Vec<_>>(),
             "notify": {
                 "settings": settings,
                 "kinds": kinds,
@@ -95,6 +99,32 @@ pub async fn set_skin(
         }
         Err(e) => Err(e),
     }
+}
+
+#[derive(Deserialize)]
+pub struct PreferredCadForm {
+    /// A format family (`cadformat::families`) or empty = show all.
+    #[serde(default)]
+    preferred_cad: String,
+}
+
+/// Saves the preferred CAD program (display of file lists only).
+pub async fn set_preferred_cad(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Form(form): Form<PreferredCadForm>,
+) -> AppResult<Response> {
+    let back = "/account#cad-preference";
+    let family = form.preferred_cad.trim();
+    let result = users::set_preferred_cad(&st.db, &ctx.me, family).await;
+    let message = match crate::cadformat::system(family) {
+        Some(s) if !family.is_empty() => format!(
+            "Preferred CAD program: {} – files of other CAD programs are shown collapsed",
+            s.short
+        ),
+        _ => "All CAD formats are shown alike".to_string(),
+    };
+    finish(&st, result, back, |()| (back.to_string(), message))
 }
 
 pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {

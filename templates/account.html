@@ -58,6 +58,25 @@
   </div>
 </section>
 
+<section class="card" id="cad-preference">
+  <div class="card-head">
+    <h2>Preferred CAD program</h2>
+    <span class="hint">Only for you; applies in the browser and the desktop app.</span>
+  </div>
+  <form class="stack" method="post" action="/account/preferred-cad">
+    <label class="field">Show files of
+      <select name="preferred_cad" aria-describedby="cad-preference-hint">
+        <option value="" {% if not me.preferred_cad %}selected{% endif %}>All CAD programs alike (default)</option>
+        {% for s in cad_families %}<option value="{{ s.id }}" {% if me.preferred_cad == s.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+      </select>
+      <span class="hint" id="cad-preference-hint">When a revision has files of your program, native files of other CAD programs
+        (e.g. a SolidWorks copy of an NX part) are listed in a collapsed group below the others. Neutral formats such as STEP, JT, STL
+        and PDF always stay visible, and nothing is hidden from search, downloads or the API.</span>
+    </label>
+    <div class="actions"><button class="primary" type="submit">Save</button></div>
+  </form>
+</section>
+
 <section class="card" id="notifications">
   <div class="card-head">
     <h2>Notifications</h2>
