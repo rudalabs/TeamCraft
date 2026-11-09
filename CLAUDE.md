@@ -92,6 +92,7 @@ src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS
                    mesh.rs = read() dispatch only; mesh/model.rs = Mesh, fields, TCMESH01 encode/decode;
                    mesh/helpers.rs = bounded byte access and limits; one file per simple format with its own tests
                    (stl, obj, ply, off, three_mf = 3MF+AMF, gltf, three_ds, points = PTS/XYZ/LAS)
+src/simmesh.rs     simulation results with fields: simmesh/vtk_legacy.rs, vtk_xml.rs, frd.rs over simmesh/grid.rs (cells → outer surface) and numbers.rs
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
                    (also the shape signatures and the mass integrals, cached per content hash)
 src/massprops.rs   pure mass properties of closed meshes (Eberly), edge check, inverted-mesh fix, parallel axis
