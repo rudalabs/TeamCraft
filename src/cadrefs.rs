@@ -7,7 +7,9 @@
 //! as SolidWorks, Inventor, Solid Edge and CATIA store paths that way) – that
 //! ends with the extension of a CAD file (`Bracket.SLDPRT`,
 //! `C:\Rover\Motor mount.ipt`, `'nozzle.stp'`, `"power.kicad_sch"`). Paths
-//! are reduced to the file name. The result is a list of referenced file
+//! are reduced to the file name. UTF-16 strings with a length prefix (as
+//! Inventor stores its references) are also read by their length, so a
+//! binary field right after the name cannot hide it. The result is a list of referenced file
 //! names; `services::references` matches them against the files in the
 //! vault.
 //!
@@ -214,7 +216,7 @@ fn utf16_runs(content: &[u8], skip: Option<&std::ops::Range<usize>>, mut f: impl
         let mut i = align;
         while let Some(&[lo, hi]) = content.get(i..i + 2) {
             let unit = u16::from_le_bytes([lo, hi]);
-            let printable = ((0x20..0x7f).contains(&unit) || (0xa0..0x180).contains(&unit))
+            let printable = printable_unit(unit)
                 && !skip.is_some_and(|s| s.contains(&i) || s.contains(&(i + 1)));
             if printable {
                 run.push(char::from_u32(u32::from(unit)).unwrap_or('?'));
@@ -229,6 +231,55 @@ fn utf16_runs(content: &[u8], skip: Option<&std::ops::Range<usize>>, mut f: impl
         if run.chars().count() >= 5 {
             f(&run);
         }
+    }
+}
+
+/// Shortest and longest length-prefixed UTF-16 string read by
+/// [`prefixed_utf16_strings`], in code units.
+const PREFIXED_MIN: usize = 5;
+const PREFIXED_MAX: usize = 1024;
+
+/// Whether a UTF-16 code unit is text for the scans (Latin-1 and Latin
+/// Extended-A, as in [`utf16_runs`]).
+fn printable_unit(unit: u16) -> bool {
+    (0x20..0x7f).contains(&unit) || (0xa0..0x180).contains(&unit)
+}
+
+/// Length-prefixed UTF-16LE strings: a `u32` LE count of code units directly
+/// followed by exactly that many printable units. Inventor stores the paths
+/// of its references this way (`9b 00 00 00` + 155 units of
+/// `C:\…\Planetrad2_Stirnraeder3.iam`), and the field after the string may
+/// itself look like text – `43 00` is a `C` – which a plain
+/// [`utf16_runs`] scan glues onto the extension (`….iamC`), so the name was
+/// lost. The count gives the exact end of the string.
+fn prefixed_utf16_strings(
+    content: &[u8],
+    skip: Option<&std::ops::Range<usize>>,
+    mut f: impl FnMut(&str),
+) {
+    let mut i = 0;
+    while let Some(head) = content.get(i..i + 4) {
+        let count = <[u8; 4]>::try_from(head).map_or(0, u32::from_le_bytes) as usize;
+        if (PREFIXED_MIN..=PREFIXED_MAX).contains(&count) {
+            let end = i + 4 + 2 * count;
+            let skipped = skip.is_some_and(|s| s.start < end && i < s.end);
+            if let (false, Some(body)) = (skipped, content.get(i + 4..end)) {
+                let units: Vec<u16> = body
+                    .chunks_exact(2)
+                    .map(|p| <[u8; 2]>::try_from(p).map_or(0, u16::from_le_bytes))
+                    .collect();
+                if units.iter().all(|&u| printable_unit(u)) {
+                    let text: String = units
+                        .iter()
+                        .map(|&u| char::from_u32(u32::from(u)).unwrap_or('?'))
+                        .collect();
+                    f(&text);
+                    i = end;
+                    continue;
+                }
+            }
+        }
+        i += 1;
     }
 }
 
@@ -387,6 +438,38 @@ fn raw_names(content: &[u8]) -> Vec<String> {
     utf16_runs(content, skip.as_ref(), |run| {
         names_in(run, &exts, &mut found)
     });
+    // Length-prefixed strings have exact ends: a path is reduced to its last
+    // part as a whole, so `=`, `,` or `(` inside the name do not cut it
+    // (`CM28-L4-H=7_52.ipt`, `ISO 4762 - M4 x 12 Edelstahl, 440C.ipt`).
+    let mut exact = Vec::new();
+    prefixed_utf16_strings(content, skip.as_ref(), |text| {
+        let last = text.rsplit(['\\', '/']).next().unwrap_or(text).trim();
+        if last.len() <= MAX_NAME && is_referencable(last) {
+            exact.push(last.to_string());
+        } else {
+            names_in(text, &exts, &mut found);
+        }
+    });
+    // The other scans cut such names at those characters: drop a name that
+    // is only the tail of an exact one after a boundary (`7_52.ipt`).
+    found.retain(|name| {
+        let name = name.to_lowercase();
+        !exact.iter().any(|e| {
+            let e = e.to_lowercase();
+            // the scans trim spaces after the boundary (`…Edelstahl, 440C.ipt`)
+            e.len() > name.len()
+                && e.ends_with(&name)
+                && e.get(..e.len() - name.len()).is_some_and(|head| {
+                    head.ends_with("  ")
+                        || head
+                            .trim_end()
+                            .chars()
+                            .next_back()
+                            .is_some_and(is_name_boundary)
+                })
+        })
+    });
+    found.extend(exact);
     found
 }
 
@@ -507,6 +590,100 @@ mod tests {
                 "Halterung_für_Düse.SLDPRT"
             ]
         );
+    }
+
+    /// A length-prefixed UTF-16 string as Inventor writes it: `u32` count of
+    /// code units, then the units.
+    fn prefixed(s: &str) -> Vec<u8> {
+        let units = utf16(s);
+        let mut out = u32::try_from(units.len() / 2)
+            .unwrap_or(0)
+            .to_le_bytes()
+            .to_vec();
+        out.extend(units);
+        out
+    }
+
+    #[test]
+    fn inventor_length_prefixed_references() {
+        // Bytes as in a real Inventor 2027 assembly: the path, then the next
+        // field `43 00 00 00` (a "C" to a plain UTF-16 scan) and the
+        // length-prefixed workspace name.
+        let mut content = vec![0x00, 0x13, 0x88, 0x01];
+        content.extend(prefixed(
+            "C:\\Users\\sebas\\Desktop\\Graksleer packngo\\Workspaces\\Arbeitsbereich\\\
+             Radkonstruktion\\Rad Mitte\\Planetrad2\\Konstruktions-Assistent\\\
+             Planetrad2_Stirnraeder3.iam",
+        ));
+        content.extend([0x43, 0x00, 0x00, 0x00]);
+        content.extend(prefixed("Arbeitsbereich"));
+        content.extend([0x02, 0x00, 0x00, 0x00, 0xff, 0xfe]);
+        content.extend(prefixed("Radkonstruktion\\Rad Mitte\\Ringrad2.iam"));
+        content.extend([0x43, 0x00, 0x00, 0x00]);
+        // names with `=` and `,` stay whole – only the cut tail was found before
+        content.extend(prefixed(
+            "C:\\Rover\\Endstop\\Crash Zone 2024\\CM28-L4-H=7_52.ipt",
+        ));
+        content.extend([0x43, 0x00, 0x00, 0x00]);
+        content.extend(prefixed(
+            "C:\\Rover\\Normteile\\DIN EN ISO 4762 - M4 x 12 Edelstahl, 440C.ipt",
+        ));
+        content.extend([0x00, 0x00]);
+        let refs = find(&content, "Rad Mitte TEST3.iam");
+        assert_eq!(
+            refs,
+            vec![
+                "Planetrad2_Stirnraeder3.iam",
+                "Ringrad2.iam",
+                "CM28-L4-H=7_52.ipt",
+                "DIN EN ISO 4762 - M4 x 12 Edelstahl, 440C.ipt"
+            ]
+        );
+        // a different file whose name only ends the same way is kept
+        let mut both = prefixed("C:\\Rover\\Big Bracket.ipt");
+        both.extend([0x00, 0x00, 0x00, 0x00]);
+        both.extend(utf16("C:\\Rover\\Bracket.ipt"));
+        both.extend([0x00, 0x00]);
+        assert_eq!(
+            find(&both, "rover.iam"),
+            vec!["Big Bracket.ipt", "Bracket.ipt"]
+        );
+        // without the length prefix the glued "C" hides the name
+        let mut plain = utf16("C:\\Rover\\Motor mount.iam");
+        plain.extend([0x43, 0x00, 0x00, 0x00]);
+        assert!(find(&plain, "rover.iam").is_empty());
+    }
+
+    #[test]
+    fn prefixed_strings_need_exact_printable_length() {
+        fn collect(content: &[u8]) -> Vec<String> {
+            let mut out = Vec::new();
+            prefixed_utf16_strings(content, None, |t| out.push(t.to_string()));
+            out
+        }
+        // count larger than the data: nothing
+        let mut short = 40u32.to_le_bytes().to_vec();
+        short.extend(utf16("bracket.ipt"));
+        assert!(collect(&short).is_empty());
+        // a non-printable unit inside the counted range: nothing
+        let mut broken = 11u32.to_le_bytes().to_vec();
+        broken.extend(utf16("brack"));
+        broken.extend([0x01, 0x00]);
+        broken.extend(utf16("t.ipt"));
+        assert!(collect(&broken).is_empty());
+        // below the minimum length: nothing
+        let mut tiny = prefixed("a.ip");
+        tiny.extend([0x00, 0x00]);
+        assert!(collect(&tiny).is_empty());
+        // the exact string, even with text right after it
+        let mut exact = prefixed("bracket.ipt");
+        exact.extend(utf16("CX"));
+        assert_eq!(collect(&exact), vec!["bracket.ipt"]);
+        // inside a skipped range (STEP FILE_NAME): nothing
+        let mut skipped = Vec::new();
+        let range = 0..exact.len();
+        prefixed_utf16_strings(&exact, Some(&range), |t| skipped.push(t.to_string()));
+        assert!(skipped.is_empty());
     }
 
     #[test]
