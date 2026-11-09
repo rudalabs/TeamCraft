@@ -535,3 +535,148 @@ fn token_scopes_narrow_the_tool_list() {
     assert!(is_read_only("search_items"));
     assert!(!is_read_only("no_such_tool"));
 }
+
+#[test]
+fn open_3d_preview_is_a_described_read_tool() {
+    let defs = definitions();
+    let d = defs
+        .iter()
+        .find(|d| d["name"] == "open_3d_preview")
+        .expect("open_3d_preview is registered");
+    assert_eq!(d["annotations"]["readOnlyHint"], true);
+    assert!(is_read_only("open_3d_preview"));
+    let schema = &d["inputSchema"];
+    assert_eq!(schema["required"], json!([]));
+    assert_eq!(schema["additionalProperties"], false);
+    for key in ["item", "q", "project", "revision", "file"] {
+        assert_eq!(schema["properties"][key]["type"], "string", "{key}");
+    }
+    let text = d["description"].as_str().unwrap();
+    for word in ["choose", "no_3d_file", "never guess"] {
+        assert!(text.contains(word), "{word}");
+    }
+}
+
+#[test]
+fn open_3d_preview_arguments_resolve_to_an_item_or_a_search() {
+    use preview_tools::Target;
+    let target = |v: Value| preview_tools::target(&Args::new(&v));
+    assert_eq!(
+        target(json!({ "item": " PRT-000012 " })).unwrap(),
+        Target::Item {
+            number: "PRT-000012".into(),
+            revision: None
+        }
+    );
+    assert_eq!(
+        target(json!({ "item": "PRT-000012/B" })).unwrap(),
+        Target::Item {
+            number: "PRT-000012".into(),
+            revision: Some("B".into())
+        }
+    );
+    assert_eq!(
+        target(json!({ "item": "PRT-000012", "revision": "C" })).unwrap(),
+        Target::Item {
+            number: "PRT-000012".into(),
+            revision: Some("C".into())
+        }
+    );
+    // the same code twice is fine, two different ones are not
+    assert!(target(json!({ "item": "PRT-000012/b", "revision": "B" })).is_ok());
+    assert!(target(json!({ "item": "PRT-000012/B", "revision": "C" })).is_err());
+    // `item` wins over `q`
+    assert!(matches!(
+        target(json!({ "item": "ASM-000001", "q": "bracket" })).unwrap(),
+        Target::Item { .. }
+    ));
+    assert_eq!(
+        target(json!({ "q": "bracket", "revision": "latest" })).unwrap(),
+        Target::Search {
+            query: "bracket".into(),
+            revision: Some("latest".into())
+        }
+    );
+    for bad_args in [
+        json!({}),
+        json!({ "q": "   " }),
+        json!({ "item": "/B" }),
+        json!({ "item": 12 }),
+        json!({ "q": ["bracket"] }),
+    ] {
+        assert!(target(bad_args.clone()).is_err(), "{bad_args}");
+    }
+}
+
+#[test]
+fn open_3d_preview_picks_viewable_files_models_first() {
+    use crate::preview::PreviewFormat;
+    let fmt = preview_tools::preview_format;
+    assert_eq!(fmt("step", "x.bin"), Some(PreviewFormat::Step));
+    assert_eq!(fmt("", "bracket.STL"), Some(PreviewFormat::Stl), "by name");
+    assert_eq!(fmt("", "bracket.iges"), None);
+    assert_eq!(fmt("", "drawing.pdf"), None);
+    assert_eq!(fmt("", "notes.txt"), None);
+    let rank = preview_tools::preview_rank;
+    assert!(rank(PreviewFormat::Step) < rank(PreviewFormat::Stl));
+    assert_eq!(rank(PreviewFormat::Stl), rank(PreviewFormat::NxPart));
+    assert!(rank(PreviewFormat::Stl) < rank(PreviewFormat::Vtu));
+    assert!(rank(PreviewFormat::Vtu) < rank(PreviewFormat::Las));
+}
+
+#[test]
+fn viewer_urls_are_checked_and_made_relative() {
+    let id = "0b9c3a3e-5d1f-4c9a-9e8b-1234567890ab";
+    let public = "https://plm.example.org";
+    let ok = format!("/files/{id}/preview");
+    assert_eq!(viewer_path(id.parse().unwrap()), ok);
+    assert_eq!(
+        checked_viewer_path(&ok, public).as_deref(),
+        Some(ok.as_str())
+    );
+    assert_eq!(
+        checked_viewer_path(&format!("{public}/files/{id}/preview"), public).as_deref(),
+        Some(ok.as_str())
+    );
+    assert_eq!(
+        checked_viewer_path(&format!("{public}{ok}"), "https://plm.example.org/").as_deref(),
+        Some(ok.as_str()),
+        "a trailing slash of the public URL"
+    );
+    // upper-case hex is canonicalised
+    assert_eq!(
+        checked_viewer_path(&format!("/files/{}/preview", id.to_uppercase()), public).as_deref(),
+        Some(ok.as_str())
+    );
+    for bad in [
+        format!("https://evil.example/files/{id}/preview"),
+        format!("https://plm.example.org.evil.example/files/{id}/preview"),
+        format!("https://plm.example.org@evil.example/files/{id}/preview"),
+        format!("http://plm.example.org/files/{id}/preview"),
+        format!("//evil.example/files/{id}/preview"),
+        format!("/files/{id}/preview?x=1"),
+        format!("/files/{id}/preview#x"),
+        format!("/files/{id}/download"),
+        format!("/files/{id}/preview/../../admin"),
+        format!("/files/../admin/{id}/preview"),
+        "/files/not-a-uuid-at-all-but-36-chars-x/preview".to_string(),
+        "/files/0b9c3a3e%2d5d1f-4c9a-9e8b-1234567890ab/preview".to_string(),
+        format!("javascript:alert(1)//files/{id}/preview"),
+        format!("files/{id}/preview"),
+        String::new(),
+    ] {
+        assert_eq!(checked_viewer_path(&bad, public), None, "{bad}");
+    }
+    // without a public URL only relative paths pass
+    assert_eq!(checked_viewer_path(&ok, "").as_deref(), Some(ok.as_str()));
+    assert_eq!(checked_viewer_path(&format!("{public}{ok}"), ""), None);
+}
+
+#[test]
+fn the_open_hint_names_the_viewer() {
+    let url = "https://plm.example.org/files/x/preview";
+    assert_eq!(
+        preview_action(url),
+        json!({ "action": "open", "kind": "preview3d", "url": url })
+    );
+}

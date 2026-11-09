@@ -13,8 +13,9 @@ import { openChange } from "./change.js";
 import { openRequest, requestChangeDialog } from "./requests.js";
 import { importBomDialog } from "./bom-import.js";
 
-export function openRevision(number, code, sub) {
-  openTab({ key: "rev:" + number + ":" + code, kind: "revision", number: number, code: code, title: number + "/" + code, sub: sub || "overview" });
+/** Opens a revision tab; `viewerFile` (a file id) picks the file of its 3D viewer. */
+export function openRevision(number, code, sub, viewerFile) {
+  openTab({ key: "rev:" + number + ":" + code, kind: "revision", number: number, code: code, title: number + "/" + code, sub: sub || "overview", viewerFile: viewerFile || null });
 }
 
 export function loadRevision(tab) {

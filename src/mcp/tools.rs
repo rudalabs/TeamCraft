@@ -38,6 +38,7 @@ mod common;
 mod compare_tools;
 mod insight_tools;
 mod item_tools;
+mod preview_tools;
 mod prompts;
 mod request_tools;
 mod schemas;
@@ -52,6 +53,7 @@ use common::*;
 use compare_tools::*;
 use insight_tools::*;
 use item_tools::*;
+use preview_tools::*;
 use request_tools::*;
 use schemas::*;
 use simulation_tools::*;
@@ -59,6 +61,7 @@ use simulation_tools::*;
 pub use args::{parse_item_ref, Args};
 pub use compare_tools::{compare, FileState, LineState, Snapshot};
 pub use insight_tools::group_duplicates;
+pub use preview_tools::{checked_viewer_path, preview_action, viewer_path, MAX_PREVIEW_CANDIDATES};
 pub use prompts::{prompt, prompts};
 pub use request_tools::{request_reason, request_scope, request_status_filter};
 pub use simulation_tools::{diff_brief, group_based};
@@ -271,6 +274,20 @@ const TOOLS: &[Tool] = &[
             `pending`: the signature is still being computed, call again shortly.",
         effect: READ,
         schema: schema_similar,
+    },
+    Tool {
+        name: "open_3d_preview",
+        title: "Open the 3D preview of an item",
+        description: "Use when the user wants to see an item in 3D (\"show me the bracket in 3D\"). Give \
+            `item` (number, optionally PRT-000012/B) or `q` (search text: a key word of the name such as \
+            `bracket`, optionally narrowed by `project`). Picks the revision's file the browser viewer can show \
+            (STEP first, then meshes and native lightweight models, then simulation results and point clouds; \
+            or `file`). Status `ok`: `url` is the TeamCraft 3D viewer page and `action` an open hint – give the \
+            user the link (TeamCraft's own assistant shows it as a button); nothing is opened by the tool. \
+            `choose`: several items match – list the candidates (`has_3d` tells which have a 3D file) and ask \
+            the user which one; never guess. `no_3d_file`: the revision has nothing to show in 3D – say so.",
+        effect: READ,
+        schema: schema_open_preview,
     },
     Tool {
         name: "compare_revisions",
@@ -514,6 +531,7 @@ pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value 
         "bom_health" => bom_health(st, me, &a).await,
         "find_duplicate_files" => find_duplicate_files(st, me, &a).await,
         "find_similar_parts" => find_similar_parts(st, me, &a).await,
+        "open_3d_preview" => open_3d_preview(st, me, &a).await,
         "compare_revisions" => compare_revisions(st, me, &a).await,
         "create_change_draft" => create_change_draft(st, me, &a).await,
         "add_to_change" => add_to_change(st, me, &a).await,
