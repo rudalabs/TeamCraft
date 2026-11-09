@@ -16,7 +16,7 @@
 //!   total mass but has no position), nothing (missing).
 //! * **Computation:** the mesh integrals come from the isolated preview
 //!   process and are cached per content hash (`Previews::mass_geometry`);
-//!   this module only scales and adds them ([`report`] is pure).
+//!   this module only scales and adds them (`report` is pure).
 //! * **Read rights:** the structure is loaded like the BOM page
 //!   (`bom::load_structure`); restricted lines are left out and counted.
 
