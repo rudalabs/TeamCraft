@@ -29,6 +29,11 @@ pub struct Run {
     pub allow_drafts: bool,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// "Open 3D preview" links of `open_3d_preview` results, checked by
+    /// `assistant::open_links` (this server's viewer pages only, relative).
+    /// Shown under the fresh answer; the stored thread keeps text only.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<assistant::OpenLink>,
     /// Where the question was asked, as resolved with the user's rights
     /// (conversation requests only).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -250,6 +255,7 @@ async fn run_once(
     let answer = result.map_err(AssistantError::into_app_error)?;
     let tainted = tools.tainted.load(std::sync::atomic::Ordering::SeqCst);
     let trace = std::mem::take(&mut guard.trace);
+    let links = assistant::open_links(&trace.open_hints, &st.config.public_url);
     Ok((
         Run {
             action: guard.question.action,
@@ -261,6 +267,7 @@ async fn run_once(
             allow_drafts,
             input_tokens: trace.input_tokens,
             output_tokens: trace.output_tokens,
+            links,
             context: None,
         },
         tainted,

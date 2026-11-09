@@ -908,6 +908,45 @@
         "idempotentHint": true,
         "openWorldHint": false,
         "readOnlyHint": true,
+        "title": "Open the 3D preview of an item"
+      },
+      "description": "Use when the user wants to see an item in 3D (\"show me the bracket in 3D\"). Give `item` (number, optionally PRT-000012/B) or `q` (search text: a key word of the name such as `bracket`, optionally narrowed by `project`). Picks the revision's file the browser viewer can show (STEP first, then meshes and native lightweight models, then simulation results and point clouds; or `file`). Status `ok`: `url` is the TeamCraft 3D viewer page and `action` an open hint – give the user the link (TeamCraft's own assistant shows it as a button); nothing is opened by the tool. `choose`: several items match – list the candidates (`has_3d` tells which have a 3D file) and ask the user which one; never guess. `no_3d_file`: the revision has nothing to show in 3D – say so.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "description": "File name to show (default: the best 3D file of the revision)",
+            "type": "string"
+          },
+          "item": {
+            "description": "Item number, e.g. PRT-000012 (or PRT-000012/B); wins over `q`",
+            "type": "string"
+          },
+          "project": {
+            "description": "Project group code that narrows `q`, e.g. ROVER",
+            "type": "string"
+          },
+          "q": {
+            "description": "Search text when the number is not known: a key word of the name, number, material or file name, e.g. bracket",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Revision code (A, B, …) or `latest` (default)",
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "name": "open_3d_preview",
+      "title": "Open the 3D preview of an item"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+        "readOnlyHint": true,
         "title": "Compare two revisions"
       },
       "description": "What changed between two revisions of an item: attributes, files added, removed or with new content, and BOM lines added, removed or with another quantity or find number. Defaults: to = latest, from = the revision before `to`.",

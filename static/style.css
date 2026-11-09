@@ -1285,6 +1285,7 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
 .assistant-text table { margin: 6px 0 var(--space-3); }
 .assistant-text hr { border: none; border-top: 1px solid var(--border); margin: var(--space-4) 0; }
 .assistant-meta .badge { margin: 0 2px 4px 0; }
+.assistant-links { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 
 /* ===========================================================================
    Narrow screens: the nav scrolls; on phones it gets a row of its own

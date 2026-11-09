@@ -2001,6 +2001,17 @@ mod tests {
         );
 
         let answer = crate::assistant::render_markdown("## Scope\n- PRT-000001 <b>");
+        // "Open 3D preview" links: checked by open_links, label escaped
+        let links = crate::assistant::open_links(
+            &[
+                json!({ "url": "http://localhost:8080/files/0b9c3a3e-5d1f-4c9a-9e8b-1234567890ab/preview",
+                        "item": "PRT-000001", "revision": "A", "file": "<script>x</script>.stl" }),
+                json!({ "url": "https://evil.example/files/0b9c3a3e-5d1f-4c9a-9e8b-1234567890ab/preview",
+                        "item": "PRT-000002", "revision": "A", "file": "evil.stl" }),
+            ],
+            "http://localhost:8080",
+        );
+        assert_eq!(links.len(), 1);
         let html = render(
             &env,
             "assistant.html",
@@ -2010,10 +2021,16 @@ mod tests {
                 "back": "/changes/x", "error": null,
                 "run": { "label": "Brief me for this review", "html": answer, "text": "x", "truncated": true,
                          "tools": [{ "name": "get_change", "ok": true }, { "name": "bom_health", "ok": false }],
-                         "steps": 3, "model": "claude-opus-5-5", "allow_drafts": false },
+                         "steps": 3, "model": "claude-opus-5-5", "allow_drafts": false,
+                         "links": links },
             })),
         );
+        assert!(
+            !html.contains("<script>x") && !html.contains("evil"),
+            "the link is escaped and only to this server"
+        );
         for expected in [
+            "<a class=\"button small view-3d\" href=\"&#x2f;files&#x2f;0b9c3a3e-5d1f-4c9a-9e8b-1234567890ab&#x2f;preview\">Open 3D preview: PRT-000001&#x2f;A · &lt;script&gt;x&lt;&#x2f;script&gt;.stl</a>",
             "<h3>Scope</h3>",
             "<a href=\"/i/PRT-000001\">PRT-000001</a> &lt;b&gt;",
             "Is it &lt;ready&gt;?",
