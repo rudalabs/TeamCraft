@@ -87,6 +87,7 @@ src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, both + PN refinement mesh/pn.rs,
                    Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs) → TCMESH01
+src/simmesh.rs     simulation results with fields: simmesh/vtk_legacy.rs, vtk_xml.rs, frd.rs over simmesh/grid.rs (cells → outer surface) and numbers.rs
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
 src/textindex.rs   text extraction from uploads for the full-text search (plain text with its numbers, STEP/IGES strings;
                    PDF via pdftext, HTML via htmltext – both in the isolated `text-extract` child)

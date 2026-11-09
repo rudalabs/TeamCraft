@@ -20,6 +20,18 @@ examine_globs = [
     "src/cadformat.rs",
     "src/cadrefs.rs",
     "src/stepbom.rs",
+    # the 3D readers: pure, untrusted input, unit tests per format
+    "src/mesh.rs",
+    "src/mesh/**/*.rs",
+    "src/simmesh.rs",
+    "src/simmesh/**/*.rs",
+]
+
+# STEP goes through the truck CAD kernel: slow per test run and mostly
+# third-party behaviour; its own Part 21 reader (p21.rs) stays in.
+exclude_globs = [
+    "src/mesh/step.rs",
+    "src/mesh/tessellated.rs",
 ]
 
 # Mutants that are equivalent or not worth a test – each with its reason.

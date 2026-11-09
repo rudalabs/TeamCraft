@@ -37,8 +37,10 @@
   `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child
   process with a time limit. The browser only draws the compact
-  `TCMESH01` buffer; `simmesh.rs` turns VTK/VTU/VTP and CalculiX `.frd`
-  results into their outer surface with scalar fields (an optional, flagged
+  `TCMESH01` buffer; `simmesh.rs` turns VTK/VTU/VTP (`simmesh/vtk_legacy.rs`,
+  `simmesh/vtk_xml.rs`) and CalculiX `.frd` (`simmesh/frd.rs`) results, over
+  a shared cell grid (`simmesh/grid.rs`) and number parsing
+  (`simmesh/numbers.rs`), into their outer surface with scalar fields (an optional, flagged
   section of the same format) that the viewer colours with a colour map.
   The same child process writes the shape signature of the
   [similar part search](../guide/similar-parts.md) (`shape.rs`), stored once
@@ -61,7 +63,7 @@
 | `src/pagecontext.rs`                 | the page context the assistant sidebar sends (kind, identifiers, view, rule, query, rows shown): parsing and caps; the services resolve it with the user's rights |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                                                                                      |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images, assembly placements)                                                    |
-| `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs`: VTK/VTU/VTP/FRD simulation results with fields                                                                |
+| `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs` + `src/simmesh/`: VTK/VTU/VTP/FRD results with fields                                                          |
 | `src/shape.rs`                       | shape signatures (extents, area, volume, D2 distribution) for the similar part search                                                                             |
 | `src/webhooks.rs`                    | event webhooks: outbox worker, HMAC-SHA256 signature, backoff, target (SSRF) guard                                                                                |
 | `migrations/`                        | PostgreSQL schema                                                                                                                                                 |
