@@ -79,14 +79,18 @@ src/llm/           provider-neutral LLM layer (no TeamCraft types): Turn/ToolCal
                    (encode/decode/error table), Transport trait; http.rs = the one reqwest client (no redirects),
                    anthropic.rs = Messages API, openai.rs = Chat Completions (OpenAI, Azure, Mistral, Ollama, vLLM …)
 src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm with the MCP tools,
-                   Tools trait (fake in tests), markdown-lite → safe HTML;
+                   Tools trait (fake in tests), markdown-lite → safe HTML, "Open 3D preview" links from the
+                   open hints of open_3d_preview (mcp/tools/preview_tools.rs; URL checked: own viewer page only);
                    services/assistant.rs runs it for a user and writes the audit record (no content); resolves the page
                    context with the user's rights; services/assistant_threads.rs = the per-user conversation (text only)
 src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows shown): parsing and caps only – ids are hints
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, both + PN refinement mesh/pn.rs,
-                   Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs) → TCMESH01
+                   Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs) → TCMESH01;
+                   mesh.rs = read() dispatch only; mesh/model.rs = Mesh, fields, TCMESH01 encode/decode;
+                   mesh/helpers.rs = bounded byte access and limits; one file per simple format with its own tests
+                   (stl, obj, ply, off, three_mf = 3MF+AMF, gltf, three_ds, points = PTS/XYZ/LAS)
 src/simmesh.rs     simulation results with fields: simmesh/vtk_legacy.rs, vtk_xml.rs, frd.rs over simmesh/grid.rs (cells → outer surface) and numbers.rs
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
 src/textindex.rs   text extraction from uploads for the full-text search (plain text with its numbers, STEP/IGES strings;

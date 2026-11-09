@@ -478,6 +478,7 @@ pub async fn show(
             "revisions": all_revisions,
             "is_latest": latest_id == Some(rev.id),
             "latest_id": latest_id,
+            "file_groups": super::file_groups(&me.preferred_cad, &attachments),
             "files": attachments,
             "file_bases": file_bases,
             "native_without_preview": native_without_preview,

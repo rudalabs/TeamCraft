@@ -120,6 +120,7 @@ pub async fn ask(
                 "html": assistant::render_markdown(&run.answer.text),
                 "text": run.answer.text,
                 "truncated": run.answer.truncated,
+                "links": run.links,
                 "tools": run.tools,
                 "steps": run.steps,
                 "model": run.model,

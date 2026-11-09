@@ -444,6 +444,7 @@ mod tests {
                 "folders": [{ "id": ROCKET, "code": "ROCKET", "name": "Sounding rocket", "items": 3, "locked": 1 }],
                 "folder": ROCKET, "entries": [entry], "limit": 500, "q": "",
                 "selected": { "rev": revision("in_work", true), "files": [file.clone()],
+                              "file_groups": [{ "files": [file.clone()], "collapsed": false }],
                               "can": { "checkout": false, "checkin": true, "cancel_checkout": true } },
                 "back": crate::util::pct_encode(&format!("/vault?folder={ROCKET}&rev={OTHER}")),
                 "max_upload_mb": 512,
@@ -726,7 +727,10 @@ mod tests {
                     "files_hint": files_hint(if state == "released" { "frozen" } else if checked_out { "upload" } else { "checkout" }),
                     "rev": revision(state, checked_out), "item": item(), "revisions": [revision(state, checked_out)],
                     "hidden": { "parents": 2, "incoming": 1, "changes": 1, "simulations": 0 },
-                    "is_latest": false, "latest_id": OTHER, "files": [file.clone(), native.clone(), unknown.clone()], "native_without_preview": state == "released", "lines": [bom_line.clone()],
+                    "is_latest": false, "latest_id": OTHER, "files": [file.clone(), native.clone(), unknown.clone()],
+                    "file_groups": [{ "files": [file.clone(), unknown.clone()], "collapsed": false },
+                                    { "files": [native.clone()], "collapsed": true, "count": 1, "families": "SolidWorks" }],
+                    "native_without_preview": state == "released", "lines": [bom_line.clone()],
                     "where_used": [{ "line_id": ME, "parent_revision_id": OTHER, "parent_item_id": ME,
                                      "parent_number": "ASM-000001", "parent_code": "A", "parent_name": "Assembly",
                                      "parent_state": "released", "find_number": 10, "quantity": 2.0 }],
@@ -754,6 +758,13 @@ mod tests {
                     "classifications": [{ "value": "make", "label": "In-house" }, { "value": "purchased", "label": "Purchased" }],
                 })),
             );
+            // preferred CAD program: the other program's file in a <details>
+            let (open, rest) = html
+                .split_once("<details class=\"other-formats\"")
+                .expect("collapsed group of other CAD formats");
+            assert!(open.contains("nozzle.step") && !open.contains(">nozzle.SLDPRT<"));
+            assert!(rest.contains("1 file in other CAD formats (SolidWorks)"));
+            assert!(rest.contains(">nozzle.SLDPRT<"));
             assert!(
                 html.contains("aria-current=\"step\""),
                 "current lifecycle state is marked"
@@ -1776,6 +1787,9 @@ mod tests {
                 "new_token": { "name": "ci", "value": "tc_pat_secret", "scope": "read_only" },
                 "api_base": "http://localhost:8080/api/v1",
                 "skins": crate::domain::SKINS,
+                "cad_families": crate::cadformat::families().iter()
+                    .map(|s| json!({ "id": s.id, "short": s.short, "name": s.name }))
+                    .collect::<Vec<_>>(),
                 "notify": {
                     "settings": { "email": true, "email_address": "max@example.org", "mattermost": false,
                                   "mattermost_username": null, "muted": ["item_update"] },
@@ -1788,6 +1802,12 @@ mod tests {
             })),
         );
         assert!(html.contains("tc_pat_secret"));
+        assert!(
+            html.contains("action=\"/account/preferred-cad\"")
+                && html.contains("value=\"nx\"")
+                && html.contains("Siemens NX"),
+            "preferred CAD program choice"
+        );
         assert!(
             html.contains("“ci” (read-only)")
                 && html.contains("MCP only")
@@ -1981,6 +2001,17 @@ mod tests {
         );
 
         let answer = crate::assistant::render_markdown("## Scope\n- PRT-000001 <b>");
+        // "Open 3D preview" links: checked by open_links, label escaped
+        let links = crate::assistant::open_links(
+            &[
+                json!({ "url": "http://localhost:8080/files/0b9c3a3e-5d1f-4c9a-9e8b-1234567890ab/preview",
+                        "item": "PRT-000001", "revision": "A", "file": "<script>x</script>.stl" }),
+                json!({ "url": "https://evil.example/files/0b9c3a3e-5d1f-4c9a-9e8b-1234567890ab/preview",
+                        "item": "PRT-000002", "revision": "A", "file": "evil.stl" }),
+            ],
+            "http://localhost:8080",
+        );
+        assert_eq!(links.len(), 1);
         let html = render(
             &env,
             "assistant.html",
@@ -1990,10 +2021,16 @@ mod tests {
                 "back": "/changes/x", "error": null,
                 "run": { "label": "Brief me for this review", "html": answer, "text": "x", "truncated": true,
                          "tools": [{ "name": "get_change", "ok": true }, { "name": "bom_health", "ok": false }],
-                         "steps": 3, "model": "claude-opus-5-5", "allow_drafts": false },
+                         "steps": 3, "model": "claude-opus-5-5", "allow_drafts": false,
+                         "links": links },
             })),
         );
+        assert!(
+            !html.contains("<script>x") && !html.contains("evil"),
+            "the link is escaped and only to this server"
+        );
         for expected in [
+            "<a class=\"button small view-3d\" href=\"&#x2f;files&#x2f;0b9c3a3e-5d1f-4c9a-9e8b-1234567890ab&#x2f;preview\">Open 3D preview: PRT-000001&#x2f;A · &lt;script&gt;x&lt;&#x2f;script&gt;.stl</a>",
             "<h3>Scope</h3>",
             "<a href=\"/i/PRT-000001\">PRT-000001</a> &lt;b&gt;",
             "Is it &lt;ready&gt;?",

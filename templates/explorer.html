@@ -92,8 +92,13 @@
 
     <h3>Files <span class="count">{{ selected.files|length }}</span></h3>
     {% if selected.files %}
+    {% for group in selected.file_groups %}
+    {% if group.collapsed %}
+    <details class="other-formats">
+      <summary>{{ group.count }} file{% if group.count != 1 %}s{% endif %} in other CAD formats ({{ group.families }})</summary>
+    {% endif %}
     <ul class="file-list">
-      {% for f in selected.files %}
+      {% for f in group.files %}
       <li>
         <a href="/files/{{ f.id }}/download" title="Download v{{ f.version }}">{{ f.filename }}</a>
         <span class="muted small">v{{ f.version }} · {{ f.size_bytes|filesize }}{% if f.format_info %} · {{ f.format_info.label }}{% endif %}</span>
@@ -102,6 +107,8 @@
       </li>
       {% endfor %}
     </ul>
+    {% if group.collapsed %}</details>{% endif %}
+    {% endfor %}
     {% else %}<p class="empty small">No files yet.</p>{% endif %}
 
     {% if can.checkin %}

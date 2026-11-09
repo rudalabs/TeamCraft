@@ -257,8 +257,13 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   Docker smoke test per push, the other artifacts nightly, on tags and by hand; (c) per push only when packaging
   inputs change. Either way: add `packaging/**` and `desktop/tauri.conf.json` to the PR paths of `release.yml`, so a
   Flatpak or bundle change is built before it is merged
-- [ ] Run `fuzz.yml` and `scale.yml` once by hand – their schedules have never fired yet – and make a failing
-  scheduled run open an issue instead of only an e-mail
+- [ ] Run `scale.yml` once by hand – its schedule has never fired yet – and make a failing scheduled run open an
+  issue instead of only an e-mail
+- [x] `fuzz.yml` had never built a single target: the prebuilt `cargo-fuzz` from `taiki-e/install-action` is a musl
+  binary, so `cargo fuzz` defaulted `--target` to `x86_64-unknown-linux-musl` (not installed; its static libc the
+  sanitizer refuses), and every target failed before fuzzing. The first scheduled run (2026-11-08) failed for this,
+  not for a crash. Fixed by building for the GNU host triple (`fix/fuzz-build-target`); the targets themselves compile
+  (`cargo +nightly check` on `fuzz/`). Still to do: make a failing scheduled run open an issue, not only an e-mail
 - [x] Triage the open CodeQL alerts (2026-11-07, 32 alerts, each checked twice; `fix/codeql-triage`). One real
   finding, the rest false positives, all answered in code or configuration, none by a model row:
     - `rust/uncontrolled-allocation-size` #38 (`POST /api/v1/change-requests`) **real, low risk**: the handler
