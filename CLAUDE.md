@@ -80,7 +80,8 @@ src/llm/           provider-neutral LLM layer (no TeamCraft types): Turn/ToolCal
                    (encode/decode/error table), Transport trait; http.rs = the one reqwest client (no redirects),
                    anthropic.rs = Messages API, openai.rs = Chat Completions (OpenAI, Azure, Mistral, Ollama, vLLM …)
 src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm with the MCP tools,
-                   Tools trait (fake in tests), markdown-lite → safe HTML;
+                   Tools trait (fake in tests), markdown-lite → safe HTML, "Open 3D preview" links from the
+                   open hints of open_3d_preview (mcp/tools/preview_tools.rs; URL checked: own viewer page only);
                    services/assistant.rs runs it for a user and writes the audit record (no content); resolves the page
                    context with the user's rights; services/assistant_threads.rs = the per-user conversation (text only)
 src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows shown): parsing and caps only – ids are hints

@@ -210,6 +210,7 @@ const NOT_AUDITED: &[(&str, &str)] = &[
     ("uploads::purge_expired", "housekeeping of upload sessions"),
     ("users::actor_for_api_token", "last-used time of a token"),
     ("users::purge_expired", "housekeeping of sessions"),
+    ("users::set_preferred_cad", "the user's own display preference"),
     ("users::set_skin", "the user's own display preference"),
     (
         "webhooks::emit",

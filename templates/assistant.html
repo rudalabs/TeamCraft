@@ -24,6 +24,7 @@
   <div class="assistant-text">{{ run.html|safe }}</div>
   {% if run.truncated %}<p class="notice">The answer was cut off at the length limit – ask a narrower question for the rest.</p>{% endif %}
   {% if not run.text %}<p class="muted">The assistant returned no text.</p>{% endif %}
+  {% if run.links %}<p class="assistant-links">{% for l in run.links %}<a class="button small view-3d" href="{{ l.url }}">{{ l.label }}</a> {% endfor %}</p>{% endif %}
   <p class="hint assistant-meta">
     {% if run.tools %}Looked up:
       {% for t in run.tools %}<span class="badge{% if not t.ok %} badge-rejected{% endif %}" title="{% if t.ok %}tool call{% else %}tool call failed{% endif %}">{{ t.name }}</span>{% endfor %}

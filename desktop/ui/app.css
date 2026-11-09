@@ -257,6 +257,9 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .connect .notice { margin-top: 16px; }
 .token-login summary { cursor: pointer; color: var(--text-muted); margin-top: 4px; }
 .token-login form { margin-top: 8px; }
+/* native files of other CAD programs (preferred CAD program, GET /me) */
+.other-formats { margin-top: 8px; }
+.other-formats > summary { cursor: pointer; color: var(--text-muted); padding: 4px 0; }
 /* Which logo shows (blue on light, white on dark) is set in skins.css. */
 
 /* ---------------------------------------------------------------- shell */

@@ -198,6 +198,19 @@ pub(super) fn schema_similar() -> Value {
     )
 }
 
+pub(super) fn schema_open_preview() -> Value {
+    object(
+        json!({
+            "item": { "type": "string", "description": "Item number, e.g. PRT-000012 (or PRT-000012/B); wins over `q`" },
+            "q": { "type": "string", "description": "Search text when the number is not known: a key word of the name, number, material or file name, e.g. bracket" },
+            "project": { "type": "string", "description": "Project group code that narrows `q`, e.g. ROVER" },
+            "revision": p_revision(),
+            "file": { "type": "string", "description": "File name to show (default: the best 3D file of the revision)" },
+        }),
+        &[],
+    )
+}
+
 pub(super) fn schema_compare() -> Value {
     object(
         json!({

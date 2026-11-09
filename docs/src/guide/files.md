@@ -25,6 +25,34 @@ labelled with program and kind, get their registered content type, are
 searchable by program (*Items → CAD program*) and, where readable, scanned
 for the files they reference.
 
+### Preferred CAD program
+
+When a part is kept in several CAD programs – an NX model next to a
+SOLIDWORKS and an Inventor copy, say – choose your program under *Account →
+Preferred CAD program*. On the revision page, in the detail pane of the vault
+explorer and in the Files tab of the desktop app, the native files of the
+**other** programs then move into a collapsed group below the list, e.g.
+*2 files in other CAD formats (SolidWorks, Inventor)*; one click opens it.
+
+* A family is everything one program writes natively: for NX its parts,
+  assemblies, drawings and simulation files (`.prt`, `.sim`, `.fem`, `.afm`);
+  for Creo also its neutral and Creo View files; for CATIA also CGR and 3D
+  XML. The families: SolidWorks, NX, Solid Edge, Inventor, Fusion, AutoCAD
+  (DWG), Creo, CATIA, SpaceClaim, FreeCAD, SolidCraft, Rhino, Alias,
+  OpenSCAD, Revit, Navisworks, MicroStation, Archicad, SketchUp, Blender,
+  Maya, 3ds Max, Cinema 4D, Modo, Houdini, KiCad, Altium and Eagle.
+* Neutral and exchange formats are never collapsed: STEP, IGES, Parasolid,
+  JT and PLM XML, DXF, meshes (STL, 3MF, 3DS, …), visualisation formats,
+  point clouds, IFC, Gerber, simulation decks and results, documents and
+  images.
+* Only a revision that has at least one file of your program is grouped;
+  any other revision lists its files as before.
+* It is display only and personal: nothing is hidden from the search,
+  downloads, *Pack and Go*, the REST API or other users. The default, *All
+  CAD programs alike*, keeps the plain list. The REST API returns the setting
+  as `preferred_cad` on `GET /api/v1/me` and each file's family as
+  `format_info.family`.
+
 ## 3D preview
 
 Meshes, point clouds and STEP models open in a WebGL viewer in the browser

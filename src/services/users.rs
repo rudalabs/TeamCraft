@@ -24,7 +24,7 @@ use crate::{
 /// (see [`access::hidden_of_user`]; archived groups count too).
 fn actor_columns() -> String {
     format!(
-        "u.id, u.username, u.display_name, u.role, u.skin,
+        "u.id, u.username, u.display_name, u.role, u.skin, u.preferred_cad,
     COALESCE((SELECT array_agg(pm.project_id) FROM project_members pm WHERE pm.user_id = u.id),
              '{{}}'::uuid[]) AS projects,
     {} AS hidden_projects",
@@ -39,6 +39,7 @@ struct ActorRow {
     display_name: String,
     role: String,
     skin: String,
+    preferred_cad: String,
     projects: Vec<Uuid>,
     hidden_projects: Vec<Uuid>,
 }
@@ -51,6 +52,12 @@ impl From<ActorRow> for Actor {
             display_name: row.display_name,
             role: Role::parse(&row.role).unwrap_or(Role::Viewer),
             skin: domain::skin_or_default(&row.skin).to_string(),
+            // an id no longer registered shows all files alike
+            preferred_cad: if crate::cadformat::is_family(&row.preferred_cad) {
+                row.preferred_cad
+            } else {
+                String::new()
+            },
             projects: row.projects,
             hidden_projects: row.hidden_projects,
         }
@@ -155,6 +162,23 @@ pub async fn set_skin(pool: &PgPool, actor: &Actor, skin: &str) -> AppResult<()>
     sqlx::query("UPDATE users SET skin = $2 WHERE id = $1")
         .bind(actor.id)
         .bind(skin)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Stores the preferred CAD program of the signed-in user: a format family
+/// (`cadformat::families`) or `""` = show all files alike. Display only –
+/// it never changes what the user may read or download.
+pub async fn set_preferred_cad(pool: &PgPool, actor: &Actor, family: &str) -> AppResult<()> {
+    if !family.is_empty() && !crate::cadformat::is_family(family) {
+        return Err(AppError::BadRequest(format!(
+            "Unknown CAD program '{family}'."
+        )));
+    }
+    sqlx::query("UPDATE users SET preferred_cad = $2 WHERE id = $1")
+        .bind(actor.id)
+        .bind(family)
         .execute(pool)
         .await?;
     Ok(())

@@ -21,6 +21,25 @@ export function itemLink(number) {
   return h("button.link", { type: "button", title: "Open " + number, on: { click: function () { openRevision(number, "latest"); } } }, number);
 }
 
+// item numbers follow the group's numbering scheme: any short token without
+// a slash or blank (they become API path segments, encoded)
+var ITEM_NUMBER = /^[^\/\s]{1,40}$/;
+var REVISION_CODE = /^[^\/\s]{1,10}$/;
+
+/** An "Open 3D preview" link of the company AI (open_3d_preview, the
+ * path already checked by the shared module): opens the revision tab on its
+ * 3D viewer with that file instead of leaving the app for the web page.
+ * Anything that does not look like an item and a revision stays a plain
+ * label (null: the shared module would make a web link, which the desktop
+ * does not follow). */
+export function previewLink(link) {
+  var m = /^\/files\/([0-9a-f-]{36})\/preview$/.exec(link.url);
+  if (!m || !ITEM_NUMBER.test(link.item) || !REVISION_CODE.test(link.revision)) {
+    return h("span.tc-a-open", { text: link.label });
+  }
+  return h("button.tc-a-open", { type: "button", title: "Open " + link.item + "/" + link.revision + " in the 3D viewer", on: { click: function () { openRevision(link.item, link.revision, "viewer", m[1]); } } }, link.label);
+}
+
 export function itemLinks(text) {
   var nodes = [], last = 0, m;
   ITEM_NUMBER_IN_TEXT.lastIndex = 0;
@@ -198,6 +217,7 @@ export function companyPanel(getContext, onBusy) {
       privacy: "the AI provider configured by your administrator" + (where ? " (" + where + ")" : ""),
       getContext: getContext,
       link: itemLink,
+      openLink: previewLink,
       api: {
         thread: function () { return api("GET", "/assistant/thread").catch(function (e) { throw assistantError(e); }); },
         send: assistantSend,

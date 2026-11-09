@@ -26,7 +26,13 @@ see the notices in the README.
   content. Page per revision with CSV and JSON export,
   `GET /api/v1/items/{number}/revisions/{code}/mass-properties`,
   `GET /api/v1/materials` and the read-only MCP tool `get_mass_properties`.
-  Migration 0060.
+  Migration 0061.
+- Preferred CAD program (*Account → Preferred CAD program*): when a revision
+  has files of the chosen program (e.g. NX), the native files of other CAD
+  programs are listed in a collapsed group on the revision page, in the vault
+  explorer and in the desktop app's Files tab. Neutral formats (STEP, JT, STL,
+  PDF, …) always stay visible; display only. `GET /api/v1/me` returns
+  `preferred_cad`, file formats carry `format_info.family`.
 
 ## [0.2.6] - 2026-11-08
 

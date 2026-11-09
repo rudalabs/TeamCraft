@@ -660,6 +660,7 @@ mod tests {
             display_name: "Reader".into(),
             role: Role::Viewer,
             skin: String::new(),
+            preferred_cad: String::new(),
             projects: Vec::new(),
             hidden_projects: hidden,
         }

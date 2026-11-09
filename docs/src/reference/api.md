@@ -68,6 +68,10 @@ Every answer contains only what the token's user may read (see
   in `restricted_projects`, those of them that are restricted. It never
   names groups the user is not a member of. `auth_source` is `local` or
   `oidc`; only local accounts have a password to change.
+  `preferred_cad` is the user's preferred CAD program (a format family such
+  as `nx` or `solidworks`, `""` = all alike; set on the account page). File
+  lists are never filtered by it – each file's `format_info.family` names
+  its family (`null` for neutral formats), and clients group by it.
   `capabilities` says what the server offers: `assistant` (Ask TeamCraft
   is configured), `mcp` and `local_agents` (both `false` when the
   administrator set `TEAMCRAFT_LOCAL_AGENTS=off`: `POST /api/v1/mcp` then
