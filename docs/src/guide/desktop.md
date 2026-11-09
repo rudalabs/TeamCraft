@@ -78,6 +78,10 @@ check-outs and reviews, and a **local working folder**:
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.
+* with a *Preferred CAD program* set on your account page in the web UI, the
+  Files tab of a revision collapses the native files of other CAD programs
+  (see [Files](files.md#preferred-cad-program)); the app reads the setting at
+  sign-in.
 * *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`, or *Agent* in a revision or
   change tab) is the app's one place for AI. It runs on one of two
   backends, decided by the server's policy and your choice:

@@ -47,6 +47,9 @@ pub struct Actor {
     pub role: Role,
     /// UI skin (see `domain::SKINS`).
     pub skin: String,
+    /// Preferred CAD program (a format family, see `cadformat::families`);
+    /// `""` = show all files alike.
+    pub preferred_cad: String,
     /// Project groups the user is a member of.
     pub projects: Vec<Uuid>,
     /// Restricted project groups the user is NOT a member of; always empty
@@ -86,6 +89,7 @@ impl Actor {
             display_name: "Webhook".into(),
             role: Role::Viewer,
             skin: String::new(),
+            preferred_cad: String::new(),
             projects: project_id.into_iter().collect(),
             hidden_projects: restricted
                 .iter()
@@ -104,6 +108,7 @@ impl Actor {
             display_name: "Test".into(),
             role,
             skin: "teamcraft".into(),
+            preferred_cad: String::new(),
             projects,
             hidden_projects,
         }
@@ -117,6 +122,7 @@ impl Actor {
             display_name: "TeamCraft".into(),
             role: Role::Admin,
             skin: String::new(),
+            preferred_cad: String::new(),
             projects: Vec::new(),
             hidden_projects: Vec::new(),
         }
@@ -658,6 +664,7 @@ mod tests {
             display_name: "Eng".into(),
             role: Role::Editor,
             skin: "teamcraft".into(),
+            preferred_cad: String::new(),
             projects: vec![rocket],
             hidden_projects: vec![],
         };
