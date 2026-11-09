@@ -736,6 +736,7 @@
     <h2>Bill of materials (single level)</h2>
     <div class="actions">
       <a class="button small" href="/revisions/{{ rev.id }}/bom">Multi-level view &amp; roll-up</a>
+      <a class="button small" href="/revisions/{{ rev.id }}/mass" title="Mass, centre of gravity and inertia from the 3D files, densities and measured masses">Mass properties</a>
       <a class="button small" href="/revisions/{{ rev.id }}/bom.csv">CSV</a>
       {% if can.edit %}<a class="button small" href="/import?into={{ rev.id }}" title="Add the structure of a BOM table exported from a CAD program (CSV, Excel)">Import BOM…</a>{% endif %}
       {% if cad_structure %}<a class="button small" href="/revisions/{{ rev.id }}/bom/from-references" title="{% if can.edit %}Preview the parts the CAD files use and add them as BOM lines{% else %}Check out to create the BOM from the CAD references{% endif %}">Create BOM from CAD references…</a>{% endif %}

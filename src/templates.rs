@@ -26,6 +26,8 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "revisions/edit.html",
     "revisions/bom.html",
     "revisions/bom_compare.html",
+    "revisions/mass.html",
+    "materials.html",
     "revisions/bom_from_references.html",
     "revisions/save_as.html",
     "revisions/simulation_compare.html",
@@ -65,6 +67,7 @@ pub fn environment(instance_name: &str) -> Result<Environment<'static>, minijinj
     env.add_filter("dt", filter_dt);
     env.add_filter("num", filter_num);
     env.add_filter("fixed", filter_fixed);
+    env.add_filter("sig", filter_sig);
     env.add_filter("filesize", filter_filesize);
     env.add_filter("label", filter_label);
     env.add_filter("urlencode", |value: String| util::pct_encode(&value));
@@ -119,6 +122,22 @@ fn filter_fixed(value: Option<f64>, decimals: Option<usize>) -> String {
     match value {
         Some(v) => format!("{v:.prec$}", prec = decimals.unwrap_or(2)),
         None => "—".to_string(),
+    }
+}
+
+/// A physical value with six significant digits (mass properties span
+/// grams to tonnes and 10⁻⁹ to 10⁶ kg·m²); exponent form outside
+/// 10⁻³ … 10⁷; `—` when missing.
+fn filter_sig(value: Option<f64>) -> String {
+    match value {
+        None => "—".to_string(),
+        Some(v) if !v.is_finite() => "—".to_string(),
+        Some(0.0) => "0".to_string(),
+        Some(v) if (1e-3..1e7).contains(&v.abs()) => {
+            let decimals = (5 - v.abs().log10().floor() as i32).clamp(0, 9) as usize;
+            util::format_number(v, decimals)
+        }
+        Some(v) => format!("{v:.5e}"),
     }
 }
 
@@ -1572,6 +1591,96 @@ mod tests {
                 "base_query": "entity_type=item", "pagination": page(), "per_page": 50,
             })),
         );
+        // mass properties: a full report, editable and read-only settings
+        let mass_line = |source: &str, warnings: Value| {
+            json!({ "level": 1, "find_number": 10, "item_number": "PRT-000002",
+                    "revision_id": OTHER, "revision_code": "A", "name": "Fin <x>", "quantity": 4.0,
+                    "factor": 1.0, "source": source, "source_label": source,
+                    "detail": "fin.stl (mm) × 2810 kg/m³ (Aluminium 7075-T6)",
+                    "unit_mass_kg": 0.0425, "total_mass_kg": 0.17, "cg_m": [1.2, 0.0, 1e-9],
+                    "warnings": warnings })
+        };
+        let report = json!({
+            "rule": "latest", "root_revision_id": ME, "root_label": "ASM-000001/A", "root_name": "Vehicle",
+            "root_source": "assembly", "root_detail": "", "reference_m": [0.0, 0.0, 0.0],
+            "mass_kg": 12.5, "placed_mass_kg": 12.4, "unplaced_mass_kg": 0.1,
+            "cg_m": [1.234567, 0.0001, -0.002], "inertia_cg": [0.1, 5.2, 5.3, 1e-6, 0.0, -2e-4],
+            "inertia_ref": [0.1, 24.0, 24.1, 1e-6, 0.0, -2e-4], "principal_moments": [5.3, 5.2, 0.1],
+            "lines": [mass_line("computed", json!([])), mass_line("missing", json!(["no density <x>"])),
+                      mass_line("restricted", json!([]))],
+            "line_count": 3, "restricted_lines": 1, "missing_lines": 1, "complete": false,
+            "warnings": ["1 restricted line left out."], "lines_with_warnings": 1,
+        });
+        let geometry_file = json!({ "id": OTHER, "revision_id": ME, "filename": "fin.stl", "sha256": "ab",
+                                    "format": "stl", "length_unit": null, "instances": 4 });
+        for (editable, measured) in [(true, true), (false, false)] {
+            let settings = json!({
+                "settings": { "revision_id": ME, "density_kg_m3": if measured { json!(2810.0) } else { Value::Null },
+                              "geometry_file_id": OTHER,
+                              "measured_mass_kg": if measured { json!(1.5) } else { Value::Null },
+                              "measured_cg_m": if measured { json!([1.0, 0.0, 0.0]) } else { Value::Null },
+                              "measured_inertia_kg_m2": null, "measured_note": "scale <A>" },
+                "files": [geometry_file.clone()], "geometry_file_id": OTHER,
+                "material": if measured { json!({ "id": OTHER, "name": "AlMg3", "density_kg_m3": 2660.0,
+                                                  "notes": "", "created_at": TS, "updated_at": TS }) } else { Value::Null },
+            });
+            let html = render(
+                &env,
+                "revisions/mass.html",
+                with_common(json!({
+                    "rev": revision("in_work", editable), "rule": "latest", "report": report,
+                    "reference": "0,0,0", "reference_error": if editable { Value::Null } else { json!("bad point") },
+                    "settings": settings, "chosen": geometry_file, "chosen_unit": "mm",
+                    "units": [{ "value": "mm" }, { "value": "m" }, { "value": "in" }],
+                    "measured_cg": if measured { json!(["1", "0", "0"]) } else { json!([]) },
+                    "measured_inertia": [], "editable": editable, "is_admin": false,
+                })),
+            );
+            assert!(html.contains("Fin &lt;x&gt;") && html.contains("no density &lt;x&gt;"));
+            assert!(html.contains("1.23457") && html.contains("mass.csv?rule=latest"));
+            assert_eq!(html.contains("Save mass settings"), editable);
+        }
+        let empty_report = json!({
+            "rule": "latest", "root_revision_id": ME, "root_label": "PRT-000001/B", "root_name": "Bracket",
+            "root_source": "missing", "root_detail": "", "reference_m": [0.0, 0.0, 0.0],
+            "mass_kg": 0.0, "placed_mass_kg": 0.0, "unplaced_mass_kg": 0.0, "cg_m": null,
+            "inertia_cg": null, "inertia_ref": null, "principal_moments": null, "lines": [],
+            "line_count": 0, "restricted_lines": 0, "missing_lines": 0, "complete": false,
+            "warnings": [], "lines_with_warnings": 0,
+        });
+        let html = render(
+            &env,
+            "revisions/mass.html",
+            with_common(json!({
+                "rev": revision("released", false), "rule": "released", "report": empty_report,
+                "reference": "0,0,0", "reference_error": null,
+                "settings": { "settings": { "revision_id": ME, "density_kg_m3": null, "geometry_file_id": null,
+                                            "measured_mass_kg": null, "measured_cg_m": null,
+                                            "measured_inertia_kg_m2": null, "measured_note": "" },
+                              "files": [], "geometry_file_id": null, "material": null },
+                "chosen": null, "chosen_unit": null, "units": [], "measured_cg": [], "measured_inertia": [],
+                "editable": false, "is_admin": false,
+            })),
+        );
+        assert!(html.contains("No placed mass"));
+        for is_admin in [true, false] {
+            let html = render(
+                &env,
+                "materials.html",
+                with_common(json!({
+                    "materials": [{ "id": OTHER, "name": "Aluminium <7075>", "density_kg_m3": 2810.0,
+                                    "notes": "handbook", "created_at": TS, "updated_at": TS }],
+                    "is_admin": is_admin,
+                })),
+            );
+            assert!(html.contains("Aluminium &lt;7075&gt;"));
+            assert_eq!(html.contains("Add material"), is_admin);
+        }
+        render(
+            &env,
+            "materials.html",
+            with_common(json!({ "materials": [], "is_admin": false })),
+        );
         let attr_def = json!({
             "id": ME, "key": "vendor", "label": "Vendor <Lieferant>", "data_type": "choice",
             "unit": "", "choices": ["Bosch", "SKF"], "item_types": ["part"], "position": 10,
@@ -2052,6 +2161,13 @@ mod tests {
         assert_eq!(filter_num(Some(1.23456), None), "1.235");
         assert_eq!(filter_num(Some(2.0), Some(2)), "2");
         assert_eq!(filter_num(None, None), "—");
+        assert_eq!(filter_sig(Some(12.345678)), "12.3457");
+        assert_eq!(filter_sig(Some(0.0425)), "0.0425");
+        assert_eq!(filter_sig(Some(-1234.5)), "-1234.5");
+        assert_eq!(filter_sig(Some(2.5e-7)), "2.50000e-7");
+        assert_eq!(filter_sig(Some(0.0)), "0");
+        assert_eq!(filter_sig(Some(f64::NAN)), "—");
+        assert_eq!(filter_sig(None), "—");
         assert_eq!(filter_fixed(Some(41.0), None), "41.00");
         assert_eq!(filter_fixed(Some(0.2), Some(3)), "0.200");
         assert_eq!(filter_fixed(None, Some(3)), "—");

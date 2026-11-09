@@ -30,6 +30,7 @@ pub mod imports;
 pub mod insights;
 pub mod interchange;
 pub mod items;
+pub mod mass_properties;
 pub mod notifications;
 pub mod ownership;
 pub mod package;

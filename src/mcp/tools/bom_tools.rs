@@ -48,6 +48,62 @@ pub(super) async fn get_bom(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResul
     }))
 }
 
+/// `get_mass_properties`: the mass roll-up with CG and inertia.
+pub(super) async fn get_mass_properties(
+    st: &AppState,
+    me: &Actor,
+    a: &Args<'_>,
+) -> AppResult<Value> {
+    let rev = revision_arg(st, me, a).await?;
+    let rule = a.rule()?.unwrap_or_else(|| default_rule(&rev));
+    let reference = mass_properties::parse_point(a.opt_str("reference")?.as_deref())?;
+    let r = mass_properties::rollup(st, me, rev.id, rule, reference).await?;
+    let (lines, truncated) = capped(r.lines, MAX_BOM_ROWS);
+    let lines: Vec<Value> = lines
+        .iter()
+        .map(|l| {
+            json!({
+                "level": l.level,
+                "find_number": l.find_number,
+                "item": l.item_number,
+                "revision": l.revision_code,
+                "name": l.name,
+                "quantity": l.quantity,
+                "source": l.source,
+                "detail": l.detail,
+                "unit_mass_kg": l.unit_mass_kg,
+                "total_mass_kg": l.total_mass_kg,
+                "cg_m": l.cg_m,
+                "warnings": l.warnings,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "root": r.root_label,
+        "rule": rule.as_str(),
+        "root_source": r.root_source,
+        "mass_kg": r.mass_kg,
+        "placed_mass_kg": r.placed_mass_kg,
+        "unplaced_mass_kg": r.unplaced_mass_kg,
+        "cg_m": r.cg_m,
+        "inertia_about_cg_kg_m2": r.inertia_cg.map(tensor),
+        "reference_m": r.reference_m,
+        "inertia_about_reference_kg_m2": r.inertia_ref.map(tensor),
+        "principal_moments_kg_m2": r.principal_moments,
+        "complete": r.complete,
+        "warnings": r.warnings,
+        "restricted_lines": r.restricted_lines,
+        "line_count": r.line_count,
+        "lines": lines,
+        "truncated": truncated,
+    }))
+}
+
+/// A tensor `[xx, yy, zz, xy, yz, xz]` with named entries.
+fn tensor(t: [f64; 6]) -> Value {
+    json!({ "ixx": t[0], "iyy": t[1], "izz": t[2], "ixy": t[3], "iyz": t[4], "ixz": t[5] })
+}
+
 pub(super) async fn where_used(st: &AppState, me: &Actor, a: &Args<'_>) -> AppResult<Value> {
     let item = items::get_by_number(&st.db, me, &a.req_str("item")?).await?;
     let levels = a.limit("levels", 1, i64::from(items::MAX_WHERE_USED_LEVELS))?;

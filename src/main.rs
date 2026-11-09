@@ -126,7 +126,7 @@ enum Command {
     PreviewMesh {
         /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, nx-part, solidworks-part, rhino,
         /// pts, xyz, las –
-        /// or tcm for a cached preview mesh (only --signature)
+        /// or tcm for a cached preview mesh (only --signature / --mass-properties)
         #[arg(long)]
         format: String,
         #[arg(long)]
@@ -137,6 +137,9 @@ enum Command {
         /// Also write the shape signature (JSON) for the similar part search.
         #[arg(long)]
         signature: Option<std::path::PathBuf>,
+        /// Also write the mass properties (JSON) per unit density in model units.
+        #[arg(long)]
+        mass_properties: Option<std::path::PathBuf>,
         /// Refuse an input file larger than this before opening it.
         #[arg(long, default_value_t = u64::MAX)]
         max_input_bytes: u64,
@@ -285,6 +288,7 @@ fn main() -> ExitCode {
         input,
         output,
         signature,
+        mass_properties,
         max_input_bytes,
         max_memory_bytes,
     }) = &cli.command
@@ -295,6 +299,7 @@ fn main() -> ExitCode {
             input,
             output.as_deref(),
             signature.as_deref(),
+            mass_properties.as_deref(),
             *max_input_bytes,
         );
     }
@@ -563,22 +568,23 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `teamcraft preview-mesh`: one conversion and/or shape signature, errors
-/// as the last line of stderr.
+/// `teamcraft preview-mesh`: one conversion, shape signature and/or mass
+/// properties, errors as the last line of stderr.
 fn preview_mesh(
     format: &str,
     input: &std::path::Path,
     output: Option<&std::path::Path>,
     signature: Option<&std::path::Path>,
+    mass: Option<&std::path::Path>,
     max_input_bytes: u64,
 ) -> ExitCode {
-    if output.is_none() && signature.is_none() {
-        eprintln!("Error: give --output and/or --signature");
+    if output.is_none() && signature.is_none() && mass.is_none() {
+        eprintln!("Error: give --output, --signature and/or --mass-properties");
         return ExitCode::FAILURE;
     }
     // the kernel's panic messages are not meant for users
     std::panic::set_hook(Box::new(|_| {}));
-    match teamcraft::preview::run_job(format, input, output, signature, max_input_bytes) {
+    match teamcraft::preview::run_job(format, input, output, signature, mass, max_input_bytes) {
         Ok(mesh) => {
             // for people running it by hand (the server ignores stdout)
             let partial = mesh

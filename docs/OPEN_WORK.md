@@ -593,6 +593,11 @@ needs an issue with a reason first (see *Direction*).
 - [ ] Derivatives generated on check-in or release – STEP, drawing PDF, DXF, Parasolid – through the CAD programs
   (the desktop app's Inventor/Solid Edge STEP export is a first step)
 - [ ] Restore drills: back up and restore the data of each release in CI, not only the current one
+- [ ] Mass properties, follow-ups of the first version (`services::mass_properties`, research page
+  *Mass properties from exported meshes*): placements per BOM line instance (4×4 transforms, e.g. from the NX /
+  SOLIDWORKS assembly placements the 3D preview reads) for parts exported in their own frame; a REST/MCP write
+  for the mass settings and the material library; measured masses on released revisions (as-built units);
+  the unit a 3MF or STEP file declares as the default unit; desktop view
 
 #### Search, metadata and usability
 

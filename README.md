@@ -118,6 +118,8 @@ end-to-end tests against a real PostgreSQL.
 **Structure**
 
 - **Multi-level BOM** – mass and cost roll-up, revision rules, comparison of two revisions, CSV/Excel export.
+- **Mass properties** – mass, centre of gravity and inertia tensor of a whole assembly or vehicle from the exported
+  meshes of its parts, a material library of densities and measured masses of bought parts; CSV/JSON export.
 - **Where-used** – every assembly a part is used in, over all levels.
 - **Alternates and supersession** – alternate parts, superseded parts and *Replace in assemblies* with a preview.
 - **BOM import** – items and BOMs from CAD BOM tables (CSV, Excel, ODS) or a STEP assembly; preview first, one

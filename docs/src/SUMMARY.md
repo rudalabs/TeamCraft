@@ -10,6 +10,7 @@
 - [Files, versions and 3D preview](guide/files.md)
 - [BOM, references and change propagation](guide/structure.md)
 - [Finding similar parts](guide/similar-parts.md)
+- [Mass properties (mass, CG, inertia)](guide/mass-properties.md)
 - [Change requests, change orders and notifications](guide/changes.md)
 - [Simulations (FEA, CFD)](guide/simulation.md)
 - [As-built records](guide/as-built.md)

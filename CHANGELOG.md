@@ -13,6 +13,21 @@ see the notices in the README.
 
 ## [Unreleased]
 
+### Added
+
+- Mass properties of assemblies: total mass, centre of gravity and inertia
+  tensor (about the CG and a reference point, principal moments) from the
+  exported 3D files of the parts in the common assembly frame, the densities
+  of an admin-managed material library or a per-revision override, and
+  measured masses (with optional CG and inertia) that win over everything
+  computed. Per-file length unit (mm, m, in) and number of units shown; open,
+  non-manifold and inverted meshes are reported (fully inverted ones fixed).
+  The mesh integrals run in the isolated preview process and are cached per
+  content. Page per revision with CSV and JSON export,
+  `GET /api/v1/items/{number}/revisions/{code}/mass-properties`,
+  `GET /api/v1/materials` and the read-only MCP tool `get_mass_properties`.
+  Migration 0060.
+
 ## [0.2.6] - 2026-11-08
 
 Changes since the `v0.2.5` tag.

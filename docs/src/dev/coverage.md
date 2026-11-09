@@ -91,6 +91,7 @@ measure of quality. The CI numbers in the tables above are still from
 | Engineering change requests      | `change_requests` (4), `change_request_paths` (1), `request_digests` (1)                                                                                      |
 | Files, vault, uploads, downloads | `uploads` (11), `range_downloads` (1), `domain_and_vault` (10), `audit_and_vault` (3), `concurrency` (6), `preview_limits` (5), `folder_import` (2)           |
 | Product structure and BOM        | `structure` (4), `bom_performance` (4), `bom_tree_view` (2), `insights` (3), `interchange` (2)                                                                |
+| Mass properties                  | `mass_properties` (3; unit tests in `massprops` and `services::mass_properties`)                                                                             |
 | BOM import                       | `import_atomicity` (4), `import_proofing` (7)                                                                                                                 |
 | CAD readers, previews, results   | `cad_fixtures` (13), `parser_robustness` (16), `parser_corpus` (2), `step_export_names` (2), `similar_parts` (2), `result_values` (4), `result_proposals` (3) |
 | Custom attributes                | `attributes` (2)                                                                                                                                              |

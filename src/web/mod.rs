@@ -23,6 +23,7 @@ mod formats;
 mod imports;
 mod interchange;
 mod items;
+mod mass;
 mod notifications;
 mod personal;
 mod references;
@@ -207,6 +208,16 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/import/{id}", get(imports::preview))
         .route("/import/{id}/run", post(imports::run))
         .route("/import/{id}/discard", post(imports::discard))
+        // mass properties
+        .route("/revisions/{id}/mass", get(mass::show).post(mass::update))
+        .route("/revisions/{id}/mass.csv", get(mass::csv))
+        .route("/revisions/{id}/mass.json", get(mass::json_export))
+        .route(
+            "/materials",
+            get(mass::materials).post(mass::create_material),
+        )
+        .route("/materials/{id}", post(mass::update_material))
+        .route("/materials/{id}/delete", post(mass::delete_material))
         .route("/revisions/{id}/bom.csv", get(bom::csv))
         .route("/revisions/{id}/bom.xlsx", get(bom::xlsx))
         .route("/revisions/{id}/package.zip", get(bom::package))
