@@ -1122,6 +1122,9 @@ pub struct AgentEntry {
 pub struct AgentProfiles {
     pub agents: Vec<AgentEntry>,
     pub selected: Option<String>,
+    /// Ask before read-only TeamCraft tools too (default: allowed once
+    /// without a prompt).
+    pub ask_read_only: bool,
 }
 
 /// Arguments as one line again (quoted where they contain spaces).
@@ -1150,6 +1153,7 @@ fn profiles_of(s: &Settings) -> AgentProfiles {
             })
             .collect(),
         selected: s.agent.clone(),
+        ask_read_only: s.agent_ask_read_only,
     }
 }
 
@@ -1186,9 +1190,17 @@ fn parse_profiles(agents: Vec<AgentEntry>) -> Result<Vec<acp::AgentProfile>, Str
 pub fn set_agent_profiles(
     state: State<'_, AppState>,
     agents: Vec<AgentEntry>,
+    ask_read_only: Option<bool>,
 ) -> CmdResult<AgentProfiles> {
     let profiles = parse_profiles(agents).map_err(ApiError::local)?;
+    // asking more takes effect at once, even if saving fails
+    if ask_read_only == Some(true) {
+        set_running_ask_read_only(&state, true);
+    }
     let s = update_settings(&state, |s| {
+        if let Some(ask) = ask_read_only {
+            s.agent_ask_read_only = ask;
+        }
         if !s
             .agent
             .as_ref()
@@ -1198,7 +1210,26 @@ pub fn set_agent_profiles(
         }
         s.agents = profiles;
     })?;
+    // a running agent follows the saved setting
+    set_running_ask_read_only(&state, s.agent_ask_read_only);
     Ok(profiles_of(&s))
+}
+
+fn set_running_ask_read_only(state: &State<'_, AppState>, ask: bool) {
+    if let Some(running) = state.agent.lock().expect("agent lock").as_ref() {
+        running.agent.set_ask_read_only(ask);
+    }
+}
+
+/// The read-only tools of TeamCraft's MCP server by its own `tools/list`
+/// (`annotations.readOnlyHint`), asked with the signed-in user's token – the
+/// list the agent session about to start uses. `None` when the server does
+/// not answer with a list (old server, refusal, network error): then every
+/// tool call asks, as before.
+async fn read_only_tools(api: &Api) -> Option<crate::autoallow::ReadOnlyTools> {
+    let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    let answer = api.json(Method::POST, "/mcp", Some(&list)).await.ok()?;
+    crate::autoallow::ReadOnlyTools::from_tools_list(&answer)
 }
 
 #[derive(Serialize)]
@@ -1366,7 +1397,18 @@ pub async fn agent_start(
         app: app.clone(),
         session,
     });
+    let ask_read_only = snapshot(&state).agent_ask_read_only;
+    // fetched per session: it holds one server and one user's token, and a
+    // new sign-in ends the agent (also fetched while the setting asks, so
+    // turning it off applies to the running agent)
+    let read_only_tools = if api.token.is_some() {
+        read_only_tools(&api).await
+    } else {
+        None
+    };
     let opts = acp::Options {
+        read_only_tools,
+        ask_read_only,
         cwd: root,
         mcp: api.token.clone().map(|token| acp::McpServer {
             url: format!("{}/api/v1/mcp", api.base),
