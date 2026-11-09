@@ -13,8 +13,9 @@ import { openChange } from "./change.js";
 import { openRequest, requestChangeDialog } from "./requests.js";
 import { importBomDialog } from "./bom-import.js";
 
-export function openRevision(number, code, sub) {
-  openTab({ key: "rev:" + number + ":" + code, kind: "revision", number: number, code: code, title: number + "/" + code, sub: sub || "overview" });
+/** Opens a revision tab; `viewerFile` (a file id) picks the file of its 3D viewer. */
+export function openRevision(number, code, sub, viewerFile) {
+  openTab({ key: "rev:" + number + ":" + code, kind: "revision", number: number, code: code, title: number + "/" + code, sub: sub || "overview", viewerFile: viewerFile || null });
 }
 
 export function loadRevision(tab) {
@@ -407,7 +408,8 @@ export function revFiles(tab, el) {
     el.appendChild(h("p.empty", { text: "No files attached." }));
     return;
   }
-  var rows = d.files.map(function (f) {
+  var groups = groupByFamily(d.files, state.me && state.me.preferred_cad);
+  var rowOf = function (f) {
     var fmt = previewFormat(f);
     return {
       cells: [
@@ -426,14 +428,47 @@ export function revFiles(tab, el) {
         ])
       ]
     };
-  });
+  };
+  var columns = ["File", "Version", "Size", "Uploaded", "SHA-256", ""];
+  var n = groups.other.length;
   el.appendChild(h("section.panel", null, [
     h("div.panel-head", null, [h("h2", { text: "Files (datasets)" }),
       h("div.row", null, [
         h("span.hint", { text: filesHint(d).text }),
         h("button.small", { type: "button", disabled: !filesHint(d).ok, title: filesHint(d).text, on: { click: function () { addFilesDialog(tab); } } }, "Add files…")])]),
-    table(["File", "Version", "Size", "Uploaded", "SHA-256", ""], rows, { numeric: [2] })
+    table(columns, groups.shown.map(rowOf), { numeric: [2] }),
+    n ? h("details.other-formats", null, [
+      h("summary", { text: n + " file" + (n === 1 ? "" : "s") + " in other CAD formats (" + groups.families.join(", ") + ")" }),
+      table(columns, groups.other.map(rowOf), { numeric: [2] })
+    ]) : null
   ]));
+}
+
+/**
+ * A revision's files split for the preferred CAD program (`preferred_cad`
+ * of GET /me, set on the account page of the web UI) – the same rule as the
+ * web UI (`cadformat::group_by_family`): only when a file of the preferred
+ * program is present, the native files of other CAD programs
+ * (`format_info.family`) go into a collapsed group; neutral files (STEP,
+ * JT, STL, PDF, …) always stay visible. Display only.
+ */
+export function groupByFamily(files, preferred) {
+  var family = function (f) { return (f.format_info && f.format_info.family) || null; };
+  if (!preferred || !files.some(function (f) { return family(f) === preferred; })) {
+    return { shown: files, other: [], families: [] };
+  }
+  var shown = [], other = [], families = [];
+  files.forEach(function (f) {
+    var fam = family(f);
+    if (fam && fam !== preferred) {
+      other.push(f);
+      var name = f.format_info.system_short || fam;
+      if (families.indexOf(name) < 0) families.push(name);
+    } else {
+      shown.push(f);
+    }
+  });
+  return { shown: shown, other: other, families: families };
 }
 
 export function showVersions(tab, f, canRestore) {

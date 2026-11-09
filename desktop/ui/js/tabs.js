@@ -23,7 +23,10 @@ export function findTab(key) { return state.tabs.filter(function (t) { return t.
 export function openTab(tab) {
   var existing = findTab(tab.key);
   if (!existing) state.tabs.push(tab);
-  else if (tab.sub) existing.sub = tab.sub;
+  else {
+    if (tab.sub) existing.sub = tab.sub;
+    if (tab.viewerFile) { existing.viewerFile = tab.viewerFile; existing.viewerVersion = null; }
+  }
   activate(tab.key);
 }
 

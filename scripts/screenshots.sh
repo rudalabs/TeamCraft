@@ -189,13 +189,16 @@ wait_for_server() {
 
 declare -A NUM REV
 
-# item KEY TYPE NAME JSON-EXTRAS – creates an item in ROVER as admin (it starts
+# The user who creates items, uploads files, edits BOMs and checks in.
+SEED_AS=admin
+
+# item KEY TYPE NAME JSON-EXTRAS – creates an item in ROVER as $SEED_AS (it starts
 # checked out by its creator).
 item() {
     local key=$1 type=$2 name=$3 extra=${4:-'{}'} body out
     body=$(jq -nc --arg t "$type" --arg n "$name" --argjson x "$extra" \
         '{item_type: $t, name: $n, project: "ROVER"} + $x')
-    out=$(japi admin POST /items "$body")
+    out=$(japi "$SEED_AS" POST /items "$body")
     NUM[$key]=$(jq -r '.item_number' <<<"$out")
     REV[$key]=$(jq -r '.id' <<<"$out")
     log "  ${NUM[$key]}  $name"
@@ -207,13 +210,13 @@ attach() {
     local key=$1 path=$2 name=${3:-} comment=${4:-Initial upload}
     [[ -f $path ]] || die "fixture '$path' is missing"
     [[ -n $name ]] || name=$(basename "$path")
-    api admin POST "/items/${NUM[$key]}/revisions/latest/files" \
+    api "$SEED_AS" POST "/items/${NUM[$key]}/revisions/latest/files" \
         -F "file=@\"$path\";filename=\"$name\"" -F "comment=$comment" | jq -r '.[0].id'
 }
 
 bom_line() {
     local parent=$1 child=$2 qty=$3 find=$4 notes=${5:-}
-    japi admin POST "/items/${NUM[$parent]}/revisions/latest/bom" \
+    japi "$SEED_AS" POST "/items/${NUM[$parent]}/revisions/latest/bom" \
         "$(jq -nc --arg c "${NUM[$child]}" --argjson q "$qty" --argjson f "$find" --arg n "$notes" \
             '{child: $c, quantity: $q, find_number: $f, notes: $n}')" >/dev/null
 }
@@ -309,7 +312,7 @@ result_cfd_vtu() {
     }' >"$1"
 }
 
-checkin() { api "${2:-admin}" POST "/items/${NUM[$1]}/revisions/latest/checkin" >/dev/null; }
+checkin() { api "${2:-$SEED_AS}" POST "/items/${NUM[$1]}/revisions/latest/checkin" >/dev/null; }
 checkout() { api "${2:-admin}" POST "/items/${NUM[$1]}/revisions/latest/checkout" >/dev/null; }
 
 # report_pdf FILE – writes a one-page surface roughness inspection report as
@@ -436,6 +439,9 @@ seed() {
     japi admin POST /projects/ROVER/members '{"username":"mchen","manager":true}' >/dev/null
     japi admin POST /projects/ROVER/members '{"username":"jlopez"}' >/dev/null
 
+    # The four-eyes rule refuses a reviewer who changed the revisions under
+    # review: mchen makes the ROVER parts, so admin may review their changes.
+    SEED_AS=mchen
     log "creating items"
     local mtc=$FIXTURES/mtc-assembly
     item mast assembly "Sensor mast assembly" '{"description":"Top-level assembly of the rover sensor mast."}'
@@ -499,6 +505,7 @@ seed() {
         checkin "$key"
     done
 
+    SEED_AS=admin
     log "releasing the fasteners through a reviewed change order"
     local eco1 eco2
     eco1=$(japi mchen POST /changes \

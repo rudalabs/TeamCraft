@@ -13,6 +13,15 @@ see the notices in the README.
 
 ## [Unreleased]
 
+### Added
+
+- Preferred CAD program (*Account → Preferred CAD program*): when a revision
+  has files of the chosen program (e.g. NX), the native files of other CAD
+  programs are listed in a collapsed group on the revision page, in the vault
+  explorer and in the desktop app's Files tab. Neutral formats (STEP, JT, STL,
+  PDF, …) always stay visible; display only. `GET /api/v1/me` returns
+  `preferred_cad`, file formats carry `format_info.family`.
+
 ### Changed
 
 - Desktop app, local agents: calls of TeamCraft's own read-only MCP tools
