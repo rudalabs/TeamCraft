@@ -10,7 +10,7 @@ use crate::{
     error::{AppError, AppResult},
     models::Revision,
     services::{
-        access, as_built, attributes, audit, impacts,
+        access, as_built, attributes, audit, impacts, mass_properties,
         notifications::{self, Notice},
         project_policy, references, simulations, webhooks,
     },
@@ -538,6 +538,7 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
         simulations::copy_to_revision(&mut tx, src.id, new_id).await?;
     let (as_built_records, as_built_deviations) =
         as_built::copy_to_revision(&mut tx, src.id, new_id).await?;
+    let mass_settings = mass_properties::copy_to_revision(&mut tx, src.id, new_id).await?;
     let lines = sqlx::query(
         "INSERT INTO bom_lines (id, parent_revision_id, child_item_id, find_number, quantity, notes)
          SELECT gen_random_uuid(), $2, child_item_id, find_number, quantity, notes
@@ -561,7 +562,8 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
         json!({ "item_id": src.item_id, "from": src.code, "files": files, "bom_lines": lines,
                 "references": references, "simulation_bases": simulation_bases,
                 "simulation_results": simulation_results,
-                "as_built_records": as_built_records, "as_built_deviations": as_built_deviations }),
+                "as_built_records": as_built_records, "as_built_deviations": as_built_deviations,
+                "mass_settings": mass_settings }),
     )
     .await?;
     let new_rev = lock(&mut tx, new_id).await?;

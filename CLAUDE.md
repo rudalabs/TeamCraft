@@ -65,7 +65,8 @@ src/services/      business logic – the only code that writes to the database
                     notifications.rs: in-app notifications, watch lists, settings – created in the event's transaction;
                     imports.rs: BOM import – one plan for preview and import, one transaction; staged_imports for the web flow;
                     insights.rs: read-only BOM health check and duplicate files;
-                    attributes.rs: custom attribute definitions (admins), values per revision in revisions.attributes)
+                    attributes.rs: custom attribute definitions (admins), values per revision in revisions.attributes;
+                    mass_properties.rs: material library, mass settings of revisions/files, mass/CG/inertia roll-up)
 src/web/           HTML handlers (cookie sessions, flash messages, CSRF origin check, error pages,
                    explorer.rs = /vault, auth_pages.rs incl. first-start /setup, imports.rs = BOM import)
 src/api/           JSON REST API (bearer tokens only, never cookies)
@@ -93,6 +94,8 @@ src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS
                    (stl, obj, ply, off, three_mf = 3MF+AMF, gltf, three_ds, points = PTS/XYZ/LAS)
 src/simmesh.rs     simulation results with fields: simmesh/vtk_legacy.rs, vtk_xml.rs, frd.rs over simmesh/grid.rs (cells → outer surface) and numbers.rs
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
+                   (also the shape signatures and the mass integrals, cached per content hash)
+src/massprops.rs   pure mass properties of closed meshes (Eberly), edge check, inverted-mesh fix, parallel axis
 src/textindex.rs   text extraction from uploads for the full-text search (plain text with its numbers, STEP/IGES strings;
                    PDF via pdftext, HTML via htmltext – both in the isolated `text-extract` child)
 src/pdftext.rs     text layer of PDF reports and the isolated `teamcraft text-extract [--format pdf|html]` child

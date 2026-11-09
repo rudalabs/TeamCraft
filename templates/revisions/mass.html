@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}Mass properties {{ rev.item_number }}/{{ rev.code }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block tc_context %}data-tc-kind="revision" data-tc-item="{{ rev.item_number }}" data-tc-revision="{{ rev.code }}" data-tc-view="mass" data-tc-rule="{{ rule }}"{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+{% set r = report %}
+<div class="page-head">
+  <div>
+    <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a><span>Mass properties</span></p>
+    <div class="title-row">
+      <h1><a class="id title-link" href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a> · {{ rev.name }}</h1>
+    </div>
+    <p class="meta">
+      Mass {{ r.mass_kg|sig }} kg{% if not r.complete %} <span class="marker-impact" title="See the warnings below">△ incomplete</span>{% endif %}
+      {% if r.cg_m %}· CG ({{ r.cg_m[0]|sig }}, {{ r.cg_m[1]|sig }}, {{ r.cg_m[2]|sig }}) m{% endif %}
+      · {{ r.line_count }} line{% if r.line_count != 1 %}s{% endif %}
+      · source of the top level: {{ r.root_source|replace("_", " ") }}
+    </p>
+  </div>
+  <div class="actions">
+    <form class="inline" method="get" action="/revisions/{{ rev.id }}/mass">
+      <label class="check">Revision rule
+        <select name="rule" data-autosubmit>
+          <option value="latest" {% if rule == "latest" %}selected{% endif %}>Latest (any state)</option>
+          <option value="released" {% if rule == "released" %}selected{% endif %}>Latest released</option>
+          <option value="as_released" {% if rule == "as_released" %}selected{% endif %}>As released (exact configuration)</option>
+        </select>
+      </label>
+      <label class="check" title="The second inertia tensor is taken about this point (x,y,z in metres, frame of the geometry files)">Reference point (m)
+        <input type="text" name="ref" value="{{ reference }}" size="14" class="mono" spellcheck="false" autocomplete="off">
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+    <a class="button" href="/revisions/{{ rev.id }}/bom?rule={{ rule }}">BOM</a>
+    <details class="menu">
+      <summary class="button">Export <span class="chev" aria-hidden="true"></span></summary>
+      <div class="menu-pop menu-right">
+        <a href="/revisions/{{ rev.id }}/mass.csv?rule={{ rule }}&amp;ref={{ reference|urlencode }}">CSV</a>
+        <a href="/revisions/{{ rev.id }}/mass.json?rule={{ rule }}&amp;ref={{ reference|urlencode }}" title="The whole report: totals, tensors and every line">JSON</a>
+      </div>
+    </details>
+  </div>
+</div>
+
+{% if reference_error %}<p class="notice warn-text">{{ reference_error }} The origin is used instead.</p>{% endif %}
+
+<section class="card">
+  <h2>Totals</h2>
+  <div class="table-wrap">
+  <table class="dense">
+    <tbody>
+      <tr><th scope="row">Mass</th><td class="num">{{ r.mass_kg|sig }} kg</td>
+        <td class="muted">placed {{ r.placed_mass_kg|sig }} kg{% if r.unplaced_mass_kg %}, without position {{ r.unplaced_mass_kg|sig }} kg{% endif %}</td></tr>
+      {% if r.cg_m %}
+      <tr><th scope="row">Centre of gravity</th><td class="num mono">{{ r.cg_m[0]|sig }}, {{ r.cg_m[1]|sig }}, {{ r.cg_m[2]|sig }} m</td>
+        <td class="muted">x, y, z in the frame of the geometry files{% if r.unplaced_mass_kg %} – placed mass only{% endif %}</td></tr>
+      {% endif %}
+      {% if r.principal_moments %}
+      <tr><th scope="row">Principal moments</th><td class="num mono">{{ r.principal_moments[0]|sig }}, {{ r.principal_moments[1]|sig }}, {{ r.principal_moments[2]|sig }} kg·m²</td>
+        <td class="muted">about the CG, largest first</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+  </div>
+  {% if r.inertia_cg %}
+  <div class="form-row">
+    {% for t in [{"title": "Inertia tensor about the CG (kg·m²)", "v": r.inertia_cg},
+                 {"title": "About the reference point (" ~ reference ~ ") m (kg·m²)", "v": r.inertia_ref}] %}
+    <div>
+      <h3>{{ t.title }}</h3>
+      <table class="dense mass-tensor">
+        <thead><tr><th scope="col"></th><th scope="col" class="num">x</th><th scope="col" class="num">y</th><th scope="col" class="num">z</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">x</th><td class="num mono">{{ t.v[0]|sig }}</td><td class="num mono">{{ t.v[3]|sig }}</td><td class="num mono">{{ t.v[5]|sig }}</td></tr>
+          <tr><th scope="row">y</th><td class="num mono">{{ t.v[3]|sig }}</td><td class="num mono">{{ t.v[1]|sig }}</td><td class="num mono">{{ t.v[4]|sig }}</td></tr>
+          <tr><th scope="row">z</th><td class="num mono">{{ t.v[5]|sig }}</td><td class="num mono">{{ t.v[4]|sig }}</td><td class="num mono">{{ t.v[2]|sig }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="hint">Tensor form: the off-diagonal entries are the negative products of inertia (I<sub>xy</sub> = −∫ xy dm). Every part is taken as exported in the common assembly frame – no placements are applied.</p>
+  {% else %}
+  <p class="empty">No placed mass: add 3D files with a density, or measured masses with a centre of gravity.</p>
+  {% endif %}
+  {% if r.warnings %}
+  <ul class="plain-list">
+    {% for w in r.warnings %}<li class="warn-text">{{ w }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{% if r.lines %}
+<section class="card">
+  <h2>Lines</h2>
+  <div class="table-wrap sticky">
+  <table class="dense">
+    <thead>
+      <tr>
+        <th scope="col" class="lvl-col" title="Level in the structure">Lvl</th><th scope="col" class="num">Find no.</th><th scope="col">Item</th><th scope="col">Rev</th><th scope="col">Name</th>
+        <th scope="col" class="num">Qty</th><th scope="col">Source</th><th scope="col" class="num">Unit mass (kg)</th><th scope="col" class="num">Total mass (kg)</th>
+        <th scope="col" class="num" title="Centre of gravity of the line (all units), m">CG x, y, z (m)</th><th scope="col">Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for l in r.lines %}
+      <tr data-level="{{ l.level }}" {% if l.source != "restricted" %}data-tc-row="{{ l.item_number }}" {% endif %}class="{% if l.source == "missing" %}unresolved{% endif %}">
+        <td class="lvl-col"><span class="lvl">{{ l.level }}</span></td>
+        <td class="num dim">{{ l.find_number }}</td>
+        <td class="nowrap{% if l.level > 6 %} lvl-deep{% elif l.level > 1 %} lvl-{{ l.level }}{% endif %}">
+          {% if l.level > 1 %}<span class="tree-guide" aria-hidden="true">└</span>{% endif %}
+          {% if l.source == "restricted" %}{{ m.restricted() }}{% elif l.revision_id %}<a class="mono" href="/revisions/{{ l.revision_id }}/mass?rule={{ rule }}">{{ l.item_number }}</a>{% else %}<span class="mono">{{ l.item_number }}</span>{% endif %}
+        </td>
+        <td>{% if l.revision_code %}{{ m.revbox(l.revision_code) }}{% endif %}</td>
+        <td class="ellipsis" title="{{ l.name }}">{{ l.name }}</td>
+        <td class="num">{{ l.quantity|num(6) }}</td>
+        <td class="nowrap"><span class="badge badge-mass-{{ l.source }}">{{ l.source_label }}</span></td>
+        <td class="num">{{ l.unit_mass_kg|sig }}</td>
+        <td class="num">{{ l.total_mass_kg|sig }}</td>
+        <td class="num mono nowrap">{% if l.cg_m %}{{ l.cg_m[0]|sig }}, {{ l.cg_m[1]|sig }}, {{ l.cg_m[2]|sig }}{% else %}—{% endif %}</td>
+        <td class="small">{{ l.detail }}{% for w in l.warnings %}<br><span class="warn-text">△ {{ w }}</span>{% endfor %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="card" id="settings">
+  <h2>Mass settings of {{ rev.item_number }}/{{ rev.code }}</h2>
+  <p class="hint">
+    Source order: a measured mass wins and covers everything below it; an assembly is the sum of its lines; a part is its 3D file × the density
+    (the override below, else the material “{{ rev.material or "—" }}” from the <a href="/materials">material library</a>{% if settings.material %}: {{ settings.material.density_kg_m3|num(3) }} kg/m³{% else %} – not found{% endif %}),
+    else its 3D file with the entered mass, else the entered mass without position.
+  </p>
+  {% set s = settings.settings %}
+  {% if editable %}
+  <form class="stack" method="post" action="/revisions/{{ rev.id }}/mass">
+    <div class="form-row">
+      <label>Geometry file
+        <select name="geometry_file">
+          <option value="auto" {% if not s.geometry_file_id %}selected{% endif %}>Automatic{% if chosen and not s.geometry_file_id %} ({{ chosen.filename }}){% endif %}</option>
+          {% for f in settings.files %}<option value="{{ f.id }}" {% if s.geometry_file_id == f.id %}selected{% endif %}>{{ f.filename }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Length unit of the file
+        <select name="length_unit">
+          <option value="">Default of the format{% if chosen_unit %} ({{ chosen_unit }}){% endif %}</option>
+          {% for u in units %}<option value="{{ u.value }}" {% if chosen and chosen.length_unit == u.value %}selected{% endif %}>{{ u.value }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Units shown in the file <span class="hint">e.g. 4 when all four fins are in one file</span>
+        <input type="number" name="instances" min="1" max="100000" step="1" value="{{ chosen.instances if chosen else 1 }}"></label>
+      <label>Density override (kg/m³)
+        <input type="text" inputmode="decimal" name="density" value="{{ s.density_kg_m3 if s.density_kg_m3 is not none else "" }}" placeholder="from the material"></label>
+    </div>
+    <fieldset>
+      <legend>Measured <span class="hint">wins over everything computed; leave empty to compute</span></legend>
+      <div class="form-row">
+        <label>Mass (kg) <input type="text" inputmode="decimal" name="measured_mass" value="{{ s.measured_mass_kg if s.measured_mass_kg is not none else "" }}"></label>
+        <label>CG x (m) <input type="text" inputmode="decimal" name="cg_x" value="{{ measured_cg[0] if measured_cg else "" }}"></label>
+        <label>CG y (m) <input type="text" inputmode="decimal" name="cg_y" value="{{ measured_cg[1] if measured_cg else "" }}"></label>
+        <label>CG z (m) <input type="text" inputmode="decimal" name="cg_z" value="{{ measured_cg[2] if measured_cg else "" }}"></label>
+      </div>
+      <div class="form-row">
+        {% for k in ["ixx", "iyy", "izz", "ixy", "iyz", "ixz"] %}
+        <label>{{ k|upper }} (kg·m²) <input type="text" inputmode="decimal" name="{{ k }}" value="{{ measured_inertia[loop.index0] if measured_inertia else "" }}"></label>
+        {% endfor %}
+      </div>
+      <label>Note <span class="hint">scale, data sheet, date</span>
+        <input type="text" name="note" maxlength="2000" value="{{ s.measured_note }}"></label>
+    </fieldset>
+    <div class="actions"><button class="primary" type="submit">Save mass settings</button></div>
+  </form>
+  {% else %}
+  <dl class="props">
+    <dt>Geometry file</dt><dd>{% if chosen %}{{ chosen.filename }} ({{ chosen_unit }}{% if chosen.instances > 1 %}, {{ chosen.instances }} units{% endif %}){% else %}none{% endif %}</dd>
+    <dt>Density override</dt><dd>{{ s.density_kg_m3|num(3) }}{% if s.density_kg_m3 is not none %} kg/m³{% endif %}</dd>
+    <dt>Measured mass</dt><dd>{{ s.measured_mass_kg|num(6) }}{% if s.measured_mass_kg is not none %} kg{% endif %}{% if measured_cg %} at ({{ measured_cg|join(", ") }}) m{% endif %}{% if s.measured_note %} – {{ s.measured_note }}{% endif %}</dd>
+  </dl>
+  <p class="hint">Check out the revision to change its mass settings.</p>
+  {% endif %}
+</section>
+{% endblock %}

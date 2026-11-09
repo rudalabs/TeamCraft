@@ -10,6 +10,7 @@ mod abortable;
 mod acp;
 mod addfiles;
 mod api;
+mod autoallow;
 mod bomimport;
 mod cadexport;
 mod commands;

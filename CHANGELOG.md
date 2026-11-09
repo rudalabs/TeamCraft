@@ -15,12 +15,34 @@ see the notices in the README.
 
 ### Added
 
+- Mass properties of assemblies: total mass, centre of gravity and inertia
+  tensor (about the CG and a reference point, principal moments) from the
+  exported 3D files of the parts in the common assembly frame, the densities
+  of an admin-managed material library or a per-revision override, and
+  measured masses (with optional CG and inertia) that win over everything
+  computed. Per-file length unit (mm, m, in) and number of units shown; open,
+  non-manifold and inverted meshes are reported (fully inverted ones fixed).
+  The mesh integrals run in the isolated preview process and are cached per
+  content. Page per revision with CSV and JSON export,
+  `GET /api/v1/items/{number}/revisions/{code}/mass-properties`,
+  `GET /api/v1/materials` and the read-only MCP tool `get_mass_properties`.
+  Migration 0061.
 - Preferred CAD program (*Account → Preferred CAD program*): when a revision
   has files of the chosen program (e.g. NX), the native files of other CAD
   programs are listed in a collapsed group on the revision page, in the vault
   explorer and in the desktop app's Files tab. Neutral formats (STEP, JT, STL,
   PDF, …) always stay visible; display only. `GET /api/v1/me` returns
   `preferred_cad`, file formats carry `format_info.family`.
+
+### Changed
+
+- Desktop app, local agents: calls of TeamCraft's own read-only MCP tools
+  (by the server's `tools/list` annotations) are allowed once without a
+  permission prompt and marked *Allowed automatically (read-only)* in the
+  tool list; the server still answers with the user's rights only. Write
+  tools, other servers' tools, the agent's own tools and every request the
+  app cannot identify for certain still ask. *Settings → Agents… → Ask
+  before read-only TeamCraft tools* restores a prompt for every call.
 
 ## [0.2.6] - 2026-11-08
 

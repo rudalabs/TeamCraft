@@ -429,7 +429,9 @@ async fn commands_without_a_database() {
     )
     .await;
     assert_eq!(r.code, 1);
-    assert!(r.stderr.contains("give --output and/or --signature"));
+    assert!(r
+        .stderr
+        .contains("give --output, --signature and/or --mass-properties"));
     let out = std::env::temp_dir().join(format!("cli-cube-{}.tcm", uuid::Uuid::new_v4()));
     let r = run(
         &none,
@@ -448,6 +450,28 @@ async fn commands_without_a_database() {
     assert_eq!(r.code, 0, "{}", r.stderr);
     assert!(r.stdout.contains("triangles"), "{}", r.stdout);
     assert!(std::fs::metadata(&out).unwrap().len() > 0);
+    // the mass properties of the cached mesh: a closed 10 mm cube
+    let mass = out.with_extension("mass.json");
+    let r = run(
+        &none,
+        &[
+            "preview-mesh",
+            "--format",
+            "tcm",
+            "--input",
+            out.to_str().unwrap(),
+            "--mass-properties",
+            mass.to_str().unwrap(),
+        ],
+        b"",
+    )
+    .await;
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    let json: serde_json::Value = serde_json::from_slice(&std::fs::read(&mass).unwrap()).unwrap();
+    let volume = json["geometry"]["volume"].as_f64().unwrap();
+    assert!((volume - 1000.0).abs() < 1e-3, "{json}");
+    assert_eq!(json["geometry"]["closed"], true, "{json}");
+    let _ = std::fs::remove_file(&mass);
     let _ = std::fs::remove_file(&out);
 
     // text-extract refuses what is not a PDF

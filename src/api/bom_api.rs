@@ -333,3 +333,37 @@ pub(super) async fn get_structure_roots(
         structure::roots(&st.db, &me, project.id, page).await?
     )))
 }
+
+// ---------------------------------------------------------------------------
+// Mass properties
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(super) struct MassQuery {
+    rule: Option<String>,
+    /// Reference point `x,y,z` in metres.
+    #[serde(rename = "ref")]
+    reference: Option<String>,
+}
+
+/// Mass, CG and inertia tensors of the structure below a revision (see
+/// `services::mass_properties`).
+pub(super) async fn get_mass_properties(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<MassQuery>,
+) -> AppResult<Response> {
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    let rule = bom_rule(q.rule.as_deref())?;
+    let reference = mass_properties::parse_point(q.reference.as_deref())?;
+    Ok(Json(mass_properties::rollup(&st, &me, rev.id, rule, reference).await?).into_response())
+}
+
+/// The material library (densities in kg/m³).
+pub(super) async fn list_materials(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+) -> AppResult<Response> {
+    Ok(Json(mass_properties::materials(&st.db).await?).into_response())
+}

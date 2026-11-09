@@ -24,9 +24,9 @@ use crate::{
     error::{AppError, AppResult},
     models::{BomLine, Change, ChangeRequest, FileRecord, Impact, Revision},
     services::{
-        as_built, audit, bom, changes, files, impacts, insights, interchange, items, notifications,
-        projects, references, requests, result_proposals, reviewers, revisions, similar,
-        simulations, Page,
+        as_built, audit, bom, changes, files, impacts, insights, interchange, items,
+        mass_properties, notifications, projects, references, requests, result_proposals,
+        reviewers, revisions, similar, simulations, Page,
     },
     AppState,
 };
@@ -180,6 +180,19 @@ const TOOLS: &[Tool] = &[
             (default: as_released for released revisions, latest otherwise).",
         effect: READ,
         schema: schema_bom,
+    },
+    Tool {
+        name: "get_mass_properties",
+        title: "Mass, centre of gravity and inertia",
+        description: "Mass properties of the structure below a revision: total mass, centre of gravity \
+            (m), inertia tensor about the CG and about `reference` (kg·m², tensor form: off-diagonals are \
+            −∫xy dm), principal moments, and per BOM line its source – measured, computed (3D file × \
+            density from the material library or an override), entered mass on geometry, entered mass \
+            without position, sum of children, missing – with warnings (open meshes, missing densities, \
+            copies stacked at one place). Every part is taken as exported in the common assembly frame. \
+            Revision rule as in get_bom.",
+        effect: READ,
+        schema: schema_mass_properties,
     },
     Tool {
         name: "where_used",
@@ -521,6 +534,7 @@ pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value 
         "read_file_text" => read_file_text(st, me, &a).await,
         "impact_summary" => impact_summary(st, me, &a).await,
         "get_bom" => get_bom(st, me, &a).await,
+        "get_mass_properties" => get_mass_properties(st, me, &a).await,
         "where_used" => where_used(st, me, &a).await,
         "replace_preview" => replace_preview(st, me, &a).await,
         "item_history" => item_history(st, me, &a).await,

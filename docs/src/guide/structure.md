@@ -12,6 +12,10 @@ roll-up and three **revision rules**:
 | Latest released | its newest released revision                                                      |
 | As released     | the exact revision the parent was released with (e.g. the as-built configuration) |
 
+The roll-up adds the entered masses. The centre of gravity and the inertia
+tensor of the structure, computed from the 3D files of the parts, are on the
+**Mass properties** page – see [Mass properties](mass-properties.md).
+
 ### Working with a large structure
 
 For a big product (hundreds or thousands of lines across several project
