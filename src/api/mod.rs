@@ -45,8 +45,9 @@ use crate::{
     services::{
         access_log::{self, AccessCtx},
         access_review, attributes, audit, bom, bom_references, changes, checkouts, desktop, files,
-        impacts, imports, items, notifications, package, project_policy, projects, references,
-        requests, reviewers, revisions, similar, stats, structure, uploads, users, workset, Page,
+        impacts, imports, items, mass_properties, notifications, package, project_policy, projects,
+        references, requests, reviewers, revisions, similar, stats, structure, uploads, users,
+        workset, Page,
     },
     web, AppState,
 };
@@ -320,6 +321,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(get_bom_xlsx),
         )
         .route(
+            "/items/{number}/revisions/{code}/mass-properties",
+            get(get_mass_properties),
+        )
+        .route("/materials", get(list_materials))
+        .route(
             "/items/{number}/revisions/{code}/files",
             get(list_files)
                 .post(upload_files)
@@ -558,6 +564,8 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/bom       {child, quantity, find_number?, notes?}",
             "GET    /api/v1/items/{number}/revisions/{code}/bom.xlsx?rule=  the expanded BOM as Excel workbook (the BOM import reads it back)",
             "GET    /api/v1/items/{number}/revisions/{code}/package?rule=  Pack and Go: ZIP with all files of the structure, bom.csv, manifest.json",
+            "GET    /api/v1/items/{number}/revisions/{code}/mass-properties?rule=&ref=x,y,z  mass, CG and inertia tensors (about the CG and the reference point, m) from the 3D files, densities and measured masses, with the source of every line",
+            "GET    /api/v1/materials                                 the material library: name, density_kg_m3, notes",
             "GET    /api/v1/items/{number}/revisions/{code}/workset?rule=&references=true  desktop Get: files of the structure and the CAD files it references, with folder, version, sha256, lock",
             "GET    /api/v1/items/{number}/revisions/{code}/structure?rule=latest|released&limit=  one level of the structure view: BOM lines with resolved revision, state, lock owner, used_in",
             "GET    /api/v1/projects/{code}/structure?limit=&offset=  top-level items of a group (not used in any BOM of the group) for the structure view",

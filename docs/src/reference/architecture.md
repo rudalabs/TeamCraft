@@ -46,7 +46,9 @@
   section of the same format) that the viewer colours with a colour map.
   The same child process writes the shape signature of the
   [similar part search](../guide/similar-parts.md) (`shape.rs`), stored once
-  per content hash in `shape_signatures`.
+  per content hash in `shape_signatures`, and the mass integrals of the
+  [mass properties](../guide/mass-properties.md) (`massprops.rs`), cached
+  per content hash next to the preview mesh.
 
 ## Source layout
 
@@ -65,6 +67,7 @@
 | `src/pagecontext.rs`                 | the page context the assistant sidebar sends (kind, identifiers, view, rule, query, rows shown): parsing and caps; the services resolve it with the user's rights |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                                                                                      |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images, assembly placements)                                                    |
+| `src/massprops.rs`                   | mass properties of closed meshes (volume, CG, inertia; Eberly), edge check, parallel axis roll-up                                                                 |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs`: VTK/VTU/VTP/FRD simulation results with fields                                                                |
 | `src/shape.rs`                       | shape signatures (extents, area, volume, D2 distribution) for the similar part search                                                                             |
 | `src/webhooks.rs`                    | event webhooks: outbox worker, HMAC-SHA256 signature, backoff, target (SSRF) guard                                                                                |

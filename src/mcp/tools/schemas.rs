@@ -104,6 +104,22 @@ pub(super) fn schema_bom() -> Value {
     )
 }
 
+pub(super) fn schema_mass_properties() -> Value {
+    object(
+        json!({
+            "item": p_item(),
+            "revision": p_revision(),
+            "rule": p_rule(),
+            "reference": {
+                "type": "string",
+                "description": "Point the second inertia tensor is taken about: `x,y,z` in metres in the \
+                    frame of the geometry files (default the origin), e.g. the nose tip",
+            },
+        }),
+        &["item"],
+    )
+}
+
 pub(super) fn schema_replace_preview() -> Value {
     object(
         json!({
