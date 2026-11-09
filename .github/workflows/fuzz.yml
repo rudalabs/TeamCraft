@@ -36,6 +36,13 @@ env:
   # ("sanitizer is incompatible with statically linked libc"). Setting it to
   # the host triple keeps the sanitizer on dynamic libc.
   FUZZ_TARGET_TRIPLE: x86_64-unknown-linux-gnu
+  # Pinned nightly. The STEP kernel pulls in branches 0.3.0 (truck -> rclite ->
+  # branches), whose build script calls core::intrinsics::abort() on every
+  # nightly; that path was removed from the compiler between nightly-2026-09-15
+  # (last known good) and nightly-2026-10-20, so a floating nightly no longer
+  # builds the targets. Stable CI is unaffected (branches uses std on stable).
+  # Bump this once rclite/truck move off branches 0.3, or branches is patched.
+  FUZZ_NIGHTLY: nightly-2026-09-15
 
 jobs:
   fuzz:
@@ -48,8 +55,9 @@ jobs:
         target: [stepbom, swpart, nxpart, cadrefs, bomtable, thumbnail, textindex, htmltext, mesh, mesh_step, cadformat, resultscan, solversummary]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.FUZZ_NIGHTLY }}
           targets: ${{ env.FUZZ_TARGET_TRIPLE }}
       - uses: Swatinem/rust-cache@v2
         with:
