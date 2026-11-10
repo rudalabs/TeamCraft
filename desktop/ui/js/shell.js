@@ -5,7 +5,7 @@
 import { $, ICONS, api, badge, call, clear, dialog, enc, errorText, fmtDate, fmtSize, h, invoke, label, run, state, svgIcon, toast, tool } from "./core.js";
 import { checkServerVersion, showConnect } from "./connect.js";
 import { navHead, selectView } from "./navigator.js";
-import { activeTab, closeTab, renderActive, renderTabs } from "./tabs.js";
+import { activeTab, closeTab, renderActive, renderTabs, tabShortcut } from "./tabs.js";
 import { agent, agentProfiles, applyAiPolicy, localAgentsAllowed, openAgent, schedulePaint, updateAgentControls } from "./agent.js";
 import { openRevision } from "./revision.js";
 import { impactGroups } from "./references.js";
@@ -207,6 +207,7 @@ export function initShell() {
   });
   document.addEventListener("keydown", function (e) {
     var mod = e.ctrlKey || e.metaKey;
+    if (tabShortcut(e)) return;
     if (mod && e.key.toLowerCase() === "w" && state.active) {
       e.preventDefault();
       closeTab(state.active);
