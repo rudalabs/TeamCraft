@@ -149,6 +149,14 @@ toolbar of the open object with its one next step filled (see
 released, a ring: in review, a half-filled ring: in work, – obsolete, the
 name in the tooltip); the search field is `Ctrl+F` (`⌘F`).
 
+**Moving tabs:** drag an object tab to a new place (a bar shows where it
+lands; the tab keeps its state, and a plain click still just selects it).
+Without a mouse: `Ctrl+Shift+PageUp` / `PageDown` move the active tab left or
+right, `Ctrl+PageUp` / `PageDown` (or `Ctrl+Tab` / `Ctrl+Shift+Tab`) switch
+to the previous or next tab, and the arrow keys move between the tabs when
+the tab strip has the focus. The right-click menu of a tab offers *Move to
+start*, *Move to end*, *Close*, *Close others* and *Close tabs to the right*.
+
 ## The toolbar
 
 The toolbar sits right below the tab strip and acts on the active tab. Its

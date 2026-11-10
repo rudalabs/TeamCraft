@@ -545,6 +545,15 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
   cursor: pointer;
   white-space: nowrap;
 }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Reordering by pointer: the strip does not select text,
+   the dragged tab is dimmed and an insertion bar marks where it lands. */
+.tabs.reordering { user-select: none; cursor: grabbing; }
+.tabs.reordering .tab { cursor: grabbing; }
+.tab.dragging { opacity: 0.55; }
+.tab.drop-before { box-shadow: -3px 0 0 -1px var(--accent); }
+.tab.drop-after { box-shadow: 3px 0 0 -1px var(--accent); }
+.tab-menu { position: fixed; right: auto; top: auto; transform-origin: top left; }
 .tab .ico { color: var(--text-dim); font-size: 11px; }
 .tab .tab-label { overflow: hidden; text-overflow: ellipsis; }
 .tab.active { color: var(--text); background: var(--surface); border-color: var(--border); font-weight: 500; }

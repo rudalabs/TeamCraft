@@ -10,6 +10,7 @@ on:
     paths:
       - "desktop/**"
       - "scripts/check-desktop-modules.mjs"
+      - "scripts/desktop-tab-order.test.mjs"
       - "static/**"
       - "shared/**"
       - "media/logos/**"
@@ -21,6 +22,7 @@ on:
     paths:
       - "desktop/**"
       - "scripts/check-desktop-modules.mjs"
+      - "scripts/desktop-tab-order.test.mjs"
       - "static/**"
       - "shared/**"
       - "media/logos/**"
@@ -66,6 +68,9 @@ jobs:
       # module that is used is imported, all reachable from js/main.js
       - name: Check the imports of the desktop UI modules
         run: node scripts/check-desktop-modules.mjs
+      # the pure rules of the tab order (moving, switching, closing)
+      - name: Test the tab order rules
+        run: node scripts/desktop-tab-order.test.mjs
 
   test:
     name: desktop (${{ matrix.os }})
