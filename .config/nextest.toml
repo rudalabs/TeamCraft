@@ -28,22 +28,29 @@ retries = 2
 
 # Windows only: a refused TCP connection to a closed local port takes about
 # 2 s there (the OS retries before it gives up), and starting a child process
-# is slow – milliseconds on Linux and macOS.
+# is slow – milliseconds on Linux and macOS. The vault tests flush every
+# stored file to disk (sync_data/sync_all), and a flush on the Windows
+# runner can take a second when the disk is busy – 0.1 s on Linux.
 [[profile.default.overrides]]
 platform = "cfg(windows)"
 filter = """
 test(=llm::http::tests::network_errors_do_not_carry_the_url)
 | test(=malware::tests::an_unreachable_scanner_fails_closed)
 | test(=preview::tests::conversions_are_cached_including_failures)
+| test(/^vault::tests::/)
 """
 slow-timeout = { period = "10s", terminate-after = 3 }
 
 # Unit tests that are slow by design (debug build: 0.3 s to 15 s locally).
+# The triangle limit builds 8 million triangles (22 s and hundreds of MB on
+# the Windows runner): it runs alone, so it does not starve the tests next
+# to it – the vault tests timed out on every retry while it ran.
 [[profile.default.overrides]]
 filter = """
 test(=mesh::tessellated::tests::the_triangle_limit_fails_the_preview)
 """
 slow-timeout = { period = "60s", terminate-after = 2 }
+threads-required = "num-test-threads"
 
 [[profile.default.overrides]]
 filter = """
