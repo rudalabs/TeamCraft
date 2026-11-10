@@ -15,6 +15,11 @@ see the notices in the README.
 
 ### Added
 
+- Desktop: rearrange the object tabs by dragging (insertion marker, scrolling
+  at the edge of the strip) or with `Ctrl+Shift+PageUp/PageDown`; switch tabs
+  with `Ctrl+PageUp/PageDown` or `Ctrl+Tab`; arrow keys between tabs (WAI-ARIA
+  tabs); right-click menu (move to start/end, close, close others, close tabs
+  to the right).
 - Mass properties of assemblies: total mass, centre of gravity and inertia
   tensor (about the CG and a reference point, principal moments) from the
   exported 3D files of the parts in the common assembly frame, the densities
