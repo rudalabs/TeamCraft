@@ -92,6 +92,8 @@ pub struct Session {
     pub update_check: bool,
     /// Check-out of an assembly also gets its parts.
     pub checkout_parts: bool,
+    /// After a crash, ask at the next start whether to share the report.
+    pub crash_prompt: bool,
 }
 
 #[tauri::command]
@@ -101,6 +103,7 @@ pub fn session(app: AppHandle, state: State<'_, AppState>) -> Session {
         token_storage: s.token.as_ref().and(s.token_storage),
         update_check: s.update_check != Some(false),
         checkout_parts: s.checkout_parts != Some(false),
+        crash_prompt: s.crash_prompt != Some(false),
         server_url: s.server_url.clone(),
         signed_in: s.token.is_some(),
         skin: s.skin.clone().unwrap_or_else(|| "teamcraft".into()),
@@ -794,6 +797,84 @@ pub fn set_checkout_parts(state: State<'_, AppState>, enabled: bool) -> CmdResul
 pub fn set_update_check(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
     update_settings(&state, |s| s.update_check = Some(enabled))?;
     Ok(())
+}
+
+// ------------------------------------------------------------ crash reports
+
+/// The crash reports waiting for the user's decision (src/crash.rs).
+#[derive(Serialize)]
+pub struct CrashReports {
+    /// How many reports (panics, unexpected exits, UI error sessions).
+    pub count: usize,
+    pub kinds: Vec<String>,
+    /// All reports as the plain, redacted text the user can share.
+    pub text: String,
+    /// Settings: ask at start-up (off: the reports are only kept locally).
+    pub ask: bool,
+}
+
+/// Crash reports stored by an earlier session, or none.
+#[tauri::command]
+pub fn crash_reports(state: State<'_, AppState>) -> Option<CrashReports> {
+    let dir = crate::crash::store_dir()?;
+    let reports = crate::crash::pending(dir);
+    if reports.is_empty() {
+        return None;
+    }
+    Some(CrashReports {
+        count: reports.len(),
+        kinds: reports.iter().map(|r| r.kind.clone()).collect(),
+        text: crate::crash::combined(&reports),
+        ask: snapshot(&state).crash_prompt != Some(false),
+    })
+}
+
+/// Opens a prefilled new issue on GitHub with the reports – the user reviews
+/// and submits it there – and removes them here. The address is built from
+/// the stored reports, never from text the web view passes in.
+#[tauri::command]
+pub fn crash_reports_open_issue(app: AppHandle) -> CmdResult<()> {
+    let dir =
+        crate::crash::store_dir().ok_or_else(|| ApiError::local("No crash report is stored."))?;
+    let reports = crate::crash::pending(dir);
+    if reports.is_empty() {
+        return Err(ApiError::local("No crash report is stored."));
+    }
+    let url = crate::crash::issue_url(&crate::crash::combined(&reports));
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| ApiError::local(format!("The browser could not be opened: {e}")))?;
+    crate::crash::discard(dir);
+    Ok(())
+}
+
+/// Deletes the stored crash reports without sharing them.
+#[tauri::command]
+pub fn crash_reports_discard() {
+    if let Some(dir) = crate::crash::store_dir() {
+        crate::crash::discard(dir);
+    }
+}
+
+/// Settings → ask after a crash whether to share the report.
+#[tauri::command]
+pub fn set_crash_prompt(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    update_settings(&state, |s| s.crash_prompt = Some(enabled))?;
+    Ok(())
+}
+
+/// An uncaught error of the user interface (js/crash.js); redacted, deduplicated
+/// and capped per session. `true` when it was recorded.
+#[tauri::command]
+pub fn record_ui_error(message: String, stack: Option<String>, source: Option<String>) -> bool {
+    crate::crash::store_dir().is_some_and(|dir| {
+        crate::crash::record_ui_error(
+            dir,
+            &message,
+            stack.as_deref().unwrap_or(""),
+            source.as_deref().unwrap_or(""),
+        )
+    })
 }
 
 /// Opens the release page in the default browser (a fixed address – the app
