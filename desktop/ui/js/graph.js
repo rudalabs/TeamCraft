@@ -7,8 +7,13 @@
 // anything else opens its overview – with a back control that stays in the
 // same place so the graph is always one click away.
 //
-// Pure vanilla SVG + foreignObject cards; no external engine (the project ships
-// no downloaded engines and the desktop UI has no build step).
+// Pure vanilla: the edges are SVG, the node cards an HTML layer stacked above
+// it that gets the same view transform (zoom and pan move both together).
+// The cards are deliberately not SVG foreignObjects: WebKit (WKWebView on
+// macOS, WebKitGTK on Linux) does not apply ancestor SVG transforms to the
+// HTML inside a foreignObject, so every card ended up at the origin. No
+// external engine (the project ships no downloaded engines and the desktop UI
+// has no build step).
 
 import { api, enc, h, invoke, label } from "./core.js";
 import { typeIcon } from "./navigator.js";
@@ -206,7 +211,7 @@ function thumbInto(img, sha, id) {
   p.then(function (u) { img.src = u; img.classList.remove("hidden"); }, function () { /* no image */ });
 }
 
-/** The HTML card of one node, inside a foreignObject. */
+/** The HTML card of one node (in the cards layer). */
 function nodeCard(n, isCenter, onOpen) {
   var cls = "g-node state-" + (n.state || "unknown") + " type-" + (n.type || "unknown") + (isCenter ? " is-center" : "");
   var thumb = h("div.g-thumb");
@@ -255,18 +260,16 @@ function draw(pane, center, nodes, onOpen) {
   var view = svg("g", { class: "g-view" });
   root.appendChild(view);
   var edges = svg("g", { class: "g-edges" });
-  var cards = svg("g", { class: "g-cards" });
   view.appendChild(edges);
-  view.appendChild(cards);
+  // the cards: an HTML layer in scene coordinates, transformed like `view`
+  var layer = h("div.g-cards-layer");
 
   function cardNode(n, isCenter) {
-    var size = n.size;
-    var g = svg("g", { class: "g-card", transform: "translate(" + n.x + "," + n.y + ")" });
-    var fo = svg("foreignObject", { x: -size / 2, y: -size / 2, width: size, height: size });
-    fo.appendChild(nodeCard(n, isCenter, onOpen));
-    g.appendChild(fo);
-    cards.appendChild(g);
-    n._g = g; n._fo = fo;
+    var holder = h("div.g-card");
+    placeCard(holder, n);
+    holder.appendChild(nodeCard(n, isCenter, onOpen));
+    layer.appendChild(holder);
+    n._card = holder;
   }
 
   function edge(n) {
@@ -283,13 +286,18 @@ function draw(pane, center, nodes, onOpen) {
   cardNode(center, true);
 
   pane.appendChild(root);
+  pane.appendChild(layer);
 
   // ---- zoom (mouse-centred) and pan ----
   var tf = { k: 1, x: 0, y: 0 };
   // once the user zooms or pans, late enrichment must not yank the view back;
   // a double-click on the background fits again on request.
   var userMoved = false;
-  function apply() { view.setAttribute("transform", "translate(" + tf.x + "," + tf.y + ") scale(" + tf.k + ")"); }
+  // the SVG group and the cards layer always get the same transform
+  function apply() {
+    view.setAttribute("transform", "translate(" + tf.x + "," + tf.y + ") scale(" + tf.k + ")");
+    layer.style.transform = "translate(" + tf.x + "px, " + tf.y + "px) scale(" + tf.k + ")";
+  }
 
   function fit() {
     var all = nodes.concat([center]);
@@ -307,8 +315,12 @@ function draw(pane, center, nodes, onOpen) {
     apply();
   }
 
-  root.addEventListener("wheel", function (e) {
+  // The listeners sit on the pane, so they see events on the SVG, on the
+  // empty layer (it lets them through) and on the cards (they bubble).
+  pane.addEventListener("wheel", function (e) {
     e.preventDefault();
+    // the SVG box: the scene origin of both the SVG and the cards layer
+    // (inside the pane's border)
     var rect = root.getBoundingClientRect();
     var cx = e.clientX - rect.left, cy = e.clientY - rect.top;
     userMoved = true;
@@ -323,20 +335,21 @@ function draw(pane, center, nodes, onOpen) {
   }, { passive: false });
 
   var drag = null;
-  root.addEventListener("pointerdown", function (e) {
+  pane.addEventListener("pointerdown", function (e) {
     if (e.target.closest(".g-node")) return; // let cards handle their own clicks
+    if (e.button !== undefined && e.button !== 0) return;
     drag = { x: e.clientX, y: e.clientY, ox: tf.x, oy: tf.y };
-    root.setPointerCapture(e.pointerId); root.classList.add("grabbing");
+    pane.setPointerCapture(e.pointerId); root.classList.add("grabbing");
   });
-  root.addEventListener("pointermove", function (e) {
+  pane.addEventListener("pointermove", function (e) {
     if (!drag) return;
     userMoved = true;
     tf.x = drag.ox + (e.clientX - drag.x); tf.y = drag.oy + (e.clientY - drag.y); apply();
   });
   function endDrag() { drag = null; root.classList.remove("grabbing"); }
-  root.addEventListener("pointerup", endDrag);
-  root.addEventListener("pointercancel", endDrag);
-  root.addEventListener("dblclick", function (e) {
+  pane.addEventListener("pointerup", endDrag);
+  pane.addEventListener("pointercancel", endDrag);
+  pane.addEventListener("dblclick", function (e) {
     if (e.target.closest(".g-node")) return;
     userMoved = false; fit();
   });
@@ -453,16 +466,22 @@ export function revGraph(tab, el) {
   });
 }
 
+/** Places a card holder in scene coordinates: its centre at (x, y). */
+function placeCard(holder, n) {
+  holder.style.left = (n.x - n.size / 2) + "px";
+  holder.style.top = (n.y - n.size / 2) + "px";
+  holder.style.width = n.size + "px";
+  holder.style.height = n.size + "px";
+}
+
 /** Re-positions and re-skins the existing cards/edges after enrichment. */
 function redraw(center, nodes, open) {
   nodes.concat([center]).forEach(function (n) {
-    if (!n._g) return;
-    n._g.setAttribute("transform", "translate(" + n.x + "," + n.y + ")");
-    n._fo.setAttribute("x", -n.size / 2); n._fo.setAttribute("y", -n.size / 2);
-    n._fo.setAttribute("width", n.size); n._fo.setAttribute("height", n.size);
-    var hadFocus = n._fo.contains(document.activeElement);
+    if (!n._card) return;
+    placeCard(n._card, n);
+    var hadFocus = n._card.contains(document.activeElement);
     var fresh = nodeCard(n, n.dir === "center", open);
-    n._fo.textContent = ""; n._fo.appendChild(fresh);
+    n._card.textContent = ""; n._card.appendChild(fresh);
     if (hadFocus) fresh.focus({ preventScroll: true });
   });
   nodes.forEach(function (n) {
