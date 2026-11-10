@@ -43,7 +43,8 @@ see the notices in the README.
 - CI: a unit test killed at its 1 s limit because the runner stalled no
   longer fails the run – failed unit tests get two more attempts (nextest
   `retries`); a hang still fails every attempt, a stall is reported as
-  `FLAKY`.
+  `FLAKY`. The 8-million-triangle limit test runs alone, and the vault tests
+  (a disk flush per stored file) get 10 s on Windows.
 
 ## [0.2.7] - 2026-11-10
 
