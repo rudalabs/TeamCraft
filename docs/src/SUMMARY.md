@@ -57,6 +57,7 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [Crash reports from the desktop app](research/crash-reporting.md)
     - [Mass properties from exported meshes](research/mass-properties.md)
     - [3D preview of Fusion designs](research/fusion-ogs-preview.md)
     - [3D preview of SOLIDWORKS files](research/solidworks-display-preview.md)
