@@ -8,6 +8,10 @@
     <h1>Audit log</h1>
     <p class="subtitle">Every change to product data, changes, projects and users.</p>
   </div>
+  <div class="actions">
+    <a class="button" href="/admin/audit/export?format=csv{% if base_query %}&amp;{{ base_query }}{% endif %}" title="The entries of the current filter as CSV (at most 100 000; the export is itself recorded)">Export CSV</a>
+    <a class="button" href="/admin/audit/export?format=json{% if base_query %}&amp;{{ base_query }}{% endif %}" title="The entries of the current filter as JSON">Export JSON</a>
+  </div>
 </div>
 
 <form class="card form-row" method="get" action="/admin/audit">

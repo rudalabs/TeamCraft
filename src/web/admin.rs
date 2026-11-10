@@ -821,6 +821,88 @@ pub async fn audit(
 }
 
 #[derive(Deserialize)]
+pub struct AuditExportQuery {
+    entity_type: Option<String>,
+    username: Option<String>,
+    action: Option<String>,
+    /// `csv` (default) or `json`.
+    format: Option<String>,
+}
+
+/// The audit filter of a query: empty values mean "any".
+pub(crate) fn audit_filter(
+    entity_type: &Option<String>,
+    username: &Option<String>,
+    action: &Option<String>,
+) -> audit::AuditFilter {
+    let clean = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    audit::AuditFilter {
+        entity_type: clean(entity_type),
+        username: clean(username),
+        action: clean(action),
+    }
+}
+
+/// An audit log export as a download (CSV or JSON).
+pub(crate) fn audit_download(
+    entries: &[crate::models::AuditEntry],
+    truncated: bool,
+    json: bool,
+) -> AppResult<Response> {
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let (content_type, filename, body) = if json {
+        (
+            "application/json",
+            format!("teamcraft-audit-{stamp}.json"),
+            serde_json::to_string_pretty(&json!({
+                "exported_at": chrono::Utc::now(),
+                "truncated": truncated,
+                "entries": entries,
+            }))
+            .map_err(|e| AppError::Other(e.into()))?,
+        )
+    } else {
+        (
+            "text/csv; charset=utf-8",
+            format!("teamcraft-audit-{stamp}.csv"),
+            audit::to_csv(entries),
+        )
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type.to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                util::content_disposition(&filename),
+            ),
+            (
+                header::HeaderName::from_static("x-truncated"),
+                truncated.to_string(),
+            ),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+/// `GET /admin/audit/export?format=csv|json` – the filtered audit log as a
+/// download (administrators; at most `audit::EXPORT_MAX` entries).
+pub async fn audit_export(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Query(q): Query<AuditExportQuery>,
+) -> AppResult<Response> {
+    let filter = audit_filter(&q.entity_type, &q.username, &q.action);
+    let (entries, truncated) = audit::export(&st.db, &ctx.me, &filter).await?;
+    audit_download(&entries, truncated, q.format.as_deref() == Some("json"))
+}
+
+#[derive(Deserialize)]
 pub struct TemplateForm {
     #[serde(default)]
     name: String,

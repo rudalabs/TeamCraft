@@ -50,7 +50,10 @@ opens the where-used page, which walks up through the sub-assemblies (1, 2,
 exports as CSV and as Excel workbook (which the BOM import reads back), and **Pack and Go** downloads a revision with
 the files of its whole structure
 as ZIP (`<item>_<revision>/`, `bom.csv`, `manifest.json` with SHA-256 per
-file).
+file). For every released revision the manifest also names the change order
+that released it and who approved it when (`released_by`: change, title,
+release time, approvals); a change order the downloader may not see is only
+marked `restricted`.
 
 ## Creating a BOM from the CAD references
 

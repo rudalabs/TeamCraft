@@ -21,6 +21,10 @@ see the notices in the README.
   order confirms every concession of an as-built revision on its own
   (`POST /api/v1/as-built-deviations/{id}/confirm`) before approving.
   Migration 0062.
+- The Pack and Go manifest names, for every released revision, the change
+  order that released it and its approvers (`released_by`), and
+  administrators export the audit log as CSV or JSON (*Admin → Audit log*,
+  `GET /api/v1/audit`); each export is recorded (#152 step 8).
 
 ### Fixed
 
