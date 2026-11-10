@@ -13,6 +13,10 @@ see the notices in the README.
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-11-10
+
+Changes since the `v0.2.6` tag.
+
 ### Added
 
 - The *Material* field (*New item*, *Edit revision*, desktop app) suggests the
@@ -24,24 +28,12 @@ see the notices in the README.
   with `Ctrl+PageUp/PageDown` or `Ctrl+Tab`; arrow keys between tabs (WAI-ARIA
   tabs); right-click menu (move to start/end, close, close others, close tabs
   to the right).
-- Mass properties of assemblies: total mass, centre of gravity and inertia
-  tensor (about the CG and a reference point, principal moments) from the
-  exported 3D files of the parts in the common assembly frame, the densities
-  of an admin-managed material library or a per-revision override, and
-  measured masses (with optional CG and inertia) that win over everything
-  computed. Per-file length unit (mm, m, in) and number of units shown; open,
-  non-manifold and inverted meshes are reported (fully inverted ones fixed).
-  The mesh integrals run in the isolated preview process and are cached per
-  content. Page per revision with CSV and JSON export,
-  `GET /api/v1/items/{number}/revisions/{code}/mass-properties`,
-  `GET /api/v1/materials` and the read-only MCP tool `get_mass_properties`.
-  Migration 0061.
-- Preferred CAD program (*Account → Preferred CAD program*): when a revision
-  has files of the chosen program (e.g. NX), the native files of other CAD
-  programs are listed in a collapsed group on the revision page, in the vault
-  explorer and in the desktop app's Files tab. Neutral formats (STEP, JT, STL,
-  PDF, …) always stay visible; display only. `GET /api/v1/me` returns
-  `preferred_cad`, file formats carry `format_info.family`.
+- Desktop: a *Graph* tab on the revision view, a navigable graph of the
+  item's neighbourhood (BOM children and references below, the assemblies
+  that use it above). Colour shows the lifecycle state, size the item's own
+  BOM complexity; every node carries the preview image and the file name.
+  The view is kept while you move through the graph and it scales to large
+  assemblies.
 - Mattermost notifications as direct messages of a bot account, never into a
   channel (#230): `TEAMCRAFT_MATTERMOST_URL` and `TEAMCRAFT_MATTERMOST_BOT_TOKEN`
   (also `…_FILE`). TeamCraft looks the user up by username (cached), opens the
@@ -77,13 +69,6 @@ see the notices in the README.
   CSV (`geometry_file`, `geometry_choice`) carry the candidates and whether a
   file was chosen automatically or by hand. The preferred CAD program breaks
   ties between native formats.
-- Desktop app, local agents: calls of TeamCraft's own read-only MCP tools
-  (by the server's `tools/list` annotations) are allowed once without a
-  permission prompt and marked *Allowed automatically (read-only)* in the
-  tool list; the server still answers with the user's rights only. Write
-  tools, other servers' tools, the agent's own tools and every request the
-  app cannot identify for certain still ask. *Settings → Agents… → Ask
-  before read-only TeamCraft tools* restores a prompt for every call.
 
 ## [0.2.6] - 2026-11-08
 
@@ -91,6 +76,24 @@ Changes since the `v0.2.5` tag.
 
 ### Added
 
+- Mass properties of assemblies: total mass, centre of gravity and inertia
+  tensor (about the CG and a reference point, principal moments) from the
+  exported 3D files of the parts in the common assembly frame, the densities
+  of an admin-managed material library or a per-revision override, and
+  measured masses (with optional CG and inertia) that win over everything
+  computed. Per-file length unit (mm, m, in) and number of units shown; open,
+  non-manifold and inverted meshes are reported (fully inverted ones fixed).
+  The mesh integrals run in the isolated preview process and are cached per
+  content. Page per revision with CSV and JSON export,
+  `GET /api/v1/items/{number}/revisions/{code}/mass-properties`,
+  `GET /api/v1/materials` and the read-only MCP tool `get_mass_properties`.
+  Migration 0061.
+- Preferred CAD program (*Account → Preferred CAD program*): when a revision
+  has files of the chosen program (e.g. NX), the native files of other CAD
+  programs are listed in a collapsed group on the revision page, in the vault
+  explorer and in the desktop app's Files tab. Neutral formats (STEP, JT, STL,
+  PDF, …) always stay visible; display only. `GET /api/v1/me` returns
+  `preferred_cad`, file formats carry `format_info.family`.
 - 3D preview of Rhino models (`.3dm`, Rhino 1 to 8) from the meshes Rhino
   stores (mesh objects, render meshes of polysurfaces and extrusions, block
   instances placed); SubD objects are refined from their control net
@@ -323,6 +326,13 @@ Changes since the `v0.2.5` tag.
 
 ### Changed
 
+- Desktop app, local agents: calls of TeamCraft's own read-only MCP tools
+  (by the server's `tools/list` annotations) are allowed once without a
+  permission prompt and marked *Allowed automatically (read-only)* in the
+  tool list; the server still answers with the user's rights only. Write
+  tools, other servers' tools, the agent's own tools and every request the
+  app cannot identify for certain still ask. *Settings → Agents… → Ask
+  before read-only TeamCraft tools* restores a prompt for every call.
 - Desktop: *Ask TeamCraft* and *Agent* are one view. The company AI (the
   server's assistant, with page context, quick actions, the drafts checkbox
   and the conversation kept on the server) is a backend of the *Agent* view (`Ctrl/Cmd+4`, the *Agent* button of
@@ -432,6 +442,7 @@ Changes since the `v0.2.0` tag.
   app keeps the private file and shows a warning. Server addresses with plain
   `http://` to another computer get a warning.
 
-[Unreleased]: https://github.com/rudalabs/TeamCraft/compare/v0.2.6...HEAD
+[Unreleased]: https://github.com/rudalabs/TeamCraft/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/rudalabs/TeamCraft/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/rudalabs/TeamCraft/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/rudalabs/TeamCraft/compare/v0.2.0...v0.2.5
