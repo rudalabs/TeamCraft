@@ -133,7 +133,7 @@
     <p class="hint">Personal access tokens authenticate scripts and tools against the REST API at <span class="mono">{{ api_base }}</span> with your permissions. A scope narrows a token further: <em>read-only</em> tokens may only read (GET requests and the read-only MCP tools), <em>MCP only</em> tokens may only call the MCP endpoint for AI assistants. Give each script or assistant its own token with the narrowest scope it needs.</p>
     {% if tokens %}
     <table>
-      <thead><tr><th scope="col">Name</th><th scope="col">Prefix</th><th scope="col">Scope</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Prefix</th><th scope="col">Scope</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
       <tbody>
       {% for t in tokens %}
         <tr>

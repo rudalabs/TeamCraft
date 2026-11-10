@@ -26,7 +26,7 @@
     <h2>Members</h2>
     {% if members %}
     <table>
-      <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Added</th><th scope="col"></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Added</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
       <tbody>
       {% for u in members %}
         <tr>
@@ -69,7 +69,7 @@
     {% if former_holders %}
     <h3>Former members still holding check-outs</h3>
     <table>
-      <thead><tr><th scope="col">Name</th><th scope="col">Check-outs</th><th scope="col"></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Check-outs</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
       <tbody>
       {% for h in former_holders %}
         <tr>
@@ -285,7 +285,7 @@
   {% if result_templates %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Result</th><th scope="col">Files</th><th scope="col">Finds</th><th scope="col">Unit</th><th scope="col" class="num">Limits</th>{% if can_manage %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Result</th><th scope="col">Files</th><th scope="col">Finds</th><th scope="col">Unit</th><th scope="col" class="num">Limits</th>{% if can_manage %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for t in result_templates %}
       <tr>

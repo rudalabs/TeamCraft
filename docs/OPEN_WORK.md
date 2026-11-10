@@ -146,10 +146,12 @@ feature milestone – the features in *What works* are enough; what is missing i
   is already tested) – `every_rendered_page_is_accessible` checks labels, accessible names, `alt`, `tabindex`,
   `lang`, heading levels and `<th scope>` on every rendered page; sign-in, new item, check-in, BOM and new change
   request done with the keyboard in Chromium; toggled panels now close with Escape ([docs](src/dev/accessibility.md))
-- [ ] Accessibility: a skip link to the main content (eight stops come before it on every page)
+- [x] Accessibility: a skip link to the main content (eight stops come before it on every page) – checked by
+  `every_rendered_page_is_accessible`
 - [ ] Accessibility: the HTML built by JavaScript (assistant sidebar, BOM tree controls, 3D viewer, upload progress)
   and the desktop app's UI under the same checks as the templates
-- [ ] Accessibility: a text (visually hidden) for the 15 empty action column headers (`<th scope="col"></th>`)
+- [x] Accessibility: a text (visually hidden) for the empty action column headers (`<th scope="col"></th>`) – 17
+  found and fixed; every `<th>` needs a name now
 - [ ] Accessibility: the main flows once with a screen reader (NVDA or VoiceOver)
 
 *Documentation and project*

@@ -15,6 +15,10 @@ see the notices in the README.
 
 ### Fixed
 
+- Every web page starts with a *Skip to the main content* link (visible
+  while it has the keyboard focus), and the 17 empty column headers (action
+  columns, the corner of the inertia tensor) have a name for screen readers.
+  The page accessibility test now requires both.
 - An administrator revoking somebody else's API token is recorded in the
   token owner's history ("Revoked API token 'x' of lena"), no longer in the
   administrator's own (#173).

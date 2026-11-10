@@ -113,7 +113,7 @@
     <h2>Reviewers{% if review_round and review_round > 1 %} <span class="small muted">(round {{ review_round }})</span>{% endif %}</h2>
     {% if reviews %}
     <table>
-      <thead><tr><th scope="col">Reviewer</th><th scope="col">Decision</th><th scope="col">Comment</th>{% if can.modify or can.replace_reviewer %}<th scope="col"></th>{% endif %}</tr></thead>
+      <thead><tr><th scope="col">Reviewer</th><th scope="col">Decision</th><th scope="col">Comment</th>{% if can.modify or can.replace_reviewer %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
       <tbody>
       {% for r in reviews %}
         <tr>
@@ -198,7 +198,7 @@
   {% if items %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Revision</th><th scope="col">Name</th><th scope="col">State</th><th scope="col">On release</th>{% if can.modify %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Revision</th><th scope="col">Name</th><th scope="col">State</th><th scope="col">On release</th>{% if can.modify %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for i in items %}
       <tr>
@@ -264,7 +264,7 @@
   {% if readiness_rows %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Dependency</th><th scope="col">Name</th><th scope="col">Needed by</th><th scope="col">State</th>{% if can.modify %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Dependency</th><th scope="col">Name</th><th scope="col">Needed by</th><th scope="col">State</th>{% if can.modify %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for d in readiness_rows %}
       <tr>
