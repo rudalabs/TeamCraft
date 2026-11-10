@@ -554,7 +554,7 @@ pub async fn edit_form(
         &ctx,
         "revisions/edit.html",
         json!({ "rev": rev, "error": null, "attribute_fields": fields,
-                "materials": super::mass::material_options(&st.db).await? }),
+                "materials": super::mass::material_options(&st).await? }),
     )
 }
 
@@ -626,7 +626,7 @@ pub async fn update(
                 "revisions/edit.html",
                 json!({ "rev": rev, "error": e.public_message(), "mass_raw": form.mass_kg,
                         "cost_raw": form.unit_cost, "attribute_fields": fields,
-                        "materials": super::mass::material_options(&st.db).await? }),
+                        "materials": super::mass::material_options(&st).await? }),
             )?;
             *page.status_mut() = e.status();
             Ok(page)

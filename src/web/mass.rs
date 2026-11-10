@@ -27,8 +27,8 @@ use crate::{
 
 /// The material library as suggestions for the Material field of a form
 /// (`[{name, label}]`, label = density), in the library's order.
-pub(super) async fn material_options(db: &sqlx::PgPool) -> AppResult<serde_json::Value> {
-    Ok(json!(mass::materials(db)
+pub(super) async fn material_options(st: &AppState) -> AppResult<serde_json::Value> {
+    Ok(json!(mass::materials(&st.db)
         .await?
         .iter()
         .map(|m| json!({ "name": m.name, "label": format!("{} kg/m³", m.density_kg_m3) }))
