@@ -437,8 +437,8 @@ pub async fn create_token(
 /// * **Atomic:** one transaction.
 pub async fn revoke_token(pool: &PgPool, actor: &Actor, token_id: Uuid) -> AppResult<()> {
     let mut tx = pool.begin().await?;
-    let name = sqlx::query_scalar::<_, String>(
-        "DELETE FROM api_tokens WHERE id = $1 AND (user_id = $2 OR $3) RETURNING name",
+    let (name, owner) = sqlx::query_as::<_, (String, Uuid)>(
+        "DELETE FROM api_tokens WHERE id = $1 AND (user_id = $2 OR $3) RETURNING name, user_id",
     )
     .bind(token_id)
     .bind(actor.id)
@@ -446,13 +446,24 @@ pub async fn revoke_token(pool: &PgPool, actor: &Actor, token_id: Uuid) -> AppRe
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found("API token not found."))?;
+    // The entry belongs to the token's owner – an admin revoking a leaver's
+    // token shows up in the leaver's history, not in the admin's own.
+    let summary = if owner == actor.id {
+        format!("Revoked API token '{name}'")
+    } else {
+        let username = sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
+            .bind(owner)
+            .fetch_one(&mut *tx)
+            .await?;
+        format!("Revoked API token '{name}' of {username}")
+    };
     audit::record(
         &mut tx,
         Some(actor),
         "token.revoke",
         "user",
-        Some(actor.id),
-        format!("Revoked API token '{name}'"),
+        Some(owner),
+        summary,
         json!({ "token_id": token_id }),
     )
     .await?;
