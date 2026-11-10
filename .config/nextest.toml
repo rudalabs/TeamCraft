@@ -17,6 +17,15 @@ fail-fast = false
 filter = "kind(test)"
 slow-timeout = { period = "60s", terminate-after = 5 }
 
+# Unit tests: two more attempts after a failure. A shared CI runner sometimes
+# stalls for seconds, and whichever fast test runs then is killed at 1 s
+# (tests of 0.015-0.17 s in a green run timed out at 1-9 s on the next,
+# without a code change). A hang or a real failure fails every attempt; a
+# stall passes on the next one and is reported as FLAKY in the summary.
+[[profile.default.overrides]]
+filter = "kind(lib) | kind(bin)"
+retries = 2
+
 # Windows only: a refused TCP connection to a closed local port takes about
 # 2 s there (the OS retries before it gives up), and starting a child process
 # is slow – milliseconds on Linux and macOS.

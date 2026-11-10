@@ -98,7 +98,9 @@ database. CI runs the tests with `cargo nextest run` (`cargo install
 cargo-nextest`), which enforces the limits in `.config/nextest.toml`: a unit
 test fails after **1 second**, so hangs show up at once; tests that are slow on
 purpose (fuzzing, hashing, large meshes) are listed there with a reason, and
-the database tests get a minute each. `tests/backup_restore.rs` additionally runs `pg_dump` and
+the database tests get a minute each. A failed unit test is retried twice: a
+hang fails every attempt, while a test caught by a stalled CI runner passes
+on the next one and shows up as `FLAKY` in the summary. `tests/backup_restore.rs` additionally runs `pg_dump` and
 `pg_restore` from `PATH` (major version at least the server's); without them
 it is skipped, with `TEAMCRAFT_REQUIRE_PG_TOOLS=1` (CI) that fails.
 

@@ -40,6 +40,10 @@ see the notices in the README.
 - An administrator revoking somebody else's API token is recorded in the
   token owner's history ("Revoked API token 'x' of lena"), no longer in the
   administrator's own (#173).
+- CI: a unit test killed at its 1 s limit because the runner stalled no
+  longer fails the run – failed unit tests get two more attempts (nextest
+  `retries`); a hang still fails every attempt, a stall is reported as
+  `FLAKY`.
 
 ## [0.2.7] - 2026-11-10
 
