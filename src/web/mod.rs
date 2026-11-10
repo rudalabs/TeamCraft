@@ -210,6 +210,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/import/{id}/discard", post(imports::discard))
         // mass properties
         .route("/revisions/{id}/mass", get(mass::show).post(mass::update))
+        .route("/revisions/{id}/mass/geometry", post(mass::choose_geometry))
         .route("/revisions/{id}/mass.csv", get(mass::csv))
         .route("/revisions/{id}/mass.json", get(mass::json_export))
         .route(

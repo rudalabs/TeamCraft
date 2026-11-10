@@ -75,6 +75,7 @@ pub(super) async fn get_mass_properties(
                 "total_mass_kg": l.total_mass_kg,
                 "cg_m": l.cg_m,
                 "warnings": l.warnings,
+                "geometry": l.geometry,
             })
         })
         .collect();
@@ -82,6 +83,7 @@ pub(super) async fn get_mass_properties(
         "root": r.root_label,
         "rule": rule.as_str(),
         "root_source": r.root_source,
+        "root_geometry": r.root_geometry,
         "mass_kg": r.mass_kg,
         "placed_mass_kg": r.placed_mass_kg,
         "unplaced_mass_kg": r.unplaced_mass_kg,

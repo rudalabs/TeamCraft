@@ -595,7 +595,7 @@
         "readOnlyHint": true,
         "title": "Mass, centre of gravity and inertia"
       },
-      "description": "Mass properties of the structure below a revision: total mass, centre of gravity (m), inertia tensor about the CG and about `reference` (kg·m², tensor form: off-diagonals are −∫xy dm), principal moments, and per BOM line its source – measured, computed (3D file × density from the material library or an override), entered mass on geometry, entered mass without position, sum of children, missing – with warnings (open meshes, missing densities, copies stacked at one place). Every part is taken as exported in the common assembly frame. Revision rule as in get_bom.",
+      "description": "Mass properties of the structure below a revision: total mass, centre of gravity (m), inertia tensor about the CG and about `reference` (kg·m², tensor form: off-diagonals are −∫xy dm), principal moments, and per BOM line its source – measured, computed (3D file × density from the material library or an override), entered mass on geometry, entered mass without position, sum of children, missing, geometry ambiguous (a part with files of several different parts and none chosen: nothing is added, the totals are incomplete; `geometry` lists the candidates, the likely whole assembly and whether a file was chosen automatically or by hand) – with warnings (open meshes, missing densities, copies stacked at one place). Every part is taken as exported in the common assembly frame. Revision rule as in get_bom.",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

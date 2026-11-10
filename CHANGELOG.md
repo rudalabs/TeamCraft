@@ -36,6 +36,19 @@ see the notices in the README.
 
 ### Changed
 
+- Mass properties (#227): the geometry file of a revision is picked
+  automatically only when its 3D files are one model (same normalised name,
+  e.g. `box.stl`, `box.prt`, `Box_rev-B.SLDPRT`), and the page, the exports
+  and the MCP tool say so. Files of several different parts (an assembly
+  attached as one item) are no longer reduced to the alphabetically first
+  part: the revision gets the new source *geometry ambiguous*, adds nothing
+  and flags the totals incomplete until a file is chosen. The likely whole
+  assembly (root of the file references, or a name matching the item) is
+  suggested with a one-click *Use …*; the file selector in *Mass settings*
+  is grouped by model. REST, JSON, MCP (`geometry`, `root_geometry`) and the
+  CSV (`geometry_file`, `geometry_choice`) carry the candidates and whether a
+  file was chosen automatically or by hand. The preferred CAD program breaks
+  ties between native formats.
 - Desktop app, local agents: calls of TeamCraft's own read-only MCP tools
   (by the server's `tools/list` annotations) are allowed once without a
   permission prompt and marked *Allowed automatically (read-only)* in the

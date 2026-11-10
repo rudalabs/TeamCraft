@@ -105,7 +105,7 @@
     </thead>
     <tbody>
     {% for l in r.lines %}
-      <tr data-level="{{ l.level }}" {% if l.source != "restricted" %}data-tc-row="{{ l.item_number }}" {% endif %}class="{% if l.source == "missing" %}unresolved{% endif %}">
+      <tr data-level="{{ l.level }}" {% if l.source != "restricted" %}data-tc-row="{{ l.item_number }}" {% endif %}class="{% if l.source == "missing" or l.source == "geometry_ambiguous" %}unresolved{% endif %}">
         <td class="lvl-col"><span class="lvl">{{ l.level }}</span></td>
         <td class="num dim">{{ l.find_number }}</td>
         <td class="nowrap{% if l.level > 6 %} lvl-deep{% elif l.level > 1 %} lvl-{{ l.level }}{% endif %}">
@@ -134,15 +134,45 @@
     Source order: a measured mass wins and covers everything below it; an assembly is the sum of its lines; a part is its 3D file × the density
     (the override below, else the material “{{ rev.material or "—" }}” from the <a href="/materials">material library</a>{% if settings.material %}: {{ settings.material.density_kg_m3|num(3) }} kg/m³{% else %} – not found{% endif %}),
     else its 3D file with the entered mass, else the entered mass without position.
+    The 3D file is picked automatically only when the revision holds one model (possibly in several formats); files of several different parts need your choice.
   </p>
   {% set s = settings.settings %}
+  {% set g = settings.geometry %}
+  {% if g and g.choice == "ambiguous" %}
+  <div class="notice warn-text" id="geometry-ambiguous">
+    <p><strong>Geometry ambiguous:</strong> {{ g.files }} files of {{ g.models }} different parts – nothing is computed from them until a geometry file is chosen.
+      Choose the geometry file below, or split the parts into BOM lines (one item per part, with quantities): see <em>Mass properties → The workflow</em> in the documentation.</p>
+    {% if g.likely_file %}
+    <p>Likely the whole assembly: <span class="mono">{{ g.likely_file }}</span>
+      {% if editable %}
+      <form class="inline" method="post" action="/revisions/{{ rev.id }}/mass/geometry">
+        <input type="hidden" name="geometry_file" value="{{ g.likely_file_id }}">
+        <button type="submit">Use {{ g.likely_file }}</button>
+      </form>
+      {% else %}(check out the revision to choose it){% endif %}
+    </p>
+    {% endif %}
+  </div>
+  {% elif g and g.choice == "automatic" %}
+  <p class="hint">Geometry: <span class="mono">{{ g.file }}</span> (chosen automatically{% if g.other_formats %}; {{ g.other_formats }} other format{% if g.other_formats != 1 %}s{% endif %} of the same model{% endif %})</p>
+  {% elif g and g.choice == "chosen" %}
+  <p class="hint">Geometry: <span class="mono">{{ g.file }}</span> (chosen by hand{% if editable %}; choose <em>Automatic</em> below to go back{% endif %})</p>
+  {% endif %}
   {% if editable %}
   <form class="stack" method="post" action="/revisions/{{ rev.id }}/mass">
     <div class="form-row">
       <label>Geometry file
         <select name="geometry_file">
-          <option value="auto" {% if not s.geometry_file_id %}selected{% endif %}>Automatic{% if chosen and not s.geometry_file_id %} ({{ chosen.filename }}){% endif %}</option>
+          <option value="auto" {% if not s.geometry_file_id %}selected{% endif %}>Automatic{% if chosen and not s.geometry_file_id %} ({{ chosen.filename }}){% elif g and g.choice == "ambiguous" %} (none: several parts){% endif %}</option>
+          {% if g and g.candidates %}
+          {% for grp in g.candidates %}
+          <optgroup label="{{ grp.model }}">
+            {% for c in grp.files %}<option value="{{ c.file_id }}" {% if s.geometry_file_id == c.file_id %}selected{% endif %}>{{ c.filename }} ({{ c.format }}){% if c.likely %} – likely whole assembly{% endif %}{% if c.used %}{% if g.choice == "automatic" %} – automatic{% else %} – chosen{% endif %}{% endif %}</option>{% endfor %}
+          </optgroup>
+          {% endfor %}
+          {% else %}
           {% for f in settings.files %}<option value="{{ f.id }}" {% if s.geometry_file_id == f.id %}selected{% endif %}>{{ f.filename }}</option>{% endfor %}
+          {% endif %}
         </select>
       </label>
       <label>Length unit of the file

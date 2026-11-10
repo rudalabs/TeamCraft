@@ -538,3 +538,271 @@ async fn an_open_mesh_is_computed_but_flagged() {
     );
     assert!(!r.complete);
 }
+
+#[tokio::test]
+async fn files_of_several_parts_are_not_guessed() {
+    let app = app_or_skip!();
+    let (admin, _) = app.user("ada", Role::Admin).await;
+    let (max_actor, max) = app.user_in("max", Role::Editor, &["ROCKET"]).await;
+    let cookie = app.login("max").await;
+    mass::create_material(
+        &app.pool,
+        &admin,
+        MaterialInput {
+            name: "Steel".into(),
+            density_kg_m3: 7850.0,
+            notes: String::new(),
+        },
+    )
+    .await
+    .unwrap();
+    let item = |kind: &str, name: &str| json!({ "item_type": kind, "name": name, "material": "Steel", "project": "ROCKET" });
+
+    // one model in two revisions of the file: picked automatically, and said so
+    let single = app.create_item(&max, item("part", "Bracket")).await;
+    upload(
+        &app,
+        &max,
+        &single,
+        "bracket.stl",
+        &box_stl([0.0; 3], [10.0; 3]),
+    )
+    .await;
+    upload(
+        &app,
+        &max,
+        &single,
+        "Bracket_rev-B.stl",
+        &box_stl([0.0; 3], [10.0; 3]),
+    )
+    .await;
+    let single_rev = revision_id(&app, &single, "A").await;
+    let r = mass::rollup(
+        &app.state,
+        &max_actor,
+        single_rev,
+        RevisionRule::Latest,
+        [0.0; 3],
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.root_source, Source::Computed, "{:?}", r.warnings);
+    let g = r.root_geometry.as_ref().unwrap();
+    assert_eq!((g.choice, g.other_formats), ("automatic", 1));
+    assert!(r
+        .root_detail
+        .contains("chosen automatically; 1 other format of the same model"));
+
+    // files of two parts: nothing is computed, the totals are incomplete
+    let two = app.create_item(&max, item("part", "Harness")).await;
+    upload(&app, &max, &two, "fin.stl", &box_stl([0.0; 3], [10.0; 3])).await;
+    upload(
+        &app,
+        &max,
+        &two,
+        "body.stl",
+        &box_stl([20.0, 0.0, 0.0], [10.0; 3]),
+    )
+    .await;
+    let two_rev = revision_id(&app, &two, "A").await;
+    let r = mass::rollup(
+        &app.state,
+        &max_actor,
+        two_rev,
+        RevisionRule::Latest,
+        [0.0; 3],
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.root_source, Source::GeometryAmbiguous);
+    assert_eq!(r.mass_kg, 0.0);
+    assert!(!r.complete && r.cg_m.is_none());
+    assert!(r
+        .warnings
+        .iter()
+        .any(|w| w.contains("2 files of 2 different parts")));
+    let g = r.root_geometry.as_ref().unwrap();
+    assert_eq!((g.choice, g.models, g.files), ("ambiguous", 2, 2));
+    assert!(g.file.is_none() && g.candidates.len() == 2);
+
+    // inside an assembly it contributes nothing, the good line still counts
+    let asm = app.create_item(&max, item("assembly", "Rig")).await;
+    add_line(&app, &max, &asm, &single, 1.0).await;
+    add_line(&app, &max, &asm, &two, 1.0).await;
+    let asm_rev = revision_id(&app, &asm, "A").await;
+    let r = mass::rollup(
+        &app.state,
+        &max_actor,
+        asm_rev,
+        RevisionRule::Latest,
+        [0.0; 3],
+    )
+    .await
+    .unwrap();
+    assert!(close(r.mass_kg, 0.00785), "{}", r.mass_kg);
+    assert!(!r.complete);
+    let line = r.lines.iter().find(|l| l.item_number == two).unwrap();
+    assert_eq!(line.source, Source::GeometryAmbiguous);
+    assert_eq!(line.total_mass_kg, None);
+    assert_eq!(r.missing_lines, 1);
+
+    // REST, MCP, CSV and JSON carry the source and the candidates
+    let body = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/revisions/A/mass-properties"),
+            &max,
+            None,
+        )
+        .await
+        .json();
+    let lines = body["lines"].as_array().unwrap();
+    let l = lines
+        .iter()
+        .find(|l| l["item_number"] == two.as_str())
+        .unwrap();
+    assert_eq!(l["source"], "geometry_ambiguous");
+    assert_eq!(l["geometry"]["choice"], "ambiguous");
+    assert_eq!(l["geometry"]["candidates"].as_array().unwrap().len(), 2);
+    let l = lines
+        .iter()
+        .find(|l| l["item_number"] == single.as_str())
+        .unwrap();
+    assert_eq!(l["geometry"]["choice"], "automatic");
+    let result = teamcraft::mcp::tools::call(
+        &app.state,
+        &max_actor,
+        "get_mass_properties",
+        &json!({ "item": two }),
+    )
+    .await;
+    assert_eq!(result["isError"], false, "{result}");
+    let s = &result["structuredContent"];
+    assert_eq!(s["root_source"], "geometry_ambiguous");
+    assert_eq!(s["root_geometry"]["choice"], "ambiguous");
+    let csv = app
+        .get_page(&format!("/revisions/{asm_rev}/mass.csv"), Some(&cookie))
+        .await
+        .text();
+    assert!(csv
+        .lines()
+        .next()
+        .unwrap()
+        .ends_with("geometry_file,geometry_choice"));
+    assert!(csv.contains("geometry ambiguous") && csv.contains(",automatic"));
+    let html = app
+        .get_page(&format!("/revisions/{two_rev}/mass"), Some(&cookie))
+        .await
+        .text();
+    assert!(html.contains("Geometry ambiguous") && html.contains("<optgroup label=\"fin\">"));
+
+    // choosing a file by hand wins; automatic can be restored
+    let fin: Uuid =
+        sqlx::query_scalar("SELECT id FROM files WHERE revision_id = $1 AND filename = 'fin.stl'")
+            .bind(two_rev)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    let r = app
+        .post_form(
+            &format!("/revisions/{two_rev}/mass/geometry"),
+            Some(&cookie),
+            Some("http://localhost:8080"),
+            &[("geometry_file", &fin.to_string())],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let r = mass::rollup(
+        &app.state,
+        &max_actor,
+        two_rev,
+        RevisionRule::Latest,
+        [0.0; 3],
+    )
+    .await
+    .unwrap();
+    assert_eq!(r.root_source, Source::Computed, "{:?}", r.warnings);
+    assert!(close(r.mass_kg, 0.00785));
+    assert_eq!(r.root_geometry.as_ref().unwrap().choice, "chosen");
+    let r = app
+        .post_form(
+            &format!("/revisions/{two_rev}/mass/geometry"),
+            Some(&cookie),
+            Some("http://localhost:8080"),
+            &[("geometry_file", "auto")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let stored = mass::revision_settings(&app.pool, &max_actor, two_rev)
+        .await
+        .unwrap();
+    assert!(stored.settings.geometry_file_id.is_none());
+    assert_eq!(stored.geometry.choice, "ambiguous");
+    // a file of another revision is refused
+    let other: Uuid = sqlx::query_scalar("SELECT id FROM files WHERE revision_id = $1 LIMIT 1")
+        .bind(single_rev)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert!(
+        mass::choose_geometry(&app.pool, &max_actor, two_rev, Some(other))
+            .await
+            .is_err()
+    );
+}
+
+/// The NIST MTC assembly (`tests/fixtures/cad`) attached to one revision
+/// without BOM lines, as in the bug report: the mass of one hex nut must not
+/// stand for the assembly.
+#[tokio::test]
+async fn the_nist_assembly_in_one_revision_is_ambiguous() {
+    let app = app_or_skip!();
+    let (max_actor, max) = app.user_in("max", Role::Editor, &["ROCKET"]).await;
+    let part = app
+        .create_item(
+            &max,
+            json!({ "item_type": "assembly", "name": "NIST mtc crada assembly", "project": "ROCKET" }),
+        )
+        .await;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/cad/nist/mtc-assembly");
+    let mut names = Vec::new();
+    // The test server accepts 1 MB per upload: the fixture files that fit
+    // (the 1.6 MB JT of the assembly is replaced by a stand-in with its
+    // name; nothing is converted while the files are ambiguous).
+    for sub in ["nx", "solidworks"] {
+        for entry in std::fs::read_dir(dir.join(sub)).unwrap() {
+            let path = entry.unwrap().path();
+            let ext = path.extension().unwrap().to_string_lossy().to_lowercase();
+            let data = std::fs::read(&path).unwrap();
+            if ["prt", "sldprt"].contains(&ext.as_str()) && data.len() < 1_000_000 {
+                let name = path.file_name().unwrap().to_string_lossy().to_string();
+                upload(&app, &max, &part, &name, &data).await;
+                names.push(name);
+            }
+        }
+    }
+    upload(&app, &max, &part, "NIST mtc crada assembly.jt", b"stand-in").await;
+    names.push("NIST mtc crada assembly.jt".into());
+    assert!(names.len() >= 12, "{names:?}");
+    let rev = revision_id(&app, &part, "A").await;
+    let r = mass::rollup(&app.state, &max_actor, rev, RevisionRule::Latest, [0.0; 3])
+        .await
+        .unwrap();
+    assert_eq!(r.root_source, Source::GeometryAmbiguous, "{:?}", r.warnings);
+    assert_eq!(r.mass_kg, 0.0);
+    assert!(!r.complete);
+    let g = r.root_geometry.as_ref().unwrap();
+    assert_eq!(g.choice, "ambiguous");
+    assert!(g.file.is_none());
+    assert_eq!(g.likely_file.as_deref(), Some("NIST mtc crada assembly.jt"));
+    assert_eq!(g.candidates[0].model, "nist mtc crada assembly");
+    assert!(g.candidates[0].files.iter().any(|c| c.likely));
+    assert!(r
+        .warnings
+        .iter()
+        .any(|w| w.contains("different parts") && w.contains("assembly.jt")));
+    // every file is a candidate; the assembly .prt and .jt are one model
+    assert_eq!(g.files, names.len());
+    assert_eq!(g.candidates[0].files.len(), 2);
+}
