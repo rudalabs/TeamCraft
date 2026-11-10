@@ -51,7 +51,9 @@ check-outs and reviews, and a **local working folder**:
   follow it – an assembly re-centres the graph, anything else opens its
   overview – and a back control stays in the same place (left of the tab row)
   so the graph is one click away even from a part's page; the mouse wheel
-  zooms on the cursor and dragging pans;
+  zooms on the cursor, dragging pans and a double-click on the background
+  fits the graph again. Large assemblies are laid out in rows, and only the
+  first 48 neighbours get a preview and their complexity;
 * the *Workspace* tab shows per file where it is, whether it is up to date,
   modified, outdated, in conflict, new, missing or a name clash, whether it
   is read-only, and who holds the lock for how long; opening an outdated

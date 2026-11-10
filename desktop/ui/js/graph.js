@@ -12,7 +12,6 @@
 
 import { api, enc, h, invoke, label } from "./core.js";
 import { typeIcon } from "./navigator.js";
-import { openRevision } from "./revision.js";
 import { activate, findTab, openTab, renderActive } from "./tabs.js";
 
 var SVG_NS = "http://www.w3.org/2000/svg";
@@ -21,7 +20,16 @@ var SVG_NS = "http://www.w3.org/2000/svg";
 // file). Shared across re-centres so the graph is not refetched each hop.
 var nodeInfo = {};
 // Blob URLs of node thumbnails, by file SHA-256 (same bytes → one request).
+// Bounded: beyond THUMB_CACHE_MAX the least recently used URL is revoked, so
+// a long session of re-centring does not keep every preview alive.
 var thumbUrls = {};
+var thumbOrder = [];
+var THUMB_CACHE_MAX = 200;
+// Above this many neighbours only the first ENRICH_MAX are fetched one by one
+// (each costs a full revision request); the rest keep their basic card.
+var ENRICH_MAX = 48;
+// Up to this many nodes per side sit on an arc; more are laid out in rows.
+var ARC_MAX = 8;
 
 function key(number, code) { return number + ":" + (code || ""); }
 
@@ -90,18 +98,20 @@ function neighbours(d) {
 /** Lazily fetches each neighbour's type, complexity (its own BOM child count)
  *  and a preview file, then calls back so the node can grow and show its image.
  *  Bounded concurrency; results are cached across re-centres. */
-function enrich(nodes, onUpdate) {
+function enrich(nodes, onUpdate, isLive) {
   var queue = nodes.filter(function (n) {
     var info = nodeInfo[key(n.number, n.code)];
     if (info) { Object.assign(n, info); return false; }
     return true;
   });
+  var skipped = Math.max(0, queue.length - ENRICH_MAX);
+  queue = queue.slice(0, ENRICH_MAX);
   onUpdate(); // paint what the cache already had (coalesced by the caller)
   var i = 0, running = 0;
   function pump() {
-    while (running < 5 && i < queue.length) {
+    while (running < 5 && i < queue.length && isLive()) {
       var n = queue[i++]; running++;
-      fetchOne(n).then(function () { running--; onUpdate(n); pump(); });
+      fetchOne(n).then(function () { running--; if (isLive()) { onUpdate(n); pump(); } });
     }
   }
   function fetchOne(n) {
@@ -119,6 +129,7 @@ function enrich(nodes, onUpdate) {
     }, function () { /* restricted or gone: leave the node as-is */ });
   }
   pump();
+  return skipped;
 }
 
 // -------------------------------------------------------------------------
@@ -148,14 +159,29 @@ function placeArc(list, a0, a1, minRadius) {
   });
 }
 
+/** Many neighbours: centred rows stacked away from the centre (sign +1 =
+ *  below, -1 = above), so the scene grows with √n instead of n. */
+function placeRows(list, sign, minRadius) {
+  var n = list.length;
+  var biggest = list.reduce(function (m, x) { return Math.max(m, x.size); }, 60);
+  var cell = biggest * 1.2;
+  var cols = Math.max(ARC_MAX, Math.ceil(Math.sqrt(n * 2.5)));
+  list.forEach(function (x, idx) {
+    var row = Math.floor(idx / cols), col = idx % cols;
+    var inRow = Math.min(cols, n - row * cols);
+    x.x = (col - (inRow - 1) / 2) * cell;
+    x.y = sign * (minRadius + biggest / 2 + row * cell);
+  });
+}
+
 function layout(center, nodes) {
   // screen angles: 0 = right, +90° = down. Down arc ≈ straight down, up arc ≈ straight up.
   var rad = Math.PI / 180;
   var down = nodes.filter(function (n) { return n.dir === "down"; });
   var up = nodes.filter(function (n) { return n.dir === "up"; });
   var minR = center.size / 2 + 90;
-  placeArc(down, 35 * rad, 145 * rad, minR);
-  placeArc(up, 215 * rad, 325 * rad, minR);
+  if (down.length > ARC_MAX) placeRows(down, 1, minR); else placeArc(down, 35 * rad, 145 * rad, minR);
+  if (up.length > ARC_MAX) placeRows(up, -1, minR); else placeArc(up, 215 * rad, 325 * rad, minR);
   center.x = 0; center.y = 0;
 }
 
@@ -165,8 +191,18 @@ function layout(center, nodes) {
 
 function thumbInto(img, sha, id) {
   if (!sha || !id) return;
-  var p = thumbUrls[sha] || (thumbUrls[sha] = invoke("file_bytes", { kind: "thumbnail", id: id })
-    .then(function (bytes) { return URL.createObjectURL(new Blob([bytes])); }));
+  var p = thumbUrls[sha];
+  if (p) thumbOrder.splice(thumbOrder.indexOf(sha), 1);
+  else {
+    p = thumbUrls[sha] = invoke("file_bytes", { kind: "thumbnail", id: id })
+      .then(function (bytes) { return URL.createObjectURL(new Blob([bytes])); });
+    while (thumbOrder.length >= THUMB_CACHE_MAX) {
+      var old = thumbOrder.shift();
+      thumbUrls[old].then(function (u) { URL.revokeObjectURL(u); }, function () {});
+      delete thumbUrls[old];
+    }
+  }
+  thumbOrder.push(sha);
   p.then(function (u) { img.src = u; img.classList.remove("hidden"); }, function () { /* no image */ });
 }
 
@@ -250,6 +286,9 @@ function draw(pane, center, nodes, onOpen) {
 
   // ---- zoom (mouse-centred) and pan ----
   var tf = { k: 1, x: 0, y: 0 };
+  // once the user zooms or pans, late enrichment must not yank the view back;
+  // a double-click on the background fits again on request.
+  var userMoved = false;
   function apply() { view.setAttribute("transform", "translate(" + tf.x + "," + tf.y + ") scale(" + tf.k + ")"); }
 
   function fit() {
@@ -272,6 +311,7 @@ function draw(pane, center, nodes, onOpen) {
     e.preventDefault();
     var rect = root.getBoundingClientRect();
     var cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    userMoved = true;
     var factor = Math.exp(-e.deltaY * 0.0015);
     var k2 = clamp(tf.k * factor, 0.25, 3.5);
     factor = k2 / tf.k;
@@ -290,15 +330,20 @@ function draw(pane, center, nodes, onOpen) {
   });
   root.addEventListener("pointermove", function (e) {
     if (!drag) return;
+    userMoved = true;
     tf.x = drag.ox + (e.clientX - drag.x); tf.y = drag.oy + (e.clientY - drag.y); apply();
   });
   function endDrag() { drag = null; root.classList.remove("grabbing"); }
   root.addEventListener("pointerup", endDrag);
   root.addEventListener("pointercancel", endDrag);
+  root.addEventListener("dblclick", function (e) {
+    if (e.target.closest(".g-node")) return;
+    userMoved = false; fit();
+  });
 
   // fit once the pane has a size (it was just inserted)
   requestAnimationFrame(fit);
-  return { refit: fit };
+  return { refit: function () { if (!userMoved) fit(); } };
 }
 
 // -------------------------------------------------------------------------
@@ -323,12 +368,15 @@ function recenter(tab, n) {
 /** Opens a non-assembly node's overview, remembering the way back to the graph. */
 function openOverview(tab, n) {
   var origin = { key: tab.key, stack: tab.graph.stack.slice() };
-  var partKey = "rev:" + n.number + ":" + n.code;
-  openTab({ key: partKey, kind: "revision", number: n.number, code: n.code,
-    title: n.number + "/" + n.code, sub: "overview" });
+  var partKey = revKey(n.number, n.code);
   var t = findTab(partKey);
-  if (t) { t.returnToGraph = origin; renderActive(); }
+  if (t) t.returnToGraph = origin; // set before openTab renders it
+  openTab({ key: partKey, kind: "revision", number: n.number, code: n.code,
+    title: n.number + "/" + n.code, sub: "overview", returnToGraph: origin });
 }
+
+// the key openRevision() (revision.js) gives a revision tab
+function revKey(number, code) { return "rev:" + number + ":" + code; }
 
 function onOpen(tab) {
   return function (n) {
@@ -344,6 +392,10 @@ function onOpen(tab) {
 export function revGraph(tab, el) {
   var g = graphState(tab);
   var current = g.stack[g.stack.length - 1];
+  // every render gets a token; answers for an older render (the user went
+  // back, re-centred or left the tab meanwhile) are dropped.
+  var gen = g.gen = (g.gen || 0) + 1;
+  function live() { return tab.sub === "graph" && tab.graph === g && g.gen === gen && pane.isConnected; }
 
   var pane = h("div.graph-pane");
   pane.appendChild(h("div.g-loading", { text: "Loading the graph of " + current.number + "/" + current.code + " …" }));
@@ -351,7 +403,7 @@ export function revGraph(tab, el) {
   el.appendChild(pane);
 
   loadCenter(tab, current.number, current.code).then(function (d) {
-    if (tab.sub !== "graph") return; // moved away while loading
+    if (!live()) return; // moved away while loading
     pane.textContent = "";
     var center = {
       number: d.rev.item_number, code: d.rev.code, name: d.rev.name, type: d.rev.item_type,
@@ -378,19 +430,24 @@ export function revGraph(tab, el) {
     layout(center, nodes);
     var view = draw(pane, center, nodes, onOpen(tab));
     var pending = false;
-    enrich(nodes, function () {
+    var skipped = enrich(nodes, function () {
       if (pending) return;
       pending = true;
       requestAnimationFrame(function () {
         pending = false;
-        if (tab.sub !== "graph") return;
+        if (!live()) return;
         nodes.forEach(function (n) { n.size = nodeSize(n.complexity, false); });
         layout(center, nodes);
         redraw(center, nodes, onOpen(tab));
         view.refit();
       });
-    });
+    }, live);
+    if (skipped) {
+      pane.appendChild(h("div.g-empty", { text: skipped + " of " + nodes.length +
+        " neighbours shown without preview and complexity – open one to see its details." }));
+    }
   }, function (err) {
+    if (!live()) return;
     pane.textContent = "";
     pane.appendChild(h("p.notice.error", { text: "Could not load the graph: " + (err && err.message ? err.message : err) }));
   });
@@ -403,8 +460,10 @@ function redraw(center, nodes, open) {
     n._g.setAttribute("transform", "translate(" + n.x + "," + n.y + ")");
     n._fo.setAttribute("x", -n.size / 2); n._fo.setAttribute("y", -n.size / 2);
     n._fo.setAttribute("width", n.size); n._fo.setAttribute("height", n.size);
+    var hadFocus = n._fo.contains(document.activeElement);
     var fresh = nodeCard(n, n.dir === "center", open);
     n._fo.textContent = ""; n._fo.appendChild(fresh);
+    if (hadFocus) fresh.focus({ preventScroll: true });
   });
   nodes.forEach(function (n) {
     if (!n._edge) return;
@@ -439,14 +498,14 @@ export function graphBackControl(tab) {
 function returnToGraph(tab) {
   var o = tab.returnToGraph;
   var g = findTab(o.key);
-  if (g) { g.sub = "graph"; g.graph = g.graph || {}; g.graph.stack = o.stack; activate(o.key); }
-  else {
-    var top = o.stack[o.stack.length - 1];
-    openRevision(top.number, top.code, "graph");
-    var t = findTab("rev:" + top.number + ":" + top.code);
-    if (t) t.graph = { stack: o.stack };
-    renderActive();
-  }
+  if (g) { g.sub = "graph"; g.graph = { stack: o.stack.slice() }; activate(o.key); return; }
+  // the graph's tab was closed: reopen it on the assembly the graph showed
+  var top = o.stack[o.stack.length - 1];
+  var k = revKey(top.number, top.code);
+  var t = findTab(k);
+  if (t) t.graph = { stack: o.stack.slice() };
+  openTab({ key: k, kind: "revision", number: top.number, code: top.code,
+    title: top.number + "/" + top.code, sub: "graph", graph: { stack: o.stack.slice() } });
 }
 
 function legend() {
@@ -455,9 +514,9 @@ function legend() {
     h("span.g-legend-label", { text: "Colour = state:" }),
     sw("state-in_work", label("in_work")),
     sw("state-in_review", label("in_review")),
-    sw("state-released", "Released"),
-    sw("state-obsolete", "Obsolete"),
+    sw("state-released", label("released")),
+    sw("state-obsolete", label("obsolete")),
     h("span.g-legend-sep"),
-    h("span.g-legend-label", { text: "Size = BOM complexity · ⚙ children · click a node to open it" })
+    h("span.g-legend-label", { text: "Size = BOM complexity · ⚙ children · click a node to open it · double-click the background to fit" })
   ]);
 }
