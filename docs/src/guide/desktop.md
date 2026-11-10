@@ -334,3 +334,28 @@ downloads or installs anything itself; install the new version as you
 installed this one. *×* hides the notice until the next version; *Settings → Updates* switches the check off (for
 example on computers without
 internet access).
+
+## Crash reports
+
+When the app crashes – a panic in the app, an uncaught error in its user
+interface, or a session that ended without closing normally (for example the
+web view crashed, the app hung and was force-quit, or the computer lost
+power) – it writes a report into the `crash-reports` folder of its settings
+directory. Before the report is written, the home folder (and with it your
+user name), server addresses and sign-in tokens are removed. The report holds
+no item data and no files.
+
+At the next start a dialog shows the whole report:
+
+* *Report on GitHub…* opens a new issue at the TeamCraft repository in your
+  browser, prefilled with the report. You read it, add what you were doing,
+  and submit it yourself; a GitHub account is needed. The full text is also
+  copied to the clipboard, in case the link had to shorten it.
+* *Copy* puts the report on the clipboard, for example for an e-mail.
+* *Delete report* removes it without sharing.
+
+Nothing is ever sent without that choice. Closing the dialog keeps the report
+for the next start. *Don't ask again* (or *Settings → Crash reports*) stops
+the question; the reports then stay on the computer only. Background and the
+alternatives that were considered: [Crash reports from the desktop
+app](../research/crash-reporting.md).

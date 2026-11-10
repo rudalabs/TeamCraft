@@ -9,7 +9,7 @@
 // Every server call goes through the Rust commands (src/commands.rs); data
 // from the server is only ever inserted as text, never as HTML.
 //
-// Modules: core.js, skins.js, connect.js, shell.js, navigator.js, tabs.js, assistant.js, agent.js, revision.js, references.js, workspace.js, change.js, requests.js, dialogs.js, bom-import.js, group-sync.js, folder-import.js, settings.js, main.js.
+// Modules: core.js, skins.js, connect.js, shell.js, navigator.js, tabs.js, assistant.js, agent.js, revision.js, references.js, workspace.js, change.js, requests.js, dialogs.js, bom-import.js, group-sync.js, folder-import.js, settings.js, crash.js, main.js.
 
 import { $, TAURI, call, errorText, h, invoke, setStatus, state, toast } from "./core.js";
 import { applySkin } from "./skins.js";
@@ -24,6 +24,7 @@ import { importBomDialog } from "./bom-import.js";
 import { getProjectsDialog } from "./group-sync.js";
 import { importFolderDialog, importTutorial } from "./folder-import.js";
 import { openAbout, openSettings, signOut } from "./settings.js";
+import { checkCrashReports, initCrashWatch } from "./crash.js";
 
 // ======================================================================
 // Zoom: Ctrl + mouse wheel (trackpads: pinch), Ctrl/Cmd + + / - / 0
@@ -109,6 +110,8 @@ export function handleMenu(id) {
 // ======================================================================
 
 export function boot() {
+  // first, so an error while starting up is recorded too
+  initCrashWatch();
   initConnect();
   initShell();
   initZoom();
@@ -123,6 +126,8 @@ export function boot() {
   TAURI.event.listen("package-progress", function (e) { onPackageProgress(e.payload || {}); });
   TAURI.event.listen("agent", function (e) { onAgentEvent(e.payload); });
   TAURI.event.listen("workspace-progress", function (e) { onGetProgress(e.payload); });
+  // a parallel instance found dead after the start (src/crash.rs)
+  TAURI.event.listen("crash-reports", function () { checkCrashReports(); });
   $("status-get-cancel").addEventListener("click", function () {
     $("status-get-text").textContent = "Stopping …";
     call("workspace_cancel").catch(function () {});
@@ -135,6 +140,8 @@ export function boot() {
     if (!s.server_url) showConnect("server");
     else if (!s.signed_in) { showConnect("signin"); checkServerVersion(); }
     else enterShell();
+    // what an earlier session left behind: the user decides whether to share it
+    checkCrashReports();
   }, function (err) {
     document.body.appendChild(h("p.notice.error", { text: "TeamCraft could not start: " + errorText(err) }));
   });

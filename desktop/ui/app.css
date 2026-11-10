@@ -1187,3 +1187,10 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 .g-legend-dot.state-in_review { border-color: var(--st-review-fg); background: var(--st-review-bg); }
 .g-legend-dot.state-in_work { border-color: var(--st-wip-bd); background: var(--st-wip-bg); }
 .g-legend-dot.state-obsolete { border-color: var(--border-strong); border-style: dashed; background: transparent; }
+
+/* crash report prompt (js/crash.js): the full, redacted report, read-only */
+.crash-text {
+  width: 100%; min-height: 14em; resize: vertical; box-sizing: border-box;
+  font-family: var(--mono); font-size: 12px; line-height: 1.45; white-space: pre;
+  overflow: auto;
+}
