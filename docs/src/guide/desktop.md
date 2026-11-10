@@ -2,7 +2,7 @@
 
 TeamCraft Desktop (`desktop/`, Tauri 2) is a rich client for Linux, macOS and
 Windows: a navigator tree of the project groups, object tabs (overview,
-files, structure, where used, changes, history, 3D viewer), a worklist with
+files, structure, where used, references, graph, changes, history, 3D viewer), a worklist with
 check-outs and reviews, and a **local working folder**:
 
 * *New* (`Ctrl/Cmd+N`) creates an item together with its files: choose the
@@ -44,6 +44,14 @@ check-outs and reviews, and a **local working folder**:
   missing items. *Part numbers from the file* or *New numbers* (the group's
   numbering scheme), and whether items with the same number are reused, are
   chosen in the dialog;
+* the *Graph* tab draws a navigable reference and BOM graph around the
+  revision: the focused item in the middle, its BOM children and references
+  below, the assemblies that use it above. Node colour is the lifecycle state,
+  node size (and the ⚙ badge) the item's own BOM complexity. Click a node to
+  follow it – an assembly re-centres the graph, anything else opens its
+  overview – and a back control stays in the same place (left of the tab row)
+  so the graph is one click away even from a part's page; the mouse wheel
+  zooms on the cursor and dragging pans;
 * the *Workspace* tab shows per file where it is, whether it is up to date,
   modified, outdated, in conflict, new, missing or a name clash, whether it
   is read-only, and who holds the lock for how long; opening an outdated

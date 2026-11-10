@@ -8,6 +8,7 @@ import { typeIcon } from "./navigator.js";
 import { openTab, reloadActive, renderActive, renderTabs, table } from "./tabs.js";
 import { agentButton } from "./agent.js";
 import { groupImpacts, impactGroup, revChanges, revHistory, revReferences } from "./references.js";
+import { graphBackControl, revGraph } from "./graph.js";
 import { addFilesDialog, checkinDialog, doCancelCheckout, doCheckout, doObsolete, doRevise, editDialog, filesHint, getStructureDialog, openFile, openWorkspaceFolder, releaseDialog, revViewer, revWorkspace } from "./workspace.js";
 import { openChange } from "./change.js";
 import { openRequest, requestChangeDialog } from "./requests.js";
@@ -231,22 +232,28 @@ export function renderRevision(tab, body, toolbar) {
       count: d.refs.outgoing.length + d.refs.incoming.length + d.refs.file_referrers.length +
         d.refs.files.reduce(function (n, f) { return n + f.references.length; }, 0)
     },
+    { id: "graph", label: "Graph" },
     { id: "changes", label: "Changes", count: d.changes.length },
     { id: "history", label: "History" },
     { id: "viewer", label: "3D viewer", count: files3d.length, hide: !files3d.length },
     { id: "workspace", label: "Workspace" }
   ];
   var content = h("div.subcontent");
-  body.appendChild(h("div.subtabs", { role: "tablist" }, subs.filter(function (s) { return !s.hide; }).map(function (s) {
+  var tabButtons = subs.filter(function (s) { return !s.hide; }).map(function (s) {
     return h("button.subtab" + (tab.sub === s.id ? ".active" : ""), {
       type: "button", role: "tab",
       on: { click: function () { tab.sub = s.id; renderActive(); } }
     }, [s.label, s.count !== undefined ? h("span.count", { text: " " + s.count }) : null]);
-  })));
+  });
+  // a single, fixed back control at the left of the sub-tab row: it returns to
+  // the graph (even from a part's overview opened out of a graph) or steps back
+  // up the graph's own navigation – always in the same place (see graph.js).
+  var back = graphBackControl(tab);
+  body.appendChild(h("div.subtabs" + (back ? ".has-back" : ""), { role: "tablist" }, [back].concat(tabButtons)));
   body.appendChild(content);
   var render = {
     overview: revOverview, files: revFiles, structure: revStructure, whereused: revWhereUsed, references: revReferences,
-    changes: revChanges, history: revHistory, viewer: revViewer, workspace: revWorkspace
+    graph: revGraph, changes: revChanges, history: revHistory, viewer: revViewer, workspace: revWorkspace
   }[tab.sub] || revOverview;
   Promise.resolve().then(function () { return render(tab, content); }).catch(function (err) {
     content.appendChild(h("p.notice.error", { text: errorText(err) }));
