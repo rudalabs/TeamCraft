@@ -41,6 +41,14 @@
 <span class="state-glyph st-{{ value }}" title="{{ value|label }}" role="img" aria-label="{{ value|label }}">{{ glyph_char(value) or "•" }}</span>
 {%- endmacro %}
 
+{#- How a review decision was signed off, and its stated meaning. -#}
+{% macro sign_off(r) -%}
+{%- if r.sign_off_method and r.sign_off_method != "session" -%}
+<span class="small muted block">signed off with {% if r.sign_off_method == "password" %}password{% elif r.sign_off_method == "sso" %}single sign-on{% else %}an API token{% endif %}</span>
+{%- endif -%}
+{%- if r.sign_off_meaning %}<span class="small block">“{{ r.sign_off_meaning }}”</span>{% endif -%}
+{%- endmacro %}
+
 {#- The revision letter in its own box. -#}
 {% macro revbox(code) -%}
 <span class="revbox" title="Revision {{ code }}">{{ code }}</span>

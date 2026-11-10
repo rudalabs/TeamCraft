@@ -1322,7 +1322,8 @@ mod tests {
                     "items": [{ "revision_id": OTHER, "item_id": ME, "item_number": "PRT-000001", "code": "A",
                                 "name": "Bracket", "state": "in_work", "checked_out_by_name": "Erika" }],
                     "reviews": [{ "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
-                                  "decision": "approved", "comment": "ok", "decided_at": TS, "absent": null },
+                                  "decision": "approved", "comment": "ok", "decided_at": TS, "absent": null,
+                                  "sign_off_method": "password", "sign_off_meaning": "approved as <owner>" },
                                  { "reviewer_id": ME, "reviewer_username": "gone", "reviewer_name": "Gone <G>",
                                   "decision": "pending", "comment": "", "decided_at": null, "absent": "deactivated" }],
                     "replacements": [user()], "review_round": 2,
@@ -1340,7 +1341,18 @@ mod tests {
                                  "in_change": false }],
                     "can": { "modify": true, "edit_text": true, "submit": true, "withdraw": true, "reopen": true,
                              "cancel": true, "review": true, "replace_reviewer": true, "take_over": true },
+                    "sign_off": { "reauth": "release", "rejections_too": false, "sso": false,
+                                  "reauthenticated": false, "window_minutes": 10 },
                 })),
+            );
+            assert!(
+                html.contains("name=\"password\"") && html.contains("name=\"meaning\""),
+                "{status}: a fresh sign-in is asked for"
+            );
+            assert!(
+                html.contains("signed off with password")
+                    && html.contains("approved as &lt;owner&gt;"),
+                "{status}: the sign-off of a decision"
             );
             assert!(
                 html.contains("Earlier rounds")

@@ -854,6 +854,107 @@ pub async fn change_own_password(
     Ok(())
 }
 
+/// How long a fresh single sign-on counts as the sign-off of a review
+/// decision (`TEAMCRAFT_APPROVAL_REAUTH`).
+pub const REAUTH_WINDOW_MINUTES: i64 = 10;
+
+/// Confirms the actor's own password for a sign-off (#152 step 4).
+///
+/// # Invariants
+///
+/// * **Permission:** a local account (single sign-on accounts sign in again
+///   instead, 400); not throttled (429 with the wait); the password must be
+///   right (400, counted like a failed sign-in).
+/// * **Audit:** a wrong password writes `user.password_failed` (never the
+///   password); a right one writes nothing (the decision records the method).
+pub async fn confirm_own_password(
+    pool: &PgPool,
+    throttle: &auth::SignInThrottle,
+    actor: &Actor,
+    password: &str,
+) -> AppResult<()> {
+    if get(pool, actor.id).await?.auth_source != "local" {
+        return Err(AppError::BadRequest(
+            "This account signs in via single sign-on: confirm by signing in again.".into(),
+        ));
+    }
+    let keys = auth::SignInThrottle::keys(&actor.username, None);
+    if let Some(wait) = throttle.blocked(&keys) {
+        let minutes = wait.as_secs().div_ceil(60).max(1);
+        return Err(AppError::TooManyRequests {
+            message: format!(
+                "Too many failed attempts. Try again in {minutes} minute{}.",
+                if minutes == 1 { "" } else { "s" }
+            ),
+            retry_after: wait,
+        });
+    }
+    if authenticate_local(pool, &actor.username, password)
+        .await?
+        .is_none()
+    {
+        throttle.failed(&keys);
+        record_failed_password_change(pool, actor).await?;
+        return Err(AppError::BadRequest("The password is wrong.".into()));
+    }
+    throttle.succeeded(&actor.username);
+    Ok(())
+}
+
+/// Whether the web session `token` of the user signed in again with single
+/// sign-on within the last [`REAUTH_WINDOW_MINUTES`].
+pub async fn session_recently_reauthenticated(
+    pool: &PgPool,
+    user_id: Uuid,
+    token: &str,
+) -> AppResult<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM sessions
+                       WHERE token_hash = $1 AND user_id = $2 AND expires_at > now()
+                         AND reauth_at > now() - make_interval(mins => $3::int))",
+    )
+    .bind(auth::hash_token(token))
+    .bind(user_id)
+    .bind(REAUTH_WINDOW_MINUTES as i32)
+    .fetch_one(pool)
+    .await?)
+}
+
+/// Marks the web session (by the hash of its token) of `user_id` as signed
+/// in again just now. False when the session is not the user's (or gone).
+pub async fn mark_session_reauthenticated(
+    pool: &PgPool,
+    user_id: Uuid,
+    token_hash: &str,
+) -> AppResult<bool> {
+    let me = actor(pool, user_id).await?;
+    let mut tx = pool.begin().await?;
+    let marked = sqlx::query(
+        "UPDATE sessions SET reauth_at = now()
+         WHERE token_hash = $1 AND user_id = $2 AND expires_at > now()",
+    )
+    .bind(token_hash)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    if marked {
+        audit::record(
+            &mut tx,
+            Some(&me),
+            "user.reauthenticate",
+            "user",
+            Some(user_id),
+            "Signed in again with single sign-on to confirm a decision",
+            json!({}),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(marked)
+}
+
 /// Records a wrong current password of the own password change
 /// (`user.password_failed`), like a failed sign-in: the account, never what
 /// was typed.

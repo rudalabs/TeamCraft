@@ -70,6 +70,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "DATABASE_URL",
     "MATTERMOST_ERROR_WEBHOOK",
     "TEAMCRAFT_ANTHROPIC_API_KEY",
+    "TEAMCRAFT_APPROVAL_REAUTH",
     "TEAMCRAFT_ASSISTANT_API_KEY",
     "TEAMCRAFT_ASSISTANT_BASE_URL",
     "TEAMCRAFT_ASSISTANT_INTERNAL_URLS",
@@ -273,6 +274,9 @@ pub struct Config {
     /// `teamcraft backup --encrypt` and the restore). Secret – never log it.
     pub backup_passphrase: Option<String>,
     pub session_ttl: Duration,
+    /// Whether review decisions in the browser need a fresh sign-in
+    /// (`TEAMCRAFT_APPROVAL_REAUTH`: `off`, `release`, `every_decision`).
+    pub approval_reauth: crate::domain::ApprovalReauth,
     /// Days the audit log is kept (`TEAMCRAFT_AUDIT_RETENTION_DAYS`; 0 = for
     /// ever). Older entries are removed by the hourly housekeeping, which
     /// records the removal as one entry.
@@ -977,6 +981,15 @@ impl Config {
             bail!("TEAMCRAFT_METRICS_TOKEN must be at least 16 characters");
         }
 
+        let approval_reauth = match env.get("TEAMCRAFT_APPROVAL_REAUTH")? {
+            None => crate::domain::ApprovalReauth::Off,
+            Some(raw) => crate::domain::ApprovalReauth::parse(&raw).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "TEAMCRAFT_APPROVAL_REAUTH must be off, release or every_decision (got '{raw}')"
+                )
+            })?,
+        };
+
         let audit_retention_days = env.parse_or("TEAMCRAFT_AUDIT_RETENTION_DAYS", 0u32)?;
         if audit_retention_days != 0
             && !(MIN_AUDIT_RETENTION_DAYS..=36_500).contains(&audit_retention_days)
@@ -1138,6 +1151,7 @@ impl Config {
             clamd,
             backup_passphrase,
             session_ttl: Duration::from_secs(session_ttl_hours * 3600),
+            approval_reauth,
             audit_retention_days,
             retention_latest_grace_days,
             signin_max_failures,

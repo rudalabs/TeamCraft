@@ -1689,6 +1689,8 @@ async fn texts_naming_restricted_objects_are_redacted() {
         change_id,
         teamcraft::domain::Decision::Approved,
         "",
+        &teamcraft::services::changes::SignOff::new(teamcraft::domain::SignOffMethod::Session, ""),
+        teamcraft::domain::ApprovalReauth::Off,
     )
     .await
     .expect("release");
@@ -2032,6 +2034,8 @@ async fn release(
         id,
         teamcraft::domain::Decision::Approved,
         "",
+        &teamcraft::services::changes::SignOff::new(teamcraft::domain::SignOffMethod::Session, ""),
+        teamcraft::domain::ApprovalReauth::Off,
     )
     .await
     .expect("release");

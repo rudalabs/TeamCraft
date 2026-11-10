@@ -655,7 +655,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/changes/{number}/readiness                release readiness: unreleased (blocking) and obsolete or file-scan (warning) dependencies",
             "POST   /api/v1/changes/{number}/dependencies             add the in-work revisions of all unreleased dependencies, level by level",
             "POST   /api/v1/changes/{number}/submit",
-            "POST   /api/v1/changes/{number}/review                   {decision: approve|reject, comment?}",
+            "POST   /api/v1/changes/{number}/review                   {decision: approve|reject, comment?, meaning?} – needs the approve token scope",
             "POST   /api/v1/changes/{number}/withdraw",
             "GET    /api/v1/change-requests?status=open|all|<status>&scope=mine|assigned&item=&limit=&offset=",
             "POST   /api/v1/change-requests                           {title, description?, reason?, priority?, due_date?, items?: [{item, revision?, note?}]} – any signed-in user",

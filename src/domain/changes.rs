@@ -531,6 +531,124 @@ impl LineAction {
     }
 }
 
+/// Whether a review decision in the browser needs a fresh sign-in
+/// (`TEAMCRAFT_APPROVAL_REAUTH`, #152 step 4). API tokens are not asked:
+/// approving needs the `approve` token scope instead.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalReauth {
+    /// No extra step (the default).
+    #[default]
+    Off,
+    /// Every approval – approvals are what release a change.
+    Release,
+    /// Every approval and every rejection.
+    EveryDecision,
+}
+
+impl ApprovalReauth {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ApprovalReauth::Off => "off",
+            ApprovalReauth::Release => "release",
+            ApprovalReauth::EveryDecision => "every_decision",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<ApprovalReauth> {
+        match raw.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "off" | "" => Some(ApprovalReauth::Off),
+            "release" => Some(ApprovalReauth::Release),
+            "every_decision" => Some(ApprovalReauth::EveryDecision),
+            _ => None,
+        }
+    }
+
+    /// Whether this decision needs a fresh sign-in.
+    pub fn requires(self, decision: Decision) -> bool {
+        match self {
+            ApprovalReauth::Off => false,
+            ApprovalReauth::Release => decision == Decision::Approved,
+            ApprovalReauth::EveryDecision => {
+                matches!(decision, Decision::Approved | Decision::Rejected)
+            }
+        }
+    }
+}
+
+/// How a reviewer confirmed a decision (stored with the review).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignOffMethod {
+    /// The web session only, no fresh sign-in.
+    Session,
+    /// The account password, entered with the decision.
+    Password,
+    /// Signed in again with single sign-on shortly before.
+    Sso,
+    /// A personal access token with the `approve` scope.
+    Token,
+}
+
+impl SignOffMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SignOffMethod::Session => "session",
+            SignOffMethod::Password => "password",
+            SignOffMethod::Sso => "sso",
+            SignOffMethod::Token => "token",
+        }
+    }
+
+    /// Whether the method proves that the person is at the keyboard now.
+    pub fn is_fresh(self) -> bool {
+        !matches!(self, SignOffMethod::Session)
+    }
+}
+
+/// Longest stated meaning of a sign-off ("approved as design owner").
+pub const MAX_SIGN_OFF_MEANING: usize = 200;
+
+#[cfg(test)]
+mod sign_off_tests {
+    use super::*;
+
+    #[test]
+    fn which_decisions_need_a_fresh_sign_in() {
+        use ApprovalReauth::*;
+        use Decision::*;
+        for d in [Approved, Rejected, Pending] {
+            assert!(!Off.requires(d));
+        }
+        assert!(Release.requires(Approved));
+        assert!(!Release.requires(Rejected));
+        assert!(EveryDecision.requires(Approved));
+        assert!(EveryDecision.requires(Rejected));
+        assert!(!EveryDecision.requires(Pending));
+    }
+
+    #[test]
+    fn settings_and_methods_parse() {
+        assert_eq!(ApprovalReauth::parse(""), Some(ApprovalReauth::Off));
+        assert_eq!(
+            ApprovalReauth::parse(" Every-Decision "),
+            Some(ApprovalReauth::EveryDecision)
+        );
+        assert_eq!(ApprovalReauth::parse("always"), None);
+        for r in [
+            ApprovalReauth::Off,
+            ApprovalReauth::Release,
+            ApprovalReauth::EveryDecision,
+        ] {
+            assert_eq!(ApprovalReauth::parse(r.as_str()), Some(r));
+        }
+        assert!(!SignOffMethod::Session.is_fresh());
+        assert!(SignOffMethod::Password.is_fresh());
+        assert!(SignOffMethod::Sso.is_fresh());
+        assert!(SignOffMethod::Token.is_fresh());
+    }
+}
+
 #[cfg(test)]
 mod line_action_tests {
     use super::*;
