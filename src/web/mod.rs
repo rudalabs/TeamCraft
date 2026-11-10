@@ -249,6 +249,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/as-built-deviations/{id}/delete",
             post(as_built::delete_deviation),
         )
+        .route(
+            "/as-built-deviations/{id}/confirm",
+            post(as_built::confirm_concession),
+        )
         .route("/revisions/{id}/built-units", post(as_built::record_unit))
         // simulations: basis links, result values, comparison
         .route(

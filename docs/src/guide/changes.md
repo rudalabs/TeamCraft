@@ -42,7 +42,8 @@ release.
     * **Reject** – no change (reason required).
       While no item is named, any CAD editor may triage; once the request is
       decided, an item is added only by a member of its project group (or an
-      admin).
+      admin). A group can keep requesters from deciding their own requests
+      (*Review policy*, see [Read permissions](../admin/permissions.md)).
 4. **Implement** – an accepted request gets its change order: *Create change
    order* creates a draft with the in-work revisions of the affected items (items without a revision in work are
    listed – revise them and add the

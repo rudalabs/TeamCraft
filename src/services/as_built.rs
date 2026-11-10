@@ -516,16 +516,23 @@ pub struct Deviation {
     pub built: String,
     pub disposition: String,
     pub note: String,
+    pub created_by: Uuid,
     pub created_by_name: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Who confirmed a "use as is" concession as a reviewer (cleared when the
+    /// deviation changes).
+    pub concession_confirmed_by_name: Option<String>,
+    pub concession_confirmed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 const DEVIATION_SELECT: &str = "
     SELECT d.id, d.revision_id, d.position, d.kind, d.feature, d.designed, d.built,
-           d.disposition, d.note, u.display_name AS created_by_name, d.created_at, d.updated_at
+           d.disposition, d.note, d.created_by, u.display_name AS created_by_name, d.created_at,
+           d.updated_at, cu.display_name AS concession_confirmed_by_name, d.concession_confirmed_at
     FROM as_built_deviations d
-    JOIN users u ON u.id = d.created_by";
+    JOIN users u ON u.id = d.created_by
+    LEFT JOIN users cu ON cu.id = d.concession_confirmed_by";
 
 /// The deviations of an as-built revision the actor may read.
 pub async fn deviations(
@@ -749,8 +756,10 @@ pub async fn patch_deviation(
     }
     .validated()?;
     let updated = sqlx::query(
+        // a changed deviation needs a new confirmation of its concession
         "UPDATE as_built_deviations SET kind = $2, feature = $3, designed = $4, built = $5,
-                disposition = $6, note = $7, updated_at = now()
+                disposition = $6, note = $7, updated_at = now(),
+                concession_confirmed_by = NULL, concession_confirmed_at = NULL
          WHERE id = $1",
     )
     .bind(id)
@@ -905,6 +914,163 @@ pub(crate) async fn ensure_ready(conn: &mut PgConnection, rev: &Revision) -> App
     Ok(())
 }
 
+/// Fails when a change in review still carries a "use as is" deviation that
+/// its group wants confirmed (`concessions_need_review`) and nobody has
+/// confirmed yet – checked before a reviewer's approval counts.
+pub(crate) async fn ensure_concessions_confirmed(
+    conn: &mut PgConnection,
+    change_id: Uuid,
+) -> AppResult<()> {
+    let waiting = sqlx::query_as::<_, (String, String)>(
+        "SELECT i.number || '/' || r.code, d.feature
+         FROM change_items ci
+         JOIN revisions r ON r.id = ci.revision_id
+         JOIN items i ON i.id = r.item_id
+         JOIN as_built_deviations d ON d.revision_id = r.id
+         JOIN project_policies pp ON pp.project_id = i.project_id AND pp.concessions_need_review
+         WHERE ci.change_id = $1 AND d.disposition = 'use_as_is'
+           AND d.concession_confirmed_by IS NULL
+         ORDER BY i.number, d.position, d.created_at
+         LIMIT 10",
+    )
+    .bind(change_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    if waiting.is_empty() {
+        return Ok(());
+    }
+    let list: Vec<String> = waiting
+        .iter()
+        .map(|(rev, feature)| format!("{rev} {feature}"))
+        .collect();
+    Err(AppError::Conflict(format!(
+        "Confirm the \"use as is\" deviations first ({}): their project group wants a reviewer to \
+         accept each concession on its own.",
+        list.join(", ")
+    )))
+}
+
+/// What the revision page shows about concessions: whether the group wants
+/// each "use as is" deviation confirmed, and whether the actor may confirm
+/// (a reviewer of a change order in review that contains the revision).
+#[derive(Clone, Copy, Debug, Default, Serialize)]
+pub struct ConcessionReview {
+    pub needed: bool,
+    pub can_confirm: bool,
+}
+
+pub async fn concession_review(
+    pool: &PgPool,
+    actor: &Actor,
+    rev: &Revision,
+) -> AppResult<ConcessionReview> {
+    let mut conn = pool.acquire().await?;
+    let needed =
+        crate::services::project_policy::concessions_need_review(&mut conn, rev.project_id).await?;
+    let can_confirm = actor.can_edit()
+        && sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM changes c
+                           JOIN change_items ci ON ci.change_id = c.id
+                           JOIN change_reviews cr ON cr.change_id = c.id AND cr.reviewer_id = $2
+                           WHERE ci.revision_id = $1 AND c.status = 'in_review')",
+        )
+        .bind(rev.id)
+        .bind(actor.id)
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(ConcessionReview {
+        needed,
+        can_confirm,
+    })
+}
+
+/// A reviewer confirms a "use as is" deviation of an as-built revision in
+/// review – the separate acceptance of a concession (#152 step 9).
+///
+/// # Invariants
+///
+/// * **Permission:** CAD editor who sees the revision (a hidden one is "not
+///   found"), is a reviewer of an open change order in review that contains
+///   it (403) and did not record the deviation (403, four-eyes).
+/// * **Data:** only "use as is" deviations (400); confirming again is a no-op.
+///   Any later change of the deviation clears the confirmation.
+/// * **Locks:** the deviation row (`FOR UPDATE`).
+/// * **Audit:** `as_built.concession_confirm` on the revision.
+/// * **Notifications / webhooks:** none.
+pub async fn confirm_concession(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Deviation> {
+    actor.require(domain::Role::Editor)?;
+    let located = get_deviation(pool, actor, id).await?;
+    let mut tx = pool.begin().await?;
+    let (revision_id, created_by, disposition, confirmed) =
+        sqlx::query_as::<_, (Uuid, Uuid, String, bool)>(
+            "SELECT revision_id, created_by, disposition, concession_confirmed_by IS NOT NULL
+             FROM as_built_deviations WHERE id = $1 FOR UPDATE",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::not_found("Deviation not found."))?;
+    if disposition != Disposition::UseAsIs.as_str() {
+        return Err(AppError::BadRequest(format!(
+            "Only a \"use as is\" deviation is confirmed; {} is {}.",
+            located.feature,
+            Disposition::parse(&disposition).map_or("?", Disposition::label)
+        )));
+    }
+    let rev = revisions::get(pool, actor, revision_id).await?;
+    let change = sqlx::query_scalar::<_, String>(
+        "SELECT c.number FROM changes c
+         JOIN change_items ci ON ci.change_id = c.id
+         JOIN change_reviews cr ON cr.change_id = c.id AND cr.reviewer_id = $2
+         WHERE ci.revision_id = $1 AND c.status = 'in_review'
+         LIMIT 1",
+    )
+    .bind(revision_id)
+    .bind(actor.id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| {
+        AppError::Forbidden(format!(
+            "Only a reviewer of the change order that releases {} confirms its \"use as is\" \
+             deviations.",
+            revisions::label(&rev)
+        ))
+    })?;
+    if created_by == actor.id {
+        return Err(AppError::Forbidden(format!(
+            "You recorded the deviation {}; another reviewer confirms it (four-eyes principle).",
+            located.feature
+        )));
+    }
+    if !confirmed {
+        sqlx::query(
+            "UPDATE as_built_deviations SET concession_confirmed_by = $2,
+                    concession_confirmed_at = now()
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(actor.id)
+        .execute(&mut *tx)
+        .await?;
+        audit::record(
+            &mut tx,
+            Some(actor),
+            "as_built.concession_confirm",
+            "revision",
+            Some(revision_id),
+            format!(
+                "{}: confirmed \"use as is\" for {} ({change})",
+                revisions::label(&rev),
+                located.feature
+            ),
+            json!({ "item_id": rev.item_id, "deviation_id": id, "change": change }),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    get_deviation(pool, actor, id).await
+}
+
 // ---------------------------------------------------------------------------
 // The design side
 // ---------------------------------------------------------------------------
@@ -1045,9 +1211,12 @@ mod tests {
             built: String::new(),
             disposition: disposition.into(),
             note: String::new(),
+            created_by: Uuid::nil(),
             created_by_name: String::new(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            concession_confirmed_by_name: None,
+            concession_confirmed_at: None,
         }
     }
 

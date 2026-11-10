@@ -367,6 +367,10 @@ pub struct ReviewPolicyForm {
     role_group: String,
     #[serde(default)]
     obsolete_requires_change: Option<String>,
+    #[serde(default)]
+    requester_cannot_decide: Option<String>,
+    #[serde(default)]
+    concessions_need_review: Option<String>,
 }
 
 /// `POST /projects/{id}/review-policy` – managers of the group, admins.
@@ -396,6 +400,8 @@ pub async fn update_review_policy(
                     .collect(),
                 role_group_code: Some(form.role_group),
                 obsolete_requires_change: Some(form.obsolete_requires_change.is_some()),
+                requester_cannot_decide: Some(form.requester_cannot_decide.is_some()),
+                concessions_need_review: Some(form.concessions_need_review.is_some()),
             };
             project_policy::set_review_policy(&st.db, &ctx.me, id, &input).await
         }

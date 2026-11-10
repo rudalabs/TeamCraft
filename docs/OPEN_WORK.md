@@ -386,7 +386,8 @@ real files and belong to section 3 once such files are at hand.
 - [x] Step 7: item owner and admin handover of a leaving user's work (owner on the item page; notifying the new owner
   and a CLI command are not done).
 - [ ] Step 8: approvals in the package manifest, audit log export, hash chain.
-- [ ] Step 9: requester cannot triage own request; separate approval of *use as is* deviations.
+- [x] Step 9: requester cannot decide own request; separate approval of *use as is* deviations (group settings
+  `requester_cannot_decide`, `concessions_need_review`; `tests/review_rules.rs`).
 - [x] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
 
 **Offboarding for high-turnover teams ([#173](https://github.com/rudalabs/TeamCraft/issues/173))**

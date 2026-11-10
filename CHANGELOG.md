@@ -13,6 +13,15 @@ see the notices in the README.
 
 ## [Unreleased]
 
+### Added
+
+- Two optional rules of a project group's review policy (#152 step 9, both
+  off by default): *Requesters do not decide their own change requests*, and
+  *A reviewer confirms each "use as is" deviation* – a reviewer of the change
+  order confirms every concession of an as-built revision on its own
+  (`POST /api/v1/as-built-deviations/{id}/confirm`) before approving.
+  Migration 0062.
+
 ### Fixed
 
 - Every web page starts with a *Skip to the main content* link (visible

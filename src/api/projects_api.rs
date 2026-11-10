@@ -272,6 +272,12 @@ pub(super) struct SetReviewPolicy {
     /// Obsolete and supersede only through a change order (omitted: unchanged).
     #[serde(default)]
     obsolete_requires_change: Option<bool>,
+    /// The requester of a change request does not decide it (omitted: unchanged).
+    #[serde(default)]
+    requester_cannot_decide: Option<bool>,
+    /// "Use as is" deviations need a reviewer's confirmation (omitted: unchanged).
+    #[serde(default)]
+    concessions_need_review: Option<bool>,
 }
 
 /// `PUT /api/v1/projects/{code}/review-policy` – managers and admins.
@@ -287,6 +293,8 @@ pub(super) async fn review_policy_set(
         required_usernames: body.required_reviewers,
         role_group_code: body.role_group,
         obsolete_requires_change: body.obsolete_requires_change,
+        requester_cannot_decide: body.requester_cannot_decide,
+        concessions_need_review: body.concessions_need_review,
     };
     Ok(Json(json!(
         project_policy::set_review_policy(&st.db, &me, project.id, &input).await?

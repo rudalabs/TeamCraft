@@ -160,6 +160,8 @@
       {% if review_policy.role_group_hidden %}<span class="hint">A role group is set that you cannot see; saving this form with the field empty removes it.</span>{% endif %}
     </label>
     <label class="check"><input type="checkbox" name="obsolete_requires_change" value="1"{% if review_policy.obsolete_requires_change %} checked{% endif %}> Obsolete and supersede only through a change order <span class="hint">the direct buttons are refused; add an obsolete or supersede line to a change order instead, which the reviewers approve</span></label>
+    <label class="check"><input type="checkbox" name="requester_cannot_decide" value="1"{% if review_policy.requester_cannot_decide %} checked{% endif %}> Requesters do not decide their own change requests <span class="hint">another CAD editor of the group accepts, rejects or defers them</span></label>
+    <label class="check"><input type="checkbox" name="concessions_need_review" value="1"{% if review_policy.concessions_need_review %} checked{% endif %}> A reviewer confirms each "use as is" deviation <span class="hint">as-built changes: before approving, a reviewer other than the person who recorded it confirms every "use as is" concession</span></label>
     <p class="hint">Applies to every change that touches items of this group. A change that cannot meet the policy of all its groups is refused when it is submitted. A single rejection always rejects the change.</p>
     <div class="actions"><button class="primary" type="submit">Save</button></div>
   </form>
