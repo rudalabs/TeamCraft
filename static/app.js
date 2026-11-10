@@ -2,6 +2,24 @@
 (function () {
   "use strict";
 
+  // Material field: the <datalist> suggests the library; this shows the hint
+  // when the text matches no library entry (ignoring case, like the mass
+  // properties do). Free text stays allowed.
+  document.querySelectorAll("input[data-material-input]").forEach(function (input) {
+    var label = input.closest("label");
+    var hint = label && label.querySelector("[data-material-hint]");
+    var list = input.list;
+    if (!hint || !list) return;
+    var names = Array.prototype.map.call(list.options, function (o) { return o.value.trim().toLowerCase(); });
+    function update() {
+      var text = input.value.trim().toLowerCase();
+      hint.classList.toggle("hidden", text === "" || names.indexOf(text) !== -1);
+    }
+    input.addEventListener("input", update);
+    input.addEventListener("change", update);
+    update();
+  });
+
   // Ask for confirmation on forms marked with data-confirm="…".
   document.addEventListener("submit", function (event) {
     var form = event.target;

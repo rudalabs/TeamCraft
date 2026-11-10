@@ -1877,3 +1877,84 @@ fn logo_variants_are_switched_by_skins_css_only() {
         assert!(html.contains("login-logo on-dark") && html.contains("login-logo on-light"));
     }
 }
+
+#[tokio::test]
+async fn material_field_suggests_the_library() {
+    use teamcraft::services::mass_properties::{self as mass, MaterialInput};
+
+    let app = app_or_skip!();
+    let (admin, _) = app.user("ada", Role::Admin).await;
+    let (_, erika) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    for (name, density) in [("Steel <1.4301>", 7900.0), ("Aluminium 7075-T6", 2810.0)] {
+        let input = MaterialInput {
+            name: name.into(),
+            density_kg_m3: density,
+            notes: String::new(),
+        };
+        mass::create_material(&app.pool, &admin, input)
+            .await
+            .unwrap();
+    }
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &erika,
+        Some(json!({ "item_type": "part", "name": "Bracket", "project": "ROCKET" })),
+    )
+    .await;
+    let rev_id = app
+        .api(
+            Method::GET,
+            "/api/v1/items/PRT-000001/revisions/A",
+            &erika,
+            None,
+        )
+        .await
+        .json()["revision"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let editor = app.login("erika").await;
+    for uri in [
+        format!("/revisions/{rev_id}/edit"),
+        "/items/new".to_string(),
+    ] {
+        let page = app.get_page(&uri, Some(&editor)).await.text();
+        assert!(page.contains("name=\"material\"") && page.contains("list=\"material-options\""));
+        // the library's names (escaped), with the density, in the library's order
+        let alu = page
+            .find("<option value=\"Aluminium 7075-T6\">2810 kg&#x2f;m³</option>")
+            .expect("aluminium is suggested");
+        let steel = page
+            .find("<option value=\"Steel &lt;1.4301&gt;\">7900 kg&#x2f;m³</option>")
+            .expect("steel is suggested");
+        assert!(alu < steel, "{uri}: library order");
+        assert!(page.contains("Not in the material library"), "{uri}: hint");
+        assert!(
+            !page.contains("href=\"/materials\">Open the library"),
+            "{uri}: only admins get the link"
+        );
+    }
+
+    // A name that is not in the library can still be saved.
+    let r = app
+        .post_form(
+            &format!("/revisions/{rev_id}/edit"),
+            Some(&editor),
+            Some("http://localhost:8080"),
+            &[("name", "Bracket"), ("material", "Alu 7075")],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::SEE_OTHER);
+    let page = app
+        .get_page(&format!("/revisions/{rev_id}/edit"), Some(&editor))
+        .await
+        .text();
+    assert!(page.contains("value=\"Alu 7075\""));
+
+    // Administrators get the link to the library.
+    let root = app.login("ada").await;
+    let page = app.get_page("/items/new", Some(&root)).await.text();
+    assert!(page.contains("href=\"/materials\">Open the library"));
+}

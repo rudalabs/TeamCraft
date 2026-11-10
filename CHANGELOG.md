@@ -15,6 +15,10 @@ see the notices in the README.
 
 ### Added
 
+- The *Material* field (*New item*, *Edit revision*, desktop app) suggests the
+  materials of the library with their density while you type (a `<datalist>`,
+  also without JavaScript); a name that is not in the library gets a hint.
+  Free text stays allowed.
 - Mass properties of assemblies: total mass, centre of gravity and inertia
   tensor (about the CG and a reference point, principal moments) from the
   exported 3D files of the parts in the common assembly frame, the densities
