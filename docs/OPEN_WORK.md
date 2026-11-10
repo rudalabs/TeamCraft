@@ -385,7 +385,9 @@ real files and belong to section 3 once such files are at hand.
 - [x] Step 6: flag and replace absent reviewers (substitutes per user: still open).
 - [x] Step 7: item owner and admin handover of a leaving user's work (owner on the item page; notifying the new owner
   and a CLI command are not done).
-- [ ] Step 8: approvals in the package manifest, audit log export, hash chain.
+- [x] Step 8: approvals in the package manifest (`released_by`), audit log export (CSV/JSON, admin page and
+  `GET /api/v1/audit`, `tests/approval_records.rs`). Hash chain: not done – open question 6 answered with the
+  database grant (`REVOKE UPDATE, DELETE` on `audit_log`, documented in admin/operations.md).
 - [x] Step 9: requester cannot decide own request; separate approval of *use as is* deviations (group settings
   `requester_cannot_decide`, `concessions_need_review`; `tests/review_rules.rs`).
 - [x] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".

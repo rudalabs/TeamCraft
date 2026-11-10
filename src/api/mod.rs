@@ -71,6 +71,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/", get(index))
         .route("/me", get(me))
         .route("/me/password", post(change_password))
+        .route("/audit", get(audit_export))
         .route("/desktop/token", post(desktop_token))
         .route(
             "/tokens",
@@ -498,6 +499,7 @@ async fn index() -> Json<Value> {
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
             "GET    /api/v1/me                                        the caller, its groups and token_scope",
+            "GET    /api/v1/audit?entity_type=&username=&action=&format=json|csv   audit log export (admins)",
             "POST   /api/v1/me/password                            {current_password, new_password} – change own password (throttled; ends web sessions)",
             "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts, and grouped by dependent revision as impact_groups), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
@@ -680,6 +682,28 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/webhook-deliveries/{id}/retry             send a failed delivery again"
         ]
     }))
+}
+
+#[derive(Deserialize)]
+struct AuditExportQuery {
+    entity_type: Option<String>,
+    username: Option<String>,
+    action: Option<String>,
+    /// `json` (default) or `csv`.
+    format: Option<String>,
+}
+
+/// `GET /api/v1/audit?entity_type=&username=&action=&format=json|csv` – the
+/// filtered audit log as a download (administrators; `x-truncated: true`
+/// when more entries matched than one export holds).
+async fn audit_export(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Query(q): Query<AuditExportQuery>,
+) -> AppResult<Response> {
+    let filter = web::audit_filter(&q.entity_type, &q.username, &q.action);
+    let (entries, truncated) = audit::export(&st.db, &me, &filter).await?;
+    web::audit_download(&entries, truncated, q.format.as_deref() != Some("csv"))
 }
 
 async fn me(

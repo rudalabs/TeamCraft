@@ -9,6 +9,8 @@
 
 mod account;
 mod admin;
+// the audit log export is shared with the REST API
+pub(crate) use admin::{audit_download, audit_filter};
 mod as_built;
 mod assistant;
 mod attributes;
@@ -431,6 +433,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(admin::release_user_checkouts),
         )
         .route("/admin/audit", get(admin::audit))
+        .route("/admin/audit/export", get(admin::audit_export))
         .route("/admin/ai", get(admin::ai))
         .route("/admin/branding", get(branding::page))
         .route("/admin/branding/name", post(branding::set_name))

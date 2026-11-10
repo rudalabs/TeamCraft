@@ -33,6 +33,73 @@ use crate::{
     },
 };
 
+/// The change order that released each of these revisions, with its
+/// approvers (for the package manifest, #152 step 8): revision id →
+/// `{change, title, released_at, approvals: [{reviewer, name, approved_at}]}`,
+/// or `{"restricted": true}` when the actor may not see that change order.
+/// Revisions released before change orders tracked them (or not released
+/// at all) are missing.
+pub(crate) async fn releases_of(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_ids: &[Uuid],
+) -> AppResult<std::collections::HashMap<Uuid, serde_json::Value>> {
+    let mut out = std::collections::HashMap::new();
+    if revision_ids.is_empty() {
+        return Ok(out);
+    }
+    let changes = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+            bool,
+        ),
+    >(&format!(
+        "SELECT ci.revision_id, c.id, c.number, c.title, c.closed_at, {visible}
+         FROM change_items ci JOIN changes c ON c.id = ci.change_id
+         WHERE ci.revision_id = ANY($1) AND ci.action = 'release' AND c.status = 'released'",
+        visible = access::change_visible("c", 2, 3),
+    ))
+    .bind(revision_ids)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
+    .fetch_all(pool)
+    .await?;
+    let visible_ids: Vec<Uuid> = changes.iter().filter(|c| c.5).map(|c| c.1).collect();
+    let approvals =
+        sqlx::query_as::<_, (Uuid, String, String, Option<chrono::DateTime<chrono::Utc>>)>(
+            "SELECT cr.change_id, u.username, u.display_name, cr.decided_at
+         FROM change_reviews cr JOIN users u ON u.id = cr.reviewer_id
+         WHERE cr.change_id = ANY($1) AND cr.decision = 'approved'
+         ORDER BY cr.decided_at, u.username",
+        )
+        .bind(&visible_ids)
+        .fetch_all(pool)
+        .await?;
+    for (revision_id, change_id, number, title, released_at, visible) in changes {
+        let value = if visible {
+            json!({
+                "change": number,
+                "title": title,
+                "released_at": released_at,
+                "approvals": approvals
+                    .iter()
+                    .filter(|a| a.0 == change_id)
+                    .map(|a| json!({ "reviewer": a.1, "name": a.2, "approved_at": a.3 }))
+                    .collect::<Vec<_>>(),
+            })
+        } else {
+            json!({ "restricted": true })
+        };
+        out.insert(revision_id, value);
+    }
+    Ok(out)
+}
+
 pub(crate) const CHANGE_SELECT: &str = "
     SELECT c.id, c.number, c.title, c.description, c.priority, c.status,
            c.created_by, u.display_name AS created_by_name,
