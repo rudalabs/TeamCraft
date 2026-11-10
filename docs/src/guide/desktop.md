@@ -47,7 +47,9 @@ check-outs and reviews, and a **local working folder**:
 * the *Graph* tab draws a navigable reference and BOM graph around the
   revision: the focused item in the middle, its BOM children and references
   below, the assemblies that use it above. Node colour is the lifecycle state,
-  node size (and the ⚙ badge) the item's own BOM complexity. Click a node to
+  node size (and the ⚙ badge) the item's own BOM complexity; the small ×n in
+  the top-left corner of a child is how many instances of it the assembly
+  contains (summed over its BOM lines). Click a node to
   follow it – an assembly re-centres the graph, anything else opens its
   overview – and a back control stays in the same place (left of the tab row)
   so the graph is one click away even from a part's page; the mouse wheel

@@ -249,6 +249,24 @@ async function checkGraph(browserType, name) {
   const w0 = aligned(await geometry(page), "first paint", fail);
   if (browserType.name() === "webkit") await page.screenshot({ path: shot, fullPage: true });
 
+  // quantity chip: every BOM child shows ×n top-left (the fake BOM has 1 + i % 3);
+  // references, referrers and the centre show none
+  const qty = await page.evaluate(() => Array.prototype.map.call(document.querySelectorAll(".g-node"), (n) => {
+    const chip = n.querySelector(".g-qty");
+    const box = chip && chip.getBoundingClientRect(), card = n.getBoundingClientRect();
+    return { sub: n.querySelector(".g-sub").textContent, chip: chip ? chip.textContent : null,
+             topLeft: !!box && box.left - card.left < 12 && box.top - card.top < 12 };
+  }));
+  const bomChildren = qty.filter((q) => /^(ASM|PRT)-1-\d\d/.test(q.sub));
+  if (bomChildren.length !== 30) fail(`${bomChildren.length} BOM children found, expected 30`);
+  bomChildren.forEach((q) => {
+    const i = Number(q.sub.match(/-(\d\d)\//)[1]);
+    if (q.chip !== "×" + (1 + (i % 3))) fail(`${q.sub}: quantity chip ${q.chip}, expected ×${1 + (i % 3)}`);
+    else if (!q.topLeft) fail(`${q.sub}: quantity chip is not in the top-left corner`);
+  });
+  const others = qty.filter((q) => !/^(ASM|PRT)-1-\d\d/.test(q.sub) && q.chip !== null);
+  if (others.length) fail(`quantity chip on a non-BOM node: ${others.map((q) => q.sub).join(", ")}`);
+
   // wheel zoom around the cursor: the scene point under the cursor stays put
   const pane = await page.locator(".graph-pane").boundingBox();
   const cx = pane.x + pane.width * 0.7, cy = pane.y + pane.height * 0.3;
@@ -277,16 +295,25 @@ async function checkGraph(browserType, name) {
   if (Math.abs(moved[0] - 80) > 2 || Math.abs(moved[1] - 40) > 2) fail(`the drag panned by ${moved}, expected 80,40`);
   const w2 = aligned(g2, "after the drag pan", fail);
 
-  // a drag that starts on a card does not pan
+  // a drag that starts on a card pans the graph like one on the background,
+  // and the release does not open or re-centre the card (card 5 is an assembly)
+  await page.evaluate(() => { window.__opened.length = 0; });
+  const centreTitle = () => page.evaluate(() => document.querySelector(".g-node.is-center").title);
+  const titleBefore = await centreTitle();
   const card = await page.locator(".g-card").nth(5).boundingBox();
   await page.mouse.move(card.x + card.width / 2, card.y + card.height / 2);
   await page.mouse.down();
-  await page.mouse.move(card.x + card.width / 2 + 60, card.y + card.height / 2 + 60, { steps: 3 });
+  await page.mouse.move(card.x + card.width / 2 + 60, card.y + card.height / 2 + 30, { steps: 4 });
   await page.mouse.up();
+  await page.waitForTimeout(150);
   const g3 = await geometry(page);
-  if (Math.hypot(g3.ends.at(-1)[0] - g2.ends.at(-1)[0], g3.ends.at(-1)[1] - g2.ends.at(-1)[1]) > 1) {
-    fail("a drag that started on a card panned the graph");
-  }
+  const moved3 = [g3.ends.at(-1)[0] - g2.ends.at(-1)[0], g3.ends.at(-1)[1] - g2.ends.at(-1)[1]];
+  if (Math.abs(moved3[0] - 60) > 2 || Math.abs(moved3[1] - 30) > 2) fail(`a drag from a card panned by ${moved3}, expected 60,30`);
+  if ((await centreTitle()) !== titleBefore) fail("a drag from an assembly card re-centred the graph");
+  if (await page.evaluate(() => window.__opened.length)) fail("a drag from a card opened it");
+  aligned(g3, "after a drag from a card", fail);
+  // no text got selected and the browser did not start an image drag
+  if (await page.evaluate(() => String(window.getSelection()).length)) fail("dragging selected text");
 
   // a double-click on the background fits the whole graph again
   await page.mouse.dblclick(pane.x + 6, pane.y + 6);
