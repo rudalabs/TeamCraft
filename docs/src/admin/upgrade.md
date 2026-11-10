@@ -125,6 +125,28 @@ teamcraft restore /srv/backups/before-0.3.0
 * Configuration and secrets are not part of the backup. Keep the
   configuration of the old version next to the backup.
 
+## Mattermost: switch from the webhook to a bot
+
+Mattermost notifications are now direct messages of a bot account
+(`TEAMCRAFT_MATTERMOST_URL` and `TEAMCRAFT_MATTERMOST_BOT_TOKEN`, see
+[Configuration](configuration.md#mattermost-a-bot-account-for-direct-messages)).
+An installation with only `TEAMCRAFT_MATTERMOST_WEBHOOK` keeps working, but
+logs a deprecation warning at start-up and the account page says so; the
+webhook mode will be removed in a later version. To switch:
+
+1. Create the bot account and its token in Mattermost.
+2. Set `TEAMCRAFT_MATTERMOST_URL` and `TEAMCRAFT_MATTERMOST_BOT_TOKEN`
+   (or `…_FILE`); remove `TEAMCRAFT_MATTERMOST_WEBHOOK` and
+   `TEAMCRAFT_MATTERMOST_DIRECT`. The bot wins when both are set.
+3. Restart and send a test notification from *Account → Notifications*.
+
+Differences users notice: nothing is posted into the channel any more, the
+messages come from the *TeamCraft* bot, and notifications about restricted
+project groups carry their full text (unless the group switched notification
+content off). A wrong Mattermost username now shows as a failed delivery
+with a reason instead of a post that vanishes. No database change is needed.
+`MATTERMOST_ERROR_WEBHOOK` is not affected.
+
 ## Breaking changes per version
 
 There is no separate change log file: the GitHub Release of a version

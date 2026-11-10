@@ -117,6 +117,7 @@ src/stepbom.rs     product structure of STEP assemblies (own Part 21 reader: PRO
 src/assets.rs      embedded CSS/JS/logos/fonts, cache busting (?v=<asset hash>, ETag)
 src/notify.rs      Mattermost error webhook (rate limited)
 src/delivery.rs    e-mail (SMTP via lettre) and Mattermost delivery of notifications from the outbox
+src/mattermost.rs Mattermost bot client: direct messages only (user lookup, direct channel, post), failure classification
 src/webhooks.rs    outgoing event webhooks: outbox worker (SKIP LOCKED), HMAC signature, backoff, SSRF guard;
                    services/webhooks.rs = admin CRUD + emit() inside the event's transaction
 templates/         MiniJinja templates, embedded via include_str!

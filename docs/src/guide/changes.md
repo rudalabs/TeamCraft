@@ -165,10 +165,18 @@ assign anybody.
 
 The bell lists review requests, decisions, releases, checks needed, change
 requests and news about **watched** items, changes and change requests (*Watch* on any of their pages).
-Optionally TeamCraft sends them by e-mail (SMTP) and to Mattermost (mention
-or direct message). Every user chooses channels and mutes kinds on the
+Optionally TeamCraft sends them by e-mail (SMTP) and to Mattermost (a direct
+message from the TeamCraft bot to you, never into a channel). Every user chooses channels and mutes kinds on the
 account page; delivery runs from an outbox, so a slow mail server never
 delays a request.
+
+**Mattermost** messages arrive as a direct message from the *TeamCraft* bot,
+with the full title and text; nothing is posted into a channel. Enter your
+Mattermost username on the account page if it differs from your TeamCraft
+login. If it is wrong (or your Mattermost account is deactivated), the
+notification shows *Mattermost failed* with the reason on the page
+*Notifications*, for example *Mattermost user "xy" not found – check your
+Mattermost username*. **Send a test** on the account page checks the setting.
 
 With e-mail switched on, CAD editors also get a **digest of the change
 requests waiting for triage** – one e-mail per project group, by default

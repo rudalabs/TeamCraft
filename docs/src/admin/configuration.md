@@ -171,9 +171,61 @@ the audit log (`user.sign_in`, `user.sign_in_failed`, `user.sign_out`).
 | `TEAMCRAFT_SMTP_URL`             | SMTP server in lettre syntax: `smtps://user:password@host:465`, `smtp://host:587?tls=required`, `smtp://localhost:25`                                                                     |
 | `TEAMCRAFT_MAIL_FROM`            | sender, `Name <address>` (required with SMTP)                                                                                                                                             |
 | `TEAMCRAFT_REQUEST_DIGEST_HOURS` | hours between two e-mail digests of the change requests waiting for triage, per CAD editor and project group (default `24`, `0` = off, at most `720`); only with SMTP                     |
-| `TEAMCRAFT_MATTERMOST_WEBHOOK`   | incoming webhook for notifications                                                                                                                                                        |
-| `TEAMCRAFT_MATTERMOST_DIRECT`    | `true`: direct messages, `false` (default): mention in the webhook's channel – notifications about [restricted project groups](permissions.md) then show only a generic text and the link |
+| `TEAMCRAFT_MATTERMOST_URL`       | base URL of the Mattermost server (`https://chat.example.org`, also below a path prefix); together with the bot token it switches notifications to **direct messages of a bot account** |
+| `TEAMCRAFT_MATTERMOST_BOT_TOKEN` | access token of the bot account (secret; also as `TEAMCRAFT_MATTERMOST_BOT_TOKEN_FILE`). Both variables are required together                                                           |
+| `TEAMCRAFT_MATTERMOST_WEBHOOK`   | **deprecated**: incoming webhook for notifications (ignored when the bot is configured); logs a warning at start-up                                                                      |
+| `TEAMCRAFT_MATTERMOST_DIRECT`    | **deprecated**, webhook only: `true`: direct messages through the webhook (they appear to come from the webhook's creator), `false` (default): mention in the webhook's channel – notifications about [restricted project groups](permissions.md) then show only a generic text and the link |
 | `MATTERMOST_ERROR_WEBHOOK`       | incoming webhook that receives internal server errors (rate limited)                                                                                                                      |
+
+### Mattermost: a bot account for direct messages
+
+Notifications reach Mattermost **only as a direct message to the person**,
+never in a channel. TeamCraft signs in as a bot account and uses the REST
+API: it looks the user up by name (`GET /api/v4/users/username/…`, cached for
+ten minutes), opens the direct channel bot ↔ user (`POST /api/v4/channels/direct`)
+and posts (`POST /api/v4/posts`). In Mattermost the messages come from the bot
+(shown with the *BOT* tag), and every user has one conversation with it. A
+direct message can only be read by its recipient, so it carries the full title
+and text, also for [restricted project groups](permissions.md) – unless the
+group switched *notification content* off, then only a generic text and the
+link are sent.
+
+Set up the bot once:
+
+1. In Mattermost: *System Console → Integrations → Integration Management*:
+   *Enable Bot Account Creation* must be on.
+2. *Integrations → Bot Accounts → Add Bot Account*: username e.g. `teamcraft`,
+   display name *TeamCraft*. A bot needs **no** role beyond *Member* and **no**
+   channel or team membership: it only has to read user profiles and open
+   direct messages, which every account may do. Do not give it a system role.
+3. Create a token for the bot (*Create New Token*), keep it in a file that only
+   the server reads, and set `TEAMCRAFT_MATTERMOST_URL` and
+   `TEAMCRAFT_MATTERMOST_BOT_TOKEN_FILE`. Both are required together.
+4. Check it from *Account → Notifications*: switch Mattermost on, save and
+   press *Send a test* (the test notification is delivered like
+   every other).
+
+Users enter their Mattermost username on their account page (empty = their
+TeamCraft login). If it is unknown or the Mattermost account is deactivated,
+the chat delivery of that notification is marked failed at once, with the
+reason (for example *Mattermost user "xy" not found – check your Mattermost
+username*) shown under *Notifications*; it is **never** posted into a channel
+instead. The bell and the e-mail are not affected. A rejected token (HTTP 401),
+a missing permission or a server error is retried like any delivery (five
+attempts with the usual pause) and then marked failed, with the reason.
+
+The server URL is set by the administrator only. The client follows no
+redirects (the token must not travel to another host) and ignores proxy
+variables. The error webhook `MATTERMOST_ERROR_WEBHOOK` stays an ordinary
+channel webhook: it is for administrators, not personal.
+
+**Deprecated webhook mode.** With only `TEAMCRAFT_MATTERMOST_WEBHOOK` set,
+notifications still go out as before (a mention in the webhook's channel, or
+with `TEAMCRAFT_MATTERMOST_DIRECT=true` a direct message that appears to come
+from the person who created the webhook), the server logs a deprecation
+warning at start-up and the account page says so. Everybody in the channel
+reads the mentions, which is why restricted groups show only a generic text
+there. See [Upgrading](upgrade.md#mattermost-switch-from-the-webhook-to-a-bot).
 
 The **change request digest** is an e-mail per project group to its CAD
 editors and admins with the requests raised since the previous digest that

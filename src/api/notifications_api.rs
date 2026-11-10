@@ -66,7 +66,12 @@ pub(super) async fn get_notification_settings(
         .collect::<Vec<_>>());
     out["email_enabled"] = json!(st.config.smtp.is_some());
     out["mattermost_enabled"] = json!(st.config.mattermost.is_some());
-    out["mattermost_direct"] = json!(st.config.mattermost.as_ref().is_some_and(|m| m.direct));
+    out["mattermost_direct"] = json!(st.config.mattermost.as_ref().is_some_and(|m| m.is_direct()));
+    out["mattermost_legacy_webhook"] = json!(st
+        .config
+        .mattermost
+        .as_ref()
+        .is_some_and(|m| m.is_legacy_webhook()));
     Ok(Json(out))
 }
 

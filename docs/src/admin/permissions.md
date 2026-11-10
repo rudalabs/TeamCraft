@@ -292,11 +292,11 @@ group, has no such manager.
   are not sent either. The groups of the items a notification names are
   stored with it (migration 0026), so it stays hidden from non-members
   after such an item is deleted.
-* With `TEAMCRAFT_MATTERMOST_DIRECT=false` (posts in a shared channel),
+* With the deprecated webhook mode (`TEAMCRAFT_MATTERMOST_DIRECT=false`, posts in a shared channel),
   notifications about restricted groups show only "new TeamCraft
   notification" and the link – decided when the post is sent, so a group
   restricted after the notification was queued counts. E-mail and
-  Mattermost direct messages go to one recipient and carry the full text.
+  Mattermost direct messages of the bot go to one recipient and carry the full text.
 * A webhook sees its own group and the internal groups; a webhook for all
   groups receives **no** events of restricted groups. Scope a webhook to
   the group to get them (see [Event webhooks](webhooks.md)). The
