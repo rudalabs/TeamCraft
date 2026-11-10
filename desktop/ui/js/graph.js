@@ -77,6 +77,8 @@ function neighbours(d) {
     var k = n.number;
     var ex = by[k];
     if (!ex) { by[k] = n; order.push(k); return; }
+    // the same item on several BOM lines: its instances add up
+    if (ex.rel === "bom" && n.rel === "bom") { ex.qty = (ex.qty || 0) + (n.qty || 0); return; }
     // keep a "down" (structural) relation over an "up" one, and fill blanks
     if (ex.dir === "up" && n.dir === "down") { n.alsoUsedBy = true; by[k] = n; }
     else { ex.type = ex.type || n.type; ex.name = ex.name || n.name; }
@@ -216,7 +218,7 @@ function nodeCard(n, isCenter, onOpen) {
   var cls = "g-node state-" + (n.state || "unknown") + " type-" + (n.type || "unknown") + (isCenter ? " is-center" : "");
   var thumb = h("div.g-thumb");
   if (n.thumbId) {
-    var img = h("img.g-img.hidden", { alt: "" });
+    var img = h("img.g-img.hidden", { alt: "", draggable: "false" });
     thumbInto(img, n.thumbSha, n.thumbId);
     thumb.appendChild(img);
   }
@@ -224,7 +226,6 @@ function nodeCard(n, isCenter, onOpen) {
   var caption = n.fileName || (n.number + (n.code ? "/" + n.code : ""));
   var badges = [];
   if (n.complexity) badges.push(h("span.g-badge", { title: n.complexity + " BOM children" }, "⚙ " + n.complexity));
-  if (n.rel === "bom" && n.qty != null && n.qty !== 1) badges.push(h("span.g-badge", { title: "Quantity" }, "×" + n.qty));
   if (n.rel === "reference") badges.push(h("span.g-badge.g-ref", { title: "Reference, not a BOM child" }, "ref"));
   if (n.dir === "up") badges.push(h("span.g-badge.g-up", { title: n.via ? "Its file references this (" + n.via + ")" : "Uses this item" }, "uses"));
   var card = h("div." + cls.split(" ").join("."), {
@@ -239,11 +240,21 @@ function nodeCard(n, isCenter, onOpen) {
     thumb,
     h("div.g-cap", null, [
       h("span.g-name", { text: caption, title: caption }),
-      h("span.g-sub", null, [h("span.g-dot"), (n.number || "") + (n.code ? "/" + n.code : "")])
+      h("span.g-sub", null, [h("span.g-dot"), h("span.g-num", { text: (n.number || "") + (n.code ? "/" + n.code : "") })])
     ]),
-    badges.length ? h("div.g-badges", null, badges) : null
+    badges.length ? h("div.g-badges", null, badges) : null,
+    quantityChip(n)
   ]);
   return card;
+}
+
+/** "×4" in the top-left corner of a BOM child: how many instances of it the
+ *  centre assembly contains (summed over its BOM lines), also for ×1, so every
+ *  child reads the same. Null for references, users and the centre itself. */
+function quantityChip(n) {
+  if (n.rel !== "bom" || n.qty == null) return null;
+  var q = Math.round(n.qty * 1e4) / 1e4; // units like m or kg keep their decimals
+  return h("span.g-qty", { title: q + (q === 1 ? " instance" : " instances") + " in this assembly", "aria-label": "Quantity " + q }, "×" + q);
 }
 
 /** Draws the whole scene into the pane and wires zoom/pan. */
@@ -334,21 +345,46 @@ function draw(pane, center, nodes, onOpen) {
     apply();
   }, { passive: false });
 
-  var drag = null;
+  // Pan from anywhere, also from a card: a press that moves more than a few
+  // pixels pans the graph and swallows the click that follows; a press that
+  // stays put is a click and opens the card. The browser's own image drag
+  // and text selection never start (mousedown/dragstart are cancelled, the
+  // cards are user-select: none).
+  var drag = null, swallowClick = false;
+  var CLICK_SLOP = 4;
   pane.addEventListener("pointerdown", function (e) {
-    if (e.target.closest(".g-node")) return; // let cards handle their own clicks
     if (e.button !== undefined && e.button !== 0) return;
-    drag = { x: e.clientX, y: e.clientY, ox: tf.x, oy: tf.y };
-    pane.setPointerCapture(e.pointerId); root.classList.add("grabbing");
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, ox: tf.x, oy: tf.y, moved: false };
+    swallowClick = false;
   });
   pane.addEventListener("pointermove", function (e) {
-    if (!drag) return;
+    if (!drag || e.pointerId !== drag.id) return;
+    var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved) {
+      if (Math.hypot(dx, dy) < CLICK_SLOP) return;
+      drag.moved = true;
+      // capture only once it is a drag, so a plain click still reaches the card
+      try { pane.setPointerCapture(e.pointerId); } catch (err) { /* pointer already gone */ }
+      root.classList.add("grabbing"); pane.classList.add("grabbing");
+    }
     userMoved = true;
-    tf.x = drag.ox + (e.clientX - drag.x); tf.y = drag.oy + (e.clientY - drag.y); apply();
+    tf.x = drag.ox + dx; tf.y = drag.oy + dy; apply();
   });
-  function endDrag() { drag = null; root.classList.remove("grabbing"); }
+  function endDrag() {
+    if (drag && drag.moved) swallowClick = true;
+    drag = null; root.classList.remove("grabbing"); pane.classList.remove("grabbing");
+  }
   pane.addEventListener("pointerup", endDrag);
-  pane.addEventListener("pointercancel", endDrag);
+  pane.addEventListener("pointercancel", function () { endDrag(); swallowClick = false; });
+  // the click after a drag must not open or re-centre (capture phase: before the card sees it)
+  pane.addEventListener("click", function (e) {
+    if (!swallowClick) return;
+    swallowClick = false;
+    e.stopPropagation(); e.preventDefault();
+  }, true);
+  // no native image drag, no text selection when pressing on the graph
+  pane.addEventListener("mousedown", function (e) { if (e.button === 0) e.preventDefault(); });
+  pane.addEventListener("dragstart", function (e) { e.preventDefault(); });
   pane.addEventListener("dblclick", function (e) {
     if (e.target.closest(".g-node")) return;
     userMoved = false; fit();
@@ -536,6 +572,6 @@ function legend() {
     sw("state-released", label("released")),
     sw("state-obsolete", label("obsolete")),
     h("span.g-legend-sep"),
-    h("span.g-legend-label", { text: "Size = BOM complexity · ⚙ children · click a node to open it · double-click the background to fit" })
+    h("span.g-legend-label", { text: "Size = BOM complexity · ⚙ children · ×n instances in this assembly · click a node to open it · double-click the background to fit" })
   ]);
 }
