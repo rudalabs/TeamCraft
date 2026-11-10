@@ -13,6 +13,13 @@ see the notices in the README.
 
 ## [Unreleased]
 
+### Fixed
+
+- Every web page starts with a *Skip to the main content* link (visible
+  while it has the keyboard focus), and the 17 empty column headers (action
+  columns, the corner of the inertia tensor) have a name for screen readers.
+  The page accessibility test now requires both.
+
 ## [0.2.7] - 2026-11-10
 
 Changes since the `v0.2.6` tag.

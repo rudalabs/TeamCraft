@@ -498,6 +498,14 @@ h2 .count, .count { color: var(--text-dim); font-weight: 500; }
 .pre { white-space: pre-wrap; }
 .hidden { display: none !important; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* the first stop of every page; visible only while it has the focus */
+.skip-link {
+  position: absolute; left: 8px; top: 8px; z-index: 1000;
+  padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+  transform: translateY(-200%);
+}
+.skip-link:focus { transform: none; }
 /* shown only on phones (the 760px block), e.g. a priority under a title */
 .show-narrow { display: none; }
 

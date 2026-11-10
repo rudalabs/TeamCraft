@@ -20,6 +20,8 @@ test covers – and fails on (`src/templates/accessibility.rs`):
 | `<html lang>` on a full page                                                                                                                                        | 3.1.1        |
 | headings do not skip a level on the way down (`h2` → `h4`)                                                                                                          | 1.3.1        |
 | every `<th>` has a `scope`                                                                                                                                          | 1.3.1        |
+| every `<th>` has a name: text (a visually hidden "Actions" for action columns), `aria-label` or `title`                                                             | 1.3.1        |
+| a full page with a `<main>` starts with a skip link: its first link points to the id of `<main>`                                                                    | 2.4.1        |
 
 A rule's own test (`the_checks_find_what_they_promise`) feeds it a page with
 one violation of each kind and a page without any. When the test was added
@@ -28,6 +30,11 @@ them in `<thead>`), two headings that skipped a level (the impact groups on
 the revision page and the assistant's answer – each got a visually hidden
 `<h2>`), and two file inputs without a label (now `aria-label`). None of the
 fixes changes how a page looks.
+
+The two later rules found 17 empty column headers (16 action columns, now
+a visually hidden "Actions", and the corner of the inertia tensor on the
+mass page, now "Axis") and the missing skip link: every page now starts with
+*Skip to the main content*, visible only while it has the focus.
 
 ## Keyboard: the main flows
 
@@ -60,14 +67,9 @@ opened it (`static/app.js`); a menu inside a panel closes first.
 
 Each of these is an entry in `docs/OPEN_WORK.md` (*Clients and packaging*):
 
-- **No skip link.** Eight stops (brand, navigation, search …) come before the
-  content on every page; the landmarks let screen-reader users jump, sighted
-  keyboard users have to tab through.
 - **HTML built by JavaScript** – the assistant sidebar, the BOM tree
   controls, the 3D viewer, the upload progress – is not covered by the
   template test, and the desktop app (`desktop/ui`) not at all.
-- **Empty column headers.** 15 tables have an action column with an empty
-  `<th scope="col"></th>`; a screen reader announces nothing for it.
 - **No screen reader run.** The checks above are structural; nobody has
   used the main flows with NVDA, JAWS or VoiceOver yet.
 - **Focus of form fields** is a 1 px outline plus a coloured border: enough

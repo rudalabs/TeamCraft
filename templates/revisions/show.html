@@ -338,7 +338,7 @@
       <tr id="versions-{{ f.id }}" class="hidden">
         <td colspan="7">
           <table>
-            <thead><tr><th scope="col">Version</th><th scope="col">Comment</th><th scope="col" class="num">Size</th><th scope="col">Uploaded</th><th scope="col"></th></tr></thead>
+            <thead><tr><th scope="col">Version</th><th scope="col">Comment</th><th scope="col" class="num">Size</th><th scope="col">Uploaded</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
             <tbody>
             {% for v in f.versions %}
               <tr class="{% if v.version == f.version %}current{% endif %}">
@@ -450,7 +450,7 @@
   {% if simulation.bases %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Role</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Simulated</th><th scope="col">Status</th>{% if can.edit %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Role</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Simulated</th><th scope="col">Status</th>{% if can.edit %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for b in simulation.bases %}
       <tr>
@@ -543,7 +543,7 @@
   </p>
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Result</th><th scope="col">Load case</th><th scope="col" class="num">Value</th><th scope="col">Unit</th><th scope="col" class="num">Lower limit</th><th scope="col" class="num">Upper limit</th><th scope="col">Status</th><th scope="col">Solver</th>{% if can.edit %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Result</th><th scope="col">Load case</th><th scope="col" class="num">Value</th><th scope="col">Unit</th><th scope="col" class="num">Lower limit</th><th scope="col" class="num">Upper limit</th><th scope="col">Status</th><th scope="col">Solver</th>{% if can.edit %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for r in simulation.results %}
       <tr class="result-{{ r.status }}">
@@ -593,7 +593,7 @@
   <p class="hint">Drafts from the assistant, read from a report of this revision – they are not results until you accept them{% if simulation.can_decide and not can.edit %} (check the revision out to accept){% endif %}. Compare each with the quoted text.</p>
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Result</th><th scope="col">Load case</th><th scope="col" class="num">Value</th><th scope="col">Unit</th><th scope="col" class="num">Limits</th><th scope="col">From the report</th>{% if simulation.can_decide %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Result</th><th scope="col">Load case</th><th scope="col" class="num">Value</th><th scope="col">Unit</th><th scope="col" class="num">Limits</th><th scope="col">From the report</th>{% if simulation.can_decide %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for p in simulation.proposals %}
       <tr>
@@ -758,7 +758,7 @@
   {% if lines %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col" class="num">Find no.</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Latest</th><th scope="col" class="num">Qty</th><th scope="col">Notes</th>{% if can.edit %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col" class="num">Find no.</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Latest</th><th scope="col" class="num">Qty</th><th scope="col">Notes</th>{% if can.edit %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for l in lines %}
       <tr>
