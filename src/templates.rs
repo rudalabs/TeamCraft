@@ -637,7 +637,7 @@ mod tests {
             with_common(json!({
                 "form": { "item_type": "part", "number": "", "name": "", "description": "", "project_id": "",
                           "unit": "each", "material": "", "mass_kg": "", "unit_cost": "" },
-                "error": "Name must not be empty.", "projects": [project()],
+                "error": "Name must not be empty.", "projects": [project()], "materials": [],
                 "types": [{ "value": "part", "label": "Part" }], "units": units(),
             })),
         );
@@ -650,7 +650,7 @@ mod tests {
                           "description": "Analysis.", "project_id": "", "basis": OTHER,
                           "basis_role": "geometry", "unit": "", "material": "", "mass_kg": "",
                           "unit_cost": "" },
-                "error": null, "projects": [project()],
+                "error": null, "projects": [project()], "materials": [],
                 "types": [{ "value": "simulation", "label": "Simulation" }], "units": units(),
                 "basis": { "revision_id": OTHER, "item_number": "PRT-000002", "code": "A",
                            "label": "PRT-000002/A", "name": "Bracket <1>" },
@@ -1200,13 +1200,16 @@ mod tests {
         render(
             &env,
             "revisions/edit.html",
-            with_common(json!({ "rev": revision("in_work", false), "error": null })),
+            with_common(
+                json!({ "rev": revision("in_work", false), "error": null, "materials": [] }),
+            ),
         );
         let html = render(
             &env,
             "revisions/edit.html",
             with_common(json!({
                 "rev": revision("in_work", false), "error": null,
+                "materials": [{ "name": "Alu <7075>", "label": "2810 kg/m³" }],
                 "attribute_fields": [
                     { "key": "vendor", "label": "Vendor", "unit": "", "data_type": "choice",
                       "choices": ["Bosch", "SKF"], "value": "Old <Ltd>" },
@@ -1217,6 +1220,11 @@ mod tests {
         );
         assert!(html.contains("name=\"attr.vendor\"") && html.contains("Length [mm]"));
         assert!(
+            html.contains("<datalist id=\"material-options\"><option value=\"Alu &lt;7075&gt;\">2810 kg&#x2f;m³</option></datalist>")
+                && html.contains("data-material-hint"),
+            "material suggestions are escaped"
+        );
+        assert!(
             html.contains("Old &lt;Ltd&gt; (no longer a choice)"),
             "removed choices stay selectable"
         );
@@ -1225,7 +1233,7 @@ mod tests {
             &env,
             "revisions/edit.html",
             with_common(json!({
-                "rev": revision("in_work", false), "error": "Mass: 'x' is not a number.", "mass_raw": "x", "cost_raw": ""
+                "rev": revision("in_work", false), "error": "Mass: 'x' is not a number.", "mass_raw": "x", "cost_raw": "", "materials": []
             })),
         );
 

@@ -1,5 +1,19 @@
 {#- Shared template helpers. Import inside a block: {% import "macros.html" as m %} -#}
 
+{#- The Material field: a text input with the material library as suggestions (<datalist>, works
+    without JavaScript). Free text stays allowed; static/app.js shows the hint for a name that is
+    not in the library. `materials` = [{name, label}] from web::mass::material_options. -#}
+{% macro material_field(value, materials, is_admin=false, placeholder="") -%}
+<label>Material
+  <input type="text" name="material" value="{{ value }}" maxlength="200" list="material-options"
+         autocomplete="off" data-material-input{% if placeholder %} placeholder="{{ placeholder }}"{% endif %}>
+  <datalist id="material-options">
+    {%- for mat in materials %}<option value="{{ mat.name }}">{{ mat.label }}</option>{% endfor -%}
+  </datalist>
+  <span class="hint hidden" data-material-hint>Not in the material library – the mass properties will report a missing density.{% if is_admin %} <a href="/materials">Open the library</a>{% endif %}</span>
+</label>
+{%- endmacro %}
+
 {#- The glyph of a state: colour is never the only cue (style.css, badges). -#}
 {% macro glyph_char(value) -%}
 {%- if value in ["released", "approved", "accepted", "implemented", "pass", "sent", "up_to_date"] %}✓

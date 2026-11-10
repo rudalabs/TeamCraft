@@ -24,7 +24,12 @@ The method and its limits are described in the research note
    files) or chosen in the mass settings.
 3. **Name the material.** The *material* attribute of the revision (e.g.
    `Aluminium 7075-T6`) is looked up in the [material library](#material-library),
-   ignoring case. A **density override** in the mass settings wins over the
+   ignoring case. The *Material* field of *New item* and *Edit revision* (and
+   of the desktop app) suggests the library while you type, with the density
+   next to each name; picking a suggestion enters exactly the library name.
+   Free text stays allowed – for a bought part with a measured mass, say –
+   but a name that is not in the library shows a hint, and the mass
+   properties report a missing density. A **density override** in the mass settings wins over the
    library – for 3D-printed parts with partial infill, for example.
 4. **Enter measured values** for bought parts and weighed sub-assemblies:
    mass, optionally the CG and the inertia tensor about that CG.

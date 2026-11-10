@@ -15,6 +15,10 @@ see the notices in the README.
 
 ### Added
 
+- The *Material* field (*New item*, *Edit revision*, desktop app) suggests the
+  materials of the library with their density while you type (a `<datalist>`,
+  also without JavaScript); a name that is not in the library gets a hint.
+  Free text stays allowed.
 - Desktop: rearrange the object tabs by dragging (insertion marker, scrolling
   at the edge of the strip) or with `Ctrl+Shift+PageUp/PageDown`; switch tabs
   with `Ctrl+PageUp/PageDown` or `Ctrl+Tab`; arrow keys between tabs (WAI-ARIA
