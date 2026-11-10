@@ -42,6 +42,25 @@ see the notices in the README.
   explorer and in the desktop app's Files tab. Neutral formats (STEP, JT, STL,
   PDF, …) always stay visible; display only. `GET /api/v1/me` returns
   `preferred_cad`, file formats carry `format_info.family`.
+- Mattermost notifications as direct messages of a bot account, never into a
+  channel (#230): `TEAMCRAFT_MATTERMOST_URL` and `TEAMCRAFT_MATTERMOST_BOT_TOKEN`
+  (also `…_FILE`). TeamCraft looks the user up by username (cached), opens the
+  direct channel and posts through the Mattermost REST API, with the full text
+  also for restricted project groups (unless the group switched notification
+  content off). An unknown or deactivated Mattermost user fails the chat
+  delivery at once with a reason shown under *Notifications*
+  (`chat_error` in `GET /api/v1/notifications`); there is no channel fallback.
+  Outbox, retries and backoff are unchanged. The notification settings
+  response has `mattermost_legacy_webhook`. No migration.
+
+### Deprecated
+
+- `TEAMCRAFT_MATTERMOST_WEBHOOK` and `TEAMCRAFT_MATTERMOST_DIRECT` for
+  notifications (channel mentions leak personal notifications to everybody in
+  the channel). They keep working when no bot is configured, log a warning at
+  start-up and the account page says so; switch as described in
+  [Upgrading](docs/src/admin/upgrade.md). `MATTERMOST_ERROR_WEBHOOK` is
+  unchanged.
 
 ### Changed
 

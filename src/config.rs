@@ -103,7 +103,9 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_LOCAL_LOGIN",
     "TEAMCRAFT_LOG_FORMAT",
     "TEAMCRAFT_MAIL_FROM",
+    "TEAMCRAFT_MATTERMOST_BOT_TOKEN",
     "TEAMCRAFT_MATTERMOST_DIRECT",
+    "TEAMCRAFT_MATTERMOST_URL",
     "TEAMCRAFT_MATTERMOST_WEBHOOK",
     "TEAMCRAFT_MAX_UPLOAD_MB",
     "TEAMCRAFT_METRICS_TOKEN",
@@ -779,11 +781,33 @@ pub struct SmtpConfig {
 
 #[derive(Clone)]
 pub struct MattermostConfig {
-    /// Incoming webhook URL (secret).
-    pub webhook: String,
-    /// `true`: direct message to each user (`"channel": "@username"`);
+    /// Bot account of the REST API: direct messages to the person only.
+    pub bot: Option<MattermostBot>,
+    /// Deprecated: incoming webhook URL (secret). Ignored when `bot` is set.
+    pub webhook: Option<String>,
+    /// Webhook only. `true`: direct message to each user (`"channel": "@username"`);
     /// `false`: post in the webhook's channel and @-mention the user.
     pub direct: bool,
+}
+
+impl MattermostConfig {
+    /// Whether a notification reaches only its recipient (never a channel).
+    pub fn is_direct(&self) -> bool {
+        self.bot.is_some() || self.direct
+    }
+
+    /// Only the deprecated incoming webhook is configured.
+    pub fn is_legacy_webhook(&self) -> bool {
+        self.bot.is_none() && self.webhook.is_some()
+    }
+}
+
+#[derive(Clone)]
+pub struct MattermostBot {
+    /// Server URL, e.g. `https://chat.example.org` (no trailing slash).
+    pub url: String,
+    /// Access token of the bot account (secret).
+    pub token: String,
 }
 
 #[derive(Clone)]
@@ -1035,20 +1059,44 @@ impl Config {
         if request_digest_hours > 24 * 30 {
             bail!("TEAMCRAFT_REQUEST_DIGEST_HOURS must be between 0 (off) and 720");
         }
-        let mattermost = match env.get("TEAMCRAFT_MATTERMOST_WEBHOOK")? {
+        let webhook = match env.get("TEAMCRAFT_MATTERMOST_WEBHOOK")? {
             Some(webhook) => {
                 if !(webhook.starts_with("https://") || webhook.starts_with("http://")) {
                     bail!("TEAMCRAFT_MATTERMOST_WEBHOOK must be an http(s) URL");
                 }
-                let direct = match env.get("TEAMCRAFT_MATTERMOST_DIRECT")? {
-                    Some(v) => parse_bool(&v)
-                        .context("TEAMCRAFT_MATTERMOST_DIRECT must be true or false")?,
-                    None => false,
-                };
-                Some(MattermostConfig { webhook, direct })
+                Some(webhook)
             }
             None => None,
         };
+        let bot = match (
+            env.get("TEAMCRAFT_MATTERMOST_URL")?,
+            env.get("TEAMCRAFT_MATTERMOST_BOT_TOKEN")?,
+        ) {
+            (Some(url), Some(token)) => {
+                if !(url.starts_with("https://") || url.starts_with("http://")) {
+                    bail!("TEAMCRAFT_MATTERMOST_URL must be an http(s) URL");
+                }
+                Some(MattermostBot {
+                    url: url.trim().trim_end_matches('/').to_string(),
+                    token: token.trim().to_string(),
+                })
+            }
+            (None, None) => None,
+            _ => bail!(
+                "TEAMCRAFT_MATTERMOST_URL and TEAMCRAFT_MATTERMOST_BOT_TOKEN must be set together"
+            ),
+        };
+        let direct = match env.get("TEAMCRAFT_MATTERMOST_DIRECT")? {
+            Some(v) => {
+                parse_bool(&v).context("TEAMCRAFT_MATTERMOST_DIRECT must be true or false")?
+            }
+            None => false,
+        };
+        let mattermost = (bot.is_some() || webhook.is_some()).then_some(MattermostConfig {
+            bot,
+            webhook,
+            direct,
+        });
         let assistant = assistant_config(&env)?;
         let local_agents = match env.get("TEAMCRAFT_LOCAL_AGENTS")? {
             Some(raw) => LocalAgents::parse(&raw)?,
@@ -1129,7 +1177,15 @@ impl Config {
             self.request_digest_hours,
             self.mattermost
                 .as_ref()
-                .map_or("off", |m| if m.direct { "direct" } else { "channel" }),
+                .map_or("off", |m| {
+                    if m.bot.is_some() {
+                        "bot"
+                    } else if m.direct {
+                        "direct"
+                    } else {
+                        "channel"
+                    }
+                }),
             self.assistant.as_ref().map_or_else(|| "off".to_string(), |a| a.label()),
             self.local_agents.as_str(),
             match (
@@ -1461,6 +1517,33 @@ mod tests {
         .err()
         .unwrap();
         assert!(err.to_string().contains("TEAMCRAFT_MAIL_FROM"), "{err}");
+        let cfg = with(&[
+            ("TEAMCRAFT_MATTERMOST_URL", "https://chat.example.org/"),
+            ("TEAMCRAFT_MATTERMOST_BOT_TOKEN", "bot-token-value"),
+        ])
+        .unwrap();
+        let m = cfg.mattermost.as_ref().unwrap();
+        assert!(m.is_direct() && !m.is_legacy_webhook());
+        assert_eq!(m.bot.as_ref().unwrap().url, "https://chat.example.org");
+        let summary = cfg.summary();
+        assert!(summary.contains("mattermost_notifications=bot"));
+        assert!(
+            !summary.contains("bot-token-value"),
+            "no secrets in the log"
+        );
+        assert!(with(&[("TEAMCRAFT_MATTERMOST_URL", "https://chat.example.org")]).is_err());
+        assert!(with(&[("TEAMCRAFT_MATTERMOST_BOT_TOKEN", "x")]).is_err());
+        assert!(with(&[
+            ("TEAMCRAFT_MATTERMOST_URL", "chat.example.org"),
+            ("TEAMCRAFT_MATTERMOST_BOT_TOKEN", "x"),
+        ])
+        .is_err());
+        let legacy = with(&[(
+            "TEAMCRAFT_MATTERMOST_WEBHOOK",
+            "https://chat.example.org/hooks/x",
+        )])
+        .unwrap();
+        assert!(legacy.mattermost.as_ref().unwrap().is_legacy_webhook());
         assert!(with(&[("TEAMCRAFT_MATTERMOST_WEBHOOK", "chat.example.org/hooks/x")]).is_err());
         assert!(with(&[
             (

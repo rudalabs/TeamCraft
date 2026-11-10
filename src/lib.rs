@@ -34,6 +34,7 @@ pub mod httprange;
 pub mod llm;
 pub mod malware;
 pub mod massprops;
+pub mod mattermost;
 pub mod mcp;
 pub mod mesh;
 pub mod metrics;

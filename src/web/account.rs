@@ -52,7 +52,8 @@ async fn render_account(
                 "kinds": kinds,
                 "email_enabled": st.config.smtp.is_some(),
                 "mattermost_enabled": st.config.mattermost.is_some(),
-                "mattermost_direct": st.config.mattermost.as_ref().is_some_and(|m| m.direct),
+                "mattermost_direct": st.config.mattermost.as_ref().is_some_and(|m| m.is_direct()),
+                "mattermost_legacy_webhook": st.config.mattermost.as_ref().is_some_and(|m| m.is_legacy_webhook()),
             },
         }),
     )

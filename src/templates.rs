@@ -1982,7 +1982,7 @@ mod tests {
                     { "id": ME, "kind": "review_requested", "title": "Review requested: CHG-000004 <x>",
                       "body": "Erika asks you to review PRT-000003/B.", "link": "/changes/1", "subject_type": "change",
                       "subject_ref": "CHG-000004", "actor_name": "Erika", "created_at": TS, "read_at": null,
-                      "email_state": "sent", "chat_state": "failed" },
+                      "email_state": "sent", "chat_state": "failed", "chat_error": "Mattermost user \"x\" not found" },
                     { "id": OTHER, "kind": "impact", "title": "Check needed: ASM-000001", "body": "",
                       "link": "/revisions/1", "subject_type": "revision", "subject_ref": "ASM-000001/A",
                       "actor_name": "Rolf", "created_at": TS, "read_at": TS, "email_state": "none", "chat_state": "none" }],
