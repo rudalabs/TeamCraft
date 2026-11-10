@@ -36,6 +36,7 @@ use crate::{
     services::{
         audit,
         bom::{self, BomNode, ResolvedRevision},
+        mass_geometry::{self, GeometryInfo, Hints, Resolution},
         revisions,
     },
     util, AppState,
@@ -317,13 +318,6 @@ impl GeometryFile {
             .and_then(LengthUnit::parse)
             .unwrap_or_else(|| LengthUnit::default_for(&self.format))
     }
-
-    fn rank(&self) -> usize {
-        GEOMETRY_FORMATS
-            .iter()
-            .position(|f| *f == self.format)
-            .unwrap_or(GEOMETRY_FORMATS.len())
-    }
 }
 
 async fn settings_of(pool: &PgPool, ids: &[Uuid]) -> AppResult<HashMap<Uuid, MassSettings>> {
@@ -350,17 +344,53 @@ async fn geometry_files_of(pool: &PgPool, ids: &[Uuid]) -> AppResult<Vec<Geometr
     .await?)
 }
 
-/// The geometry file of a revision: the chosen one, else the best format
-/// (ties by file name).
-fn pick_geometry(files: &[GeometryFile], chosen: Option<Uuid>) -> Option<&GeometryFile> {
-    if let Some(id) = chosen {
-        if let Some(f) = files.iter().find(|f| f.id == id) {
-            return Some(f);
-        }
+/// The files of a revision as `(id, name)` with the file names their
+/// current versions reference, for the root of an assembly.
+async fn reference_roots_of(pool: &PgPool, revision_id: Uuid) -> AppResult<HashSet<Uuid>> {
+    let files: Vec<(Uuid, String)> =
+        sqlx::query_as("SELECT id, filename FROM files WHERE revision_id = $1")
+            .bind(revision_id)
+            .fetch_all(pool)
+            .await?;
+    let references: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT f.id, fr.name
+         FROM files f
+         JOIN file_versions fv ON fv.file_id = f.id AND fv.version = f.current_version
+         JOIN file_references fr ON fr.file_version_id = fv.id
+         WHERE f.revision_id = $1",
+    )
+    .bind(revision_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(mass_geometry::reference_roots(&files, &references))
+}
+
+/// The geometry file of a revision (see [`mass_geometry`]): the chosen one;
+/// else the best file of the only model; else *ambiguous*. The root of the
+/// file references is looked up only when the files are ambiguous.
+async fn resolve_geometry<'a>(
+    pool: &PgPool,
+    files: &'a [GeometryFile],
+    chosen: Option<Uuid>,
+    preferred: &str,
+    number: &str,
+    name: &str,
+) -> AppResult<Resolution<'a>> {
+    let hints = Hints {
+        item_number: number,
+        item_name: name,
+        roots: None,
+    };
+    let first = mass_geometry::resolve(files, chosen, preferred, &hints);
+    if !first.is_ambiguous() {
+        return Ok(first);
     }
-    files
-        .iter()
-        .min_by(|a, b| a.rank().cmp(&b.rank()).then(a.filename.cmp(&b.filename)))
+    let roots = reference_roots_of(pool, files[0].revision_id).await?;
+    let hints = Hints {
+        roots: Some(&roots),
+        ..hints
+    };
+    Ok(mass_geometry::resolve(files, chosen, preferred, &hints))
 }
 
 /// The mass settings of a revision the actor may read, its candidate
@@ -369,7 +399,10 @@ fn pick_geometry(files: &[GeometryFile], chosen: Option<Uuid>) -> Option<&Geomet
 pub struct RevisionMass {
     pub settings: MassSettings,
     pub files: Vec<GeometryFile>,
+    /// The file the mass is computed from (`None` when ambiguous).
     pub geometry_file_id: Option<Uuid>,
+    /// How it was decided, with the candidates by model.
+    pub geometry: GeometryInfo,
     /// The library entry of the revision's material, if any.
     pub material: Option<Material>,
 }
@@ -388,12 +421,23 @@ pub async fn revision_settings(
             ..MassSettings::default()
         });
     let files = geometry_files_of(pool, &[rev.id]).await?;
-    let geometry_file_id = pick_geometry(&files, settings.geometry_file_id).map(|f| f.id);
+    let resolution = resolve_geometry(
+        pool,
+        &files,
+        settings.geometry_file_id,
+        &actor.preferred_cad,
+        &rev.item_number,
+        &rev.name,
+    )
+    .await?;
+    let geometry_file_id = resolution.file().map(|f| f.id);
+    let geometry = mass_geometry::info(&resolution, true);
     let material = material_named(pool, &rev.material).await?;
     Ok(RevisionMass {
         settings,
         files,
         geometry_file_id,
+        geometry,
         material,
     })
 }
@@ -546,7 +590,15 @@ pub async fn update_settings(
             ));
         }
     }
-    let file = pick_geometry(&candidates, upd.geometry_file_id).map(|f| (f.id, f.filename.clone()));
+    // an ambiguous revision has no file whose unit could be set yet
+    let file = mass_geometry::resolve(
+        &candidates,
+        upd.geometry_file_id,
+        &actor.preferred_cad,
+        &Hints::default(),
+    )
+    .file()
+    .map(|f| (f.id, f.filename.clone()));
     sqlx::query(
         "INSERT INTO revision_mass (revision_id, density_kg_m3, geometry_file_id, measured_mass_kg,
                                     measured_cg_m, measured_inertia_kg_m2, measured_note,
@@ -602,6 +654,50 @@ pub async fn update_settings(
     .await?;
     tx.commit().await?;
     revision_settings(pool, actor, revision_id).await
+}
+
+/// Chooses the geometry file of a revision (`None` = back to automatic),
+/// keeping every other mass setting, like the one-click choice on the page.
+/// Same rules as [`update_settings`].
+pub async fn choose_geometry(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_id: Uuid,
+    file_id: Option<Uuid>,
+) -> AppResult<RevisionMass> {
+    let current = revision_settings(pool, actor, revision_id).await?;
+    let s = &current.settings;
+    let chosen = file_id.and_then(|id| current.files.iter().find(|f| f.id == id));
+    if file_id.is_some() && chosen.is_none() {
+        return Err(AppError::BadRequest(
+            "The geometry file must be a 3D file of this revision.".into(),
+        ));
+    }
+    // the file keeps the unit and instance count stored for it (for
+    // automatic: those of the file that is picked automatically)
+    let file = chosen.or_else(|| {
+        let auto = current.geometry.choice == "automatic";
+        current
+            .files
+            .iter()
+            .find(|f| auto && Some(f.id) == current.geometry_file_id)
+    });
+    update_settings(
+        pool,
+        actor,
+        revision_id,
+        MassSettingsUpdate {
+            density_kg_m3: s.density_kg_m3,
+            geometry_file_id: file_id,
+            length_unit: file.and_then(|f| f.length_unit.clone()),
+            instances: file.map(|f| f.instances),
+            measured_mass_kg: s.measured_mass_kg,
+            measured_cg_m: s.measured_cg_m.as_deref().and_then(v3),
+            measured_inertia_kg_m2: s.measured_inertia_kg_m2.as_deref().and_then(sym),
+            measured_note: s.measured_note.clone(),
+        },
+    )
+    .await
 }
 
 /// Copies the mass settings of `from` to the new revision `to` (*revise*):
@@ -668,6 +764,8 @@ pub enum Source {
     Covered,
     /// No mass at all.
     Missing,
+    /// Files of several different parts and none chosen: nothing is added.
+    GeometryAmbiguous,
     /// A line the reader may not see.
     Restricted,
 }
@@ -682,6 +780,7 @@ impl Source {
             Source::Assembly => "sum of children",
             Source::Covered => "covered by measured parent",
             Source::Missing => "missing",
+            Source::GeometryAmbiguous => "geometry ambiguous",
             Source::Restricted => "restricted",
         }
     }
@@ -695,6 +794,8 @@ pub(crate) struct RevisionInput {
     pub settings: MassSettings,
     /// The geometry file and its integrals (or why there are none).
     pub geometry: Option<(GeometryFile, Result<Geometry, String>)>,
+    /// How the geometry file was decided (set for parts that need one).
+    pub geometry_info: Option<GeometryInfo>,
     /// Density and where it comes from (`override`, the material name).
     pub density: Option<(f64, String)>,
 }
@@ -730,6 +831,8 @@ pub struct MassLine {
     /// CG of the placed mass of this line (m).
     pub cg_m: Option<V3>,
     pub warnings: Vec<String>,
+    /// The geometry file and how it was chosen; the candidates when ambiguous.
+    pub geometry: Option<GeometryInfo>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -741,6 +844,8 @@ pub struct MassReport {
     /// Source of the root itself (measured, assembly, computed …).
     pub root_source: Source,
     pub root_detail: String,
+    /// The geometry file of the root and how it was chosen (a part).
+    pub root_geometry: Option<GeometryInfo>,
     /// The point the second inertia tensor is taken about (m).
     pub reference_m: V3,
     /// Placed plus unplaced mass.
@@ -790,7 +895,10 @@ pub(crate) fn report(
     let restricted = walker.restricted;
     let total = unit.placed;
     let has_placed = total.mass > 0.0 && total.is_finite();
-    let missing_lines = lines.iter().filter(|l| l.source == Source::Missing).count();
+    let missing_lines = lines
+        .iter()
+        .filter(|l| matches!(l.source, Source::Missing | Source::GeometryAmbiguous))
+        .count();
     let lines_with_warnings = lines.iter().filter(|l| !l.warnings.is_empty()).count();
     let mut warnings = root_warnings;
     if restricted > 0 {
@@ -826,6 +934,7 @@ pub(crate) fn report(
         root_name,
         root_source: source,
         root_detail: detail,
+        root_geometry: root_input.geometry_info.clone(),
         reference_m: reference,
         mass_kg: total.mass + unit.unplaced,
         placed_mass_kg: total.mass,
@@ -911,6 +1020,29 @@ impl Walker<'_> {
         }
         // 3. geometry
         let entered = input.entered_mass_kg;
+        let ambiguous = input.geometry_info.as_ref().filter(|g| g.is_ambiguous());
+        if let Some(info) = ambiguous {
+            // files of several parts: no guess; an entered mass still counts
+            warnings.push(info.ambiguity_warning());
+            if entered.is_none() {
+                return (
+                    Unit {
+                        missing: 1,
+                        ..Unit::default()
+                    },
+                    Source::GeometryAmbiguous,
+                    info.note(),
+                    warnings,
+                );
+            }
+        }
+        let geometry_note = input
+            .geometry_info
+            .as_ref()
+            .map(GeometryInfo::note)
+            .filter(|n| !n.is_empty() && ambiguous.is_none())
+            .map(|n| format!(" – {n}"))
+            .unwrap_or_default();
         if let Some((file, geometry)) = &input.geometry {
             let unit_label = file.unit().as_str();
             match geometry {
@@ -931,7 +1063,7 @@ impl Walker<'_> {
                             }
                         }
                         let detail = format!(
-                            "{} ({unit_label}) × {} kg/m³ ({from})",
+                            "{} ({unit_label}) × {} kg/m³ ({from}){geometry_note}",
                             file.filename,
                             util::format_number(*density, 3)
                         );
@@ -954,7 +1086,7 @@ impl Walker<'_> {
                             body
                         };
                         let detail = format!(
-                            "{} ({unit_label}), entered mass spread uniformly",
+                            "{} ({unit_label}), entered mass spread uniformly{geometry_note}",
                             file.filename
                         );
                         warnings.push(no_density(&input.material));
@@ -977,7 +1109,11 @@ impl Walker<'_> {
         // 4. the entered mass alone
         if let Some(mass) = entered {
             if input.geometry.is_none() && mass > 0.0 {
-                warnings.push("no 3D file: the entered mass has no position".into());
+                warnings.push(if ambiguous.is_some() {
+                    "no geometry file chosen: the entered mass has no position".into()
+                } else {
+                    "no 3D file: the entered mass has no position".to_string()
+                });
             }
             return (
                 Unit {
@@ -1031,6 +1167,7 @@ impl Walker<'_> {
                 total_mass_kg: None,
                 cg_m: None,
                 warnings: Vec::new(),
+                geometry: None,
             };
             if n.restricted {
                 self.restricted += 1;
@@ -1100,8 +1237,10 @@ impl Walker<'_> {
                 line.source = source;
                 line.source_label = source.label();
                 line.detail = detail;
-                line.unit_mass_kg = (source != Source::Missing).then_some(unit_mass);
-                line.total_mass_kg = (source != Source::Missing).then_some(unit_mass * factor);
+                let massless = matches!(source, Source::Missing | Source::GeometryAmbiguous);
+                line.geometry = input.geometry_info.clone();
+                line.unit_mass_kg = (!massless).then_some(unit_mass);
+                line.total_mass_kg = (!massless).then_some(unit_mass * factor);
                 line.cg_m = (line_body.mass > 0.0).then_some(line_body.cg);
                 line.warnings = warnings;
             }
@@ -1175,11 +1314,13 @@ pub async fn rollup(
         .collect();
 
     let settings = settings_of(pool, &ids).await?;
-    let base: Vec<(Uuid, String, Option<f64>)> =
-        sqlx::query_as("SELECT id, material, mass_kg FROM revisions WHERE id = ANY($1)")
-            .bind(&ids)
-            .fetch_all(pool)
-            .await?;
+    let base: Vec<(Uuid, String, Option<f64>, String, String)> = sqlx::query_as(
+        "SELECT r.id, r.material, r.mass_kg, i.number, r.name
+         FROM revisions r JOIN items i ON i.id = r.item_id WHERE r.id = ANY($1)",
+    )
+    .bind(&ids)
+    .fetch_all(pool)
+    .await?;
     let library: HashMap<String, Material> = materials(pool)
         .await?
         .into_iter()
@@ -1192,7 +1333,7 @@ pub async fn rollup(
 
     let mut inputs: HashMap<Uuid, RevisionInput> = HashMap::new();
     let mut cache: HashMap<String, Result<Geometry, String>> = HashMap::new();
-    for (id, material, entered) in base {
+    for (id, material, entered, number, name) in base {
         let settings = settings.get(&id).cloned().unwrap_or(MassSettings {
             revision_id: id,
             ..MassSettings::default()
@@ -1205,11 +1346,24 @@ pub async fn rollup(
         };
         // geometry only where it is used: parts without a measured mass
         let needs_geometry = settings.measured_mass_kg.is_none() && !has_children.contains(&id);
+        let mut geometry_info = None;
         let geometry = if needs_geometry {
-            match files
-                .get(&id)
-                .and_then(|f| pick_geometry(f, settings.geometry_file_id))
-            {
+            let resolution = match files.get(&id).filter(|f| !f.is_empty()) {
+                Some(f) => Some(
+                    resolve_geometry(
+                        pool,
+                        f,
+                        settings.geometry_file_id,
+                        &actor.preferred_cad,
+                        &number,
+                        &name,
+                    )
+                    .await?,
+                ),
+                None => None,
+            };
+            geometry_info = resolution.as_ref().map(|r| mass_geometry::info(r, false));
+            match resolution.as_ref().and_then(Resolution::file) {
                 Some(file) => {
                     let result = match cache.get(&file.sha256) {
                         Some(r) => r.clone(),
@@ -1239,6 +1393,7 @@ pub async fn rollup(
                 entered_mass_kg: entered,
                 settings,
                 geometry,
+                geometry_info,
                 density,
             },
         );
@@ -1305,12 +1460,12 @@ fn csv_field(s: &str) -> String {
 /// rows with `level` 0 (`TOTAL`, `INERTIA_CG`, `INERTIA_REF`).
 pub fn to_csv(r: &MassReport) -> String {
     let mut out = String::from(
-        "level,find_number,item_number,revision,name,quantity,source,unit_mass_kg,total_mass_kg,cg_x_m,cg_y_m,cg_z_m,detail,warnings\n",
+        "level,find_number,item_number,revision,name,quantity,source,unit_mass_kg,total_mass_kg,cg_x_m,cg_y_m,cg_z_m,detail,warnings,geometry_file,geometry_choice\n",
     );
     let cg = r.cg_m.unwrap_or([f64::NAN; 3]);
     let fmt = |v: f64| if v.is_finite() { num(v) } else { String::new() };
     out.push_str(&format!(
-        "0,,TOTAL,{},{},1,{},{},{},{},{},{},{},{}\n",
+        "0,,TOTAL,{},{},1,{},{},{},{},{},{},{},{},{},{}\n",
         csv_field(&r.root_label),
         csv_field(&r.root_name),
         r.root_source.label(),
@@ -1324,7 +1479,14 @@ pub fn to_csv(r: &MassReport) -> String {
             num(r.placed_mass_kg),
             num(r.unplaced_mass_kg)
         )),
-        csv_field(&r.warnings.join("; "))
+        csv_field(&r.warnings.join("; ")),
+        csv_field(
+            r.root_geometry
+                .as_ref()
+                .and_then(|g| g.file.as_deref())
+                .unwrap_or("")
+        ),
+        r.root_geometry.as_ref().map_or("", |g| g.choice)
     ));
     for (label, tensor, point) in [
         ("INERTIA_CG", r.inertia_cg, r.cg_m),
@@ -1332,7 +1494,7 @@ pub fn to_csv(r: &MassReport) -> String {
     ] {
         if let (Some(t), Some(p)) = (tensor, point) {
             out.push_str(&format!(
-                "0,,{label},,,,,,,{},{},{},{},\n",
+                "0,,{label},,,,,,,{},{},{},{},,,\n",
                 num(p[0]),
                 num(p[1]),
                 num(p[2]),
@@ -1351,7 +1513,7 @@ pub fn to_csv(r: &MassReport) -> String {
     for l in &r.lines {
         let cg = l.cg_m.unwrap_or([f64::NAN; 3]);
         out.push_str(&format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             l.level,
             l.find_number,
             csv_field(&l.item_number),
@@ -1365,7 +1527,14 @@ pub fn to_csv(r: &MassReport) -> String {
             fmt(cg[1]),
             fmt(cg[2]),
             csv_field(&l.detail),
-            csv_field(&l.warnings.join("; "))
+            csv_field(&l.warnings.join("; ")),
+            csv_field(
+                l.geometry
+                    .as_ref()
+                    .and_then(|g| g.file.as_deref())
+                    .unwrap_or("")
+            ),
+            l.geometry.as_ref().map_or("", |g| g.choice)
         ));
     }
     out

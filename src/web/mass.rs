@@ -274,6 +274,33 @@ pub async fn update(
     })
 }
 
+#[derive(Deserialize, Default)]
+#[serde(default)]
+pub struct GeometryForm {
+    geometry_file: String,
+}
+
+/// `POST /revisions/{id}/mass/geometry` – the one-click choice of the
+/// geometry file (`auto` = back to automatic); the other settings stay.
+pub async fn choose_geometry(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(f): Form<GeometryForm>,
+) -> AppResult<Response> {
+    let back = format!("/revisions/{id}/mass");
+    let result = match f.geometry_file.trim() {
+        "" | "auto" => mass::choose_geometry(&st.db, &ctx.me, id, None).await,
+        v => match Uuid::parse_str(v) {
+            Ok(file) => mass::choose_geometry(&st.db, &ctx.me, id, Some(file)).await,
+            Err(_) => Err(AppError::BadRequest("Unknown geometry file.".into())),
+        },
+    };
+    finish(&st, result, &back, |_| {
+        (back.clone(), "Saved the geometry file.".to_string())
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Material library
 // ---------------------------------------------------------------------------

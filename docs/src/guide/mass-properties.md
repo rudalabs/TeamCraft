@@ -18,10 +18,17 @@ The method and its limits are described in the research note
    only adds the parts up – no placements, no CAD assembly file needed.
    A part used several times (four fins) is exported once with all its
    instances in one file; set **Units shown in the file** to 4.
-2. **Attach the files** to the part revisions as usual. The geometry file of
-   a revision is picked automatically (STL, 3MF, OBJ, PLY, OFF, AMF, glTF,
-   3DS, then STEP, then the lightweight data in NX, SOLIDWORKS, JT and Rhino
-   files) or chosen in the mass settings.
+2. **Attach the files** to the part revisions as usual. Attach the files of
+   **one part** to a part revision, in as many formats as you like. The
+   geometry file is then picked automatically (STL, 3MF, OBJ, PLY, OFF, AMF,
+   glTF, 3DS, then STEP, then the lightweight data in NX, SOLIDWORKS, JT and
+   Rhino files; the native format of your preferred CAD program first among
+   the native ones) and the page says so: *Geometry: `box.stl` (chosen
+   automatically; 2 other formats of the same model)*. Files belong to one
+   model when their names agree apart from case, `_`, `-`, spaces, the
+   extension and a trailing `rev-X` (`box.prt`, `Box_rev-B.SLDPRT`,
+   `box.stp`). If the revision holds files of **several different parts**,
+   TeamCraft does not guess – see [Geometry ambiguous](#geometry-ambiguous).
 3. **Name the material.** The *material* attribute of the revision (e.g.
    `Aluminium 7075-T6`) is looked up in the [material library](#material-library),
    ignoring case. The *Material* field of *New item* and *Edit revision* (and
@@ -47,6 +54,7 @@ For every revision the first source that applies is used:
 | **computed**                   | a 3D file and a density (override or material library)                                        | mass, CG, inertia from the closed mesh                          |
 | **entered mass on geometry**   | a 3D file, no density, but the revision's *mass* attribute                                    | the entered mass spread uniformly over the mesh                 |
 | **entered mass (no position)** | only the *mass* attribute                                                                     | counts in the total mass, not in the CG and inertia             |
+| **geometry ambiguous**         | 3D files of several different parts and none chosen, no measured mass, no BOM lines           | nothing – the line is flagged, the totals are incomplete        |
 | **missing**                    | none of the above                                                                             | nothing – the line is flagged                                   |
 
 Lines below a measured assembly are shown as *covered by measured parent*.
@@ -59,6 +67,35 @@ units sit at the same place unless the file shows them all: a line whose
 quantity differs from the units shown in the file is flagged *copies
 stacked at the same place* – the mass is right, the CG and the inertia
 usually are not.
+
+### Geometry ambiguous
+
+A plausible but wrong number is worse than none, so a revision whose 3D
+files belong to several different parts (typically an assembly attached as
+one item: the parts, the assembly and the neutral JT or STEP file) does not
+get the mass of whichever file sorts first. Its source is **geometry
+ambiguous**, it adds nothing to mass, CG and inertia, and the totals are
+flagged incomplete: *N files of M different parts – choose the geometry file
+in Mass settings, or split the parts into BOM lines*. The same applies to a
+part revision inside an assembly. An entered mass still counts (without
+position).
+
+* TeamCraft suggests the **likely whole assembly**: the file that references
+  other files of the revision and is referenced by none of them, else the
+  file named like the item (number or name). The *Mass settings* card offers
+  a one-click *Use `NIST mtc crada assembly.jt`* (the revision must be
+  checked out); the choice is stored like a manual one. It is a suggestion
+  only – nothing is used without the click.
+* The file selector lists the candidates **grouped by model**, the likely
+  assembly first, and marks the file in use as *automatic* or *chosen*;
+  *Automatic* restores the automatic pick.
+* The better fix is usually to model the assembly as an assembly: one item
+  per part with the part's files, and BOM lines with quantities (see
+  [The workflow](#the-workflow)).
+* REST, the JSON export and the MCP tool carry `geometry` per line and
+  `root_geometry`: `choice` (`automatic`, `chosen`, `ambiguous`), the file,
+  the number of other formats, the candidates by model and the likely file.
+  The CSV has the columns `geometry_file` and `geometry_choice`.
 
 ## Warnings
 

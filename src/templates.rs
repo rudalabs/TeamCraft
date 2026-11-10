@@ -1682,6 +1682,37 @@ mod tests {
             })),
         );
         assert!(html.contains("No placed mass"));
+        // files of several parts: the warning, the one-click choice (only
+        // when editable) and the grouped selector
+        for editable in [true, false] {
+            let candidate = |id: &str, name: &str, likely: bool| json!({ "file_id": id, "filename": name, "format": "jt", "likely": likely, "used": false });
+            let geometry = json!({
+                "choice": "ambiguous", "file": null, "file_id": null, "other_formats": 0,
+                "models": 2, "files": 3, "likely_file": "asm <1>.jt", "likely_file_id": OTHER,
+                "candidates": [
+                    { "model": "asm <1>", "files": [candidate(OTHER, "asm <1>.jt", true)] },
+                    { "model": "fin", "files": [candidate(ME, "fin.jt", false)] },
+                ],
+            });
+            let html = render(
+                &env,
+                "revisions/mass.html",
+                with_common(json!({
+                    "rev": revision("in_work", editable), "rule": "latest", "report": empty_report,
+                    "reference": "0,0,0", "reference_error": null,
+                    "settings": { "settings": { "revision_id": ME, "density_kg_m3": null, "geometry_file_id": null,
+                                                "measured_mass_kg": null, "measured_cg_m": null,
+                                                "measured_inertia_kg_m2": null, "measured_note": "" },
+                                  "files": [], "geometry_file_id": null, "geometry": geometry,
+                                  "material": null },
+                    "chosen": null, "chosen_unit": null, "units": [], "measured_cg": [], "measured_inertia": [],
+                    "editable": editable, "is_admin": false,
+                })),
+            );
+            assert!(html.contains("Geometry ambiguous") && html.contains("asm &lt;1&gt;.jt"));
+            assert_eq!(html.contains("/mass/geometry"), editable);
+            assert_eq!(html.contains("<optgroup label=\"fin\">"), editable);
+        }
         for is_admin in [true, false] {
             let html = render(
                 &env,
