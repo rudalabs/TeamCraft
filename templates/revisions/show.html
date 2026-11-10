@@ -716,7 +716,17 @@
         <td>{{ d.feature }}</td>
         <td class="mono small">{% if d.designed %}{{ d.designed }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="mono small">{% if d.built %}{{ d.built }}{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td class="nowrap">{% for o in as_built.dispositions %}{% if o.value == d.disposition %}<span class="badge {% if o.value == "open" %}badge-out_of_date{% elif o.value == "scrap" %}badge-fail{% else %}badge-pass{% endif %}">{{ o.label }}</span>{% endif %}{% endfor %}</td>
+        <td class="nowrap">{% for o in as_built.dispositions %}{% if o.value == d.disposition %}<span class="badge {% if o.value == "open" %}badge-out_of_date{% elif o.value == "scrap" %}badge-fail{% else %}badge-pass{% endif %}">{{ o.label }}</span>{% endif %}{% endfor %}
+          {% if d.disposition == "use_as_is" and as_built.concessions.needed %}
+            {% if d.concession_confirmed_by_name %}<span class="small muted">confirmed by {{ d.concession_confirmed_by_name }}</span>
+            {% elif as_built.concessions.can_confirm and d.created_by != me.id %}
+            <form class="inline" method="post" action="/as-built-deviations/{{ d.id }}/confirm">
+              <input type="hidden" name="back" value="{{ back }}#deviations">
+              <button class="small" type="submit" title="Accept this concession as a reviewer of the change order">Confirm</button>
+            </form>
+            {% else %}<span class="small muted">needs a reviewer's confirmation</span>{% endif %}
+          {% endif %}
+        </td>
         <td class="small">{{ d.note }}</td>
         {% endif %}
       </tr>

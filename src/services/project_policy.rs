@@ -558,6 +558,10 @@ pub struct ReviewPolicyView {
     pub role_group_hidden: bool,
     /// Obsoleting and superseding needs a released change order (step 3).
     pub obsolete_requires_change: bool,
+    /// The requester of a change request does not decide it (step 9).
+    pub requester_cannot_decide: bool,
+    /// "Use as is" deviations are confirmed by a reviewer one by one (step 9).
+    pub concessions_need_review: bool,
 }
 
 /// What a manager submits.
@@ -569,6 +573,10 @@ pub struct ReviewPolicyInput {
     pub role_group_code: Option<String>,
     /// `None` leaves the setting as it is.
     pub obsolete_requires_change: Option<bool>,
+    /// `None` leaves the setting as it is.
+    pub requester_cannot_decide: Option<bool>,
+    /// `None` leaves the setting as it is.
+    pub concessions_need_review: Option<bool>,
 }
 
 async fn review_policy_of(
@@ -576,14 +584,15 @@ async fn review_policy_of(
     viewer: Option<&Actor>,
     project_id: Uuid,
 ) -> AppResult<ReviewPolicyView> {
-    let row = sqlx::query_as::<_, (Option<i32>, Option<Uuid>, bool)>(
-        "SELECT review_min_approvals, review_role_project_id, obsolete_requires_change
+    let row = sqlx::query_as::<_, (Option<i32>, Option<Uuid>, bool, bool, bool)>(
+        "SELECT review_min_approvals, review_role_project_id, obsolete_requires_change,
+                requester_cannot_decide, concessions_need_review
          FROM project_policies WHERE project_id = $1",
     )
     .bind(project_id)
     .fetch_optional(&mut *conn)
     .await?
-    .unwrap_or((None, None, false));
+    .unwrap_or((None, None, false, false, false));
     let required_reviewers = sqlx::query_as::<_, PolicyPerson>(
         "SELECT u.id, u.username, u.display_name FROM project_required_reviewers r
          JOIN users u ON u.id = r.user_id WHERE r.project_id = $1 ORDER BY u.username",
@@ -614,6 +623,8 @@ async fn review_policy_of(
         role_group,
         role_group_hidden,
         obsolete_requires_change: row.2,
+        requester_cannot_decide: row.3,
+        concessions_need_review: row.4,
     })
 }
 
@@ -640,7 +651,8 @@ pub async fn get_review_policy(
 /// * **Locks:** the group row (`FOR UPDATE`).
 /// * **Data:** the minimum is 1 to 50 or empty (all reviewers); required
 ///   `obsolete_requires_change` (`None` keeps it) makes direct obsolete and supersede in the
-///   group a 409.
+///   group a 409; `requester_cannot_decide` and `concessions_need_review`
+///   (`None` keeps them) are the two rules of step 9.
 ///   reviewers are active users with the editor role or higher, at most
 ///   [`MAX_REQUIRED_REVIEWERS`] (400). Existing changes already in review
 ///   keep being evaluated with the policy as it is when they are decided.
@@ -736,12 +748,15 @@ pub async fn set_review_policy(
     let before = review_policy_of(&mut tx, None, project_id).await?;
     sqlx::query(
         "INSERT INTO project_policies (project_id, review_min_approvals, review_role_project_id,
-                                       obsolete_requires_change, created_by, updated_by)
-         VALUES ($1, $2, $3, $5, $4, $4)
+                                       obsolete_requires_change, requester_cannot_decide,
+                                       concessions_need_review, created_by, updated_by)
+         VALUES ($1, $2, $3, $5, $6, $7, $4, $4)
          ON CONFLICT (project_id) DO UPDATE
          SET review_min_approvals = EXCLUDED.review_min_approvals,
              review_role_project_id = EXCLUDED.review_role_project_id,
              obsolete_requires_change = EXCLUDED.obsolete_requires_change,
+             requester_cannot_decide = EXCLUDED.requester_cannot_decide,
+             concessions_need_review = EXCLUDED.concessions_need_review,
              updated_by = EXCLUDED.updated_by, updated_at = now()",
     )
     .bind(project_id)
@@ -752,6 +767,16 @@ pub async fn set_review_policy(
         input
             .obsolete_requires_change
             .unwrap_or(before.obsolete_requires_change),
+    )
+    .bind(
+        input
+            .requester_cannot_decide
+            .unwrap_or(before.requester_cannot_decide),
+    )
+    .bind(
+        input
+            .concessions_need_review
+            .unwrap_or(before.concessions_need_review),
     )
     .execute(&mut *tx)
     .await?;
@@ -779,11 +804,15 @@ pub async fn set_review_policy(
             "required_reviewers": after.required_reviewers.iter().map(|p| &p.username).collect::<Vec<_>>(),
             "role_group": after.role_group.as_ref().map(|g| &g.code),
             "obsolete_requires_change": after.obsolete_requires_change,
+            "requester_cannot_decide": after.requester_cannot_decide,
+            "concessions_need_review": after.concessions_need_review,
             "previous": {
                 "min_approvals": before.min_approvals,
                 "required_reviewers": before.required_reviewers.iter().map(|p| &p.username).collect::<Vec<_>>(),
                 "role_group": before.role_group.as_ref().map(|g| &g.code),
                 "obsolete_requires_change": before.obsolete_requires_change,
+                "requester_cannot_decide": before.requester_cannot_decide,
+                "concessions_need_review": before.concessions_need_review,
             },
         }),
     )
@@ -803,6 +832,43 @@ pub(crate) async fn obsolete_requires_change(
     };
     Ok(sqlx::query_scalar::<_, bool>(
         "SELECT obsolete_requires_change FROM project_policies WHERE project_id = $1",
+    )
+    .bind(project_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .unwrap_or(false))
+}
+
+/// Whether one of these groups keeps the requester of a change request from
+/// deciding it. Items without a group and groups without a policy: no.
+pub(crate) async fn requester_cannot_decide(
+    conn: &mut PgConnection,
+    projects: &[Option<Uuid>],
+) -> AppResult<bool> {
+    let ids: Vec<Uuid> = projects.iter().flatten().copied().collect();
+    if ids.is_empty() {
+        return Ok(false);
+    }
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM project_policies
+                       WHERE project_id = ANY($1) AND requester_cannot_decide)",
+    )
+    .bind(&ids)
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
+/// Whether "use as is" deviations in this group need a reviewer's separate
+/// confirmation. Items without a group and groups without a policy: no.
+pub(crate) async fn concessions_need_review(
+    conn: &mut PgConnection,
+    project_id: Option<Uuid>,
+) -> AppResult<bool> {
+    let Some(project_id) = project_id else {
+        return Ok(false);
+    };
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT concessions_need_review FROM project_policies WHERE project_id = $1",
     )
     .bind(project_id)
     .fetch_optional(&mut *conn)

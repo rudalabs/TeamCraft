@@ -1813,7 +1813,9 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
 ///
 /// * **Permission:** CAD editor; the change is in review, the actor sees every
 ///   affected item and is one of its reviewers with a pending decision (409
-///   when already decided); a rejection needs a comment.
+///   when already decided); a rejection needs a comment; an approval needs
+///   every "use as is" deviation confirmed where the group asks for it
+///   (`as_built::ensure_concessions_confirmed`, 409).
 /// * **Locks:** the change row (`FOR UPDATE`); on release or rejection every
 ///   affected revision (`revisions::lock`) before its state changes.
 /// * **Audit:** `change.approve` / `change.reject`; when the change finishes,
@@ -1871,6 +1873,11 @@ pub async fn review(
         return Err(AppError::Conflict(
             "You have already decided on this change.".into(),
         ));
+    }
+    if decision == Decision::Approved {
+        // groups with `concessions_need_review`: every "use as is" deviation
+        // is confirmed on its own before an approval counts
+        as_built::ensure_concessions_confirmed(&mut tx, change_id).await?;
     }
     sqlx::query(
         "UPDATE change_reviews SET decision = $3, comment = $4, decided_at = now()

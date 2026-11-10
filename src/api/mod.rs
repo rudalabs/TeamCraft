@@ -215,6 +215,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/as-built-deviations/{id}",
             patch(as_built::patch_deviation).delete(as_built::delete_deviation),
         )
+        .route(
+            "/as-built-deviations/{id}/confirm",
+            post(as_built::confirm_concession),
+        )
         .route("/items/{number}/built-units", get(as_built::built_units))
         .route(
             "/items/{number}/revisions/{code}/built-units",
@@ -507,7 +511,7 @@ async fn index() -> Json<Value> {
             "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages|notification_content|external_llm|desktop_sync: bool}, read_log?, log_retention_days?} need-to-know policy – managers and admins",
             "GET    /api/v1/projects/{code}/access-log               ?user=&kind=view|download|package|export&since=&until=&limit= read and download log (groups with read_log) – managers and admins",
             "GET    /api/v1/projects/{code}/review-policy            review policy: min approvals, required reviewers, role group",
-            "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?, obsolete_requires_change?} – managers and admins",
+            "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?, obsolete_requires_change?, requester_cannot_decide?, concessions_need_review?} – managers and admins",
             "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
             "GET    /api/v1/projects/{code}/access-review            access report of a restricted group (members, source, last sign-in, policy, elevations, reviews); ?format=csv – managers and admins",
             "POST   /api/v1/projects/{code}/access-review            {note} confirm the access review (dated, audited) – managers and admins",
@@ -599,6 +603,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/as-built/deviations  {kind: dimension|material|component|process|other, feature, designed?, built?, disposition?: open|use_as_is|rework|repair|scrap, note?}",
             "PATCH  /api/v1/as-built-deviations/{id}                  any deviation field",
             "DELETE /api/v1/as-built-deviations/{id}",
+            "POST   /api/v1/as-built-deviations/{id}/confirm          a reviewer accepts a \"use as is\" concession",
             "GET    /api/v1/items/{number}/built-units                units built to the design item (older design revision? open deviations?)",
             "POST   /api/v1/items/{number}/revisions/{code}/built-units  {serial_number?, built_on?, number?, name?, note?, project?, with_bom?: true} – records a unit built to this design revision",
             "GET    /api/v1/projects/{code}/result-templates         extraction templates of the group (see the simulation guide)",

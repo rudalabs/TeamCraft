@@ -230,6 +230,26 @@ that moves both through review:
 
 Step 3 of [#152](https://github.com/rudalabs/TeamCraft/issues/152).
 
+### Requesters do not decide, concessions are confirmed
+
+Two more checkboxes of the same form, both off by default (`requester_cannot_decide` and
+`concessions_need_review` in `PUT /api/v1/projects/{code}/review-policy`; omitted: unchanged):
+
+* **Requesters do not decide their own change requests.** The person who raised a
+  change request on items of the group cannot accept, reject or defer it (403,
+  administrators included); another CAD editor of the group does. The request page
+  and `GET /api/v1/change-requests/{number}` show `can.decide = false` for them.
+* **A reviewer confirms each "use as is" deviation.** For an as-built revision of
+  the group in a change order, every deviation with the disposition *use as is* is
+  a concession that a reviewer of that change confirms on its own (*Confirm* in the
+  deviation table, `POST /api/v1/as-built-deviations/{id}/confirm`) before any
+  approval counts – approving earlier answers 409 and names the deviations. The
+  person who recorded the deviation cannot confirm it (four-eyes). Changing a
+  deviation clears its confirmation, and *Revise* copies deviations unconfirmed.
+  The audit log records `as_built.concession_confirm`.
+
+Step 9 of [#152](https://github.com/rudalabs/TeamCraft/issues/152).
+
 ## What outsiders see of links
 
 A visible item can point to a restricted one, and the other way round:

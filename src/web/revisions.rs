@@ -441,14 +441,16 @@ pub async fn show(
     // As-built: the build record and deviations of an as-built revision;
     // for a design (part, assembly, software) the units built to it.
     let as_built = if rev.item_type == ItemType::AsBuilt.as_str() {
-        let (record, deviations) = tokio::try_join!(
+        let (record, deviations, concessions) = tokio::try_join!(
             as_built::record(&st.db, me, id),
-            as_built::deviations(&st.db, me, id)
+            as_built::deviations(&st.db, me, id),
+            as_built::concession_review(&st.db, me, &rev)
         )?;
         json!({
             "record": record,
             "summary": as_built::summarize(&deviations),
             "deviations": deviations,
+            "concessions": concessions,
             "kinds": DeviationKind::ALL
                 .iter()
                 .map(|k| json!({ "value": k.as_str(), "label": k.label() }))
