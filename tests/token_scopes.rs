@@ -369,6 +369,50 @@ async fn tokens_are_managed_through_the_api_with_a_scope() {
     app.teardown().await;
 }
 
+/// An admin revoking somebody else's token is recorded against the token's
+/// owner (with the admin as actor), so it shows in the owner's history.
+#[tokio::test]
+async fn an_admin_revoke_is_recorded_on_the_owner() {
+    let app = app_or_skip!();
+    let (admin, admin_token) = app.user("root", Role::Admin).await;
+    let (leaver, _) = app.user_in("lena", Role::Editor, &["ROVER"]).await;
+    let value = token(&app, &leaver, TokenScope::Full).await;
+    let id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM api_tokens WHERE user_id = $1 AND name = 'scoped'")
+            .bind(leaver.id)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+
+    let r = app
+        .api(
+            Method::DELETE,
+            &format!("/api/v1/tokens/{id}"),
+            &admin_token,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.text());
+    let r = app.api(Method::GET, "/api/v1/items", &value, None).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "the token is gone");
+
+    let (entity, actor, summary): (uuid::Uuid, uuid::Uuid, String) = sqlx::query_as(
+        "SELECT entity_id, user_id, summary FROM audit_log WHERE action = 'token.revoke'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(entity, leaver.id, "on the owner");
+    assert_eq!(actor, admin.id, "by the admin");
+    assert!(summary.contains("of lena"), "{summary}");
+    assert!(!app
+        .audit_actions(admin.id)
+        .await
+        .contains(&"token.revoke".to_string()));
+
+    app.teardown().await;
+}
+
 #[tokio::test]
 async fn the_account_page_creates_scoped_tokens() {
     let app = app_or_skip!();

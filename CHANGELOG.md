@@ -13,6 +13,12 @@ see the notices in the README.
 
 ## [Unreleased]
 
+### Fixed
+
+- An administrator revoking somebody else's API token is recorded in the
+  token owner's history ("Revoked API token 'x' of lena"), no longer in the
+  administrator's own (#173).
+
 ## [0.2.7] - 2026-11-10
 
 Changes since the `v0.2.6` tag.
