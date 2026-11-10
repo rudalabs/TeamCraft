@@ -1053,3 +1053,107 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 .node.twin { background: var(--selected); outline: 1px dashed var(--control-border); outline-offset: -1px; }
 .node.restricted { font-style: italic; }
 .node .lock-owner { display: inline-flex; align-items: center; gap: 2px; color: var(--text-dim); font-size: 12px; }
+
+/* ======================================================================
+   Assembly graph (js/graph.js): a navigable reference/BOM graph.
+   ====================================================================== */
+
+/* The fixed back control at the left of the sub-tab row (same place always). */
+.graph-back {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin: 0 8px 6px 0; padding: 4px 10px;
+  font-size: var(--fs-body); font-weight: 600; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--control-border); border-radius: var(--radius-sm);
+}
+@media (hover: hover) { .graph-back:where(:enabled):hover { background: var(--surface-hover); border-color: var(--text-muted); } }
+.subtabs.has-back { align-items: center; }
+
+.graph-legend {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  margin-bottom: 10px; font-size: 12px; color: var(--text-muted);
+}
+.g-legend-label { color: var(--text-dim); }
+.g-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.g-legend-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--border-strong); background: var(--surface); }
+.g-legend-sep { width: 1px; height: 14px; background: var(--border); }
+
+.graph-pane {
+  position: relative; height: min(72vh, 760px); min-height: 360px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-sunken);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 22px 22px; overflow: hidden; touch-action: none;
+}
+.g-loading, .g-empty {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  color: var(--text-muted); font-size: 13px; text-align: center; pointer-events: none;
+}
+.g-empty { top: auto; bottom: 14px; transform: translateX(-50%); }
+.g-svg { width: 100%; height: 100%; display: block; cursor: grab; }
+.g-svg.grabbing { cursor: grabbing; }
+
+/* edges */
+.g-edge { stroke: var(--border-strong); stroke-width: 1.5; fill: none; }
+.g-edge-reference { stroke-dasharray: 5 4; }
+.g-edge-used-by { stroke: var(--control-border); }
+.g-arrow { fill: var(--border-strong); }
+.g-arrow-used-by { fill: var(--control-border); }
+
+/* node cards (foreignObject) */
+.g-node {
+  position: relative; box-sizing: border-box; width: 100%; height: 100%;
+  border: 2px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface); overflow: hidden; cursor: pointer;
+  box-shadow: var(--shadow-pop); font-family: inherit;
+  transition: transform .08s ease, box-shadow .08s ease;
+}
+@media (hover: hover) { .g-node:hover { transform: translateY(-1px); } }
+.g-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.g-node.is-center { border-width: 3px; box-shadow: 0 0 0 4px var(--selected), var(--shadow-pop); }
+
+.g-thumb {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); overflow: hidden;
+}
+.g-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #fff; }
+.g-img.hidden { display: none; }
+.g-glyph { font-size: 30px; line-height: 1; color: var(--text-dim); }
+
+.g-cap {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 6px 4px;
+  display: flex; flex-direction: column; gap: 1px;
+  background: linear-gradient(to top, var(--surface) 55%, transparent);
+}
+.g-name {
+  font-size: 12px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.g-sub { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.g-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--border-strong); }
+
+.g-badges { position: absolute; top: 4px; right: 4px; display: flex; flex-wrap: wrap; gap: 3px; justify-content: flex-end; max-width: 80%; }
+.g-badge {
+  font-size: 10px; line-height: 1; padding: 2px 4px; border-radius: var(--radius-xs);
+  color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.g-badge.g-ref { color: var(--text-muted); }
+.g-badge.g-up { color: var(--st-wip-fg); background: var(--st-wip-bg); border-color: var(--st-wip-bd); }
+
+/* colour = lifecycle state (reuses the badge palette); the dot mirrors it */
+.g-node.state-released { border-color: var(--st-ok-fg); }
+.state-released .g-dot { background: var(--st-ok-fg); }
+.g-node.state-in_review { border-color: var(--st-review-fg); }
+.state-in_review .g-dot { background: var(--st-review-fg); }
+.g-node.state-in_work { border-color: var(--st-wip-bd); }
+.state-in_work .g-dot { background: var(--st-wip-fg); }
+.g-node.state-obsolete { border-color: var(--border-strong); border-style: dashed; }
+.state-obsolete .g-name { text-decoration: line-through; color: var(--text-muted); }
+.state-obsolete .g-dot { background: var(--text-dim); }
+.g-node.state-unknown { border-color: var(--border-strong); }
+
+/* legend swatches reuse the same colours */
+.g-legend-dot.state-released { border-color: var(--st-ok-fg); background: var(--st-ok-bg); }
+.g-legend-dot.state-in_review { border-color: var(--st-review-fg); background: var(--st-review-bg); }
+.g-legend-dot.state-in_work { border-color: var(--st-wip-bd); background: var(--st-wip-bg); }
+.g-legend-dot.state-obsolete { border-color: var(--border-strong); border-style: dashed; background: transparent; }
