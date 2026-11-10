@@ -505,6 +505,12 @@ pub struct ChangeReview {
     pub decision: String,
     pub comment: String,
     pub decided_at: Option<DateTime<Utc>>,
+    /// How the decision was signed off (`session`, `password`, `sso`, `token`).
+    #[sqlx(default)]
+    pub sign_off_method: Option<String>,
+    /// What the sign-off means, as the reviewer stated it.
+    #[sqlx(default)]
+    pub sign_off_meaning: String,
     /// Why a pending reviewer can no longer decide (`deactivated`, `not_editor`,
     /// `cannot_see_items`); `None` when they can, and for decided reviews.
     #[sqlx(default)]
@@ -522,6 +528,10 @@ pub struct ChangeReviewRound {
     pub comment: String,
     pub decided_at: Option<DateTime<Utc>>,
     pub closed_at: DateTime<Utc>,
+    #[sqlx(default)]
+    pub sign_off_method: Option<String>,
+    #[sqlx(default)]
+    pub sign_off_meaning: String,
 }
 
 /// An engineering change request (ECR).

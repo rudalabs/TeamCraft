@@ -25,6 +25,11 @@ see the notices in the README.
   order that released it and its approvers (`released_by`), and
   administrators export the audit log as CSV or JSON (*Admin → Audit log*,
   `GET /api/v1/audit`); each export is recorded (#152 step 8).
+- Sign-off of review decisions (#152 step 4): `TEAMCRAFT_APPROVAL_REAUTH`
+  (`off` by default, `release`, `every_decision`) asks for the password – or
+  a fresh single sign-on (`prompt=login`, *Sign in again*) – to decide in the
+  browser. Every decision records how it was signed off and an optional
+  meaning ("approved as design owner"). Migration 0063.
 
 ### Fixed
 

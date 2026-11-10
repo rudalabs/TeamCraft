@@ -95,6 +95,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/setup", post(auth_pages::setup_submit))
         .route("/auth/oidc/login", get(auth_pages::oidc_start))
         .route("/auth/oidc/callback", get(auth_pages::oidc_callback))
+        .route("/auth/oidc/reauth", get(auth_pages::oidc_reauth))
         // items
         .route(
             "/items",

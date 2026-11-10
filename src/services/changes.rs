@@ -33,6 +33,23 @@ use crate::{
     },
 };
 
+/// How a reviewer signs off a decision (#152 step 4).
+#[derive(Clone, Debug)]
+pub struct SignOff {
+    pub method: domain::SignOffMethod,
+    /// What the approval means, e.g. "approved as design owner" (may be empty).
+    pub meaning: String,
+}
+
+impl SignOff {
+    pub fn new(method: domain::SignOffMethod, meaning: &str) -> SignOff {
+        SignOff {
+            method,
+            meaning: meaning.to_string(),
+        }
+    }
+}
+
 /// The change order that released each of these revisions, with its
 /// approvers (for the package manifest, #152 step 8): revision id →
 /// `{change, title, released_at, approvals: [{reviewer, name, approved_at}]}`,
@@ -282,7 +299,7 @@ pub(crate) async fn items_unchecked(pool: &PgPool, change_id: Uuid) -> AppResult
 pub async fn reviews(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeReview>> {
     Ok(sqlx::query_as::<_, ChangeReview>(&format!(
         "SELECT cr.reviewer_id, u.username AS reviewer_username, u.display_name AS reviewer_name,
-                cr.decision, cr.comment, cr.decided_at,
+                cr.decision, cr.comment, cr.decided_at, cr.sign_off_method, cr.sign_off_meaning,
                 CASE WHEN cr.decision <> 'pending' THEN NULL
                      WHEN NOT u.active THEN 'deactivated'
                      WHEN u.role NOT IN ('editor', 'admin') THEN 'not_editor'
@@ -317,7 +334,8 @@ pub async fn review_round(pool: &PgPool, change_id: Uuid) -> AppResult<i32> {
 pub async fn earlier_rounds(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeReviewRound>> {
     Ok(sqlx::query_as::<_, ChangeReviewRound>(
         "SELECT rr.round, rr.reviewer_id, u.username AS reviewer_username,
-                u.display_name AS reviewer_name, rr.decision, rr.comment, rr.decided_at, rr.closed_at
+                u.display_name AS reviewer_name, rr.decision, rr.comment, rr.decided_at, rr.closed_at,
+                rr.sign_off_method, rr.sign_off_meaning
          FROM change_review_rounds rr JOIN users u ON u.id = rr.reviewer_id
          WHERE rr.change_id = $1
          ORDER BY rr.round DESC, u.display_name",
@@ -705,8 +723,10 @@ async fn reset_reviews(conn: &mut PgConnection, change_id: Uuid) -> AppResult<()
     .await?;
     if decided {
         sqlx::query(
-            "INSERT INTO change_review_rounds (change_id, round, reviewer_id, decision, comment, decided_at)
-             SELECT cr.change_id, c.review_round, cr.reviewer_id, cr.decision, cr.comment, cr.decided_at
+            "INSERT INTO change_review_rounds (change_id, round, reviewer_id, decision, comment,
+                                              decided_at, sign_off_method, sign_off_meaning)
+             SELECT cr.change_id, c.review_round, cr.reviewer_id, cr.decision, cr.comment,
+                    cr.decided_at, cr.sign_off_method, cr.sign_off_meaning
              FROM change_reviews cr JOIN changes c ON c.id = cr.change_id
              WHERE cr.change_id = $1
              ON CONFLICT DO NOTHING",
@@ -720,7 +740,9 @@ async fn reset_reviews(conn: &mut PgConnection, change_id: Uuid) -> AppResult<()
             .await?;
     }
     sqlx::query(
-        "UPDATE change_reviews SET decision = 'pending', comment = '', decided_at = NULL WHERE change_id = $1",
+        "UPDATE change_reviews SET decision = 'pending', comment = '', decided_at = NULL,
+                sign_off_method = NULL, sign_off_meaning = ''
+         WHERE change_id = $1",
     )
     .bind(change_id)
     .execute(&mut *conn)
@@ -1896,21 +1918,38 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
 ///   implemented change requests (`requests::on_change_released`), the
 ///   notifications and the webhook deliveries in one transaction
 ///   (`tests/atomic_processes.rs`); a second approval at once gets a 409.
+/// * **Sign-off:** when `reauth` asks for it (`TEAMCRAFT_APPROVAL_REAUTH`),
+///   a decision signed off only by the web session is refused (403); the
+///   method and the stated meaning are stored with the review.
 pub async fn review(
     pool: &PgPool,
     actor: &Actor,
     change_id: Uuid,
     decision: Decision,
     comment: &str,
+    sign_off: &SignOff,
+    reauth: domain::ApprovalReauth,
 ) -> AppResult<Change> {
     actor.require(Role::Editor)?;
     let comment = domain::limit_text("Comment", comment, 4000)?;
+    let meaning = domain::limit_text(
+        "Meaning of the sign-off",
+        &sign_off.meaning,
+        domain::MAX_SIGN_OFF_MEANING,
+    )?;
     if decision == Decision::Pending {
         return Err(AppError::BadRequest("Choose approve or reject.".into()));
     }
     if decision == Decision::Rejected && comment.is_empty() {
         return Err(AppError::BadRequest(
             "Please explain why you reject the change.".into(),
+        ));
+    }
+    if reauth.requires(decision) && !sign_off.method.is_fresh() {
+        return Err(AppError::Forbidden(
+            "Confirm your decision with your password (or sign in again with single sign-on): \
+             this server asks for a fresh sign-in for review decisions."
+                .into(),
         ));
     }
     let mut tx = pool.begin().await?;
@@ -1947,13 +1986,16 @@ pub async fn review(
         as_built::ensure_concessions_confirmed(&mut tx, change_id).await?;
     }
     sqlx::query(
-        "UPDATE change_reviews SET decision = $3, comment = $4, decided_at = now()
+        "UPDATE change_reviews SET decision = $3, comment = $4, decided_at = now(),
+                sign_off_method = $5, sign_off_meaning = $6
          WHERE change_id = $1 AND reviewer_id = $2",
     )
     .bind(change_id)
     .bind(actor.id)
     .bind(decision.as_str())
     .bind(&comment)
+    .bind(sign_off.method.as_str())
+    .bind(&meaning)
     .execute(&mut *tx)
     .await?;
     audit::record(
@@ -1980,7 +2022,7 @@ pub async fn review(
                 format!(": {comment}")
             }
         ),
-        json!({ "comment": comment }),
+        json!({ "comment": comment, "sign_off": sign_off.method.as_str(), "meaning": meaning }),
     )
     .await?;
 

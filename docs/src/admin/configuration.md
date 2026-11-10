@@ -152,6 +152,20 @@ limit still are). Every variable also exists as `NAME_FILE`.
 | `TEAMCRAFT_METRICS_TOKEN`                                                  | – (endpoint off)                  | enables `GET /metrics` (Prometheus text format); the scraper sends this value (at least 16 characters) as `Authorization: Bearer …`. Request counts and latency, database pool, pending webhook deliveries, e-mails and chat messages, 3D preview queue |
 | `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME`, `TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD` | `admin` / –                       | create this administrator on start when there are no accounts (public servers)                                                                                                                                                                          |
 | `TEAMCRAFT_OIDC_*`                                                         | –                                 | single sign-on, see [Users, roles and SSO](users.md)                                                                                                                                                                                                    |
+| `TEAMCRAFT_APPROVAL_REAUTH`                                                | `off`                             | a fresh sign-in to sign off review decisions in the browser: `release` (every approval) or `every_decision` (approvals and rejections); see below                                                                                                        |
+
+**Sign-off of review decisions.** With `TEAMCRAFT_APPROVAL_REAUTH` a reviewer
+confirms a decision on the change page with the account password, or – for
+single sign-on accounts – with *Sign in again*, which sends them to the
+identity provider with `prompt=login` and `max_age=0`; the provider's
+`auth_time` must be at most five minutes old, and the confirmation counts
+for 10 minutes. API tokens are not asked: reviewing needs the `approve`
+token scope (`write` tokens get 403). Every decision records how it was
+signed off (`session`, `password`, `sso` or `token`) and an optional stated
+meaning ("approved as design owner"), shown on the change page, in
+`GET /api/v1/changes/{number}` and kept with earlier review rounds. A wrong
+password counts like a failed sign-in (`user.password_failed`, throttled);
+a fresh SSO sign-in writes `user.reauthenticate`.
 
 Failed password sign-ins are counted per username and per client address
 for 15 minutes from the first failure; when a counter is full the sign-in

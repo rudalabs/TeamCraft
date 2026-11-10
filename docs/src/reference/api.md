@@ -441,6 +441,16 @@ last with `"cannot_review": true` (four-eyes): show them, do not add them. It on
 [Suggested reviewers](../guide/changes.md#suggested-reviewers) for the
 sources and points.
 
+### Review decisions and their sign-off
+
+`POST /changes/{number}/review` with `{"decision": "approve"|"reject",
+"comment": "…", "meaning": "…"}` needs a token with the `approve` scope.
+Each entry of `reviews` and `earlier_rounds` carries `sign_off_method`
+(`session`, `password`, `sso`, `token`; `null` while pending) and
+`sign_off_meaning`. In the browser, `TEAMCRAFT_APPROVAL_REAUTH` asks for the
+password or a fresh single sign-on (see
+[Configuration](../admin/configuration.md)).
+
 ### Review rounds and absent reviewers
 
 `GET /changes/{number}` returns `review_round`, `earlier_rounds` (reviews of

@@ -262,6 +262,9 @@ pub(super) struct ReviewBody {
     decision: String,
     #[serde(default)]
     comment: String,
+    /// What the sign-off means, e.g. "approved as design owner".
+    #[serde(default)]
+    meaning: String,
 }
 
 pub(super) async fn review_change(
@@ -274,7 +277,19 @@ pub(super) async fn review_change(
     let decision = Decision::parse(&body.decision)
         .filter(|d| *d != Decision::Pending)
         .ok_or_else(|| AppError::BadRequest("decision must be approve or reject.".into()))?;
-    changes::review(&st.db, &me, change.id, decision, &body.comment).await?;
+    // a bearer token with the `approve` scope (checked before the handler)
+    // is the sign-off of the API
+    let sign_off = changes::SignOff::new(crate::domain::SignOffMethod::Token, &body.meaning);
+    changes::review(
+        &st.db,
+        &me,
+        change.id,
+        decision,
+        &body.comment,
+        &sign_off,
+        st.config.approval_reauth,
+    )
+    .await?;
     Ok(Json(change_json(&st, &me, &number).await?))
 }
 

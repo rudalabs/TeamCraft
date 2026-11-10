@@ -378,8 +378,10 @@ real files and belong to section 3 once such files are at hand.
 - [x] Step 3: obsolete and supersede through a change order (group setting `obsolete_requires_change`, obsolete and
   supersede lines on a change order applied on release, supersede notifies watchers). Left: an
   `obsolete_requires_change` toggle in the desktop app; lines from MCP and the desktop app.
-- [ ] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication
-  (`TEAMCRAFT_APPROVAL_REAUTH`, open).
+- [x] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication
+  (`TEAMCRAFT_APPROVAL_REAUTH` = `release` | `every_decision`: password or a fresh SSO sign-in with `prompt=login`,
+  method and meaning stored per review; `tests/approval_sign_off.rs`, `tests/oidc_flow.rs`). The meaning is free
+  text (open question 7: no fixed list yet).
 - [x] Step 5: keep review rounds (`change_review_rounds`, `changes.review_round`; change page and API show earlier
   rounds).
 - [x] Step 6: flag and replace absent reviewers (substitutes per user: still open).

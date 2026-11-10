@@ -76,6 +76,21 @@
       <textarea name="comment" maxlength="4000" aria-describedby="decision-hint"></textarea>
       <span class="hint" id="decision-hint">A rejection needs a comment: what has to change.</span>
     </label>
+    <label>Meaning of your sign-off <span class="hint">optional, e.g. approved as design owner</span>
+      <input type="text" name="meaning" maxlength="200">
+    </label>
+    {% if sign_off is defined and sign_off.reauth != "off" %}
+      {% if sign_off.reauthenticated %}
+      <p class="hint">You signed in again – your decision is confirmed with single sign-on (for {{ sign_off.window_minutes }} minutes).</p>
+      {% elif sign_off.sso %}
+      <p class="notice">This server asks for a fresh sign-in to {% if sign_off.rejections_too %}decide{% else %}approve{% endif %}.
+        <a class="button" href="/auth/oidc/reauth?next=/changes/{{ change.id }}%23decision">Sign in again</a></p>
+      {% else %}
+      <label>Your password <span class="hint">this server asks for it to {% if sign_off.rejections_too %}approve or reject{% else %}approve{% endif %}</span>
+        <input type="password" name="password" autocomplete="current-password">
+      </label>
+      {% endif %}
+    {% endif %}
     <div class="actions">
       <button class="primary" type="submit" name="decision" value="approve">Approve change</button>
       <button class="danger" type="submit" name="decision" value="reject">Reject</button>
@@ -119,7 +134,7 @@
         <tr>
           <td class="nowrap" title="{{ r.reviewer_username }}">{{ r.reviewer_name }}
             {% if r.absent %}<span class="small block absent-reviewer">Cannot decide: {% if r.absent == "deactivated" %}deactivated{% elif r.absent == "not_editor" %}no longer an editor{% else %}cannot see every item{% endif %}</span>{% endif %}</td>
-          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}</td>
+          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}{{ m.sign_off(r) }}</td>
           <td class="pre">{{ r.comment }}</td>
           {% if can.modify %}
           <td class="right">
@@ -153,7 +168,7 @@
         <tr>
           <td class="nowrap">{{ r.round }}</td>
           <td class="nowrap" title="{{ r.reviewer_username }}">{{ r.reviewer_name }}</td>
-          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}</td>
+          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}{{ m.sign_off(r) }}</td>
           <td class="pre">{{ r.comment }}</td>
         </tr>
       {% endfor %}

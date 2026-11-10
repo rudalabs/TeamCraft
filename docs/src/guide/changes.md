@@ -121,6 +121,17 @@ touch the files. The user who submitted a change is stored in
 was introduced keep working: only the author is refused on those until they
 are withdrawn and submitted again.
 
+### Signing off a decision
+
+A reviewer may state what their approval means (*Meaning of your sign-off*,
+e.g. *approved as design owner*; `meaning` in `POST /api/v1/changes/{number}/review`).
+When the server asks for a fresh sign-in (`TEAMCRAFT_APPROVAL_REAUTH`, see
+[Configuration](../admin/configuration.md)), the review form also asks for
+the password – or offers *Sign in again* for single sign-on accounts – and
+a decision without it is refused. The change page shows how each decision
+was signed off (password, single sign-on or an API token with the `approve`
+scope) and the stated meaning.
+
 ### Review rounds and absent reviewers
 
 When a change is withdrawn or reopened after somebody decided, the decisions
