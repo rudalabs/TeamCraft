@@ -400,6 +400,12 @@ pub const RELEASE_REASON_MIN: usize = 10;
 /// Longest reason for releasing a check-out.
 pub const RELEASE_REASON_MAX: usize = 500;
 
+/// Checks a release reason as [`cancel_checkout`] would (400), for callers
+/// that release many check-outs with one reason.
+pub fn check_release_reason(raw: Option<&str>) -> AppResult<()> {
+    release_reason(raw).map(|_| ())
+}
+
 /// A release reason as given: trimmed, empty = none; its length is checked.
 fn release_reason(raw: Option<&str>) -> AppResult<Option<String>> {
     let Some(text) = raw.map(str::trim).filter(|t| !t.is_empty()) else {
