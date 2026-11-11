@@ -203,14 +203,10 @@ pub async fn create_token(
             s => domain::TokenScope::parse(s),
         }
         .ok_or_else(|| AppError::BadRequest("Choose what the token may do.".into()))?;
-        users::create_token(
-            &st.db,
-            &ctx.me,
-            &form.name,
-            users::TokenLifetime::fixed(days),
-            scope,
-        )
-        .await
+        let asked = users::TokenLifetime::fixed(days);
+        let idle = st.config.oidc_token_idle_days;
+        let lifetime = users::token_lifetime_for(&st.db, ctx.me.id, asked, idle).await?;
+        users::create_token(&st.db, &ctx.me, &form.name, lifetime, scope).await
     }
     .await;
     match result {

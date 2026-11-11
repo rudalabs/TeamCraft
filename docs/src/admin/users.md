@@ -40,6 +40,25 @@ Keycloak, Entra ID, Google, …). Register the redirect URI
 | `TEAMCRAFT_OIDC_ADMIN_GROUP`                  | `teamcraft-admins`     | members become admins              |
 | `TEAMCRAFT_OIDC_EDITOR_GROUP`                 | `teamcraft-editors`    | members become CAD editors         |
 | `TEAMCRAFT_OIDC_VIEWER_GROUP`                 | –                      | if set, required to sign in at all |
+| `TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS`              | `0` (off)              | idle lifetime of SSO users' tokens |
+
+`TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS` (1 to 3650) caps the API and desktop
+tokens that single sign-on users create from then on: a token without an
+expiry, or with a longer one, expires after that many days without use
+instead (every use renews it); a shorter fixed expiry stays. A leaver who is
+removed only at the identity provider then loses their tokens after that
+many idle days. Existing tokens keep their lifetime.
+
+**Back-channel logout.** Register
+`<TEAMCRAFT_PUBLIC_URL>/auth/oidc/backchannel-logout` as the client's
+back-channel logout URI (OpenID Connect Back-Channel Logout 1.0). When the
+provider ends a user's session – or the user is removed there – it posts a
+signed logout token; TeamCraft checks it against the provider's published
+keys (`jwks_uri`, RS256 or ES256), ends all of that user's browser sessions,
+audits it (`user.idp_logout`) and notes the time, which the report of *SSO
+users without sign-in* shows. The token must name the user (`sub`); tokens
+with only a session id (`sid`) are refused. API and desktop tokens are not
+touched – deactivate the user (*Offboard and deactivate*) for that.
 
 Accounts are created at the first sign-in; the role follows the groups at
 every sign-in. A project group bound to an IdP group (*Projects → group →

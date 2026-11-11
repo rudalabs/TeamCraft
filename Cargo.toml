@@ -54,6 +54,9 @@ pdf_oxide = { version = "0.3", default-features = false, features = ["legacy-cry
 truck-meshalgo = { version = "0.4", default-features = false, features = ["analyzers", "filters", "tessellation"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Signature check of OIDC back-channel logout tokens (RS256, ES256); already
+# in the tree through rustls
+ring = "0.17"
 rpassword = "7"
 # BOM comparison export and .xlsx files for the import tests (MIT / Apache-2.0)
 rust_xlsxwriter = { version = "0.102", default-features = false }
