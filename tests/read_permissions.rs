@@ -1689,6 +1689,8 @@ async fn texts_naming_restricted_objects_are_redacted() {
         change_id,
         teamcraft::domain::Decision::Approved,
         "",
+        &teamcraft::services::changes::SignOff::new(teamcraft::domain::SignOffMethod::Session, ""),
+        teamcraft::domain::ApprovalReauth::Off,
     )
     .await
     .expect("release");
@@ -2032,6 +2034,8 @@ async fn release(
         id,
         teamcraft::domain::Decision::Approved,
         "",
+        &teamcraft::services::changes::SignOff::new(teamcraft::domain::SignOffMethod::Session, ""),
+        teamcraft::domain::ApprovalReauth::Off,
     )
     .await
     .expect("release");
@@ -3386,6 +3390,7 @@ async fn fourth_review_round_leaks_are_closed() {
         thread: false,
         limits: String::new(),
         files: Vec::new(),
+        origin: Default::default(),
     };
     let tools = McpTools::new(&app.state, &mona_actor);
     tools.note_context(&question(&hs)).await;
@@ -3483,6 +3488,7 @@ async fn fourth_review_round_leaks_are_closed() {
         email: None,
         role: Role::Editor,
         groups: groups.iter().map(|g| g.to_string()).collect(),
+        claims: Default::default(),
     };
     upsert_oidc_user(&app.pool, identity(&["teamcraft-rocket"]))
         .await

@@ -13,14 +13,213 @@ see the notices in the README.
 
 ## [Unreleased]
 
-Changes on `main` since the `v0.2.5` tag.
-
 ### Added
 
+- Offboarding (#173, step 8): **Season handover** of a project group
+  (`/projects/{id}/season`, managers and administrators): tick the members
+  who leave – or let the page tick those inactive since a date or past their
+  new *member until* date – and run one plan: make the new lead a manager,
+  release check-outs with a reason, set *member until*, remove members and
+  demote the old managers. Every step is checked and audited on its own.
+  Migration 0070 (`project_members.expires_at`, a flag only).
+- Offboarding (#173, step 7): **groups without an active manager** – or
+  whose managers have neither signed in nor used a token for 90 days – are
+  listed for administrators on *Project groups* and at
+  `GET /api/v1/projects/manager-gaps`; the hourly housekeeping notifies the
+  administrators once per gap (audited as `project.manager_gap_alert`).
+- Offboarding (#173, step 6): a group manager can release the check-out of
+  an **active** member with a reason (*Release with reason* on the revision
+  page, `{"reason": …}` on `cancel-checkout`). The reason is audited and told
+  to the holder; without one the release is still refused.
+- Offboarding (#173, step 4): **Offboard and deactivate** on the admin user
+  page, `POST /api/v1/users/{id}/offboard` and `teamcraft user deactivate`
+  deactivate a leaver in one step – hand over the work and the manager roles
+  to a successor, delete the API tokens (so a reactivation does not bring
+  them back), release the check-outs. Deactivating the only active manager of
+  a group without a successor needs a confirmation; every step is audited.
+  Audit entries of the command line are recorded as `system` without a user.
+- Desktop app (#255): a **Projects** page (rail, `Ctrl/Cmd+5`) to choose the
+  active project group, create one, get groups into the workspace and import
+  a CAD folder. **Home** becomes a file browser of the active group: names
+  first with the number dimmed after them (long number prefixes no longer cut
+  the file names off), sorted by name by default, or by number, type or
+  state.
+- Offboarding (#173, step 1): **what a user still holds**, in one place –
+  check-outs with their age, open change orders they wrote, reviews waiting
+  for them, change requests assigned to and raised by them, owned items,
+  memberships (flagging groups where they are the only active manager) and
+  API tokens. *Users → user → Everything … still holds*
+  (`/users/{id}/holdings`), `GET /api/v1/users/{id}/holdings` and
+  `teamcraft user holdings --username`. Filtered by the reader's rights, not
+  the leaver's; group managers see the same report for the groups they
+  manage (*holds…* in the member list).
+- BOM quantities from Inventor assemblies (#247): the reference scan reads
+  how often an `.iam` places each referenced file from the file descriptor
+  table of its `UFRxDoc` stream (`src/invasm.rs`, checked against Inventor's
+  own API on 32 real assemblies: 190 of 190 files), so the folder import,
+  *Quantities from CAD…* and the BOM-from-references page get real
+  quantities instead of 1. Suppressed occurrences are left out, as in
+  Inventor's BOM (from the occurrence records in the same stream); a part
+  with only suppressed occurrences counts 0 – it stays referenced but gets
+  no BOM line. When the records do not add up, the counts include the
+  suppressed ones instead of guessing.
+  *Quantities from CAD…* reads the counts from the stored file, so it works
+  for assemblies imported before; `teamcraft rescan-references --format
+  inventor-assembly` also refreshes the stored counts of those files.
+
+- Two optional rules of a project group's review policy (#152 step 9, both
+  off by default): *Requesters do not decide their own change requests*, and
+  *A reviewer confirms each "use as is" deviation* – a reviewer of the change
+  order confirms every concession of an as-built revision on its own
+  (`POST /api/v1/as-built-deviations/{id}/confirm`) before approving.
+  Migration 0062.
+- The Pack and Go manifest names, for every released revision, the change
+  order that released it and its approvers (`released_by`), and
+  administrators export the audit log as CSV or JSON (*Admin → Audit log*,
+  `GET /api/v1/audit`); each export is recorded (#152 step 8).
+- Sign-off of review decisions (#152 step 4): `TEAMCRAFT_APPROVAL_REAUTH`
+  (`off` by default, `release`, `every_decision`) asks for the password – or
+  a fresh single sign-on (`prompt=login`, *Sign in again*) – to decide in the
+  browser. Every decision records how it was signed off and an optional
+  meaning ("approved as design owner"). Migration 0063.
+- The read log of need-to-know groups (#151, step 4) also records the read
+  tools of MCP clients and the built-in assistant that name an item (channel
+  `mcp` / `assistant`, the tool as detail) and the desktop app's Get (channel
+  `desktop`, kind `workset`); the assistant's own taint comparisons are not
+  logged. *The whole log, with filters* (`/projects/{id}/access-log`)
+  filters by user, kind, channel, object and dates and pages through the log;
+  `GET /api/v1/projects/{code}/access-log` takes the same filters and pages
+  with `next` / `before`. Migration 0066.
+- Periodic access review of need-to-know groups (#151, step 5): *Review the
+  access every (days)* flags a group "access review due" (group list, group
+  page, review page, evidence report) when no review was confirmed within the
+  interval, and the hourly housekeeping reminds the managers once it is due
+  and again after each further interval (audited). Migration 0067.
+- Conditions on membership of need-to-know groups (#151, step 2): required
+  identity-provider claims (from the last single sign-on; only the claims a
+  condition names are kept), allowed networks (client address ranges) and a
+  maximum sign-in age. A reader who does not meet them – administrators
+  included – sees the group as "not found"; a refused member is audited once
+  per session; a manager cannot set conditions that would hide the group from
+  themselves; administrators limited by the policy may tighten but not
+  loosen. The access review shows the conditions and whether each member met
+  them. The assistant applies the request's conditions (and, for a token, the
+  `api_tokens` switch) at every tool step. Migration 0068.
 - 3D preview of CATIA V5 parts (`.CATPart`) from the visualisation (CGR)
   data CATIA stores in the file, refined along its exact surface normals
   like NX parts. Their thumbnail is rendered from it. Products are not
   previewed yet.
+
+### Fixed
+
+- Desktop, *Graph* tab (#254): a click on a sub-assembly now turns the tab
+  into that sub-assembly – tab title, header, toolbar and graph are its own –
+  instead of re-centring the graph inside the tab of the assembly above it;
+  a part opens its overview the same way. *← Back* leads back one step per
+  click, and a click on the assembly one came from is that same step. A click
+  on the item in the middle opens its overview and no longer adds a step:
+  each click used to add one, so the back control appeared although nothing
+  had changed. `Ctrl`/`⌘`+click opens a node in a tab of its own.
+- Every web page starts with a *Skip to the main content* link (visible
+  while it has the keyboard focus), and the 17 empty column headers (action
+  columns, the corner of the inertia tensor) have a name for screen readers.
+  The page accessibility test now requires both.
+- An administrator revoking somebody else's API token is recorded in the
+  token owner's history ("Revoked API token 'x' of lena"), no longer in the
+  administrator's own (#173).
+- CI: a unit test killed at its 1 s limit because the runner stalled no
+  longer fails the run – failed unit tests get two more attempts (nextest
+  `retries`); a hang still fails every attempt, a stall is reported as
+  `FLAKY`. The 8-million-triangle limit test runs alone, and the vault tests
+  (a disk flush per stored file) get 10 s on Windows.
+
+## [0.2.7] - 2026-11-10
+
+Changes since the `v0.2.6` tag.
+
+### Added
+
+- The *Material* field (*New item*, *Edit revision*, desktop app) suggests the
+  materials of the library with their density while you type (a `<datalist>`,
+  also without JavaScript); a name that is not in the library gets a hint.
+  Free text stays allowed.
+- Desktop: rearrange the object tabs by dragging (insertion marker, scrolling
+  at the edge of the strip) or with `Ctrl+Shift+PageUp/PageDown`; switch tabs
+  with `Ctrl+PageUp/PageDown` or `Ctrl+Tab`; arrow keys between tabs (WAI-ARIA
+  tabs); right-click menu (move to start/end, close, close others, close tabs
+  to the right).
+- Desktop: a *Graph* tab on the revision view, a navigable graph of the
+  item's neighbourhood (BOM children and references below, the assemblies
+  that use it above). Colour shows the lifecycle state, size the item's own
+  BOM complexity; every node carries the preview image and the file name.
+  The view is kept while you move through the graph and it scales to large
+  assemblies.
+- Mattermost notifications as direct messages of a bot account, never into a
+  channel (#230): `TEAMCRAFT_MATTERMOST_URL` and `TEAMCRAFT_MATTERMOST_BOT_TOKEN`
+  (also `…_FILE`). TeamCraft looks the user up by username (cached), opens the
+  direct channel and posts through the Mattermost REST API, with the full text
+  also for restricted project groups (unless the group switched notification
+  content off). An unknown or deactivated Mattermost user fails the chat
+  delivery at once with a reason shown under *Notifications*
+  (`chat_error` in `GET /api/v1/notifications`); there is no channel fallback.
+  Outbox, retries and backoff are unchanged. The notification settings
+  response has `mattermost_legacy_webhook`. No migration.
+
+### Deprecated
+
+- `TEAMCRAFT_MATTERMOST_WEBHOOK` and `TEAMCRAFT_MATTERMOST_DIRECT` for
+  notifications (channel mentions leak personal notifications to everybody in
+  the channel). They keep working when no bot is configured, log a warning at
+  start-up and the account page says so; switch as described in
+  [Upgrading](docs/src/admin/upgrade.md). `MATTERMOST_ERROR_WEBHOOK` is
+  unchanged.
+
+### Changed
+
+- Mass properties (#227): the geometry file of a revision is picked
+  automatically only when its 3D files are one model (same normalised name,
+  e.g. `box.stl`, `box.prt`, `Box_rev-B.SLDPRT`), and the page, the exports
+  and the MCP tool say so. Files of several different parts (an assembly
+  attached as one item) are no longer reduced to the alphabetically first
+  part: the revision gets the new source *geometry ambiguous*, adds nothing
+  and flags the totals incomplete until a file is chosen. The likely whole
+  assembly (root of the file references, or a name matching the item) is
+  suggested with a one-click *Use …*; the file selector in *Mass settings*
+  is grouped by model. REST, JSON, MCP (`geometry`, `root_geometry`) and the
+  CSV (`geometry_file`, `geometry_choice`) carry the candidates and whether a
+  file was chosen automatically or by hand. The preferred CAD program breaks
+  ties between native formats.
+
+## [0.2.6] - 2026-11-08
+
+Changes since the `v0.2.5` tag.
+
+### Added
+
+- Mass properties of assemblies: total mass, centre of gravity and inertia
+  tensor (about the CG and a reference point, principal moments) from the
+  exported 3D files of the parts in the common assembly frame, the densities
+  of an admin-managed material library or a per-revision override, and
+  measured masses (with optional CG and inertia) that win over everything
+  computed. Per-file length unit (mm, m, in) and number of units shown; open,
+  non-manifold and inverted meshes are reported (fully inverted ones fixed).
+  The mesh integrals run in the isolated preview process and are cached per
+  content. Page per revision with CSV and JSON export,
+  `GET /api/v1/items/{number}/revisions/{code}/mass-properties`,
+  `GET /api/v1/materials` and the read-only MCP tool `get_mass_properties`.
+  Migration 0061.
+- Preferred CAD program (*Account → Preferred CAD program*): when a revision
+  has files of the chosen program (e.g. NX), the native files of other CAD
+  programs are listed in a collapsed group on the revision page, in the vault
+  explorer and in the desktop app's Files tab. Neutral formats (STEP, JT, STL,
+  PDF, …) always stay visible; display only. `GET /api/v1/me` returns
+  `preferred_cad`, file formats carry `format_info.family`.
+- 3D preview of Rhino models (`.3dm`, Rhino 1 to 8) from the meshes Rhino
+  stores (mesh objects, render meshes of polysurfaces and extrusions, block
+  instances placed); SubD objects are refined from their control net
+  (Catmull-Clark with creases). Hidden objects and layers are left out. The
+  thumbnail is rendered from the 3D preview; models saved without meshes
+  show the picture Rhino stored.
 - Branding (#184): administrators rename the header name and subtitle ("TeamCraft PLM") under *Admin → Branding*;
   effective at once in the web
   header, page titles, sign-in page, notification e-mails and the desktop
@@ -194,9 +393,65 @@ Changes on `main` since the `v0.2.5` tag.
   their component tree; suppressed and hidden components are left out. The
   thumbnails of SOLIDWORKS parts and assemblies are rendered from the 3D
   preview.
+- 3D preview of standalone JT files (JT 9 with topologically compressed
+  triangle LODs; other versions report their version), graphical revision
+  comparison (*Compare with …* lays another version or revision over the
+  model) and 3D notes pinned to a picked point of a file version (#200).
+- Storage quotas per user and for the whole vault (a refused
+  upload gets 413 and stores nothing), optional malware scanning with ClamAV
+  (`TEAMCRAFT_CLAMD_ADDR`; infected files are refused and never stored),
+  likely duplicates by name (`GET /api/v1/items/duplicates`, a hint after
+  creating an item), bulk revise and obsolete (`POST /api/v1/items/bulk`, up to
+  200 items, one transaction each), and a section plane and point-to-point
+  measuring in the 3D viewer (web and desktop) (#199).
+- One-click copy of item numbers, printable QR labels of a revision (the QR
+  code of the short link `/i/<number>`), and a warning before removing a
+  file that CAD files of other items still reference (#202).
+- New item form: chunked, resumable uploads of large files, as on the
+  revision page (#164).
+- Create a BOM from the CAD references the server found (#180): a preview with
+  instance counts as quantities (NX placed instances, SOLIDWORKS component
+  tree; otherwise 1, flagged as assumed), unmatched names and hidden items
+  counted, then the chosen lines in one audited transaction. Web UI and
+  `GET`/`POST /api/v1/items/{n}/revisions/{code}/bom/from-references`.
+- Desktop: a structure view of assemblies in the navigator, and checking out
+  an assembly gets its parts – missing parts are downloaded read-only, parts
+  changed locally are never overwritten and are listed (#183).
+- Adding files to an existing item (#181): the Files card says how (check out
+  and add, locked by someone else, in review, frozen – revise), offers *Check
+  out and add files* and takes dropped files; the desktop app has *Add files…*
+  (copies into the working folder, checks out first if needed).
+- New simulation from an item (#178): the form is prefilled from the item and
+  the item is linked as the basis in the same transaction; `POST /items`
+  takes `basis`.
+- Simulation results: *Fill with AI…* on the Results card with a box to say
+  which numbers to extract and which limits apply; the assistant proposes
+  values that a person accepts (#177).
+- Offboarding (#173, minimum fix): managers release the check-outs of
+  deactivated members (also in bulk), demote managers (at least one active
+  manager stays), take over the change orders of a deactivated author; a
+  change with a deactivated reviewer cannot be submitted; runbook *When
+  someone leaves* in the admin guide.
+- Obsolete and supersede through a change order (#152 step 3): a group
+  setting `obsolete_requires_change`, change order lines with the action
+  `obsolete` or `supersede` applied on release, and watchers are notified of
+  a supersede.
+- Need-to-know groups (#151): the switches `notification_content`,
+  `external_llm` (with `TEAMCRAFT_ASSISTANT_INTERNAL_URLS`) and
+  `desktop_sync`.
+- Mutation testing with cargo-mutants (#170): configuration, a report-only
+  check on pull requests and a weekly run; the gaps of the first
+  whole-repository run are closed with unit tests (#207).
 
 ### Changed
 
+- Desktop app, local agents: calls of TeamCraft's own read-only MCP tools
+  (by the server's `tools/list` annotations) are allowed once without a
+  permission prompt and marked *Allowed automatically (read-only)* in the
+  tool list; the server still answers with the user's rights only. Write
+  tools, other servers' tools, the agent's own tools and every request the
+  app cannot identify for certain still ask. *Settings → Agents… → Ask
+  before read-only TeamCraft tools* restores a prompt for every call.
 - Desktop: *Ask TeamCraft* and *Agent* are one view. The company AI (the
   server's assistant, with page context, quick actions, the drafts checkbox
   and the conversation kept on the server) is a backend of the *Agent* view (`Ctrl/Cmd+4`, the *Agent* button of
@@ -210,6 +465,21 @@ Changes on `main` since the `v0.2.5` tag.
   so `read_file_text` shows the real text (only ASCII STL, OBJ and KiCad files
   still drop decimal numbers for the search). Files uploaded before keep their
   old text until a new version is uploaded.
+- Admin → Attributes: the field "Order" is called "Position in forms" (#179).
+- CI runs the tests with `cargo nextest`, and a unit test fails after 1 s
+  unless it is slow on purpose (#209).
+
+### Fixed
+
+- The sign-in and error pages showed the logo twice in dark mode (#182).
+- After a refused migration (changed checksum, dirty version) the next start
+  no longer waits forever for the migration lock (#209).
+- `POST /api/v1/change-requests` checks the 100-item limit before looking up
+  the items (#163).
+- Tests and CI on `main` after merges: audit guard exemptions, the
+  `file_versions_solver_summary_object` check is validated,
+  unique migration numbers with a guard test, rustdoc links and test
+  fixtures (#196, #204, #208).
 
 ## [0.2.5] - 2026-11-07
 
@@ -291,5 +561,7 @@ Changes since the `v0.2.0` tag.
   app keeps the private file and shows a warning. Server addresses with plain
   `http://` to another computer get a warning.
 
-[Unreleased]: https://github.com/rudalabs/TeamCraft/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/rudalabs/TeamCraft/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/rudalabs/TeamCraft/compare/v0.2.6...v0.2.7
+[0.2.6]: https://github.com/rudalabs/TeamCraft/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/rudalabs/TeamCraft/compare/v0.2.0...v0.2.5

@@ -45,8 +45,9 @@ use crate::{
     services::{
         access_log::{self, AccessCtx},
         access_review, attributes, audit, bom, bom_references, changes, checkouts, desktop, files,
-        impacts, imports, items, notifications, package, project_policy, projects, references,
-        requests, reviewers, revisions, similar, stats, structure, uploads, users, workset, Page,
+        impacts, imports, items, mass_properties, membership_conditions, notifications, package,
+        project_policy, projects, references, requests, reviewers, revisions, similar, stats,
+        structure, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -70,12 +71,15 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/", get(index))
         .route("/me", get(me))
         .route("/me/password", post(change_password))
+        .route("/audit", get(audit_export))
         .route("/desktop/token", post(desktop_token))
         .route(
             "/tokens",
             get(tokens_api::list_tokens).post(tokens_api::create_token),
         )
         .route("/tokens/{id}", delete(tokens_api::revoke_token))
+        .route("/users/{id}/holdings", get(user_holdings))
+        .route("/users/{id}/offboard", post(user_offboard))
         .route("/worklist", get(worklist))
         .route("/worklist/checkin-all", post(checkin_all))
         .route("/mcp", post(crate::mcp::http).get(crate::mcp::http_get))
@@ -89,6 +93,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/branding/name", put(branding_name_set))
         .route("/branding/{kind}", get(branding_logo))
         .route("/projects", get(list_projects).post(create_project))
+        .route("/projects/manager-gaps", get(project_manager_gaps))
         .route("/projects/{code}/visibility", put(set_project_visibility))
         .route(
             "/projects/{code}/policy",
@@ -214,6 +219,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/as-built-deviations/{id}",
             patch(as_built::patch_deviation).delete(as_built::delete_deviation),
         )
+        .route(
+            "/as-built-deviations/{id}/confirm",
+            post(as_built::confirm_concession),
+        )
         .route("/items/{number}/built-units", get(as_built::built_units))
         .route(
             "/items/{number}/revisions/{code}/built-units",
@@ -319,6 +328,11 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/items/{number}/revisions/{code}/bom.xlsx",
             get(get_bom_xlsx),
         )
+        .route(
+            "/items/{number}/revisions/{code}/mass-properties",
+            get(get_mass_properties),
+        )
+        .route("/materials", get(list_materials))
         .route(
             "/items/{number}/revisions/{code}/files",
             get(list_files)
@@ -488,20 +502,24 @@ async fn index() -> Json<Value> {
         "authentication": "Authorization: Bearer <personal access token>",
         "endpoints": [
             "GET    /api/v1/me                                        the caller, its groups and token_scope",
+            "GET    /api/v1/audit?entity_type=&username=&action=&format=json|csv   audit log export (admins)",
             "POST   /api/v1/me/password                            {current_password, new_password} – change own password (throttled; ends web sessions)",
             "GET    /api/v1/worklist                                  my check-outs, reviews waiting for me, my open changes, change requests assigned to me and raised by me, dependents to check (impacts, and grouped by dependent revision as impact_groups), statistics",
             "POST   /api/v1/desktop/token                             {code, verifier} – desktop sign-in, no token needed",
             "GET    /api/v1/tokens                                    your personal access tokens (name, prefix, scope, expiry; never the value)",
             "POST   /api/v1/tokens                                    {name, expires_in_days?: 1..3650 (absent = never), scope?: full|write|read_only|mcp_only} – the value is answered once",
             "DELETE /api/v1/tokens/{id}                               revoke a token (your own; admins: any)",
+            "POST   /api/v1/users/{id}/offboard                       {release_checkouts?, hand_over_to?: username, revoke_tokens?, confirm_no_manager?} – admins: deactivate a leaver and hand over / release / revoke in one step",
+            "GET    /api/v1/users/{id}/holdings                     what a user still holds: check-outs, open change orders, pending reviews, change requests, owned items, memberships, tokens – admins; group managers for their groups",
             "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
+            "GET    /api/v1/projects/manager-gaps                     active groups without an active manager (kind none) or whose managers were inactive for 90 days (kind stale) – admins",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
             "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
-            "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages|notification_content|external_llm|desktop_sync: bool}, read_log?, log_retention_days?} need-to-know policy – managers and admins",
-            "GET    /api/v1/projects/{code}/access-log               ?user=&kind=view|download|package|export&since=&until=&limit= read and download log (groups with read_log) – managers and admins",
+            "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages|notification_content|external_llm|desktop_sync: bool}, read_log?, log_retention_days?, review_interval_days?, required_claims?: [{claim, values}], allowed_networks?: [cidr], max_signin_age_hours?} need-to-know policy – managers and admins",
+            "GET    /api/v1/projects/{code}/access-log               ?user=&kind=view|download|package|export|workset&channel=web|api|mcp|assistant|desktop&object=&since=&until=&limit=&before= read and download log (groups with read_log), one page with `next` – managers and admins",
             "GET    /api/v1/projects/{code}/review-policy            review policy: min approvals, required reviewers, role group",
-            "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?, obsolete_requires_change?} – managers and admins",
+            "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?, obsolete_requires_change?, requester_cannot_decide?, concessions_need_review?} – managers and admins",
             "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
             "GET    /api/v1/projects/{code}/access-review            access report of a restricted group (members, source, last sign-in, policy, elevations, reviews); ?format=csv – managers and admins",
             "POST   /api/v1/projects/{code}/access-review            {note} confirm the access review (dated, audited) – managers and admins",
@@ -558,6 +576,8 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/bom       {child, quantity, find_number?, notes?}",
             "GET    /api/v1/items/{number}/revisions/{code}/bom.xlsx?rule=  the expanded BOM as Excel workbook (the BOM import reads it back)",
             "GET    /api/v1/items/{number}/revisions/{code}/package?rule=  Pack and Go: ZIP with all files of the structure, bom.csv, manifest.json",
+            "GET    /api/v1/items/{number}/revisions/{code}/mass-properties?rule=&ref=x,y,z  mass, CG and inertia tensors (about the CG and the reference point, m) from the 3D files, densities and measured masses, with the source of every line",
+            "GET    /api/v1/materials                                 the material library: name, density_kg_m3, notes",
             "GET    /api/v1/items/{number}/revisions/{code}/workset?rule=&references=true  desktop Get: files of the structure and the CAD files it references, with folder, version, sha256, lock",
             "GET    /api/v1/items/{number}/revisions/{code}/structure?rule=latest|released&limit=  one level of the structure view: BOM lines with resolved revision, state, lock owner, used_in",
             "GET    /api/v1/projects/{code}/structure?limit=&offset=  top-level items of a group (not used in any BOM of the group) for the structure view",
@@ -567,7 +587,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/bom/import  same multipart fields – imports below the revision (checked out by me)",
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
             "DELETE /api/v1/bom-lines/{id}",
-            "GET    /api/v1/items/{number}/revisions/{code}/references  references, referrers, CAD file references, impacts",
+            "GET    /api/v1/items/{number}/revisions/{code}/references  references, referrers, CAD file references (files[].references[].instances: how often the file places it, null = not known), impacts",
             "POST   /api/v1/items/{number}/revisions/{code}/references  {item, kind: drawing|specification|reference, note?}",
             "DELETE /api/v1/references/{id}",
             "GET    /api/v1/items/{number}/revisions/{code}/simulation  basis links (out of date?), result values (pass/fail), summary",
@@ -591,6 +611,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/as-built/deviations  {kind: dimension|material|component|process|other, feature, designed?, built?, disposition?: open|use_as_is|rework|repair|scrap, note?}",
             "PATCH  /api/v1/as-built-deviations/{id}                  any deviation field",
             "DELETE /api/v1/as-built-deviations/{id}",
+            "POST   /api/v1/as-built-deviations/{id}/confirm          a reviewer accepts a \"use as is\" concession",
             "GET    /api/v1/items/{number}/built-units                units built to the design item (older design revision? open deviations?)",
             "POST   /api/v1/items/{number}/revisions/{code}/built-units  {serial_number?, built_on?, number?, name?, note?, project?, with_bom?: true} – records a unit built to this design revision",
             "GET    /api/v1/projects/{code}/result-templates         extraction templates of the group (see the simulation guide)",
@@ -640,7 +661,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/changes/{number}/readiness                release readiness: unreleased (blocking) and obsolete or file-scan (warning) dependencies",
             "POST   /api/v1/changes/{number}/dependencies             add the in-work revisions of all unreleased dependencies, level by level",
             "POST   /api/v1/changes/{number}/submit",
-            "POST   /api/v1/changes/{number}/review                   {decision: approve|reject, comment?}",
+            "POST   /api/v1/changes/{number}/review                   {decision: approve|reject, comment?, meaning?} – needs the approve token scope",
             "POST   /api/v1/changes/{number}/withdraw",
             "GET    /api/v1/change-requests?status=open|all|<status>&scope=mine|assigned&item=&limit=&offset=",
             "POST   /api/v1/change-requests                           {title, description?, reason?, priority?, due_date?, items?: [{item, revision?, note?}]} – any signed-in user",
@@ -667,6 +688,80 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/webhook-deliveries/{id}/retry             send a failed delivery again"
         ]
     }))
+}
+
+#[derive(Deserialize)]
+struct AuditExportQuery {
+    entity_type: Option<String>,
+    username: Option<String>,
+    action: Option<String>,
+    /// `json` (default) or `csv`.
+    format: Option<String>,
+}
+
+/// `GET /api/v1/audit?entity_type=&username=&action=&format=json|csv` – the
+/// filtered audit log as a download (administrators; `x-truncated: true`
+/// when more entries matched than one export holds).
+async fn audit_export(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Query(q): Query<AuditExportQuery>,
+) -> AppResult<Response> {
+    let filter = web::audit_filter(&q.entity_type, &q.username, &q.action);
+    let (entries, truncated) = audit::export(&st.db, &me, &filter).await?;
+    web::audit_download(&entries, truncated, q.format.as_deref() != Some("csv"))
+}
+
+/// `GET /api/v1/users/{id}/holdings` – what a user still holds, as the
+/// caller may see it (administrators; managers for the groups they manage).
+async fn user_holdings(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(
+        crate::services::offboarding::holdings(&st.db, &me, id).await?
+    )))
+}
+
+#[derive(Deserialize, Default)]
+struct OffboardBody {
+    #[serde(default)]
+    release_checkouts: bool,
+    /// Username of the successor.
+    hand_over_to: Option<String>,
+    #[serde(default)]
+    revoke_tokens: bool,
+    #[serde(default)]
+    confirm_no_manager: bool,
+}
+
+/// `POST /api/v1/users/{id}/offboard` – administrators: deactivate a leaver
+/// with the chosen offboarding steps (issue #173, step 4).
+async fn user_offboard(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+    ApiJson(body): ApiJson<OffboardBody>,
+) -> AppResult<Json<Value>> {
+    let hand_over_to = match body.hand_over_to.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(name) => Some(
+            users::find_by_username(&st.db, name)
+                .await?
+                .ok_or_else(|| AppError::BadRequest(format!("Unknown user '{name}'.")))?
+                .id,
+        ),
+    };
+    let opts = crate::services::deactivation::Offboarding {
+        release_checkouts: body.release_checkouts,
+        hand_over_to,
+        revoke_tokens: body.revoke_tokens,
+        confirm_no_manager: body.confirm_no_manager,
+    };
+    let report = crate::services::deactivation::deactivate(&st.db, &me, id, &opts).await?;
+    let summary = report.summary();
+    Ok(Json(json!({ "report": report, "summary": summary })))
 }
 
 async fn me(
@@ -726,6 +821,7 @@ struct AssistantBody {
 async fn assistant_ask(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
+    origin: crate::auth::Origin,
     ApiJson(body): ApiJson<AssistantBody>,
 ) -> AppResult<Json<Value>> {
     let run = crate::services::assistant::chat(
@@ -736,6 +832,7 @@ async fn assistant_ask(
         &body.context,
         body.allow_drafts,
         body.thread,
+        origin,
     )
     .await?;
     Ok(Json(json!(run)))

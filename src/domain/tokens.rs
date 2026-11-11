@@ -216,3 +216,32 @@ mod tests {
         assert!(s.allows_tool(false));
     }
 }
+
+/// Found by cargo mutants: the stored values, labels and refusal messages of
+/// the scopes were not pinned.
+#[cfg(test)]
+mod text_tests {
+    use super::*;
+
+    #[test]
+    fn scope_texts() {
+        let scopes: Vec<(&str, &str)> = TokenScope::ALL
+            .iter()
+            .map(|s| (s.as_str(), s.label()))
+            .collect();
+        assert_eq!(
+            scopes,
+            [
+                ("full", "full access"),
+                ("write", "read and write, no approval"),
+                ("read_only", "read-only"),
+                ("mcp_only", "MCP only")
+            ]
+        );
+        // a full token is never refused; every other scope says why
+        assert_eq!(TokenScope::Full.refusal(), "");
+        assert!(TokenScope::Write.refusal().contains("may not approve"));
+        assert!(TokenScope::ReadOnly.refusal().contains("read-only"));
+        assert!(TokenScope::McpOnly.refusal().contains("MCP endpoint"));
+    }
+}

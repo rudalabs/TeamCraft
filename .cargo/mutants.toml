@@ -20,13 +20,78 @@ examine_globs = [
     "src/cadformat.rs",
     "src/cadrefs.rs",
     "src/stepbom.rs",
+    # the 3D readers: pure, untrusted input, unit tests per format
+    "src/mesh.rs",
+    "src/mesh/**/*.rs",
+    "src/simmesh.rs",
+    "src/simmesh/**/*.rs",
+]
+
+# STEP goes through the truck CAD kernel: slow per test run and mostly
+# third-party behaviour; its own Part 21 reader (p21.rs) stays in.
+exclude_globs = [
+    "src/mesh/step.rs",
+    "src/mesh/tessellated.rs",
 ]
 
 # Mutants that are equivalent or not worth a test – each with its reason.
 # The pattern matches the mutant's name as `cargo mutants --list` prints it.
 # Add a rule only when such a mutant shows up in a report, e.g.
 #   "<impl (fmt::)?(Debug|Display) for " for log-only output.
-exclude_re = []
+exclude_re = [
+    # cell_text: at exactly 1e15 the whole-number branch and the float branch
+    # print the same digits, so `<` and `<=` cannot be told apart.
+    "src/bomtable.rs:.*replace < with <= in cell_text",
+    # split_number: the last ',' and the last '.' are never at the same index,
+    # so `c > d` and `c >= d` cannot be told apart.
+    "src/bomtable.rs:.*replace > with >= in split_number",
+    # cadrefs::names_in: `ext + 1` vs `ext * 1` only moves the stem end onto
+    # the dot before the extension; the stem is only tested for letters and
+    # digits, which the dot is not, and a name always has at least one
+    # character before the dot.
+    "src/cadrefs.rs:162:76: replace \\+ with \\* in names_in",
+    # cadrefs::names_in: `stem > 0` vs `stem >= 0` – the same condition also
+    # needs a letter or digit among the first `stem` characters, which an
+    # empty stem never has.
+    "src/cadrefs.rs:170:17: replace > with >= in names_in",
+    # cadrefs::step_file_name_entity: searching FILE_NAME from 7 bytes before
+    # `HEADER;` finds the same one – nine bytes ending before `HEADER;` cannot
+    # start within those seven.
+    "src/cadrefs.rs:257:43: replace \\+ with - in step_file_name_entity",
+    # cadrefs::step_file_name_entity: starting the depth scan at `FILE_NAME`
+    # instead of at its `(` only adds letters, which change neither depth nor
+    # string state; without a `(` both return None.
+    "src/cadrefs.rs:261:67: replace == with != in step_file_name_entity",
+    # cadrefs::step_file_name_entity: without the escaped-quote arm, `''`
+    # toggles the string state twice, which ends in the same state.
+    "src/cadrefs.rs:268:22: replace match guard in_string && .* with false in step_file_name_entity",
+    # htmltext::mostly_utf8: only called after an invalid byte was found, so
+    # `invalid >= 1`; with no multi-byte character `invalid <= multibyte` is
+    # false either way, so `multibyte > 0` vs `>= 0` cannot be told apart.
+    "src/htmltext.rs:101:15: replace > with >= in mostly_utf8",
+    # htmltext::Reader::push: inside a silent element `Reader::tag` always
+    # pushes with `silent = true`, so `self.silent > 0` never decides alone.
+    "src/htmltext.rs:680:38: replace > with < in Reader::push",
+    # htmltext: the nesting caps (`tables.len() < MAX_DEPTH`) moved by one
+    # level – 256 or 257 tracked tables/cells give the same text.
+    "src/htmltext.rs:746:30: replace < with <= in Reader::start_cell",
+    "src/htmltext.rs:815:38: replace < with <= in Reader::tag",
+    # htmltext::read_tag: tag and attribute names cut at 32 or 33 characters;
+    # start and end tags are cut alike and every name that matters is short.
+    "src/htmltext.rs:871:23: replace < with <= in read_tag",
+    "src/htmltext.rs:907:27: replace < with <= in read_tag",
+    # htmltext::to_text: reading on after the text is full only costs time –
+    # `Out::text` refuses every further character.
+    "src/htmltext.rs:979:28: replace && with \\|\\| in to_text",
+    # resultscan::compile_regex: the lazy-DFA cache limit only changes speed –
+    # when the cache is full the regex crate falls back to a slower engine
+    # with the same matches; the compile-time `size_limit` is tested.
+    "src/resultscan.rs:431:42: replace \\* with (\\+|/) in compile_regex",
+    # resultscan::glob_matches: backtracking to the `*` itself (`s * 1`)
+    # instead of past it (`s + 1`) costs one loop step – the next step sees
+    # the `*` and sets the same state (`pi = s + 1`, `mark` unchanged).
+    "src/resultscan.rs:463:20: replace \\+ with \\* in glob_matches",
+]
 
 # Unit tests only (see above); the integration tests in tests/ need PostgreSQL.
 # A cargo argument, not a test argument: the build step (`cargo test --no-run`)

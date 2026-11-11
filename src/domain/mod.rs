@@ -44,6 +44,15 @@ mod tests {
         use serde_json::json;
         assert_eq!(normalize_attribute_key(" Order No. ").unwrap(), "order_no");
         assert_eq!(normalize_attribute_key("length_mm").unwrap(), "length_mm");
+        // separators at the start and in a row fold into nothing or one '_'
+        // (found by cargo mutants)
+        assert_eq!(
+            normalize_attribute_key("--Order -- No").unwrap(),
+            "order_no"
+        );
+        assert_eq!(normalize_attribute_key("/vendor").unwrap(), "vendor");
+        assert_eq!(normalize_attribute_key("a._/b").unwrap(), "a_b");
+        assert_eq!(normalize_attribute_key(&"a".repeat(40)).unwrap().len(), 40);
         for bad in ["", "1abc", "ä", "a/b?", &"a".repeat(41)] {
             assert!(normalize_attribute_key(bad).is_err(), "{bad:?}");
         }
@@ -51,6 +60,21 @@ mod tests {
             parse_attribute_choices("Steel; steel\n Aluminium \n\n").unwrap(),
             ["Steel", "Aluminium"]
         );
+        // both limits are inclusive (found by cargo mutants)
+        assert!(parse_attribute_choices(&"x".repeat(100)).is_ok());
+        for n in [101, 102] {
+            assert!(parse_attribute_choices(&"x".repeat(n)).is_err(), "{n}");
+        }
+        let choices = |n: usize| {
+            (0..n)
+                .map(|i| format!("c{i}"))
+                .collect::<Vec<_>>()
+                .join(";")
+        };
+        assert_eq!(parse_attribute_choices(&choices(200)).unwrap().len(), 200);
+        for n in [201, 202] {
+            assert!(parse_attribute_choices(&choices(n)).is_err(), "{n}");
+        }
 
         let none: [String; 0] = [];
         let v = |t, raw| parse_attribute_value("X", t, &none, raw);
@@ -84,6 +108,7 @@ mod tests {
         assert_eq!(attribute_input_text(&json!(3)).unwrap(), "3");
         assert_eq!(attribute_input_text(&json!(true)).unwrap(), "true");
         assert_eq!(attribute_input_text(&json!(null)).unwrap(), "");
+        assert_eq!(attribute_input_text(&json!("Bosch")).unwrap(), "Bosch");
         assert!(attribute_input_text(&json!([1])).is_err());
 
         let c = |t, raw| parse_attribute_condition("X", t, raw).unwrap();
@@ -103,6 +128,13 @@ mod tests {
         );
         assert_eq!(c(AttributeType::Number, "..20"), Range(None, Some(20.0)));
         assert!(parse_attribute_condition("X", AttributeType::Number, "10-20").is_err());
+        // a number that overflows to infinity is no bound (found by cargo mutants)
+        for raw in ["1e999", "1e999..", "..-1e999"] {
+            assert!(
+                parse_attribute_condition("X", AttributeType::Number, raw).is_err(),
+                "{raw}"
+            );
+        }
 
         for k in Classification::ALL {
             assert_eq!(Classification::parse(k.as_str()), Some(k));
@@ -129,6 +161,11 @@ mod tests {
         for t in AttributeType::ALL {
             assert_eq!(AttributeType::parse(t.as_str()), Some(t));
         }
+        // the labels on the item and attribute pages (found by cargo mutants)
+        let labels: Vec<&str> = Classification::ALL.iter().map(|k| k.label()).collect();
+        assert_eq!(labels, ["In-house", "Purchased", "Standard part"]);
+        let labels: Vec<&str> = AttributeType::ALL.iter().map(|t| t.label()).collect();
+        assert_eq!(labels, ["Text", "Number", "Yes/no", "Choice list"]);
     }
 
     #[test]
@@ -315,6 +352,21 @@ mod tests {
         assert_eq!(avatar_tint("admin"), avatar_tint("admin"));
         assert!((1..=6).contains(&avatar_tint("")));
         assert!((1..=6).contains(&avatar_tint("someone else")));
+        // FNV-1a is stable across builds: the tint of a user never changes,
+        // and all six tints are used (found by cargo mutants)
+        assert_eq!(
+            [
+                avatar_tint("admin"),
+                avatar_tint("erika"),
+                avatar_tint("max"),
+                avatar_tint("")
+            ],
+            [3, 2, 6, 2]
+        );
+        let mut tints: Vec<u32> = (0..60).map(|i| avatar_tint(&format!("user{i}"))).collect();
+        tints.sort_unstable();
+        tints.dedup();
+        assert_eq!(tints, [1, 2, 3, 4, 5, 6]);
     }
 
     // --- skins.css: token blocks and contrast --------------------------------
@@ -513,6 +565,10 @@ mod tests {
         assert_eq!(revision_seq("b"), Some(2));
         assert_eq!(revision_seq(""), None);
         assert_eq!(revision_seq("I"), None);
+        // at most six letters, although seven would still fit an i32 (found
+        // by cargo mutants)
+        assert!(revision_seq("AAAAAA").is_some());
+        assert_eq!(revision_seq("AAAAAAA"), None);
         assert_eq!(revision_seq("A1"), None);
     }
 
@@ -534,6 +590,35 @@ mod tests {
         for s in LifecycleState::ALL {
             assert_eq!(LifecycleState::parse(s.as_str()), Some(s));
         }
+        // stored values, labels and the two flags of every state; file
+        // retention values (found by cargo mutants)
+        let states: Vec<(&str, &str, bool, bool)> = LifecycleState::ALL
+            .iter()
+            .map(|s| (s.as_str(), s.label(), s.is_editable(), s.is_open()))
+            .collect();
+        assert_eq!(
+            states,
+            [
+                ("in_work", "WIP", true, true),
+                ("in_review", "In Review", false, true),
+                ("released", "Released", false, false),
+                ("obsolete", "Obsolete", false, false),
+            ]
+        );
+        assert_eq!(LifecycleState::parse(" Released "), Some(Released));
+        assert_eq!(LifecycleState::parse("wip"), None);
+        for r in [FileRetention::All, FileRetention::Latest] {
+            assert_eq!(FileRetention::parse(r.as_str()), Some(r));
+        }
+        assert_eq!(
+            (FileRetention::All.as_str(), FileRetention::Latest.as_str()),
+            ("all", "latest")
+        );
+        assert_eq!(
+            FileRetention::parse(" LATEST "),
+            Some(FileRetention::Latest)
+        );
+        assert_eq!(FileRetention::parse("newest"), None);
     }
 
     #[test]
@@ -770,6 +855,15 @@ mod tests {
         assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2025-0012"), None);
         assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-12A"), None);
         assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-"), None);
+        // digits only and at most 18 of them (found by cargo mutants: `+12`
+        // and 19 digits would parse as i64)
+        assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-+12"), None);
+        assert_eq!(s.seq_of(&ctx, "ROVER-ASM-2026-1000000000000000000"), None);
+        assert_eq!(
+            s.seq_of(&ctx, "ROVER-ASM-2026-100000000000000000"),
+            Some(100_000_000_000_000_000),
+            "18 digits"
+        );
 
         let s = NumberScheme::parse("x{YY}{MM}.{SEQ}").unwrap();
         assert_eq!(s.format(&ctx, 12), "X2603.12");
@@ -806,6 +900,29 @@ mod tests {
                 NumberScheme::parse(bad).is_err(),
                 "{bad:?} must be rejected"
             );
+        }
+        // the reason is named (found by cargo mutants)
+        let msg = |raw: &str| NumberScheme::parse(raw).unwrap_err().public_message();
+        assert!(msg("PRT-{YYYY}").contains("needs a sequence"));
+        assert!(msg("{SEQ}-{SEQ:3}").contains("only once"));
+        // generated numbers of exactly 64 characters are fine, 65 are not
+        // (project code 32 + text + sequence 12)
+        let numbers = |text: usize| format!("{{PROJECT}}{}{{SEQ:12}}", "A".repeat(text));
+        assert!(NumberScheme::parse(&numbers(20)).is_ok(), "64 characters");
+        assert!(msg(&numbers(21)).contains("at most 64"));
+        // the scheme text itself has at most 100 characters; `{YY}` makes a
+        // long text with short numbers (found by cargo mutants)
+        let scheme = |extra: usize| format!("{}{{SEQ:1}}A{}", "{YY}".repeat(23), "B".repeat(extra));
+        assert_eq!(scheme(0).len(), 100);
+        assert!(
+            NumberScheme::parse(&scheme(0)).is_ok(),
+            "exactly 100 characters"
+        );
+        for extra in [1, 2] {
+            let err = NumberScheme::parse(&scheme(extra))
+                .unwrap_err()
+                .public_message();
+            assert!(err.contains("at most 100"), "{err}");
         }
     }
 
@@ -847,6 +964,26 @@ mod tests {
         for t in ItemType::ALL {
             assert_eq!(ItemType::parse(t.as_str()), Some(t));
         }
+        // stored value, label and number prefix of each type (found by cargo
+        // mutants)
+        let types: Vec<(&str, &str, &str)> = ItemType::ALL
+            .iter()
+            .map(|t| (t.as_str(), t.label(), t.number_prefix()))
+            .collect();
+        assert_eq!(
+            types,
+            [
+                ("part", "Part", "PRT"),
+                ("assembly", "Assembly", "ASM"),
+                ("document", "Document", "DOC"),
+                ("software", "Software", "SW"),
+                ("simulation", "Simulation", "SIM"),
+                ("as_built", "As-built", "AB"),
+            ]
+        );
+        assert_eq!(ItemType::parse("As-Built"), Some(ItemType::AsBuilt));
+        assert_eq!(ItemType::parse("as built"), Some(ItemType::AsBuilt));
+        assert_eq!(ItemType::parse("gadget"), None);
         for r in BasisRole::ALL {
             assert_eq!(BasisRole::parse(r.as_str()), Some(r));
         }
@@ -906,6 +1043,29 @@ mod tests {
         // reads as a hard-coded credential (CodeQL) and says less about the rule
         assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN - 1)).is_err());
         assert!(validate_password(&"x".repeat(MIN_PASSWORD_LEN)).is_ok());
+        // text limits count characters and are inclusive; numbers (found by
+        // cargo mutants)
+        assert_eq!(limit_text("Name", " äöü ", 3).unwrap(), "äöü");
+        assert!(limit_text("Name", "äöüß", 3).is_err());
+        assert_eq!(limit_text("Name", "", 3).unwrap(), "");
+        assert!(require_text("Name", "  ", 3).is_err());
+        assert_eq!(require_text("Name", "abc", 3).unwrap(), "abc");
+        assert!(require_text("Name", "abcd", 3).is_err());
+        assert_eq!(validate_non_negative("Mass", Some(0.0)).unwrap(), Some(0.0));
+        assert_eq!(validate_non_negative("Mass", None).unwrap(), None);
+        for bad in [-0.001, f64::NAN, f64::INFINITY] {
+            assert!(validate_non_negative("Mass", Some(bad)).is_err(), "{bad}");
+        }
+        assert_eq!(validate_quantity(0.5).unwrap(), 0.5);
+        assert_eq!(validate_quantity(999_999_999.0).unwrap(), 999_999_999.0);
+        for bad in [0.0, -1.0, 1e9, f64::NAN, f64::INFINITY] {
+            assert!(validate_quantity(bad).is_err(), "{bad}");
+        }
+        // at most 1024 bytes (found by cargo mutants)
+        assert!(validate_password(&"x".repeat(1024)).is_ok());
+        for n in [1025, 1026] {
+            assert!(validate_password(&"x".repeat(n)).is_err(), "{n}");
+        }
     }
 
     #[test]
@@ -1024,6 +1184,27 @@ mod tests {
         let long = vec!["x".repeat(100); 5].join("/");
         assert!(normalize_folder(&long).is_err(), "longer than 400");
         assert!(normalize_folder(&"y".repeat(MAX_FOLDER_SEGMENT + 1)).is_err());
+        // both length limits are inclusive (found by cargo mutants)
+        assert!(normalize_folder(&"y".repeat(MAX_FOLDER_SEGMENT)).is_ok());
+        let path = |len: usize| {
+            // folders of 99 characters plus '/', the last one non-empty
+            let mut parts = vec!["x".repeat(99); (len - 1) / 100];
+            parts.push("z".repeat(len - parts.len() * 100));
+            parts.join("/")
+        };
+        assert_eq!(path(MAX_FOLDER_LEN).chars().count(), MAX_FOLDER_LEN);
+        assert_eq!(
+            normalize_folder(&path(MAX_FOLDER_LEN))
+                .unwrap()
+                .chars()
+                .count(),
+            MAX_FOLDER_LEN
+        );
+        assert!(normalize_folder(&path(MAX_FOLDER_LEN + 1)).is_err());
+        // reserved names need a digit after COM/LPT, and only these four
+        for ok in ["COMX", "LPTA", "CONSOLE", "nullable"] {
+            assert!(normalize_folder(ok).is_ok(), "{ok}");
+        }
     }
 }
 

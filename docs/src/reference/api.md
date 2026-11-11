@@ -68,6 +68,10 @@ Every answer contains only what the token's user may read (see
   in `restricted_projects`, those of them that are restricted. It never
   names groups the user is not a member of. `auth_source` is `local` or
   `oidc`; only local accounts have a password to change.
+  `preferred_cad` is the user's preferred CAD program (a format family such
+  as `nx` or `solidworks`, `""` = all alike; set on the account page). File
+  lists are never filtered by it – each file's `format_info.family` names
+  its family (`null` for neutral formats), and clients group by it.
   `capabilities` says what the server offers: `assistant` (Ask TeamCraft
   is configured), `mcp` and `local_agents` (both `false` when the
   administrator set `TEAMCRAFT_LOCAL_AGENTS=off`: `POST /api/v1/mcp` then
@@ -127,6 +131,10 @@ curl -s -H "$H" -o hub.step $API/files/<file id>/content
 curl -s -X POST -H "$H" -F file=@hub.step -F comment="wall 2 → 2.5 mm" \
      $API/items/PRT-000001/revisions/A/checkin          # stores and releases in one step
 curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/cancel-checkout
+# a group manager releasing an active member's lock names a reason (10–500 characters)
+curl -s -X POST -H "$H" -H "Content-Type: application/json" \
+     -d '{"reason": "Lena is away until March; Tom finishes the bracket."}' \
+     $API/items/PRT-000001/revisions/A/cancel-checkout
 ```
 
 ### Concurrency: base versions and file status
@@ -352,10 +360,11 @@ the caller cannot read are left out; a successor there is a placeholder with
 
 | Resource         | Endpoints                                                                                                                                                                                                                                                                                                                          |
 |------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Items            | `GET/POST /items` (`class=`, `attr=` + `value=`, `result=` + `result_name=` filters), `GET /items/duplicates?name=&type=` (likely duplicates by name, before creating), `POST /items/bulk` (`{"action": "revise"|"obsolete", "items": [number]}`: the latest revision of up to 200 items, each in its own transaction, outcome per item), `GET/PATCH /items/{number}` (classification, unit, project), `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch                                            |
+| Items            | `GET/POST /items` (`class=`, `attr=` + `value=`, `result=` + `result_name=` filters), `GET /items/duplicates?name=&type=` (likely duplicates by name, before creating), `POST /items/bulk` (`{"action": "revise"\|"obsolete", "items": [number]}`: the latest revision of up to 200 items, each in its own transaction, outcome per item), `GET/PATCH /items/{number}` (classification, unit, project), `where-used` (`levels=1…25` for parents of parents), `interchange`, `alternates`, `supersession`, `replace`, history, impacts, watch                                            |
 | Attributes       | `GET /attributes` (`all=true`: also inactive), `POST /attributes`, `PATCH /attributes/{key}` (admins); values in `attributes` of a revision                                                                                                                                                                                        |
 | Revisions        | `GET/PATCH /items/{number}/revisions/{code\|latest}`, `checkout`, `checkin`, `cancel-checkout`, `file-status`, `revise`, `obsolete`                                                                                                                                                                                                |
 | Worklist         | `GET /worklist` (check-outs, reviews, impacts and `impact_groups`, statistics), `POST /worklist/checkin-all`                                                                                                                                                                                                                       |
+| Users            | `GET /users/{id}/holdings` – what a user still holds (check-outs, open change orders, pending reviews, change requests, owned items, memberships, tokens), as the caller may see it: administrators, and group managers for the groups they manage; `POST /users/{id}/offboard` `{hand_over_to?: username, release_checkouts?, revoke_tokens?, confirm_no_manager?}` – administrators deactivate a leaver in one step (see [When someone leaves](../admin/users.md#when-someone-leaves)) |
 | Files            | `POST …/files` (multipart, `folder`/`folders`), `GET/PATCH /files/{id}` (metadata, folder), `/content`, `/versions`, `/restore`, `/mesh`, `/thumbnail`, `…/workset`, `GET/POST /file-versions/{id}/annotations` + `DELETE /annotations/{id}` (3D notes)                                                                                                                                                                |
 | Uploads          | `POST /uploads`, `PATCH/HEAD/GET/DELETE /uploads/{id}`, `POST /uploads/{id}/finish` – chunked, resumable uploads of large files                                                                                                                                                                                                    |
 | BOM              | `GET/POST …/bom` (`rule=latest\|released\|as_released`, `expand=true`), `PATCH/DELETE /bom-lines/{id}`, `…/package` (Pack and Go ZIP); the expanded tree has `project_id` per line (`null` for restricted placeholders)                                                                                                            |
@@ -366,14 +375,16 @@ the caller cannot read are left out; a successor there is a placeholder with
 | Simulations      | `GET/POST /projects/{code}/result-templates`, `PUT/DELETE /result-templates/{id}`, `GET …/simulation`, `GET/POST …/simulation/bases`, `DELETE /simulation-bases/{id}`, `GET/POST/PUT …/simulation/results`, `…/results/import`, `PATCH/DELETE /simulation-results/{id}`, `…/simulation/compare`, `GET /items/{number}/simulations` |
 | As-built         | `GET …/as-built`, `PUT …/as-built/record`, `GET/POST …/as-built/deviations`, `PATCH/DELETE /as-built-deviations/{id}`, `GET /items/{number}/built-units`, `POST …/revisions/{code}/built-units`                                                                                                                                    |
 | Changes          | `GET/POST /changes`, items (`{item, revision?, action?: release\|obsolete\|supersede, successor?}`), reviewers, `suggested-reviewers`, `readiness`, `dependencies` (add all unreleased), `submit`, `review`, `withdraw`, `impact`                                                                                                  |
-| Projects         | `GET/POST /projects`, `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                                                                                                                                                                                                              |
+| Projects         | `GET/POST /projects`, `GET /projects/manager-gaps` (admins), `GET/POST /projects/{code}/members`, `GET/PUT /projects/{code}/numbering` (`?scheme=` previews)                                                                                                                                                                                                              |
 | Notifications    | `GET /notifications`, `POST /notifications/read`, settings, watches                                                                                                                                                                                                                                                                |
 | Personal         | `GET /favorites`, `POST/DELETE /items/{number}/favorite`, `GET/POST /searches`, `DELETE /searches/{id}`                                                                                                                                                                                                                            |
+| Audit log        | `GET /audit?entity_type=&username=&action=&format=json\|csv` – administrators; the filtered log as a download (at most 100 000 entries, `x-truncated`), recorded as `audit.export`; see [Operations](../admin/operations.md)                                                                                                        |
 | Save As, compare | `POST …/revisions/{code}/save-as` `{number?, name?, project?, files?, bom?}`, `GET …/revisions/{code}/bom/compare?with={code}`                                                                                                                                                                                                     |
 | Similar parts    | `GET …/revisions/{code}/similar` (`limit`, `ignore_scale`, `file`, `wait`) – parts of similar 3D shape, see below                                                                                                                                                                                                                  |
+| Mass properties  | `GET …/revisions/{code}/mass-properties?rule=&ref=x,y,z` – mass, CG, inertia about the CG and the reference point (m), source per line (`geometry_ambiguous` when a revision has 3D files of several parts and none is chosen; `geometry` lists the candidates); `GET /materials` – the material library. See [Mass properties](../guide/mass-properties.md) |
 | Formats          | `GET /formats` – the recognised CAD programs and formats                                                                                                                                                                                                                                                                           |
 | Password         | `POST /me/password` `{current_password, new_password}` – change the own password (204; throttled; web sessions end, tokens stay)                                                                                                                                                                                                   |
-| Branding         | `GET /branding` – replaced logos `{wide, square}` (version token or `null`) and `{wide_type, square_type}` (content type); `GET /branding/{wide                                                                                                                                                                                    |square}` – the image (404 = built-in logo) |
+| Branding         | `GET /branding` – replaced logos `{wide, square}` (version token or `null`) and `{wide_type, square_type}` (content type); `GET /branding/{wide\|square}` – the image (404 = built-in logo) |
 | MCP              | `POST /mcp` – Model Context Protocol for AI assistants, see [MCP server](mcp.md)                                                                                                                                                                                                                                                   |
 | Assistant        | `GET/POST /assistant` – the built-in assistant (optional), `context` = the page the caller is on, `thread: true` = ask in the caller's conversation; `GET/DELETE /assistant/thread` – the conversation. See [Ask TeamCraft](../guide/assistant.md#api)                                                                             |
 
@@ -434,6 +445,16 @@ last with `"cannot_review": true` (four-eyes): show them, do not add them. It on
 `POST /changes/{number}/reviewers`. See
 [Suggested reviewers](../guide/changes.md#suggested-reviewers) for the
 sources and points.
+
+### Review decisions and their sign-off
+
+`POST /changes/{number}/review` with `{"decision": "approve"|"reject",
+"comment": "…", "meaning": "…"}` needs a token with the `approve` scope.
+Each entry of `reviews` and `earlier_rounds` carries `sign_off_method`
+(`session`, `password`, `sso`, `token`; `null` while pending) and
+`sign_off_meaning`. In the browser, `TEAMCRAFT_APPROVAL_REAUTH` asks for the
+password or a fresh single sign-on (see
+[Configuration](../admin/configuration.md)).
 
 ### Review rounds and absent reviewers
 
@@ -529,6 +550,7 @@ deviation the caller may not read `404`.
 | `GET/POST …/revisions/{code}/as-built/deviations`   | `{kind: dimension\|material\|component\|process\|other, feature, designed?, built?, disposition?: open\|use_as_is\|rework\|repair\|scrap, note?}` → `201`; at most 1000 per revision                            |
 | `PATCH /as-built-deviations/{id}`                   | any of the deviation fields, e.g. `{"disposition": "use_as_is"}`; the others are kept                                                                                                                           |
 | `DELETE /as-built-deviations/{id}`                  | removes a deviation → `204`                                                                                                                                                                                     |
+| `POST /as-built-deviations/{id}/confirm`            | a reviewer of the change order in review confirms a "use as is" deviation (not the person who recorded it); needed before approving when the group's review policy has `concessions_need_review`             |
 | `GET /items/{number}/built-units`                   | units built to any revision of the design item (latest revision of each unit, at most 500); hidden units are counted in `X-Hidden-Count`                                                                        |
 | `POST /items/{number}/revisions/{code}/built-units` | `{serial_number?, built_on?, number?, name?, note?, project?, with_bom?: true}` → `201` with the new as-built revision (A, checked out by the caller)                                                           |
 

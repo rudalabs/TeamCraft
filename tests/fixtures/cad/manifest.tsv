@@ -31,3 +31,6 @@ d5b7f39fd854a38e6d89de0580d5e63868f17acc95308573fbe599b87c6c0503	154	nist/mtc-as
 1fb1b54fa7531c9846eb6ef71ee381f7c3551ee79fde900f6c26c6c1f0ec8c5c	858435	nist/mtc-assembly/solidworks/nist_mtc_crada_cover_rev-B.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/nist_mtc_crada_cover_rev-B.SLDPRT
 be8150458846cc8d0357491bb8daf83827e4ade4b1ae6366bea3832c56642cd5	724497	nist/mtc-assembly/solidworks/nist_mtc_crada_plate_rev-A.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/nist_mtc_crada_plate_rev-A.SLDPRT
 2f1ec6a437cc923ad9fb4ea86a7db0d67ee920bcffc4152afa6643f3912764aa	253010	nist/mtc-assembly/solidworks/nist_mtc_crada_polycarb-window.SLDPRT	solidworks-part	NIST-MTC-Assembly.zip:SolidWorks/nist_mtc_crada_polycarb-window.SLDPRT
+59e78629c5c19a5e04a195d746cd6b3981c504fcdcd76423ba507ec9e58e69b7	111350	rhino3dm/mesh.3dm	rhino	github.com/mcneel/rhino3dm (MIT), main 2026-11-08:tests/models/mesh.3dm
+2f4f218e2b5952da1ba280ae4db4ec5a08947c9f5b012d4194be9171eebccc93	720696	rhino3dm/sphereDecals.3dm	rhino	github.com/mcneel/rhino3dm (MIT), main 2026-11-08:tests/models/sphereDecals.3dm
+98400d4d67b5c16fe92bf65898298ff8dd08166fe20499fe02a41c2970657eee	11662	rhino3dm/subd_creases.3dm	rhino	github.com/mcneel/rhino3dm (MIT), main 2026-11-08:tests/models/subd_creases.3dm

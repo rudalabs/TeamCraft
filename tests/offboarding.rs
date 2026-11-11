@@ -153,7 +153,7 @@ async fn a_manager_releases_a_deactivated_members_lock() {
     let (_, rev) = part(&app, &lena_token, "ROCKET").await;
 
     // an active member's lock stays with them
-    let err = revisions::cancel_checkout(&app.pool, &tom, rev)
+    let err = revisions::cancel_checkout(&app.pool, &tom, rev, None)
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::Forbidden(_)), "{err:?}");
@@ -162,7 +162,7 @@ async fn a_manager_releases_a_deactivated_members_lock() {
     deactivate(&app, lena.id).await;
     let before = notifications_of(&app, lena.id).await;
     // a plain member still cannot release it
-    let err = revisions::cancel_checkout(&app.pool, &max, rev)
+    let err = revisions::cancel_checkout(&app.pool, &max, rev, None)
         .await
         .unwrap_err();
     assert!(matches!(err, AppError::Forbidden(_)), "{err:?}");
@@ -172,7 +172,7 @@ async fn a_manager_releases_a_deactivated_members_lock() {
     assert!(revisions::may_cancel_checkout(&app.pool, &tom, &loaded)
         .await
         .unwrap());
-    revisions::cancel_checkout(&app.pool, &tom, rev)
+    revisions::cancel_checkout(&app.pool, &tom, rev, None)
         .await
         .unwrap();
     assert_eq!(holder(&app, rev).await, None);

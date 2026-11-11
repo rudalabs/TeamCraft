@@ -944,6 +944,61 @@ pub async fn demote_manager(
     Ok(())
 }
 
+/// Sets or clears when a membership is meant to end ("member until", issue
+/// #173 step 8). Only a flag on the season page: nothing removes the member
+/// when the date has passed.
+///
+/// # Invariants
+///
+/// * **Permission:** the group is visible to the actor ("not found"
+///   otherwise) and the actor manages it (or is an administrator; 403).
+/// * **Locks:** the group row (`FOR UPDATE`), as the other membership changes.
+/// * **Data:** the user is a member ("not found" otherwise).
+/// * **Audit:** `project.member_expiry`.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
+pub async fn set_member_expiry(
+    pool: &PgPool,
+    actor: &Actor,
+    project_id: Uuid,
+    user_id: Uuid,
+    until: Option<chrono::NaiveDate>,
+) -> AppResult<()> {
+    let project = get_for_management(pool, actor, project_id).await?;
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT id FROM projects WHERE id = $1 FOR UPDATE")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await?;
+    require_manager(&mut tx, actor, project_id).await?;
+    let username = sqlx::query_scalar::<_, String>(
+        "UPDATE project_members pm SET expires_at = $3 FROM users u
+         WHERE pm.project_id = $1 AND pm.user_id = $2 AND u.id = pm.user_id
+         RETURNING u.username",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .bind(until)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or_else(|| AppError::not_found("This user is not a member of the project group."))?;
+    audit::record(
+        &mut tx,
+        Some(actor),
+        "project.member_expiry",
+        "project",
+        Some(project_id),
+        match until {
+            Some(d) => format!("{username} is a member of {} until {d}", project.code),
+            None => format!("{username} is a member of {} without an end", project.code),
+        },
+        json!({ "user_id": user_id, "expires_at": until }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Revisions of the group checked out by a user.
 pub(crate) async fn held_checkouts(
     conn: &mut PgConnection,

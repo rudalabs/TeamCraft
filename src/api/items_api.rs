@@ -638,14 +638,29 @@ pub(super) async fn checkin(
     Ok(Json(json!({ "revision": rev, "files": changed })))
 }
 
+#[derive(Deserialize)]
+pub(super) struct ReleaseBody {
+    reason: Option<String>,
+}
+
+/// Releases a check-out: `{reason}` (optional; required for a manager
+/// releasing an active member's lock), or an empty body.
 pub(super) async fn cancel_checkout(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
+    body: axum::body::Bytes,
 ) -> AppResult<Json<Value>> {
+    let reason = if body.iter().all(u8::is_ascii_whitespace) {
+        None
+    } else {
+        serde_json::from_slice::<ReleaseBody>(&body)
+            .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {e}")))?
+            .reason
+    };
     let rev = revision_at(&st, &me, &number, &code).await?;
     Ok(Json(json!(
-        revisions::cancel_checkout(&st.db, &me, rev.id).await?
+        revisions::cancel_checkout(&st.db, &me, rev.id, reason.as_deref()).await?
     )))
 }
 

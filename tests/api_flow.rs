@@ -926,6 +926,7 @@ async fn sso_groups_sync_project_memberships() {
         email: Some("max@example.org".into()),
         role: Role::Editor,
         groups: groups.iter().map(|g| g.to_string()).collect(),
+        claims: Default::default(),
     };
     let rocket = app.project_id("ROCKET").await;
     let rover = app.project_id("ROVER").await;
@@ -3627,6 +3628,59 @@ async fn nx_part_thumbnails_are_rendered_from_the_3d_preview() {
     let asm = thumbnail(id_of("crada.prt")).await;
     assert_eq!(asm.status, StatusCode::OK, "{}", asm.text());
     assert_eq!(asm.header("content-type").as_deref(), Some("image/jpeg"));
+    app.teardown().await;
+}
+
+/// A Rhino model gets a 3D preview from the meshes it stores (here a SubD,
+/// refined from its control net) and a thumbnail rendered from it.
+#[tokio::test]
+async fn rhino_models_get_a_3d_preview_and_a_rendered_thumbnail() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "part", "name": "Fairing", "project": "GEARBOX" })),
+    )
+    .await;
+    let model = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/cad/rhino3dm/subd_creases.3dm"),
+    )
+    .unwrap();
+    let files = app
+        .api_multipart(
+            "/api/v1/items/PRT-000001/revisions/A/files",
+            &eng,
+            &[("fairing.3dm", &model)],
+            &[],
+        )
+        .await;
+    assert_eq!(files.status, StatusCode::CREATED, "{}", files.text());
+    let file = &files.json()[0];
+    assert_eq!(file["format"], "rhino");
+    let id = file["id"].as_str().unwrap().to_string();
+
+    let r = app
+        .api(Method::GET, &format!("/api/v1/files/{id}/mesh"), &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.triangle_count(), 3_072);
+
+    let thumb = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
+    assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
+    // IHDR: the rendered size
+    assert_eq!(&thumb.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
     app.teardown().await;
 }
 

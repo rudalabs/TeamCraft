@@ -2,6 +2,7 @@
 {% block title %}{% if basis %}New simulation{% else %}New item{% endif %}{% endblock %}
 {% block nav_items %}active{% endblock %}
 {% block content %}
+{% import "macros.html" as m %}
 <div class="page-head">
   <div>
     <h1>{% if basis %}New simulation{% else %}New item{% endif %}</h1>
@@ -65,9 +66,7 @@
       </label>{% endif %}
     </div>
     {% if not basis %}<div class="form-row">
-      <label>Material
-        <input type="text" name="material" value="{{ form.material }}" maxlength="200" placeholder="e.g. AlMg3, 1.4301, CFRP">
-      </label>
+      {{ m.material_field(form.material, materials, me.is_admin, "e.g. AlMg3, 1.4301, CFRP") }}
       <label>Mass per unit [kg]
         <input type="text" name="mass_kg" value="{{ form.mass_kg }}" inputmode="decimal" placeholder="e.g. 0.125">
       </label>

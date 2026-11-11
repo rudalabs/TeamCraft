@@ -2,7 +2,7 @@
 // TeamCraft Desktop – Import BOM.
 // Part of the desktop UI (ES modules, no build step; js/main.js starts it).
 
-import { badge, call, clear, dialog, field, fmtNum, h, label, setStatus, state, toast } from "./core.js";
+import { api, badge, call, clear, dialog, enc, field, fmtNum, h, label, setStatus, state, toast } from "./core.js";
 import { canEdit, canEditProject, freshProjects, refreshWorklistCount } from "./shell.js";
 import { selectView } from "./navigator.js";
 import { activeTab, reloadActive, stat, table } from "./tabs.js";
@@ -22,6 +22,79 @@ export var BOM_PREVIEW_LINES = 15;
  * same file again and the server creates everything in one transaction.
  */
 export function importBomDialog(rev) { freshProjects().then(function () { openImportBomDialog(rev || null); }); }
+
+/** Lines of the plan to tick by default: new lines, and existing lines whose
+ * quantity differs from the instances counted in the CAD file (the ×1 lines
+ * of an earlier folder import). An assumed quantity never replaces one. */
+export function cadPlanSelected(c) {
+  if (c.status === "new") return true;
+  return c.status === "differs" && c.quantity_source === "cad_instances";
+}
+
+/**
+ * Quantities from CAD…: the BOM the CAD references of this revision lead to
+ * (`GET …/bom/from-references`: instances counted in SOLIDWORKS, NX and STEP
+ * assemblies), compared with the BOM – adds missing lines and corrects the
+ * quantity of existing ones (e.g. the quantity 1 of an earlier folder import).
+ */
+export function bomFromCadDialog(rev) {
+  if (!canEdit()) { toast("Viewers cannot change BOMs.", "error"); return; }
+  if (rev.checked_out_by !== state.me.id) { toast("Check out " + rev.item_number + "/" + rev.code + " first – the BOM is changed under your check-out.", "error"); return; }
+  var base = "/items/" + enc(rev.item_number) + "/revisions/" + enc(rev.code) + "/bom/from-references";
+  var result = h("div.stack.bom-plan", null, [h("p.loading", { text: "Reading the CAD files of " + rev.item_number + "/" + rev.code })]);
+  var boxes = [];
+  var applyButton = null;
+  var handle = dialog("Quantities from CAD – " + rev.item_number + "/" + rev.code, h("div.stack", null, [
+    h("p.hint", { text: "How often the assembly places each part, counted in its CAD files (SOLIDWORKS 2015+, NX, STEP assemblies with external part files). Other formats (Inventor, Solid Edge, …) do not tell – their quantity stays as it is." }),
+    result
+  ]), [
+    { label: "Cancel", onClick: function (d) { d.close(); } },
+    {
+      label: "Apply", primary: true, submit: true, onClick: function (d) {
+        var children = boxes.filter(function (b) { return b.box.checked; }).map(function (b) { return b.child.item_number; });
+        if (!children.length) { d.fail("Tick at least one line."); return; }
+        applyButton.disabled = true;
+        api("POST", base, { children: children, update_quantities: true }).then(function (r) {
+          d.close();
+          var n = function (list, one, many) { return list.length ? list.length + " " + (list.length === 1 ? one : many) : null; };
+          toast([n(r.added, "line added", "lines added"), n(r.updated, "quantity corrected", "quantities corrected"),
+            n(r.refused, "refused (circular)", "refused (circular)")].filter(Boolean).join(" · ") || "Nothing changed");
+          var tab = activeTab();
+          if (tab && tab.kind === "revision" && tab.number === rev.item_number && tab.code === rev.code) { tab.sub = "structure"; reloadActive(); }
+        }, function (err) { applyButton.disabled = false; d.fail(err); });
+      }
+    }
+  ], { wide: true });
+  applyButton = handle.form.querySelector(".dialog-actions button.primary");
+  applyButton.disabled = true;
+  api("GET", base).then(function (p) {
+    clear(result);
+    if (!p.children.length) {
+      result.appendChild(h("p.notice", { text: "The CAD files of this revision lead to no BOM lines." }));
+      return;
+    }
+    var rows = p.children.map(function (c) {
+      var box = h("input", { type: "checkbox", checked: cadPlanSelected(c), disabled: c.status === "circular" || c.status === "already_in_bom" });
+      boxes.push({ box: box, child: c });
+      return {
+        cells: [
+          box,
+          h("span.mono", { text: c.item_number }),
+          c.item_name,
+          h("span", { title: c.quantity_label, text: c.quantity_text + (c.quantity_source === "assumed" ? " (assumed)" : "") }),
+          c.bom_quantity_text == null ? "–" : c.bom_quantity_text,
+          c.status_label
+        ]
+      };
+    });
+    result.appendChild(table(["", "Number", "Name", "CAD", "BOM", "Status"], rows, { numeric: [3, 4] }));
+    if (p.not_in_teamcraft.length) {
+      result.appendChild(h("p.hint", { text: p.not_in_teamcraft.length + " referenced files are not in TeamCraft: " +
+        p.not_in_teamcraft.slice(0, 5).map(function (u) { return u.name; }).join(", ") + (p.not_in_teamcraft.length > 5 ? ", …" : "") }));
+    }
+    applyButton.disabled = false;
+  }, function (err) { clear(result); handle.fail(err); });
+}
 
 export function openImportBomDialog(rev) {
   if (!canEdit()) { toast("Viewers cannot import BOMs.", "error"); return; }

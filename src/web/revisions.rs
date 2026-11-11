@@ -52,6 +52,7 @@ async fn log_file(
             object_type: "file",
             object_id: Some(file_id),
             label: filename,
+            detail: "",
         },
     )
     .await
@@ -351,11 +352,13 @@ pub async fn show(
     } else {
         Vec::new()
     };
+    let release = revisions::release_rule(&st.db, me, &rev).await?;
     let can = json!({
         "edit": editable,
         "checkout": can_work && rev.checked_out_by.is_none(),
         "checkin": rev.checked_out_by == Some(me.id),
-        "cancel_checkout": revisions::may_cancel_checkout(&st.db, me, &rev).await?,
+        "cancel_checkout": release == revisions::Release::Yes,
+        "release_with_reason": release == revisions::Release::WithReason,
         "revise": in_project && !item_has_open_revision,
         "obsolete": in_project && state == LifecycleState::Released,
         "delete": ((item.created_by == me.id && in_project) || me.is_admin())
@@ -441,14 +444,16 @@ pub async fn show(
     // As-built: the build record and deviations of an as-built revision;
     // for a design (part, assembly, software) the units built to it.
     let as_built = if rev.item_type == ItemType::AsBuilt.as_str() {
-        let (record, deviations) = tokio::try_join!(
+        let (record, deviations, concessions) = tokio::try_join!(
             as_built::record(&st.db, me, id),
-            as_built::deviations(&st.db, me, id)
+            as_built::deviations(&st.db, me, id),
+            as_built::concession_review(&st.db, me, &rev)
         )?;
         json!({
             "record": record,
             "summary": as_built::summarize(&deviations),
             "deviations": deviations,
+            "concessions": concessions,
             "kinds": DeviationKind::ALL
                 .iter()
                 .map(|k| json!({ "value": k.as_str(), "label": k.label() }))
@@ -475,9 +480,14 @@ pub async fn show(
         json!({
             "rev": rev,
             "item": item,
+            "release_reason": {
+                "min": revisions::RELEASE_REASON_MIN,
+                "max": revisions::RELEASE_REASON_MAX,
+            },
             "revisions": all_revisions,
             "is_latest": latest_id == Some(rev.id),
             "latest_id": latest_id,
+            "file_groups": super::file_groups(&me.preferred_cad, &attachments),
             "files": attachments,
             "file_bases": file_bases,
             "native_without_preview": native_without_preview,
@@ -552,7 +562,8 @@ pub async fn edit_form(
         &st,
         &ctx,
         "revisions/edit.html",
-        json!({ "rev": rev, "error": null, "attribute_fields": fields }),
+        json!({ "rev": rev, "error": null, "attribute_fields": fields,
+                "materials": super::mass::material_options(&st).await? }),
     )
 }
 
@@ -623,7 +634,8 @@ pub async fn update(
                 &ctx,
                 "revisions/edit.html",
                 json!({ "rev": rev, "error": e.public_message(), "mass_raw": form.mass_kg,
-                        "cost_raw": form.unit_cost, "attribute_fields": fields }),
+                        "cost_raw": form.unit_cost, "attribute_fields": fields,
+                        "materials": super::mass::material_options(&st).await? }),
             )?;
             *page.status_mut() = e.status();
             Ok(page)
@@ -706,15 +718,24 @@ pub async fn checkin(
     })
 }
 
-/// Releases the lock without changes (admins: release someone else's lock).
+#[derive(Deserialize)]
+pub struct ReleaseForm {
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+/// Releases the lock without changes (admins and managers: release someone
+/// else's lock; a manager names a reason for an active member's lock).
 pub async fn cancel_checkout(
     State(st): State<AppState>,
     ctx: WebCtx,
     Path(id): Path<Uuid>,
     Query(query): Query<BackForm>,
+    Form(form): Form<ReleaseForm>,
 ) -> AppResult<Response> {
     let back = back_of(id, &query);
-    let result = revisions::cancel_checkout(&st.db, &ctx.me, id).await;
+    let reason = form.reason;
+    let result = revisions::cancel_checkout(&st.db, &ctx.me, id, reason.as_deref()).await;
     finish(&st, result, &back, |rev| {
         (
             back.clone(),

@@ -2,6 +2,7 @@
 {% block title %}Edit {{ rev.item_number }}/{{ rev.code }}{% endblock %}
 {% block nav_items %}active{% endblock %}
 {% block content %}
+{% import "macros.html" as m %}
 <div class="page-head">
   <div>
     <h1>Edit <span class="mono">{{ rev.item_number }}/{{ rev.code }}</span></h1>
@@ -18,9 +19,7 @@
       <textarea name="description" maxlength="10000">{{ rev.description }}</textarea>
     </label>
     <div class="form-row">
-      <label>Material
-        <input type="text" name="material" value="{{ rev.material }}" maxlength="200">
-      </label>
+      {{ m.material_field(rev.material, materials, me.is_admin) }}
       <label>Mass per unit [kg] <span class="hint">own mass, children are added in the BOM roll-up</span>
         <input type="text" name="mass_kg" inputmode="decimal"
                value="{% if mass_raw is defined %}{{ mass_raw }}{% elif rev.mass_kg is not none %}{{ rev.mass_kg }}{% endif %}">

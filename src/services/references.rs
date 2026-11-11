@@ -293,6 +293,10 @@ pub struct FileMatch {
 #[derive(Clone, Debug, Serialize)]
 pub struct ReferencedName {
     pub name: String,
+    /// How often the referencing file places it, where its format tells
+    /// (SOLIDWORKS 2015+ and NX assemblies, see `cadrefs::instance_counts`;
+    /// 0 = only instances excluded from the BOM); `None` = not known.
+    pub instances: Option<i32>,
     pub matches: Vec<FileMatch>,
 }
 
@@ -318,9 +322,11 @@ pub async fn files_of_revision(
         filename: String,
         format: String,
         name: String,
+        instances: Option<i32>,
     }
     let rows = sqlx::query_as::<_, Row>(
-        "SELECT f.id AS file_id, f.filename, COALESCE(f.format, '') AS format, fr.name
+        "SELECT f.id AS file_id, f.filename, COALESCE(f.format, '') AS format, fr.name,
+                fr.instances
          FROM files f
          JOIN file_versions fv ON fv.file_id = f.id AND fv.version = f.current_version
          JOIN file_references fr ON fr.file_version_id = fv.id
@@ -414,6 +420,7 @@ pub async fn files_of_revision(
             .unwrap_or_default();
         entry.references.push(ReferencedName {
             name: row.name,
+            instances: row.instances,
             matches,
         });
     }
@@ -594,19 +601,27 @@ pub(crate) async fn store_export_name(
     Ok(())
 }
 
-/// Stores the references found in a newly stored file version.
+/// Stores the references found in a newly stored file version, with their
+/// instance counts where known.
 pub(crate) async fn store_file_references(
     conn: &mut PgConnection,
     file_version_id: Uuid,
-    names: &[String],
+    refs: &[crate::cadrefs::FileRef],
 ) -> AppResult<()> {
-    if !names.is_empty() {
+    if !refs.is_empty() {
+        let names: Vec<&str> = refs.iter().map(|r| r.name.as_str()).collect();
+        let instances: Vec<Option<i32>> = refs
+            .iter()
+            .map(|r| r.instances.map(|n| i32::try_from(n).unwrap_or(i32::MAX)))
+            .collect();
         sqlx::query(
-            "INSERT INTO file_references (file_version_id, name)
-             SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING",
+            "INSERT INTO file_references (file_version_id, name, instances)
+             SELECT $1, n, i FROM unnest($2::text[], $3::int4[]) AS t (n, i)
+             ON CONFLICT DO NOTHING",
         )
         .bind(file_version_id)
-        .bind(names)
+        .bind(&names)
+        .bind(&instances)
         .execute(&mut *conn)
         .await?;
     }

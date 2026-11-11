@@ -25,6 +25,33 @@ labelled with program and kind, get their registered content type, are
 searchable by program (*Items → CAD program*) and, where readable, scanned
 for the files they reference.
 
+### Preferred CAD program
+
+When a part is kept in several CAD programs – an NX model next to a
+SOLIDWORKS and an Inventor copy, say – choose your program under *Account →
+Preferred CAD program*. On the revision page, in the detail pane of the vault
+explorer and in the Files tab of the desktop app, the native files of the **other** programs then move into a collapsed
+group below the list, e.g. *2 files in other CAD formats (SolidWorks, Inventor)*; one click opens it.
+
+* A family is everything one program writes natively: for NX its parts,
+  assemblies, drawings and simulation files (`.prt`, `.sim`, `.fem`, `.afm`);
+  for Creo also its neutral and Creo View files; for CATIA also CGR and 3D
+  XML. The families: SolidWorks, NX, Solid Edge, Inventor, Fusion, AutoCAD (DWG), Creo, CATIA, SpaceClaim, FreeCAD,
+  SolidCraft, Rhino, Alias,
+  OpenSCAD, Revit, Navisworks, MicroStation, Archicad, SketchUp, Blender,
+  Maya, 3ds Max, Cinema 4D, Modo, Houdini, KiCad, Altium and Eagle.
+* Neutral and exchange formats are never collapsed: STEP, IGES, Parasolid,
+  JT and PLM XML, DXF, meshes (STL, 3MF, 3DS, …), visualisation formats,
+  point clouds, IFC, Gerber, simulation decks and results, documents and
+  images.
+* Only a revision that has at least one file of your program is grouped;
+  any other revision lists its files as before.
+* It is display only and personal: nothing is hidden from the search,
+  downloads, *Pack and Go*, the REST API or other users. The default, *All
+  CAD programs alike*, keeps the plain list. The REST API returns the setting
+  as `preferred_cad` on `GET /api/v1/me` and each file's family as
+  `format_info.family`.
+
 ## 3D preview
 
 Meshes, point clouds and STEP models open in a WebGL viewer in the browser
@@ -36,8 +63,8 @@ the other side – for a look inside housings and assemblies. *Measure* picks
 two points on the model (click, don't drag) and shows their distance and its
 X, Y and Z parts in model units; the decimal places (0–6) are remembered in
 the browser and apply to the section position too. Measured points are on the
-visible surface, so a section shows inner distances such as wall thickness.
-*Compare with …* (on the preview page, when there is something to compare)
+visible surface, so a section shows inner distances such as wall thickness. *Compare with …* (on the preview page, when
+there is something to compare)
 lays another version of the file – or the file of the same name in another
 revision of the item – over the model as a translucent red ghost: red shows
 where the other model sticks out, so added and removed material is visible at
@@ -51,13 +78,15 @@ its author or an administrator; adding and removing are recorded in the
 revision's history (`annotation.add` / `annotation.remove`). The REST API
 has the same notes under `/api/v1/file-versions/{id}/annotations`.
 
-| Previewed           | Formats                                                                                                                                                         |
-|---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                                                                                                                  |
-| Native CAD          | NX parts (`.prt`), SOLIDWORKS parts (`.sldprt`, 2015+), CATIA V5 parts (`.CATPart`) – the tessellation stored in the file; NX and SOLIDWORKS assemblies from the parts |
-| Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS                                                                                                |
-| Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces                                                                                                         |
-| Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields                                                                                                |
+| Previewed           | Formats                                                                                                                       |
+|---------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                                                                                |
+| Native CAD          | NX parts (`.prt`), SOLIDWORKS parts (`.sldprt`, 2015+) – the tessellation stored in the file; their assemblies from the parts |
+| Native CAD          | CATIA V5 parts (`.CATPart`) – the visualisation data stored in the file                                                       |
+| Native CAD          | Rhino models (`.3dm`) – the meshes stored in the file, SubD objects refined from their control net                            |
+| Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS                                                              |
+| Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces                                                                       |
+| Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields                                                              |
 
 The server converts a file **once**, in a separate process with a time limit,
 and caches the result next to the vault; uploads start the conversion in the
@@ -104,12 +133,20 @@ These components are left out:
 * NX components on layers the assembly hides;
 * SOLIDWORKS components that are suppressed or hidden.
 
+**Rhino** models (`.3dm`, Rhino 1 to 8) are shown from the meshes Rhino
+saves with them: mesh objects, the render meshes of polysurfaces and
+extrusions, block instances in their places; SubD objects are refined
+from their control net. Hidden objects and hidden layers are left out. A
+model saved without render meshes (*Save Small*, or very old files) has
+no 3D preview and shows the picture Rhino stored instead (see
+[Research: 3D preview of Rhino models](../research/rhino-3dm-preview.md)).
+
 For the rest TeamCraft shows what other PLM systems show:
 
 * **A picture of the 3D preview** for NX and SOLIDWORKS parts and
-  assemblies and for CATIA parts. It replaces the image stored in the file
-  and is a 512 × 512 PNG with a transparent background, drawn once and
-  cached. An assembly's picture is drawn again when one of its parts
+  assemblies, CATIA parts and Rhino models. It replaces the image stored in
+  the file and is a 512 × 512 PNG with a transparent background, drawn once
+  and cached. An assembly's picture is drawn again when one of its parts
   changes. Drawings, and assemblies none of whose parts are in TeamCraft,
   keep the stored image.
 * **The preview image stored in the file.** Inventor (`.ipt`, `.iam`,

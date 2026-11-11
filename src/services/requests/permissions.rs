@@ -72,7 +72,15 @@ pub async fn abilities_of(
 ) -> AppResult<Abilities> {
     let mut conn = pool.acquire().await?;
     let projects = project_ids(&mut conn, request.id).await?;
-    Ok(abilities(actor, request, &projects))
+    let mut can = abilities(actor, request, &projects);
+    // a group may keep the requester from deciding their own request
+    if can.decide
+        && request.requested_by == actor.id
+        && crate::services::project_policy::requester_cannot_decide(&mut conn, &projects).await?
+    {
+        can.decide = false;
+    }
+    Ok(can)
 }
 
 pub(super) fn forbidden(request: &ChangeRequest, what: &str) -> AppError {

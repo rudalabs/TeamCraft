@@ -87,13 +87,20 @@
             {% if rev.checked_out_by != me.id %}data-confirm="Release the check-out held by {{ rev.checked_out_by_name }}?"{% endif %}>
         <button class="ghost" type="submit">{% if rev.checked_out_by != me.id %}Force unlock{% else %}Cancel check-out{% endif %}</button>
       </form>
+      {% elif can.release_with_reason %}
+      <a class="button ghost" href="/revisions/{{ rev.id }}" title="As a manager of the group you release the lock of {{ rev.checked_out_by_name }} on the revision page, with a reason they are told">Release with reason…</a>
       {% endif %}
     </div>
 
     <h3>Files <span class="count">{{ selected.files|length }}</span></h3>
     {% if selected.files %}
+    {% for group in selected.file_groups %}
+    {% if group.collapsed %}
+    <details class="other-formats">
+      <summary>{{ group.count }} file{% if group.count != 1 %}s{% endif %} in other CAD formats ({{ group.families }})</summary>
+    {% endif %}
     <ul class="file-list">
-      {% for f in selected.files %}
+      {% for f in group.files %}
       <li>
         <a href="/files/{{ f.id }}/download" title="Download v{{ f.version }}">{{ f.filename }}</a>
         <span class="muted small">v{{ f.version }} · {{ f.size_bytes|filesize }}{% if f.format_info %} · {{ f.format_info.label }}{% endif %}</span>
@@ -102,6 +109,8 @@
       </li>
       {% endfor %}
     </ul>
+    {% if group.collapsed %}</details>{% endif %}
+    {% endfor %}
     {% else %}<p class="empty small">No files yet.</p>{% endif %}
 
     {% if can.checkin %}

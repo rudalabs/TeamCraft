@@ -28,7 +28,10 @@ use crate::{
     auth::{Actor, ApiCaller},
     config::{LocalAgents, LOCAL_AGENT_HEADER, LOCAL_AGENT_HEADER_VALUE},
     domain::TokenScope,
-    services::project_policy::{self, Interface},
+    services::{
+        access_log::{AccessCtx, Channel},
+        project_policy::{self, Interface},
+    },
     AppState,
 };
 
@@ -58,7 +61,8 @@ release, became obsolete or its simulated file a newer version.\n\n\
 Use the tools to answer questions about the data – find items, explain structures and where-used, \
 summarise what changed between revisions, prepare change orders, check a BOM before a release, summarise \
 reported problems, check simulations and compare their results, read the extracted text of files \
-(read_file_text) and sum up what changing an item would touch (impact_summary). Quote item, request and simulation numbers \
+(read_file_text), sum up what changing an item would touch (impact_summary) and open an item's 3D \
+preview for the user (open_3d_preview). Quote item, request and simulation numbers \
 and revisions exactly as returned. You can draft change orders, raise change requests and comment on them, \
 but only when the user asks; you cannot submit, approve or release change orders or triage and decide change \
 requests – tell the user what is left for them to do. Prompts: release_notes, review_change, release_check, \
@@ -110,9 +114,11 @@ pub fn local_agent_refusal(policy: LocalAgents, headers: &HeaderMap) -> Option<&
 pub async fn http(
     State(st): State<AppState>,
     ApiCaller { actor: me, scope }: ApiCaller,
+    log: AccessCtx,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let log = log.through(Channel::Mcp);
     // after ApiUser: without a valid token the answer stays 401
     if let Some(message) = local_agent_refusal(st.config.local_agents, &headers) {
         tracing::debug!(
@@ -142,13 +148,13 @@ pub async fn http(
         Ok(Value::Array(batch)) => {
             let mut replies = Vec::new();
             for msg in batch {
-                if let Some(r) = handle(&st, &me, scope, msg).await {
+                if let Some(r) = handle(&st, &me, scope, &log, msg).await {
                     replies.push(r);
                 }
             }
             (!replies.is_empty()).then_some(Value::Array(replies))
         }
-        Ok(msg) => handle(&st, &me, scope, msg).await,
+        Ok(msg) => handle(&st, &me, scope, &log, msg).await,
     };
     match reply {
         Some(r) => ([(header::CONTENT_TYPE, "application/json")], r.to_string()).into_response(),
@@ -240,13 +246,20 @@ pub fn negotiate(asked: Option<&str>) -> &'static str {
         .unwrap_or(PROTOCOL_VERSION)
 }
 
-/// One JSON-RPC message in, at most one out (notifications get none).
-pub async fn handle(st: &AppState, me: &Actor, scope: TokenScope, msg: Value) -> Option<Value> {
+/// One JSON-RPC message in, at most one out (notifications get none). `log`
+/// is the request for the read log (channel MCP).
+pub async fn handle(
+    st: &AppState,
+    me: &Actor,
+    scope: TokenScope,
+    log: &AccessCtx,
+    msg: Value,
+) -> Option<Value> {
     match classify(msg) {
         Message::Silent => None,
         Message::Invalid(reply) => Some(reply),
         Message::Request { id, method, params } => {
-            Some(match request(st, me, scope, &method, &params).await {
+            Some(match request(st, me, scope, log, &method, &params).await {
                 Ok(result) => response(id, result),
                 Err((code, message)) => error(id, code, message),
             })
@@ -258,6 +271,7 @@ async fn request(
     st: &AppState,
     me: &Actor,
     scope: TokenScope,
+    log: &AccessCtx,
     method: &str,
     params: &Value,
 ) -> Result<Value, (i64, String)> {
@@ -297,7 +311,7 @@ async fn request(
                 Some(a @ Value::Object(_)) => a.clone(),
                 Some(_) => return Err((INVALID_PARAMS, "`arguments` must be an object".into())),
             };
-            Ok(tools::call(st, me, name, &args).await)
+            Ok(tools::call_logged(st, me, name, &args, log).await)
         }
         "prompts/list" => Ok(json!({ "prompts": tools::prompts() })),
         "prompts/get" => {

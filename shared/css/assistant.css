@@ -144,6 +144,9 @@
 .tc-md th, .tc-md td { padding: 3px 8px; text-align: left; border-bottom: 1px solid var(--border); }
 .tc-a-meta, .tc-a-note, .tc-a-hint, .tc-a-disclaimer, .tc-a-empty { margin: 4px 0 0; font-size: 12px; line-height: 16px; color: var(--text-dim); }
 .tc-a-note { color: var(--st-wip-fg); }
+.tc-a-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; }
+.tc-a-open { display: inline-block; padding: 3px 10px; font: inherit; font-size: 12px; line-height: 18px; color: var(--link); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; text-decoration: none; }
+.tc-a-open:hover, .tc-a-open:focus-visible { border-color: var(--link); }
 .tc-a-error { margin: 0; padding: var(--space-2) var(--space-3); color: var(--st-danger-fg); background: var(--st-danger-bg); border: 1px solid var(--st-danger-bd); border-radius: var(--radius-sm); }
 
 /* composer */

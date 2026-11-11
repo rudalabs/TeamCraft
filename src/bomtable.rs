@@ -1050,4 +1050,158 @@ mod tests {
             assert!(!supported(name), "{name}");
         }
     }
+
+    // ----- found by cargo mutants: rules the tests above did not pin down -----
+
+    #[test]
+    fn every_field_has_its_own_label() {
+        let labels = [
+            ("level", "Level"),
+            ("position", "Find number / position"),
+            ("number", "Part number"),
+            ("name", "Name"),
+            ("description", "Description"),
+            ("quantity", "Quantity"),
+            ("unit", "Unit"),
+            ("material", "Material"),
+            ("mass", "Mass"),
+            ("structure", "BOM structure / classification"),
+            ("file", "File name"),
+        ];
+        for (field, label) in labels {
+            assert_eq!(field_label(field), label, "{field}");
+        }
+        assert_eq!(field_label("colour"), "?");
+    }
+
+    #[test]
+    fn spreadsheet_numbers_become_cell_text() {
+        use calamine::Data;
+        assert_eq!(cell_text(&Data::Float(4.0)), "4");
+        assert_eq!(cell_text(&Data::Float(4.5)), "4.5");
+        assert_eq!(
+            cell_text(&Data::Float(-0.0)),
+            "0",
+            "no '-0' for an empty sum"
+        );
+        // beyond i64: printed as the float, not saturated to i64::MAX
+        assert_eq!(cell_text(&Data::Float(1e20)), "100000000000000000000");
+        assert_eq!(cell_text(&Data::Int(7)), "7");
+        assert_eq!(cell_text(&Data::Empty), "");
+    }
+
+    #[test]
+    fn units_without_letters_are_empty() {
+        for raw in ["", "  ", "-", "/", "–"] {
+            assert_eq!(normalize_unit(raw), "", "{raw:?}");
+        }
+        assert_eq!(normalize_unit(" Stk "), "each");
+        assert_eq!(normalize_unit("MM"), "mm");
+    }
+
+    #[test]
+    fn only_short_alphanumeric_extensions_are_cut_off() {
+        assert_eq!(file_stem("Part.ipt"), "Part");
+        assert_eq!(file_stem("Bracket.SLDPRT"), "Bracket");
+        assert_eq!(file_stem(".ipt"), ".ipt", "nothing before the dot");
+        assert_eq!(file_stem("Part.a-b"), "Part.a-b", "not an extension");
+        assert_eq!(
+            file_stem("Part.verylongext"),
+            "Part.verylongext",
+            "too long"
+        );
+        assert_eq!(file_stem("Part."), "Part.", "empty extension");
+        assert_eq!(file_stem("Part"), "Part");
+    }
+
+    #[test]
+    fn a_clean_dotted_structure_has_no_warnings() {
+        let csv = "Pos,Part Number,Description,QTY\n\
+                   1,ASM-1,Top,1\n\
+                   1.1,PRT-1,Child,2\n\
+                   1.2,PRT-2,Child,1\n\
+                   2,PRT-3,Second top,1\n";
+        let t = read("bom.csv", csv.as_bytes()).unwrap();
+        assert_eq!(levels(&t), vec![1, 2, 2, 1]);
+        assert!(t.warnings.is_empty(), "{:?}", t.warnings);
+    }
+
+    #[test]
+    fn a_dotted_row_after_its_siblings_parent_is_flagged() {
+        // 1.1 comes after 2, which is not below 1
+        let csv = "Pos,Part Number,Description,QTY\n\
+                   1,ASM-1,Top,1\n\
+                   2,PRT-3,Second top,1\n\
+                   1.1,PRT-1,Child,2\n";
+        let t = read("bom.csv", csv.as_bytes()).unwrap();
+        assert_eq!(levels(&t), vec![1, 1, 2]);
+        assert_eq!(t.warnings.len(), 1, "{:?}", t.warnings);
+        assert!(t.warnings[0].contains("comes after rows that are not below 1"));
+    }
+
+    #[test]
+    fn flat_tables_are_not_read_as_dotted() {
+        // no level column and positions without dots: flat, no warnings
+        let csv = "Pos,Part Number,Description,QTY\n\
+                   1,PRT-1,One,1\n\
+                   A,PRT-2,Lettered position,1\n\
+                   2,PRT-3,Two,1\n";
+        let t = read("bom.csv", csv.as_bytes()).unwrap();
+        assert_eq!(levels(&t), vec![1, 1, 1]);
+        assert_eq!(t.rows[1].find_number, None);
+        assert!(t.warnings.is_empty(), "{:?}", t.warnings);
+        // no position column at all
+        let csv = "Part Number,Description,QTY\nPRT-1,One,1\nPRT-2,Two,1\n";
+        let t = read("bom.csv", csv.as_bytes()).unwrap();
+        assert_eq!(levels(&t), vec![1, 1]);
+        assert!(t.warnings.is_empty(), "{:?}", t.warnings);
+    }
+
+    #[test]
+    fn rows_below_a_reference_component_are_skipped_by_level() {
+        let csv = "Level,Part Number,BOM Structure,QTY,Description\n\
+                   1,ASM-1,Normal,1,Top\n\
+                   2,SKETCH,Reference,1,Layout\n\
+                   3,REF-CHILD,Normal,1,Below the reference\n\
+                   2,PRT-1,Normal,2,Sibling of the reference\n\
+                   1,PRT-2,Normal,1,Second top\n";
+        let t = read("bom.csv", csv.as_bytes()).unwrap();
+        let numbers: Vec<&str> = t.rows.iter().map(|r| r.number.as_str()).collect();
+        assert_eq!(numbers, ["ASM-1", "PRT-1", "PRT-2"]);
+        assert_eq!(levels(&t), vec![1, 2, 1]);
+    }
+
+    #[test]
+    fn only_a_level_gap_is_reported() {
+        let table = |levels: &str| {
+            let mut csv = String::from("Level,Part Number,Description,QTY\n");
+            for (i, l) in levels.split(' ').enumerate() {
+                csv.push_str(&format!("{l},P{i},Part,1\n"));
+            }
+            read("bom.csv", csv.as_bytes()).unwrap()
+        };
+        assert!(table("1 2 3 2 1").warnings.is_empty(), "steps of one");
+        let t = table("1 3 4 1 3");
+        assert_eq!(t.warnings.len(), 1, "reported once: {:?}", t.warnings);
+        assert!(
+            t.warnings[0].contains("jumps from 1 to 3"),
+            "{:?}",
+            t.warnings
+        );
+    }
+
+    #[test]
+    fn the_row_limit_is_inclusive() {
+        let mut csv = String::from("Part Number,Description,QTY\n");
+        for i in 0..MAX_ROWS {
+            csv.push_str(&format!("P{i},Part,1\n"));
+        }
+        assert_eq!(
+            read("bom.csv", csv.as_bytes()).unwrap().rows.len(),
+            MAX_ROWS
+        );
+        csv.push_str("ONE-MORE,Part,1\n");
+        let err = read("bom.csv", csv.as_bytes()).unwrap_err();
+        assert!(err.contains("more than"), "{err}");
+    }
 }

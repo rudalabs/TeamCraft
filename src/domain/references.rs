@@ -86,3 +86,50 @@ impl ReferenceKind {
         }
     }
 }
+
+/// Found by cargo mutants: the stored values (URLs, API, database) and the
+/// labels were not tested.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn revision_rules() {
+        let rules = [
+            RevisionRule::Latest,
+            RevisionRule::Released,
+            RevisionRule::AsReleased,
+        ];
+        let stored: Vec<&str> = rules.iter().map(|r| r.as_str()).collect();
+        assert_eq!(stored, ["latest", "released", "as_released"]);
+        for r in rules {
+            assert_eq!(RevisionRule::parse(r.as_str()), Some(r));
+        }
+        assert_eq!(RevisionRule::parse(""), Some(RevisionRule::Latest));
+        assert_eq!(
+            RevisionRule::parse("as-released"),
+            Some(RevisionRule::AsReleased)
+        );
+        assert_eq!(RevisionRule::parse("newest"), None);
+    }
+
+    #[test]
+    fn reference_kinds() {
+        let kinds: Vec<(&str, &str)> = ReferenceKind::ALL
+            .iter()
+            .map(|k| (k.as_str(), k.label()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("drawing", "Drawing of"),
+                ("specification", "Specification for"),
+                ("reference", "References")
+            ]
+        );
+        for k in ReferenceKind::ALL {
+            assert_eq!(ReferenceKind::parse(k.as_str()), Some(k));
+        }
+        assert_eq!(ReferenceKind::parse("link"), None);
+    }
+}

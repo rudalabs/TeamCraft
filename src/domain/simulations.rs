@@ -187,3 +187,68 @@ pub fn validate_result_numbers(
     }
     Ok(())
 }
+
+/// Found by cargo mutants: stored values, labels and the edges of the pass /
+/// fail rule.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basis_roles() {
+        let roles: Vec<(&str, &str)> = BasisRole::ALL
+            .iter()
+            .map(|r| (r.as_str(), r.label()))
+            .collect();
+        assert_eq!(
+            roles,
+            [
+                ("geometry", "Geometry"),
+                ("mesh", "Mesh"),
+                ("material", "Material"),
+                ("load_case", "Load case"),
+                ("other", "Other")
+            ]
+        );
+    }
+
+    #[test]
+    fn result_filters() {
+        let filters: Vec<&str> = ResultFilter::ALL.iter().map(|f| f.as_str()).collect();
+        assert_eq!(filters, ["failed", "passed", "above_limit", "below_limit"]);
+        let mut labels: Vec<&str> = ResultFilter::ALL.iter().map(|f| f.label()).collect();
+        assert_eq!(labels[0], "A value fails its limits");
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(labels.len(), ResultFilter::ALL.len());
+        for f in ResultFilter::ALL {
+            assert_eq!(ResultFilter::parse(&format!(" {} ", f.as_str())), Some(f));
+            assert_eq!(
+                ResultFilter::parse_field(Some(f.as_str())).unwrap(),
+                Some(f)
+            );
+        }
+        assert_eq!(ResultFilter::parse_field(None).unwrap(), None);
+        assert_eq!(ResultFilter::parse_field(Some("  ")).unwrap(), None);
+        assert!(ResultFilter::parse_field(Some("broken")).is_err());
+    }
+
+    #[test]
+    fn pass_and_fail() {
+        use ResultStatus::*;
+        assert_eq!(
+            (Pass.as_str(), Fail.as_str(), NoLimits.as_str()),
+            ("pass", "fail", "none")
+        );
+        assert_eq!(result_status(5.0, None, None), NoLimits);
+        // limits are inclusive, either may be missing
+        assert_eq!(result_status(1.0, Some(1.0), Some(2.0)), Pass);
+        assert_eq!(result_status(2.0, Some(1.0), Some(2.0)), Pass);
+        assert_eq!(result_status(0.99, Some(1.0), Some(2.0)), Fail);
+        assert_eq!(result_status(2.01, Some(1.0), Some(2.0)), Fail);
+        assert_eq!(result_status(-1e9, None, Some(2.0)), Pass);
+        assert_eq!(result_status(1e9, Some(1.0), None), Pass);
+        assert_eq!(result_status(f64::NAN, Some(1.0), None), Fail);
+        assert_eq!(result_status(f64::INFINITY, None, Some(1e300)), Fail);
+    }
+}

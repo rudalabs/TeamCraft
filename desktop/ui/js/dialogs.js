@@ -2,7 +2,7 @@
 // TeamCraft Desktop – Dialogs: new item, settings, about.
 // Part of the desktop UI (ES modules, no build step; js/main.js starts it).
 
-import { $, ITEM_TYPES, TAURI, api, call, dialog, errorText, field, h, label, setStatus, state, toast } from "./core.js";
+import { $, ITEM_TYPES, TAURI, api, call, dialog, errorText, field, h, label, materialField, setStatus, state, toast } from "./core.js";
 import { canEdit, canEditProject, freshProjects, refreshWorklistCount } from "./shell.js";
 import { selectView } from "./navigator.js";
 import { openRevision } from "./revision.js";
@@ -40,7 +40,7 @@ export function openNewItemDialog() {
   var project = h("select", null, projects.map(function (p) { return h("option", { value: p.code, text: p.code + " – " + p.name }); }));
   var name = h("input", { type: "text", maxlength: "200", required: true, placeholder: "from the first file" });
   var number = h("input", { type: "text", maxlength: "64", placeholder: "automatic (PRT-000042 …)" });
-  var material = h("input", { type: "text", maxlength: "200" });
+  var materialF = materialField(""), material = materialF.input;
   var mass = h("input", { type: "text", inputmode: "decimal" });
   var desc = h("textarea", { maxlength: "10000" });
   // The item's files: chosen first, name and type follow from the first one.
@@ -69,7 +69,7 @@ export function openNewItemDialog() {
     field("Files", h("div.stack", null, [pick, fileList]), "the CAD model with its drawing and a STEP export for the 3D preview – uploaded right after the item is created"),
     h("div.grid-2", null, [field("Type", type), field("Project group", project)]),
     field("Name", name), field("Number", number, "optional"),
-    h("div.grid-2", null, [field("Material", material), field("Mass per unit (kg)", mass)]),
+    h("div.grid-2", null, [materialF.el, field("Mass per unit (kg)", mass)]),
     field("Description", desc)
   ]), [
     { label: "Cancel", onClick: function (d) { d.close(); } },
