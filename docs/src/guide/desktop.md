@@ -35,8 +35,9 @@ check-outs and reviews, and a **local working folder**:
   assemblies apart by the file type). Their quantity is how often the
   assembly places the part where the file tells it (SOLIDWORKS 2015+, NX,
   Inventor and STEP assemblies with external part files; instances excluded
-  from the BOM do not count – in Inventor assemblies suppressed occurrences
-  do count, check those); for other formats (Solid Edge, …) it is 1
+  from the BOM and suppressed Inventor occurrences do not count, a part that
+  is only placed that way gets no BOM line but stays referenced); for other
+  formats (Solid Edge, …) it is 1
   with the note *check the quantity* – set the real quantities with *Import
   BOM…* from the CAD program's BOM export. *Help → How to
   Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file

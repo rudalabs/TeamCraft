@@ -23,8 +23,29 @@
 //!
 //! The stream also keeps copies of the table from earlier saves (with the
 //! same or older paths); only the first table counts – the descriptors that
-//! follow each other without a gap. Suppressed occurrences are counted too:
-//! the table does not tell them apart (Inventor's own BOM leaves them out).
+//! follow each other without a gap.
+//!
+//! The descriptor counts include suppressed occurrences. Inventor's BOM
+//! leaves those out, and so does this reader: the same stream holds one
+//! property record per occurrence, in occurrence order (again followed by
+//! copies from earlier saves, so only the first records as many as the
+//! descriptors count are read):
+//!
+//! ```text
+//! 01 05 01 00 00 00 05  u32 n, n × UTF-16LE   occurrence name ("Bolt" of "Bolt:3")
+//! 4 bytes
+//! 01 02 01 00 00 00 02  16 bytes, 4 bytes     identifier
+//! 01 07 01 00 00 00 07  u8                    1 = suppressed
+//! ```
+//!
+//! The occurrence name is the descriptor's display name, or the file name
+//! without extension when that is empty. Every suppressed record is taken
+//! off the count of the one file whose name it carries; a file with only
+//! suppressed occurrences counts 0 (still referenced, not in the BOM). When
+//! the records do not add up – fewer records than occurrences, a suppressed
+//! record whose name fits no file or several – the descriptor counts stay as
+//! they are: suppression is not guessed.
+//!
 //! Anything that does not fit is skipped, never trusted: a file whose
 //! descriptor is not found has no count (not known), it is never guessed.
 #![deny(
@@ -80,9 +101,34 @@ fn text_at(data: &[u8], i: usize, min: usize, max: usize) -> Option<(String, usi
     Some((text, end))
 }
 
-/// One file descriptor at `i`: the file name (last part of the path), its
-/// occurrences and the offset after the descriptor.
-fn descriptor_at(data: &[u8], i: usize) -> Option<(String, u32, usize)> {
+/// One file descriptor of the table.
+struct Descriptor {
+    /// File name (last part of the path).
+    name: String,
+    /// Display name, may be empty.
+    display: String,
+    /// Occurrences, suppressed ones included.
+    count: u32,
+    /// Offset after the descriptor.
+    end: usize,
+}
+
+impl Descriptor {
+    /// Does an occurrence record with this name place this file? Its name is
+    /// the display name, or the file name without extension.
+    fn is_named(&self, occurrence: &str) -> bool {
+        let occurrence = occurrence.trim().to_lowercase();
+        let stem = self
+            .name
+            .rsplit_once('.')
+            .map_or(self.name.as_str(), |(stem, _)| stem);
+        (!self.display.trim().is_empty() && self.display.trim().to_lowercase() == occurrence)
+            || stem.trim().to_lowercase() == occurrence
+    }
+}
+
+/// One file descriptor at `i`.
+fn descriptor_at(data: &[u8], i: usize) -> Option<Descriptor> {
     let (path, after_path) = text_at(data, i, 5, MAX_PATH)?;
     let name = path.rsplit(['\\', '/']).next()?.trim();
     if !path.contains(['\\', '/']) || !name.contains('.') || name.starts_with('.') {
@@ -90,7 +136,7 @@ fn descriptor_at(data: &[u8], i: usize) -> Option<(String, u32, usize)> {
     }
     u32_at(data, after_path)?; // kind of the path
     let (_, after_workspace) = text_at(data, after_path + 4, 0, MAX_NAME)?;
-    let (_, after_display) = text_at(data, after_workspace + 2, 0, MAX_NAME)?;
+    let (display, after_display) = text_at(data, after_workspace + 2, 0, MAX_NAME)?;
     if data.get(after_display..after_display + 6)? != [0u8; 6] {
         return None;
     }
@@ -103,29 +149,101 @@ fn descriptor_at(data: &[u8], i: usize) -> Option<(String, u32, usize)> {
     if count == 0 {
         return None;
     }
-    Some((name.to_string(), u32::from(count), tail + 8))
+    Some(Descriptor {
+        name: name.to_string(),
+        display,
+        count: u32::from(count),
+        end: tail + 8,
+    })
 }
 
-/// The occurrence counts of the first descriptor table in the content of
-/// the `UFRxDoc` stream: (file name, occurrences) in table order. A file
-/// name that appears twice (two files of that name in different folders)
-/// is listed twice.
-pub fn occurrence_counts(data: &[u8]) -> Vec<(String, u32)> {
+/// The first descriptor table: the first descriptor and those that follow it
+/// directly.
+fn descriptor_table(data: &[u8]) -> Vec<Descriptor> {
     let mut out = Vec::new();
     let mut i = 0;
     while i + 4 <= data.len() {
-        let Some((name, count, end)) = descriptor_at(data, i) else {
+        let Some(first) = descriptor_at(data, i) else {
             i += 1;
             continue;
         };
-        out.push((name, count));
-        // the table goes on only where the next descriptor follows directly
-        let mut next = end + TABLE_GAP;
-        while let Some((name, count, end)) = descriptor_at(data, next) {
-            out.push((name, count));
-            next = end + TABLE_GAP;
+        let mut next = first.end + TABLE_GAP;
+        out.push(first);
+        while let Some(d) = descriptor_at(data, next) {
+            next = d.end + TABLE_GAP;
+            out.push(d);
         }
         break;
+    }
+    out
+}
+
+/// The tag of a property in an occurrence record: `01 t 01 00 00 00 t`.
+fn tag(t: u8) -> [u8; 7] {
+    [1, t, 1, 0, 0, 0, t]
+}
+
+/// The occurrence records in stream order: (occurrence name, suppressed).
+fn occurrence_records(data: &[u8]) -> Vec<(String, bool)> {
+    let (name_tag, id_tag, flag_tag) = (tag(0x05), tag(0x02), tag(0x07));
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(found) = data
+        .get(i..)
+        .and_then(|rest| rest.windows(7).position(|w| w == name_tag))
+    {
+        let at = i + found;
+        i = at + 1;
+        let Some((name, after_name)) = text_at(data, at + 7, 1, MAX_NAME) else {
+            continue;
+        };
+        let id_at = after_name + 4;
+        let flag_at = id_at + 7 + 20;
+        if data.get(id_at..id_at + 7) != Some(&id_tag[..])
+            || data.get(flag_at..flag_at + 7) != Some(&flag_tag[..])
+        {
+            continue;
+        }
+        match data.get(flag_at + 7) {
+            Some(0) => out.push((name, false)),
+            Some(1) => out.push((name, true)),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The occurrence counts of the first descriptor table in the content of
+/// the `UFRxDoc` stream: (file name, occurrences) in table order, without
+/// suppressed occurrences where the occurrence records tell them. A file
+/// name that appears twice (two files of that name in different folders)
+/// is listed twice.
+pub fn occurrence_counts(data: &[u8]) -> Vec<(String, u32)> {
+    let table = descriptor_table(data);
+    let all: Vec<(String, u32)> = table.iter().map(|d| (d.name.clone(), d.count)).collect();
+    let total: u32 = table.iter().map(|d| d.count).sum();
+    let records = occurrence_records(data);
+    let Some(current) = records.get(..usize::try_from(total).unwrap_or(usize::MAX)) else {
+        return all; // fewer records than occurrences: suppression not known
+    };
+    let mut suppressed = vec![0u32; table.len()];
+    for (name, _) in current.iter().filter(|(_, s)| *s) {
+        let mut matches = table.iter().enumerate().filter(|(_, d)| d.is_named(name));
+        match (matches.next(), matches.next()) {
+            (Some((index, _)), None) => {
+                if let Some(n) = suppressed.get_mut(index) {
+                    *n += 1;
+                }
+            }
+            _ => return all, // no file or several: not guessed
+        }
+    }
+    let mut out = Vec::with_capacity(table.len());
+    for (d, n) in table.iter().zip(&suppressed) {
+        let Some(active) = d.count.checked_sub(*n) else {
+            return all;
+        };
+        out.push((d.name.clone(), active));
     }
     out
 }
@@ -152,15 +270,28 @@ pub fn file_occurrence_counts<R: Read + Seek>(
 /// (path, from a library, occurrences) – for tests of the callers.
 #[cfg(test)]
 pub(crate) fn test_assembly(entries: &[(&str, bool, u16)]) -> Vec<u8> {
+    test_assembly_with_records(entries, &[])
+}
+
+/// Like [`test_assembly`], followed by occurrence records (name, suppressed).
+#[cfg(test)]
+pub(crate) fn test_assembly_with_records(
+    entries: &[(&str, bool, u16)],
+    records: &[(&str, bool)],
+) -> Vec<u8> {
     use std::io::{Cursor, Write};
     let descriptors: Vec<Vec<u8>> = entries
         .iter()
         .map(|(path, library, count)| tests::descriptor(path, *library, "", *count))
         .collect();
+    let mut data = tests::table(&descriptors);
+    for (name, suppressed) in records {
+        data.extend(tests::record(name, *suppressed));
+    }
     let mut cfb = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
     cfb.create_stream(DESCRIPTOR_STREAM)
         .unwrap()
-        .write_all(&tests::table(&descriptors))
+        .write_all(&data)
         .unwrap();
     cfb.flush().unwrap();
     cfb.into_inner().into_inner()
@@ -206,6 +337,145 @@ mod tests {
             out.extend_from_slice(e);
         }
         out
+    }
+
+    /// One occurrence record in the layout of a real Inventor 2027 assembly
+    /// (with some of the properties around the three that are read).
+    pub(super) fn record(name: &str, suppressed: bool) -> Vec<u8> {
+        let mut r = Vec::new();
+        r.extend(tag(0x12));
+        r.extend([0x5au8; 16]);
+        r.extend([0u8; 4]);
+        r.extend(tag(0x19));
+        r.extend(if suppressed { 5u64 } else { 1 }.to_le_bytes());
+        r.extend(tag(0x05));
+        r.extend(text(name));
+        r.extend([0u8; 4]);
+        r.extend(tag(0x02));
+        r.extend([0xa7u8; 16]);
+        r.extend([0u8; 4]);
+        r.extend(tag(0x07));
+        r.push(u8::from(suppressed));
+        r.extend([0u8; 4]);
+        r.extend(tag(0x1e));
+        r.extend(text(name));
+        r.extend([0u8; 30]);
+        r
+    }
+
+    fn with_records(table_entries: &[Vec<u8>], records: &[(&str, bool)]) -> Vec<u8> {
+        let mut data = table(table_entries);
+        data.extend([0x33u8; 64]);
+        for (name, suppressed) in records {
+            data.extend(record(name, *suppressed));
+        }
+        data
+    }
+
+    fn suppression_table() -> Vec<Vec<u8>> {
+        vec![
+            descriptor("C:\\Rover\\Wheel\\Wheel.iam", false, "", 4),
+            descriptor("C:\\Rover\\Frame.ipt", false, "", 1),
+            descriptor(
+                "C:\\CC\\ISO 4762\\ISO 4762 - M6 x 20.ipt",
+                true,
+                "ISO 4762 M6 x 20",
+                3,
+            ),
+        ]
+    }
+
+    #[test]
+    fn suppressed_occurrences_are_not_counted() {
+        let data = with_records(
+            &suppression_table(),
+            &[
+                ("Wheel", false),
+                ("Wheel", true),
+                ("Frame", true),
+                ("ISO 4762 M6 x 20", false),
+                ("Wheel", false),
+                ("ISO 4762 M6 x 20", false),
+                ("WHEEL", false), // names compare without case
+                ("ISO 4762 M6 x 20", false),
+                // records of an earlier save: not read
+                ("Wheel", true),
+                ("ISO 4762 M6 x 20", true),
+            ],
+        );
+        assert_eq!(
+            occurrence_counts(&data),
+            vec![
+                ("Wheel.iam".to_string(), 3),
+                // only suppressed occurrences: still listed, with 0
+                ("Frame.ipt".to_string(), 0),
+                ("ISO 4762 - M6 x 20.ipt".to_string(), 3),
+            ]
+        );
+    }
+
+    #[test]
+    fn suppression_that_does_not_add_up_is_not_guessed() {
+        let all = vec![
+            ("Wheel.iam".to_string(), 4),
+            ("Frame.ipt".to_string(), 1),
+            ("ISO 4762 - M6 x 20.ipt".to_string(), 3),
+        ];
+        // fewer records than occurrences
+        let few = with_records(&suppression_table(), &[("Wheel", true), ("Frame", false)]);
+        assert_eq!(occurrence_counts(&few), all);
+        // a suppressed record whose name fits no file
+        let mut unknown: Vec<(&str, bool)> = vec![("Wheel", false); 4];
+        unknown.extend([
+            ("Bracket", true),
+            ("ISO 4762 M6 x 20", false),
+            ("ISO 4762 M6 x 20", false),
+        ]);
+        assert_eq!(
+            occurrence_counts(&with_records(&suppression_table(), &unknown)),
+            all
+        );
+        // more suppressed records than the file has occurrences
+        let mut too_many: Vec<(&str, bool)> = vec![("Frame", true); 2];
+        too_many.extend(vec![("Wheel", false); 3]);
+        too_many.extend(vec![("ISO 4762 M6 x 20", false); 3]);
+        assert_eq!(
+            occurrence_counts(&with_records(&suppression_table(), &too_many)),
+            all
+        );
+        // a name that fits two files (same display name)
+        let twins = vec![
+            descriptor("C:\\Rover\\Washer A.ipt", false, "DIN 988 S7", 1),
+            descriptor("C:\\Rover\\Washer B.ipt", false, "DIN 988 S7", 1),
+        ];
+        assert_eq!(
+            occurrence_counts(&with_records(
+                &twins,
+                &[("DIN 988 S7", true), ("DIN 988 S7", false)]
+            )),
+            vec![
+                ("Washer A.ipt".to_string(), 1),
+                ("Washer B.ipt".to_string(), 1)
+            ]
+        );
+        // a record whose flag is neither 0 nor 1 is not a record (were it
+        // read as suppressed, Frame would count 0)
+        let mut odd = record("Frame", true);
+        // after the flag: 4 bytes, tag 1e, the name again, 30 bytes
+        let flag_at = odd.len() - 30 - (4 + 2 * "Frame".len()) - 7 - 4 - 1;
+        assert_eq!(odd.get(flag_at), Some(&1));
+        if let Some(b) = odd.get_mut(flag_at) {
+            *b = 2;
+        }
+        let mut data = table(&suppression_table());
+        for _ in 0..4 {
+            data.extend(record("Wheel", false));
+        }
+        data.extend(odd);
+        for _ in 0..3 {
+            data.extend(record("ISO 4762 M6 x 20", false));
+        }
+        assert_eq!(occurrence_counts(&data), all);
     }
 
     fn stream() -> Vec<u8> {
